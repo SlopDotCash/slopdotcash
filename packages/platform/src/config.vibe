@@ -1,0 +1,45 @@
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+export error ConfigInvalid { name: string; issue: string }
+
+export type Tier = "production" | "staging" | "local"
+
+const tiers: ReadonlyArray<Tier> = ["production", "staging", "local"]
+const githubId = /^[1-9][0-9]{0,19}$/u
+const loopback = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{3,4}$/u
+const localDevelopment = /^http:\/\/(?:localhost|127\.0\.0\.1):([1-9][0-9]{3,4})$/u
+
+export effect function idList(name: string, text: string | undefined) {
+  const entries = (text ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "")
+  const invalid = entries.findIndex((entry) => !githubId.test(entry))
+  if (invalid !== -1) throw new ConfigInvalid({ name, issue: `entry ${invalid + 1} is not a numeric GitHub id` })
+  const ids: ReadonlyArray<string> = [...new Set(entries)]
+  return ids
+}
+
+export effect function jsonVar<S extends Schema.Constraint>(name: string, text: string | undefined, schema: S) {
+  if (text === undefined || text.trim() === "") throw new ConfigInvalid({ name, issue: "missing" })
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new ConfigInvalid({ name, issue: "not JSON" }) })
+  const decoded = Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new ConfigInvalid({ name, issue: "does not match its schema" }) }
+  return decoded
+}
+
+export effect function secret(name: string, text: string | undefined) {
+  if (text === undefined || text === "") throw new ConfigInvalid({ name, issue: "missing" })
+  return Redacted.make(text)
+}
+
+export effect function tierOf(text: string | undefined) {
+  if (text === undefined) return "production" satisfies Tier
+  const tier = tiers.find((candidate) => candidate === text)
+  if (tier === undefined) throw new ConfigInvalid({ name: "SLOP_ENVIRONMENT", issue: "not production, staging or local" })
+  return tier
+}
+
+export function loopbackOrigin(origin: string | undefined) {
+  return origin !== undefined && loopback.test(origin)
+}
+
+export function localDevelopmentOrigin(origin: string) {
+  const port = localDevelopment.exec(origin)?.[1]
+  return port !== undefined && Number(port) <= 65_535
+}

@@ -1,0 +1,15 @@
+// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"
+import type { ReadFailure } from "./backend.vibe"
+
+export schema Readiness = "ReadinessEnabled" | "ReadinessDisabled" | "ReadinessUnobserved"
+
+export schema ReportingObservation {
+  readonly readiness: Readiness
+  readonly identityMatches: boolean
+  readonly refreshFailed: boolean
+  readonly verifiedAt?: string
+}
+
+export service ReportingReadiness {
+  current(projectId: string): ReportingObservation!ReadFailure
+}

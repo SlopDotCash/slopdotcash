@@ -1,0 +1,18 @@
+// spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+import { isoFromMillis, millisFromIso } from "./times.ts"
+
+export effect function isoAt(millis: number) {
+  return try orDie(Effect.try(() => isoFromMillis(millis)))
+}
+
+export effect function isoNow() {
+  return try isoAt(try Clock.currentTimeMillis)
+}
+
+export effect function nowSeconds() {
+  return Math.floor((try Clock.currentTimeMillis) / 1000)
+}
+
+export function millisOf(iso: string) {
+  return millisFromIso(iso)
+}

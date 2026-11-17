@@ -1,0 +1,414 @@
+// spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+import { type JsonRpc, RpcMalformed, type RpcFailure, jsonRpc } from "./rpc.vibe"
+import {
+  type Abi,
+  type Address,
+  type Hex,
+  type TypedDataDefinition,
+  checksum,
+  decodeResult as decodeResultUnchecked,
+  encodeCall as encodeCallUnchecked,
+  hash32,
+  hexData,
+  quantity,
+  toQuantity,
+  typedDataDigest as typedDataDigestUnchecked,
+} from "./evmCodec.ts"
+
+export { type Abi, type Address, type DecodedEvent, type EventLog, type Hex, type TypedDataDefinition, canonicalSignature, checksum, decodeEvents, keccak, personalMessageDigest, recoverDigest, recoverPersonalSign, recoverTypedData } from "./evmCodec.ts"
+import { type ScanRequest, scanWith } from "./evmScan.vibe"
+export { ScanInvalid, maxPageBlocks, type ScanPage, type ScanRequest } from "./evmScan.vibe"
+
+export type BlockTag = "latest" | "finalized" | "safe"
+export type BlockRef = BlockTag | "pending" | bigint
+
+export interface Block {
+  readonly number: bigint
+  readonly hash: Hex
+  readonly parentHash: Hex
+  readonly timestamp: number
+  readonly transactions: ReadonlyArray<Hex>
+  readonly baseFeePerGas: bigint | undefined
+}
+
+export interface Log {
+  readonly address: Address
+  readonly topics: ReadonlyArray<Hex>
+  readonly data: Hex
+  readonly blockNumber: bigint
+  readonly blockHash: Hex
+  readonly transactionHash: Hex
+  readonly transactionIndex: number
+  readonly logIndex: number
+  readonly removed: boolean
+}
+
+export interface Receipt {
+  readonly transactionHash: Hex
+  readonly blockHash: Hex
+  readonly blockNumber: bigint
+  readonly transactionIndex: number
+  readonly status: "success" | "reverted"
+  readonly from: Address
+  readonly to: Address | undefined
+  readonly contractAddress: Address | undefined
+  readonly gasUsed: bigint
+  readonly effectiveGasPrice: bigint | undefined
+  readonly logs: ReadonlyArray<Log>
+}
+
+export interface Transaction {
+  readonly hash: Hex
+  readonly from: Address
+  readonly to: Address | undefined
+  readonly nonce: bigint
+  readonly input: Hex
+  readonly value: bigint
+  readonly gas: bigint
+  readonly blockNumber: bigint | undefined
+  readonly blockHash: Hex | undefined
+  readonly transactionIndex: number | undefined
+}
+
+export interface FeeHistory {
+  readonly oldestBlock: bigint
+  readonly baseFeePerGas: ReadonlyArray<bigint>
+  readonly gasUsedRatio: ReadonlyArray<number>
+  readonly reward: ReadonlyArray<ReadonlyArray<bigint>>
+}
+
+export interface LogFilter {
+  readonly address: Address | ReadonlyArray<Address>
+  readonly topics: ReadonlyArray<Hex | ReadonlyArray<Hex> | null>
+  readonly fromBlock: bigint
+  readonly toBlock: bigint
+}
+
+export interface CallRequest {
+  readonly to: Address
+  readonly data: Hex
+  readonly block: BlockRef
+  readonly from?: Address
+}
+
+export interface GasRequest {
+  readonly to: Address
+  readonly data: Hex
+  readonly from?: Address
+  readonly value?: bigint
+}
+
+export service EvmRpc {
+  chainId(): bigint!RpcFailure
+  head(tag: BlockTag): Block!RpcFailure
+  blockByNumber(number: bigint): (Block | undefined)!RpcFailure
+  receipt(hash: Hex): (Receipt | undefined)!RpcFailure
+  finalizedReceipt(hash: Hex): (Receipt | undefined)!RpcFailure
+  transaction(hash: Hex): (Transaction | undefined)!RpcFailure
+  logs(filter: LogFilter): ReadonlyArray<Log>!RpcFailure
+  call(request: CallRequest): Hex!RpcFailure
+  balance(address: Address, block: BlockRef): bigint!RpcFailure
+  nonce(address: Address, block: BlockRef): bigint!RpcFailure
+  code(address: Address, block: BlockRef): Hex!RpcFailure
+  storageAt(address: Address, slot: Hex, block: BlockRef): Hex!RpcFailure
+  estimateGas(request: GasRequest): bigint!RpcFailure
+  gasPrice(): bigint!RpcFailure
+  feeHistory(blocks: number, percentiles: ReadonlyArray<number>): FeeHistory!RpcFailure
+  maxPriorityFee(): bigint!RpcFailure
+  sendRaw(bytes: Hex): Hex!RpcFailure
+}
+
+export interface EvmRpcOptions {
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly chainId: bigint
+  readonly timeoutMs?: number
+  readonly maxBytes?: number
+}
+
+export error AbiMismatch { operation: string; issue: string }
+
+export effect function encodeCall(abi: Abi, functionName: string, args: ReadonlyArray<unknown>) {
+  return try Effect.try({ try: () => encodeCallUnchecked(abi, functionName, args), catch: () => new AbiMismatch({ operation: "encodeCall", issue: `${functionName} does not accept these arguments` }) })
+}
+
+export effect function decodeResult(abi: Abi, functionName: string, data: Hex) {
+  return try Effect.try({ try: () => decodeResultUnchecked(abi, functionName, data), catch: () => new AbiMismatch({ operation: "decodeResult", issue: `the answer is not a ${functionName} result` }) })
+}
+
+export effect function typedDataDigest(typedData: TypedDataDefinition) {
+  return try Effect.try({ try: () => typedDataDigestUnchecked(typedData), catch: () => new AbiMismatch({ operation: "typedDataDigest", issue: "the typed data does not match its types" }) })
+}
+
+const Quantity = Schema.String
+
+schema WireBlock {
+  number: string
+  hash: string
+  parentHash: string
+  timestamp: string
+  transactions: ReadonlyArray<string>
+  baseFeePerGas?: string
+}
+
+schema WireLog {
+  address: string
+  topics: ReadonlyArray<string>
+  data: string
+  blockNumber: string
+  blockHash: string
+  transactionHash: string
+  transactionIndex: string
+  logIndex: string
+  removed?: boolean
+}
+
+schema WireReceipt {
+  transactionHash: string
+  blockHash: string
+  blockNumber: string
+  transactionIndex: string
+  status: string
+  from: string
+  to: string | null
+  contractAddress?: string | null
+  gasUsed: string
+  effectiveGasPrice?: string
+  logs: ReadonlyArray<WireLog>
+}
+
+schema WireTransaction {
+  hash: string
+  from: string
+  to: string | null
+  nonce: string
+  input: string
+  value: string
+  gas: string
+  blockNumber: string | null
+  blockHash: string | null
+  transactionIndex: string | null
+}
+
+schema WireFeeHistory {
+  oldestBlock: string
+  baseFeePerGas: ReadonlyArray<string>
+  gasUsedRatio: ReadonlyArray<number>
+  reward?: ReadonlyArray<ReadonlyArray<string>>
+}
+
+effect function big(method: string, field: string, value: unknown) {
+  const parsed = quantity(value)
+  if (parsed === undefined) throw new RpcMalformed({ method, issue: `${field} is not a quantity` })
+  return parsed
+}
+
+effect function small(method: string, field: string, value: unknown) {
+  const parsed = try big(method, field, value)
+  if (parsed > 9007199254740991n) throw new RpcMalformed({ method, issue: `${field} is out of range` })
+  return Number(parsed)
+}
+
+effect function hashOf(method: string, field: string, value: unknown) {
+  const parsed = hash32(value)
+  if (parsed === undefined) throw new RpcMalformed({ method, issue: `${field} is not a 32-byte hash` })
+  return parsed
+}
+
+effect function dataOf(method: string, field: string, value: unknown) {
+  const parsed = hexData(value)
+  if (parsed === undefined) throw new RpcMalformed({ method, issue: `${field} is not hex data` })
+  return parsed
+}
+
+effect function addressOf(method: string, field: string, value: unknown) {
+  const parsed = checksum(value)
+  if (parsed === undefined) throw new RpcMalformed({ method, issue: `${field} is not an address` })
+  return parsed
+}
+
+effect function optionalAddress(method: string, field: string, value: string | null | undefined) {
+  return value === null || value === undefined ? undefined : try addressOf(method, field, value)
+}
+
+effect function blockOf(method: string, wire: WireBlock) {
+  const transactions: Hex[] = []
+  for (const hash of wire.transactions) transactions.push(try hashOf(method, "transaction", hash))
+  return {
+    number: try big(method, "number", wire.number),
+    hash: try hashOf(method, "hash", wire.hash),
+    parentHash: try hashOf(method, "parentHash", wire.parentHash),
+    timestamp: try small(method, "timestamp", wire.timestamp),
+    transactions,
+    baseFeePerGas: wire.baseFeePerGas === undefined ? undefined : try big(method, "baseFeePerGas", wire.baseFeePerGas),
+  } satisfies Block
+}
+
+effect function logOf(method: string, wire: WireLog) {
+  const topics: Hex[] = []
+  for (const topic of wire.topics) topics.push(try hashOf(method, "topic", topic))
+  return {
+    address: try addressOf(method, "address", wire.address),
+    topics,
+    data: try dataOf(method, "data", wire.data),
+    blockNumber: try big(method, "blockNumber", wire.blockNumber),
+    blockHash: try hashOf(method, "blockHash", wire.blockHash),
+    transactionHash: try hashOf(method, "transactionHash", wire.transactionHash),
+    transactionIndex: try small(method, "transactionIndex", wire.transactionIndex),
+    logIndex: try small(method, "logIndex", wire.logIndex),
+    removed: wire.removed === true,
+  } satisfies Log
+}
+
+effect function receiptOf(method: string, wire: WireReceipt) {
+  if (wire.status !== "0x1" && wire.status !== "0x0") throw new RpcMalformed({ method, issue: "status is neither 0x1 nor 0x0" })
+  const logs: Log[] = []
+  for (const log of wire.logs) logs.push(try logOf(method, log))
+  return {
+    transactionHash: try hashOf(method, "transactionHash", wire.transactionHash),
+    blockHash: try hashOf(method, "blockHash", wire.blockHash),
+    blockNumber: try big(method, "blockNumber", wire.blockNumber),
+    transactionIndex: try small(method, "transactionIndex", wire.transactionIndex),
+    status: wire.status === "0x1" ? "success" : "reverted",
+    from: try addressOf(method, "from", wire.from),
+    to: try optionalAddress(method, "to", wire.to),
+    contractAddress: try optionalAddress(method, "contractAddress", wire.contractAddress),
+    gasUsed: try big(method, "gasUsed", wire.gasUsed),
+    effectiveGasPrice: wire.effectiveGasPrice === undefined ? undefined : try big(method, "effectiveGasPrice", wire.effectiveGasPrice),
+    logs,
+  } satisfies Receipt
+}
+
+effect function transactionOf(method: string, wire: WireTransaction) {
+  return {
+    hash: try hashOf(method, "hash", wire.hash),
+    from: try addressOf(method, "from", wire.from),
+    to: try optionalAddress(method, "to", wire.to),
+    nonce: try big(method, "nonce", wire.nonce),
+    input: try dataOf(method, "input", wire.input),
+    value: try big(method, "value", wire.value),
+    gas: try big(method, "gas", wire.gas),
+    blockNumber: wire.blockNumber === null ? undefined : try big(method, "blockNumber", wire.blockNumber),
+    blockHash: wire.blockHash === null ? undefined : try hashOf(method, "blockHash", wire.blockHash),
+    transactionIndex: wire.transactionIndex === null ? undefined : try small(method, "transactionIndex", wire.transactionIndex),
+  } satisfies Transaction
+}
+
+function blockParam(block: BlockRef) {
+  return typeof block === "bigint" ? toQuantity(block) : block
+}
+
+function ordered(left: Log, right: Log) {
+  if (left.blockNumber !== right.blockNumber) return left.blockNumber < right.blockNumber ? -1 : 1
+  return left.logIndex - right.logIndex
+}
+
+function reader(rpc: JsonRpc): EvmRpc.Shape {
+  effect function quantityAt(method: string, params: ReadonlyArray<unknown>) {
+    return try big(method, "result", try rpc.call(method, params, Quantity))
+  }
+  effect function blockAt(tag: string) {
+    const wire = try rpc.call("eth_getBlockByNumber", [tag, false], Schema.NullOr(WireBlock))
+    return wire === null ? undefined : try blockOf("eth_getBlockByNumber", wire)
+  }
+  effect function receipt(hash: Hex) {
+    const wire = try rpc.call("eth_getTransactionReceipt", [hash], Schema.NullOr(WireReceipt))
+    if (wire === null) return undefined
+    const found = try receiptOf("eth_getTransactionReceipt", wire)
+    if (found.transactionHash !== hash.toLowerCase()) throw new RpcMalformed({ method: "eth_getTransactionReceipt", issue: "receipt is for another transaction" })
+    return found
+  }
+  effect function head(tag: BlockTag) {
+    const found = try blockAt(tag)
+    if (found === undefined) throw new RpcMalformed({ method: "eth_getBlockByNumber", issue: `the RPC has no ${tag} block` })
+    return found
+  }
+  effect function blockByNumber(number: bigint) {
+    const found = try blockAt(toQuantity(number))
+    if (found !== undefined && found.number !== number) throw new RpcMalformed({ method: "eth_getBlockByNumber", issue: "block number differs from the one asked for" })
+    return found
+  }
+  effect function finalizedReceipt(hash: Hex) {
+    const found = try receipt(hash)
+    if (found === undefined) return undefined
+    const finalized = try head("finalized")
+    if (found.blockNumber > finalized.number) return undefined
+    const canonical = try blockByNumber(found.blockNumber)
+    const canonicalAtIndex = canonical !== undefined && canonical.hash === found.blockHash && canonical.transactions[found.transactionIndex] === found.transactionHash
+    return canonicalAtIndex && found.logs.every((log) => log.blockHash === found.blockHash && log.transactionHash === found.transactionHash) ? found : undefined
+  }
+  effect function logs(filter: LogFilter) {
+    const wire = try rpc.call("eth_getLogs", [{ address: filter.address, topics: filter.topics, fromBlock: toQuantity(filter.fromBlock), toBlock: toQuantity(filter.toBlock) }], Schema.Array(WireLog))
+    const found: Log[] = []
+    for (const log of wire) found.push(try logOf("eth_getLogs", log))
+    return found.sort(ordered)
+  }
+  effect function transaction(hash: Hex) {
+    const wire = try rpc.call("eth_getTransactionByHash", [hash], Schema.NullOr(WireTransaction))
+    if (wire === null) return undefined
+    const found = try transactionOf("eth_getTransactionByHash", wire)
+    if (found.hash !== hash.toLowerCase()) throw new RpcMalformed({ method: "eth_getTransactionByHash", issue: "transaction differs from the one asked for" })
+    return found
+  }
+  effect function hexAt(method: string, params: ReadonlyArray<unknown>) {
+    return try dataOf(method, "result", try rpc.call(method, params, Schema.String))
+  }
+  effect function storageAt(address: Address, slot: Hex, block: BlockRef) {
+    const word = try hexAt("eth_getStorageAt", [address, slot, blockParam(block)])
+    if (word.length !== 66) throw new RpcMalformed({ method: "eth_getStorageAt", issue: "storage word is not 32 bytes" })
+    return word
+  }
+  effect function feeHistory(blocks: number, percentiles: ReadonlyArray<number>) {
+    const method = "eth_feeHistory"
+    const wire = try rpc.call(method, [`0x${blocks.toString(16)}`, "latest", percentiles], WireFeeHistory)
+    const baseFeePerGas: bigint[] = []
+    for (const fee of wire.baseFeePerGas) baseFeePerGas.push(try big(method, "baseFeePerGas", fee))
+    const reward: bigint[][] = []
+    for (const row of wire.reward ?? []) {
+      const values: bigint[] = []
+      for (const value of row) values.push(try big(method, "reward", value))
+      reward.push(values)
+    }
+    return { oldestBlock: try big(method, "oldestBlock", wire.oldestBlock), baseFeePerGas, gasUsedRatio: wire.gasUsedRatio, reward } satisfies FeeHistory
+  }
+  effect function sendRaw(bytes: Hex) {
+    return try hashOf("eth_sendRawTransaction", "result", try rpc.call("eth_sendRawTransaction", [bytes], Schema.String))
+  }
+  return {
+    chainId: () => quantityAt("eth_chainId", []),
+    head,
+    blockByNumber,
+    receipt,
+    finalizedReceipt,
+    transaction,
+    logs,
+    call: (request) => hexAt("eth_call", [{ to: request.to, data: request.data, ...request.from === undefined ? {} : { from: request.from } }, blockParam(request.block)]),
+    balance: (address, block) => quantityAt("eth_getBalance", [address, blockParam(block)]),
+    nonce: (address, block) => quantityAt("eth_getTransactionCount", [address, blockParam(block)]),
+    code: (address, block) => hexAt("eth_getCode", [address, blockParam(block)]),
+    storageAt,
+    estimateGas: (request) => quantityAt("eth_estimateGas", [{ to: request.to, data: request.data, ...request.from === undefined ? {} : { from: request.from }, ...request.value === undefined ? {} : { value: toQuantity(request.value) } }]),
+    gasPrice: () => quantityAt("eth_gasPrice", []),
+    feeHistory,
+    maxPriorityFee: () => quantityAt("eth_maxPriorityFeePerGas", []),
+    sendRaw,
+  }
+}
+
+export function evmRpc(options: EvmRpcOptions) {
+  return Layer.effect(EvmRpc, effect {
+    const rpc = try jsonRpc({
+      urls: options.urls,
+      timeoutMs: options.timeoutMs ?? 15_000,
+      maxBytes: options.maxBytes ?? 16 * 1024 * 1024,
+      identity: { method: "eth_chainId", expected: options.chainId.toString(), read: (answer) => quantity(answer)?.toString() },
+    })
+    const evm = reader(rpc)
+    try evm.chainId()
+    return evm
+  })
+}
+
+export effect function scanPage(request: ScanRequest) {
+  const evm = try EvmRpc
+  return try scanWith(request, (filter) => evm.logs(filter))
+}

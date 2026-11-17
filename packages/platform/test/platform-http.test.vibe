@@ -1,0 +1,244 @@
+import { assert, layer } from "@effect/vitest"
+import * as Base64 from "effect/encoding/Base64"
+import * as Hex from "effect/encoding/Hex"
+import { Response } from "miniflare"
+import { base64url, sha256Hex, utf8, webCrypto } from "../src/crypto.vibe"
+import { signedHeaders } from "../src/signed.vibe"
+import { bundle, startWorker } from "../src/testing.ts"
+
+interface Ask {
+  readonly method?: string
+  readonly headers?: Readonly<Record<string, string>>
+  readonly body?: string | Uint8Array | ReadableStream<Uint8Array>
+}
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: unknown
+}
+
+service Http {
+  readonly upstream: ReadonlyArray<string>
+  ask(path: string, init?: Ask): Answer!!
+}
+
+const shownHeaders = ["cache-control", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "vary"]
+
+const signer = {
+  seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  publicKey: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+}
+
+function bytes(hex: string) {
+  return Result.getOrUndefined(Hex.decode(hex)) ?? new Uint8Array()
+}
+
+const signingKey = Redacted.make(JSON.stringify({ kty: "OKP", crv: "Ed25519", d: base64url(bytes(signer.seed)), x: base64url(bytes(signer.publicKey)) }))
+
+function upstreamAnswer(size: string) {
+  if (size === "small") return new Response(JSON.stringify({ text: "ok" }), { status: 200, headers: { "content-type": "application/json" } })
+  if (size === "large") return new Response(JSON.stringify({ text: "x".repeat(200) }), { status: 200, headers: { "content-type": "application/json" } })
+  return new Response(JSON.stringify({ error: "held", message: "Held upstream" }), { status: 409, headers: { "content-type": "application/json" } })
+}
+
+const Started = Layer.effect(Http, effect {
+  const upstream: string[] = []
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "http" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    vars: { SERVICE_KEYS: Base64.encode(bytes(signer.publicKey)) },
+    services: {
+      UPSTREAM: (request) => {
+        upstream.push(`${request.method} ${request.url} ${request.headers.get("authorization") ?? ""}`)
+        return upstreamAnswer(new URL(request.url).pathname.split("/").pop() ?? "")
+      },
+    },
+  })), (started) => promise(() => started.dispose()))
+  return {
+    upstream,
+    ask: (path, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(`https://platform.test${path}`, { method: init.method ?? "GET", headers: init.headers ?? {}, body: init.body, duplex: "half" })
+      const type = response.headers.get("content-type") ?? ""
+      const headers = Object.fromEntries(shownHeaders.flatMap((name) => {
+        const value = response.headers.get(name)
+        return value === null ? [] : [[name, value]]
+      }))
+      return { status: response.status, headers, body: type.startsWith("application/json") ? await response.json() : await response.text() }
+    }),
+  }
+})
+
+const site = "https://platform.test"
+const signedIn = { cookie: "__Host-slop_points=7" }
+const write = { ...signedIn, origin: site, "content-type": "application/json" }
+
+function refusal(status: number, error: string, message: string, headers: Readonly<Record<string, string>> = { "cache-control": "no-store" }) {
+  return { status, headers, body: { error, message } }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Each access kind admits or refuses a request with its exact status and body (spec/backend/accounts.md, "Account identity, sessions and membership"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+    const http = try Http
+    const note = (text: string, headers: Readonly<Record<string, string>> = write, path = "/api/v1/fixture/notes") => http.ask(path, { method: "POST", headers, body: JSON.stringify({ text }) })
+    const answers = {
+      publicItem: try http.ask("/api/v1/fixture/items/a1?q=x"),
+      anonymous: try http.ask("/api/v1/fixture/me"),
+      member: try http.ask("/api/v1/fixture/me", { headers: signedIn }),
+      changedActor: try http.ask("/api/v1/fixture/me", { headers: { ...signedIn, "x-slop-expected-github-id": "8" } }),
+      malformedActor: try http.ask("/api/v1/fixture/me", { headers: { ...signedIn, "x-slop-expected-github-id": "08" } }),
+      missingOrigin: try note("hello", { ...signedIn, "content-type": "application/json" }),
+      wrongType: try note("hello", { ...write, "content-type": "text/plain" }),
+      oversized: try note("x".repeat(1100)),
+      extraKey: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: JSON.stringify({ text: "hello", admin: true }) }),
+      missingKey: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: "{}" }),
+      notJson: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: "{" }),
+      notObject: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: JSON.stringify(["hello"]) }),
+      notUtf8: try http.ask("/api/v1/fixture/notes", { method: "POST", headers: write, body: new Uint8Array([...new TextEncoder().encode("{\"text\":\""), 0xff, ...new TextEncoder().encode("\"}")]) }),
+      unauthenticated: try note("hello", { origin: site, "content-type": "application/json" }),
+      saved: try note("hello"),
+      closed: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: write, body: "{}" }),
+      closedWithoutJson: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: { ...signedIn, origin: site } }),
+      disputeChanged: try note("hello", { ...write, "x-slop-expected-github-id": "8" }, "/api/v1/fixture/disputes"),
+      stale: try note("stale"),
+      rejected: try note("rejected"),
+      github: try note("github"),
+      refused: try note("refused"),
+      unmapped: try note("unmapped"),
+      defect: try note("defect"),
+    }
+    try Effect.try(() => assert.deepStrictEqual(answers, {
+      publicItem: { status: 200, headers: { "cache-control": "public, max-age=0, s-maxage=300, stale-while-revalidate=60", "access-control-allow-origin": "*" }, body: { id: "a1", q: "x" } },
+      anonymous: refusal(401, "unauthorized", "Sign in with GitHub"),
+      member: { status: 200, headers: { "cache-control": "private, no-store" }, body: { githubId: "7", login: "member-7" } },
+      changedActor: refusal(403, "actor_changed", "Your account changed. Reload your private view before continuing."),
+      malformedActor: refusal(400, "invalid_expected_actor", "Expected GitHub actor is invalid"),
+      missingOrigin: refusal(403, "origin_forbidden", "Requests must come from this site"),
+      wrongType: refusal(403, "origin_forbidden", "Requests must come from this site"),
+      oversized: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      extraKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
+      missingKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
+      notJson: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      notObject: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      notUtf8: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      unauthenticated: refusal(401, "unauthorized", "Sign in with GitHub"),
+      saved: { status: 201, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "7" } },
+      closed: { status: 200, headers: { "cache-control": "no-store" }, body: { closed: "7" } },
+      closedWithoutJson: refusal(403, "origin_forbidden", "Requests must come from this site"),
+      disputeChanged: refusal(409, "account_changed", "The selected GitHub account changed."),
+      stale: refusal(409, "changed_concurrently", "This record changed while saving. Reload and try again."),
+      rejected: refusal(409, "note_refused", "This request is not allowed in the current state"),
+      github: refusal(503, "github_unavailable", "GitHub could not be checked. Retry."),
+      refused: refusal(422, "note_invalid", "Notes must not say refused"),
+      unmapped: refusal(500, "internal_error", "Internal error"),
+      defect: refusal(500, "internal_error", "Internal error"),
+    }))
+  })
+
+  it.effect('Raw bodies are bounded while they are read, and a cross-origin route answers only its listed origins and headers (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+    const http = try Http
+    const trace = (bytes: string | ReadableStream<Uint8Array>, type = "application/x-ndjson") => http.ask("/api/v1/fixture/traces/t1", { method: "PUT", headers: { "content-type": type }, body: bytes })
+    const streamed = Stream.toReadableStream(Stream.make(new TextEncoder().encode("0123456789"), new TextEncoder().encode("0123456")))
+    const preflighted = (origin: string, headers: string) => http.ask("/api/v1/fixture/wallets", { method: "OPTIONS", headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": headers } })
+    const wallet = (origin: string, authorization?: string) => http.ask("/api/v1/fixture/wallets", { method: "POST", headers: { origin, "content-type": "application/json", ...(authorization === undefined ? {} : { authorization }) }, body: JSON.stringify({ text: "claim" }) })
+    const answers = {
+      within: try trace("{\"a\":1}\n"),
+      missing: try http.ask("/api/v1/fixture/traces/missing", { method: "PUT" }),
+      streamedPastLimit: try trace(streamed),
+      declaredPastLimit: try trace("x".repeat(17)),
+      wrongType: try trace("{}", "application/json"),
+      form: try http.ask("/api/v1/fixture/unsubscribe", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" }),
+      preflight: try preflighted("https://slop.cash", "Authorization, content-type"),
+      foreignPreflight: try preflighted("https://evil.test", "authorization"),
+      extraHeader: try preflighted("https://slop.cash", "authorization, x-other"),
+      listed: try wallet("https://slop.cash", "Bearer fixture"),
+      foreign: try wallet("https://evil.test", "Bearer fixture"),
+      noToken: try wallet("https://slop.cash"),
+      wrongToken: try wallet("https://slop.cash", "Bearer forged"),
+    }
+    try Effect.try(() => assert.deepStrictEqual(answers, {
+      within: { status: 200, headers: { "cache-control": "public, max-age=60, must-revalidate" }, body: { id: "t1", bytes: 8 } },
+      missing: { status: 404, headers: { "cache-control": "no-store" }, body: "missing" },
+      streamedPastLimit: refusal(413, "payload_too_large", "Request body exceeds 16 bytes"),
+      declaredPastLimit: refusal(413, "payload_too_large", "Request body exceeds 16 bytes"),
+      wrongType: refusal(415, "unsupported_media_type", "This request body type is not accepted"),
+      form: { status: 200, headers: { "cache-control": "no-store" }, body: { entries: [["List-Unsubscribe", "One-Click"]] } },
+      preflight: {
+        status: 204,
+        headers: {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "https://slop.cash",
+          "access-control-allow-methods": "POST",
+          "access-control-allow-headers": "authorization, content-type",
+          vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        },
+        body: "",
+      },
+      foreignPreflight: refusal(403, "origin_not_allowed", "This origin may not call this route"),
+      extraHeader: refusal(403, "headers_not_allowed", "These request headers are not allowed"),
+      listed: { status: 200, headers: { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }, body: { saved: "claim", by: "9" } },
+      foreign: refusal(403, "origin_not_allowed", "This origin may not call this route"),
+      noToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
+      wrongToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
+    }))
+  })
+
+  it.effect('A strict JSON body is bounded while it is read and answers the trace API refusals (spec/backend/accounts.md, "Account identity, sessions and membership"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
+    const http = try Http
+    const strict = (body: string | Uint8Array) => http.ask("/api/v1/fixture/strict", { method: "POST", headers: { "content-type": "application/json" }, body })
+    const answers = {
+      accepted: try strict(JSON.stringify({ text: "hello" })),
+      oversized: try strict(JSON.stringify({ text: "x".repeat(40) })),
+      malformed: try strict("{"),
+      empty: try strict(""),
+      notUtf8: try strict(new Uint8Array([0x22, 0xff, 0x22])),
+      notObject: try strict("[]"),
+      extraKey: try strict(JSON.stringify({ text: "a", x: 1 })),
+      missingKey: try strict("{}"),
+    }
+    try Effect.try(() => assert.deepStrictEqual(answers, {
+      accepted: { status: 200, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "strict" } },
+      oversized: refusal(413, "payload_too_large", "Request body exceeds 32 bytes"),
+      malformed: refusal(400, "invalid_request", "Request body must be valid UTF-8 JSON"),
+      empty: refusal(400, "invalid_request", "Request body must be valid UTF-8 JSON"),
+      notUtf8: refusal(400, "invalid_request", "Request body must be valid UTF-8 JSON"),
+      notObject: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      extraKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
+      missingKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
+    }))
+  })
+
+  it.effect('A service binding answer is read within its byte bound, a callee refusal is carried through, and a service route admits only a signed request (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window")', () => effect {
+    const http = try Http
+    const path = "/api/v1/vetting/fixture/results"
+    const body = JSON.stringify({ text: "verdict" })
+    provide webCrypto {
+      const signed = try signedHeaders({ key: signingKey, method: "POST", path, body: utf8(body) })
+      const keyId = try sha256Hex(bytes(signer.publicKey))
+      const result = (headers: Readonly<Record<string, string>>, text: string) => http.ask(path, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: text })
+      const answers = {
+        small: try http.ask("/api/v1/fixture/relay/small"),
+        large: try http.ask("/api/v1/fixture/relay/large"),
+        refusal: try http.ask("/api/v1/fixture/relay/refusal"),
+        signed: try result(signed, body),
+        unsigned: try result({}, body),
+        forged: try result(signed, JSON.stringify({ text: "forged" })),
+      }
+      try Effect.try(() => assert.deepStrictEqual({ answers, upstream: http.upstream }, {
+        answers: {
+          small: { status: 200, headers: { "cache-control": "public, max-age=31536000, immutable" }, body: { text: "ok" } },
+          large: refusal(503, "service_unavailable", "A required service is unavailable. Retry."),
+          refusal: refusal(409, "held", "Held upstream"),
+          signed: { status: 200, headers: { "cache-control": "no-store" }, body: { saved: "verdict", by: keyId } },
+          unsigned: refusal(401, "invalid_signature", "The signed timestamp is missing or stale"),
+          forged: refusal(401, "invalid_signature", "The vetting signature is not valid"),
+        },
+        upstream: [
+          "GET https://upstream.internal/v1/answers/small Bearer relay-assertion",
+          "GET https://upstream.internal/v1/answers/large Bearer relay-assertion",
+          "GET https://upstream.internal/v1/answers/refusal Bearer relay-assertion",
+        ],
+      }))
+    }
+  })
+})

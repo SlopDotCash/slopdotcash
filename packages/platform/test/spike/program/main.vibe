@@ -1,0 +1,15 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "../../../src/crypto.vibe"
+import { outbound } from "../../../src/http.vibe"
+
+schema Hello { hello: string }
+
+effect function main() {
+  const [origin = ""] = try (try Stdio.Stdio).args
+  const response = try HttpClient.get(`${origin}/api/hello`)
+  const hello = try Schema.decodeUnknownEffect(Hello)(try response.json)
+  try Console.log(JSON.stringify({ status: response.status, hello: hello.hello, digest: try sha256Hex(hello.hello), at: try Clock.currentTimeMillis }))
+}
+
+NodeRuntime.runMain(Effect.provide(main(), Layer.mergeAll(NodeServices.layer, webCrypto, outbound)))

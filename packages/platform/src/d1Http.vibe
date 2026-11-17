@@ -1,0 +1,51 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import { D1, DatabaseFailure, type Statement, classified } from "./d1.vibe"
+
+export interface D1HttpOptions {
+  readonly accountId: string
+  readonly databaseId: string
+  readonly token: Redacted.Redacted<string>
+  readonly api?: string
+}
+
+const Cell = Schema.Unknown
+
+schema Row = Record<string, Cell>
+schema QueryMeta { changes?: number }
+schema QueryResult { success: boolean; results?: ReadonlyArray<Row>; meta?: QueryMeta }
+schema ApiMessage { message: string }
+schema QueryAnswer { success: boolean; errors?: ReadonlyArray<ApiMessage>; result?: ReadonlyArray<QueryResult> }
+
+export const cloudflareApi = "https://api.cloudflare.com/client/v4"
+
+export const atomicBatchUnavailable = "atomic batch unavailable over HTTP"
+
+function refusal(status: number, answer: QueryAnswer | undefined) {
+  const reasons = (answer?.errors ?? []).map((error) => error.message).join("; ")
+  return reasons === "" ? `D1 HTTP API answered ${status}` : reasons
+}
+
+export function d1Http(options: D1HttpOptions) {
+  const url = `${options.api ?? cloudflareApi}/accounts/${options.accountId}/d1/database/${options.databaseId}/query`
+  return Layer.effect(D1, effect {
+    const client = try HttpClient.HttpClient
+    const query = (operation: string, statement: Statement) => effect {
+      const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.bearerToken(HttpClientRequest.post(url), options.token), { sql: statement.text, params: statement.params })
+      const response = timeout(provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" }), "30 seconds") catch effect (error) => {
+        throw new DatabaseFailure({ operation, message: `D1 HTTP API request failed: ${error._tag}` })
+      }
+      const body = response.json catch () => undefined
+      const answer = Schema.decodeUnknownEffect(QueryAnswer)(body) catch () => undefined
+      const [result] = answer?.result ?? []
+      if (response.status < 200 || response.status > 299 || answer?.success !== true || answer.result?.length !== 1 || result?.success !== true) {
+        throw classified(operation, refusal(response.status, answer))
+      }
+      return result
+    }
+    return {
+      all: (statement) => Effect.map(query("all", statement), (result) => result.results ?? []),
+      run: (statement) => Effect.map(query("run", statement), (result) => result.meta?.changes ?? 0),
+      batch: () => Effect.fail(new DatabaseFailure({ operation: "batch", message: atomicBatchUnavailable })),
+    }
+  })
+}

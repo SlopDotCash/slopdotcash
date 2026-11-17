@@ -1,0 +1,145 @@
+import { assert, layer } from "@effect/vitest"
+import type { Fetcher } from "../src/bindings.ts"
+import { webCrypto } from "../src/crypto.vibe"
+import { outboundVia } from "../src/http.vibe"
+import { type ModelCall, type ModelReply, Provider, type ProviderFailure, type Route, providers } from "../src/providers/client.vibe"
+import type { Handler } from "../src/testing.ts"
+import { providerFake } from "../src/testing/providers.ts"
+
+const fake = providerFake()
+
+const viaFake: Fetcher = {
+  fetch: (request) => Promise.resolve(fake.handler(request as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]>,
+}
+
+const keys = { surplus: "surplus-test-key", orbio: "orbio-test-key" }
+
+const Live = Layer.provide(
+  providers({ surplus: { apiKey: Redacted.make(keys.surplus) }, orbio: { apiKey: Redacted.make(keys.orbio) }, timeoutMs: 10_000, maxReplyBytes: 64 * 1024 }),
+  Layer.merge(outboundVia(viaFake), webCrypto),
+)
+
+function call(route: Route, model: string, extra: Partial<ModelCall> = {}): ModelCall {
+  return { route, model, system: "Review the one item you are shown.", messages: [{ role: "user", content: [{ text: "policy", cached: true }, { text: "item" }] }], maxTokens: 16000, ...extra }
+}
+
+function outcome(result: ModelReply | { readonly failure: ProviderFailure }) {
+  return "failure" in result
+    ? { category: result.failure.category, reason: result.failure.reason, status: result.failure.status, retryAfterSeconds: result.failure.retryAfterSeconds, resetAt: result.failure.resetAt, usage: result.failure.receipt.usage, model: result.failure.receipt.model }
+    : { text: result.text, usage: result.usage, model: result.model }
+}
+
+effect function ask(model: ModelCall) {
+  const provider = try Provider
+  return outcome(provider.complete(model) catch (failure) => ({ failure }))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const usage = { input: 11, output: 7, cacheRead: 3, cacheWrite: 2, costMicro: 1500 }
+
+layer(Live, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect('Each route answers through its own wire with usage, cost and request identity, carrying only its own key (spec/slopbot/review.md, "Every call is free, attributed and accounted")', () => effect {
+    const provider = try Provider
+    fake.reply((sent) => sent.model === "anthropic/claude-sonnet-5.5", { text: "{\"verdict\":\"orbio\"}" }, usage)
+    fake.reply((sent) => sent.model === "claude-sonnet-5.5", { text: "{\"verdict\":\"messages\"}" }, usage)
+    fake.reply((sent) => sent.model === "gpt-6.1-terra", { text: "{\"verdict\":\"responses\"}" }, usage)
+    fake.reply((sent) => sent.model === "claude-sequenced", { text: "{\"verdict\":\"sequenced\"}", stopReason: "stop_sequence" }, usage)
+    const replies = [
+      try provider.complete(call("orbio", "anthropic/claude-sonnet-5.5", { effort: "medium", responseFormat: { type: "object" } })),
+      try provider.complete(call("surplus-anthropic", "claude-sonnet-5.5")),
+      try provider.complete(call("surplus-openai", "gpt-6.1-terra")),
+      try provider.complete(call("surplus-anthropic", "claude-sequenced")),
+    ]
+    const sent = fake.calls.filter((recorded) => ["anthropic/claude-sonnet-5.5", "claude-sonnet-5.5", "gpt-6.1-terra"].includes(recorded.model))
+    try same(
+      {
+        configured: [...provider.configured].sort(),
+        replies: replies.map((reply) => ({ route: reply.route, model: reply.model, text: reply.text, usage: reply.usage, cost: reply.costMicroUsd, requestId: reply.requestId?.startsWith("req_fake_"), stopReason: reply.stopReason, digest: reply.responseSha256.length })),
+        sent: sent.map((recorded) => ({ route: recorded.route, key: recorded.key, system: recorded.system, messages: recorded.messages, maxTokens: recorded.maxTokens })),
+      },
+      {
+        configured: ["orbio", "surplus-anthropic", "surplus-openai"],
+        replies: [
+          { route: "orbio", model: "anthropic/claude-sonnet-5.5", text: "{\"verdict\":\"orbio\"}", usage: { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }, cost: 1500, requestId: true, stopReason: "end_turn", digest: 64 },
+          { route: "surplus-anthropic", model: "claude-sonnet-5.5", text: "{\"verdict\":\"messages\"}", usage: { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }, cost: 1500, requestId: true, stopReason: "end_turn", digest: 64 },
+          { route: "surplus-openai", model: "gpt-6.1-terra", text: "{\"verdict\":\"responses\"}", usage: { input: 11, output: 7, cacheRead: 3, cacheWrite: 0 }, cost: 1500, requestId: true, stopReason: "completed", digest: 64 },
+          { route: "surplus-anthropic", model: "claude-sequenced", text: "{\"verdict\":\"sequenced\"}", usage: { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }, cost: 1500, requestId: true, stopReason: "stop_sequence", digest: 64 },
+        ],
+        sent: [
+          { route: "orbio", key: keys.orbio, system: "Review the one item you are shown.", messages: [{ role: "user", content: "policy\nitem" }], maxTokens: 16000 },
+          { route: "surplus-anthropic", key: keys.surplus, system: "Review the one item you are shown.", messages: [{ role: "user", content: "policy\nitem" }], maxTokens: 16000 },
+          { route: "surplus-openai", key: keys.surplus, system: "Review the one item you are shown.", messages: [{ role: "user", content: "policy\n\nitem" }], maxTokens: 16000 },
+        ],
+      },
+    )
+  })
+
+  it.effect('Only a Surplus Messages spending denial is a denial; rate limits and outages keep their own category (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block")', () => effect {
+    const resetsAt = "2026-12-01T00:00:00.000Z"
+    fake.reply((sent) => sent.model === "deny-surplus", { failure: "spendDenied", resetsAt })
+    fake.reply((sent) => sent.model === "deny-orbio", { failure: "spendDenied", resetsAt })
+    fake.reply((sent) => sent.model === "deny-responses", { failure: "spendDenied", resetsAt })
+    fake.reply((sent) => sent.model === "limit-surplus", { failure: "rateLimited", retryAfterSeconds: 42 })
+    fake.reply((sent) => sent.model === "limit-responses", { failure: "rateLimited", retryAfterSeconds: 7 })
+    fake.reply((sent) => sent.model === "down-orbio", { failure: "unavailable" })
+    fake.reply((sent) => sent.model === "down-responses", { failure: "unavailable" })
+    const outcomes = [
+      try ask(call("surplus-anthropic", "deny-surplus")),
+      try ask(call("orbio", "deny-orbio")),
+      try ask(call("surplus-openai", "deny-responses")),
+      try ask(call("surplus-anthropic", "limit-surplus")),
+      try ask(call("surplus-openai", "limit-responses")),
+      try ask(call("orbio", "down-orbio")),
+      try ask(call("surplus-openai", "down-responses")),
+    ]
+    const failure = (category: string, reason: string, status: number, extra: { retryAfterSeconds?: number; resetAt?: number } = {}) =>
+      ({ category, reason, status, retryAfterSeconds: extra.retryAfterSeconds, resetAt: extra.resetAt, usage: null, model: null })
+    try same(outcomes, [
+      failure("SpendDenied", "spend-denied", 400, { resetAt: 1796083200000 }),
+      failure("Unavailable", "provider-http-402-billing_error", 402),
+      failure("Unavailable", "provider-http-400-invalid_request_error", 400),
+      failure("RateLimited", "provider-http-429-rate_limit_error", 429, { retryAfterSeconds: 42 }),
+      failure("RateLimited", "provider-http-429-requests", 429, { retryAfterSeconds: 7 }),
+      failure("Unavailable", "provider-http-503-api_error", 503),
+      failure("Unavailable", "provider-http-503-server_error", 503),
+    ])
+  })
+
+  it.effect('Malformed, oversized, timed-out, truncated and refused answers are never a reply (spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable")', () => effect {
+    fake.reply((sent) => sent.model === "broken", { failure: "malformed" })
+    fake.reply((sent) => sent.model === "huge", { failure: "tooLarge" })
+    fake.reply((sent) => sent.model === "slow", { failure: "timeout" })
+    fake.reply((sent) => sent.model === "cut", { text: "{\"verdict\":", truncated: true }, usage)
+    fake.reply((sent) => sent.model === "declined", { text: "I cannot help with that.", stopReason: "refusal" }, usage)
+    fake.reply((sent) => sent.model === "long", { text: "{\"verdict\":", stopReason: "max_tokens" }, usage)
+    fake.reply((sent) => sent.model === "filtered", { text: "", stopReason: "content_filter" }, usage)
+    fake.reply((sent) => sent.model === "sequenced", { text: "{\"verdict\":", stopReason: "stop_sequence" }, usage)
+    fake.reply((sent) => sent.model === "sequenced", { text: "{\"verdict\":", stopReason: "stop_sequence" }, usage)
+    const outcomes = [
+      try ask(call("surplus-anthropic", "broken")),
+      try ask(call("orbio", "huge")),
+      try ask(call("surplus-anthropic", "slow", { timeoutMs: 300 })),
+      try ask(call("surplus-anthropic", "cut")),
+      try ask(call("orbio", "declined")),
+      try ask(call("surplus-anthropic", "long")),
+      try ask(call("surplus-openai", "filtered")),
+      try ask(call("surplus-anthropic", "sequenced", { accept: "allText" })),
+      try ask(call("orbio", "sequenced", { accept: "exact" })),
+    ]
+    const counted = { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }
+    try same(outcomes, [
+      { category: "Malformed", reason: "invalid-response", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: null, model: null },
+      { category: "TooLarge", reason: "response-unreadable", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: null, model: null },
+      { category: "Timeout", reason: "timeout", status: undefined, retryAfterSeconds: undefined, resetAt: undefined, usage: null, model: null },
+      { category: "Incomplete", reason: "truncated", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: counted, model: "cut" },
+      { category: "Refused", reason: "stop-refusal", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: counted, model: "declined" },
+      { category: "Incomplete", reason: "stop-max_tokens", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: counted, model: "long" },
+      { category: "Refused", reason: "incomplete-content_filter", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: { ...counted, cacheWrite: 0 }, model: "filtered" },
+      { category: "Incomplete", reason: "stop-stop_sequence", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: counted, model: "sequenced" },
+      { category: "Incomplete", reason: "stop-stop_sequence", status: 200, retryAfterSeconds: undefined, resetAt: undefined, usage: counted, model: "sequenced" },
+    ])
+  })
+})

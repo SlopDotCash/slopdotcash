@@ -1,0 +1,233 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import type { D1Database, R2Bucket } from "../src/bindings.ts"
+import { randomId, webCrypto } from "../src/crypto.vibe"
+import { type NonEmpty, allChunked, chunked, d1, list, sql } from "../src/d1.vibe"
+import { fileJournal } from "../src/journal.vibe"
+import { bundle, database, startWorker, storage } from "../src/testing.ts"
+import { type Outbound, internet } from "../src/testing/internet.ts"
+import { PartedRow, entries, prepared, recorded } from "./worker/storage.vibe"
+
+interface Answer {
+  readonly status: number
+  readonly cache: string | null
+  readonly control: string | null
+  readonly body: unknown
+}
+
+interface ApiCall {
+  readonly method: string
+  readonly url: string
+  readonly authorization: string | null
+  readonly contentType: string | null
+  readonly body: unknown
+}
+
+interface Init {
+  readonly method?: string
+  readonly body?: unknown
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+service Storage {
+  readonly db: D1Database
+  readonly objects: R2Bucket
+  readonly api: ReadonlyArray<ApiCall>
+  readonly unexpected: ReadonlyArray<Outbound>
+  request(path: string, init?: Init): Answer!!
+}
+
+schema Item { id: number }
+interface Page {
+  readonly objects: ReadonlyArray<{ readonly key: string; readonly size: number; readonly uploaded: number }>
+  readonly cursor?: string
+}
+
+function page(answer: Answer) {
+  const { objects, cursor } = answer.body as Page
+  return { objects: objects.map((object) => [object.key, object.size, object.uploaded > 0]), more: cursor !== undefined }
+}
+
+function d1Answer(text: string) {
+  const headers = { "content-type": "application/json" }
+  if (text.startsWith("INSERT")) return new Response(JSON.stringify({ success: false, errors: [{ code: 7500, message: "UNIQUE constraint failed: items.id: SQLITE_CONSTRAINT" }], messages: [], result: [] }), { status: 400, headers })
+  const result = text.startsWith("UPDATE") ? { success: true, results: [], meta: { changes: 1 } } : { success: true, results: [{ id: 1, name: "one" }, { id: 2, name: "two" }], meta: { changes: 0 } }
+  return new Response(JSON.stringify({ success: true, errors: [], messages: [], result: [result] }), { status: 200, headers })
+}
+
+const Started = Layer.effect(Storage, effect {
+  const api: ApiCall[] = []
+  const net = try sync(() => internet({
+    hosts: {
+      "api.cloudflare.com": async (request) => {
+        const sent = (await request.json()) as { readonly sql: string }
+        api.push({ method: request.method, url: request.url, authorization: request.headers.get("authorization"), contentType: request.headers.get("content-type"), body: sent })
+        return d1Answer(sent.sql)
+      },
+    },
+  }))
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "storage" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { DB: "platform-storage" },
+    r2: ["OBJECTS"],
+    durableObjects: { JOURNAL: "StorageJournal" },
+    vars: { D1_API_TOKEN: "test-d1-token" },
+    outbound: net.handler,
+  })), (started) => promise(() => started.dispose()))
+  return {
+    db: try promise(() => database(mf, "DB")),
+    objects: try promise(() => storage(mf, "OBJECTS")),
+    api,
+    unexpected: net.unexpected,
+    request: (path, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(`https://platform.test${path}`, {
+        method: init.method ?? "GET",
+        headers: { ...(init.body === undefined ? {} : { "content-type": "application/json" }), ...init.headers },
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      })
+      const type = response.headers.get("content-type") ?? ""
+      return { status: response.status, cache: response.headers.get("x-slop-cache"), control: response.headers.get("cache-control"), body: type.startsWith("application/json") ? await response.json() : await response.text() }
+    }),
+  }
+})
+
+const items = Array.from({ length: 300 }, (_, index) => index + 1)
+const wanted = items.slice(0, 250)
+
+effect function readAt(path: string) {
+  provide fileJournal(path) {
+    return try entries()
+  }
+}
+
+const inList = (chunk: NonEmpty<number>) => sql`SELECT id FROM items WHERE id IN ${list(chunk)} ORDER BY id`
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A 250-id IN query reads every row in chunks of bound parameters (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+    const { db } = try Storage
+    try promise(() => db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"))
+    try promise(() => db.batch(items.map((id) => db.prepare("INSERT INTO items (id, name) VALUES (?, ?)").bind(id, `item-${id}`))))
+    provide d1(db) {
+      const found = try allChunked(Item, wanted, inList)
+      const none = try allChunked(Item, [], inList)
+      try Effect.try(() => assert.deepStrictEqual({
+        found: found.map((row) => row.id),
+        none,
+        parameters: chunked(wanted, inList).map((statement) => statement.params.length),
+      }, {
+        found: wanted,
+        none: [],
+        parameters: [90, 90, 70],
+      }))
+    }
+  })
+
+  it.effect('An 8.5 MiB object is stored as two verified parts, a small one at its own key, and a tampered part is refused (spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest")', () => effect {
+    const storage = try Storage
+    const size = 8 * 1024 * 1024 + 512 * 1024
+    const stored = try storage.request(`/parts/big?size=${size}`, { method: "PUT" })
+    const parted = try Schema.decodeUnknownEffect(PartedRow)(stored.body)
+    const again = try storage.request(`/parts/big?size=${size}`, { method: "PUT" })
+    const read = try storage.request("/parts", { method: "POST", body: parted })
+    const small = try Schema.decodeUnknownEffect(PartedRow)((try storage.request("/parts/small?size=1024", { method: "PUT" })).body)
+    const smallRead = try storage.request("/parts", { method: "POST", body: small })
+    const atRoot = try promise(() => storage.objects.head("parts/small"))
+    const prefix = encodeURIComponent("parts/big/chunks/")
+    const first = try storage.request(`/retention?prefix=${prefix}&limit=1`)
+    const cursor = (first.body as Page).cursor ?? ""
+    const second = try storage.request(`/retention?prefix=${prefix}&limit=1&cursor=${encodeURIComponent(cursor)}`)
+    const [head, tail] = parted.parts
+    try promise(() => storage.objects.put(tail?.key ?? "", new TextEncoder().encode("changed bytes")))
+    const tampered = try storage.request("/parts", { method: "POST", body: parted })
+    const rewritten = try storage.request(`/parts/big?size=${size}`, { method: "PUT" })
+    try storage.request(`/retention?key=${encodeURIComponent(tail?.key ?? "")}`, { method: "DELETE" })
+    const missing = try storage.request("/parts", { method: "POST", body: parted })
+    try Effect.try(() => assert.deepStrictEqual({
+      sizes: parted.parts.map((part) => part.size),
+      keys: parted.parts.map((part, index) => part.key === `parts/big/chunks/${index}/${part.sha256}`),
+      again: again.body,
+      read: [read.status, read.body],
+      small: [small.parts.map((part) => [part.key, part.size, part.sha256 === small.sha256]), [smallRead.status, smallRead.body], atRoot?.size],
+      listed: [page(first), page(second)],
+      tampered: [tampered.status, tampered.body],
+      rewritten: [rewritten.status, rewritten.body],
+      missing: [missing.status, missing.body],
+    }, {
+      sizes: [8 * 1024 * 1024, 512 * 1024],
+      keys: [true, true],
+      again: stored.body,
+      read: [200, { sizes: [8 * 1024 * 1024, 512 * 1024], sha256: parted.sha256 }],
+      small: [[["parts/small", 1024, true]], [200, { sizes: [1024], sha256: small.sha256 }], 1024],
+      listed: [{ objects: [[head?.key, head?.size, true]], more: true }, { objects: [[tail?.key, tail?.size, true]], more: false }],
+      tampered: [409, { error: "digest_mismatch", message: "The bytes do not match their digest" }],
+      rewritten: [409, { error: "already_stored", message: "Other bytes already hold a part of this object" }],
+      missing: [404, { error: "missing", message: "A part of the object is missing" }],
+    }))
+  })
+
+  it.effect('The edge cache serves a public list with the cache-control of its miss until the enforcement generation changes (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+    const storage = try Storage
+    const at = (generation: number) => storage.request("/cached/projects", { headers: { "x-generation": String(generation) } })
+    const [miss, hit, changed, kept] = [try at(1), try at(1), try at(2), try at(2)]
+    const [plain, plainAgain] = [try storage.request("/uncached/projects"), try storage.request("/uncached/projects")]
+    const [vaultMiss, vaultHit] = [try storage.request("/cached/vault"), try storage.request("/cached/vault")]
+    try Effect.try(() => assert.deepStrictEqual({
+      caches: [miss.cache, hit.cache, changed.cache, kept.cache, plain.cache, plainAgain.cache, vaultMiss.cache, vaultHit.cache],
+      sameBody: [hit.body === miss.body, changed.body === miss.body, kept.body === changed.body, plainAgain.body === plain.body, vaultHit.body === vaultMiss.body],
+      controls: [miss.control, hit.control, plain.control, vaultMiss.control, vaultHit.control],
+    }, {
+      caches: ["miss", "hit", "miss", "hit", "miss", "miss", "miss", "hit"],
+      sameBody: [true, false, true, false, true],
+      controls: ["public, max-age=0, s-maxage=30", "public, max-age=0, s-maxage=30", "public, max-age=0, s-maxage=30", "public, max-age=60, s-maxage=60", "public, max-age=60, s-maxage=60"],
+    }))
+  })
+
+  it.effect('A Durable Object journal transaction that fails leaves no row, then commits (spec/settlement/signer.md, "Both possible winners stay retained")', () => effect {
+    const storage = try Storage
+    const step = (texts: ReadonlyArray<string>, refuse: boolean) => storage.request("/journal/attester", { method: "POST", body: { texts, refuse } })
+    const steps = [try step(["a", "b", "a"], false), try step(["c"], true), try step(["a", "b"], false)]
+    try Effect.try(() => assert.deepStrictEqual(steps.map((answer) => answer.body), [
+      { outcome: "JournalFailure", entries: [] },
+      { outcome: "Refusal", entries: [] },
+      { outcome: 2, entries: [{ seq: 1, text: "a" }, { seq: 2, text: "b" }] },
+    ]))
+  })
+
+  it.effect('A file journal is held by one process and commits all its writes or none (spec/settlement/signer.md, "Both possible winners stay retained")', () => effect {
+    const path = new URL(`../.cache/journal-${try randomId()}.sqlite`, import.meta.url).pathname
+    const kept = [{ seq: 1, text: "a" }, { seq: 2, text: "b" }]
+    provide fileJournal(path) {
+      try prepared()
+      const failed = recorded(["a", "b", "a"], false) catch (error) => error._tag
+      const refused = recorded(["c"], true) catch (error) => error._tag
+      const committed = try recorded(["a", "b"], false)
+      const second = readAt(path) catch (error) => error._tag
+      const held = { failed, refused, committed, second, kept: try entries() }
+      try Effect.try(() => assert.deepStrictEqual(held, { failed: "JournalFailure", refused: "Refusal", committed: 2, second: "JournalFailure", kept }))
+    }
+    const reopened = try readAt(path)
+    try Effect.try(() => assert.deepStrictEqual(reopened, kept))
+  })
+
+  it.effect('Programs reach D1 through the D1 HTTP API and never send a non-atomic batch (spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+    const storage = try Storage
+    const outcomes = try storage.request("/d1http", { method: "POST" })
+    const query = "https://api.cloudflare.com/client/v4/accounts/account-1/d1/database/database-1/query"
+    const call = (body: unknown) => ({ method: "POST", url: query, authorization: "Bearer test-d1-token", contentType: "application/json", body })
+    try Effect.try(() => assert.deepStrictEqual({ outcomes: outcomes.body, api: storage.api, unexpected: storage.unexpected }, {
+      outcomes: {
+        rows: [{ id: 1, name: "one" }, { id: 2, name: "two" }],
+        changes: 1,
+        batch: "DatabaseFailure: atomic batch unavailable over HTTP",
+        constraint: "ConstraintViolation",
+      },
+      api: [
+        call({ sql: "SELECT id, name FROM items WHERE id IN (?, ?)", params: [1, 2] }),
+        call({ sql: "UPDATE items SET name = ? WHERE id = ?", params: ["renamed", 1] }),
+        call({ sql: "INSERT INTO items (id, name) VALUES (?, ?)", params: [1, "again"] }),
+      ],
+      unexpected: [],
+    }))
+  })
+})

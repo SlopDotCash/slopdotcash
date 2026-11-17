@@ -1,13 +1,32 @@
+// spec/operations/release.md, "Every required check binds the same source and built artifact"
+import { builtinModules } from "node:module";
 import vibelang from "vibelang-vite";
-import type { UserConfig } from "vite";
+import type { EnvironmentOptions, UserConfig } from "vite";
 
-const conditions = ["workerd", "worker", "import", "default"];
+export interface Deployables {
+  readonly workers?: Readonly<Record<string, string>>;
+  readonly programs?: Readonly<Record<string, string>>;
+  readonly outDir?: string;
+  readonly emptyOutDir?: boolean;
+}
 
-export function workerBuild(entry: string): UserConfig {
+interface Target {
+  readonly input: string;
+  readonly file: string;
+  readonly conditions: ReadonlyArray<string>;
+  readonly external: ReadonlyArray<string | RegExp>;
+}
+
+const workerConditions = ["workerd", "worker", "import", "default"];
+const nodeConditions = ["node", "import", "default"];
+const workerExternal = [/^cloudflare:/];
+const nodeExternal = [/^node:/, ...builtinModules];
+
+function single(entry: string): UserConfig {
   return {
     plugins: [vibelang()],
-    resolve: { conditions },
-    ssr: { noExternal: true, target: "webworker", resolve: { conditions, externalConditions: ["workerd", "worker"] } },
+    resolve: { conditions: workerConditions },
+    ssr: { noExternal: true, target: "webworker", resolve: { conditions: workerConditions, externalConditions: ["workerd", "worker"] } },
     build: {
       ssr: entry,
       outDir: "dist",
@@ -15,7 +34,46 @@ export function workerBuild(entry: string): UserConfig {
       target: "es2024",
       minify: false,
       sourcemap: true,
-      rolldownOptions: { output: { entryFileNames: "worker.js", format: "es" } },
+      rolldownOptions: { external: workerExternal, output: { entryFileNames: "worker.js", format: "es" } },
+    },
+  };
+}
+
+function environment(target: Target, outDir: string, emptyOutDir: boolean): EnvironmentOptions {
+  return {
+    consumer: "server",
+    resolve: { conditions: [...target.conditions], externalConditions: [...target.conditions], noExternal: true },
+    build: {
+      outDir,
+      emptyOutDir,
+      target: "es2024",
+      minify: false,
+      sourcemap: false,
+      copyPublicDir: false,
+      rolldownOptions: { input: target.input, external: [...target.external], output: { entryFileNames: target.file, format: "es", codeSplitting: false } },
+    },
+  };
+}
+
+/** @throws {never} */
+export function workerBuild(entry: string | Deployables): UserConfig {
+  if (typeof entry === "string") return single(entry);
+  const { workers = {}, programs = {}, outDir = "dist", emptyOutDir = true } = entry;
+  const targets: ReadonlyArray<readonly [string, Target]> = [
+    ...Object.entries(workers).map(([name, input]) => [`worker_${name}`, { input, file: `${name}.js`, conditions: workerConditions, external: workerExternal }] as const),
+    ...Object.entries(programs).map(([name, input]) => [`program_${name}`, { input, file: `programs/${name}.js`, conditions: nodeConditions, external: nodeExternal }] as const),
+  ];
+  const environments = Object.fromEntries(targets.map(([name, target], index) => [name, environment(target, outDir, emptyOutDir && index === 0)]));
+  return {
+    plugins: [vibelang()],
+    environments,
+    builder: {
+      buildApp: async (builder) => {
+        for (const name of Object.keys(environments)) {
+          const target = builder.environments[name];
+          if (target !== undefined) await builder.build(target);
+        }
+      },
     },
   };
 }

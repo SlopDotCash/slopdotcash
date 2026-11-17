@@ -1,4 +1,3 @@
-// Fresh test keys, generated in the test process (never stored): DER bytes as hex, the form the spike sends to workerd.
 import { bytesHex } from "./worker/subtle.ts";
 
 export interface KeySet {

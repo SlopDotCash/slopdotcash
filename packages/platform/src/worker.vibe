@@ -1,34 +1,110 @@
-import type { MessageBatch, QueueMessage, ScheduledController } from "./bindings.ts"
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/frontend/requests.md, "Story: Read current data without losing the last good result"
+import type { ExecutionContext, Fetcher, MessageBatch, QueueMessage, ScheduledController } from "./bindings.ts"
+import { admission, json, preflight } from "./http.vibe"
+import type { AnyRoute } from "./route.vibe"
+
+module subtle {
+  import { type Context, Effect } from "effect"
+  import type { ExecutionContext } from "./bindings.ts"
+  /** @throws {never} */
+  export function keepRunning<E, R>(context: ExecutionContext, services: Context.Context<R>, program: Effect.Effect<void, E, R>): void {
+    context.waitUntil(Effect.runPromiseWith(services)(program))
+  }
+}
+import { keepRunning } from subtle
 
 export type Routes<S> = HttpRouter.HttpRouter | HttpRouter.Request<"Requires", S> | HttpRouter.Request<"Error", unknown>
 
-export interface WorkerApp<Env extends object, S, LE, A, RE, SE, QE> {
-  readonly services: (env: Env) => Layer.Layer<S, LE>
-  readonly routes: Layer.Layer<A, RE, Routes<S>>
-  readonly scheduled?: (controller: ScheduledController) => void!SE!S
-  readonly queue?: (message: QueueMessage) => void!QE!S
+export service Execution { readonly context: ExecutionContext }
+
+export effect function later<E, R>(program: void!E!R) {
+  const services = try Effect.context<R>()
+  const { context } = try Execution
+  keepRunning(context, services, program)
 }
 
-export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<Env, S, LE, A, RE, SE, QE>) {
-  const started = new WeakMap<Env, ReturnType<typeof start>>()
-  function start(env: Env) {
-    const services = app.services(env)
-    const runtime = ManagedRuntime.make(services)
-    const web = HttpRouter.toWebHandler(Layer.provideMerge(app.routes as Layer.Layer<A, RE, HttpRouter.HttpRouter>, services), { memoMap: runtime.memoMap, disableLogger: true })
-    return { runtime, handler: web.handler as (request: globalThis.Request) => Promise<globalThis.Response> }
+export interface Job<R = any> {
+  readonly name: string
+  readonly run: (controller: ScheduledController) => void!unknown!R
+}
+
+export type CronJobs<R = any> = Readonly<Record<string, ReadonlyArray<Job<R>>>>
+
+export error CronUnknown { cron: string }
+export error JobsFailed { cron: string; failed: ReadonlyArray<string> }
+
+effect function runCron<R>(jobs: CronJobs<R>, controller: ScheduledController) {
+  const { cron } = controller
+  const due = Object.hasOwn(jobs, cron) ? jobs[cron] : undefined
+  if (due === undefined) throw new CronUnknown({ cron })
+  const failed: string[] = []
+  for (const job of due) {
+    const outcome = try exit(job.run(controller))
+    if (Exit.isFailure(outcome)) {
+      failed.push(job.name)
+      try Effect.logError("scheduled job failed", { cron, job: job.name })
+    }
   }
-  function running(env: Env) {
+  if (failed.length > 0) throw new JobsFailed({ cron, failed })
+}
+
+export function byCron<R>(jobs: CronJobs<R>) {
+  return (controller: ScheduledController) => runCron(jobs, controller)
+}
+
+export interface Area<P, R> {
+  readonly name: string
+  readonly api: ReadonlyArray<AnyRoute>
+  readonly routes: Layer.Layer<never, never, R>
+  readonly provides: Layer.Layer<P, never, any>
+  readonly jobs?: CronJobs
+}
+
+export function area<P, R>(a: Area<P, R>) {
+  return a
+}
+
+type Handler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+function refusedIsolate(cause: unknown) {
+  Effect.runFork(Effect.logError("isolate_refused", cause))
+  return HttpServerResponse.toWeb(json({ error: admission.internal.code, message: admission.internal.message }, admission.internal.status))
+}
+
+function answering(answer: Promise<globalThis.Response>) {
+  return answer.catch(refusedIsolate)
+}
+
+function isolate<Env extends object, Started>(start: (env: Env) => Started) {
+  const started = new WeakMap<Env, Started>()
+  return (env: Env) => {
     const found = started.get(env)
     if (found !== undefined) return found
     const made = start(env)
     started.set(env, made)
     return made
   }
+}
+
+export interface WorkerApp<Env extends object, S, LE, A, RE, SE, QE> {
+  readonly services: (env: Env) => Layer.Layer<S, LE>
+  readonly routes: Layer.Layer<A, RE, Routes<S | Execution>>
+  readonly scheduled?: (controller: ScheduledController) => void!SE!(S | Execution)
+  readonly queue?: (message: QueueMessage) => void!QE!S
+}
+
+export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<Env, S, LE, A, RE, SE, QE>) {
+  const running = isolate((env: Env) => {
+    const services = app.services(env)
+    const runtime = ManagedRuntime.make(services)
+    const web = HttpRouter.toWebHandler(Layer.provideMerge(app.routes as Layer.Layer<A, RE, HttpRouter.HttpRouter>, services), { memoMap: runtime.memoMap, disableLogger: true })
+    return { runtime, handler: web.handler as Handler }
+  })
   return {
-    fetch: (request: globalThis.Request, env: Env) => running(env).handler(request),
-    scheduled: (controller: ScheduledController, env: Env) => {
+    fetch: (request: globalThis.Request, env: Env, context: ExecutionContext) => answering(running(env).handler(request, Context.make(Execution, { context }))),
+    scheduled: (controller: ScheduledController, env: Env, context: ExecutionContext) => {
       const job = app.scheduled
-      return job === undefined ? Promise.resolve() : running(env).runtime.runPromise(job(controller))
+      return job === undefined ? Promise.resolve() : running(env).runtime.runPromise(provideService(job(controller), Execution, { context }))
     },
     queue: (batch: MessageBatch, env: Env) => {
       const handle = app.queue
@@ -42,5 +118,31 @@ effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessag
     const outcome = try exit(handle(message))
     if (Exit.isSuccess(outcome)) message.ack()
     else message.retry()
+  }
+}
+
+effect function forward(assets: Fetcher) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const web = try orDie(HttpServerRequest.toWeb(request))
+  const response = try orDie(tryPromise(() => assets.fetch(web)))
+  return HttpServerResponse.fromWeb(response)
+}
+
+export interface Site<Env extends object, S, LE, K extends string> {
+  readonly areas: ReadonlyArray<Area<never, any>>
+  readonly services: (env: Env) => Layer.Layer<S, LE>
+  readonly assets: K
+}
+
+export function pages<Env extends Readonly<Record<K, Fetcher>>, S, LE, K extends string>(site: Site<Env, S, LE, K>) {
+  const running = isolate((env: Env) => {
+    const provided = site.areas.reduce((layer: Layer.Layer<any, any>, part) => Layer.provideMerge(part.provides, layer), site.services(env))
+    const areaRoutes = site.areas.reduce((layer: Layer.Layer<never, never, any>, part) => Layer.merge(layer, part.routes), Layer.empty)
+    const routes = Layer.mergeAll(areaRoutes, preflight(site.areas.flatMap((part) => part.api)), HttpRouter.add("*", "*", forward(env[site.assets])))
+    const runtime = ManagedRuntime.make(provided)
+    return HttpRouter.toWebHandler(Layer.provideMerge(routes as Layer.Layer<never, never, HttpRouter.HttpRouter>, provided), { memoMap: runtime.memoMap, disableLogger: true }).handler as Handler
+  })
+  return {
+    fetch: (request: globalThis.Request, env: Env, context: ExecutionContext) => answering(running(env)(request, Context.make(Execution, { context }))),
   }
 }

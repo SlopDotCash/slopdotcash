@@ -1,0 +1,75 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+module compression {
+  import { gzipSync } from "node:zlib"
+  /** @throws {never} */
+  export function gzipBase64(bytes: Uint8Array): string { return gzipSync(bytes).toString("base64") }
+}
+import { gzipBase64 } from compression
+import { gitObjectId, sha256Of, utf8Text } from "./bytes.ts"
+import { type FileMode, type FileRecovery, type FileRequest, type RecoveredBlob, type RecoveredEntry, VALUE_FILE_EXPANSION_LIMIT, fileRequestsSha256, objectId, refused, validFileRequest } from "./model.vibe"
+import { gitBytes } from "./process.vibe"
+
+const unavailable = "Immutable file recovery is unavailable"
+
+interface Snapshot {
+  readonly sha: string
+  readonly files: ReadonlyMap<string, { readonly mode: string; readonly sha: string }>
+}
+
+effect function recoveryBytes(repository: string, args: ReadonlyArray<string>, limit = 8 * 1024 * 1024) {
+  return try gitBytes({ args: ["--git-dir", repository, ...args], limit, seconds: 30 }, unavailable)
+}
+
+effect function snapshotOf(repository: string, ref: string) {
+  const sha = (utf8Text(try recoveryBytes(repository, ["rev-parse", `${ref}^{tree}`])) ?? "").trim()
+  if (!objectId.test(sha)) throw refused("Invalid recovery tree")
+  const text = utf8Text(try recoveryBytes(repository, ["ls-tree", "-r", "-z", "--full-tree", ref]))
+  if (text === undefined) throw refused("Invalid recovery tree entry")
+  const rows = text.split("\0")
+  if (rows.pop() !== "") throw refused("Incomplete recovery tree")
+  const files = new Map<string, { mode: string; sha: string }>()
+  for (const row of rows) {
+    const match = /^([0-7]{6}) (?:blob|commit) ([a-f0-9]{40})\t([\s\S]+)$/u.exec(row)
+    if (match === null || files.has(match[3])) throw refused("Invalid recovery tree entry")
+    files.set(match[3], { mode: match[1], sha: match[2] })
+  }
+  return { sha, files } satisfies Snapshot
+}
+
+function regular(mode: string): mode is FileMode {
+  return mode === "100644" || mode === "100755"
+}
+
+export effect function recoverFiles(repository: string, requests: ReadonlyArray<FileRequest>) {
+  const entries: RecoveredEntry[] = []
+  const blobs = new Map<string, RecoveredBlob>()
+  const snapshots = new Map<string, Snapshot>()
+  let expanded = 0
+  for (const request of requests) {
+    if (!validFileRequest(request)) throw refused("Invalid recovery selection")
+    const snapshot = snapshots.get(request.ref) ?? try snapshotOf(repository, request.ref)
+    snapshots.set(request.ref, snapshot)
+    const file = snapshot.files.get(request.path)
+    const mode = file === undefined || !regular(file.mode) ? null : file.mode
+    let blob = file === undefined || mode === null ? undefined : blobs.get(file.sha)
+    if (file !== undefined && mode !== null && blob === undefined) {
+      const size = Number((utf8Text(try recoveryBytes(repository, ["cat-file", "-s", file.sha])) ?? "").trim())
+      if (!Number.isSafeInteger(size) || size < 0 || size > VALUE_FILE_EXPANSION_LIMIT - expanded) throw refused("Recovery expansion exceeds limit")
+      const bytes = try recoveryBytes(repository, ["cat-file", "blob", file.sha], VALUE_FILE_EXPANSION_LIMIT)
+      if (bytes.length !== size || gitObjectId("blob", bytes) !== file.sha) throw refused("Recovery blob changed")
+      expanded += bytes.length
+      blob = { sha: file.sha, sha256: sha256Of(bytes), size, gzipBase64: gzipBase64(bytes) }
+      blobs.set(file.sha, blob)
+    }
+    entries.push({
+      repository: request.repository,
+      repositoryNodeId: request.repositoryNodeId,
+      ref: request.ref,
+      path: request.path,
+      treeSha: snapshot.sha,
+      mode: blob === undefined ? null : mode,
+      blobSha: blob?.sha ?? null,
+    })
+  }
+  return { inputSha256: fileRequestsSha256(requests), entries, blobs: [...blobs.values()] } satisfies FileRecovery
+}

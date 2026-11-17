@@ -1,0 +1,51 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { lossyText, sha256Of, textBytes } from "./bytes.ts"
+import { MERGE_GIT_VERSION, refused } from "./model.vibe"
+import { runCommand, runInherited } from "./process.vibe"
+
+export const PINNED_GIT_SOURCE = "https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz"
+export const PINNED_GIT_SHA256 = "26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3"
+
+effect function pinnedArchive() {
+  const client = try HttpClient.HttpClient
+  const response = timeout(provideService(client.get(PINNED_GIT_SOURCE), FetchHttpClient.RequestInit, { redirect: "error" }), "60 seconds") catch effect () => {
+    throw refused("Pinned Git archive unavailable")
+  }
+  if (response.status < 200 || response.status > 299) throw refused("Pinned Git archive unavailable")
+  const body = response.arrayBuffer catch effect () => {
+    throw refused("Pinned Git archive unavailable")
+  }
+  const bytes = new Uint8Array(body)
+  if (sha256Of(bytes) !== PINNED_GIT_SHA256) throw refused("Pinned Git archive checksum mismatch")
+  return bytes
+}
+
+export effect function installPinnedGit(destination: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const searchPath = try Config.String("PATH")
+  if (!path.isAbsolute(destination)) throw refused("Provide one absolute installation directory")
+  fs.makeDirectory(destination, { recursive: false }) catch effect () => {
+    throw refused("Refusing to adopt or overwrite an existing Git installation")
+  }
+  return try scoped(effect {
+    const directory = fs.makeTempDirectoryScoped({ prefix: "slop-merge-git-build-" }) catch effect () => {
+      throw refused("Pinned Git build directory unavailable")
+    }
+    const archive = path.join(directory, "git.tar.xz")
+    const bytes = try pinnedArchive()
+    fs.writeFile(archive, bytes, { flag: "wx" }) catch effect () => {
+      throw refused("Pinned Git archive could not be written")
+    }
+    const env = { PATH: searchPath, HOME: directory, LC_ALL: "C" }
+    try runInherited("tar", ["-xJf", archive, "--strip-components=1", "-C", directory], env, 600, "Pinned Git archive could not be extracted")
+    try runInherited("make", ["-C", directory, "-j2", `prefix=${destination}`, "NO_GETTEXT=YesPlease", "NO_TCLTK=YesPlease", "NO_PERL=YesPlease", "NO_RUST=YesPlease", "install"], env, 600, "Pinned Git build failed")
+    const built = try runCommand({ command: path.join(destination, "bin/git"), args: ["--version"], env, limit: 4096, seconds: 30 }, "Built Git version differs from merge profile")
+    const version = lossyText(built.stdout).trim()
+    if (built.status !== 0 || version !== MERGE_GIT_VERSION) throw refused("Built Git version differs from merge profile")
+    fs.writeFile(path.join(destination, "source.json"), textBytes(`${JSON.stringify({ source: PINNED_GIT_SOURCE, sha256: PINNED_GIT_SHA256, version, optionalRust: false })}\n`), { flag: "wx" }) catch effect () => {
+      throw refused("Pinned Git source record could not be written")
+    }
+    return path.join(destination, "bin/git")
+  })
+}

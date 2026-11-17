@@ -1,0 +1,69 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "GET /api/v1/security-submissions/:id",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "pages",
+  "mount": "functions/api/v1/[[path]].ts"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "PAYMENT_NETWORKS": "[]",
+  "TRACE_AUTH_SECRET": "<40+ character test value>",
+  "bindings": [
+   "SLOP_DB",
+   "PRIVATE_TRACES",
+   "SLOP_IDENTITY",
+   "SLOP_NOTIFY",
+   "SLOPBOT",
+   "VETTING_SANDBOX",
+   "VETTING_EVIDENCE",
+   "ASSETS"
+  ],
+  "unset": "every other variable (no VETTING_RESULT_PUBLIC_KEYS, no private intake, no X client, no GitHub App)"
+ },
+ "cases": [
+  {
+   "name": "signed-out read",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project",
+    "headers": {},
+    "body": null
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"unauthorized\",\"message\":\"Sign in with GitHub\"}",
+    "bodySha256": "c3bbf9f4ff1bde583174d412b8b1127d3726ab705e4f5b7c82889f664f5478d1"
+   }
+  },
+  {
+   "name": "DELETE on a read route",
+   "kind": "request",
+   "request": {
+    "method": "DELETE",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project",
+    "headers": {
+     "origin": "https://slop.cash"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 403,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"origin_forbidden\",\"message\":\"Requests must come from this site\"}",
+    "bodySha256": "b09a64649746a215effd1dcb1489a007af6c931168d719b4870eb1c3acc87243"
+   }
+  }
+ ]
+}

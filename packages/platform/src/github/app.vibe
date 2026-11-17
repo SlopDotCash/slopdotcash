@@ -1,0 +1,110 @@
+// spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"
+import { base64url, rs256Sign, utf8 } from "../crypto.vibe"
+import { type Exchange, GitHub, decoded, defaultTimeoutMs, exchanged, githubApi, githubJson, githubWith, manualRedirects, parsed } from "./client.vibe"
+import { type GitHubFailure, GitHubMalformed } from "./errors.vibe"
+
+const jwtBackdateSeconds = 60
+const jwtLifetimeSeconds = 540
+const refreshBeforeMillis = 5 * 60 * 1_000
+const answerLimitBytes = 64 * 1024
+const numericId = /^[1-9][0-9]{0,19}$/u
+const repositoryPart = /^[A-Za-z0-9_.-]{1,100}$/u
+const printable = /^[!-~]+$/u
+
+export interface Scope {
+  readonly repositories?: ReadonlyArray<string>
+  readonly permissions?: Readonly<Record<string, "read" | "write">>
+}
+
+export interface AppOptions {
+  readonly appId: string
+  readonly privateKey: Redacted.Redacted<string>
+  readonly authority?: string
+  readonly userAgent?: string
+  readonly timeoutMs?: number
+}
+
+export service GitHubApp {
+  appJwt(): string!!
+  installationToken(installationId: string, scope?: Scope): Redacted.Redacted<string>!GitHubFailure
+  installationFor(owner: string, repository: string): string!GitHubFailure
+  asInstallation(installationId: string, scope?: Scope): Layer.Layer<GitHub, never, HttpClient.HttpClient>
+}
+
+schema IssuedToken { token: string; expires_at: string }
+schema Installation { id: number }
+
+interface Cached {
+  readonly token: Redacted.Redacted<string>
+  readonly refreshAt: number
+}
+
+function segment(value: unknown) {
+  return base64url(utf8(JSON.stringify(value)))
+}
+
+function scopeKey(installationId: string, scope: Scope | undefined) {
+  return JSON.stringify([installationId, [...scope?.repositories ?? []].sort(), Object.entries(scope?.permissions ?? {}).sort(([a], [b]) => a.localeCompare(b))])
+}
+
+function scopeBody(scope: Scope | undefined) {
+  return {
+    ...(scope?.repositories === undefined ? {} : { repositories: scope.repositories }),
+    ...(scope?.permissions === undefined ? {} : { permissions: scope.permissions }),
+  }
+}
+
+export function githubApp(options: AppOptions): Layer.Layer<GitHubApp, never, HttpClient.HttpClient> {
+  return Layer.effect(GitHubApp, effect {
+    const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
+    const userAgent = options.userAgent ?? "slop.cash"
+    const timeoutMs = options.timeoutMs ?? defaultTimeoutMs
+    const client = try HttpClient.HttpClient
+    const exchange: Exchange = { client: manualRedirects(client), authority, userAgent, timeoutMs }
+    const cache = new Map<string, Cached>()
+
+    effect function appJwt() {
+      const seconds = Math.floor((try Clock.currentTimeMillis) / 1_000)
+      const unsigned = `${segment({ alg: "RS256", typ: "JWT" })}.${segment({ iat: seconds - jwtBackdateSeconds, exp: seconds + jwtLifetimeSeconds, iss: options.appId })}`
+      return `${unsigned}.${base64url(try orDie(rs256Sign(options.privateKey, unsigned)))}`
+    }
+
+    effect function installationToken(installationId: string, scope?: Scope) {
+      const path = `/app/installations/${installationId}/access_tokens`
+      if (!numericId.test(installationId)) throw new GitHubMalformed({ path, issue: "an installation id is a positive integer" })
+      const cacheKey = scopeKey(installationId, scope)
+      const now = try Clock.currentTimeMillis
+      const cached = cache.get(cacheKey)
+      if (cached !== undefined && now < cached.refreshAt) return cached.token
+      const jwt = Redacted.make(try appJwt())
+      const answer = try exchanged(exchange, { method: "POST", url: `${authority}${path}`, accept: githubJson, bearer: jwt, json: scopeBody(scope) }, answerLimitBytes)
+      const issued = try decoded(IssuedToken, try parsed(answer.bytes, path), path)
+      const expiresAt = Date.parse(issued.expires_at)
+      if (!printable.test(issued.token) || !Number.isFinite(expiresAt)) throw new GitHubMalformed({ path, issue: "GitHub answered an unusable installation token" })
+      const token = Redacted.make(issued.token)
+      cache.set(cacheKey, { token, refreshAt: expiresAt - refreshBeforeMillis })
+      return token
+    }
+
+    effect function installationFor(owner: string, repository: string) {
+      const path = `/repos/${owner}/${repository}/installation`
+      if (!repositoryPart.test(owner) || !repositoryPart.test(repository)) throw new GitHubMalformed({ path, issue: "an owner and repository name are one path segment each" })
+      const answer = try exchanged(exchange, { method: "GET", url: `${authority}${path}`, accept: githubJson, bearer: Redacted.make(try appJwt()) }, answerLimitBytes)
+      const installation = try decoded(Installation, try parsed(answer.bytes, path), path)
+      if (!Number.isSafeInteger(installation.id) || installation.id <= 0) throw new GitHubMalformed({ path, issue: "GitHub answered an invalid installation id" })
+      return String(installation.id)
+    }
+
+    return {
+      appJwt,
+      installationToken,
+      installationFor,
+      asInstallation: (installationId, scope) => githubWith({
+        authority,
+        credential: installationToken(installationId, scope),
+        userAgent,
+        timeoutMs,
+      }),
+    }
+  })
+}

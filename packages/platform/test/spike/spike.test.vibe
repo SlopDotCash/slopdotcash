@@ -1,0 +1,207 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
+import type { D1Database } from "../../src/bindings.ts"
+import { buildDeployables, buildSite, type SiteFiles } from "./build.ts"
+import { testKeys } from "./keys.ts"
+import { type Answer, type Ask, type Site, ask, backendRoot, bundleSizes, readText, runProgram, sentEmail, spikeCache, startSite } from "./site.ts"
+import { type Signed, checkAll, rfc4231, signAll } from "./worker/primitives.vibe"
+
+service Spike {
+  readonly site: Site
+  readonly built: SiteFiles
+  readonly db: D1Database
+  request(path: string, init?: Ask): Answer!!
+}
+
+const Started = Layer.effect(Spike, effect {
+  const built = try promise(() => buildSite(spikeCache))
+  const site = try acquireRelease(sync(() => startSite(built)), (started) => promise(() => started.mf.dispose()))
+  const db = (try promise(() => site.mf.getD1Database("DB", "pages"))) as unknown as D1Database
+  try promise(() => db.exec("CREATE TABLE stamps (digest TEXT NOT NULL, text TEXT NOT NULL)\nCREATE TABLE jobs (key TEXT NOT NULL, queue TEXT NOT NULL, attempts INTEGER NOT NULL)\nCREATE TABLE later (key TEXT NOT NULL)"))
+  return { site, built, db, request: (path, init) => promise(() => ask(site.mf, path, init)) }
+})
+
+function rowsOf(db: D1Database, sql: string) {
+  return Effect.map(promise(() => db.prepare(sql).all()), (result) => result.results)
+}
+
+effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try Effect.sleep("100 millis")
+  }
+  return try probe
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('The Pages _worker.js serves the API and leaves every other path to the static assets (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
+    const spike = try Spike
+    const hello = try spike.request("/api/hello")
+    const page = try spike.request("/")
+    const about = try spike.request("/about.txt")
+    const missing = try spike.request("/no-such-page")
+    const greeted = try spike.request("/api/greet/k1", { method: "POST", json: { name: "ada" } })
+    const extra = try spike.request("/api/greet/k1", { method: "POST", json: { name: "ada", admin: true } })
+    const defect = try spike.request("/api/defect")
+    const failure = try spike.request("/api/failure")
+    try same({
+      hello: [hello.status, hello.body, hello.headers["cache-control"]],
+      page: [page.status, page.type, String(page.body).includes("<title>Spike page</title>")],
+      about: [about.status, about.body],
+      missing: missing.status,
+      greeted: [greeted.status, greeted.body],
+      extra: [extra.status, extra.body],
+      defect: [defect.status, defect.body],
+      failure: [failure.status, failure.body],
+    }, {
+      hello: [200, { hello: "pages" }, "no-store"],
+      page: [200, "text/html; charset=utf-8", true],
+      about: [200, "A static file served through the ASSETS binding.\n"],
+      missing: 404,
+      greeted: [200, { text: "hello ada at k1", length: 3 }],
+      extra: [400, { error: "invalid_body", message: "Request body is not valid for this request" }],
+      defect: [500, ""],
+      failure: [500, { error: "internal_error", message: "Internal error" }],
+    })
+  })
+
+  it.effect('A Durable Object journal commits all its writes or none, and an entrypoint runs on the Worker\'s services (spec/settlement/signer.md, "Both possible winners stay retained")', () => effect {
+    const spike = try Spike
+    const committed = try spike.request("/api/journal/run-1", { method: "POST", json: { texts: ["first", "second"], refuse: false } })
+    const refused = try spike.request("/api/journal/run-1", { method: "POST", json: { texts: ["third", "fourth"], refuse: true } })
+    const other = try spike.request("/api/journal/run-2", { method: "POST", json: { texts: ["alone"], refuse: false } })
+    const stamped = try spike.request("/api/stamp/hello", { method: "POST" })
+    try same({ committed: committed.body, refused: refused.body, other: other.body, stamped: stamped.body }, {
+      committed: { outcome: { committed: 2 }, stored: [[1, "first", 64], [2, "second", 64]] },
+      refused: { outcome: { refused: "refused after writing" }, stored: [[1, "first", 64], [2, "second", 64]] },
+      other: { outcome: { committed: 1 }, stored: [[1, "alone", 64]] },
+      stamped: { digest: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", rows: 1 },
+    })
+  })
+
+  it.effect('A failing queue message is retried and then lands in the dead-letter queue (spec/backend/email.md, "Delivery of the verification mail has its own state")', () => effect {
+    const spike = try Spike
+    const sent = try.all [spike.request("/api/jobs", { method: "POST", json: { key: "good", fail: false } }), spike.request("/api/jobs", { method: "POST", json: { key: "bad", fail: true } })]
+    const jobs = try eventually(rowsOf(spike.db, "SELECT key, queue, attempts FROM jobs ORDER BY key"), (rows) => rows.length >= 2)
+    try same({ sent: sent.map((answer) => [answer.status, answer.body]), jobs }, {
+      sent: [[202, { queued: "good" }], [202, { queued: "bad" }]],
+      jobs: [{ key: "bad", queue: "spike-jobs-dlq", attempts: 1 }, { key: "good", queue: "spike-jobs", attempts: 1 }],
+    })
+  })
+
+  it.effect('The rate-limit binding refuses past its limit, and send_email delivers only to an allowed address (spec/backend/email.md, "Simulation samples exercise replay, rate limits, stale versions and revisions")', () => effect {
+    const spike = try Spike
+    const limits = [try spike.request("/api/limit/a", { method: "POST" }), try spike.request("/api/limit/a", { method: "POST" }), try spike.request("/api/limit/a", { method: "POST" }), try spike.request("/api/limit/b", { method: "POST" })]
+    const delivered = try spike.request("/api/email", { method: "POST", json: { to: "member@slop.test", text: "Your code is 424242." } })
+    const refused = try spike.request("/api/email", { method: "POST", json: { to: "stranger@slop.test", text: "never" } })
+    const mails = try eventually(sync(() => sentEmail(spike.site.logged)), (found) => found.length >= 1)
+    const mail = mails[0] ?? ""
+    try same({
+      limits: limits.map((answer) => answer.status),
+      delivered: delivered.body,
+      refused: [refused.status, refused.body],
+      mails: mails.length,
+      headers: ["From: notifications@slop.cash", "To: member@slop.test", "Subject: Spike notice", "Your code is 424242."].map((line) => mail.includes(line)),
+    }, {
+      limits: [200, 200, 429, 200],
+      delivered: { sent: true },
+      refused: [403, { error: "email_refused", message: "The email was refused" }],
+      mails: 1,
+      headers: [true, true, true, true],
+    })
+  })
+
+  it.effect('The Cache API keeps a response until it is deleted, and waitUntil work finishes after the response (spec/frontend/requests.md, "Empty and denied never display retained rows as current data")', () => effect {
+    const spike = try Spike
+    const first = try spike.request("/api/cached/projects")
+    const second = try eventually(spike.request("/api/cached/projects"), (answer) => (answer.body as { state: string }).state === "hit")
+    const deleted = try spike.request("/api/cached/projects", { method: "DELETE" })
+    const third = try spike.request("/api/cached/projects")
+    const deferred = try spike.request("/api/later/after-response", { method: "POST" })
+    const before = try rowsOf(spike.db, "SELECT key FROM later")
+    const after = try eventually(rowsOf(spike.db, "SELECT key FROM later"), (rows) => rows.length === 1)
+    try same({
+      first: (first.body as { state: string }).state,
+      second: [(second.body as { body: string }).body === (first.body as { body: string }).body],
+      deleted: deleted.body,
+      third: (third.body as { state: string }).state,
+      deferred: [deferred.status, deferred.body, before.length],
+      after,
+    }, {
+      first: "miss",
+      second: [true],
+      deleted: { deleted: true },
+      third: "miss",
+      deferred: [202, { scheduled: "after-response" }, 0],
+      after: [{ key: "after-response" }],
+    })
+  })
+
+  it.effect('HMAC, Ed25519, ECDSA, RS256 and AES-GCM give the same results in workerd and in Node (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const spike = try Spike
+    const keys = try promise(() => testKeys())
+    const now = 1_800_000_000
+    const inWorkerd = try spike.request("/api/crypto/sign", { method: "POST", json: { keys, message: "bind 0xabc", now } })
+    const signed = inWorkerd.body as Signed
+    const checkedInNode = try checkAll(keys, "bind 0xabc", signed)
+    const inNode = try signAll(keys, "bind 0xabc", now)
+    const checkedInWorkerd = try spike.request("/api/crypto/check", { method: "POST", json: { keys, message: "bind 0xabc", signed: inNode } })
+    const expected = { ed25519: true, ed25519Tampered: false, ecdsa: true, ecdsaTampered: false, jwtIssuer: "424242", opened: "bind 0xabc", openedTampered: "SubtleFailure" }
+    try same({
+      hmac: [signed.hmac, inNode.hmac],
+      ed25519Deterministic: signed.ed25519 === inNode.ed25519,
+      jwtHeader: [signed.jwt.split(".")[0], signed.jwt === inNode.jwt],
+      checkedInNode,
+      checkedInWorkerd: checkedInWorkerd.body,
+    }, {
+      hmac: [rfc4231, rfc4231],
+      ed25519Deterministic: true,
+      jwtHeader: ["eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9", true],
+      checkedInNode: expected,
+      checkedInWorkerd: expected,
+    })
+  })
+
+  it.effect('D1 bound parameters and batch sizes have the limits Miniflare enforces (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
+    const spike = try Spike
+    const params = [100, 101, 32766, 32767, 100000]
+    const batches = [100, 1000, 10000]
+    const bound: unknown[] = []
+    for (const count of params) bound.push((try spike.request(`/api/params/${count}`)).body)
+    const batched: unknown[] = []
+    for (const count of batches) batched.push((try spike.request(`/api/batch/${count}`)).body)
+    try Effect.log(JSON.stringify({ bound, batched }))
+    try same({ bound: bound.map((outcome) => "error" in (outcome as object) ? "refused" : "ran"), batched: batched.map((outcome) => "error" in (outcome as object) ? "refused" : "ran") }, {
+      bound: ["ran", "refused", "refused", "refused", "refused"],
+      batched: ["ran", "ran", "ran"],
+    })
+  })
+
+  it.effect('A program built for Node runs on the same crypto and HTTP services as the Workers (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
+    const spike = try Spike
+    const origin = try promise(() => spike.site.mf.ready)
+    const ran = try promise(() => runProgram(spike.built.program, [origin.origin]))
+    const report = ran.code === 0 ? (try orDie(Effect.try(() => JSON.parse(ran.stdout)))) as { status: number; hello: string; digest: string; at: number } : undefined
+    try same({ code: ran.code, stderr: ran.code === 0 ? ran.stderr : `${ran.stdout}${ran.stderr}`, status: report?.status, hello: report?.hello, digest: report?.digest }, {
+      code: 0, stderr: "", status: 200, hello: "pages", digest: try sha256Hex("pages"),
+    })
+  })
+
+  it.effect('Both Workers keep their class and entry names in the bundle, and the minified backend slice fits the _worker.js limit (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
+    const spike = try Spike
+    const service = try orDie(Effect.try(() => readText(spike.built.service)))
+    const minified = try promise(() => buildSite(`${spikeCache}/minified`, true))
+    const backend = try promise(() => buildDeployables(backendRoot, { outDir: `${spikeCache}/backend`, workers: { worker: "src/worker.vibe" }, minify: true }))
+    const measured = try orDie(Effect.try(() => bundleSizes({ pages: spike.built.pages, pagesMinified: minified.pages, backendMinified: `${backend}/worker.js` })))
+    try Effect.log(JSON.stringify(measured))
+    try same({
+      exports: /export \{[^}]*\bJournal\b[^}]*\}/u.test(service) && /export \{[^}]*\bVerifier\b[^}]*\}/u.test(service),
+      underFreeLimit: measured.backendMinified.gzip < 3 * 1024 * 1024,
+    }, { exports: true, underFreeLimit: true })
+  })
+})

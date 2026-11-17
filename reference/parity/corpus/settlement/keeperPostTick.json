@@ -1,0 +1,13 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /tick @worker:operator-keeper (Durable Object)",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:operator-keeper (Durable Object)"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": null,
+ "cases": [],
+ "reason": "this Worker surface needs a Durable Object or signer configuration that a local probe cannot supply without fabricating state"
+}

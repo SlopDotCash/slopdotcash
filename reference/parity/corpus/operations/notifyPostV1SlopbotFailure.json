@@ -1,0 +1,130 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /v1/slopbot-failure @worker:slop-notify",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:slop-notify"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "bindings": [
+   "SLOP_DB",
+   "ADMIN_EMAIL"
+  ],
+  "unset": "mail pilot variables (no activity or security pilot configured)"
+ },
+ "cases": [
+  {
+   "name": "signed-out same-origin JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://notify.internal/v1/slopbot-failure",
+    "headers": {
+     "origin": "https://notify.internal",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"invalid_request\"}",
+    "bodySha256": "52977cef16ffb1e7392b602fc98ae422b15b03d9403f17ac43ad8e59b51c8782"
+   }
+  },
+  {
+   "name": "cross-site JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://notify.internal/v1/slopbot-failure",
+    "headers": {
+     "origin": "https://attacker.example",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"invalid_request\"}",
+    "bodySha256": "52977cef16ffb1e7392b602fc98ae422b15b03d9403f17ac43ad8e59b51c8782"
+   }
+  },
+  {
+   "name": "form-encoded write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://notify.internal/v1/slopbot-failure",
+    "headers": {
+     "origin": "https://notify.internal",
+     "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": "a=b"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"invalid_request\"}",
+    "bodySha256": "52977cef16ffb1e7392b602fc98ae422b15b03d9403f17ac43ad8e59b51c8782"
+   }
+  },
+  {
+   "name": "malformed JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://notify.internal/v1/slopbot-failure",
+    "headers": {
+     "origin": "https://notify.internal",
+     "content-type": "application/json"
+    },
+    "body": "{"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"invalid_request\"}",
+    "bodySha256": "52977cef16ffb1e7392b602fc98ae422b15b03d9403f17ac43ad8e59b51c8782"
+   }
+  },
+  {
+   "name": "GET on a write route",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://notify.internal/v1/slopbot-failure",
+    "headers": {
+     "origin": "https://notify.internal"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 405,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store",
+     "allow": "POST"
+    },
+    "body": "{\"error\":\"method_not_allowed\"}",
+    "bodySha256": "48ceae43089b9c26f0b2e5e53afe122639812aaa791c84f311d6b992f2332fef"
+   }
+  }
+ ]
+}

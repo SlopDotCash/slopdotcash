@@ -1,0 +1,418 @@
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import {
+  type Address,
+  type Blockhash,
+  type FetchedTransaction,
+  type Message,
+  type Signature,
+  type SolanaRpcOptions,
+  ASSOCIATED_TOKEN_PROGRAM,
+  SYSTEM_PROGRAM,
+  SolanaRpc,
+  TOKEN_2022_PROGRAM,
+  address,
+  addressOf,
+  associatedTokenAddress,
+  base64Encode,
+  chainIdentity,
+  decodeMessage,
+  decodeMint,
+  decodeTokenAccount,
+  decodeTransaction,
+  encodeMessage,
+  encodeTransaction,
+  findPda,
+  solanaRpc,
+  verifyTransactionSignatures,
+} from "../src/chain/solana.vibe"
+import { utf8, webCrypto } from "../src/crypto.vibe"
+import { outbound } from "../src/http.vibe"
+import { type Validator, solanaValidator } from "../src/testing/chains.ts"
+import { freePort } from "../src/testing/chains/faults.ts"
+
+const mintText = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh"
+const escrowProgram = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ"
+const devnetGenesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+const mintFixture = new URL("../../contracts/solana/integration/fixtures/token-2022-mint.bin", import.meta.url).pathname
+
+service Chain {
+  readonly validator: Validator
+  readonly options: SolanaRpcOptions
+  readonly payer: Address
+  readonly mint: Address
+  readonly fixture: Uint8Array
+}
+
+effect function known<A>(value: A | undefined, what: string) {
+  if (value === undefined) return try Effect.die(new Error(`${what} is missing`))
+  return value
+}
+
+const Started = Layer.effect(Chain, effect {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const directory = try fs.makeTempDirectoryScoped()
+  const accountFile = path.join(directory, "token-2022-mint.json")
+  const fixture = try fs.readFile(mintFixture)
+  try fs.writeFileString(accountFile, JSON.stringify({
+    pubkey: mintText,
+    account: { lamports: 10000000, data: [base64Encode(fixture), "base64"], owner: TOKEN_2022_PROGRAM, executable: false, rentEpoch: 0, space: fixture.length },
+  }))
+  const validator = try acquireRelease(
+    promise(() => solanaValidator({ accounts: [{ address: mintText, jsonPath: accountFile }] })),
+    (started) => promise(() => started.close()),
+  )
+  return {
+    validator,
+    options: { urls: Redacted.make([validator.url]), genesis: validator.genesis },
+    payer: try known(address(validator.payer.address), "payer address"),
+    mint: try known(address(mintText), "mint address"),
+    fixture,
+  }
+})
+
+function corrupted(bytes: Uint8Array, at: number, value: number) {
+  const copy = new Uint8Array(bytes)
+  copy[at] = value
+  return copy
+}
+
+function options(urls: ReadonlyArray<string>, genesis: string): SolanaRpcOptions {
+  return { urls: Redacted.make(urls), genesis, timeoutMs: 3000 }
+}
+
+function lamportBytes(value: bigint) {
+  const bytes: number[] = []
+  let rest = value
+  for (let index = 0; index < 8; index++) {
+    bytes.push(Number(rest & 255n))
+    rest >>= 8n
+  }
+  return bytes
+}
+
+function transferMessage(from: Address, to: Address, lamports: bigint, blockhash: Blockhash, version: "legacy" | 0): Message {
+  const body = {
+    header: { requiredSignatures: 1, readonlySigned: 0, readonlyUnsigned: 1 },
+    accountKeys: [from, to, SYSTEM_PROGRAM],
+    recentBlockhash: blockhash,
+    instructions: [{ programIndex: 2, accounts: [0, 1], data: Uint8Array.from([2, 0, 0, 0, ...lamportBytes(lamports)]) }],
+  }
+  return version === 0 ? { ...body, version: 0, lookups: [] } : { ...body, version: "legacy" }
+}
+
+effect function signed(message: Message) {
+  const chain = try Chain
+  const bytes = try known(encodeMessage(message), "encoded message")
+  const secret = chain.validator.payer.secretKey.slice(0, 32)
+  const signature = try orDie(Effect.try(() => ed25519.sign(bytes, secret)))
+  return try known(encodeTransaction({ signatures: [signature], message }), "encoded transaction")
+}
+
+const ranks = { processed: 0, confirmed: 1, finalized: 2 }
+
+effect function settled(signature: Signature, level: "confirmed" | "finalized") {
+  const rpc = try SolanaRpc
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const [found] = try rpc.signatureStatuses([signature])
+    if (found?.err === true) return try Effect.die(new Error(`${signature} failed on chain`))
+    if (found?.confirmationStatus !== undefined && ranks[found.confirmationStatus] >= ranks[level]) return found.slot
+    try Effect.sleep("100 millis")
+  }
+  return try Effect.die(new Error(`${signature} did not reach ${level}`))
+}
+
+effect function send(wire: Uint8Array) {
+  return try (try SolanaRpc).sendRaw(wire, { skipPreflight: false, maxRetries: 3 })
+}
+
+effect function freshAddress() {
+  const bytes = try orDie((try Experimental.Crypto.Crypto).randomBytes(32))
+  return try known(addressOf(bytes), "fresh address")
+}
+
+effect function pinnedRead(rpcOptions: SolanaRpcOptions, mint: Address) {
+  provide solanaRpc(rpcOptions) {
+    const rpc = try SolanaRpc
+    return { genesis: try rpc.genesisHash(), owner: (try rpc.account(mint, "finalized"))?.owner }
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function signaturesOf(entries: ReadonlyArray<{ readonly signature: Signature; readonly err: boolean }>) {
+  return entries.map((entry) => [entry.signature, entry.err])
+}
+
+layer(Layer.mergeAll(Layer.provide(Started, NodeServices.layer), webCrypto, outbound), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A missing or wrong genesis is refused before any read, and only an endpoint of the pinned network is read (spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => effect {
+    const chain = try Chain
+    const closed = `http://127.0.0.1:${try promise(() => freePort())}`
+    const { url, genesis } = chain.validator
+    const readMint = effect {
+      return try (try SolanaRpc).account(chain.mint, "finalized")
+    }
+    const wrong = try Effect.flip(Effect.provide(readMint, solanaRpc(options([url], devnetGenesis))))
+    const missing = try Effect.flip(Effect.provide(readMint, solanaRpc(options([closed], ""))))
+    const unavailable = try Effect.flip(Effect.provide(readMint, solanaRpc(options([closed], genesis))))
+    const identities = [
+      try chainIdentity(options([url], "")),
+      try chainIdentity(options([url], devnetGenesis)),
+      try chainIdentity(options([closed], genesis)),
+      try chainIdentity(options([url], genesis)),
+      try chainIdentity(options([closed, url], genesis)),
+    ]
+    const pinned = try pinnedRead(options([closed, url], genesis), chain.mint)
+    try same({
+      wrong: wrong._tag === "WrongChain" ? [wrong._tag, wrong.expected, wrong.actual] : [wrong._tag],
+      missing: missing._tag,
+      unavailable: unavailable._tag,
+      identities,
+      pinned,
+    }, {
+      wrong: ["WrongChain", devnetGenesis, genesis],
+      missing: "GenesisPinMissing",
+      unavailable: "RpcUnavailable",
+      identities: ["MissingPin", "WrongGenesis", "GenesisUnavailable", "PinnedGenesis", "PinnedGenesis"],
+      pinned: { genesis, owner: TOKEN_2022_PROGRAM },
+    })
+  })
+
+  it.effect('A confirmed transfer is invisible to finalized reads until it is finalized (spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact")', () => effect {
+    const chain = try Chain
+    provide solanaRpc(chain.options) {
+      const rpc = try SolanaRpc
+      const fresh = try freshAddress()
+      const latest = try rpc.blockhash("confirmed")
+      const valid = try rpc.blockhashValid(latest.blockhash, "confirmed")
+      const message = transferMessage(chain.payer, fresh, 1000000n, latest.blockhash, "legacy")
+      const fee = try rpc.feeForMessage(try known(encodeMessage(message), "encoded message"), "confirmed")
+      const wire = try signed(message)
+      const signature = try send(wire)
+      try settled(signature, "confirmed")
+      const confirmed = try rpc.account(fresh, "confirmed")
+      const unfinalized = try rpc.account(fresh, "finalized")
+      const pending = try rpc.transaction(signature, "finalized")
+      const seen = try rpc.transaction(signature, "confirmed")
+      const confirmedSlot = try rpc.slot("confirmed")
+      const finalizedSlot = try rpc.slot("finalized")
+      try settled(signature, "finalized")
+      const finalized = try rpc.account(fresh, "finalized")
+      const landed = try known(try rpc.transaction(signature, "finalized"), "finalized transfer")
+      const heights = { confirmed: try rpc.blockHeight("confirmed"), finalized: try rpc.blockHeight("finalized") }
+      try same({
+        valid: valid.value,
+        confirmed: confirmed?.lamports,
+        unfinalized,
+        pending,
+        seen: seen === undefined ? undefined : base64Encode(seen.wire),
+        landed: [base64Encode(landed.wire), landed.meta.err, landed.meta.fee === fee, landed.meta.fee > 0n],
+        ahead: confirmedSlot > finalizedSlot,
+        finalized: [finalized?.lamports, finalized?.owner, finalized?.executable, finalized?.data.length],
+        heights: heights.confirmed >= heights.finalized,
+        rent: try rpc.rentExemption(0, "finalized"),
+      }, {
+        valid: true,
+        confirmed: 1000000n,
+        unfinalized: undefined,
+        pending: undefined,
+        seen: base64Encode(wire),
+        landed: [base64Encode(wire), false, true, true],
+        ahead: true,
+        finalized: [1000000n, SYSTEM_PROGRAM, false, 0],
+        heights: true,
+        rent: 890880n,
+      })
+    }
+  })
+
+  it.effect('Finalized transactions read back as their exact legacy and v0 wire bytes, and signature pages stop at the until bound (spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact")', () => effect {
+    const chain = try Chain
+    provide solanaRpc(chain.options) {
+      const rpc = try SolanaRpc
+      const sink = try freshAddress()
+      const plan = [["legacy", 1000001n], [0, 1000002n], ["legacy", 1000003n], [0, 1000004n], ["legacy", 1000005n]] as const
+      const sent: Signature[] = []
+      const wires: Uint8Array[] = []
+      for (const [version, lamports] of plan) {
+        const latest = try rpc.blockhash("confirmed")
+        const wire = try signed(transferMessage(chain.payer, sink, lamports, latest.blockhash, version))
+        const signature = try send(wire)
+        try settled(signature, "confirmed")
+        sent.push(signature)
+        wires.push(wire)
+      }
+      try settled(try known(sent[sent.length - 1], "newest signature"), "finalized")
+      const fetched: FetchedTransaction[] = []
+      for (const signature of sent) fetched.push(try known(try rpc.transaction(signature, "finalized"), "finalized transaction"))
+      const checks: Array<Record<string, unknown>> = []
+      for (const [index, read] of fetched.entries()) {
+        const tampered = Uint8Array.from(read.transaction.messageBytes)
+        tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1
+        const block = try rpc.block(read.slot, "finalized")
+        checks.push({
+          sent: base64Encode(read.wire) === base64Encode(wires[index] ?? new Uint8Array()),
+          reencoded: base64Encode(encodeTransaction(read.transaction) ?? new Uint8Array()) === base64Encode(read.wire),
+          version: read.transaction.message.version,
+          signed: try verifyTransactionSignatures(read.transaction),
+          tampered: try verifyTransactionSignatures({ ...read.transaction, messageBytes: tampered }),
+          err: read.meta.err,
+          fee: read.meta.fee > 0n,
+          received: (read.meta.postBalances[1] ?? 0n) - (read.meta.preBalances[1] ?? 0n),
+          block: block !== undefined && block.parentSlot < read.slot,
+          time: (try rpc.blockTime(read.slot)) !== undefined,
+        })
+      }
+      const newestFirst = [...sent].reverse()
+      const first = try rpc.signatures(sink, { limit: 2 }, "finalized")
+      const second = try rpc.signatures(sink, { limit: 2, before: first[1]?.signature }, "finalized")
+      const third = try rpc.signatures(sink, { limit: 2, before: second[1]?.signature }, "finalized")
+      const bounded = try rpc.signatures(sink, { limit: 1000, until: newestFirst[3] }, "finalized")
+      try same({ checks, pages: [first, second, third, bounded].map(signaturesOf) }, {
+        checks: plan.map(([version, lamports]) => ({
+          sent: true, reencoded: true, version, signed: true, tampered: false, err: false, fee: true, received: lamports, block: true, time: true,
+        })),
+        pages: [newestFirst.slice(0, 2), newestFirst.slice(2, 4), newestFirst.slice(4), newestFirst.slice(0, 3)].map((page) => page.map((signature) => [signature, false])),
+      })
+      const legacyWire = wires[0] ?? new Uint8Array()
+      const v0Message = (fetched[1]?.transaction.messageBytes ?? new Uint8Array())
+      const lookupMessage: Message = {
+        version: 0,
+        header: { requiredSignatures: 1, readonlySigned: 0, readonlyUnsigned: 1 },
+        accountKeys: [chain.payer, sink, SYSTEM_PROGRAM],
+        recentBlockhash: (fetched[0]?.transaction.message.recentBlockhash ?? ("" as Blockhash)),
+        instructions: [{ programIndex: 2, accounts: [0, 1, 3, 5], data: Uint8Array.of(9, 8, 7) }],
+        lookups: [{ table: chain.mint, writableIndexes: [0, 4], readonlyIndexes: [2] }],
+      }
+      const lookupBytes = encodeMessage(lookupMessage) ?? new Uint8Array()
+      const outOfRange = encodeMessage({ ...lookupMessage, instructions: [{ programIndex: 2, accounts: [6], data: Uint8Array.of() }] }) ?? new Uint8Array()
+      try same({
+        lookups: decodeMessage(lookupBytes),
+        outOfRange: decodeMessage(outOfRange),
+        overlong: decodeTransaction(Uint8Array.from([0x81, 0x00, ...legacyWire.slice(1)])),
+        trailing: decodeTransaction(Uint8Array.from([...legacyWire, 0])),
+        version1: decodeMessage(Uint8Array.from([0x81, ...v0Message.slice(1)])),
+        unsigned: decodeTransaction(Uint8Array.from([0, ...legacyWire.slice(65)])),
+        oversized: decodeTransaction(new Uint8Array(1233)),
+        badIndex: encodeMessage({ ...lookupMessage, instructions: [{ programIndex: 256, accounts: [], data: Uint8Array.of() }] }),
+      }, {
+        lookups: { kind: "decoded", value: lookupMessage },
+        outOfRange: { kind: "malformed", issue: "accountIndexOutOfRange" },
+        overlong: { kind: "malformed", issue: "invalidCompactLength" },
+        trailing: { kind: "malformed", issue: "trailingBytes" },
+        version1: { kind: "malformed", issue: "unsupportedVersion" },
+        unsigned: { kind: "malformed", issue: "invalidSignerHeader" },
+        oversized: { kind: "malformed", issue: "tooLarge" },
+        badIndex: undefined,
+      })
+    }
+  })
+
+  it.effect('Program and associated token addresses match the chain, and a Token-2022 mint and account decode to their raw extension lists (spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership")', () => effect {
+    const chain = try Chain
+    provide solanaRpc(chain.options) {
+      const rpc = try SolanaRpc
+      const program = try known(address(escrowProgram), "escrow program")
+      const projectSeed = new Uint8Array(32).fill(7)
+      const ata = try known(associatedTokenAddress(chain.payer, chain.mint, TOKEN_2022_PROGRAM), "associated token address")
+      const latest = try rpc.blockhash("confirmed")
+      const create: Message = {
+        version: "legacy",
+        header: { requiredSignatures: 1, readonlySigned: 0, readonlyUnsigned: 4 },
+        accountKeys: [chain.payer, ata, chain.mint, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, ASSOCIATED_TOKEN_PROGRAM],
+        recentBlockhash: latest.blockhash,
+        instructions: [{ programIndex: 5, accounts: [0, 1, 0, 2, 3, 4], data: Uint8Array.of(1) }],
+      }
+      const wire = try signed(create)
+      const simulated = try rpc.simulate(wire, [ata], "confirmed")
+      const signature = try send(wire)
+      try settled(signature, "finalized")
+      const read = try rpc.accounts([chain.mint, ata], "finalized")
+      const [mintAccount, tokenAccount] = read.value
+      const mint = decodeMint(mintAccount?.data ?? new Uint8Array())
+      const token = decodeTokenAccount(tokenAccount?.data ?? new Uint8Array())
+      const holders = try rpc.programAccounts(TOKEN_2022_PROGRAM, [
+        { kind: "dataSize", size: tokenAccount?.data.length ?? 0 },
+        { kind: "memcmp", offset: 32, bytes: chain.validator.payer.publicKey },
+      ], "finalized")
+      const pointer = mint.kind === "decoded" ? mint.value.extensions.find((extension) => extension.type === 18) : undefined
+      try same({
+        project: addressOf(projectSeed),
+        config: findPda([utf8("config")], program)?.address,
+        vault: findPda([utf8("vault"), projectSeed], program)?.address,
+        tooManySeeds: findPda(Array.from({ length: 16 }, () => Uint8Array.of(1)), program),
+        longSeed: findPda([new Uint8Array(33)], program),
+        simulated: [simulated.err, simulated.accounts[0]?.owner],
+        owners: [mintAccount?.owner, tokenAccount?.owner],
+        fixture: base64Encode(mintAccount?.data ?? new Uint8Array()) === base64Encode(chain.fixture),
+        mint: mint.kind === "decoded" ? {
+          mintAuthority: mint.value.mintAuthority,
+          freezeAuthority: mint.value.freezeAuthority,
+          supply: mint.value.supply,
+          decimals: mint.value.decimals,
+          initialized: mint.value.initialized,
+          accountType: mint.value.accountType,
+          extensions: mint.value.extensions.map((extension) => extension.type),
+          pointer: [pointer?.length, addressOf(pointer?.bytes.slice(32, 64) ?? new Uint8Array())],
+        } : mint,
+        truncatedMint: decodeMint((mintAccount?.data ?? new Uint8Array()).slice(0, 100)),
+        paddedMint: decodeMint(corrupted(chain.fixture, 90, 1)),
+        mintAsTokenAccount: decodeMint(corrupted(chain.fixture, 165, 2)),
+        hiddenExtension: decodeMint(corrupted(chain.fixture, 1000, 1)),
+        tokenAsMint: decodeTokenAccount(corrupted(tokenAccount?.data ?? new Uint8Array(), 165, 1)),
+        token: token.kind === "decoded" ? {
+          mint: token.value.mint,
+          owner: token.value.owner,
+          amount: token.value.amount,
+          delegate: token.value.delegate,
+          state: token.value.state,
+          isNative: token.value.isNative,
+          closeAuthority: token.value.closeAuthority,
+          accountType: token.value.accountType,
+          extensions: token.value.extensions.map((extension) => [extension.type, extension.length]),
+        } : token,
+        holders: holders.map((holder) => holder.address),
+      }, {
+        project: "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        config: "9hjoFnUrgF65K4DnWSDbS1WJjoGu4LChuz8XFq73UtaS",
+        vault: "DmCm1opZm61cYKAHYQ24LTVvh8UqPu5hpkRChccaCa6n",
+        tooManySeeds: undefined,
+        longSeed: undefined,
+        simulated: [false, TOKEN_2022_PROGRAM],
+        owners: [TOKEN_2022_PROGRAM, TOKEN_2022_PROGRAM],
+        fixture: true,
+        mint: {
+          mintAuthority: undefined,
+          freezeAuthority: undefined,
+          supply: 1000000000000n,
+          decimals: 6,
+          initialized: true,
+          accountType: 1,
+          extensions: [18, 19],
+          pointer: [64, chain.mint],
+        },
+        truncatedMint: { kind: "malformed", issue: "truncated" },
+        paddedMint: { kind: "malformed", issue: "basePadding" },
+        mintAsTokenAccount: { kind: "malformed", issue: "accountTypeMismatch" },
+        hiddenExtension: { kind: "malformed", issue: "uninitializedExtension" },
+        tokenAsMint: { kind: "malformed", issue: "accountTypeMismatch" },
+        token: {
+          mint: chain.mint,
+          owner: chain.payer,
+          amount: 0n,
+          delegate: undefined,
+          state: 1,
+          isNative: undefined,
+          closeAuthority: undefined,
+          accountType: 2,
+          extensions: [[7, 0]],
+        },
+        holders: [ata],
+      })
+    }
+  })
+})

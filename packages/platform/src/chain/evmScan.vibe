@@ -1,0 +1,51 @@
+// spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head"
+import type { Address, Hex, Log, LogFilter } from "./evm.vibe"
+import { RpcMalformed } from "./rpc.vibe"
+
+export const maxPageBlocks = 9_999_999n
+
+export error ScanInvalid { issue: string }
+
+export interface ScanRequest {
+  readonly address: Address
+  readonly topics: ReadonlyArray<Hex | ReadonlyArray<Hex> | null>
+  readonly cursor: bigint
+  readonly pageBlocks: bigint
+  readonly finalizedHead: bigint
+}
+
+export interface ScanPage {
+  readonly from: bigint
+  readonly to: bigint
+  readonly logs: ReadonlyArray<Log>
+}
+
+function issueOf(request: ScanRequest) {
+  if (request.pageBlocks < 1n || request.pageBlocks > maxPageBlocks) return `a page holds 1 to ${maxPageBlocks} blocks, not ${request.pageBlocks}`
+  if (request.cursor < -1n) return "the cursor is below -1"
+  if (request.finalizedHead < 0n) return "the finalized head is negative"
+  return undefined
+}
+
+function strayIn(logs: ReadonlyArray<Log>, address: Address, from: bigint, to: bigint) {
+  const seen = new Set<string>()
+  return logs.find((log) => {
+    const key = `${log.blockNumber}:${log.logIndex}`
+    const stray = log.removed || log.blockNumber < from || log.blockNumber > to || log.address.toLowerCase() !== address.toLowerCase() || seen.has(key)
+    seen.add(key)
+    return stray
+  })
+}
+
+export effect function scanWith<E, R>(request: ScanRequest, read: (filter: LogFilter) => ReadonlyArray<Log>!E!R): (ScanPage | "caughtUp")!(E | ScanInvalid | RpcMalformed)!R {
+  const issue = issueOf(request)
+  if (issue !== undefined) throw new ScanInvalid({ issue })
+  const from = request.cursor + 1n
+  if (from > request.finalizedHead) return "caughtUp"
+  const end = from + request.pageBlocks - 1n
+  const to = end < request.finalizedHead ? end : request.finalizedHead
+  const logs = try read({ address: request.address, topics: request.topics, fromBlock: from, toBlock: to })
+  const stray = strayIn(logs, request.address, from, to)
+  if (stray !== undefined) throw new RpcMalformed({ method: "eth_getLogs", issue: `log ${stray.logIndex} of block ${stray.blockNumber} is outside the page, removed, from another address or repeated` })
+  return { from, to, logs }
+}

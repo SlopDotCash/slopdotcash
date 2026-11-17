@@ -1,0 +1,64 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "GET /v1/oauth/callback @worker:slop-identity",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:slop-identity"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "IDENTITY_PUBLIC_ORIGIN": "https://identity.slop.cash",
+  "IDENTITY_STATE_KEY": "<test value>",
+  "IDENTITY_ASSERTION_KEY": "<test value>",
+  "GITHUB_APP_CLIENT_ID": "Iv1.parity",
+  "bindings": [
+   "IDENTITY_DB",
+   "IDENTITY_START_LIMITER",
+   "IDENTITY_POLL_LIMITER"
+  ]
+ },
+ "cases": [
+  {
+   "name": "signed-out read",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://identity.slop.cash/v1/oauth/callback",
+    "headers": {},
+    "body": null
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "text/html; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"color-scheme\" content=\"dark\"><title>Sign-in failed · slop.cash</title><style>\n*{box-sizing:border-box}body{margin:0;min-height:100svh;background:#0f0e0c;color:#f3efe6;font:16px/1.5 system-ui,sans-serif;display:grid;grid-template-rows:auto 1fr}header{padding:24px 32px;border-bottom:1px solid rgba(243, 239, 230, 0.1);font-weight:800;letter-spacing:-.04em;font-size:24px}header span{color:#ff5a19}main{width:min(100%,480px);margin:auto;padding:48px 28px;text-align:center}h1{font-size:clamp(28px,6vw,36px);line-height:1.15;letter-spacing:-.035em;margin:0 0 16px}p{margin:0 0 28px;color:#a39d90;text-wrap:pretty}a,button{font:inherit;display:flex;align-items:center;justify-content:center;min-height:48px;padding:12px 20px;border-radius:8px;background:#ff5a19;color:#0f0e0c;font-weight:700;text-decoration:none;border:0;width:100%;cursor:pointer}a:hover,button:hover{background:#ff7a42}a:focus-visible,button:focus-visible{outline:3px solid #f3efe6;outline-offset:4px}.note{font-size:14px;margin:20px 0 0}.status{width:52px;height:52px;display:grid;place-items:center;border:1px solid rgba(243, 239, 230, 0.22);border-radius:50%;margin:0 auto 24px;color:#ff5a19;font-size:28px}\n</style></head><body><header>slop<span>.</span>cash</header><main><div class=\"status\" aria-hidden=\"true\">!</div><h1>Sign-in failed</h1><p>The sign-in response was invalid or expired.</p><a href=\"https://slop.cash\">Return to Slop</a></main></body></html>",
+    "bodySha256": "302f50e90886ba37d611efa16c83c76853317a55bf7d1ceb5aeaf30eb5c10315"
+   }
+  },
+  {
+   "name": "DELETE on a read route",
+   "kind": "request",
+   "request": {
+    "method": "DELETE",
+    "url": "https://identity.slop.cash/v1/oauth/callback",
+    "headers": {
+     "origin": "https://identity.slop.cash"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  }
+ ]
+}

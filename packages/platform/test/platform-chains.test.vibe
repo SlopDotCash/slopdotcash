@@ -1,0 +1,168 @@
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { base58 } from "@scure/base"
+import { type Anvil, type Validator, anvil, artifact, deploy, forgeBuild, forward, refuseMainnet, rpcFaults, sbfBuild, serve, solanaValidator } from "../src/testing/chains.ts"
+import { repoRoot } from "../src/testing/paths.ts"
+import { decodeResult, encodeCall } from "../src/chain/evm.vibe"
+import { jsonRpc } from "../src/chain/rpc.vibe"
+import { outbound } from "../src/http.vibe"
+
+const escrowProgram = "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ"
+const Quantity = Schema.String
+schema Block { readonly number: string }
+const Account = Schema.Struct({ value: Schema.NullOr(Schema.Struct({ executable: Schema.Boolean })) })
+schema Balance { readonly value: number }
+
+service Evm {
+  readonly chain: Anvil
+}
+
+service Solana {
+  readonly chain: Validator
+}
+
+const EvmStarted = Layer.effect(Evm, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 4663 })), (started) => promise(() => started.close()))
+  return { chain }
+})
+
+const SolanaStarted = Layer.effect(Solana, effect {
+  const built = try acquireRelease(promise(() => sbfBuild(`${repoRoot}/packages/contracts/solana`, "programs/slop-escrow/Cargo.toml")), (output) => promise(() => output.close()))
+  const chain = try acquireRelease(
+    promise(() => solanaValidator({ programs: [{ id: escrowProgram, soPath: `${built.out}/slop_escrow.so` }] })),
+    (started) => promise(() => started.close()),
+  )
+  return { chain }
+})
+
+effect function rpcAt(url: string, timeoutMs = 15_000) {
+  return try jsonRpc({ urls: Redacted.make([url]), timeoutMs, maxBytes: 1024 * 1024 })
+}
+
+layer(Layer.merge(EvmStarted, outbound), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('A local anvil on chain 4663 authenticates as a local chain and runs a deployed contract artifact (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head")', () => effect {
+    const { chain } = try Evm
+    const identity = try promise(() => refuseMainnet(chain))
+    const built = try acquireRelease(promise(() => forgeBuild(`${repoRoot}/packages/contracts/evm`, ["integration/MockReferralToken.sol"])), (output) => promise(() => output.close()))
+    const path = `${built.out}/MockReferralToken.sol/MockReferralToken.json`
+    const { abi } = try promise(() => artifact(path))
+    const [owner, holder] = chain.accounts
+    const token = try promise(() => deploy(chain, path, [], owner.address))
+    const mint = try encodeCall(abi, "mint", [holder.address, 5_000_000n])
+    const minted = try promise(() => chain.transact({ from: owner.address, to: token, data: mint }))
+    const rpc = try rpcAt(chain.url)
+    const balanceOf = try encodeCall(abi, "balanceOf", [holder.address])
+    const balance = try decodeResult(abi, "balanceOf", try rpc.call("eth_call", [{ to: token, data: balanceOf }, "latest"], Schema.TemplateLiteral(["0x", Schema.String])))
+    const head = try promise(() => chain.mine(70))
+    const depthFinalized = try rpc.call("eth_getBlockByNumber", ["finalized", false], Block)
+    chain.setFinalized(3n)
+    const pinnedFinalized = try rpc.call("eth_getBlockByNumber", ["finalized", false], Block)
+    const snapshot = try promise(() => chain.snapshot())
+    try promise(() => chain.mine(5))
+    try promise(() => chain.revert(snapshot))
+    const reverted = try rpc.call("eth_blockNumber", [], Quantity)
+    chain.setFinalized(undefined)
+    try Effect.try(() => assert.deepStrictEqual({
+      identity: identity.family === "evm" ? [identity.chainId, identity.client.startsWith("anvil/")] : identity.family,
+      deployed: token.startsWith("0x") && token.length === 42,
+      minted: minted.status,
+      balance,
+      finalized: [BigInt(depthFinalized.number), BigInt(pinnedFinalized.number)],
+      reverted: BigInt(reverted),
+    }, {
+      identity: [4663n, true],
+      deployed: true,
+      minted: "success",
+      balance: 5_000_000n,
+      finalized: [head - 64n, 3n],
+      reverted: head,
+    }))
+  })
+
+  it.effect('Each RPC fault reaches the JSON-RPC transport as the failure a scan must stop on (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head")', () => effect {
+    const { chain } = try Evm
+    const [owner, holder] = chain.accounts
+    const faults = try Effect.try(() => rpcFaults(forward(chain.url), [
+      { method: "eth_blockNumber", nth: 1, fault: "timeout" },
+      { method: "eth_blockNumber", nth: 2, fault: "http500" },
+      { method: "eth_blockNumber", nth: 3, fault: "malformed" },
+      { method: "eth_getBlockByNumber", nth: 1, fault: "staleFinalized" },
+      { method: "eth_sendTransaction", nth: 1, fault: "lostResponse" },
+      { method: "eth_chainId", fault: "wrongChain" },
+    ]))
+    const faulty = try acquireRelease(promise(() => serve(faults)), (served) => promise(() => served.close()))
+    try promise(() => chain.mine(80))
+    const rpc = try rpcAt(faulty.url, 1_000)
+    const timedOut = rpc.call("eth_blockNumber", [], Quantity) catch (error) => error._tag
+    const failed = rpc.call("eth_blockNumber", [], Quantity) catch (error) => error._tag
+    const malformed = rpc.call("eth_blockNumber", [], Quantity) catch (error) => error._tag
+    const recovered = try rpc.call("eth_blockNumber", [], Quantity)
+    const stale = try rpc.call("eth_getBlockByNumber", ["finalized", false], Block)
+    const finalized = try promise(() => chain.finalized())
+    const nonce = () => promise(() => chain.rpc("eth_getTransactionCount", [owner.address, "latest"]))
+    const before = try nonce()
+    const lost = rpc.call("eth_sendTransaction", [{ from: owner.address, to: holder.address, value: "0x1" }], Quantity) catch (error) => error._tag
+    const after = try nonce()
+    const identified = try jsonRpc({
+      urls: Redacted.make([faulty.url]),
+      timeoutMs: 1_000,
+      maxBytes: 1024 * 1024,
+      identity: { method: "eth_chainId", expected: "4663", read: (answer) => (typeof answer === "string" ? String(Number.parseInt(answer, 16)) : undefined) },
+    })
+    const wrongChain = identified.call("eth_blockNumber", [], Quantity) catch (error) => error._tag
+    try Effect.try(() => assert.deepStrictEqual({
+      timedOut,
+      failed,
+      malformed,
+      recovered: BigInt(recovered) > 0n,
+      stale: [BigInt(stale.number), finalized > 0n],
+      lost,
+      landed: BigInt(String(after)) - BigInt(String(before)),
+      wrongChain,
+      fired: faults.fired.map((fired) => fired.fault),
+    }, {
+      timedOut: "RpcUnavailable",
+      failed: "RpcUnavailable",
+      malformed: "RpcMalformed",
+      recovered: true,
+      stale: [0n, true],
+      lost: "RpcUnavailable",
+      landed: 1n,
+      wrongChain: "WrongChain",
+      fired: ["timeout", "http500", "malformed", "staleFinalized", "lostResponse", "wrongChain"],
+    }))
+  })
+})
+
+layer(Layer.merge(SolanaStarted, outbound), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('A validator owned by this run loads the escrow program, answers its own genesis, funds by airdrop and keeps its ledger across a slot warp (spec/operations/localValidator.md, "Story: Run tests only against the validator owned by the current stage"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => effect {
+    const { chain } = try Solana
+    const identity = try promise(() => refuseMainnet(chain))
+    const rpc = try rpcAt(chain.url)
+    const genesis = try rpc.call("getGenesisHash", [], Schema.String)
+    const program = try rpc.call("getAccountInfo", [escrowProgram, { encoding: "base64", commitment: "finalized" }], Account)
+    const recipient = try Effect.try(() => base58.encode(ed25519.getPublicKey(ed25519.utils.randomSecretKey())))
+    const balance = () => rpc.call("getBalance", [recipient, { commitment: "finalized" }], Balance)
+    const before = try balance()
+    try promise(() => chain.airdrop(recipient, 1_000_000_000n))
+    const after = try balance()
+    const warped = try promise(() => chain.warpSlot(5_000n))
+    const warpedGenesis = try rpc.call("getGenesisHash", [], Schema.String)
+    const kept = try rpc.call("getBalance", [recipient, { commitment: "processed" }], Balance)
+    try Effect.try(() => assert.deepStrictEqual({
+      identity,
+      genesis,
+      executable: program.value?.executable,
+      airdropped: after.value - before.value,
+      runner: chain.receipt.version,
+      warped: [warped >= 5_000n, warpedGenesis, kept.value],
+    }, {
+      identity: { family: "solana", genesis: chain.genesis },
+      genesis: chain.genesis,
+      executable: true,
+      airdropped: 1_000_000_000,
+      runner: "2.1.21",
+      warped: [true, chain.genesis, after.value],
+    }))
+  })
+})

@@ -1,4 +1,3 @@
-// spike: a Durable Object's SQLite storage as an Effect service, with an atomic transaction (PaymentSignerJournal shape)
 import type { SqlValue } from "../../../src/bindings.ts"
 import { sha256Hex } from "../../../src/crypto.vibe"
 import type { DurableObjectStorage } from "../bindings.ts"
@@ -18,7 +17,6 @@ export effect function query(text: string, params: ReadonlyArray<SqlValue> = [])
   return try Effect.try({ try: () => execute(storage, text, params), catch: (cause) => new ObjectSqlFailure({ message: String(cause) }) })
 }
 
-// Only synchronous effects may run inside: SQL through `query`, no WebCrypto, no I/O (they would die as async).
 export effect function transaction<A, E, R>(program: A!E!R) {
   const { storage } = try ObjectStorage
   const services = try Effect.context<R>()

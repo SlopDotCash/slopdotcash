@@ -1,0 +1,121 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /run @worker:vetting-sandbox",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:vetting-sandbox"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "bindings": [
+   "SANDBOX"
+  ]
+ },
+ "cases": [
+  {
+   "name": "signed-out same-origin JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://vetting-sandbox.internal/run",
+    "headers": {
+     "origin": "https://vetting-sandbox.internal",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "Invalid artifact request",
+    "bodySha256": "566affcff704f67ec98689d22e9f3ebc714248fbb58f84698826075b2ffc9667"
+   }
+  },
+  {
+   "name": "cross-site JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://vetting-sandbox.internal/run",
+    "headers": {
+     "origin": "https://attacker.example",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "Invalid artifact request",
+    "bodySha256": "566affcff704f67ec98689d22e9f3ebc714248fbb58f84698826075b2ffc9667"
+   }
+  },
+  {
+   "name": "form-encoded write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://vetting-sandbox.internal/run",
+    "headers": {
+     "origin": "https://vetting-sandbox.internal",
+     "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": "a=b"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "Invalid artifact request",
+    "bodySha256": "566affcff704f67ec98689d22e9f3ebc714248fbb58f84698826075b2ffc9667"
+   }
+  },
+  {
+   "name": "malformed JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://vetting-sandbox.internal/run",
+    "headers": {
+     "origin": "https://vetting-sandbox.internal",
+     "content-type": "application/json"
+    },
+    "body": "{"
+   },
+   "response": {
+    "status": 400,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "Invalid artifact request",
+    "bodySha256": "566affcff704f67ec98689d22e9f3ebc714248fbb58f84698826075b2ffc9667"
+   }
+  },
+  {
+   "name": "GET on a write route",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://vetting-sandbox.internal/run",
+    "headers": {
+     "origin": "https://vetting-sandbox.internal"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 405,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "Method not allowed",
+    "bodySha256": "371b26886bee5e559d5016b17b1479cb7a9154865da5a0f11563580ea99ff033"
+   }
+  }
+ ]
+}

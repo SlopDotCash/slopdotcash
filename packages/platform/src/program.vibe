@@ -1,0 +1,38 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { exitWithCode, failureLine } from "./programExit.ts"
+
+type Platform = NodeServices.NodeServices
+
+export type Command<E, R> = (args: ReadonlyArray<string>) => void!E!R
+
+export interface Program<S, LE, E> {
+  readonly services: Layer.Layer<S, LE, Platform>
+  readonly commands: Readonly<Record<string, Command<E, S | Platform>>>
+}
+
+export effect function run<S, LE, E>(spec: Program<S, LE, E>, argv: ReadonlyArray<string>) {
+  const [name = "", ...args] = argv
+  const command = Object.hasOwn(spec.commands, name) ? spec.commands[name] : undefined
+  if (command === undefined) {
+    try Console.error(`unknown command: ${name}\ncommands: ${Object.keys(spec.commands).sort().join(", ")}`)
+    return 2
+  }
+  const outcome = try exit(Effect.provide(command(args), spec.services))
+  if (Exit.isSuccess(outcome)) return 0
+  try Console.error(failureLine(outcome.cause))
+  return 1
+}
+
+effect function main<S, LE, E>(spec: Program<S, LE, E>) {
+  const argv = try (try Stdio.Stdio).args
+  return try run(spec, argv)
+}
+
+export function program<S, LE, E>(spec: Program<S, LE, E>) {
+  return {
+    run: (argv: ReadonlyArray<string>) => run(spec, argv),
+    runMain: () => NodeRuntime.runMain(Effect.provide(main(spec), NodeServices.layer), { teardown: exitWithCode, disableErrorReporting: true }),
+  }
+}

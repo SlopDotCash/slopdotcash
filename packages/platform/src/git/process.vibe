@@ -1,0 +1,111 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { concatBytes, textBytes, utf8Text } from "./bytes.ts"
+import { refused } from "./model.vibe"
+
+export service Git {
+  readonly binary: string
+  readonly searchPath: string
+}
+
+export function gitAt(binary: string) {
+  return Layer.effect(Git, effect {
+    return { binary, searchPath: try Config.String("PATH") }
+  })
+}
+
+export const systemGit = gitAt("git")
+
+export type Environment = Readonly<Record<string, string>>
+
+export interface Command {
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+  readonly env: Environment
+  readonly input?: string | Uint8Array
+  readonly limit: number
+  readonly seconds: number
+}
+
+export interface GitCall {
+  readonly args: ReadonlyArray<string>
+  readonly env?: Environment
+  readonly input?: string | Uint8Array
+  readonly limit: number
+  readonly seconds: number
+}
+
+export interface Output {
+  readonly status: number
+  readonly stdout: Uint8Array
+}
+
+error OutputLimit
+
+effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of stream) {
+    size += chunk.length
+    if (size > limit) throw new OutputLimit()
+    chunks.push(chunk)
+  }
+  return concatBytes(chunks)
+}
+
+export effect function runCommand(call: Command, refusal: string) {
+  const stdin = call.input === undefined ? "ignore" : Stream.make(typeof call.input === "string" ? textBytes(call.input) : call.input)
+  const ran = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make(call.command, call.args, { env: { ...call.env }, extendEnv: false, stdin, stderr: "ignore" }))
+    const [stdout, code] = try.all [collected(handle.stdout, call.limit), handle.exitCode]
+    return { status: Number(code), stdout } satisfies Output
+  })
+  const output = timeout(ran, Duration.seconds(call.seconds)) catch effect () => {
+    throw refused(refusal)
+  }
+  return output
+}
+
+export effect function runInherited(command: string, args: ReadonlyArray<string>, env: Environment, seconds: number, refusal: string) {
+  const ran = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make(command, args, { env: { ...env }, extendEnv: false, stdin: "ignore", stdout: "inherit", stderr: "inherit" }))
+    return Number(try handle.exitCode)
+  })
+  const status = timeout(ran, Duration.seconds(seconds)) catch effect () => {
+    throw refused(refusal)
+  }
+  if (status !== 0) throw refused(refusal)
+}
+
+export function isolated(searchPath: string, extra: Environment = {}): Environment {
+  return {
+    PATH: searchPath,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_NO_REPLACE_OBJECTS: "1",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_OPTIONAL_LOCKS: "0",
+    LC_ALL: "C",
+    ...extra,
+  }
+}
+
+export effect function runGit(call: GitCall, refusal: string) {
+  const git = try Git
+  return try runCommand({ command: git.binary, args: call.args, env: isolated(git.searchPath, call.env), input: call.input, limit: call.limit, seconds: call.seconds }, refusal)
+}
+
+export effect function gitBytes(call: GitCall, refusal: string) {
+  const output = try runGit(call, refusal)
+  if (output.status !== 0) throw refused(refusal)
+  return output.stdout
+}
+
+export effect function gitText(call: GitCall, refusal: string) {
+  const text = utf8Text(try gitBytes(call, refusal))
+  if (text === undefined) throw refused("Git merge metadata is not UTF-8")
+  return text
+}

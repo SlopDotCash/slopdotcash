@@ -1,0 +1,43 @@
+// spec/backend/projects.md, "Self-service project registry lifecycle"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement"
+import { idList } from "./config.vibe"
+
+export type Role = "administrator" | "moderator" | "operator"
+
+export service Roles {
+  has(githubId: string, role: Role): boolean!!
+  isTeam(githubId: string): boolean!!
+  snapshot(role: Role): ReadonlyArray<string>!!
+}
+
+export interface RoleVars {
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly OPERATOR_GITHUB_IDS?: string
+}
+
+effect function decodeRoles(vars: RoleVars) {
+  const administrators = try idList("ADMIN_GITHUB_IDS", vars.ADMIN_GITHUB_IDS)
+  const listedModerators = try idList("PROJECT_MODERATOR_GITHUB_IDS", vars.PROJECT_MODERATOR_GITHUB_IDS)
+  const operators = try idList("OPERATOR_GITHUB_IDS", vars.OPERATOR_GITHUB_IDS)
+  const admitted = new Set(administrators)
+  const snapshots: Readonly<Record<Role, ReadonlyArray<string>>> = {
+    administrator: administrators,
+    moderator: listedModerators.filter((id) => admitted.has(id)),
+    operator: operators,
+  }
+  const members = {
+    administrator: admitted,
+    moderator: new Set(snapshots.moderator),
+    operator: new Set(operators),
+  } satisfies Readonly<Record<Role, ReadonlySet<string>>>
+  const team = new Set([...administrators, ...listedModerators])
+  return {
+    has: (githubId: string, role: Role) => succeed(members[role].has(githubId)),
+    isTeam: (githubId: string) => succeed(team.has(githubId)),
+    snapshot: (role: Role) => succeed(snapshots[role]),
+  } satisfies Roles.Shape
+}
+
+export function rolesFrom(vars: RoleVars) {
+  return Layer.effect(Roles, decodeRoles(vars))
+}

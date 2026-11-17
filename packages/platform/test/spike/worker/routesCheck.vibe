@@ -1,4 +1,3 @@
-// spike: handle(route, f) keeps the Routes<S> check — a route needing a service the site does not provide is a compile error
 import type { Fetcher } from "../../../src/bindings.ts"
 import { webCrypto } from "../../../src/crypto.vibe"
 import { handle, pages, route } from "./site.vibe"

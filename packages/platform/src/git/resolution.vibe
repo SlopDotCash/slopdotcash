@@ -1,0 +1,245 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { lossyText, sha256Of } from "./bytes.ts"
+import { mergeResolutionLineCounts } from "./lineCounts.ts"
+import { type AutomaticMergeResolution, type CombinedParentFile, type CombinedParentMergeResolution, LEGACY_MERGE_PROFILE, MERGE_GIT_VERSION, MERGE_PROFILE, type MergeInput, type MergeProfile, type MergeRelocation, type MergeResolution, objectId, refused } from "./model.vibe"
+import { type Output, gitText, runGit } from "./process.vibe"
+
+const unavailable = "Complete local Git evidence unavailable"
+const cacheable = ["--version", "cat-file", "show", "diff-tree", "rev-parse", "ls-tree", "diff", "merge-base", "merge-tree"]
+const cacheLimit = 8 * 1024 * 1024
+
+interface Workspace {
+  readonly directory: string
+  readonly objects: string
+  readonly gitVersion: string
+  readonly cache: Map<string, Output>
+  readonly cached: { bytes: number }
+  parents?: Map<string, string>
+  paths?: Map<string, ReadonlyArray<string>>
+}
+
+effect function attempt(workspace: Workspace, args: ReadonlyArray<string>) {
+  const key = JSON.stringify(args)
+  const retained = workspace.cache.get(key)
+  if (retained !== undefined) return retained
+  const result = try runGit({ args: ["--git-dir", workspace.directory, ...args], env: { GIT_ALTERNATE_OBJECT_DIRECTORIES: workspace.objects }, limit: 64 * 1024 * 1024, seconds: 1800 }, unavailable)
+  const size = result.stdout.length
+  if (cacheable.includes(args[0] ?? "") && (result.status === 0 || (args[0] === "merge-tree" && result.status === 1)) && workspace.cached.bytes + size <= cacheLimit) {
+    workspace.cache.set(key, result)
+    workspace.cached.bytes += size
+  }
+  return result
+}
+
+effect function read(workspace: Workspace, ...args: ReadonlyArray<string>) {
+  const result = try attempt(workspace, args)
+  if (result.status !== 0) throw refused(unavailable)
+  return lossyText(result.stdout)
+}
+
+effect function readInput(workspace: Workspace, args: ReadonlyArray<string>, input: string) {
+  const result = try runGit({ args: ["--git-dir", workspace.directory, ...args], env: { GIT_ALTERNATE_OBJECT_DIRECTORIES: workspace.objects }, input, limit: 8 * 1024 * 1024, seconds: 30 }, unavailable)
+  if (result.status !== 0) throw refused(unavailable)
+  return lossyText(result.stdout)
+}
+
+effect function withMergeWorkspace<A, E, R>(repository: string, operation: (workspace: Workspace) => A!E!R) {
+  const objects = (try gitText({ args: ["-C", repository, "rev-parse", "--path-format=absolute", "--git-path", "objects"], limit: 64 * 1024, seconds: 30 }, unavailable)).trim()
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = fs.makeTempDirectoryScoped({ prefix: "slop-value-merge-" }) catch effect () => {
+      throw refused(unavailable)
+    }
+    const gitVersion = (try gitText({ args: ["--version"], limit: 4096, seconds: 30 }, unavailable)).trim()
+    try gitText({ args: ["init", "--bare", "--template=", directory], limit: 64 * 1024, seconds: 30 }, unavailable)
+    return try operation({ directory, objects, gitVersion, cache: new Map(), cached: { bytes: 0 } })
+  })
+}
+
+effect function entryAt(workspace: Workspace, ref: string, path: string) {
+  return (try read(workspace, "ls-tree", "-z", ref, "--", `:(literal)${path}`)).split("\0").find((entry) => entry.split("\t")[1] === path)?.split("\t")[0]
+}
+
+effect function parentsOf(workspace: Workspace, sha: string) {
+  return workspace.parents?.get(sha) ?? (try read(workspace, "show", "-s", "--format=%P", sha)).trim()
+}
+
+effect function combinedParentResolution(workspace: Workspace, commit: MergeInput["commits"][number], parents: ReadonlyArray<string>) {
+  const parentTrees: string[] = []
+  for (const parent of parents) parentTrees.push((try read(workspace, "rev-parse", `${parent}^{tree}`)).trim())
+  const resolvedTree = (try read(workspace, "rev-parse", `${commit.sha}^{tree}`)).trim()
+  const combinedPaths = (try read(workspace, "diff-tree", "--no-commit-id", "-c", "--name-only", "-z", commit.sha, "--")).split("\0").filter(Boolean)
+  const combined = try read(workspace, "diff-tree", "--no-commit-id", "-c", "-p", "--combined-all-paths", "--full-index", "--no-ext-diff", "--no-textconv", "--no-renames", commit.sha, "--")
+  const files: CombinedParentFile[] = []
+  const sections: string[] = []
+  const observed: string[] = []
+  for (const section of combined.split(/^diff --combined /mu).slice(1)) {
+    const path = section.slice(0, section.indexOf("\n"))
+    if (!combinedPaths.includes(path) || observed.includes(path)) throw refused("Incomplete combined merge paths")
+    observed.push(path)
+    const prefixes = section.split("\n").map((line) => line.slice(0, parents.length))
+    if (!prefixes.some((prefix) => prefix === "+".repeat(parents.length) || prefix === "-".repeat(parents.length))) continue
+    const entries: Array<{ mode: string; blobSha: string }> = []
+    for (const ref of [...parents, commit.sha]) {
+      const match = /^(100644|100755) blob ([a-f0-9]{40})$/u.exec((try entryAt(workspace, ref, path)) ?? "")
+      if (match === null) throw refused("Octopus resolution requires complete regular-file snapshots")
+      entries.push({ mode: match[1], blobSha: match[2] })
+    }
+    files.push({ path, parents: entries.slice(0, -1), result: entries[entries.length - 1] })
+    sections.push(`diff --combined ${section}`)
+  }
+  if (JSON.stringify([...observed].sort()) !== JSON.stringify([...combinedPaths].sort())) throw refused("Combined merge contains an unsupported path or binary delta")
+  const patch = sections.join("")
+  const resolution: CombinedParentMergeResolution = {
+    kind: "combined-parent-delta",
+    commitSha: commit.sha,
+    parents,
+    parentTrees,
+    gitVersion: workspace.gitVersion,
+    resolvedTree,
+    patch,
+    patchSha256: sha256Of(patch),
+    paths: files.map((file) => file.path),
+    files,
+  }
+  if (mergeResolutionLineCounts(resolution, commit) === null) throw refused("Incomplete or ambiguous combined-parent resolution")
+  return resolution
+}
+
+effect function relocations(workspace: Workspace, input: MergeInput, parents: ReadonlyArray<string>, automaticTree: string, resolvedTree: string, acceptedPaths: ReadonlySet<string>, authoredPaths: ReadonlySet<string>) {
+  const found: MergeRelocation[] = []
+  for (const sourceParent of parents) {
+    const rows = (try read(workspace, "diff", "--raw", "-z", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--find-renames=100%", "--diff-filter=R", sourceParent, automaticTree, "--")).split("\0")
+    for (let index = 0; index < rows.length - 1; index += 3) {
+      const [oldMode = "", newMode = "", oldBlob = "", newBlob = "", status = ""] = rows[index].slice(1).split(" ")
+      const sourcePath = rows[index + 1] ?? ""
+      const path = rows[index + 2] ?? ""
+      if (status !== "R100" || oldMode !== newMode || oldBlob !== newBlob || !acceptedPaths.has(path) || authoredPaths.has(path) || !["100644", "100755"].includes(oldMode)) continue
+      const expected = `${oldMode} blob ${oldBlob}`
+      if ((try entryAt(workspace, sourceParent, sourcePath)) !== expected || (try entryAt(workspace, automaticTree, path)) !== expected || (try entryAt(workspace, resolvedTree, path)) !== expected || (try entryAt(workspace, input.pull.head.sha, path)) !== expected) continue
+      const sourceCommitShas: string[] = []
+      for (const entry of input.commitAttribution) {
+        if (!objectId.test(entry.sha) || entry.limitations.length !== 0 || !(entry.changedPaths ?? []).includes(sourcePath)) continue
+        if ((try attempt(workspace, ["merge-base", "--is-ancestor", entry.sha, sourceParent])).status === 0) sourceCommitShas.push(entry.sha)
+      }
+      if (sourceCommitShas.length === 0) continue
+      found.push({ sourceParent, sourcePath, path, blobSha: oldBlob, headSha: input.pull.head.sha, sourceCommitShas: sourceCommitShas.sort() })
+    }
+  }
+  return found
+}
+
+effect function automaticResolution(workspace: Workspace, input: MergeInput, commit: MergeInput["commits"][number], parents: ReadonlyArray<string>, profile: MergeProfile) {
+  const acceptedPaths = new Set(input.files.map((file) => file.filename))
+  const authoredPaths = new Set(input.commitAttribution.flatMap((entry) => entry.changedPaths ?? []))
+  const relocationPaths = [...acceptedPaths].filter((path) => !authoredPaths.has(path))
+  const [left = "", right = ""] = parents
+  const merged = try attempt(workspace, ["merge-tree", "--write-tree", "--no-messages", left, right])
+  if (merged.status !== 0 && merged.status !== 1) throw refused("Automatic merge reconstruction failed")
+  const automaticTree = lossyText(merged.stdout).split("\n")[0] ?? ""
+  if (!objectId.test(automaticTree)) throw refused("Automatic merge tree missing")
+  const resolvedTree = (try read(workspace, "rev-parse", `${commit.sha}^{tree}`)).trim()
+  const same = automaticTree === resolvedTree
+  const patch = same ? "" : try read(workspace, "diff", ...(profile === MERGE_PROFILE ? ["--full-index"] : []), "--no-ext-diff", "--no-textconv", "--binary", "--no-renames", automaticTree, resolvedTree, "--")
+  const paths = same ? [] : (try read(workspace, "diff", "--name-only", "-z", "--no-renames", automaticTree, resolvedTree, "--")).split("\0").filter(Boolean)
+  const automaticRelocations = relocationPaths.length === 0 ? [] : try relocations(workspace, input, parents, automaticTree, resolvedTree, acceptedPaths, authoredPaths)
+  const resolution: AutomaticMergeResolution = {
+    commitSha: commit.sha,
+    parents: [left, right],
+    gitVersion: workspace.gitVersion,
+    automaticTree,
+    resolvedTree,
+    hadConflicts: merged.status === 1,
+    patch,
+    patchSha256: sha256Of(patch),
+    paths,
+    ...(automaticRelocations.length > 0 ? { automaticRelocations } : {}),
+  }
+  return resolution
+}
+
+effect function collectWithWorkspace(input: MergeInput, profile: MergeProfile, workspace: Workspace) {
+  if (profile !== MERGE_PROFILE && profile !== LEGACY_MERGE_PROFILE) throw refused("Unsupported merge reconstruction profile")
+  const resolutions: MergeResolution[] = []
+  for (const commit of input.commits) {
+    if (commit.parents.length < 2) continue
+    const parents = commit.parents.map((parent) => parent.sha)
+    if (![commit.sha, ...parents].every((sha) => objectId.test(sha))) throw refused("Invalid immutable merge identity")
+    if ((try parentsOf(workspace, commit.sha)) !== parents.join(" ")) throw refused("Local merge parents differ from GitHub evidence")
+    resolutions.push(parents.length > 2 ? try combinedParentResolution(workspace, commit, parents) : try automaticResolution(workspace, input, commit, parents, profile))
+  }
+  return resolutions
+}
+
+effect function verifyAndCollect(input: MergeInput, profile: MergeProfile, workspace: Workspace) {
+  if ((try read(workspace, "--version")).trim() !== MERGE_GIT_VERSION) throw refused("Required merge reconstruction Git version unavailable")
+  if (!objectId.test(input.pull.head.sha)) throw refused("Invalid immutable source head")
+  try read(workspace, "cat-file", "-e", `${input.pull.head.sha}^{commit}`)
+  for (const commit of input.commits) {
+    const parents = commit.parents.map(({ sha }) => sha)
+    if (![commit.sha, ...parents].every((sha) => objectId.test(sha)) || (try parentsOf(workspace, commit.sha)) !== parents.join(" ")) throw refused("Git objects differ from ordered source parents")
+    if (commit.parents.length > 1) continue
+    const attributions = input.commitAttribution.filter(({ sha }) => sha === commit.sha)
+    const attribution = attributions[0]
+    if (attributions.length !== 1 || attribution.limitations.length !== 0 || attribution.changedPaths === null) throw refused("Complete ordinary source paths unavailable")
+    const paths = workspace.paths?.get(commit.sha) ?? (try read(workspace, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", "-z", "--no-renames", commit.sha, "--")).split("\0").filter(Boolean)
+    if (JSON.stringify([...paths].sort()) !== JSON.stringify([...attribution.changedPaths].sort())) throw refused("Git paths differ from complete source inventory")
+  }
+  return try collectWithWorkspace(input, profile, workspace)
+}
+
+export effect function collectMergeResolutions(input: MergeInput, repository: string, profile: MergeProfile = MERGE_PROFILE) {
+  return try withMergeWorkspace(repository, (workspace) => collectWithWorkspace(input, profile, workspace))
+}
+
+export effect function collectVerifiedMergeResolutions(input: MergeInput, repository: string, profile: MergeProfile = MERGE_PROFILE) {
+  return try withMergeWorkspace(repository, (workspace) => verifyAndCollect(input, profile, workspace))
+}
+
+effect function sourceParents(workspace: Workspace, unique: ReadonlyArray<string>) {
+  const parents = new Map<string, string>()
+  for (const row of (try read(workspace, "log", "--no-walk=unsorted", "--format=%H %P", ...unique, "--")).trim().split("\n")) {
+    const [sha = "", ...rest] = row.split(" ")
+    if (!unique.includes(sha) || parents.has(sha)) throw refused("Incomplete ordered source parents")
+    parents.set(sha, rest.filter(Boolean).join(" "))
+  }
+  if (parents.size !== unique.length) throw refused("Incomplete ordered source parents")
+  return parents
+}
+
+effect function sourcePaths(workspace: Workspace, ordinary: ReadonlyArray<string>) {
+  const inventory = new Map<string, string[]>()
+  if (ordinary.length === 0) return inventory
+  const rows = (try readInput(workspace, ["diff-tree", "--stdin", "--root", "--always", "--raw", "--no-abbrev", "-r", "-z", "--no-renames"], `${ordinary.join("\n")}\n`)).split("\0")
+  if (rows.pop() !== "") throw refused("Incomplete source path inventory")
+  let paths: string[] | undefined
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index]
+    if (objectId.test(row)) {
+      if (!ordinary.includes(row) || inventory.has(row)) throw refused("Invalid source path inventory")
+      paths = []
+      inventory.set(row, paths)
+    } else {
+      const path = rows[index + 1] ?? ""
+      if (paths === undefined || !/^:[0-7]{6} [0-7]{6} [a-f0-9]{40} [a-f0-9]{40} [AMDTUX]$/u.test(row) || path === "") throw refused("Invalid source path inventory")
+      paths.push(path)
+      index++
+    }
+  }
+  if (inventory.size !== ordinary.length) throw refused("Incomplete source path inventory")
+  return inventory
+}
+
+export effect function collectVerifiedMergeResolutionBatch(inputs: ReadonlyArray<MergeInput>, repository: string) {
+  if (inputs.length === 0) throw refused("Complete merge inputs are required")
+  return try withMergeWorkspace(repository, (workspace) => effect {
+    const unique = [...new Set(inputs.flatMap((input) => input.commits.map((commit) => commit.sha)))]
+    if (unique.some((sha) => !objectId.test(sha))) throw refused("Invalid immutable merge identity")
+    const parents = try sourceParents(workspace, unique)
+    workspace.parents = parents
+    workspace.paths = try sourcePaths(workspace, unique.filter((sha) => (parents.get(sha) ?? "").split(" ").filter(Boolean).length < 2))
+    const results: Array<ReadonlyArray<MergeResolution>> = []
+    for (const input of inputs) results.push(try verifyAndCollect(input, MERGE_PROFILE, workspace))
+    return results
+  })
+}

@@ -1,8 +1,14 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"
 import * as Hex from "effect/encoding/Hex"
 import type { R2Bucket, R2Object } from "./bindings.ts"
+import { sha256Hex } from "./crypto.vibe"
+import { runningSha256 } from "./digest.ts"
 
 export error StorageFailure { operation: string; key: string; message: string }
 export error AlreadyStored { key: string }
+export error DigestMismatch { key: string; expected: string; actual: string }
+
+export const partBytes = 8 * 1024 * 1024
 
 export interface StoredObject {
   readonly key: string
@@ -11,10 +17,59 @@ export interface StoredObject {
   readonly contentType: string | undefined
 }
 
+export interface Part {
+  readonly key: string
+  readonly sha256: string
+  readonly size: number
+}
+
+export interface Parted {
+  readonly key: string
+  readonly sha256: string
+  readonly size: number
+  readonly parts: ReadonlyArray<Part>
+}
+
+export interface PartOptions {
+  readonly sha256: string
+  readonly contentType: string
+  readonly partBytes?: number
+}
+
+export interface Listed {
+  readonly key: string
+  readonly size: number
+  readonly uploaded: number
+}
+
+export interface Listing {
+  readonly objects: ReadonlyArray<Listed>
+  readonly cursor: string | undefined
+}
+
 export interface Bucket {
   put(key: string, bytes: Uint8Array, options: { readonly sha256: string; readonly contentType: string; readonly once?: boolean }): StoredObject!(StorageFailure | AlreadyStored)
   get(key: string): ({ readonly object: StoredObject; readonly bytes: Uint8Array } | undefined)!StorageFailure
   head(key: string): (StoredObject | undefined)!StorageFailure
+  putParts(key: string, bytes: Uint8Array, options: PartOptions): Parted!(StorageFailure | AlreadyStored | DigestMismatch)!Experimental.Crypto.Crypto
+  getVerified(key: string, sha256: string, size: number): (Uint8Array | undefined)!(StorageFailure | DigestMismatch)!Experimental.Crypto.Crypto
+  getParts<E, R>(parted: Parted, each: (bytes: Uint8Array) => void!E!R): boolean!(StorageFailure | DigestMismatch | E)!(Experimental.Crypto.Crypto | R)
+}
+
+export interface RetentionBucket extends Bucket {
+  list(prefix: string, cursor?: string, limit?: number): Listing!StorageFailure
+  remove(key: string): void!StorageFailure
+}
+
+export interface R2Listing {
+  readonly objects: ReadonlyArray<R2Object>
+  readonly truncated: boolean
+  readonly cursor?: string
+}
+
+export interface RetentionR2Bucket extends R2Bucket {
+  list(options: { readonly prefix: string; readonly limit: number; readonly cursor?: string }): Promise<R2Listing>
+  delete(key: string): Promise<void>
 }
 
 function described(object: R2Object): StoredObject {
@@ -31,7 +86,45 @@ function failed(operation: string, key: string) {
   return (cause: unknown) => new StorageFailure({ operation, key, message: cause instanceof Error ? cause.message : String(cause) })
 }
 
+function bounded(size: number): boolean {
+  return Number.isSafeInteger(size) && size >= 0 && size <= partBytes
+}
+
+export function partKey(key: string, index: number, sha256: string): string {
+  return `${key}/chunks/${index}/${sha256}`
+}
+
 export function bucket(binding: R2Bucket): Bucket {
+  const read = (key: string) => effect {
+    const found = try tryPromise({ try: () => binding.get(key), catch: failed("get", key) })
+    if (found === null) return undefined
+    const bytes = try tryPromise({ try: () => found.arrayBuffer(), catch: failed("get", key) })
+    return { object: described(found), bytes: new Uint8Array(bytes) }
+  }
+  const getVerified = (key: string, sha256: string, size: number) => effect {
+    if (!bounded(size)) throw new StorageFailure({ operation: "getVerified", key, message: "part exceeds bounded read size" })
+    const found = try tryPromise({ try: () => binding.get(key), catch: failed("getVerified", key) })
+    if (found === null) return undefined
+    if (found.size !== size) throw new DigestMismatch({ key, expected: sha256, actual: `${found.size} of ${size} bytes` })
+    const recorded = found.customMetadata?.sha256 ?? described(found).sha256
+    if (recorded !== undefined && recorded !== sha256) throw new DigestMismatch({ key, expected: sha256, actual: recorded })
+    const bytes = new Uint8Array(try tryPromise({ try: () => found.arrayBuffer(), catch: failed("getVerified", key) }))
+    const actual = try sha256Hex(bytes)
+    if (bytes.length !== size || actual !== sha256) throw new DigestMismatch({ key, expected: sha256, actual })
+    return bytes
+  }
+  const storeOnce = (key: string, bytes: Uint8Array, sha256: string, contentType: string) => effect {
+    const written = try tryPromise({
+      try: () => binding.put(key, bytes, { sha256, onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType }, customMetadata: { sha256 } }),
+      catch: failed("putParts", key),
+    })
+    if (written !== null) return
+    const kept = getVerified(key, sha256, bytes.length) catch effect (error) => match (error) {
+      when DigestMismatch: undefined;
+      default: throw error;
+    }
+    if (kept === undefined) throw new AlreadyStored({ key })
+  }
   return {
     put: (key, bytes, options) => effect {
       const written = try tryPromise({
@@ -45,15 +138,58 @@ export function bucket(binding: R2Bucket): Bucket {
       if (written === null) throw new AlreadyStored({ key })
       return described(written)
     },
-    get: (key) => effect {
-      const found = try tryPromise({ try: () => binding.get(key), catch: failed("get", key) })
-      if (found === null) return undefined
-      const bytes = try tryPromise({ try: () => found.arrayBuffer(), catch: failed("get", key) })
-      return { object: described(found), bytes: new Uint8Array(bytes) }
-    },
+    get: read,
     head: (key) => effect {
       const found = try tryPromise({ try: () => binding.head(key), catch: failed("head", key) })
       return found === null ? undefined : described(found)
     },
+    putParts: (key, bytes, options) => effect {
+      const size = options.partBytes ?? partBytes
+      if (!bounded(size) || size < 1) throw new StorageFailure({ operation: "putParts", key, message: "part size must be a positive whole number of bytes no larger than 8 MiB" })
+      const actual = try sha256Hex(bytes)
+      if (actual !== options.sha256) throw new DigestMismatch({ key, expected: options.sha256, actual })
+      if (bytes.length <= size) {
+        try storeOnce(key, bytes, actual, options.contentType)
+        return { key, sha256: actual, size: bytes.length, parts: [{ key, sha256: actual, size: bytes.length }] }
+      }
+      const parts: Part[] = []
+      for (let offset = 0; offset < bytes.length; offset += size) {
+        const slice = bytes.slice(offset, offset + size)
+        const digest = try sha256Hex(slice)
+        const stored = partKey(key, parts.length, digest)
+        try storeOnce(stored, slice, digest, options.contentType)
+        parts.push({ key: stored, sha256: digest, size: slice.length })
+      }
+      return { key, sha256: actual, size: bytes.length, parts }
+    },
+    getVerified,
+    getParts: (parted, each) => effect {
+      const whole = runningSha256()
+      for (const part of parted.parts) {
+        const bytes = try getVerified(part.key, part.sha256, part.size)
+        if (bytes === undefined) return false
+        whole.update(bytes)
+        try each(bytes)
+      }
+      const actual = Hex.encode(whole.finish())
+      if (actual !== parted.sha256) throw new DigestMismatch({ key: parted.key, expected: parted.sha256, actual })
+      return true
+    },
+  }
+}
+
+export function retentionBucket(binding: RetentionR2Bucket): RetentionBucket {
+  return {
+    ...bucket(binding),
+    list: (prefix, cursor, limit = 1000) => effect {
+      const listed = try tryPromise({
+        try: () => binding.list({ prefix, limit, ...(cursor === undefined ? {} : { cursor }) }),
+        catch: failed("list", prefix),
+      })
+      const next = listed.truncated ? listed.cursor : undefined
+      if (listed.truncated && (next === undefined || next === cursor)) throw new StorageFailure({ operation: "list", key: prefix, message: "listing did not advance" })
+      return { objects: listed.objects.map((object) => ({ key: object.key, size: object.size, uploaded: object.uploaded.getTime() })), cursor: next }
+    },
+    remove: (key) => tryPromise({ try: () => binding.delete(key), catch: failed("remove", key) }),
   }
 }

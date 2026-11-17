@@ -1,0 +1,12 @@
+// spec/contributor/openedRun.md, "Story: Bind the ordinary PR-opened event to its own authenticated run"
+import type { ReadFailure } from "./backend.vibe"
+
+export interface OpenedPullRequest {
+  readonly repositoryId: string
+  readonly pullRequestNodeId: string
+  readonly authorGithubId: string
+}
+
+export service RunEvidence {
+  prOpened(pullRequest: OpenedPullRequest): boolean!ReadFailure
+}

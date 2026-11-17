@@ -336,6 +336,41 @@
       ],
       "outputs": []
     },
+    "@repo/platform#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/contracts/evm/{src,vendor,integration}/**",
+        "$TURBO_ROOT$/packages/contracts/evm/foundry.toml",
+        "$TURBO_ROOT$/packages/contracts/solana/programs/**",
+        "$TURBO_ROOT$/packages/contracts/solana/Cargo.toml",
+        "$TURBO_ROOT$/packages/contracts/solana/Cargo.lock",
+        "$TURBO_ROOT$/frozen.json",
+        "$TURBO_ROOT$/.gitattributes",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/skills/**",
+        "$TURBO_ROOT$/data/**",
+        "$TURBO_ROOT$/cycles/**",
+        "$TURBO_ROOT$/funding/**",
+        "$TURBO_ROOT$/disclosures/**",
+        "$TURBO_ROOT$/docs/**",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/src/lib/**",
+        "$TURBO_ROOT$/apps/frontend/public/**",
+        "$TURBO_ROOT$/apps/frontend/src/agent-logos/**",
+        "$TURBO_ROOT$/apps/backend/src/projects/legacyProjects.json",
+        "$TURBO_ROOT$/packages/contracts/evm/*.integration.ts",
+        "$TURBO_ROOT$/packages/contracts/solana/{integration,scripts}/**",
+        "$TURBO_ROOT$/packages/contracts/solana/package*.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
     "@repo/backend#test": {
       "dependsOn": [
         "gen",
@@ -439,7 +474,13 @@
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/migrations/**",
-        "$TURBO_ROOT$/frozen.json"
+        "$TURBO_ROOT$/frozen.json",
+        "$TURBO_ROOT$/packages/contracts/evm/{src,vendor,integration}/**",
+        "$TURBO_ROOT$/packages/contracts/evm/foundry.toml",
+        "$TURBO_ROOT$/packages/contracts/solana/programs/**",
+        "$TURBO_ROOT$/packages/contracts/solana/Cargo.toml",
+        "$TURBO_ROOT$/packages/contracts/solana/Cargo.lock",
+        "$TURBO_ROOT$/packages/contracts/solana/integration/**"
       ],
       "outputs": [
         ".cache/test-result-*.json"

@@ -1,0 +1,14 @@
+// spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"
+import { ConfigInvalid } from "../../src/config.vibe"
+import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
+import { program } from "../../src/program.vibe"
+
+effect function digest(args: ReadonlyArray<string>) {
+  try Console.log(try sha256Hex(args.join(" ")))
+}
+
+effect function refuse() {
+  throw new ConfigInvalid({ name: "SLOP_ENVIRONMENT", issue: "not production, staging or local" })
+}
+
+program({ services: webCrypto, commands: { digest, refuse } }).runMain()

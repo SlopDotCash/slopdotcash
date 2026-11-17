@@ -1,14 +1,24 @@
+// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"
+import * as Base64Url from "effect/encoding/Base64Url"
 import * as Hex from "effect/encoding/Hex"
+import { aesGcmDecrypt, aesGcmEncrypt, rs256Signature } from "./webcrypto.ts"
 
 export const webCrypto = Experimental.Crypto.layerWebCrypto
+
+export error SealBroken
+export error KeyInvalid { issue: string }
 
 export function utf8(text: string): Uint8Array {
   return new TextEncoder().encode(text)
 }
 
+function bytesOf(data: string | Uint8Array) {
+  return typeof data === "string" ? utf8(data) : data
+}
+
 export effect function sha256Hex(data: string | Uint8Array) {
   const crypto = try Experimental.Crypto.Crypto
-  const digest = try orDie(crypto.digest("SHA-256", typeof data === "string" ? utf8(data) : data))
+  const digest = try orDie(crypto.digest("SHA-256", bytesOf(data)))
   return Hex.encode(digest)
 }
 
@@ -17,7 +27,91 @@ export effect function randomId() {
   return try orDie(crypto.randomUUIDv4())
 }
 
-export effect function randomToken(bytes = 32) {
+export effect function randomBytes(size: number) {
   const crypto = try Experimental.Crypto.Crypto
-  return Hex.encode(try orDie(crypto.randomBytes(bytes)))
+  return try orDie(crypto.randomBytes(size))
+}
+
+export effect function randomToken(bytes = 32) {
+  return Hex.encode(try randomBytes(bytes))
+}
+
+export effect function hmacSha256(key: Uint8Array | Redacted.Redacted<string>, data: string | Uint8Array) {
+  const crypto = try Experimental.Crypto.Crypto
+  const secret = key instanceof Uint8Array ? key : utf8(Redacted.value(key))
+  return try orDie(crypto.hmac("SHA-256", Redacted.make(secret), bytesOf(data)))
+}
+
+export effect function hmacSha256Hex(key: Uint8Array | Redacted.Redacted<string>, data: string | Uint8Array) {
+  return Hex.encode(try hmacSha256(key, data))
+}
+
+export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  let difference = a.length ^ b.length
+  for (let index = 0; index < Math.max(a.length, b.length); index++) difference |= (a[index] ?? 0) ^ (b[index] ?? 0)
+  return difference === 0
+}
+
+export function base64url(bytes: Uint8Array): string {
+  return Base64Url.encode(bytes)
+}
+
+export function fromBase64url(text: string): Uint8Array | undefined {
+  return /^[A-Za-z0-9_-]+$/u.test(text) ? Result.getOrUndefined(Base64Url.decode(text)) : undefined
+}
+
+effect function aesKey(key: Redacted.Redacted<string>) {
+  const bytes = fromBase64url(Redacted.value(key))
+  if (bytes === undefined || bytes.length !== 32) return try die(new KeyInvalid({ issue: "An AES-GCM key is 32 bytes of unpadded base64url" }))
+  return bytes
+}
+
+export effect function aesGcmSeal(key: Redacted.Redacted<string>, plain: Uint8Array, aad: string) {
+  const secret = try aesKey(key)
+  const iv = try randomBytes(12)
+  const sealed = try orDie(tryPromise(() => aesGcmEncrypt(secret, iv, plain, aad)))
+  return `${base64url(iv)}.${base64url(sealed)}`
+}
+
+export effect function aesGcmOpen(key: Redacted.Redacted<string>, sealed: string, aad: string) {
+  const secret = try aesKey(key)
+  const parts = sealed.split(".")
+  const iv = fromBase64url(parts[0] ?? "")
+  const body = fromBase64url(parts[1] ?? "")
+  if (parts.length !== 2 || iv === undefined || iv.length !== 12 || body === undefined) throw new SealBroken()
+  return try tryPromise({ try: () => aesGcmDecrypt(secret, iv, body, aad), catch: () => new SealBroken() })
+}
+
+const ed25519Spki = [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]
+const ed25519Pkcs8 = [0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20]
+const pairCheck = utf8("slop-vetting-key-pair-check")
+
+export effect function ed25519Verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array) {
+  if (publicKey.length !== 32 || signature.length !== 64) return false
+  const crypto = try Experimental.Crypto.Crypto
+  return crypto.verify("Ed25519", new Uint8Array([...ed25519Spki, ...publicKey]), signature, message) catch () => false
+}
+
+schema Ed25519Jwk { kty: "OKP"; crv: "Ed25519"; d: string; x: string }
+const decodeJwk = Schema.decodeUnknownEffect(Schema.fromJsonString(Ed25519Jwk))
+
+export effect function ed25519KeyPair(privateJwk: Redacted.Redacted<string>) {
+  const jwk = decodeJwk(Redacted.value(privateJwk)) catch effect () => { throw new KeyInvalid({ issue: "The key is not an Ed25519 private JWK" }) }
+  const seed = fromBase64url(jwk.d)
+  const publicKey = fromBase64url(jwk.x)
+  if (seed === undefined || seed.length !== 32 || publicKey === undefined || publicKey.length !== 32) throw new KeyInvalid({ issue: "The Ed25519 JWK does not hold 32-byte keys" })
+  const privateKey = Redacted.make(new Uint8Array([...ed25519Pkcs8, ...seed]))
+  const crypto = try Experimental.Crypto.Crypto
+  const proof = crypto.sign("Ed25519", privateKey, pairCheck) catch () => undefined
+  if (proof === undefined || !(try ed25519Verify(publicKey, pairCheck, proof))) throw new KeyInvalid({ issue: "The Ed25519 private and public keys are not one pair" })
+  return { privateKey, publicKey }
+}
+
+export effect function ed25519Sign(privateJwk: Redacted.Redacted<string>, message: Uint8Array) {
+  const { privateKey } = try ed25519KeyPair(privateJwk)
+  return try orDie((try Experimental.Crypto.Crypto).sign("Ed25519", privateKey, message))
+}
+
+export effect function rs256Sign(pkcs8Pem: Redacted.Redacted<string>, data: string) {
+  return try tryPromise({ try: () => rs256Signature(Redacted.value(pkcs8Pem), data), catch: () => new KeyInvalid({ issue: "The RSA key is not a PKCS#1 or PKCS#8 PEM private key" }) })
 }

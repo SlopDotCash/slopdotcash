@@ -1,0 +1,154 @@
+// spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement"
+import type { D1Database, DurableObjectNamespace, DurableObjectState, Fetcher, ScheduledController } from "../../src/bindings.ts"
+import { isoAt } from "../../src/clock.vibe"
+import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
+import { D1, d1, sql } from "../../src/d1.vibe"
+import { type Remote, durableObject, entrypoint } from "../../src/entrypoints.ts"
+import { json } from "../../src/http.vibe"
+import { Journal, durableJournal } from "../../src/journal.vibe"
+import { Roles, rolesFrom } from "../../src/roles.vibe"
+import { type CronJobs, area, byCron, later, pages, worker } from "../../src/worker.vibe"
+
+export interface Env {
+  readonly DB: D1Database
+  readonly ASSETS: Fetcher
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly LEDGER: DurableObjectNamespace<Remote<typeof ledgerMethods>>
+  readonly STAMPER: Remote<typeof stamperMethods>
+}
+
+service Bindings { readonly env: Env }
+
+service Greeter {
+  greet(name: string): string!!
+}
+
+error Refusal { reason: string }
+
+effect function param(name: string) {
+  return (try HttpRouter.params)[name] ?? ""
+}
+
+effect function roleCard() {
+  const id = try param("id")
+  const roles = try Roles
+  return json({
+    administrator: try roles.has(id, "administrator"),
+    moderator: try roles.has(id, "moderator"),
+    team: try roles.isTeam(id),
+    moderators: try roles.snapshot("moderator"),
+  })
+}
+
+effect function greeting() {
+  const name = try param("name")
+  return json({ greeting: try (try Greeter).greet(name) })
+}
+
+effect function record(job: string, at: string) {
+  try orDie((try D1).run(sql`INSERT INTO runs (job, at) VALUES (${job}, ${at})`))
+}
+
+effect function deferred() {
+  const key = try param("key")
+  try later(record(key, "after the response"))
+  return json({ scheduled: key }, 202)
+}
+
+effect function recorded(controller: ScheduledController) {
+  try record("records", try isoAt(controller.scheduledTime))
+}
+
+effect function migrateLedger() {
+  const journal = try Journal
+  try journal.transaction((tx) => tx.run(sql`CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, text TEXT NOT NULL)`))
+}
+
+effect function append(key: string, texts: ReadonlyArray<string>, refuse: boolean) {
+  const journal = try Journal
+  return try journal.transaction((tx) => effect {
+    for (const text of texts) try tx.run(sql`INSERT INTO entries (key, text) VALUES (${key}, ${text})`)
+    if (refuse) throw new Refusal({ reason: "the ledger refuses after writing" })
+    return texts.length
+  })
+}
+
+effect function listed(key: string) {
+  const journal = try Journal
+  const rows = try journal.transaction((tx) => tx.all(sql`SELECT text FROM entries WHERE key = ${key} ORDER BY seq`))
+  return rows.map((row) => String(row.text))
+}
+
+effect function stamp(text: string) {
+  if (text === "refuse") throw new Refusal({ reason: "the stamper refuses" })
+  const digest = try sha256Hex(text)
+  try orDie((try D1).run(sql`INSERT INTO stamps (text, digest) VALUES (${text}, ${digest})`))
+  return digest
+}
+
+const ledgerMethods = { record: append, entries: listed }
+const stamperMethods = { stamp }
+
+effect function settled<A>(run: () => Promise<A>) {
+  const outcome = Effect.map(tryPromise(run), (value) => ({ settled: value })) catch () => "rejected"
+  return outcome
+}
+
+effect function ledger() {
+  const key = try param("key")
+  const refuse = (try param("mode")) === "refuse"
+  const { env } = try Bindings
+  const object = env.LEDGER.get(env.LEDGER.idFromName(key))
+  const outcome = try settled(() => object.record(key, ["first", "second"], refuse))
+  const entries = try orDie(tryPromise(() => object.entries(key)))
+  return json({ outcome, entries })
+}
+
+effect function stamped() {
+  const text = try param("text")
+  const { env } = try Bindings
+  const outcome = try settled(() => env.STAMPER.stamp(text))
+  const rows = try orDie((try D1).all(sql`SELECT digest FROM stamps WHERE text = ${text}`))
+  return json({ outcome, stamps: rows.length })
+}
+
+const jobs: CronJobs<D1> = {
+  "*/5 * * * *": [
+    { name: "refuses", run: () => effect { throw new Refusal({ reason: "the first job refuses" }) } },
+    { name: "records", run: recorded },
+  ],
+  "17 * * * *": [{ name: "records", run: recorded }],
+}
+
+const alpha = area({
+  name: "alpha",
+  api: [],
+  routes: HttpRouter.add("GET", "/api/alpha/roles/:id", roleCard()),
+  provides: Layer.succeed(Greeter, { greet: (name: string) => succeed(`hello ${name}`) }),
+})
+
+const beta = area({
+  name: "beta",
+  api: [],
+  routes: Layer.mergeAll(
+    HttpRouter.add("GET", "/api/beta/greet/:name", greeting()),
+    HttpRouter.add("POST", "/api/beta/later/:key", deferred()),
+    HttpRouter.add("POST", "/api/beta/ledger/:key/:mode", ledger()),
+    HttpRouter.add("POST", "/api/beta/stamp/:text", stamped()),
+  ),
+  provides: Layer.empty,
+  jobs,
+})
+
+function services(env: Env) {
+  return Layer.mergeAll(d1(env.DB), webCrypto, rolesFrom(env), Layer.succeed(Bindings, { env }))
+}
+
+export const Ledger = durableObject((state: DurableObjectState) => durableJournal(state), { start: migrateLedger(), methods: ledgerMethods })
+export const Stamper = entrypoint(services, stamperMethods)
+
+const site = pages({ areas: [alpha, beta], services, assets: "ASSETS" })
+const cron = worker({ services, routes: Layer.empty, scheduled: byCron(jobs) })
+
+export default { fetch: site.fetch, scheduled: cron.scheduled }

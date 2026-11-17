@@ -1,0 +1,197 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { sha256Of } from "./bytes.ts"
+
+export const MERGE_GIT_VERSION = "git version 2.56.0"
+export const LEGACY_MERGE_PROFILE = "git-2.56.0-v1"
+export const MERGE_PROFILE = "git-2.56.0-v2"
+export const VALUE_FILE_EXPANSION_LIMIT = 256 * 1024 * 1024
+
+export error MergeRefused { reason: string }
+
+export schema MergeProfile = "git-2.56.0-v1" | "git-2.56.0-v2"
+
+export schema MergeHead {
+  readonly sha: string
+}
+
+export schema MergePull {
+  readonly head: MergeHead
+}
+
+export schema MergeFile {
+  readonly filename: string
+}
+
+export schema MergeCommit {
+  readonly sha: string
+  readonly parents: ReadonlyArray<MergeHead>
+}
+
+export schema MergeCommitAttribution {
+  readonly sha: string
+  readonly changedPaths: ReadonlyArray<string> | null
+  readonly limitations: ReadonlyArray<string>
+}
+
+export schema MergeInput {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pull: MergePull
+  readonly files: ReadonlyArray<MergeFile>
+  readonly commits: ReadonlyArray<MergeCommit>
+  readonly commitAttribution: ReadonlyArray<MergeCommitAttribution>
+}
+
+export schema MergeRelocation {
+  readonly sourceParent: string
+  readonly sourcePath: string
+  readonly path: string
+  readonly blobSha: string
+  readonly headSha: string
+  readonly sourceCommitShas: ReadonlyArray<string>
+}
+
+export schema AutomaticMergeResolution {
+  readonly kind?: "automatic"
+  readonly commitSha: string
+  readonly parents: ReadonlyArray<string>
+  readonly gitVersion: string
+  readonly automaticTree: string
+  readonly resolvedTree: string
+  readonly hadConflicts: boolean
+  readonly patch: string
+  readonly patchSha256: string
+  readonly paths: ReadonlyArray<string>
+  readonly automaticRelocations?: ReadonlyArray<MergeRelocation>
+}
+
+export schema SnapshotEntry {
+  readonly mode: string
+  readonly blobSha: string
+}
+
+export schema CombinedParentFile {
+  readonly path: string
+  readonly parents: ReadonlyArray<SnapshotEntry>
+  readonly result: SnapshotEntry
+}
+
+export schema CombinedParentMergeResolution {
+  readonly kind: "combined-parent-delta"
+  readonly commitSha: string
+  readonly parents: ReadonlyArray<string>
+  readonly parentTrees: ReadonlyArray<string>
+  readonly gitVersion: string
+  readonly resolvedTree: string
+  readonly patch: string
+  readonly patchSha256: string
+  readonly paths: ReadonlyArray<string>
+  readonly files: ReadonlyArray<CombinedParentFile>
+}
+
+export schema MergeResolution = AutomaticMergeResolution | CombinedParentMergeResolution
+
+export schema MergeRecipe {
+  readonly profile: MergeProfile
+  readonly inputSha256: string
+}
+
+export schema FileRequest {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly ref: string
+  readonly path: string
+}
+
+export schema FileMode = "100644" | "100755"
+
+export schema RecoveredEntry {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly ref: string
+  readonly path: string
+  readonly treeSha: string
+  readonly mode: FileMode | null
+  readonly blobSha: string | null
+}
+
+export schema RecoveredBlob {
+  readonly sha: string
+  readonly sha256: string
+  readonly size: number
+  readonly gzipBase64: string
+}
+
+export schema FileRecovery {
+  readonly inputSha256: string
+  readonly entries: ReadonlyArray<RecoveredEntry>
+  readonly blobs: ReadonlyArray<RecoveredBlob>
+}
+
+export interface ObjectClosure {
+  readonly commits: ReadonlyArray<string>
+  readonly trees: ReadonlyArray<string>
+  readonly blobs: ReadonlyArray<string>
+  readonly snapshots: ReadonlyArray<string>
+  readonly expandedBytes: number
+}
+
+export const objectId = /^[a-f0-9]{40}$/u
+
+export function refused(reason: string) {
+  return new MergeRefused({ reason })
+}
+
+export function ordered(values: Iterable<string>): ReadonlyArray<string> {
+  return [...new Set(values)].sort()
+}
+
+export function canonicalMergeInput(input: MergeInput): MergeInput {
+  return {
+    repository: input.repository,
+    repositoryNodeId: input.repositoryNodeId,
+    repositoryDatabaseId: input.repositoryDatabaseId,
+    pull: { head: { sha: input.pull.head.sha } },
+    files: input.files.map(({ filename }) => ({ filename })),
+    commits: input.commits.map(({ sha, parents }) => ({ sha, parents: parents.map((parent) => ({ sha: parent.sha })) })),
+    commitAttribution: input.commitAttribution.map(({ sha, changedPaths, limitations }) => ({ sha, changedPaths, limitations })),
+  }
+}
+
+export function mergeInputSha256(input: MergeInput): string {
+  return sha256Of(JSON.stringify(canonicalMergeInput(input)))
+}
+
+export function fileRequestsSha256(requests: ReadonlyArray<FileRequest>): string {
+  return sha256Of(JSON.stringify(requests.map(({ repository, repositoryNodeId, ref, path }) => ({ repository, repositoryNodeId, ref, path }))))
+}
+
+export function mergeRecipe(input: MergeInput): MergeRecipe {
+  return { profile: MERGE_PROFILE, inputSha256: mergeInputSha256(input) }
+}
+
+export function validMergeRecipe(value: unknown): value is MergeRecipe {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const keys = Object.keys(value).sort().join()
+  const profile: unknown = Reflect.get(value, "profile")
+  const digest: unknown = Reflect.get(value, "inputSha256")
+  return keys === "inputSha256,profile" && (profile === MERGE_PROFILE || profile === LEGACY_MERGE_PROFILE) && typeof digest === "string" && /^[a-f0-9]{64}$/u.test(digest)
+}
+
+export function sameMergeRecipeInput(recipe: unknown, ...inputs: ReadonlyArray<MergeInput>): boolean {
+  return validMergeRecipe(recipe) && inputs.every((input) => mergeInputSha256(input) === recipe.inputSha256)
+}
+
+export function validFileRequest(value: FileRequest): boolean {
+  return (
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(value.repository) &&
+    value.repositoryNodeId.length > 0 &&
+    objectId.test(value.ref) &&
+    value.path.length > 0 &&
+    value.path.length <= 1024 &&
+    !value.path.includes("\\") &&
+    ![...value.path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) &&
+    !value.path.split("/").some((part) => part === "" || part === "." || part === "..")
+  )
+}

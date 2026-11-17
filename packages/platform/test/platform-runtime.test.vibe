@@ -1,0 +1,178 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { Miniflare } from "miniflare"
+import { createBuilder } from "vite"
+import type { D1Database } from "../src/bindings.ts"
+import { sha256Hex, webCrypto } from "../src/crypto.vibe"
+import { scheduled } from "../src/testing.ts"
+import { workerBuild } from "../src/vite.ts"
+
+const root = new URL("..", import.meta.url).pathname
+const out = `${root}.cache/runtime`
+const page = "<!doctype html><title>Runtime fixture</title><p>static page</p>\n"
+const about = "Served by the ASSETS binding.\n"
+
+interface Answer {
+  readonly status: number
+  readonly body: string
+}
+
+service Fixture {
+  readonly mf: Miniflare
+  readonly db: D1Database
+  readonly program: string
+}
+
+function workerOptions(name: string, script: string, admins: string) {
+  return {
+    config: {
+      name,
+      compatibilityDate: "2026-11-13",
+      manifest: { mainModule: "worker.js", modules: { "worker.js": { type: "esm" as const, contents: script } } },
+      assets: { directory: `${out}/site`, runWorkerFirst: true, hasUserWorker: true },
+      exports: { Ledger: { type: "durable-object" as const, storage: "sqlite" as const } },
+      env: {
+        DB: { type: "d1" as const, id: "runtime", name: "runtime" },
+        LEDGER: { type: "durable-object" as const, worker: name, exportName: "Ledger" },
+        STAMPER: { type: "worker" as const, worker: name, exportName: "Stamper" },
+        ASSETS: { type: "assets" as const },
+        ADMIN_GITHUB_IDS: { type: "text" as const, value: admins },
+        PROJECT_MODERATOR_GITHUB_IDS: { type: "text" as const, value: "8,9" },
+      },
+    },
+  }
+}
+
+const Started = Layer.effect(Fixture, effect {
+  const fs = try FileSystem.FileSystem
+  try fs.makeDirectory(`${out}/site`, { recursive: true })
+  try fs.writeFileString(`${out}/site/index.html`, page)
+  try fs.writeFileString(`${out}/site/about.txt`, about)
+  const config = workerBuild({ workers: { _worker: "test/worker/runtime.vibe" }, programs: { main: "test/worker/program.vibe" }, outDir: `${out}/dist` })
+  try promise(() => createBuilder({ root, configFile: false, logLevel: "error", ...config }).then((builder) => builder.buildApp()))
+  const script = try fs.readFileString(`${out}/dist/_worker.js`)
+  const started = Effect.try(() => new Miniflare({
+    telemetry: { enabled: false },
+    cf: false,
+    enableDevRegistry: false,
+    logRequests: false,
+    workers: [workerOptions("site", script, "7,8"), workerOptions("refused", script, "7,eight")],
+  }))
+  const mf = try acquireRelease(orDie(started), (running) => promise(() => running.dispose()))
+  const db = (try promise(() => mf.getD1Database("DB", "site"))) as unknown as D1Database
+  try promise(() => db.exec("CREATE TABLE runs (job TEXT NOT NULL, at TEXT NOT NULL)"))
+  try promise(() => db.exec("CREATE TABLE stamps (text TEXT NOT NULL, digest TEXT NOT NULL)"))
+  return { mf, db, program: `${out}/dist/programs/main.js` }
+})
+
+effect function ask(path: string, method = "GET") {
+  const { mf } = try Fixture
+  const response = try promise(() => mf.dispatchFetch(`https://runtime.test${path}`, { method }))
+  return { status: response.status, body: try promise(() => response.text()) } satisfies Answer
+}
+
+effect function askRefused(path: string) {
+  const { mf } = try Fixture
+  const refused = (try promise(() => mf.getWorker("refused"))) as unknown as { fetch(url: string): Promise<{ readonly status: number }> }
+  return (try promise(() => refused.fetch(`https://runtime.test${path}`))).status
+}
+
+effect function jobs() {
+  const { db } = try Fixture
+  const result = try promise(() => db.prepare("SELECT job FROM runs ORDER BY rowid").all())
+  return result.results.map((row) => String(row.job))
+}
+
+effect function eventually<A, R>(probe: A!!R, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try Effect.sleep("100 millis")
+  }
+  return try probe
+}
+
+effect function runProgram(args: ReadonlyArray<string>) {
+  const { program } = try Fixture
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("node", [program, ...args]))
+    const [stdout, stderr, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr)), handle.exitCode]
+    return { code: Number(code), stdout, stderr }
+  })
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.mergeAll(Layer.provide(Started, NodeServices.layer), NodeServices.layer, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Two areas share one Pages Worker, reach its Durable Object and entrypoint, and every other path falls through to the static assets (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
+    const greeted = try ask("/api/beta/greet/ada")
+    const home = try ask("/")
+    const file = try ask("/about.txt")
+    const missing = try ask("/no-such-page")
+    const deferred = try ask("/api/beta/later/k1", "POST")
+    const kept = try eventually(jobs(), (rows) => rows.includes("k1"))
+    const committed = try ask("/api/beta/ledger/l1/keep", "POST")
+    const rolledBack = try ask("/api/beta/ledger/l1/refuse", "POST")
+    const stamped = try ask("/api/beta/stamp/hello", "POST")
+    const unstamped = try ask("/api/beta/stamp/refuse", "POST")
+    const answer = (body: unknown) => ({ status: 200, body: JSON.stringify(body) })
+    try same(
+      { greeted, home: [home.status, home.body.includes("Runtime fixture")], file, missing: missing.status, deferred, kept, committed, rolledBack, stamped, unstamped },
+      {
+        greeted: { status: 200, body: JSON.stringify({ greeting: "hello ada" }) },
+        home: [200, true],
+        file: { status: 200, body: about },
+        missing: 404,
+        deferred: { status: 202, body: JSON.stringify({ scheduled: "k1" }) },
+        kept: ["k1"],
+        committed: answer({ outcome: { settled: 2 }, entries: ["first", "second"] }),
+        rolledBack: answer({ outcome: "rejected", entries: ["first", "second"] }),
+        stamped: answer({ outcome: { settled: try sha256Hex("hello") }, stamps: 1 }),
+        unstamped: answer({ outcome: "rejected", stamps: 0 }),
+      },
+    )
+  })
+
+  it.effect('Roles are the configured snapshot and a malformed id refuses the isolate (spec/backend/projects.md, "Self-service project registry lifecycle"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement")', () => effect {
+    const cards = [try ask("/api/alpha/roles/7"), try ask("/api/alpha/roles/8"), try ask("/api/alpha/roles/9"), try ask("/api/alpha/roles/10")]
+    const card = (administrator: boolean, moderator: boolean, team: boolean) => ({ status: 200, body: JSON.stringify({ administrator, moderator, team, moderators: ["8"] }) })
+    const refused = [try askRefused("/api/alpha/roles/7"), try askRefused("/about.txt")]
+    try same({ cards, refused }, { cards: [card(true, false, true), card(true, true, true), card(false, false, true), card(false, false, false)], refused: [500, 500] })
+  })
+
+  it.effect('A scheduled run runs every job, isolates the failing one and reports the run failed (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end")', () => effect {
+    const { mf } = try Fixture
+    const before = (try jobs()).filter((job) => job === "records").length
+    const failing = try promise(() => scheduled(mf, "*/5 * * * *"))
+    const afterFailing = (try jobs()).filter((job) => job === "records").length
+    const passing = try promise(() => scheduled(mf, "17 * * * *"))
+    const afterPassing = (try jobs()).filter((job) => job === "records").length
+    const unknown = try promise(() => scheduled(mf, "0 0 * * *"))
+    const afterUnknown = (try jobs()).filter((job) => job === "records").length
+    try same(
+      { outcomes: [failing.outcome, passing.outcome, unknown.outcome], records: [afterFailing - before, afterPassing - before, afterUnknown - before] },
+      { outcomes: ["exception", "ok", "exception"], records: [1, 2, 2] },
+    )
+  })
+
+  it.effect('A Node program runs one named command and exits 0 on success, 1 on a failure and 2 for an unknown command (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end")', () => effect {
+    const digested = try runProgram(["digest", "hello", "world"])
+    const refused = try runProgram(["refuse"])
+    const unknown = try runProgram(["publish"])
+    const empty = try runProgram([])
+    try same(
+      { digested, refused, unknown: unknown.code, listed: unknown.stderr, empty: empty.code },
+      {
+        digested: { code: 0, stdout: `${try sha256Hex("hello world")}\n`, stderr: "" },
+        refused: { code: 1, stdout: "", stderr: "ConfigInvalid: name=SLOP_ENVIRONMENT, issue=not production, staging or local\n" },
+        unknown: 2,
+        listed: "unknown command: publish\ncommands: digest, refuse\n",
+        empty: 2,
+      },
+    )
+  })
+})

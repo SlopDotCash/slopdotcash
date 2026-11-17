@@ -1,0 +1,180 @@
+import { assert, layer } from "@effect/vitest"
+import * as Base64 from "effect/encoding/Base64"
+import * as Hex from "effect/encoding/Hex"
+import { TestClock } from "effect/testing"
+import { aesGcmOpen, aesGcmSeal, base64url, ed25519Sign, ed25519Verify, fromBase64url, hmacSha256, hmacSha256Hex, rs256Sign, sha256Hex, timingSafeEqual, utf8, webCrypto } from "../src/crypto.vibe"
+import { serviceKeys, signedHeaders, verifySigned } from "../src/signed.vibe"
+import { generatedRsaKey } from "./support/rsaKey.ts"
+
+function bytes(hex: string) {
+  return Result.getOrUndefined(Hex.decode(hex)) ?? new Uint8Array()
+}
+
+function text(data: Uint8Array) {
+  return new TextDecoder().decode(data)
+}
+
+function changed(data: Uint8Array) {
+  return new Uint8Array([...data.slice(0, -1), (data[data.length - 1] ?? 0) ^ 1])
+}
+
+function jwk(seed: string, publicKey: string) {
+  return Redacted.make(JSON.stringify({ kty: "OKP", crv: "Ed25519", d: base64url(bytes(seed)), x: base64url(bytes(publicKey)) }))
+}
+
+effect function tagOf<A, E extends { readonly _tag: string }>(attempt: A!E) {
+  return attempt catch (error) => error._tag
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const rfc4231 = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+
+const rfc8032 = [
+  {
+    seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    publicKey: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    message: "",
+    signature: "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+  },
+  {
+    seed: "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+    publicKey: "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+    message: "72",
+    signature: "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+  },
+] as const
+
+const appJwtInput = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3OTQ4MzAzNDAsImV4cCI6MTc5NDgzMDk0MCwiaXNzIjoiNDI0MjQyIn0"
+
+
+const signedAt = 1794830400000
+
+layer(webCrypto)((it) => {
+  it.effect('HMAC-SHA256 matches RFC 4231 and digests compare in constant time (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
+    const fromText = try hmacSha256Hex(Redacted.make("Jefe"), "what do ya want for nothing?")
+    const fromBytes = Hex.encode(try hmacSha256(utf8("Jefe"), utf8("what do ya want for nothing?")))
+    const digest = bytes(rfc4231)
+    try same(
+      { fromText, fromBytes, equal: timingSafeEqual(digest, bytes(rfc4231)), changed: timingSafeEqual(digest, changed(digest)), shorter: timingSafeEqual(digest, digest.slice(1)) },
+      { fromText: rfc4231, fromBytes: rfc4231, equal: true, changed: false, shorter: false },
+    )
+  })
+
+  it.effect('A sealed verifier opens only under its own key and additional data (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub")', () => effect {
+    const key = Redacted.make(base64url(new Uint8Array(32).fill(7)))
+    const otherKey = Redacted.make(base64url(new Uint8Array(32).fill(8)))
+    const aad = "slop-identity-pkce:v1:flow-1"
+    const sealed = try aesGcmSeal(key, utf8("a-verifier-of-forty-three-characters-123456"), aad)
+    const resealed = try aesGcmSeal(key, utf8("a-verifier-of-forty-three-characters-123456"), aad)
+    const opened = text(try aesGcmOpen(key, sealed, aad))
+    const [iv = "", body = ""] = sealed.split(".")
+    const tampered = `${iv}.${base64url(changed(fromBase64url(body) ?? new Uint8Array()))}`
+    const shortKey = try exit(aesGcmSeal(Redacted.make(base64url(new Uint8Array(16))), utf8("x"), aad))
+    try same(
+      {
+        opened,
+        fresh: sealed !== resealed,
+        otherAad: try tagOf(aesGcmOpen(key, sealed, "slop-identity-pkce:v1:flow-2")),
+        otherKey: try tagOf(aesGcmOpen(otherKey, sealed, aad)),
+        tampered: try tagOf(aesGcmOpen(key, tampered, aad)),
+        malformed: try tagOf(aesGcmOpen(key, "not-sealed", aad)),
+        shortKeyDies: Exit.isFailure(shortKey),
+        strictBase64url: [fromBase64url("a+b/"), fromBase64url("YQ=="), fromBase64url("")],
+      },
+      {
+        opened: "a-verifier-of-forty-three-characters-123456",
+        fresh: true,
+        otherAad: "SealBroken",
+        otherKey: "SealBroken",
+        tampered: "SealBroken",
+        malformed: "SealBroken",
+        shortKeyDies: true,
+        strictBase64url: [undefined, undefined, undefined],
+      },
+    )
+  })
+
+  it.effect('Ed25519 reproduces the RFC 8032 vectors, RS256 verifies under its public key, and both refuse a changed byte or a broken key (spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window")', () => effect {
+    const vectors = []
+    for (const vector of rfc8032) {
+      const signature = try ed25519Sign(jwk(vector.seed, vector.publicKey), bytes(vector.message))
+      vectors.push({
+        signature: Hex.encode(signature),
+        verified: try ed25519Verify(bytes(vector.publicKey), bytes(vector.message), signature),
+        changed: try ed25519Verify(bytes(vector.publicKey), bytes(vector.message), changed(signature)),
+        shortKey: try ed25519Verify(bytes(vector.publicKey).slice(1), bytes(vector.message), signature),
+      })
+    }
+    const [first, second] = rfc8032
+    const mismatched = ed25519Sign(jwk(first.seed, second.publicKey), utf8("x")) catch (error) => error._tag
+    const notJwk = ed25519Sign(Redacted.make("{\"kty\":\"RSA\"}"), utf8("x")) catch (error) => error._tag
+    const rsa = try Effect.try(() => generatedRsaKey())
+    const rs256Signature = try rs256Sign(Redacted.make(rsa.pem), appJwtInput)
+    const rs256Again = try rs256Sign(Redacted.make(rsa.pem), appJwtInput)
+    const rs256 = {
+      verified: try Effect.try(() => rsa.verifies(appJwtInput, rs256Signature)),
+      changed: try Effect.try(() => rsa.verifies(appJwtInput, changed(rs256Signature))),
+      repeated: Hex.encode(rs256Signature) === Hex.encode(rs256Again),
+    }
+    const notPem = rs256Sign(Redacted.make("-----BEGIN PRIVATE KEY-----\nnot base64!\n-----END PRIVATE KEY-----"), appJwtInput) catch (error) => error._tag
+    try same(
+      { vectors, mismatched, notJwk, rs256, notPem },
+      {
+        vectors: rfc8032.map((vector) => ({ signature: vector.signature, verified: true, changed: false, shortKey: false })),
+        mismatched: "KeyInvalid",
+        notJwk: "KeyInvalid",
+        rs256: { verified: true, changed: false, repeated: true },
+        notPem: "KeyInvalid",
+      },
+    )
+  })
+
+  it.effect('A signed service request is accepted once and refused for a changed byte, another path, a stale or future time and an unknown key (spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window")', () => effect {
+    const [first, second] = rfc8032
+    const key = jwk(first.seed, first.publicKey)
+    const keys = try serviceKeys(`${Base64.encode(bytes(first.publicKey))}, ${Base64.encode(bytes(second.publicKey))}`)
+    const strangers = try serviceKeys(Base64.encode(bytes(second.publicKey)))
+    const broken = try serviceKeys(`${Base64.encode(bytes(first.publicKey))},${Base64.encode(bytes(second.publicKey).slice(1))}`)
+    const body = utf8("{\"assessmentId\":\"a1\",\"verdict\":\"no-findings\"}")
+    const path = "/api/v1/vetting/results?attempt=1"
+    try TestClock.setTime(signedAt)
+    const headers = try signedHeaders({ key, method: "POST", path, body })
+    const request = { method: "POST", path, headers, body }
+    const verdict = effect (candidate: typeof request, trusted: ReadonlyMap<string, Uint8Array>) => verifySigned(candidate, trusted) catch (error) => error.reason
+    const accepted = try verdict(request, keys)
+    const changedBody = try verdict({ ...request, body: changed(body) }, keys)
+    const otherPath = try verdict({ ...request, path: "/api/v1/vetting/results?attempt=2" }, keys)
+    const otherMethod = try verdict({ ...request, method: "PUT" }, keys)
+    const unknownKey = try verdict(request, strangers)
+    const missing = try verdict({ ...request, headers: { ...headers, "x-slop-vetting-timestamp": "16 Nov 2026" } }, keys)
+    try TestClock.setTime(signedAt + 300_000)
+    const lastMoment = try verdict(request, keys)
+    try TestClock.setTime(signedAt + 300_001)
+    const expired = try verdict(request, keys)
+    try TestClock.setTime(signedAt - 300_001)
+    const future = try verdict(request, keys)
+    const unsignable = signedHeaders({ key, method: "POST", path: "/api/v1/projects/p1", body }) catch (error) => error._tag
+    try same(
+      { headers: Object.keys(headers).sort(), timestamp: headers["x-slop-vetting-timestamp"], keyCount: keys.size, broken: broken.size, accepted, changedBody, otherPath, otherMethod, unknownKey, missing, lastMoment, expired, future, unsignable },
+      {
+        headers: ["x-slop-vetting-key", "x-slop-vetting-signature", "x-slop-vetting-timestamp"],
+        timestamp: "2026-11-16T12:00:00.000Z",
+        keyCount: 2,
+        broken: 0,
+        accepted: { keyId: try sha256Hex(bytes(first.publicKey)) },
+        changedBody: "signature",
+        otherPath: "signature",
+        otherMethod: "signature",
+        unknownKey: "unknownKey",
+        missing: "missing",
+        lastMoment: { keyId: try sha256Hex(bytes(first.publicKey)) },
+        expired: "expired",
+        future: "future",
+        unsignable: "UnsignablePath",
+      },
+    )
+  })
+})

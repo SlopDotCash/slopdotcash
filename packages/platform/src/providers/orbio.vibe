@@ -1,0 +1,11 @@
+// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"
+import { recordOf } from "./anthropic.vibe"
+
+export const orbioBase = "https://api.orbio.so/api"
+
+export function orbioCost(body: unknown): number | null {
+  const cost = recordOf(recordOf(body)?.usage)?.cost
+  if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) return null
+  const micro = Math.round(cost * 1_000_000)
+  return Number.isSafeInteger(micro) && micro / 1_000_000 === cost ? micro : null
+}

@@ -1,5 +1,3 @@
-// The two workerd built-in modules the spike imports. @cloudflare/workers-types is not installed (IDIOMS failed
-// assumption 7), so these are the minimal shapes the spike uses; the build keeps both modules external.
 declare module "cloudflare:workers" {
   import type { DurableObjectState, ExecutionContext } from "./bindings.ts";
 

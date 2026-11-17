@@ -1,0 +1,112 @@
+// spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "Story: Clear each repository by its own admission before work"; spec/security/bounty.md, "Story: Award each underlying finding once, to its first qualifying report"; spec/security/privacy.md, "Story: Read only authorized retained evidence"
+import type { Statement } from "@repo/platform/d1"
+import { type FileRecovery, type FileRequest, type MergeInput, MergeResolution } from "@repo/platform/git/evidence"
+import type { Json, ReadFailure } from "./backend.vibe"
+
+export {
+  AutomaticMergeResolution,
+  CombinedParentFile,
+  CombinedParentMergeResolution,
+  FileMode,
+  FileRecovery,
+  FileRequest,
+  MergeCommit,
+  MergeCommitAttribution,
+  MergeFile,
+  MergeHead,
+  MergeInput,
+  MergeProfile,
+  MergePull,
+  MergeRelocation,
+  MergeResolution,
+  RecoveredBlob,
+  RecoveredEntry,
+  SnapshotEntry,
+} from "@repo/platform/git/evidence"
+
+export schema Restriction = "Clear" | "FlagQuarantine" | "ModeratorQuarantine" | "ServiceBan" | "ModeratorBan"
+
+export schema EnforcementView {
+  readonly restriction: Restriction
+  readonly enforcementGeneration: number
+  readonly clearanceGeneration: string
+}
+
+export service Enforcement {
+  project(projectId: string): EnforcementView!ReadFailure
+  fence(pin: { readonly enforcementGeneration: number }): Statement!!
+}
+
+export schema ClearanceRead = "ClearanceCleared" | "ClearanceUnverified" | "ClearanceRefused"
+
+export interface ClearancePin {
+  readonly projectId: string
+  readonly revision: number
+  readonly templateSha256: string
+}
+
+export service Clearance {
+  of(pin: ClearancePin): ClearanceRead!ReadFailure
+}
+
+export schema AwardSplit = "StandardSplit" | "FullAward"
+
+export schema ApprovedAward {
+  readonly caseId: string
+  readonly projectId: string
+  readonly caseRevision: number
+  readonly termsRevision: number
+  readonly direct: boolean
+  readonly split: AwardSplit
+  readonly grossBaseUnits: string
+  readonly asset: string
+  readonly rootCauseKey: string
+  readonly approvedAt: string
+}
+
+export service ApprovedAwards {
+  forCase(caseId: string): (ApprovedAward | undefined)!ReadFailure
+}
+
+export interface AuditEvent {
+  readonly actorGithubId: string
+  readonly action: string
+  readonly target: string
+  readonly requestId: string
+  readonly details: { readonly [key: string]: Json }
+  readonly onlyIf?: Statement
+}
+
+export service Audit {
+  statements(event: AuditEvent): ReadonlyArray<Statement>!!
+}
+
+export schema CaseNoticeAccess {
+  readonly allowed: boolean
+  readonly acknowledgeHours: number
+}
+
+export service SecurityNoticeAccess {
+  forCase(read: { readonly caseId: string; readonly githubId: string }): CaseNoticeAccess!ReadFailure
+}
+
+export schema MergeResult {
+  readonly inputSha256: string
+  readonly mergeResolutions: ReadonlyArray<MergeResolution>
+}
+
+export interface MergeReconstruction {
+  readonly inputs: ReadonlyArray<MergeInput>
+  readonly bundle: ReadableStream<Uint8Array>
+}
+
+export interface MergeFileRecovery extends MergeReconstruction {
+  readonly fileRequests: ReadonlyArray<FileRequest>
+}
+
+export error MergeUnavailable { stage: string }
+
+export service MergeVerifier {
+  reconstruct(request: MergeReconstruction): ReadonlyArray<MergeResult>!MergeUnavailable
+  recover(request: MergeFileRecovery): FileRecovery!MergeUnavailable
+}

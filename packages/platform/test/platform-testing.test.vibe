@@ -1,0 +1,196 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { Area, areaLayer, outcome } from "../src/testing/area.ts"
+import { settableClock } from "../src/testing/clock.ts"
+import { flipByte, frozenCopy, verifyFrozen } from "../src/testing/frozen.ts"
+import { internet } from "../src/testing/internet.ts"
+import { mailCapture } from "../src/testing/mail.ts"
+import { migrationsDir } from "../src/testing/paths.ts"
+
+const fixture = `import { EmailMessage } from "cloudflare:email";
+const json = (body, status = 200) => Response.json(body, { status });
+async function record(env, kind, detail) {
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS fixture_events (kind TEXT NOT NULL, detail TEXT NOT NULL)").run();
+  await env.DB.prepare("INSERT INTO fixture_events (kind, detail) VALUES (?, ?)").bind(kind, detail).run();
+}
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/role") return json({ admins: env.ADMIN_GITHUB_IDS });
+    if (url.pathname === "/jobs" && request.method === "POST") {
+      const job = await request.json();
+      await env.JOBS.send(job);
+      return json({ queued: job.key }, 202);
+    }
+    if (url.pathname === "/mail" && request.method === "POST") {
+      const { to, text } = await request.json();
+      const raw = ["From: Slop <notifications@slop.cash>", "To: " + to, "Subject: Fixture notice", "Message-ID: <" + crypto.randomUUID() + "@slop.test>", "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", text].join("\\r\\n");
+      try {
+        await env.EMAIL.send(new EmailMessage("notifications@slop.cash", to, raw));
+        return json({ sent: true }, 202);
+      } catch {
+        return json({ error: "email_refused" }, 503);
+      }
+    }
+    if (url.pathname === "/outbound") return json({ status: (await fetch(url.searchParams.get("url"))).status });
+    return json({ error: "not_found" }, 404);
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      if (batch.queue === "fixture-jobs" && message.body.fail) {
+        message.retry();
+        continue;
+      }
+      await record(env, batch.queue, message.body.key);
+      message.ack();
+    }
+  },
+  async scheduled(controller, env) {
+    await record(env, "cron", controller.cron);
+  },
+};`
+
+const mail = mailCapture({ allowed: ["member@slop.test"] })
+const net = internet({ github: () => new Response("Keep it logically awesome.", { status: 200 }) })
+
+const Fixture = areaLayer({
+  module: fixture,
+  d1: { DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7" },
+  queues: {
+    producers: { JOBS: "fixture-jobs" },
+    consumers: { "fixture-jobs": { maxRetries: 1, deadLetterQueue: "fixture-jobs-dlq" }, "fixture-jobs-dlq": { maxRetries: 0 } },
+  },
+  email: { EMAIL: mail.binding },
+  internet: net,
+})
+
+error Rejected { reason: string }
+
+effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try Effect.sleep("100 millis")
+  }
+  return try probe
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Fixture, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('An area Worker starts on every migration, retries a failing job into its dead-letter queue and runs its cron (spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/jobQueue.md, "A dead-lettered job stays visible and has no recovery route until the owner decides one"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows")', () => effect {
+    const area = try Area
+    const sent = try.all [area.post("/jobs", { key: "good", fail: false }), area.post("/jobs", { key: "bad", fail: true })]
+    const jobs = try eventually(area.sql("SELECT kind, detail FROM fixture_events WHERE kind <> 'cron' ORDER BY detail"), (rows) => rows.length >= 2)
+    const cron = try area.scheduled("17 * * * *")
+    const crons = try area.sql("SELECT detail FROM fixture_events WHERE kind = 'cron'")
+    try same({
+      migrated: [area.applied.length >= 136, area.applied.filter((file) => file.error !== undefined), area.applied[0]?.file],
+      sent: sent.map((answer) => [answer.status, answer.body]),
+      jobs,
+      cron: [cron.outcome, crons],
+    }, {
+      migrated: [true, [], "0001_private_trace_backend.sql"],
+      sent: [[202, { queued: "good" }], [202, { queued: "bad" }]],
+      jobs: [{ kind: "fixture-jobs-dlq", detail: "bad" }, { kind: "fixture-jobs", detail: "good" }],
+      cron: ["ok", [{ detail: "17 * * * *" }]],
+    })
+  })
+
+  it.effect('Mail is captured at the provider boundary, and a refused send or one outside the allowed destinations is never captured (spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send")', () => effect {
+    const area = try Area
+    mail.reject(1)
+    const refused = try area.post("/mail", { to: "member@slop.test", text: "never delivered" })
+    const stranger = try area.post("/mail", { to: "stranger@slop.test", text: "never delivered" })
+    const delivered = try area.post("/mail", { to: "member@slop.test", text: "Your code is 424242." })
+    const [message] = mail.messages()
+    try same({
+      refused: [refused.status, refused.body],
+      stranger: [stranger.status, stranger.body],
+      delivered: [delivered.status, delivered.body],
+      count: mail.messages().length,
+      message: [message?.from, message?.to, message?.headers.subject, message?.headers.from, message?.raw.endsWith("Your code is 424242.")],
+    }, {
+      refused: [503, { error: "email_refused" }],
+      stranger: [503, { error: "email_refused" }],
+      delivered: [202, { sent: true }],
+      count: 1,
+      message: ["notifications@slop.cash", "member@slop.test", "Fixture notice", "Slop <notifications@slop.cash>", true],
+    })
+  })
+
+  it.effect('A redeploy with a changed role variable keeps the same database (spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off")', () => effect {
+    const area = try Area
+    const before = try area.get("/role")
+    const tables = try area.sql("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table'")
+    const events = try area.sql("SELECT count(*) AS events FROM fixture_events")
+    try area.redeploy({ vars: { ADMIN_GITHUB_IDS: "8" } })
+    const after = try area.get("/role")
+    try same({
+      roles: [before.body, after.body],
+      tables: try area.sql("SELECT count(*) AS tables FROM sqlite_master WHERE type = 'table'"),
+      events: try area.sql("SELECT count(*) AS events FROM fixture_events"),
+    }, {
+      roles: [{ admins: "7" }, { admins: "8" }],
+      tables,
+      events,
+    })
+  })
+
+  it.effect('Only faked hosts answer outbound requests and any other host is recorded as unexpected (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const area = try Area
+    const github = try area.get("/outbound?url=https://api.github.com/zen")
+    const stranger = try area.get("/outbound?url=https://unknown.example/collect")
+    try same({
+      answers: [github.body, stranger.body],
+      requests: net.requests.map((request) => request.host),
+      unexpected: net.unexpected,
+    }, {
+      answers: [{ status: 200 }, { status: 599 }],
+      requests: ["api.github.com", "unknown.example"],
+      unexpected: [{ method: "GET", url: "https://unknown.example/collect", host: "unknown.example" }],
+    })
+  })
+
+  it.effect('Frozen files are byte-identical and one changed byte in a copy is reported (spec/operations/release.md, "Every required check binds the same source and built artifact")', () => effect {
+    const repository = try Effect.try(() => verifyFrozen())
+    const copy = try acquireRelease(Effect.try(() => frozenCopy([".gitattributes"])), (made) => sync(() => made.dispose()))
+    const intact = try Effect.try(() => verifyFrozen(copy.root, copy.manifest))
+    try Effect.try(() => flipByte(`${copy.root}/.gitattributes`, 0))
+    const changed = try Effect.try(() => verifyFrozen(copy.root, copy.manifest))
+    try same({
+      repository,
+      intact,
+      changed: changed.map((found) => [found.path, found.actual !== found.expected, /^[0-9a-f]{64}$/u.test(found.actual)]),
+      migrations: migrationsDir.endsWith("/migrations"),
+    }, {
+      repository: [],
+      intact: [],
+      changed: [[".gitattributes", true, true]],
+      migrations: true,
+    })
+  })
+
+  it.effect('A settable clock drives a five-minute expiry, and a refused event counts as refused (spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes")', () => effect {
+    const start = 1_800_000_000_000
+    const clock = settableClock(start)
+    const expiresAt = start + 300_000
+    const expired = Effect.provide(Effect.map(Clock.currentTimeMillis, (now) => now >= expiresAt), clock.layer)
+    const fresh = try expired
+    clock.advance(299_999)
+    const edge = try expired
+    clock.advance(1)
+    const late = try expired
+    clock.set(start)
+    const reset = try expired
+    const accepted = try promise(() => outcome(Effect.succeed(1)))
+    const refused = try promise(() => outcome(Effect.fail(new Rejected({ reason: "not pending" }))))
+    try same({ expiry: [fresh, edge, late, reset, clock.now()], outcomes: [accepted, refused] }, {
+      expiry: [false, false, true, false, start],
+      outcomes: ["accepted", "refused"],
+    })
+  })
+})

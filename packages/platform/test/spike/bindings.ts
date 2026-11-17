@@ -1,5 +1,3 @@
-// Binding shapes the spike adds beside src/bindings.ts (candidates for it): Durable Objects, SQLite storage,
-// rate limits, send_email, queue producers, the Cache API and the ExecutionContext.
 import type { SqlValue } from "../../src/bindings.ts";
 
 export interface ExecutionContext {

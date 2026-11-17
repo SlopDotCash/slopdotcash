@@ -1,0 +1,88 @@
+{
+ "schema": "slop-parity-conflicts-v1",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+ },
+ "method": "Every Markdown file under spec/ (as of 16 Nov 2026) was scanned for answer statements: a status followed within twelve characters by a backticked code, and any backticked snake_case code on a line about refusing, answering or errors. Each was compared with the status and error codes of routes.json. A row is a conflict when a current spec rule names a different status or code than the old handler for the same refusal (ARCHITECTURE O30: the spec governs; the old bytes stay recorded so the owner can choose wire compatibility for installed clients, backend-core:C5).",
+ "conflicts": [],
+ "agreements": [
+  {
+   "subject": "expected-actor mismatch",
+   "spec": "spec/backend/accounts.md",
+   "rule": "preamble: Shell obligations outside this model",
+   "specSays": "Points dispute routes: 409 account_changed; every other session route: 400 invalid_expected_actor for a malformed value, 403 actor_changed for another account",
+   "old": [
+    "backend/http.ts:197 400 invalid_expected_actor",
+    "backend/http.ts:199 403 actor_changed",
+    "backend/points/handler.ts:131 409 {error: account_changed}"
+   ],
+   "note": "The lane plan recorded this as a conflict; the merged spec now states the old codes, so no conflict remains."
+  },
+  {
+   "subject": "restricted project read",
+   "spec": "spec/backend/listing.md",
+   "rule": "A restricted project is closed on every public route and a paused one stays listed",
+   "specSays": "GET /api/v1/projects/:id answers 410",
+   "old": [
+    "backend/projects/handler.ts:2966 410 project_restricted"
+   ]
+  },
+  {
+   "subject": "evidence download admission",
+   "spec": "spec/security/privacy.md",
+   "rule": "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range",
+   "specSays": "403 grant_invalid, 405 method_not_allowed, 403 origin_forbidden",
+   "old": [
+    "backend/vetting/evidence.ts:2024 405 method_not_allowed",
+    "backend/vetting/evidence.ts:1841 403 origin_forbidden",
+    "backend/vetting/evidence.ts:1851 403 grant_invalid",
+    "backend/vetting/evidence.ts:1777 403 grant_invalid"
+   ]
+  },
+  {
+   "subject": "signed vetting service requests",
+   "spec": "spec/security/admission.md",
+   "rule": "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window",
+   "specSays": "401 invalid_signature; 503 vetting_unavailable with no key",
+   "old": [
+    "backend/vetting/handler.ts:214 401 invalid_signature",
+    "backend/vetting/handler.ts:217 401 invalid_signature",
+    "backend/vetting/handler.ts:232 401 invalid_signature"
+   ]
+  },
+  {
+   "subject": "private report size",
+   "spec": "spec/security/intake.md",
+   "rule": "A report body holds between 1 and 262,144 bytes and any other size creates nothing",
+   "specSays": "413 after rate admission for a stored object over the limit",
+   "old": [
+    "backend/security/report-intake.ts:423 413 report_too_large"
+   ]
+  }
+ ],
+ "implementationDivergences": [
+  {
+   "file": "packages/platform/src/http.vibe",
+   "unit": "shared:U16",
+   "current": [
+    "415 json_required",
+    "413 body_too_large",
+    "400 invalid_json",
+    "400 invalid_body"
+   ],
+   "old": "admission.json: no 415 (a non-JSON write is the route's 403 origin_forbidden); a bounded Pages read answers 400 {error: invalid_request, message: \"Request body must be a JSON object\"} for malformed, oversized and non-object bodies; exactKeys answers 400 {error: invalid_request, message: \"Request body has unexpected fields\"}; the trace API answers 413 payload_too_large and 400 invalid_content_length"
+  },
+  {
+   "file": "apps/backend/src/referrals/routes.vibe",
+   "unit": "backend-core:U9",
+   "current": [
+    "401 sign_in_required",
+    "503 github_unavailable",
+    "409 changed_concurrently",
+    "every refusal answers {error} without a message"
+   ],
+   "old": "routes.json POST /api/v1/referrals/code: 401 {error: unauthorized, message: \"Sign in with GitHub\"}; GitHub failures 503 github_rate_limited and 502 github_unavailable with message \"Internal error\"; a lost race answers 409 code_taken; 403 origin_forbidden has no message; every other refusal carries its message"
+  }
+ ]
+}

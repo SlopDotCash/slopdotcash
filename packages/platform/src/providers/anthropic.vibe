@@ -1,0 +1,79 @@
+// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"
+import type { Acceptance, Answer, Content, Exchange, ModelCall } from "./client.vibe"
+
+export function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined
+}
+
+export function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 2_000_000_000 ? value : undefined
+}
+
+export function boundedText(value: unknown, maximum: number): string | undefined {
+  return typeof value === "string" && value.trim() !== "" && value.length <= maximum ? value : undefined
+}
+
+function blocks(content: Content) {
+  return typeof content === "string"
+    ? content
+    : content.map((part) => (part.cached === true ? { type: "text", text: part.text, cache_control: { type: "ephemeral" } } : { type: "text", text: part.text }))
+}
+
+export function messagesRequest(call: ModelCall) {
+  const output = {
+    ...(call.effort === undefined ? {} : { effort: call.effort }),
+    ...(call.responseFormat === undefined ? {} : { format: { type: "json_schema", schema: call.responseFormat } }),
+  }
+  return {
+    model: call.model,
+    max_tokens: call.maxTokens,
+    system: blocks(call.system),
+    messages: call.messages.map((message) => ({ role: message.role, content: blocks(message.content) })),
+    ...(call.temperature === undefined ? {} : { temperature: call.temperature }),
+    ...(Object.keys(output).length === 0 ? {} : { output_config: output }),
+  }
+}
+
+export function messagesExchange(body: unknown): Exchange | undefined {
+  const reply = recordOf(body)
+  const usage = recordOf(reply?.usage)
+  const id = boundedText(reply?.id, 256)
+  const model = boundedText(reply?.model, 128)
+  const input = count(usage?.input_tokens)
+  const output = count(usage?.output_tokens)
+  const cacheRead = count(usage?.cache_read_input_tokens ?? 0)
+  const cacheWrite = count(usage?.cache_creation_input_tokens ?? 0)
+  if (id === undefined || model === undefined || input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined) return undefined
+  return { id, model, usage: { input, output, cacheRead, cacheWrite } }
+}
+
+const stopReasons: ReadonlySet<unknown> = new Set(["max_tokens", "pause_turn", "refusal", "tool_use", "stop_sequence"])
+const answerBlocks: ReadonlySet<unknown> = new Set(["text", "thinking", "redacted_thinking"])
+
+export function messagesAnswer(body: unknown, accept: Acceptance): Answer {
+  const reply = recordOf(body)
+  const stop = reply?.stop_reason
+  const stopped = accept === "firstText" ? stop === "refusal" || stop === "max_tokens" : stop !== "end_turn" || (accept === "exact" && reply?.stop_details !== undefined && reply?.stop_details !== null)
+  if (reply === undefined || typeof stop !== "string" || stopped) {
+    const reason = typeof stop === "string" && stopReasons.has(stop) ? stop : "other"
+    return { kind: "stopped", category: reason === "refusal" ? "Refused" : "Incomplete", reason: `stop-${reason}` }
+  }
+  const content = Array.isArray(reply.content) ? reply.content.map(recordOf) : []
+  const texts = content.filter((block) => block?.type === "text").map((block) => block?.text)
+  if (accept === "exact" && (texts.length !== 1 || content.some((block) => !answerBlocks.has(block?.type)))) return { kind: "malformed" }
+  const text = boundedText(accept === "allText" ? (texts.every((part) => typeof part === "string") ? texts.join("") : undefined) : texts[0], Number.MAX_SAFE_INTEGER)
+  return text === undefined ? { kind: "malformed" } : { kind: "text", text, stopReason: stop }
+}
+
+function micro(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+export function spendResetAt(status: number, body: unknown): number | undefined {
+  const error = recordOf(recordOf(body)?.error)
+  const detail = recordOf(error?.detail)
+  if ((status !== 400 && status !== 200) || error?.type !== "invalid_request_error" || detail === undefined) return undefined
+  const at = typeof detail.resets_at === "string" ? Date.parse(detail.resets_at) : Number.NaN
+  const valid = typeof detail.window === "string" && detail.window.length > 0 && micro(detail.limit_micro) && micro(detail.spent_micro) && Number.isFinite(at)
+  return valid ? at : undefined
+}

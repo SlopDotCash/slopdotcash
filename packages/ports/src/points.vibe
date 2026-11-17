@@ -1,0 +1,26 @@
+// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"
+import type { Statement } from "@repo/platform/d1"
+import type { ReadFailure } from "./backend.vibe"
+
+export schema PointWeight {
+  readonly githubId: string
+  readonly points: number
+}
+
+export schema ClosedMonthLedger {
+  readonly sha256: string
+  readonly weights: ReadonlyArray<PointWeight>
+}
+
+export interface ProjectMonth {
+  readonly projectId: string
+  readonly period: string
+}
+
+export service ClosedMonth {
+  ledger(month: ProjectMonth): (ClosedMonthLedger | undefined)!ReadFailure
+}
+
+export service ContributorAudience {
+  affected(project: Statement): Statement!!
+}

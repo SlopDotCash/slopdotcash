@@ -1,0 +1,218 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/installation.md, "Every Slopbot effect requires an active installation"
+import { webCrypto } from "../../src/crypto.vibe"
+import { json, outbound } from "../../src/http.vibe"
+import { worker } from "../../src/worker.vibe"
+import { GitHubApp, githubApp } from "../../src/github/app.vibe"
+import { GitHub, type TokenRefusal, github } from "../../src/github/client.vibe"
+import { type GitHubFailure, GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, RateLimited } from "../../src/github/errors.vibe"
+import { verifyWebhook } from "../../src/github/webhook.vibe"
+
+interface Env {
+  readonly GITHUB_TOKEN: string
+  readonly APP_ID: string
+  readonly APP_PRIVATE_KEY: string
+  readonly WEBHOOK_SECRET: string
+}
+
+service Secrets {
+  readonly token: Redacted.Redacted<string>
+  readonly webhook: Redacted.Redacted<string>
+}
+
+schema Repository { name: string }
+schema Account { id: number; login: string }
+schema InstalledRepositories { repositories: ReadonlyArray<Repository> }
+schema RepositorySummary { id: number; name: string }
+schema Issue { number: number }
+schema Comment { id: number; body: string }
+schema CommentRequest { text: string }
+
+const userAgent = "slop-platform-test"
+let offsetMillis = 0
+let offsetNanos = 0n
+
+function failure(error: GitHubFailure) {
+  return match (error) {
+    when NotFound: ({ failure: "NotFound", path: error.path });
+    when GitHubRefused: ({ failure: "GitHubRefused", status: error.status, path: error.path });
+    when RateLimited: ({ failure: "RateLimited", retryAfterSeconds: error.retryAfterSeconds ?? null, retryAfter: error.retryAfter, secondary: error.secondary });
+    when GitHubUnavailable: ({ failure: "GitHubUnavailable", status: error.status ?? null, path: error.path });
+    when GitHubMalformed: ({ failure: "GitHubMalformed", path: error.path, issue: error.issue });
+  }
+}
+
+effect function shifted<A, E, R>(program: A!E!R) {
+  const real = try Clock.Clock
+  const now = () => real.currentTimeMillisUnsafe() + offsetMillis
+  const nanos = () => real.currentTimeNanosUnsafe() + offsetNanos
+  return try provideService(program, Clock.Clock, {
+    currentTimeMillisUnsafe: now,
+    currentTimeMillis: sync(now),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: sync(nanos),
+    monotonicTimeNanosUnsafe: () => real.monotonicTimeNanosUnsafe(),
+    monotonicTimeNanos: real.monotonicTimeNanos,
+    sleep: (duration) => real.sleep(duration),
+  })
+}
+
+effect function reported<R>(program: unknown!GitHubFailure!R) {
+  return shifted(effect { return json(try program) }) catch (error) => json(failure(error))
+}
+
+effect function query() {
+  const request = try HttpServerRequest.HttpServerRequest
+  return new URL(request.url, "https://platform.test").searchParams
+}
+
+effect function param(name: string) {
+  return (try HttpRouter.params)[name] ?? ""
+}
+
+effect function client() {
+  const { token } = try Secrets
+  return github({ token, userAgent })
+}
+
+effect function repositoryPages() {
+  const login = try param("login")
+  const search = try query()
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      const repositories = try (try GitHub).pages(`/users/${login}/repos?type=owner`, Repository, { perPage: Number(search.get("perPage") ?? "100"), maxPages: Number(search.get("maxPages") ?? "10") })
+      return { names: repositories.map((repository) => repository.name) }
+    }
+  })
+}
+
+effect function account() {
+  const login = try param("login")
+  const search = try query()
+  const { token } = try Secrets
+  const refusals: TokenRefusal[] = []
+  const layer = github({
+    token: search.get("token") === "malformed" ? Redacted.make("not a token!") : token,
+    userAgent,
+    ...(search.get("retry") === "1" ? { anonymousRetry: (refusal: TokenRefusal) => sync(() => { refusals.push(refusal) }) } : {}),
+  })
+  return try reported(effect {
+    provide layer {
+      const found = try (try GitHub).json(`/users/${login}`, Account)
+      return { id: found.id, login: found.login, refusals }
+    }
+  })
+}
+
+effect function searchPages() {
+  const search = try query()
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      const issues = try (try GitHub).pages(`/search/issues?q=${encodeURIComponent(search.get("q") ?? "")}`, Issue, { perPage: Number(search.get("perPage") ?? "100"), itemsKey: "items" })
+      return { numbers: issues.map((issue) => issue.number).sort((a, b) => a - b) }
+    }
+  })
+}
+
+effect function repository() {
+  const owner = try param("owner")
+  const name = try param("name")
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      const found = try (try GitHub).json(`/repos/${owner}/${name}`, RepositorySummary)
+      return { id: found.id, name: found.name }
+    }
+  })
+}
+
+effect function membership() {
+  const org = try param("org")
+  const login = try param("login")
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      return { status: try (try GitHub).status(`/orgs/${org}/members/${login}`) }
+    }
+  })
+}
+
+effect function comment() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const sent = try orDie(Schema.decodeUnknownEffect(CommentRequest)(try orDie(request.json)))
+  const path = `/repos/${try param("owner")}/${try param("name")}/issues/${try param("number")}/comments`
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      const answer = try (try GitHub).send("POST", path, { body: sent.text }, Comment)
+      return { status: answer.status, body: answer.value?.body ?? null }
+    }
+  })
+}
+
+schema GraphQLRequest { query: string; variables: Record<string, string> }
+
+effect function graphql() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const body = try orDie(Schema.decodeUnknownEffect(GraphQLRequest)(try orDie(request.json)))
+  const layer = try client()
+  return try reported(effect {
+    provide layer {
+      return { data: try (try GitHub).graphql(body.query, body.variables, Schema.Unknown) }
+    }
+  })
+}
+
+effect function installationToken() {
+  const id = try param("id")
+  return try reported(effect {
+    return { token: Redacted.value(try (try GitHubApp).installationToken(id)) }
+  })
+}
+
+effect function installedRepositories() {
+  const id = try param("id")
+  const layer = (try GitHubApp).asInstallation(id)
+  return try reported(effect {
+    provide layer {
+      const installed = try (try GitHub).json("/installation/repositories", InstalledRepositories)
+      return { names: installed.repositories.map((repository) => repository.name) }
+    }
+  })
+}
+
+effect function advance() {
+  const millis = Number(try param("millis"))
+  offsetNanos += try orDie(Effect.try(() => BigInt(millis) * 1_000_000n))
+  offsetMillis += millis
+  return json({ offsetMillis })
+}
+
+effect function webhook() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const bytes = new Uint8Array(try orDie(request.arrayBuffer))
+  return json({ verified: try verifyWebhook(bytes, request.headers["x-hub-signature-256"], (try Secrets).webhook) })
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    webCrypto,
+    outbound,
+    Layer.provide(githubApp({ appId: env.APP_ID, privateKey: Redacted.make(env.APP_PRIVATE_KEY), userAgent }), outbound),
+    Layer.succeed(Secrets, { token: Redacted.make(env.GITHUB_TOKEN), webhook: Redacted.make(env.WEBHOOK_SECRET) }),
+  ),
+  routes: Layer.mergeAll(
+    HttpRouter.add("GET", "/pages/:login", repositoryPages()),
+    HttpRouter.add("GET", "/accounts/:login", account()),
+    HttpRouter.add("GET", "/search", searchPages()),
+    HttpRouter.add("GET", "/repos/:owner/:name", repository()),
+    HttpRouter.add("GET", "/members/:org/:login", membership()),
+    HttpRouter.add("POST", "/comments/:owner/:name/:number", comment()),
+    HttpRouter.add("POST", "/graphql", graphql()),
+    HttpRouter.add("GET", "/app/tokens/:id", installationToken()),
+    HttpRouter.add("GET", "/app/repositories/:id", installedRepositories()),
+    HttpRouter.add("POST", "/clock/:millis", advance()),
+    HttpRouter.add("POST", "/webhook", webhook()),
+  ),
+})

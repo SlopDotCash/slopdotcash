@@ -1,0 +1,326 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
+import { boundedBytes } from "../browser.vibe"
+import { type GitHubFailure, GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, classify, isRefusal, rateLimited } from "./errors.vibe"
+
+export { GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, RateLimited, rateLimitHints } from "./errors.vibe"
+export type { GitHubFailure, RateLimitHints } from "./errors.vibe"
+
+export const githubApi = "https://api.github.com"
+export const githubJson = "application/vnd.github+json"
+export const githubRaw = "application/vnd.github.raw"
+export const defaultLimitBytes = 1024 * 1024
+export const defaultTimeoutMs = 10_000
+
+const refusalLimitBytes = 16 * 1024
+const apiVersion = "2022-11-28"
+const movedRepository = /^\/repositories\/[1-9]\d*(?:\/|$)/u
+const repositoryPath = /^\/repos\/[^/]+\/[^/]+(\/.*)?$/u
+const repositoryIdPath = /^\/repositories\/[1-9]\d*(\/.*)?$/u
+const pageNumber = /^[1-9]\d{0,8}$/u
+const tokenShape = /^[A-Za-z0-9_]{16,512}$/u
+
+export type Credential = (Redacted.Redacted<string> | undefined)!GitHubFailure
+
+export interface Exchange {
+  readonly client: HttpClient.HttpClient
+  readonly authority: string
+  readonly userAgent: string
+  readonly timeoutMs: number
+}
+
+export type WriteMethod = "POST" | "PATCH" | "PUT" | "DELETE"
+
+export type TokenRefusal = { readonly kind: "malformed" } | { readonly kind: "refused"; readonly status: 401 | 403; readonly path: string }
+
+export type AnonymousRetry = (refusal: TokenRefusal) => void!!
+
+export interface Call {
+  readonly method: "GET" | WriteMethod
+  readonly url: string
+  readonly accept: string
+  readonly bearer: Redacted.Redacted<string> | undefined
+  readonly json?: unknown
+  readonly form?: Readonly<Record<string, string>>
+  readonly statusOnly?: boolean
+}
+
+export interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string | undefined>>
+  readonly bytes: Uint8Array
+}
+
+export interface ReadOptions {
+  readonly accept?: string
+  readonly limitBytes?: number
+}
+
+export interface PageOptions {
+  readonly maxPages?: number
+  readonly perPage?: number
+  readonly limitBytes?: number
+  readonly itemsKey?: string
+}
+
+export interface Sent<A> {
+  readonly status: number
+  readonly value?: A
+}
+
+export interface GraphQLOptions {
+  readonly absent?: ReadonlyArray<ReadonlyArray<string | number>>
+  readonly limitBytes?: number
+}
+
+export interface GitHubOptions {
+  readonly authority?: string
+  readonly token?: Redacted.Redacted<string>
+  readonly userAgent: string
+  readonly anonymousRetry?: AnonymousRetry
+  readonly timeoutMs?: number
+}
+
+export interface Settings {
+  readonly authority: string
+  readonly credential: Credential
+  readonly userAgent: string
+  readonly anonymousRetry?: AnonymousRetry
+  readonly timeoutMs: number
+}
+
+interface Session {
+  anonymous: boolean
+}
+
+export service GitHub {
+  json<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, options?: ReadOptions): S["Type"]!GitHubFailure
+  pages<S extends Schema.ConstraintDecoder<unknown>>(path: string, itemSchema: S, options?: PageOptions): ReadonlyArray<S["Type"]>!GitHubFailure
+  graphql<S extends Schema.ConstraintDecoder<unknown>>(query: string, variables: Readonly<Record<string, unknown>>, schema: S, options?: GraphQLOptions): S["Type"]!GitHubFailure
+  bytes(path: string, limitBytes: number): Uint8Array!GitHubFailure
+  send<S extends Schema.ConstraintDecoder<unknown>>(method: WriteMethod, path: string, body: unknown, schema?: S): Sent<S["Type"]>!GitHubFailure
+  status(path: string): number!GitHubFailure
+}
+
+schema GraphQLProblem { type?: string; message?: string; path?: ReadonlyArray<string | number> }
+const GraphQLEnvelope = Schema.Struct({ data: Schema.optionalKey(Schema.Unknown), errors: Schema.optionalKey(Schema.Array(GraphQLProblem)) })
+schema Refusal { message?: string }
+
+const anyList = Schema.Array(Schema.Unknown)
+const anyObject = Schema.Record(Schema.String, Schema.Unknown)
+
+export function originOf(url: string): string | undefined {
+  return URL.parse(url)?.origin
+}
+
+export function manualRedirects(client: HttpClient.HttpClient) {
+  return HttpClient.transform(client, (response) => provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }))
+}
+
+function pathOf(url: string) {
+  const parsed = URL.parse(url)
+  return parsed === null ? url : `${parsed.pathname}${parsed.search}`
+}
+
+function request(exchange: Exchange, call: Call, url: string) {
+  const atAuthority = originOf(url) === originOf(exchange.authority)
+  const bearer = atAuthority ? call.bearer : undefined
+  const headers: Record<string, string> = { accept: call.accept, "user-agent": exchange.userAgent }
+  if (atAuthority) headers["x-github-api-version"] = apiVersion
+  if (bearer !== undefined) headers.authorization = `Bearer ${Redacted.value(bearer)}`
+  const base = HttpClientRequest.make(call.method)(url, { headers })
+  if (call.form !== undefined) return HttpClientRequest.bodyUrlParams(base, call.form)
+  if (call.json !== undefined) return HttpClientRequest.bodyJsonUnsafe(base, call.json)
+  return base
+}
+
+effect function sent(exchange: Exchange, call: Call, url: string) {
+  return exchange.client.execute(request(exchange, call, url)) catch effect () => {
+    throw new GitHubUnavailable({ path: pathOf(url) })
+  }
+}
+
+effect function followed(exchange: Exchange, call: Call) {
+  const response = try sent(exchange, call, call.url)
+  const location = response.headers.location
+  if (call.method !== "GET" || response.status !== 301 || location === undefined) return response
+  const moved = URL.parse(location, call.url)
+  if (moved === null || moved.origin !== originOf(exchange.authority) || !movedRepository.test(moved.pathname)) return response
+  try drained(response, pathOf(call.url))
+  return try sent(exchange, call, moved.href)
+}
+
+export effect function bounded(response: HttpClientResponse.HttpClientResponse, limitBytes: number, path: string) {
+  return boundedBytes(response, limitBytes, path) catch effect (error) => {
+    throw error._tag === "BodyTooLarge" ? new GitHubMalformed({ path, issue: `the answer exceeds ${limitBytes} bytes` }) : new GitHubUnavailable({ status: response.status, path })
+  }
+}
+
+export effect function parsed(bytes: Uint8Array, path: string) {
+  return try Effect.try({
+    try: (): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+    catch: () => new GitHubMalformed({ path, issue: "the answer is not UTF-8 JSON" }),
+  })
+}
+
+export effect function decoded<S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, path: string) {
+  return Schema.decodeUnknownEffect(schema)(value) catch effect (error) => {
+    throw new GitHubMalformed({ path, issue: error.message.slice(0, 300) })
+  }
+}
+
+effect function drained(response: HttpClientResponse.HttpClientResponse, path: string) {
+  return bounded(response, refusalLimitBytes, path) catch () => new Uint8Array(0)
+}
+
+effect function refusalMessage(response: HttpClientResponse.HttpClientResponse, path: string) {
+  const bytes = try drained(response, path)
+  const value = parsed(bytes, path) catch () => undefined
+  const refusal = decoded(Refusal, value, path) catch () => undefined
+  return (refusal?.message ?? "").slice(0, 300)
+}
+
+export effect function answered(response: HttpClientResponse.HttpClientResponse, limitBytes: number, path: string) {
+  const status = response.status
+  const headers = response.headers
+  const kind = classify(status, headers)
+  if (kind === "notFound") throw new NotFound({ path })
+  if (kind === "rateLimited") throw rateLimited(headers, try Clock.currentTimeMillis)
+  if (kind === "refused" && isRefusal(status)) throw new GitHubRefused({ status, path, message: try refusalMessage(response, path) })
+  if (kind !== "ok") throw new GitHubUnavailable({ status, path })
+  return { status, headers, bytes: try bounded(response, limitBytes, path) } satisfies Answer
+}
+
+effect function reached(response: HttpClientResponse.HttpClientResponse, path: string) {
+  if (response.status < 200 || response.status >= 400) return try answered(response, refusalLimitBytes, path)
+  try drained(response, path)
+  return { status: response.status, headers: response.headers, bytes: new Uint8Array(0) } satisfies Answer
+}
+
+function continues(first: URL, current: URL, next: URL) {
+  const listed = repositoryPath.exec(first.pathname)
+  const rewritten = repositoryIdPath.exec(next.pathname)
+  const samePath = next.pathname === first.pathname || (listed !== null && rewritten !== null && (rewritten[1] ?? "") === (listed[1] ?? ""))
+  if (next.origin !== first.origin || !samePath) return false
+  const page = current.searchParams.get("page")
+  const following = next.searchParams.get("page")
+  if (page === null && following === null) return true
+  return following !== null && pageNumber.test(following) && Number(following) === Number(page ?? "1") + 1
+}
+
+export effect function exchanged(exchange: Exchange, call: Call, limitBytes: number) {
+  const path = pathOf(call.url)
+  return timeout(effect {
+    const response = try followed(exchange, call)
+    return try (call.statusOnly === true ? reached(response, path) : answered(response, limitBytes, path))
+  }, Duration.millis(exchange.timeoutMs)) catch effect (error) => {
+    if (error._tag === "TimeoutError") throw new GitHubUnavailable({ path })
+    throw error
+  }
+}
+
+export function githubWith(settings: Settings): Layer.Layer<GitHub, never, HttpClient.HttpClient> {
+  return Layer.effect(GitHub, effect {
+    const exchange: Exchange = {
+      client: manualRedirects(try HttpClient.HttpClient),
+      authority: settings.authority,
+      userAgent: settings.userAgent,
+      timeoutMs: settings.timeoutMs,
+    }
+    const base = settings.authority.replace(/\/+$/u, "")
+
+    effect function located(path: string) {
+      if (!path.startsWith("/") || path.startsWith("//")) throw new GitHubMalformed({ path, issue: "a GitHub path starts with one /" })
+      return `${base}${path}`
+    }
+
+    effect function read(call: Omit<Call, "bearer">, limitBytes: number, session: Session = { anonymous: false }) {
+      const bearer = session.anonymous ? undefined : try settings.credential
+      const report = settings.anonymousRetry
+      if (report === undefined || bearer === undefined) return try exchanged(exchange, { ...call, bearer }, limitBytes)
+      if (!tokenShape.test(Redacted.value(bearer))) {
+        session.anonymous = true
+        try report({ kind: "malformed" })
+        return try exchanged(exchange, { ...call, bearer: undefined }, limitBytes)
+      }
+      const answer = exchanged(exchange, { ...call, bearer }, limitBytes) catch effect (error) => {
+        if (error._tag !== "GitHubRefused" || (error.status !== 401 && error.status !== 403)) throw error
+        session.anonymous = true
+        try report({ kind: "refused", status: error.status, path: error.path })
+        return try exchanged(exchange, { ...call, bearer: undefined }, limitBytes)
+      }
+      return answer
+    }
+
+    effect function listed(value: unknown, itemsKey: string | undefined, path: string) {
+      if (itemsKey === undefined) return try decoded(anyList, value, path)
+      const envelope = try decoded(anyObject, value, path)
+      if (envelope.incomplete_results === true) throw new GitHubMalformed({ path, issue: "GitHub answered an incomplete list" })
+      return try decoded(anyList, envelope[itemsKey], path)
+    }
+
+    return {
+      json: (path, schema, options) => effect {
+        const url = try located(path)
+        const answer = try read({ method: "GET", url, accept: options?.accept ?? githubJson }, options?.limitBytes ?? defaultLimitBytes)
+        return try decoded(schema, try parsed(answer.bytes, path), path)
+      },
+      pages: (path, itemSchema, options) => effect {
+        const maxPages = options?.maxPages ?? 10
+        const first = URL.parse(try located(path))
+        if (first === null) throw new GitHubMalformed({ path, issue: "the path is not a URL" })
+        first.searchParams.set("per_page", String(options?.perPage ?? 100))
+        const items: Array<(typeof itemSchema)["Type"]> = []
+        const session: Session = { anonymous: false }
+        let current = first
+        for (let page = 1; ; page++) {
+          const answer = try read({ method: "GET", url: current.href, accept: githubJson }, options?.limitBytes ?? defaultLimitBytes, session)
+          const list = try listed(try parsed(answer.bytes, path), options?.itemsKey, path)
+          for (const item of list) items.push(try decoded(itemSchema, item, path))
+          const part = answer.headers.link?.split(",").find((entry) => /;\s*rel="next"(?:\s*;|\s*$)/u.test(entry))
+          if (part === undefined) return items
+          const target = /^\s*<([^<>]+)>/u.exec(part)?.[1]
+          const next = target === undefined ? null : URL.parse(target)
+          if (next === null || !continues(first, current, next)) throw new GitHubMalformed({ path, issue: "a next page link is not a continuation of this list" })
+          if (page >= maxPages) throw new GitHubMalformed({ path, issue: `the list has more than ${maxPages} pages` })
+          current = next
+        }
+      },
+      graphql: (query, variables, schema, options) => effect {
+        const url = try located("/graphql")
+        const answer = try read({ method: "POST", url, accept: githubJson, json: { query, variables } }, options?.limitBytes ?? defaultLimitBytes)
+        const envelope = try decoded(GraphQLEnvelope, try parsed(answer.bytes, "/graphql"), "/graphql")
+        const problems = envelope.errors ?? []
+        if (problems.some((problem) => problem.type === "RATE_LIMITED")) throw rateLimited(answer.headers, try Clock.currentTimeMillis)
+        const absent = (options?.absent ?? []).map((where) => JSON.stringify(where))
+        const tolerated = problems.every((problem) => problem.type === "NOT_FOUND" && absent.includes(JSON.stringify(problem.path ?? [])))
+        if (!tolerated) throw new GitHubMalformed({ path: "/graphql", issue: (problems[0]?.message ?? "GraphQL answered an error").slice(0, 300) })
+        if (envelope.data === undefined || envelope.data === null) throw new GitHubMalformed({ path: "/graphql", issue: "GraphQL answered no data" })
+        return try decoded(schema, envelope.data, "/graphql")
+      },
+      bytes: (path, limitBytes) => effect {
+        const url = try located(path)
+        return (try read({ method: "GET", url, accept: githubRaw }, limitBytes)).bytes
+      },
+      send: (method, path, body, schema) => effect {
+        const url = try located(path)
+        const answer = try exchanged(exchange, { method, url, accept: githubJson, bearer: try settings.credential, json: body }, defaultLimitBytes)
+        if (schema === undefined || answer.bytes.length === 0) return { status: answer.status }
+        return { status: answer.status, value: try decoded(schema, try parsed(answer.bytes, path), path) }
+      },
+      status: (path) => effect {
+        const url = try located(path)
+        return (try read({ method: "GET", url, accept: githubJson, statusOnly: true }, refusalLimitBytes)).status
+      },
+    }
+  })
+}
+
+export function github(options: GitHubOptions) {
+  return githubWith({
+    authority: options.authority ?? githubApi,
+    credential: succeed(options.token),
+    userAgent: options.userAgent,
+    ...(options.anonymousRetry === undefined ? {} : { anonymousRetry: options.anonymousRetry }),
+    timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
+  })
+}

@@ -1,0 +1,117 @@
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
+
+export type ReadFailure = D1Error | RowMismatch
+
+export type Json = string | number | boolean | null | ReadonlyArray<Json> | { readonly [key: string]: Json }
+
+export schema Network = "Base" | "Ethereum" | "Robinhood" | "Solana"
+
+export schema MailCategory = "SecurityMail" | "ActivityMail"
+
+export schema Permission = "PermissionVerified" | "PermissionDenied" | "PermissionUnavailable"
+
+export schema Installation = "Installed" | "InstallationMissing" | "InstallationSuspended" | "InstallationUnavailable"
+
+export schema AuthorityRead {
+  readonly actorGithubId: string
+  readonly repositoryId: string
+  readonly permission: Permission
+  readonly installation: Installation
+}
+
+export service Authority {
+  repository(read: { readonly actorGithubId: string; readonly repositoryId: string }): AuthorityRead!!
+}
+
+export schema ProjectStatus = "Active" | "Paused"
+
+export schema ListingTier = "Community" | "Featured" | "Retired"
+
+export schema Retirement = "NotRetired" | "OwnerRemoved" | "AdminDelisted" | "RestrictionRetired" | "RetirementProofUnavailable"
+
+export schema ProjectRepository {
+  readonly id: string
+  readonly nodeId: string
+  readonly fullName: string
+  readonly integrationBranch: string
+  readonly aliases: ReadonlyArray<string>
+}
+
+export schema ProjectView {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly rowStatus: ProjectStatus
+  readonly manifestStatus: ProjectStatus
+  readonly listingTier: ListingTier
+  readonly retirement: Retirement
+  readonly stewardGithubId: string
+  readonly listedByGithubId?: string
+  readonly repositories: ReadonlyArray<ProjectRepository>
+  readonly network?: Network
+  readonly asset?: string
+  readonly closureConsent: boolean
+}
+
+export schema LookupMatch = "CurrentPath" | "AliasOnly"
+
+export schema RepositoryLookup {
+  readonly match: LookupMatch
+  readonly registeredRepositoryId: string
+  readonly project: ProjectView
+}
+
+export interface RegistryPin {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export service Registry {
+  project(projectId: string): (ProjectView | undefined)!ReadFailure
+  byRepository(repositoryId: string): (ProjectView | undefined)!ReadFailure
+  byPath(fullName: string): (RepositoryLookup | undefined)!ReadFailure
+  active(): ReadonlyArray<ProjectView>!ReadFailure
+  fence(pin: RegistryPin): Statement!!
+}
+
+export service ProjectAudience {
+  listedBy(project: Statement): Statement!!
+  owners(project: Statement): Statement!!
+}
+
+export schema AccountStanding {
+  readonly banned: boolean
+  readonly bannedAt?: string
+}
+
+export schema ProjectClosure {
+  readonly restricted: boolean
+  readonly sourceProjectId?: string
+}
+
+export service Restrictions {
+  account(githubId: string): AccountStanding!ReadFailure
+  project(projectId: string): ProjectClosure!ReadFailure
+}
+
+export schema EffectiveWallet {
+  readonly address: string
+  readonly claimId: string
+  readonly digest: string
+}
+
+export service Wallets {
+  effective(owner: { readonly githubId: string; readonly network: Network }): (EffectiveWallet | undefined)!ReadFailure
+}
+
+export schema ConsentedDestination {
+  readonly address: string
+  readonly version: string
+}
+
+export service EmailConsent {
+  destination(consent: { readonly githubId: string; readonly category: MailCategory }): (ConsentedDestination | undefined)!ReadFailure
+}

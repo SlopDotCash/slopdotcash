@@ -1,0 +1,76 @@
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"
+import * as Base64 from "effect/encoding/Base64"
+import { isoNow } from "./clock.vibe"
+import { ed25519KeyPair, ed25519Verify, sha256Hex, utf8 } from "./crypto.vibe"
+
+export error SignatureRefused { reason: "missing" | "unknownKey" | "expired" | "future" | "signature" }
+export error UnsignablePath { path: string }
+
+export interface SignedRequest {
+  readonly method: string
+  readonly path: string
+  readonly headers: Readonly<Record<string, string | undefined>>
+  readonly body: Uint8Array
+}
+
+export const signatureHeaders = { key: "x-slop-vetting-key", timestamp: "x-slop-vetting-timestamp", signature: "x-slop-vetting-signature" } as const
+
+const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u
+const signablePrefix = "/api/v1/vetting/"
+
+function base64Bytes(text: string): Uint8Array | undefined {
+  const normal = text.trim().replaceAll("-", "+").replaceAll("_", "/")
+  return /^[A-Za-z0-9+/]+={0,2}$/u.test(normal) ? Result.getOrUndefined(Base64.decode(normal)) : undefined
+}
+
+function signable(path: string) {
+  const url = new URL(path, "https://signer.invalid")
+  return url.origin === "https://signer.invalid" && `${url.pathname}${url.search}` === path && url.pathname.startsWith(signablePrefix)
+}
+
+export effect function signedMessage(method: string, path: string, timestamp: string, body: Uint8Array) {
+  return utf8(["slop-vetting:v1", method, path, timestamp, try sha256Hex(body)].join("\n"))
+}
+
+export effect function serviceKeys(configured: string | undefined) {
+  const keys = new Map<string, Uint8Array>()
+  for (const entry of (configured ?? "").split(",")) {
+    if (entry.trim() === "") continue
+    const raw = base64Bytes(entry)
+    if (raw === undefined || raw.length !== 32) {
+      try logError("A configured service public key is not 32 bytes of base64; no service key is trusted")
+      return new Map<string, Uint8Array>() satisfies ReadonlyMap<string, Uint8Array>
+    }
+    keys.set(try sha256Hex(raw), raw)
+  }
+  return keys satisfies ReadonlyMap<string, Uint8Array>
+}
+
+export effect function signedHeaders(request: { readonly key: Redacted.Redacted<string>; readonly method: string; readonly path: string; readonly body: Uint8Array }) {
+  if (!signable(request.path)) throw new UnsignablePath({ path: request.path })
+  const pair = try ed25519KeyPair(request.key)
+  const timestamp = try isoNow()
+  const message = try signedMessage(request.method, request.path, timestamp, request.body)
+  const signature = try orDie((try Experimental.Crypto.Crypto).sign("Ed25519", pair.privateKey, message))
+  return {
+    [signatureHeaders.key]: try sha256Hex(pair.publicKey),
+    [signatureHeaders.timestamp]: timestamp,
+    [signatureHeaders.signature]: Base64.encode(signature),
+  } satisfies Record<string, string>
+}
+
+export effect function verifySigned(request: SignedRequest, keys: ReadonlyMap<string, Uint8Array>, windowSeconds = 300) {
+  const timestamp = request.headers[signatureHeaders.timestamp] ?? ""
+  const at = instant.test(timestamp) ? Date.parse(timestamp) : Number.NaN
+  if (!Number.isFinite(at)) throw new SignatureRefused({ reason: "missing" })
+  const now = try Clock.currentTimeMillis
+  if (now - at > windowSeconds * 1000) throw new SignatureRefused({ reason: "expired" })
+  if (at - now > windowSeconds * 1000) throw new SignatureRefused({ reason: "future" })
+  const keyId = request.headers[signatureHeaders.key] ?? ""
+  const publicKey = keys.get(keyId)
+  if (publicKey === undefined) throw new SignatureRefused({ reason: "unknownKey" })
+  const signature = base64Bytes(request.headers[signatureHeaders.signature] ?? "")
+  const message = try signedMessage(request.method, request.path, timestamp, request.body)
+  if (signature === undefined || !(try ed25519Verify(publicKey, message, signature))) throw new SignatureRefused({ reason: "signature" })
+  return { keyId }
+}

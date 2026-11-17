@@ -1,0 +1,220 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Of, textBytes } from "../src/git/bytes.ts"
+import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore } from "../src/git/index.ts"
+import { outbound } from "../src/http.vibe"
+import { acceptedMerges, addUnrelatedObjects, bareRepository, borrowObjects, gunzipBase64, hexOfBytes, octopusMerge, replayedTree, twoParentMerge } from "./support/git/fixtures.ts"
+import { pinnedGit } from "./support/git/pinned.vibe"
+
+const packageRoot = new URL("..", import.meta.url).pathname
+const repositoryName = "slop-fixtures/merge"
+const repositoryNodeId = "R_kgDOfixture"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function fixture(name: string) {
+  return try acquireRelease(orDie(Effect.try(() => bareRepository(name))), (repository) => sync(() => repository.close()))
+}
+
+function mergeInput(head: string, commits: ReadonlyArray<{ readonly sha: string; readonly parents: ReadonlyArray<string> }>, files: ReadonlyArray<string>): MergeInput {
+  return {
+    repository: repositoryName,
+    repositoryNodeId,
+    repositoryDatabaseId: 4242,
+    pull: { head: { sha: head } },
+    files: files.map((filename) => ({ filename })),
+    commits: commits.map(({ sha, parents }) => ({ sha, parents: parents.map((parent) => ({ sha: parent })) })),
+    commitAttribution: [],
+  }
+}
+
+function commitOf(input: MergeInput, index = 0) {
+  return input.commits[index] ?? { sha: "", parents: [] }
+}
+
+function withoutIndex(patch: string) {
+  return patch.replace(/^index .*$/gmu, "")
+}
+
+function combined(resolution: MergeResolution | undefined): CombinedParentMergeResolution {
+  return resolution !== undefined && resolution.kind === "combined-parent-delta" ? resolution : { kind: "combined-parent-delta", commitSha: "", parents: [], parentTrees: [], gitVersion: "", resolvedTree: "", patch: "", patchSha256: "", paths: [], files: [] }
+}
+
+function rehashed(resolution: CombinedParentMergeResolution): CombinedParentMergeResolution {
+  return { ...resolution, patchSha256: sha256Of(resolution.patch) }
+}
+
+function faults(value: CombinedParentMergeResolution): Readonly<Record<string, CombinedParentMergeResolution>> {
+  const [first, ...rest] = value.files
+  const file = first ?? { path: "", parents: [], result: { mode: "", blobSha: "" } }
+  const [parent, ...others] = file.parents
+  return {
+    order: rehashed({ ...value, parents: [...value.parents].reverse() }),
+    "parent-tree": rehashed({ ...value, parentTrees: value.parentTrees.slice(0, -1) }),
+    blob: rehashed({ ...value, files: [{ ...file, parents: [{ mode: parent?.mode ?? "", blobSha: "f".repeat(40) }, ...others] }, ...rest] }),
+    mode: rehashed({ ...value, files: [{ ...file, result: { ...file.result, mode: "120000" } }, ...rest] }),
+    truncated: rehashed({ ...value, patch: value.patch.slice(0, -10) }),
+    counter: rehashed({ ...value, patch: value.patch.replace(/\+1,2/u, "+1,3") }),
+    hash: { ...value, patchSha256: "0".repeat(64) },
+    "mixed-prefix": rehashed({ ...value, patch: value.patch.replace("+++++++++accepted", "+-+++++++accepted") }),
+    "overlapping-hunk": rehashed({ ...value, patch: value.patch + value.patch.slice(value.patch.indexOf("@@@@@@@@@@ ")) }),
+  }
+}
+
+layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(NodeServices.layer, outbound))), { excludeTestServices: true, timeout: "30 minutes" })((it) => {
+  it.effect('Two-parent merge determinism: the retained resolution, object closure and bundle do not depend on unrelated objects or on the store (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const compact = try fixture("compact")
+    const expanded = try fixture("expanded")
+    const work = try fixture("bundle")
+    const ids = try orDie(Effect.try(() => twoParentMerge(compact)))
+    try orDie(Effect.try(() => borrowObjects(expanded, compact)))
+    try orDie(Effect.try(() => addUnrelatedObjects(expanded, 70_000)))
+    const input = mergeInput(ids.merged, [{ sha: ids.merged, parents: [ids.left, ids.right] }], ["witness.txt"])
+    const first = try collectMergeResolutions(input, compact.path)
+    const second = try collectMergeResolutions(input, expanded.path)
+    const verified = try collectVerifiedMergeResolutions(input, compact.path)
+    const batched = try collectVerifiedMergeResolutionBatch([input, input], expanded.path)
+    const legacy = try collectMergeResolutions(input, compact.path, LEGACY_MERGE_PROFILE)
+    const resolution = first[0]
+    const legacyResolution = legacy[0]
+    const closure = try verifyMergeObjectStore([input], compact.path)
+    const bundle = try createMergeBundle([input], compact.path, `${work.root}/proof.bundle`, packageRoot)
+    const unbundled = `${work.root}/unbundled.git`
+    try unbundledStore(bundle.path, unbundled)
+    const fromBundle = try collectVerifiedMergeResolutions(input, unbundled)
+    const inside = (try Effect.flip(createMergeBundle([input], compact.path, `${packageRoot}test/inside.bundle`, packageRoot))).reason
+    const emptyInputs = (try Effect.flip(verifyMergeObjectStore([], compact.path))).reason
+    try same(
+      {
+        second,
+        verified,
+        batched,
+        fromBundle,
+        paths: resolution?.paths,
+        conflicts: resolution !== undefined && resolution.kind !== "combined-parent-delta" ? resolution.hadConflicts : undefined,
+        fullIndex: /\nindex [a-f0-9]{40}\.\.[a-f0-9]{40} 100644\n/u.test(resolution?.patch ?? ""),
+        legacyIndex: /\nindex [a-f0-9]{7}\.\.[a-f0-9]{7} 100644\n/u.test(legacyResolution?.patch ?? ""),
+        legacyBody: withoutIndex(legacyResolution?.patch ?? ""),
+        counts: resolution === undefined ? null : mergeResolutionLineCounts(resolution, commitOf(input)),
+        bundled: { commits: bundle.commits, trees: bundle.trees, blobs: bundle.blobs, expandedBytes: bundle.expandedBytes, snapshots: closure.snapshots.length },
+        inside,
+        emptyInputs,
+        recipe: sameMergeRecipeInput(mergeRecipe(input), input),
+      },
+      {
+        second: first,
+        verified: first,
+        batched: [first, first],
+        fromBundle: first,
+        paths: ["witness.txt"],
+        conflicts: true,
+        fullIndex: true,
+        legacyIndex: true,
+        legacyBody: withoutIndex(resolution?.patch ?? ""),
+        counts: [{ path: "witness.txt", additions: 1, deletions: 5 }],
+        bundled: { commits: closure.commits.length, trees: closure.trees.length, blobs: closure.blobs.length, expandedBytes: closure.expandedBytes, snapshots: 4 },
+        inside: "Raw merge evidence must stay outside the workspace",
+        emptyInputs: "Complete Git merge ancestry is required",
+        recipe: true,
+      },
+    )
+  }))
+
+  it.effect('Octopus merge determinism: a nine-parent delta is retained identically, counted exactly, refused when tampered and recovered natively (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const repository = try fixture("octopus")
+    const ids = try orDie(Effect.try(() => octopusMerge(repository)))
+    const input = mergeInput(ids.head, [{ sha: ids.head, parents: ids.parents }], ["fix.ts"])
+    const requests: ReadonlyArray<FileRequest> = [
+      { repository: repositoryName, repositoryNodeId, ref: ids.head, path: "fix.ts" },
+      { repository: repositoryName, repositoryNodeId, ref: ids.head, path: "absent.ts" },
+    ]
+    const closure = try verifyMergeObjectStore([input], repository.path, requests)
+    const verified = try collectVerifiedMergeResolutions(input, repository.path)
+    const again = try collectMergeResolutions(input, repository.path)
+    const batched = try collectVerifiedMergeResolutionBatch([input, input], repository.path)
+    const resolution = combined(verified[0])
+    const tampered = Object.fromEntries(Object.entries(faults(resolution)).map(([fault, value]) => [fault, mergeResolutionLineCounts(value, commitOf(input))]))
+    const added = mergeInput(ids.added, [{ sha: ids.added, parents: ids.parents }], ["fix.ts"])
+    const unrepresentable = (try Effect.flip(collectMergeResolutions(added, repository.path))).reason
+    const recovery = try recoverFiles(repository.path, requests)
+    const blob = recovery.blobs[0]
+    const content = try orDie(Effect.try(() => gunzipBase64(blob?.gzipBase64 ?? "")))
+    const repositoryRecord: PublicMergeRepository = { id: 4242, node_id: repositoryNodeId, private: false, full_name: repositoryName }
+    const files = publicFiles(repository.path, repositoryRecord)
+    const read = try files.read(repositoryName, ids.head, "fix.ts")
+    const reread = try files.read(repositoryName, ids.head, "fix.ts")
+    const missing = try files.read(repositoryName, ids.head, "absent.ts")
+    const foreign = (try Effect.flip(files.read("someone/else", ids.head, "fix.ts"))).reason
+    try same(
+      {
+        again,
+        batched,
+        kind: resolution.kind,
+        parents: resolution.parents,
+        automatic: "automaticTree" in resolution,
+        paths: resolution.paths,
+        counts: mergeResolutionLineCounts(resolution, commitOf(input)),
+        tampered,
+        unrepresentable,
+        snapshots: closure.snapshots.includes(ids.head),
+        recovery: {
+          inputSha256: recovery.inputSha256,
+          entries: recovery.entries.map(({ path, mode, blobSha }) => ({ path, mode, blobSha })),
+          blob: blob === undefined ? undefined : { sha: blob.sha, size: blob.size, sha256: blob.sha256, content },
+        },
+        public: { sha: read?.sha, content: read === null ? "" : hexOfBytes(read.bytes), cached: read === reread, missing, foreign },
+      },
+      {
+        again: verified,
+        batched: [verified, verified],
+        kind: "combined-parent-delta",
+        parents: ids.parents,
+        automatic: false,
+        paths: ["fix.ts"],
+        counts: [{ path: "fix.ts", additions: 1, deletions: 0 }],
+        tampered: { order: null, "parent-tree": null, blob: null, mode: null, truncated: null, counter: null, hash: null, "mixed-prefix": null, "overlapping-hunk": null },
+        unrepresentable: "Octopus resolution requires complete regular-file snapshots",
+        snapshots: true,
+        recovery: {
+          inputSha256: fileRequestsSha256(requests),
+          entries: [
+            { path: "fix.ts", mode: "100644", blobSha: resolution.files[0]?.result.blobSha },
+            { path: "absent.ts", mode: null, blobSha: null },
+          ],
+          blob: { sha: resolution.files[0]?.result.blobSha, size: 23, sha256: sha256Of("common\naccepted repair\n"), content: hexOfBytes(textBytes("common\naccepted repair\n")) },
+        },
+        public: { sha: resolution.files[0]?.result.blobSha, content: hexOfBytes(textBytes("common\naccepted repair\n")), cached: true, missing: null, foreign: "Invalid immutable file recovery selection" },
+      },
+    )
+  }))
+
+  it.effect('Accepted-patch replay: each retained resolution patch replays onto the automatic merge and reproduces the accepted tree, binary files included (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+    const repository = try fixture("replay")
+    const { binary } = try Git
+    const ids = try orDie(Effect.try(() => acceptedMerges(repository)))
+    const input = mergeInput(ids.clean, [{ sha: ids.merged, parents: [ids.left, ids.right] }, { sha: ids.clean, parents: [ids.cleanLeft, ids.cleanRight] }], ["a.txt", "b.bin", "c.txt"])
+    const resolutions = try collectMergeResolutions(input, repository.path)
+    const replays: Array<{ readonly matches: boolean; readonly paths: ReadonlyArray<string>; readonly conflicts: boolean; readonly patched: boolean }> = []
+    for (const resolution of resolutions) {
+      if (resolution.kind === "combined-parent-delta") continue
+      const [left = "", right = ""] = resolution.parents
+      const replay = try orDie(Effect.try(() => replayedTree(repository, binary, left, right, resolution.patch)))
+      replays.push({ matches: replay.automaticTree === resolution.automaticTree && replay.replayed === resolution.resolvedTree, paths: resolution.paths, conflicts: resolution.hadConflicts, patched: resolution.patch !== "" })
+    }
+    const conflicted = resolutions[0]
+    const corrupted = conflicted === undefined || conflicted.kind === "combined-parent-delta" ? undefined : try orDie(Effect.try(() => replayedTree(repository, binary, conflicted.parents[0] ?? "", conflicted.parents[1] ?? "", conflicted.patch.replace("+accepted", "+tampered"))))
+    try same(
+      { replays, corruptedMatches: corrupted === undefined ? undefined : corrupted.replayed === (conflicted?.resolvedTree ?? ""), binaryIndexed: /\nindex [a-f0-9]{40}\.\.[a-f0-9]{40} 100644\nGIT binary patch\n/u.test(conflicted?.patch ?? "") },
+      {
+        replays: [
+          { matches: true, paths: ["a.txt", "b.bin", "c.txt"], conflicts: true, patched: true },
+          { matches: true, paths: [], conflicts: false, patched: false },
+        ],
+        corruptedMatches: false,
+        binaryIndexed: true,
+      },
+    )
+  }))
+})

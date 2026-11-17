@@ -1,0 +1,233 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import * as Hex from "effect/encoding/Hex"
+import { gitObjectId, utf8Text } from "./bytes.ts"
+import { type FileRequest, type MergeInput, type ObjectClosure, objectId, ordered, refused, validFileRequest } from "./model.vibe"
+import { gitBytes, gitText } from "./process.vibe"
+
+const MAX_OUTPUT = 8 * 1024 * 1024
+const MAX_EXPANDED = 256 * 1024 * 1024
+const unavailable = "Required Git merge objects are unavailable"
+const treeModes = ["40000", "100644", "100755", "120000", "160000"]
+
+interface TreeListing {
+  readonly mode: string
+  readonly name: string
+  readonly sha: string
+}
+
+function treeEntries(bytes: Uint8Array): ReadonlyArray<TreeListing> | string {
+  const entries: TreeListing[] = []
+  let cursor = 0
+  while (cursor < bytes.length) {
+    const space = bytes.indexOf(32, cursor)
+    const nul = bytes.indexOf(0, space + 1)
+    if (space < cursor || nul < space || nul + 21 > bytes.length) return "Incomplete Git snapshot entry"
+    const mode = utf8Text(bytes.subarray(cursor, space)) ?? ""
+    const name = utf8Text(bytes.subarray(space + 1, nul))
+    if (!treeModes.includes(mode) || name === undefined || name === "" || name.includes("/") || name === "." || name === "..") return "Invalid Git snapshot entry"
+    entries.push({ mode, name, sha: Hex.encode(bytes.subarray(nul + 1, nul + 21)) })
+    cursor = nul + 21
+  }
+  return entries
+}
+
+effect function objectBytes(repository: string, args: ReadonlyArray<string>, input?: string) {
+  return try gitBytes({ args: ["--git-dir", repository, ...args], input, limit: MAX_OUTPUT, seconds: 30 }, unavailable)
+}
+
+effect function objectText(repository: string, args: ReadonlyArray<string>, input?: string) {
+  return try gitText({ args: ["--git-dir", repository, ...args], input, limit: MAX_OUTPUT, seconds: 30 }, unavailable)
+}
+
+function rootsOf(inputs: ReadonlyArray<MergeInput>) {
+  const roots = new Set<string>()
+  const edges = new Map<string, readonly [string | null, string]>()
+  const mergePairs: Array<readonly [string, string]> = []
+  const addEdge = (before: string | null, after: string) => edges.set(`${before ?? "root"}:${after}`, [before, after])
+  for (const input of inputs) {
+    roots.add(input.pull.head.sha)
+    for (const commit of input.commits) {
+      roots.add(commit.sha)
+      for (const parent of commit.parents) {
+        roots.add(parent.sha)
+        addEdge(parent.sha, commit.sha)
+      }
+      if (commit.parents.length === 0) addEdge(null, commit.sha)
+      for (let left = 0; left < commit.parents.length; left++)
+        for (let right = left + 1; right < commit.parents.length; right++) mergePairs.push([commit.parents[left].sha, commit.parents[right].sha])
+    }
+  }
+  return { roots, edges, mergePairs, addEdge }
+}
+
+function pathsByRef<T>(items: ReadonlyArray<T>, ref: (item: T) => string, paths: (item: T) => ReadonlyArray<string>) {
+  const selected = new Map<string, Set<string>>()
+  for (const item of items) {
+    const found = selected.get(ref(item)) ?? new Set<string>()
+    for (const path of paths(item)) found.add(path)
+    selected.set(ref(item), found)
+  }
+  return selected
+}
+
+function findPath(rootsByCommit: ReadonlyMap<string, string>, treeBytes: ReadonlyMap<string, Uint8Array>, ref: string, path: string): TreeListing | null | string {
+  let tree = rootsByCommit.get(ref)
+  const parts = path.split("/")
+  for (let index = 0; index < parts.length; index++) {
+    const body = tree === undefined ? undefined : treeBytes.get(tree)
+    if (body === undefined) return "Incomplete Git snapshot tree"
+    const listing = treeEntries(body)
+    if (typeof listing === "string") return listing
+    const entry = listing.find((item) => item.name === parts[index])
+    if (entry === undefined) return null
+    if (index === parts.length - 1) return entry
+    if (entry.mode !== "40000") return null
+    tree = entry.sha
+  }
+  return null
+}
+
+export effect function requiredMergeObjects(inputs: ReadonlyArray<MergeInput>, repository: string, fileRequests: ReadonlyArray<FileRequest> = []) {
+  if (inputs.length === 0) throw refused("Complete Git merge ancestry is required")
+  if ((try objectText(repository, ["rev-parse", "--is-shallow-repository"])).trim() !== "false") throw refused("Complete Git merge ancestry is required")
+  const { roots, edges, mergePairs, addEdge } = rootsOf(inputs)
+  if ([...roots].some((sha) => !objectId.test(sha))) throw refused("Invalid Git merge object identity")
+  for (const request of fileRequests) {
+    if (!validFileRequest(request) || !inputs.some((input) => input.repository === request.repository && input.repositoryNodeId === request.repositoryNodeId)) throw refused("Invalid recovered file repository")
+    roots.add(request.ref)
+  }
+  const snapshots = new Set(roots)
+  const commits = new Map<string, ReadonlyArray<string>>()
+  const trees = new Set<string>()
+  const blobs = new Set<string>()
+  for (const row of (try objectText(repository, ["rev-list", "--parents", ...ordered(roots), "--"])).trim().split("\n")) {
+    const [sha = "", ...parents] = row.split(" ")
+    if (![sha, ...parents].every((value) => objectId.test(value)) || commits.has(sha)) throw refused("Invalid Git merge ancestry")
+    commits.set(sha, parents)
+  }
+  for (const [sha, parents] of commits) if (parents.some((parent) => !commits.has(parent))) throw refused(`Incomplete Git merge ancestry for ${sha}`)
+  for (const input of inputs) {
+    if (!commits.has(input.pull.head.sha)) throw refused("Git merge head is not a commit")
+    for (const commit of input.commits)
+      if (JSON.stringify(commits.get(commit.sha)) !== JSON.stringify(commit.parents.map(({ sha }) => sha))) throw refused("Git merge parents differ from source")
+  }
+  const visited = new Set<string>()
+  for (let index = 0; index < mergePairs.length; index++) {
+    const pair = mergePairs[index]
+    const key = [...pair].sort().join(":")
+    if (visited.has(key)) continue
+    visited.add(key)
+    const bases = (try objectText(repository, ["merge-base", "--all", ...pair])).trim().split("\n")
+    if (bases.length === 0 || bases.some((base) => !objectId.test(base) || !commits.has(base))) throw refused("Git merge base is unavailable")
+    for (const base of bases) {
+      snapshots.add(base)
+      for (const side of pair) addEdge(base, side)
+    }
+    for (let left = 0; left < bases.length; left++) for (let right = left + 1; right < bases.length; right++) mergePairs.push([bases[left], bases[right]])
+  }
+  const selectedPaths = pathsByRef(inputs, (input) => input.pull.head.sha, (input) => input.files.map((file) => file.filename))
+  const regularPaths = pathsByRef(fileRequests, (request) => request.ref, (request) => [request.path])
+  const rootsByCommit = new Map<string, string>()
+  for (const row of (try objectText(repository, ["log", "--no-walk=unsorted", "--format=%H %T", ...snapshots, "--"])).trim().split("\n")) {
+    const match = /^([a-f0-9]{40}) ([a-f0-9]{40})$/u.exec(row)
+    if (match === null || !snapshots.has(match[1]) || rootsByCommit.has(match[1])) throw refused("Git snapshot tree is unavailable")
+    rootsByCommit.set(match[1], match[2])
+  }
+  if (rootsByCommit.size !== snapshots.size) throw refused("Git snapshot tree is unavailable")
+  const treeBytes = new Map<string, Uint8Array>()
+  let pending = new Set(rootsByCommit.values())
+  while (pending.size > 0) {
+    const batch = [...pending].filter((sha) => !treeBytes.has(sha))
+    pending = new Set()
+    if (batch.length === 0) break
+    const bytes = try objectBytes(repository, ["cat-file", "--batch"], `${batch.join("\n")}\n`)
+    let cursor = 0
+    for (const sha of batch) {
+      const newline = bytes.indexOf(10, cursor)
+      const match = newline < 0 ? null : /^([a-f0-9]{40}) tree (\d+)$/u.exec(utf8Text(bytes.subarray(cursor, newline)) ?? "")
+      if (match === null || match[1] !== sha) throw refused("Git snapshot tree is unavailable")
+      const size = Number(match[2])
+      const start = newline + 1
+      const end = start + size
+      if (!Number.isSafeInteger(size) || end >= bytes.length || bytes[end] !== 10) throw refused("Incomplete Git snapshot tree")
+      const body = bytes.slice(start, end)
+      if (gitObjectId("tree", body) !== sha) throw refused("Git snapshot tree hash differs")
+      treeBytes.set(sha, body)
+      trees.add(sha)
+      const listing = treeEntries(body)
+      if (typeof listing === "string") throw refused(listing)
+      const names = new Set<string>()
+      for (const entry of listing) {
+        if (names.has(entry.name)) throw refused("Invalid Git snapshot listing")
+        names.add(entry.name)
+        if (entry.mode === "40000") pending.add(entry.sha)
+        else if ([".gitattributes", ".gitmodules"].includes(entry.name) && entry.mode !== "160000") blobs.add(entry.sha)
+      }
+      cursor = end + 1
+    }
+    if (cursor !== bytes.length) throw refused("Unexpected Git tree batch bytes")
+  }
+  for (const [ref, paths] of selectedPaths)
+    for (const path of paths) {
+      const entry = findPath(rootsByCommit, treeBytes, ref, path)
+      if (typeof entry === "string") throw refused(entry)
+      if (entry !== null && !["40000", "160000"].includes(entry.mode)) blobs.add(entry.sha)
+    }
+  for (const [ref, paths] of regularPaths)
+    for (const path of paths) {
+      const entry = findPath(rootsByCommit, treeBytes, ref, path)
+      if (typeof entry === "string") throw refused(entry)
+      if (entry !== null && ["100644", "100755"].includes(entry.mode)) blobs.add(entry.sha)
+    }
+  const changedEdges = [...edges.values()]
+  for (let offset = 0; offset < changedEdges.length; offset += 64) {
+    const batch = changedEdges.slice(offset, offset + 64)
+    const rows = (try objectText(repository, ["diff-tree", "--stdin", "--root", "--no-commit-id", "-r", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", "-z"], `${batch.map(([before, after]) => (before === null ? after : `${before} ${after}`)).join("\n")}\n`)).split("\0")
+    if (rows.pop() !== "" || rows.length % 2 !== 0) throw refused("Incomplete Git change listing")
+    for (let index = 0; index < rows.length; index += 2) {
+      const match = /^:([0-7]{6}) ([0-7]{6}) ([a-f0-9]{40}) ([a-f0-9]{40}) [AMDTUX]$/u.exec(rows[index])
+      if (match === null || rows[index + 1] === "") throw refused("Invalid Git change listing")
+      for (const [mode, sha] of [[match[1], match[3]], [match[2], match[4]]] as const) {
+        if ((mode === "000000" && sha === "0".repeat(40)) || mode === "160000") continue
+        if (!["100644", "100755", "120000"].includes(mode) || !objectId.test(sha)) throw refused("Unsupported changed Git object")
+        blobs.add(sha)
+      }
+    }
+  }
+  const expected = new Map<string, string>()
+  for (const [kind, values] of [["commit", commits.keys()], ["tree", trees.values()], ["blob", blobs.values()]] as const)
+    for (const sha of values) {
+      if (expected.has(sha) && expected.get(sha) !== kind) throw refused("Conflicting required Git object types")
+      expected.set(sha, kind)
+    }
+  const ids = ordered(expected.keys())
+  const rows = (try objectText(repository, ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"], `${ids.join("\n")}\n`)).trim().split("\n")
+  if (rows.length !== ids.length) throw refused("Incomplete required Git objects")
+  let expandedBytes = 0
+  for (let index = 0; index < rows.length; index++) {
+    const match = /^([a-f0-9]{40}) (commit|tree|blob) (\d+)$/u.exec(rows[index])
+    if (match === null || match[1] !== ids[index] || match[2] !== expected.get(ids[index])) throw refused("Required Git merge object is missing")
+    const size = Number(match[3])
+    expandedBytes += size
+    if (!Number.isSafeInteger(size) || !Number.isSafeInteger(expandedBytes) || expandedBytes > MAX_EXPANDED) throw refused("Required Git object expansion exceeds limit")
+  }
+  return {
+    commits: ordered(commits.keys()),
+    trees: ordered(trees),
+    blobs: ordered(blobs),
+    snapshots: ordered(snapshots),
+    expandedBytes,
+  } satisfies ObjectClosure
+}
+
+export effect function verifyMergeObjectStore(inputs: ReadonlyArray<MergeInput>, repository: string, fileRequests: ReadonlyArray<FileRequest> = []) {
+  try objectText(repository, ["fsck", "--full", "--strict", "--no-reflogs", "--no-dangling"])
+  let bytes = 0
+  for (const value of (try objectText(repository, ["cat-file", "--batch-all-objects", "--batch-check=%(objectsize)"])).trim().split("\n")) {
+    if (!/^\d+$/u.test(value)) throw refused("Invalid Git object inventory")
+    const size = Number(value)
+    bytes += size
+    if (!Number.isSafeInteger(size) || !Number.isSafeInteger(bytes) || bytes > MAX_EXPANDED) throw refused("Expanded object limit")
+  }
+  return try requiredMergeObjects(inputs, repository, fileRequests)
+}

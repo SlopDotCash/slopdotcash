@@ -1,0 +1,5094 @@
+{
+ "schema": "slop-parity-admission-v1",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+ },
+ "findings": [
+  {
+   "topic": "contentType",
+   "finding": "The old API has no 415 answer. A session write must be same-origin JSON (backend/http.ts isSameOriginJsonWrite: Origin equals the request origin and the media type is application/json); any other content type answers the dispatcher's origin refusal, 403 origin_forbidden, with or without a message per dispatcher (see the origin rows).",
+   "at": "backend/http.ts:58"
+  },
+  {
+   "topic": "invalidJson",
+   "finding": "A malformed, oversized or non-object JSON body read through readJsonObject is null; requireJsonObject answers 400 {error: invalid_request, message: \"Request body must be a JSON object\"}, and routes that read with readJsonObject answer their own 400 code (listed per route in routes.json).",
+   "at": "backend/http.ts:75"
+  },
+  {
+   "topic": "bodyLimit",
+   "finding": "Pages session routes read bounded JSON with readBoundedJson and do not answer 413: an oversized body is the same 400 as malformed JSON. The trace API reads with readLimitedBody and answers 413 {error: payload_too_large, message: \"Request body exceeds <limit> bytes\"} and 400 invalid_content_length for a non-decimal Content-Length.",
+   "at": "backend/trace/validation.ts:141"
+  },
+  {
+   "topic": "exactKeys",
+   "finding": "exactKeys answers 400 {error: invalid_request, message: \"Request body has unexpected fields\"} for a missing required key or an extra key.",
+   "at": "backend/http.ts:173"
+  },
+  {
+   "topic": "expectedActor",
+   "finding": "requireActor answers 400 invalid_expected_actor for a header that is not ^[1-9]\\d{0,19}$ and 403 actor_changed for another account. The Points dispute routes check the header themselves and answer 409 {error: account_changed} (no message) for another account and do not validate its format. The notifications and email routes answer the same codes with {error} only (errorOnly mapping).",
+   "at": "backend/http.ts:186",
+   "evidence": [
+    "backend/http-expected-actor.test.ts:133",
+    "backend/http-expected-actor.test.ts:185",
+    "backend/http-expected-actor.test.ts:194"
+   ]
+  },
+  {
+   "topic": "rateLimit",
+   "finding": "Points POST routes: 20 per minute per cf-connecting-ip (scope points-web), 429 {error: rate_limited} with retry-after. Identity start and poll: Workers rate-limit binding then the exact D1 window (12 per minute for start, 120 for poll), 429 {error: rate_limited, message: \"Too many requests. Try again later.\"} with retry-after, and 503 {error: service_unavailable, message: \"Identity service is temporarily unavailable.\"} when the limiter fails.",
+   "at": "backend/points/handler.ts:108"
+  },
+  {
+   "topic": "errorMapping",
+   "finding": "apiErrorResponse (backend/http.ts) maps a thrown refusal to its status and {error, message}; a code that is not ^[a-z][a-z0-9_]{1,63}$ becomes internal_error, a 5xx message becomes \"Internal error\" unless the dispatcher marks it public, and any other failure is 500 {error: internal_error, message: \"Internal error\"}.",
+   "at": "backend/http.ts:133"
+  }
+ ],
+ "rows": [
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "actor === null",
+   "in": "requireActor",
+   "at": "backend/http.ts:191",
+   "routes": [
+    "GET /api/v1/project-github/owned-repositories",
+    "GET /api/v1/project-github/repositories/:owner/:name",
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id/solana-funding",
+    "GET /api/v1/project-vaults/:id",
+    "POST /api/v1/project-vaults/:id",
+    "GET /api/v1/project-setup",
+    "GET /api/v1/project-setup/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "GET /api/v1/project-applications/mine",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "GET /api/v1/admin/projects",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals",
+    "GET /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "actor === null",
+   "in": "requireActor",
+   "at": "backend/http.ts:191",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "GET /api/v1/security-cases",
+    "POST /api/v1/security-cases",
+    "GET /api/v1/security-cases/:id",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/security-submissions",
+    "GET /api/v1/security-submissions",
+    "GET /api/v1/security-submissions/:id",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify",
+    "GET /api/v1/operator/vetting-evidence",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/body"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "actor === null",
+   "in": "requireActor",
+   "at": "backend/http.ts:191",
+   "routes": [
+    "GET /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "GET /api/v1/admin/vetting",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "actor === null",
+   "in": "requireActor",
+   "at": "backend/http.ts:191",
+   "routes": [
+    "POST /api/v1/referrals/code",
+    "GET /api/v1/admin/fee-conversions",
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "actor === null",
+   "in": "requireActor",
+   "at": "backend/http.ts:191",
+   "routes": [
+    "GET /api/v1/notifications/email",
+    "POST /api/v1/notifications/email",
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify",
+    "GET /api/v1/notifications/incomplete-assessments",
+    "GET /api/v1/notifications/scam-reviews/:path",
+    "GET /api/v1/notifications/appeals/:key",
+    "GET /api/v1/notifications",
+    "POST /api/v1/notifications/read"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "session_expired",
+   "body": {
+    "error": "session_expired"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!member",
+   "in": "handlePaymentsApi",
+   "at": "backend/payments/handler.ts:551",
+   "routes": [
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!member",
+   "in": "handlePaymentsApi",
+   "at": "backend/payments/handler.ts:551",
+   "routes": [
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!actor",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:128",
+   "routes": [
+    "GET /api/v1/points/disputes",
+    "POST /api/v1/points/disputes",
+    "GET /api/v1/points/disputes/:key",
+    "POST /api/v1/points/disputes/:key"
+   ]
+  },
+  {
+   "category": "authentication",
+   "otherMethods": true,
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "not: route === \"/me\" && request.method === \"GET\"",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:274",
+   "routes": [
+    "GET /api/v1/points/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "not: route === \"/me\" && request.method === \"GET\"",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:274",
+   "routes": [
+    "GET /api/v1/points/sessions",
+    "POST /api/v1/points/sessions/revoke",
+    "POST /api/v1/points/account/close",
+    "POST /api/v1/points/signout",
+    "POST /api/v1/points/visibility"
+   ]
+  },
+  {
+   "category": "authentication",
+   "otherMethods": true,
+   "status": 401,
+   "error": "session_expired",
+   "body": {
+    "error": "session_expired"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "headersFrom": {
+    "set-cookie": "sessionCookie(\"\", 0)"
+   },
+   "condition": "not: route === \"/me\" && request.method === \"GET\"",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:285",
+   "routes": [
+    "GET /api/v1/points/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "session_expired",
+   "body": {
+    "error": "session_expired"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "headersFrom": {
+    "set-cookie": "sessionCookie(\"\", 0)"
+   },
+   "condition": "not: route === \"/me\" && request.method === \"GET\"",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:285",
+   "routes": [
+    "GET /api/v1/points/sessions",
+    "POST /api/v1/points/sessions/revoke",
+    "POST /api/v1/points/account/close",
+    "POST /api/v1/points/signout",
+    "POST /api/v1/points/visibility"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "not_signed_in",
+   "body": {
+    "error": "not_signed_in"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!current",
+   "in": "handleX",
+   "at": "backend/points/x.ts:267",
+   "routes": [
+    "GET /api/v1/points/x/me",
+    "POST /api/v1/points/x/start",
+    "POST /api/v1/points/x/disconnect",
+    "POST /api/v1/points/x/visibility"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "sign_in_required",
+   "body": {
+    "error": "sign_in_required"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!actor",
+   "in": "referralAccount",
+   "at": "backend/referrals/claims.ts:52",
+   "routes": [
+    "GET /api/v1/referrals/me"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "flow === null",
+   "in": "authorize",
+   "at": "backend/security/submissions.ts:286",
+   "routes": [
+    "POST /api/v1/security-submissions"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "flow === null",
+   "in": "authorizeSubmission",
+   "at": "backend/security/submissions.ts:443",
+   "routes": [
+    "POST /api/v1/security-submissions/:id/authorize"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "body": {
+    "error": "unauthorized"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json"
+   },
+   "condition": "!actor",
+   "in": "handleHistoricalValueImport",
+   "at": "backend/slopbot/value-import.ts:42",
+   "routes": [
+    "POST /api/v1/slopbot/value-import"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Authentication failed",
+   "body": {
+    "error": "unauthorized",
+    "message": "Authentication failed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "!member",
+   "in": "handleTraceApiInternal",
+   "at": "backend/trace/handler.ts:1525",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/finalize",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Authentication failed",
+   "body": {
+    "error": "unauthorized",
+    "message": "Authentication failed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "actor === null",
+   "in": "handleTraceApiInternal",
+   "at": "backend/trace/handler.ts:1538",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/finalize",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Identity authentication failed",
+   "body": {
+    "error": "unauthorized",
+    "message": "Identity authentication failed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "!/^[A-Za-z0-9._~-]{32,2048}$/u.test(assertion)",
+   "in": "exchangeIdentityAssertion",
+   "at": "backend/trace/handler.ts:785",
+   "routes": [
+    "POST /api/v1/auth/session"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Identity authentication failed",
+   "body": {
+    "error": "unauthorized",
+    "message": "Identity authentication failed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "identity === null",
+   "in": "exchangeIdentityAssertion",
+   "at": "backend/trace/handler.ts:789",
+   "routes": [
+    "POST /api/v1/auth/session"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Sign in with GitHub",
+   "body": {
+    "error": "unauthorized",
+    "message": "Sign in with GitHub"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "session === null",
+   "in": "requireAdmin",
+   "at": "backend/vetting/handler.ts:241",
+   "routes": [
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "GET /api/v1/admin/vetting",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Identity assertion is invalid",
+   "body": {
+    "error": "unauthorized",
+    "message": "Identity assertion is invalid"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "match === null",
+   "in": "consumeAssertion",
+   "at": "workers/identity/handler.ts:519",
+   "routes": [
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "authentication",
+   "status": 401,
+   "error": "unauthorized",
+   "message": "Identity assertion is invalid, used, or expired",
+   "body": {
+    "error": "unauthorized",
+    "message": "Identity assertion is invalid, used, or expired"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "assertion === null",
+   "in": "consumeAssertion",
+   "at": "workers/identity/handler.ts:530",
+   "routes": [
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 400,
+   "error": "invalid_content_length",
+   "message": "Content-Length must contain only decimal digits",
+   "body": {
+    "error": "invalid_content_length",
+    "message": "Content-Length must contain only decimal digits"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "declared !== null && !/^\\d+$/u.test(declared)",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:147",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "otherMethods": true,
+   "status": 400,
+   "error": "invalid_content_length",
+   "message": "Content-Length must contain only decimal digits",
+   "body": {
+    "error": "invalid_content_length",
+    "message": "Content-Length must contain only decimal digits"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "declared !== null && !/^\\d+$/u.test(declared)",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:147",
+   "routes": [
+    "GET /api/v1/project-vaults/:id"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 400,
+   "error": "invalid_content_length",
+   "message": "Content-Length must contain only decimal digits",
+   "body": {
+    "error": "invalid_content_length",
+    "message": "Content-Length must contain only decimal digits"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "declared !== null && !/^\\d+$/u.test(declared)",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:147",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/vetting/evidence/:assessment/:run",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha/chunks/:index",
+    "POST /api/v1/vetting/evidence/:assessment/:run/:sha/finalize",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 400,
+   "error": "invalid_content_length",
+   "message": "Content-Length must contain only decimal digits",
+   "body": {
+    "error": "invalid_content_length",
+    "message": "Content-Length must contain only decimal digits"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "declared !== null && !/^\\d+$/u.test(declared)",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:147",
+   "routes": [
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments",
+    "GET /api/v1/vetting/sandbox",
+    "POST /api/v1/vetting/sandbox",
+    "GET /api/v1/vetting/requests",
+    "POST /api/v1/vetting/results",
+    "POST /api/v1/vetting/journal",
+    "POST /api/v1/vetting/reuse",
+    "POST /api/v1/vetting/refresh",
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity",
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 400,
+   "error": "invalid_content_length",
+   "message": "Content-Length must contain only decimal digits",
+   "body": {
+    "error": "invalid_content_length",
+    "message": "Content-Length must contain only decimal digits"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "declared !== null && !/^\\d+$/u.test(declared)",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:147",
+   "routes": [
+    "PUT /api/v1/trace-uploads/:capability",
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "report_too_large",
+   "message": "The private report is too large.",
+   "body": {
+    "error": "report_too_large",
+    "message": "The private report is too large."
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "bytes.byteLength > MAX_REPORT_BYTES",
+   "in": "storeReport",
+   "at": "backend/security/report-intake.ts:423",
+   "routes": [
+    "POST /api/v1/security-submissions",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 65536 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 65536 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "otherMethods": true,
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 65536 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 65536 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "GET /api/v1/project-vaults/:id"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 65536 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 65536 bytes"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": {
+    "raw": "`Request body exceeds ${limit} bytes`"
+   },
+   "body": {
+    "error": "payload_too_large",
+    "message": {
+     "raw": "`Request body exceeds ${limit} bytes`"
+    }
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/vetting/evidence/:assessment/:run",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha/chunks/:index",
+    "POST /api/v1/vetting/evidence/:assessment/:run/:sha/finalize"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 65536 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 65536 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 3145728 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 3145728 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "GET /api/v1/vetting/sandbox",
+    "POST /api/v1/vetting/sandbox"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": {
+    "raw": "`Request body exceeds ${limit} bytes`"
+   },
+   "body": {
+    "error": "payload_too_large",
+    "message": {
+     "raw": "`Request body exceeds ${limit} bytes`"
+    }
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "GET /api/v1/vetting/requests",
+    "POST /api/v1/vetting/results"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 4096 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 4096 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/vetting/journal",
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity",
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 1024 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 1024 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/vetting/reuse",
+    "POST /api/v1/vetting/refresh"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 8388608 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 8388608 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "PUT /api/v1/trace-uploads/:capability"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "payload_too_large",
+   "message": "Request body exceeds 65536 bytes",
+   "body": {
+    "error": "payload_too_large",
+    "message": "Request body exceeds 65536 bytes"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "error instanceof RangeError",
+   "in": "readLimitedBody",
+   "at": "backend/trace/validation.ts:157",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "evidence_oversize",
+   "message": "Large evidence requires a native streamed download grant",
+   "body": {
+    "error": "evidence_oversize",
+    "message": "Large evidence requires a native streamed download grant"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "!download && object.size_bytes > EVIDENCE_CHUNK_BYTES",
+   "in": "grant",
+   "at": "backend/vetting/evidence.ts:1697",
+   "routes": [
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "evidence_oversize",
+   "message": "Large evidence requires a streamed download",
+   "body": {
+    "error": "evidence_oversize",
+    "message": "Large evidence requires a streamed download"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "row.size_bytes > EVIDENCE_CHUNK_BYTES",
+   "in": "bytes",
+   "at": "backend/vetting/evidence.ts:375",
+   "routes": [
+    "GET /api/v1/operator/vetting-evidence",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha",
+    "POST /api/v1/vetting/evidence/:assessment/:run/:sha/finalize",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/body"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "evidence_oversize",
+   "message": "Large evidence requires a streamed download",
+   "body": {
+    "error": "evidence_oversize",
+    "message": "Large evidence requires a streamed download"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "row.size_bytes > EVIDENCE_CHUNK_BYTES",
+   "in": "bytes",
+   "at": "backend/vetting/evidence.ts:375",
+   "routes": [
+    "POST /api/v1/vetting/results",
+    "POST /api/v1/vetting/reuse"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "evidence_oversize",
+   "message": "A structural evidence document is too large to parse in one request",
+   "body": {
+    "error": "evidence_oversize",
+    "message": "A structural evidence document is too large to parse in one request"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "row.size_bytes > MAX_PARSED_EVIDENCE_BYTES",
+   "in": "document",
+   "at": "backend/vetting/evidence.ts:418",
+   "routes": [
+    "POST /api/v1/vetting/results",
+    "POST /api/v1/vetting/reuse"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "error": "request_too_large",
+   "message": "Request body is too large",
+   "body": {
+    "error": "request_too_large",
+    "message": "Request body is too large"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "catch: { // An invalid or excessive declared length and an oversized stream. fail(413, \"request_too_large\", \"Request body is too large\"); }",
+   "in": "readJson",
+   "at": "workers/identity/handler.ts:129",
+   "routes": [
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity",
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "bodyLimit",
+   "status": 413,
+   "body": {
+    "text": "payload too large"
+   },
+   "headers": {
+    "content-type": "text/plain;charset=UTF-8"
+   },
+   "condition": "catch: { return new Response(\"payload too large\", { status: 413 }); }",
+   "in": "fetch",
+   "at": "workers/slopbot/index.ts:388",
+   "routes": [
+    "POST /github/webhook @worker:slopbot"
+   ]
+  },
+  {
+   "category": "exactKeys",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body has unexpected fields",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body has unexpected fields"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))",
+   "in": "exactKeys",
+   "at": "backend/http.ts:183",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "exactKeys",
+   "otherMethods": true,
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body has unexpected fields",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body has unexpected fields"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))",
+   "in": "exactKeys",
+   "at": "backend/http.ts:183",
+   "routes": [
+    "GET /api/v1/project-vaults/:id"
+   ]
+  },
+  {
+   "category": "exactKeys",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body has unexpected fields",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body has unexpected fields"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))",
+   "in": "exactKeys",
+   "at": "backend/http.ts:183",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/security-submissions",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify"
+   ]
+  },
+  {
+   "category": "exactKeys",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body has unexpected fields",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body has unexpected fields"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))",
+   "in": "exactKeys",
+   "at": "backend/http.ts:183",
+   "routes": [
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/vetting/journal"
+   ]
+  },
+  {
+   "category": "exactKeys",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body has unexpected fields",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body has unexpected fields"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))",
+   "in": "exactKeys",
+   "at": "backend/http.ts:183",
+   "routes": [
+    "POST /api/v1/referrals/code"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 400,
+   "error": "invalid_expected_actor",
+   "message": "Expected GitHub actor is invalid",
+   "body": {
+    "error": "invalid_expected_actor",
+    "message": "Expected GitHub actor is invalid"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "!/^[1-9]\\d{0,19}$/u.test(expected)",
+   "in": "requireActor",
+   "at": "backend/http.ts:197",
+   "routes": [
+    "GET /api/v1/project-github/owned-repositories",
+    "GET /api/v1/project-github/repositories/:owner/:name",
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id/solana-funding",
+    "GET /api/v1/project-vaults/:id",
+    "POST /api/v1/project-vaults/:id",
+    "GET /api/v1/project-setup",
+    "GET /api/v1/project-setup/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "GET /api/v1/project-applications/mine",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "GET /api/v1/admin/projects",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals",
+    "GET /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 400,
+   "error": "invalid_expected_actor",
+   "message": "Expected GitHub actor is invalid",
+   "body": {
+    "error": "invalid_expected_actor",
+    "message": "Expected GitHub actor is invalid"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "!/^[1-9]\\d{0,19}$/u.test(expected)",
+   "in": "requireActor",
+   "at": "backend/http.ts:197",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "GET /api/v1/security-cases",
+    "POST /api/v1/security-cases",
+    "GET /api/v1/security-cases/:id",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/security-submissions",
+    "GET /api/v1/security-submissions",
+    "GET /api/v1/security-submissions/:id",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify",
+    "GET /api/v1/operator/vetting-evidence",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/body"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 400,
+   "error": "invalid_expected_actor",
+   "message": "Expected GitHub actor is invalid",
+   "body": {
+    "error": "invalid_expected_actor",
+    "message": "Expected GitHub actor is invalid"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!/^[1-9]\\d{0,19}$/u.test(expected)",
+   "in": "requireActor",
+   "at": "backend/http.ts:197",
+   "routes": [
+    "GET /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "GET /api/v1/admin/vetting",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 400,
+   "error": "invalid_expected_actor",
+   "message": "Expected GitHub actor is invalid",
+   "body": {
+    "error": "invalid_expected_actor",
+    "message": "Expected GitHub actor is invalid"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!/^[1-9]\\d{0,19}$/u.test(expected)",
+   "in": "requireActor",
+   "at": "backend/http.ts:197",
+   "routes": [
+    "POST /api/v1/referrals/code",
+    "GET /api/v1/admin/fee-conversions",
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 400,
+   "error": "invalid_expected_actor",
+   "body": {
+    "error": "invalid_expected_actor"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!/^[1-9]\\d{0,19}$/u.test(expected)",
+   "in": "requireActor",
+   "at": "backend/http.ts:197",
+   "routes": [
+    "GET /api/v1/notifications/email",
+    "POST /api/v1/notifications/email",
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify",
+    "GET /api/v1/notifications/incomplete-assessments",
+    "GET /api/v1/notifications/scam-reviews/:path",
+    "GET /api/v1/notifications/appeals/:key",
+    "GET /api/v1/notifications",
+    "POST /api/v1/notifications/read"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 403,
+   "error": "actor_changed",
+   "message": "Your account changed. Reload your private view before continuing.",
+   "body": {
+    "error": "actor_changed",
+    "message": "Your account changed. Reload your private view before continuing."
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "expected !== actor.githubId",
+   "in": "requireActor",
+   "at": "backend/http.ts:199",
+   "routes": [
+    "GET /api/v1/project-github/owned-repositories",
+    "GET /api/v1/project-github/repositories/:owner/:name",
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id/solana-funding",
+    "GET /api/v1/project-vaults/:id",
+    "POST /api/v1/project-vaults/:id",
+    "GET /api/v1/project-setup",
+    "GET /api/v1/project-setup/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "GET /api/v1/project-applications/mine",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "GET /api/v1/admin/projects",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals",
+    "GET /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 403,
+   "error": "actor_changed",
+   "message": "Your account changed. Reload your private view before continuing.",
+   "body": {
+    "error": "actor_changed",
+    "message": "Your account changed. Reload your private view before continuing."
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "expected !== actor.githubId",
+   "in": "requireActor",
+   "at": "backend/http.ts:199",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "GET /api/v1/security-cases",
+    "POST /api/v1/security-cases",
+    "GET /api/v1/security-cases/:id",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/security-submissions",
+    "GET /api/v1/security-submissions",
+    "GET /api/v1/security-submissions/:id",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify",
+    "GET /api/v1/operator/vetting-evidence",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/body"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 403,
+   "error": "actor_changed",
+   "message": "Your account changed. Reload your private view before continuing.",
+   "body": {
+    "error": "actor_changed",
+    "message": "Your account changed. Reload your private view before continuing."
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "expected !== actor.githubId",
+   "in": "requireActor",
+   "at": "backend/http.ts:199",
+   "routes": [
+    "GET /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "GET /api/v1/admin/vetting",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 403,
+   "error": "actor_changed",
+   "message": "Your account changed. Reload your private view before continuing.",
+   "body": {
+    "error": "actor_changed",
+    "message": "Your account changed. Reload your private view before continuing."
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "expected !== actor.githubId",
+   "in": "requireActor",
+   "at": "backend/http.ts:199",
+   "routes": [
+    "POST /api/v1/referrals/code",
+    "GET /api/v1/admin/fee-conversions",
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 403,
+   "error": "actor_changed",
+   "body": {
+    "error": "actor_changed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "expected !== actor.githubId",
+   "in": "requireActor",
+   "at": "backend/http.ts:199",
+   "routes": [
+    "GET /api/v1/notifications/email",
+    "POST /api/v1/notifications/email",
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify",
+    "GET /api/v1/notifications/incomplete-assessments",
+    "GET /api/v1/notifications/scam-reviews/:path",
+    "GET /api/v1/notifications/appeals/:key",
+    "GET /api/v1/notifications",
+    "POST /api/v1/notifications/read"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 409,
+   "error": "account_changed",
+   "body": {
+    "error": "account_changed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "expected && expected !== actor.githubId",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:131",
+   "routes": [
+    "GET /api/v1/points/disputes",
+    "POST /api/v1/points/disputes",
+    "GET /api/v1/points/disputes/:key",
+    "POST /api/v1/points/disputes/:key"
+   ]
+  },
+  {
+   "category": "expectedActor",
+   "status": 409,
+   "error": "account_changed",
+   "message": "The selected GitHub account changed. Preview the decision again.",
+   "body": {
+    "error": "account_changed",
+    "message": "The selected GitHub account changed. Preview the decision again."
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "account === null || (selected.githubId !== undefined && selected.githubId !== account.githubId)",
+   "in": "enforceProject",
+   "at": "backend/projects/handler.ts:2503",
+   "routes": [
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "value === null",
+   "in": "requireJsonObject",
+   "at": "backend/http.ts:99",
+   "routes": [
+    "POST /api/v1/security-submissions",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "value === null",
+   "in": "requireJsonObject",
+   "at": "backend/http.ts:99",
+   "routes": [
+    "POST /api/v1/referrals/code"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be valid UTF-8 JSON",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be valid UTF-8 JSON"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Request body must be valid UTF-8 JSON\", ); }",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:106",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "otherMethods": true,
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be valid UTF-8 JSON",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be valid UTF-8 JSON"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Request body must be valid UTF-8 JSON\", ); }",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:106",
+   "routes": [
+    "GET /api/v1/project-vaults/:id"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be valid UTF-8 JSON",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be valid UTF-8 JSON"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Request body must be valid UTF-8 JSON\", ); }",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:106",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be valid UTF-8 JSON",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be valid UTF-8 JSON"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Request body must be valid UTF-8 JSON\", ); }",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:106",
+   "routes": [
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be valid UTF-8 JSON",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be valid UTF-8 JSON"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Request body must be valid UTF-8 JSON\", ); }",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:106",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "!isRecord(value)",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:113",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "otherMethods": true,
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "!isRecord(value)",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:113",
+   "routes": [
+    "GET /api/v1/project-vaults/:id"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "!isRecord(value)",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:113",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!isRecord(value)",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:113",
+   "routes": [
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw",
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Request body must be a JSON object",
+   "body": {
+    "error": "invalid_request",
+    "message": "Request body must be a JSON object"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "!isRecord(value)",
+   "in": "readStrictJsonObject",
+   "at": "backend/trace/validation.ts:113",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Trace body must not be empty",
+   "body": {
+    "error": "invalid_request",
+    "message": "Trace body must not be empty"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "bytes.byteLength === 0",
+   "in": "readTraceBody",
+   "at": "backend/trace/validation.ts:124",
+   "routes": [
+    "PUT /api/v1/trace-uploads/:capability"
+   ]
+  },
+  {
+   "category": "invalidJson",
+   "status": 400,
+   "error": "invalid_request",
+   "message": "Trace body must be valid UTF-8",
+   "body": {
+    "error": "invalid_request",
+    "message": "Trace body must be valid UTF-8"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "catch: { throw new RequestBodyError( 400, \"invalid_request\", \"Trace body must be valid UTF-8\", ); }",
+   "in": "readTraceBody",
+   "at": "backend/trace/validation.ts:132",
+   "routes": [
+    "PUT /api/v1/trace-uploads/:capability"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\"",
+   "in": "handleFeeConversionsApi",
+   "at": "backend/fee-conversions/handler.ts:242",
+   "routes": [
+    "GET /api/v1/admin/fee-conversions"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "![\"GET\", \"POST\"].includes(request.method)",
+   "in": "handleEmailPreferences",
+   "at": "backend/notifications/email.ts:54",
+   "routes": [
+    "GET /api/v1/notifications/email",
+    "POST /api/v1/notifications/email",
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify",
+    "POST /api/v1/notifications/email/unsubscribe"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handleEmailPreferences",
+   "at": "backend/notifications/email.ts:62",
+   "routes": [
+    "POST /api/v1/notifications/email/unsubscribe"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handleEmailPreferences",
+   "at": "backend/notifications/email.ts:92",
+   "routes": [
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== (write ? \"POST\" : \"GET\")",
+   "in": "handleNotificationsApi",
+   "at": "backend/notifications/handler.ts:109",
+   "routes": [
+    "GET /api/v1/notifications/incomplete-assessments",
+    "GET /api/v1/notifications/scam-reviews/:path",
+    "GET /api/v1/notifications/appeals/:key",
+    "GET /api/v1/notifications",
+    "POST /api/v1/notifications/read"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handlePointsDisputes",
+   "at": "backend/points/disputes.ts:206",
+   "routes": [
+    "POST /api/v1/points/disputes/:key"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "public, max-age=300",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && request.method !== \"HEAD\"",
+   "in": "handleMergeActivityApi",
+   "at": "backend/projects/merge-activity.ts:416",
+   "routes": [
+    "GET /api/v1/merge-activity"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "public, max-age=60, s-maxage=60",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && request.method !== \"HEAD\"",
+   "in": "handlePoolFundingApi",
+   "at": "backend/projects/pool-funding.ts:82",
+   "routes": [
+    "GET /api/v1/pool-funding"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\"",
+   "in": "handleReferralClaims",
+   "at": "backend/referrals/claims.ts:37",
+   "routes": [
+    "GET /api/v1/referrals/me"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "body": {
+    "text": "Method not allowed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "text/plain; charset=utf-8",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && request.method !== \"HEAD\"",
+   "in": "referralRedirect",
+   "at": "backend/referrals/codes.ts:217",
+   "routes": [
+    "GET /referral/:code"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "public, max-age=300",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && request.method !== \"HEAD\"",
+   "in": "handleReferralsApi",
+   "at": "backend/referrals/handler.ts:122",
+   "routes": [
+    "GET /api/v1/referrals/accruals",
+    "GET /api/v1/referrals/accruals/:period"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "public, max-age=300",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && request.method !== \"HEAD\"",
+   "in": "referredProjects",
+   "at": "backend/referrals/handler.ts:63",
+   "routes": [
+    "GET /api/v1/referrals/projects"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "allow": "GET",
+    "cache-control": "public, max-age=60",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\"",
+   "in": "handleSlopbotApi",
+   "at": "backend/slopbot/summary.ts:67",
+   "routes": [
+    "GET /api/v1/slopbot/summary"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handleHistoricalValueImport",
+   "at": "backend/slopbot/value-import.ts:29",
+   "routes": [
+    "POST /api/v1/slopbot/value-import"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "message": "Native downloads require GET",
+   "body": {
+    "error": "method_not_allowed",
+    "message": "Native downloads require GET"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "request.method !== \"GET\"",
+   "in": "handle",
+   "at": "backend/vetting/evidence.ts:2024",
+   "routes": [
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "body": null,
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handleEnrollmentMailRequest",
+   "at": "workers/notify/enrollment.ts:44",
+   "routes": [
+    "POST /v1/email/capabilities @worker:slop-notify",
+    "POST /v1/email/verification @worker:slop-notify",
+    "POST /v1/email/unsubscribe @worker:slop-notify"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "error": "method_not_allowed",
+   "body": {
+    "error": "method_not_allowed"
+   },
+   "headers": {
+    "allow": "POST",
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "handleNotifyRequest",
+   "at": "workers/notify/handler.ts:349",
+   "routes": [
+    "POST /v1/project-applications @worker:slop-notify",
+    "POST /v1/slopbot-spend @worker:slop-notify",
+    "POST /v1/slopbot-failure @worker:slop-notify"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "body": null,
+   "headers": {
+    "cache-control": "private, no-store"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "fetch",
+   "at": "workers/notify/index.ts:185",
+   "routes": [
+    "POST /v1/security-notifications/dispatch @worker:slop-notify",
+    "POST /v1/security-notifications/reconcile @worker:slop-notify"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "body": null,
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "fetch",
+   "at": "workers/notify/index.ts:223",
+   "routes": [
+    "POST /v1/activity-notifications/eligibility @worker:slop-notify",
+    "POST /v1/activity-notifications/dispatch @worker:slop-notify",
+    "POST /v1/activity-notifications/reconcile @worker:slop-notify"
+   ]
+  },
+  {
+   "category": "method",
+   "otherMethods": true,
+   "status": 405,
+   "body": {
+    "text": "Method not allowed"
+   },
+   "headers": {
+    "content-type": "text/plain;charset=UTF-8"
+   },
+   "condition": "request.method !== \"POST\"",
+   "in": "fetch",
+   "at": "workers/vetting-sandbox/index.ts:34",
+   "routes": [
+    "POST /run @worker:vetting-sandbox"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 400,
+   "error": "https_required",
+   "body": {
+    "error": "https_required"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "requestUrl.protocol !== \"https:\" && !isLocal",
+   "in": "handleTraceApiInternal",
+   "at": "backend/trace/handler.ts:1439",
+   "routes": [
+    "GET /api/v1/private-request-intake",
+    "GET /api/v1/wallet-claims/actors/:githubId/current",
+    "GET /api/v1/wallet-claims/:id/possession",
+    "GET /api/v1/wallet-claims/:id",
+    "PUT /api/v1/trace-uploads/:capability",
+    "POST /api/v1/auth/session",
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/finalize",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims",
+    "* /api/v1/*"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 400,
+   "error": "https_required",
+   "body": {
+    "error": "https_required"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "url.protocol !== \"https:\" && !(deps.allowLoopback === true && url.origin === publicOriginOf(deps))",
+   "in": "handleIdentityRequestCore",
+   "at": "workers/identity/handler.ts:555",
+   "routes": [
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "GET /v1/oauth/authorize @worker:slop-identity",
+    "GET /v1/oauth/callback @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity",
+    "POST /v1/assertions/consume @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method === \"POST\" && !oneClick && !isSameOriginJsonWrite(request)",
+   "in": "handleEmailPreferences",
+   "at": "backend/notifications/email.ts:58",
+   "routes": [
+    "POST /api/v1/notifications/email",
+    "POST /api/v1/notifications/email/verification",
+    "POST /api/v1/notifications/email/verify",
+    "POST /api/v1/notifications/email/unsubscribe"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "write && !isSameOriginJsonWrite(request)",
+   "in": "handleNotificationsApi",
+   "at": "backend/notifications/handler.ts:113",
+   "routes": [
+    "POST /api/v1/notifications/read"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!new Set([ ...deploymentOrigins(deps.tier).browserOrigins, ...(deps.allowedOrigins ?? []), ]).has(url.origin) || (request.method !== \"GET\" && (request.method !== \"POST\" || !isSameOriginJsonWrite(request)))",
+   "in": "handlePaymentsApi",
+   "at": "backend/payments/handler.ts:210",
+   "routes": [
+    "POST /api/v1/payments/projects/:id/solana-funding",
+    "POST /api/v1/payments/projects/:id/solana-monthly-commitment",
+    "GET /api/v1/payments/projects/:id/monthly/:period/authorization/:network",
+    "GET /api/v1/payments/projects/:id/monthly/:period/cuts",
+    "GET /api/v1/payments/projects/:id/totals",
+    "GET /api/v1/payments/projects/:id/vault",
+    "GET /api/v1/payments/received",
+    "GET /api/v1/payments/projects/:id/direct-transfers",
+    "GET /api/v1/payments/actors/:githubId/direct-transfers",
+    "GET /api/v1/payments/vault-payments",
+    "GET /api/v1/payments/projects/:id/vault-payments",
+    "GET /api/v1/payments/actors/:githubId/vault-payments",
+    "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+    "POST /api/v1/payments/projects/:id/monthly-settings",
+    "GET /api/v1/payments/projects/:id/monthly/:period",
+    "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+    "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+    "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+    "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+    "POST /api/v1/payments/wallets/register",
+    "POST /api/v1/payments/wallets/challenge",
+    "POST /api/v1/payments/wallets/authorize",
+    "POST /api/v1/payments/wallets/bind-challenge",
+    "POST /api/v1/payments/wallets/bind-authorize",
+    "POST /api/v1/payments/wallets/solana-bind/prepare",
+    "POST /api/v1/payments/wallets/solana-bind/complete",
+    "GET /api/v1/payments/me"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && (request.method !== \"POST\" || !isSameOriginJsonWrite(request))",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:103",
+   "routes": [
+    "GET /api/v1/points/disputes",
+    "GET /api/v1/points/disputes/:key",
+    "GET /api/v1/points/x/profile",
+    "GET /api/v1/points/x/callback",
+    "GET /api/v1/points/x/me",
+    "GET /api/v1/points/people",
+    "GET /api/v1/points/me",
+    "GET /api/v1/points/sessions",
+    "GET /api/v1/points/member",
+    "GET /api/v1/points/journal"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && (request.method !== \"POST\" || !isSameOriginJsonWrite(request))",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:103",
+   "routes": [
+    "POST /api/v1/points/disputes",
+    "POST /api/v1/points/disputes/:key",
+    "POST /api/v1/points/x/start",
+    "POST /api/v1/points/x/disconnect",
+    "POST /api/v1/points/x/visibility",
+    "POST /api/v1/points/join",
+    "POST /api/v1/points/sessions/revoke",
+    "POST /api/v1/points/account/close",
+    "POST /api/v1/points/signout",
+    "POST /api/v1/points/visibility"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!new Set([ ...deploymentOrigins(deps.tier).browserOrigins, ...(deps.allowedOrigins ?? []), ]).has(url.origin)",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:98",
+   "routes": [
+    "GET /api/v1/points/disputes",
+    "POST /api/v1/points/disputes",
+    "GET /api/v1/points/disputes/:key",
+    "POST /api/v1/points/disputes/:key",
+    "GET /api/v1/points/x/profile",
+    "GET /api/v1/points/x/callback",
+    "GET /api/v1/points/x/me",
+    "POST /api/v1/points/x/start",
+    "POST /api/v1/points/x/disconnect",
+    "POST /api/v1/points/x/visibility",
+    "GET /api/v1/points/people",
+    "POST /api/v1/points/join",
+    "GET /api/v1/points/me",
+    "GET /api/v1/points/sessions",
+    "POST /api/v1/points/sessions/revoke",
+    "POST /api/v1/points/account/close",
+    "POST /api/v1/points/signout",
+    "POST /api/v1/points/visibility",
+    "GET /api/v1/points/member",
+    "GET /api/v1/points/journal"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "request.method !== \"GET\" && parts.length > 0 && isProjectRoute(parts) && !isSameOriginJsonWrite(request)",
+   "in": "handleProjectApi",
+   "at": "backend/projects/handler.ts:3144",
+   "routes": [
+    "GET /api/v1/projects",
+    "GET /api/v1/project-revisions",
+    "GET /api/v1/project-revisions/:id/:revision",
+    "GET /api/v1/project-account-bans",
+    "GET /api/v1/projects/:id",
+    "GET /api/v1/project-github/owned-repositories",
+    "GET /api/v1/project-github/repositories/:owner/:name",
+    "GET /api/v1/project-session",
+    "GET /api/v1/project-vaults/:id",
+    "GET /api/v1/project-setup",
+    "GET /api/v1/project-setup/:id",
+    "GET /api/v1/project-applications/mine",
+    "GET /api/v1/admin/projects",
+    "GET /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-project-api-contract": "project-registry-v1"
+   },
+   "condition": "request.method !== \"GET\" && parts.length > 0 && isProjectRoute(parts) && !isSameOriginJsonWrite(request)",
+   "in": "handleProjectApi",
+   "at": "backend/projects/handler.ts:3144",
+   "routes": [
+    "POST /api/v1/projects",
+    "PUT /api/v1/projects/:id",
+    "POST /api/v1/projects/:id/remove",
+    "POST /api/v1/project-vaults/:id/solana-funding",
+    "POST /api/v1/project-vaults/:id",
+    "POST /api/v1/project-setup/:id/check",
+    "POST /api/v1/project-applications/:id/publish",
+    "POST /api/v1/project-applications/:id/cancel",
+    "PUT /api/v1/admin/projects/:id/manifest",
+    "POST /api/v1/admin/projects/:id/enforcement-preview",
+    "POST /api/v1/admin/projects/:id/enforcement",
+    "POST /api/v1/project-appeals"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"POST\" || !isSameOriginJsonWrite(request)",
+   "in": "handleReferralCode",
+   "at": "backend/referrals/codes.ts:181",
+   "routes": [
+    "POST /api/v1/referrals/code"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleSecurityApi",
+   "at": "backend/security/handler.ts:3450",
+   "routes": [
+    "GET /api/v1/security-programs/:id/intake",
+    "GET /api/v1/security-cases",
+    "GET /api/v1/security-cases/:id",
+    "GET /api/v1/security-submissions",
+    "GET /api/v1/security-submissions/:id",
+    "GET /api/v1/security-submissions/authorize/callback"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleSecurityApi",
+   "at": "backend/security/handler.ts:3450",
+   "routes": [
+    "POST /api/v1/security-cases/:id/acknowledge",
+    "POST /api/v1/security-cases",
+    "POST /api/v1/security-cases/:id/actions",
+    "POST /api/v1/security-submissions",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/authorize",
+    "POST /api/v1/security-submissions/:id/send",
+    "POST /api/v1/security-submissions/:id/reconcile",
+    "POST /api/v1/security-submissions/:id/verify"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json"
+   },
+   "condition": "!isSameOriginJsonWrite(request, [\"application/json\", \"multipart/form-data\"])",
+   "in": "handleHistoricalValueImport",
+   "at": "backend/slopbot/value-import.ts:33",
+   "routes": [
+    "POST /api/v1/slopbot/value-import"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_not_allowed",
+   "body": {
+    "error": "origin_not_allowed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "origin !== null && !deploymentOrigins(deps.tier).traceBrowserOrigins.has(origin)",
+   "in": "handleTraceApi",
+   "at": "backend/trace/handler.ts:1401",
+   "routes": [
+    "GET /api/v1/wallet-claims/actors/:githubId/current",
+    "GET /api/v1/wallet-claims/:id/possession",
+    "GET /api/v1/wallet-claims/:id",
+    "POST /api/v1/auth/session",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_not_allowed",
+   "body": {
+    "error": "origin_not_allowed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "origin === null",
+   "in": "handleTraceApi",
+   "at": "backend/trace/handler.ts:1403",
+   "routes": [
+    "GET /api/v1/wallet-claims/actors/:githubId/current",
+    "GET /api/v1/wallet-claims/:id/possession",
+    "GET /api/v1/wallet-claims/:id",
+    "POST /api/v1/auth/session",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "headers_not_allowed",
+   "body": {
+    "error": "headers_not_allowed"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "requestedHeaders.some((header) => !allowedHeaders.includes(header))",
+   "in": "handleTraceApi",
+   "at": "backend/trace/handler.ts:1411",
+   "routes": [
+    "GET /api/v1/wallet-claims/actors/:githubId/current",
+    "GET /api/v1/wallet-claims/:id/possession",
+    "GET /api/v1/wallet-claims/:id",
+    "POST /api/v1/auth/session",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_not_allowed",
+   "message": "Same-origin access is required",
+   "body": {
+    "error": "origin_not_allowed",
+    "message": "Same-origin access is required"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1"
+   },
+   "condition": "request.headers.get(\"origin\") !== requestUrl.origin",
+   "in": "handleTraceApiInternal",
+   "at": "backend/trace/handler.ts:1523",
+   "routes": [
+    "POST /api/v1/operator/wallet-bindings/reconcile",
+    "GET /api/v1/wallet-claims/current",
+    "POST /api/v1/wallet-claims",
+    "POST /api/v1/wallet-claims/:id/possession-challenge",
+    "POST /api/v1/wallet-claims/:id/possession",
+    "POST /api/v1/runs",
+    "POST /api/v1/runs/:id/trace-intents",
+    "POST /api/v1/runs/:id/finalize",
+    "POST /api/v1/runs/:id/events",
+    "POST /api/v1/operator/wallet-claims"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Downloads require a fresh same-origin browser request without ranges",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Downloads require a fresh same-origin browser request without ranges"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "request.headers.get(\"sec-fetch-site\") !== \"same-origin\" || request.headers.has(\"range\")",
+   "in": "download",
+   "at": "backend/vetting/evidence.ts:1841",
+   "routes": [
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "operator && request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handle",
+   "at": "backend/vetting/evidence.ts:1970",
+   "routes": [
+    "GET /api/v1/operator/vetting-evidence",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download",
+    "GET /api/v1/operator/vetting-evidence/:assessment/:run/:sha/body"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "operator && request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handle",
+   "at": "backend/vetting/evidence.ts:1970",
+   "routes": [
+    "POST /api/v1/operator/vetting-evidence/:assessment/close",
+    "POST /api/v1/vetting/evidence/:assessment/:run",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha",
+    "PUT /api/v1/vetting/evidence/:assessment/:run/:sha/chunks/:index",
+    "POST /api/v1/vetting/evidence/:assessment/:run/:sha/finalize",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+    "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleProjectFlagsApi",
+   "at": "backend/vetting/flags.ts:662",
+   "routes": [
+    "GET /api/v1/project-flags/:id"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleProjectFlagsApi",
+   "at": "backend/vetting/flags.ts:662",
+   "routes": [
+    "POST /api/v1/project-flags/:id",
+    "POST /api/v1/project-flags/:id/withdraw"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "admin && request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleVettingApi",
+   "at": "backend/vetting/handler.ts:1500",
+   "routes": [
+    "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+    "POST /api/v1/admin/vetting/exemptions",
+    "POST /api/v1/admin/vetting/assessments"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "origin_forbidden",
+   "message": "Requests must come from this site",
+   "body": {
+    "error": "origin_forbidden",
+    "message": "Requests must come from this site"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "admin && request.method !== \"GET\" && !isSameOriginJsonWrite(request)",
+   "in": "handleVettingApi",
+   "at": "backend/vetting/handler.ts:1500",
+   "routes": [
+    "GET /api/v1/admin/vetting"
+   ]
+  },
+  {
+   "category": "origin",
+   "status": 403,
+   "error": "origin_forbidden",
+   "body": {
+    "error": "origin_forbidden"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "!browserOrigins(deps).has(origin)",
+   "in": "handleIdentityRequest",
+   "at": "workers/identity/handler.ts:642",
+   "routes": [
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "origin",
+   "otherMethods": true,
+   "status": 403,
+   "error": "preflight_forbidden",
+   "body": {
+    "error": "preflight_forbidden"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "request.headers.get(\"access-control-request-method\") !== \"POST\" || requestedHeaders.some((name) => name !== \"content-type\")",
+   "in": "handleIdentityRequest",
+   "at": "workers/identity/handler.ts:656",
+   "routes": [
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "status": 429,
+   "error": "verification_rate_limited",
+   "body": {
+    "error": "verification_rate_limited",
+    "retryAfter": {
+     "raw": "Math.ceil((retryAt - now.getTime()) / 1000)"
+    }
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "results[0].meta?.changes !== 1",
+   "in": "requestEmailVerification",
+   "at": "backend/notifications/email.ts:425",
+   "routes": [
+    "POST /api/v1/notifications/email/verification"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "status": 429,
+   "error": "rate_limited",
+   "body": {
+    "error": "rate_limited"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "headersFrom": {
+    "retry-after": "String(admission.retryAfterSeconds)"
+   },
+   "condition": "!admission.allowed",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:118",
+   "routes": [
+    "POST /api/v1/points/disputes",
+    "POST /api/v1/points/disputes/:key",
+    "POST /api/v1/points/x/start",
+    "POST /api/v1/points/x/disconnect",
+    "POST /api/v1/points/x/visibility",
+    "POST /api/v1/points/join",
+    "POST /api/v1/points/sessions/revoke",
+    "POST /api/v1/points/account/close",
+    "POST /api/v1/points/signout",
+    "POST /api/v1/points/visibility"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "otherMethods": true,
+   "status": 429,
+   "error": "rate_limited",
+   "body": {
+    "error": "rate_limited"
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "headersFrom": {
+    "retry-after": "String(admission.retryAfterSeconds)"
+   },
+   "condition": "!admission.allowed",
+   "in": "handlePointsApi",
+   "at": "backend/points/handler.ts:118",
+   "routes": [
+    "GET /api/v1/points/x/profile",
+    "GET /api/v1/points/x/callback",
+    "GET /api/v1/points/x/me",
+    "GET /api/v1/points/people",
+    "GET /api/v1/points/me",
+    "GET /api/v1/points/sessions",
+    "GET /api/v1/points/member",
+    "GET /api/v1/points/journal"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "status": 429,
+   "error": "intake_rate_limited",
+   "message": "Please wait before requesting more private report work.",
+   "body": {
+    "error": "intake_rate_limited",
+    "message": "Please wait before requesting more private report work."
+   },
+   "headers": {
+    "cache-control": "private, no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "x-robots-tag": "noindex"
+   },
+   "condition": "result[1].meta?.changes !== 1",
+   "in": "admitPublicWork",
+   "at": "backend/security/report-intake.ts:161",
+   "routes": [
+    "POST /api/v1/security-submissions",
+    "POST /api/v1/security-submissions/:id/screen",
+    "POST /api/v1/security-submissions/:id/review",
+    "POST /api/v1/security-submissions/:id/report",
+    "POST /api/v1/security-submissions/:id/send"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "status": 429,
+   "error": "rate_limited",
+   "message": "Too many requests. Try again later.",
+   "body": {
+    "error": "rate_limited",
+    "message": "Too many requests. Try again later."
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+   },
+   "headersFrom": {
+    "retry-after": "String(retryAfterSeconds)"
+   },
+   "condition": "unconditional",
+   "in": "rateLimitResponse",
+   "at": "workers/identity/index.ts:114",
+   "routes": [
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity"
+   ]
+  },
+  {
+   "category": "rateLimit",
+   "status": 503,
+   "error": "service_unavailable",
+   "message": "Identity service is temporarily unavailable.",
+   "body": {
+    "error": "service_unavailable",
+    "message": "Identity service is temporarily unavailable."
+   },
+   "headers": {
+    "cache-control": "no-store",
+    "content-type": "application/json; charset=utf-8",
+    "referrer-policy": "no-referrer",
+    "retry-after": "60",
+    "x-content-type-options": "nosniff"
+   },
+   "condition": "unconditional",
+   "in": "limiterUnavailableResponse",
+   "at": "workers/identity/index.ts:133",
+   "routes": [
+    "POST /v1/local/start @worker:slop-identity",
+    "POST /v1/local/poll @worker:slop-identity",
+    "POST /v1/oauth/start @worker:slop-identity",
+    "POST /v1/oauth/poll @worker:slop-identity"
+   ]
+  }
+ ],
+ "bodyLimits": [
+  {
+   "route": "POST /api/v1/projects",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "PUT /api/v1/projects/:id",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/projects/:id/remove",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-vaults/:id/solana-funding",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "vault funding action",
+     "at": "backend/payments/solana-funding.ts:38"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "vault funding action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-vaults/:id",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-setup/:id/check",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-applications/:id/publish",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-applications/:id/cancel",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "PUT /api/v1/admin/projects/:id/manifest",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/admin/projects/:id/enforcement-preview",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/admin/projects/:id/enforcement",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-appeals",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-cases/:id/acknowledge",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-cases",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-cases/:id/actions",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/security/submissions.ts:151"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/screen",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Private report",
+     "at": "backend/security/report-intake.ts:1231"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/review",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Private report",
+     "at": "backend/security/report-intake.ts:1231"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/report",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Private report",
+     "at": "backend/security/report-intake.ts:1231"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/authorize",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/security/submissions.ts:151"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/send",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/security/submissions.ts:151"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/reconcile",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/security/submissions.ts:151"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/security-submissions/:id/verify",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/security/submissions.ts:151"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 262144,
+     "label": "Report request",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/operator/vetting-evidence/:assessment/close",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/download-grant",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/operator/vetting-evidence/:assessment/:run/:sha/grant",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-flags/:id",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/project-flags/:id/withdraw",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/admin/vetting/exemptions/:id/revoke",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/admin/vetting/exemptions",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/admin/vetting/assessments",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "GET /api/v1/vetting/sandbox",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 3145728,
+     "at": "backend/vetting/handler.ts:218"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 3145728,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/vetting/sandbox",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 3145728,
+     "at": "backend/vetting/handler.ts:218"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 3145728,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/vetting/journal",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "backend/vetting/handler.ts:218"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/vetting/reuse",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 1024,
+     "at": "backend/vetting/handler.ts:218"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 1024,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/vetting/refresh",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 1024,
+     "at": "backend/vetting/handler.ts:218"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 1024,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/referrals/code",
+   "limits": [
+    {
+     "reader": "requireJsonObject",
+     "bytes": 1024,
+     "label": "Referral code",
+     "at": "backend/referrals/codes.ts:101"
+    },
+    {
+     "reader": "readJsonObject",
+     "bytes": 1024,
+     "label": "Referral code",
+     "at": "backend/http.ts:97"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 1024,
+     "label": "Referral code",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/notifications/email",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "email preference",
+     "at": "backend/notifications/email.ts:306"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/notifications/email/verification",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "email preference",
+     "at": "backend/notifications/email.ts:306"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/notifications/email/verify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "email preference",
+     "at": "backend/notifications/email.ts:306"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/notifications/email/unsubscribe",
+   "limits": [
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 128,
+     "label": "unsubscribe request",
+     "at": "backend/notifications/email.ts:119"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "email preference",
+     "at": "backend/notifications/email.ts:306"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/notifications/read",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 32768,
+     "label": "notification read request",
+     "at": "backend/notifications/handler.ts:285"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/solana-funding",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "vault funding action",
+     "at": "backend/payments/solana-funding.ts:38"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "vault funding action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/solana-monthly-commitment",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "monthly commitment setting",
+     "at": "backend/payments/handler.ts:237"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "monthly commitment setting",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "Solana award commitment",
+     "at": "backend/payments/handler.ts:572"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "Solana award commitment",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly-settings",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 1024,
+     "label": "Monthly payment setting",
+     "at": "backend/payments/handler.ts:702"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 1024,
+     "label": "Monthly payment setting",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly/:period/reserve-release",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/payments/handler.ts:725"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly/:period/allocations",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/payments/handler.ts:725"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly/:period/finalize",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/payments/handler.ts:725"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/projects/:id/monthly/:period/commitment",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/payments/handler.ts:725"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "Monthly award action",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/register",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "wallet registration",
+     "at": "backend/payments/handler.ts:811"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "wallet registration",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/challenge",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "wallet challenge",
+     "at": "backend/payments/handler.ts:831"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "wallet challenge",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/authorize",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "wallet authorization",
+     "at": "backend/payments/handler.ts:871"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "wallet authorization",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/bind-challenge",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "binding authorization",
+     "at": "backend/payments/handler.ts:946"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "binding authorization",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/bind-authorize",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "binding authorization",
+     "at": "backend/payments/handler.ts:946"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "binding authorization",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/solana-bind/prepare",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "solana binding",
+     "at": "backend/payments/handler.ts:1108"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "solana binding",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/payments/wallets/solana-bind/complete",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "solana binding",
+     "at": "backend/payments/handler.ts:1108"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "solana binding",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/disputes",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 20000,
+     "label": "Points dispute",
+     "at": "backend/points/disputes.ts:116"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 20000,
+     "label": "Points dispute",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/disputes/:key",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 20000,
+     "label": "Points dispute decision",
+     "at": "backend/points/disputes.ts:207"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 20000,
+     "label": "Points dispute decision",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/x/start",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 256,
+     "label": "X connection",
+     "at": "backend/points/x.ts:279"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 256,
+     "label": "X connection",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/x/visibility",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 256,
+     "label": "X visibility",
+     "at": "backend/points/x.ts:344"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 256,
+     "label": "X visibility",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/join",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 4096,
+     "label": "points join",
+     "at": "backend/points/handler.ts:166"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "points join",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/sessions/revoke",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 1024,
+     "label": "session",
+     "at": "backend/points/handler.ts:298"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 1024,
+     "label": "session",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/account/close",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 256,
+     "label": "account closure",
+     "at": "backend/points/handler.ts:315"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 256,
+     "label": "account closure",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/points/visibility",
+   "limits": [
+    {
+     "reader": "readJsonObject",
+     "bytes": 256,
+     "label": "visibility",
+     "at": "backend/points/handler.ts:388"
+    },
+    {
+     "reader": "readBoundedJson",
+     "bytes": 256,
+     "label": "visibility",
+     "at": "backend/http.ts:82"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/slopbot/value-import",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 34603008,
+     "label": "historical assessment",
+     "at": "backend/slopbot/value-import.ts:81"
+    }
+   ]
+  },
+  {
+   "route": "PUT /api/v1/trace-uploads/:capability",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 8388608,
+     "at": "backend/trace/validation.ts:122"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 8388608,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/operator/wallet-bindings/reconcile",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/wallet-claims",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/wallet-claims/:id/possession",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/runs",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/runs/:id/trace-intents",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/runs/:id/events",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /api/v1/operator/wallet-claims",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 65536,
+     "at": "backend/trace/validation.ts:101"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 65536,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/local/start @worker:slop-identity",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "workers/identity/handler.ts:126"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/local/poll @worker:slop-identity",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "workers/identity/handler.ts:126"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/oauth/start @worker:slop-identity",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "workers/identity/handler.ts:126"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/oauth/poll @worker:slop-identity",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "workers/identity/handler.ts:126"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/assertions/consume @worker:slop-identity",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 4096,
+     "at": "workers/identity/handler.ts:126"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 4096,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/email/verification @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "private email request",
+     "at": "workers/notify/enrollment.ts:49"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/email/unsubscribe @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "private email request",
+     "at": "workers/notify/enrollment.ts:49"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/security-notifications/dispatch @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "private notice",
+     "at": "workers/notify/index.ts:189"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/security-notifications/reconcile @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "private notice",
+     "at": "workers/notify/index.ts:189"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/activity-notifications/eligibility @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "activity notice",
+     "at": "workers/notify/index.ts:227"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/activity-notifications/dispatch @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "activity notice",
+     "at": "workers/notify/index.ts:227"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/activity-notifications/reconcile @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "activity notice",
+     "at": "workers/notify/index.ts:227"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/project-applications @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "notice",
+     "at": "workers/notify/handler.ts:88"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/slopbot-spend @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "notice",
+     "at": "workers/notify/handler.ts:88"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/slopbot-failure @worker:slop-notify",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 8192,
+     "label": "notice",
+     "at": "workers/notify/handler.ts:88"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/reconcile-binding @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "binding recovery",
+     "at": "workers/payment-executor/index.ts:138"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/commit-monthly @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4194304,
+     "label": "monthly commitment",
+     "at": "workers/payment-executor/index.ts:274"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/monthly-reserve-release @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 2048,
+     "label": "monthly reserve release",
+     "at": "workers/payment-executor/index.ts:325"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/monthly-authorization @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "monthly authorization",
+     "at": "workers/payment-executor/index.ts:368"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/attempt-status @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "payout execution",
+     "at": "workers/payment-executor/index.ts:466"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/cancel-unsubmitted @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "payout execution",
+     "at": "workers/payment-executor/index.ts:466"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/pay @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "payout execution",
+     "at": "workers/payment-executor/index.ts:466"
+    }
+   ]
+  },
+  {
+   "route": "POST /v1/complete-bind @worker:attester (PaymentSignerJournal)",
+   "limits": [
+    {
+     "reader": "readBoundedJson",
+     "bytes": 4096,
+     "label": "payout execution",
+     "at": "workers/payment-executor/index.ts:466"
+    }
+   ]
+  },
+  {
+   "route": "POST /github/webhook @worker:slopbot",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 26214400,
+     "at": "workers/slopbot/index.ts:383"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 26214400,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  },
+  {
+   "route": "POST /run @worker:vetting-sandbox",
+   "limits": [
+    {
+     "reader": "readLimitedBody",
+     "bytes": 3145728,
+     "at": "workers/vetting-sandbox/index.ts:40"
+    },
+    {
+     "reader": "readBoundedBytes",
+     "bytes": 3145728,
+     "label": "Request body",
+     "at": "backend/trace/validation.ts:154"
+    }
+   ]
+  }
+ ]
+}

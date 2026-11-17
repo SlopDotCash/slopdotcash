@@ -1,0 +1,299 @@
+import { assert, layer } from "@effect/vitest"
+import { Headers, Response } from "miniflare"
+import { type Handler, bundle, startWorker } from "../src/testing.ts"
+import { githubFake } from "../src/testing/github.ts"
+
+interface Answer { readonly status: number; readonly body: unknown }
+
+interface Seen {
+  readonly method: string
+  readonly host: string
+  readonly path: string
+  readonly page: string | null
+  readonly authorized: boolean
+}
+
+interface Sent {
+  readonly method?: string
+  readonly body?: Uint8Array
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+interface Alteration {
+  readonly path: string
+  readonly link?: string
+  readonly location?: string
+}
+
+type Fake = ReturnType<typeof githubFake>
+
+service Harness {
+  readonly seen: ReadonlyArray<Seen>
+  readonly fake: Fake
+  readonly issues: ReadonlyArray<number>
+  readonly alterations: Alteration[]
+  request(path: string, sent?: Sent): Answer!!
+}
+
+const authority = "https://api.github.com"
+const webhookSecret = "platform-github-webhook-secret"
+const appId = "424242"
+const tools = ["tool-1", "tool-2", "tool-3", "tool-4", "tool-5"]
+
+async function setUp() {
+  const seen: Seen[] = []
+  const fake = githubFake({ authority, webhookSecret })
+  const app = fake.world.addApp({ id: appId, slug: "slop-platform-test", botId: 9001, webhookSecret })
+  fake.world.addUser({ id: 5001, login: "octo" })
+  fake.world.addUser({ id: 5002, login: "drifter" })
+  tools.forEach((name, index) => fake.world.addRepo({ id: 7001 + index, owner: "octo", name }))
+  fake.world.addRepo({ id: 7101, owner: "drifter", name: "kit-1" })
+  fake.world.addRepo({ id: 7102, owner: "drifter", name: "kit-2" })
+  fake.world.addOrg({ id: 6001, login: "slop-org" })
+  fake.world.addOrg({ id: 6002, login: "far-org" })
+  fake.world.addMember("slop-org", "octo")
+  fake.world.addMember("far-org", "drifter")
+  const issues = ["First", "Second", "Third"].map((title) => fake.world.addIssue({ repo: "octo/tool-1", author: "octo", title }))
+  fake.world.addInstallation({ id: 77, account: "octo", repositories: "all", permissions: { metadata: "read" }, app: appId })
+  const alterations: Alteration[] = []
+  let tokensMinted = 0
+  const outbound: Handler = async (request) => {
+    const url = new URL(request.url)
+    seen.push({ method: request.method, host: url.host, path: url.pathname, page: url.searchParams.get("page"), authorized: request.headers.has("authorization") })
+    if (url.host === "elsewhere.test") return new Response("[]", { status: 200, headers: { "content-type": "application/json" } })
+    const altered = alterations.findIndex((alteration) => alteration.path === url.pathname)
+    const alteration = altered === -1 ? undefined : alterations.splice(altered, 1)[0]
+    if (alteration?.location !== undefined) return new Response(null, { status: 301, headers: { location: alteration.location } })
+    const response = await fake.handler(request)
+    if (alteration?.link !== undefined) {
+      const headers = new Headers(response.headers)
+      headers.set("link", `<${authority}${alteration.link}>; rel="next"`)
+      return new Response(await response.arrayBuffer(), { status: response.status, headers })
+    }
+    const link = response.headers.get("link")
+    if (url.pathname === "/users/drifter/repos" && link !== null) {
+      const headers = new Headers(response.headers)
+      headers.set("link", link.replaceAll(authority, "https://elsewhere.test"))
+      return new Response(await response.arrayBuffer(), { status: response.status, headers })
+    }
+    if (url.pathname.endsWith("/access_tokens") && response.status === 201 && tokensMinted++ === 0) {
+      const issued = (await response.json()) as Record<string, unknown>
+      return new Response(JSON.stringify({ ...issued, expires_at: new Date(Date.now() + 330_000).toISOString() }), { status: 201, headers: response.headers })
+    }
+    return response
+  }
+  const script = await bundle(new URL("..", import.meta.url).pathname, { entry: "github" })
+  const mf = startWorker({
+    script,
+    vars: { GITHUB_TOKEN: fake.tokens.user("octo"), APP_ID: app.id, APP_PRIVATE_KEY: app.privateKeyPem, WEBHOOK_SECRET: webhookSecret },
+    outbound,
+  })
+  return { seen, fake, issues, alterations, mf }
+}
+
+const Started = Layer.effect(Harness, effect {
+  const { seen, fake, issues, alterations, mf } = try acquireRelease(promise(() => setUp()), (started) => promise(() => started.mf.dispose()))
+  return {
+    seen,
+    fake,
+    issues,
+    alterations,
+    request: (path, sent = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(`https://platform.test${path}`, { method: sent.method ?? "GET", body: sent.body, headers: sent.headers })
+      return { status: response.status, body: await response.json() }
+    }),
+  }
+})
+
+function posted(value: unknown): Sent {
+  return { method: "POST", body: new TextEncoder().encode(JSON.stringify(value)), headers: { "content-type": "application/json" } }
+}
+
+function at(seen: ReadonlyArray<Seen>, path: string) {
+  return seen.filter((request) => request.path === path)
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A list is read across its pages and the token never follows a link off the authority (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const harness = try Harness
+    const paged = try harness.request("/pages/octo?perPage=2")
+    const strayed = try harness.request("/pages/drifter?perPage=1")
+    try Effect.try(() => assert.deepStrictEqual({
+      paged,
+      strayed,
+      octo: at(harness.seen, "/users/octo/repos").map((request) => [request.page, request.authorized]),
+      drifter: at(harness.seen, "/users/drifter/repos").map((request) => request.authorized),
+      elsewhere: harness.seen.filter((request) => request.host === "elsewhere.test").length,
+    }, {
+      paged: { status: 200, body: { names: tools } },
+      strayed: { status: 200, body: { failure: "GitHubMalformed", path: "/users/drifter/repos?type=owner", issue: "a next page link is not a continuation of this list" } },
+      octo: [[null, true], ["2", true], ["3", true]],
+      drifter: [true],
+      elsewhere: 0,
+    }))
+  })
+
+  it.effect('A next link to another list or a skipped page is refused, and a search envelope is read across its pages (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const harness = try Harness
+    const drifterBefore = at(harness.seen, "/users/drifter/repos").length
+    const octoBefore = at(harness.seen, "/users/octo/repos").length
+    try sync(() => { harness.alterations.push({ path: "/users/octo/repos", link: "/users/drifter/repos?page=2&per_page=2" }) })
+    const otherList = try harness.request("/pages/octo?perPage=2")
+    try sync(() => { harness.alterations.push({ path: "/users/octo/repos", link: "/users/octo/repos?type=owner&page=3&per_page=2" }) })
+    const skipped = try harness.request("/pages/octo?perPage=2")
+    const searched = try harness.request(`/search?perPage=2&q=${encodeURIComponent("repo:octo/tool-1 is:issue")}`)
+    const refused = { status: 200, body: { failure: "GitHubMalformed", path: "/users/octo/repos?type=owner", issue: "a next page link is not a continuation of this list" } }
+    try Effect.try(() => assert.deepStrictEqual({
+      otherList,
+      skipped,
+      searched,
+      drifterRead: at(harness.seen, "/users/drifter/repos").length - drifterBefore,
+      octoRead: at(harness.seen, "/users/octo/repos").length - octoBefore,
+      searchPages: at(harness.seen, "/search/issues").map((request) => request.page),
+    }, {
+      otherList: refused,
+      skipped: refused,
+      searched: { status: 200, body: { numbers: [...harness.issues].sort((a, b) => a - b) } },
+      drifterRead: 0,
+      octoRead: 2,
+      searchPages: [null, "2"],
+    }))
+  })
+
+  it.effect('Only a moved repository is followed, once, at the authority, and the bearer never leaves it (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+    const harness = try Harness
+    try Effect.try(() => harness.fake.world.renameRepo("drifter/kit-2", "drifter/kit-moved"))
+    const moved = try harness.request("/repos/drifter/kit-2")
+    try sync(() => { harness.alterations.push({ path: "/repos/drifter/kit-1", location: "https://elsewhere.test/repositories/7101" }) })
+    const offAuthority = try harness.request("/repos/drifter/kit-1")
+    const member = try harness.request("/members/slop-org/octo")
+    const outsider = try harness.request("/members/slop-org/drifter")
+    const hidden = try harness.request("/members/far-org/octo")
+    try Effect.try(() => assert.deepStrictEqual({
+      moved,
+      offAuthority,
+      member,
+      outsider,
+      hidden,
+      movedSent: [...at(harness.seen, "/repos/drifter/kit-2"), ...at(harness.seen, "/repositories/7102")].map((request) => [request.path, request.authorized]),
+      publicMembers: harness.seen.filter((request) => request.path.includes("/public_members/")).length,
+      elsewhere: harness.seen.filter((request) => request.host === "elsewhere.test").length,
+    }, {
+      moved: { status: 200, body: { id: 7102, name: "kit-moved" } },
+      offAuthority: { status: 200, body: { failure: "GitHubUnavailable", status: 301, path: "/repos/drifter/kit-1" } },
+      member: { status: 200, body: { status: 204 } },
+      outsider: { status: 200, body: { failure: "NotFound", path: "/orgs/slop-org/members/drifter" } },
+      hidden: { status: 200, body: { status: 302 } },
+      movedSent: [["/repos/drifter/kit-2", true], ["/repositories/7102", true]],
+      publicMembers: 0,
+      elsewhere: 0,
+    }))
+  })
+
+  it.effect('A write is sent once with the token and answers its status and decoded body (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const harness = try Harness
+    const issue = harness.issues[0] ?? 0
+    const commented = try harness.request(`/comments/octo/tool-1/${issue}`, posted({ text: "Thanks for the report." }))
+    try Effect.try(() => assert.deepStrictEqual({
+      commented,
+      sent: at(harness.seen, `/repos/octo/tool-1/issues/${issue}/comments`).map((request) => [request.method, request.authorized]),
+    }, {
+      commented: { status: 200, body: { status: 201, body: "Thanks for the report." } },
+      sent: [["POST", true]],
+    }))
+  })
+
+  it.effect('A primary and a secondary rate limit are told apart with their waits (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const harness = try Harness
+    try sync(() => harness.fake.failNext(/\/users\/octo(?:$|\?)/u, { rateLimit: { secondary: false, retryAfterSeconds: 120 } }))
+    const primary = try harness.request("/accounts/octo")
+    try sync(() => harness.fake.failNext(/\/users\/octo(?:$|\?)/u, { rateLimit: { secondary: true, retryAfterSeconds: 30 } }))
+    const secondary = try harness.request("/accounts/octo")
+    const recovered = try harness.request("/accounts/octo")
+    const wait = (primary.body as { retryAfterSeconds?: number }).retryAfterSeconds ?? 0
+    try Effect.try(() => assert.deepStrictEqual({ primary, secondary, recovered, waitInRange: wait >= 120 && wait <= 122 }, {
+      primary: { status: 200, body: { failure: "RateLimited", retryAfterSeconds: wait, retryAfter: 0, secondary: false } },
+      secondary: { status: 200, body: { failure: "RateLimited", retryAfterSeconds: 30, retryAfter: 30_000, secondary: true } },
+      recovered: { status: 200, body: { id: 5001, login: "octo", refusals: [] } },
+      waitInRange: true,
+    }))
+  })
+
+  it.effect('A refused or malformed token is replaced by one anonymous read only where asked, and the caller is told (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const harness = try Harness
+    const before = at(harness.seen, "/users/octo").length
+    try sync(() => harness.fake.failNext(/\/users\/octo(?:$|\?)/u, { status: 401 }))
+    const retried = try harness.request("/accounts/octo?retry=1")
+    try sync(() => harness.fake.failNext(/\/users\/octo(?:$|\?)/u, { status: 401 }))
+    const refused = try harness.request("/accounts/octo")
+    const malformed = try harness.request("/accounts/octo?retry=1&token=malformed")
+    try Effect.try(() => assert.deepStrictEqual({
+      retried,
+      refused,
+      malformed,
+      sent: at(harness.seen, "/users/octo").slice(before).map((request) => request.authorized),
+    }, {
+      retried: { status: 200, body: { id: 5001, login: "octo", refusals: [{ kind: "refused", status: 401, path: "/users/octo" }] } },
+      refused: { status: 200, body: { failure: "GitHubRefused", status: 401, path: "/users/octo" } },
+      malformed: { status: 200, body: { id: 5001, login: "octo", refusals: [{ kind: "malformed" }] } },
+      sent: [true, false, true, false],
+    }))
+  })
+
+  it.effect('GraphQL errors and GraphQL rate limits fail typed instead of answering partial data (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const harness = try Harness
+    const unknownField = try harness.request("/graphql", posted({ query: "query { viewer { noSuchField } }", variables: {} }))
+    try sync(() => harness.fake.failNext(/\/graphql(?:$|\?)/u, { rateLimit: { secondary: false, retryAfterSeconds: 60 } }))
+    const limited = try harness.request("/graphql", posted({ query: "query { viewer { login } }", variables: {} }))
+    const failed = (answer: Answer) => [answer.status, (answer.body as { failure?: string; path?: string }).failure, (answer.body as { path?: string }).path]
+    try Effect.try(() => assert.deepStrictEqual({ unknownField: failed(unknownField), limited: [limited.status, (limited.body as { failure?: string }).failure] }, {
+      unknownField: [200, "GitHubMalformed", "/graphql"],
+      limited: [200, "RateLimited"],
+    }))
+  })
+
+  it.effect('An App installation token is reused until five minutes before it expires (spec/slopbot/installation.md, "Every Slopbot effect requires an active installation")', () => effect {
+    const harness = try Harness
+    const minted = () => harness.seen.filter((request) => request.method === "POST" && request.path === "/app/installations/77/access_tokens").length
+    const first = try harness.request("/app/tokens/77")
+    const second = try harness.request("/app/tokens/77")
+    const mintedBefore = minted()
+    try harness.request("/clock/45000", { method: "POST" })
+    const third = try harness.request("/app/tokens/77")
+    const listed = try harness.request("/app/repositories/77")
+    const token = (answer: Answer) => (answer.body as { token?: unknown }).token
+    try Effect.try(() => assert.deepStrictEqual({
+      issued: typeof token(first) === "string",
+      reused: token(second) === token(first),
+      mintedBefore,
+      mintedAfter: minted(),
+      listed,
+      listedWithToken: at(harness.seen, "/installation/repositories").map((request) => request.authorized),
+    }, {
+      issued: true,
+      reused: true,
+      mintedBefore: 1,
+      mintedAfter: 2,
+      listed: { status: 200, body: { names: tools } },
+      listedWithToken: [true],
+    }))
+    try Effect.try(() => assert.strictEqual(typeof token(third), "string"))
+  })
+
+  it.effect('A webhook is accepted only for its exact signed bytes (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
+    const harness = try Harness
+    const delivery = try promise(async () => {
+      const request = harness.fake.deliver("ping", { zen: "Keep it logically awesome.", hook_id: 1 }, { installationId: 77 })
+      return { bytes: new Uint8Array(await request.arrayBuffer()), signature: request.headers.get("x-hub-signature-256") ?? "" }
+    })
+    const changed = delivery.bytes.map((byte, index) => (index === 0 ? byte ^ 1 : byte))
+    const accepted = try harness.request("/webhook", { method: "POST", body: delivery.bytes, headers: { "x-hub-signature-256": delivery.signature } })
+    const altered = try harness.request("/webhook", { method: "POST", body: changed, headers: { "x-hub-signature-256": delivery.signature } })
+    const unsigned = try harness.request("/webhook", { method: "POST", body: delivery.bytes })
+    try Effect.try(() => assert.deepStrictEqual({ accepted: accepted.body, altered: altered.body, unsigned: unsigned.body }, {
+      accepted: { verified: true },
+      altered: { verified: false },
+      unsigned: { verified: false },
+    }))
+  })
+})

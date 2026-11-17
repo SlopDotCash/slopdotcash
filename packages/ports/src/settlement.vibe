@@ -1,0 +1,40 @@
+// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"
+import type { Statement } from "@repo/platform/d1"
+import { Network, type ReadFailure } from "./backend.vibe"
+
+export schema VaultPurpose = "Ordinary" | "PrivateBounty"
+
+export schema VaultTotalsView {
+  readonly network: Network
+  readonly vault: string
+  readonly asset: string
+  readonly freeBaseUnits?: string
+  readonly observedAt: string
+  readonly stale: boolean
+}
+
+export service VaultTotals {
+  of(vault: { readonly projectId: string; readonly purpose: VaultPurpose }): (VaultTotalsView | undefined)!ReadFailure
+}
+
+export schema DirectLane = "Researcher" | "Fee"
+
+export schema LegState = "Unsent" | "Submitted" | "PaidExact" | "Reverted" | "Inexact"
+
+export schema DirectLeg {
+  readonly lane: DirectLane
+  readonly state: LegState
+  readonly network: Network
+  readonly asset: string
+  readonly baseUnits: string
+  readonly transaction?: string
+  readonly finalizedAt?: string
+}
+
+export service DirectBounty {
+  legs(caseId: string): ReadonlyArray<DirectLeg>!ReadFailure
+}
+
+export service PayeeAudience {
+  affected(project: Statement): Statement!!
+}

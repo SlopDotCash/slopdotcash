@@ -1,0 +1,138 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /api/v1/security-submissions/:id/verify",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "pages",
+  "mount": "functions/api/v1/[[path]].ts"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "PAYMENT_NETWORKS": "[]",
+  "TRACE_AUTH_SECRET": "<40+ character test value>",
+  "bindings": [
+   "SLOP_DB",
+   "PRIVATE_TRACES",
+   "SLOP_IDENTITY",
+   "SLOP_NOTIFY",
+   "SLOPBOT",
+   "VETTING_SANDBOX",
+   "VETTING_EVIDENCE",
+   "ASSETS"
+  ],
+  "unset": "every other variable (no VETTING_RESULT_PUBLIC_KEYS, no private intake, no X client, no GitHub App)"
+ },
+ "cases": [
+  {
+   "name": "signed-out same-origin JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project/verify",
+    "headers": {
+     "origin": "https://slop.cash",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"not_found\",\"message\":\"Submission not found\"}",
+    "bodySha256": "301bff4e9e9174a0cfdea48f24e5fce008b89d2c6fd5979a5cf60d84772ffb93"
+   }
+  },
+  {
+   "name": "cross-site JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project/verify",
+    "headers": {
+     "origin": "https://attacker.example",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 403,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"origin_forbidden\",\"message\":\"Requests must come from this site\"}",
+    "bodySha256": "b09a64649746a215effd1dcb1489a007af6c931168d719b4870eb1c3acc87243"
+   }
+  },
+  {
+   "name": "form-encoded write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project/verify",
+    "headers": {
+     "origin": "https://slop.cash",
+     "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": "a=b"
+   },
+   "response": {
+    "status": 403,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"origin_forbidden\",\"message\":\"Requests must come from this site\"}",
+    "bodySha256": "b09a64649746a215effd1dcb1489a007af6c931168d719b4870eb1c3acc87243"
+   }
+  },
+  {
+   "name": "malformed JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project/verify",
+    "headers": {
+     "origin": "https://slop.cash",
+     "content-type": "application/json"
+    },
+    "body": "{"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"not_found\",\"message\":\"Submission not found\"}",
+    "bodySha256": "301bff4e9e9174a0cfdea48f24e5fce008b89d2c6fd5979a5cf60d84772ffb93"
+   }
+  },
+  {
+   "name": "GET on a write route",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://slop.cash/api/v1/security-submissions/example-project/verify",
+    "headers": {
+     "origin": "https://slop.cash"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "private, no-store"
+    },
+    "body": "{\"error\":\"not_found\",\"message\":\"Submission not found\"}",
+    "bodySha256": "301bff4e9e9174a0cfdea48f24e5fce008b89d2c6fd5979a5cf60d84772ffb93"
+   }
+  }
+ ]
+}

@@ -1,0 +1,294 @@
+// spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"
+import { ed25519Verify } from "../crypto.vibe"
+import { type JsonRpc, type RpcFailure, RpcMalformed, jsonRpc } from "./rpc.vibe"
+import {
+  type Account,
+  type AccountFilter,
+  type Address,
+  type BlockSummary,
+  type Blockhash,
+  type Decoded,
+  type DecodedTransaction,
+  type FetchedTransaction,
+  type LatestBlockhash,
+  type SendOptions,
+  type Signature,
+  type SignatureEntry,
+  type SignatureStatus,
+  type Simulation,
+  type Slotted,
+  RpcAccountReply,
+  RpcAccountsReply,
+  RpcBlock,
+  RpcBlockhashReply,
+  RpcFeeReply,
+  RpcProgramAccounts,
+  RpcSignatureEntries,
+  RpcSimulationReply,
+  RpcStatusesReply,
+  RpcTransaction,
+  RpcValidReply,
+  accountFromRpc,
+  accountsFromRpc,
+  base64Encode,
+  blockFromRpc,
+  blockhashFromRpc,
+  exactCount,
+  exactLamports,
+  filterParams,
+  firstSignature,
+  programAccountsFromRpc,
+  publicKey,
+  signaturesFromRpc,
+  simulationFromRpc,
+  statusesFromRpc,
+  transactionFromRpc,
+} from "./solanaWire.ts"
+
+export {
+  ASSOCIATED_TOKEN_PROGRAM,
+  MAX_TRANSACTION_BYTES,
+  SYSTEM_PROGRAM,
+  TOKEN_2022_PROGRAM,
+  TOKEN_PROGRAM,
+  address,
+  addressOf,
+  associatedTokenAddress,
+  base58Decode,
+  base58Encode,
+  base64Decode,
+  base64Encode,
+  decodeMessage,
+  decodeMint,
+  decodeTokenAccount,
+  decodeTransaction,
+  encodeMessage,
+  encodeTransaction,
+  findPda,
+  isAddress,
+  isBlockhash,
+  isSignature,
+  onCurve,
+  publicKey,
+  signatureOf,
+} from "./solanaWire.ts"
+
+export type {
+  Account,
+  AccountFilter,
+  Address,
+  AddressTableLookup,
+  BlockSummary,
+  Blockhash,
+  CompiledInstruction,
+  Decoded,
+  DecodedTransaction,
+  FetchedTransaction,
+  InnerInstructions,
+  LatestBlockhash,
+  Message,
+  MessageHeader,
+  MintAccount,
+  ProgramAddress,
+  SendOptions,
+  Signature,
+  SignatureEntry,
+  SignatureStatus,
+  Simulation,
+  Slotted,
+  TokenAccount,
+  TokenBalance,
+  TokenExtension,
+  TokenIssue,
+  Transaction,
+  TransactionMeta,
+  WireIssue,
+} from "./solanaWire.ts"
+
+export type Commitment = "confirmed" | "finalized"
+
+export type ChainIdentity = "MissingPin" | "WrongGenesis" | "GenesisUnavailable" | "PinnedGenesis"
+
+export error GenesisPinMissing
+
+export interface SolanaRpcOptions {
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly genesis: string
+  readonly timeoutMs?: number
+  readonly maxBytes?: number
+}
+
+export interface SignaturePage {
+  readonly before?: Signature
+  readonly until?: Signature
+  readonly limit: number
+}
+
+export interface ProgramAccount {
+  readonly address: Address
+  readonly account: Account
+}
+
+export service SolanaRpc {
+  genesisHash(): string!RpcFailure
+  slot(commitment: Commitment): number!RpcFailure
+  blockHeight(commitment: Commitment): number!RpcFailure
+  blockhash(commitment: Commitment): LatestBlockhash!RpcFailure
+  blockhashValid(blockhash: Blockhash, commitment: Commitment, minContextSlot?: number): (Slotted<boolean>)!RpcFailure
+  firstAvailableBlock(): number!RpcFailure
+  block(slot: number, commitment: Commitment): (BlockSummary | undefined)!RpcFailure
+  blockTime(slot: number): (number | undefined)!RpcFailure
+  account(address: Address, commitment: Commitment): (Account | undefined)!RpcFailure
+  accounts(addresses: ReadonlyArray<Address>, commitment: Commitment): (Slotted<ReadonlyArray<Account | undefined>>)!RpcFailure
+  programAccounts(program: Address, filters: ReadonlyArray<AccountFilter>, commitment: Commitment): (ReadonlyArray<ProgramAccount>)!RpcFailure
+  rentExemption(size: number, commitment: Commitment): bigint!RpcFailure
+  signatures(address: Address, page: SignaturePage, commitment: Commitment): (ReadonlyArray<SignatureEntry>)!RpcFailure
+  transaction(signature: Signature, commitment: Commitment): (FetchedTransaction | undefined)!RpcFailure
+  signatureStatuses(signatures: ReadonlyArray<Signature>): (ReadonlyArray<SignatureStatus | undefined>)!RpcFailure
+  feeForMessage(message: Uint8Array, commitment: Commitment): (bigint | undefined)!RpcFailure
+  simulate(transaction: Uint8Array, accounts: ReadonlyArray<Address>, commitment: Commitment): Simulation!RpcFailure
+  sendRaw(transaction: Uint8Array, options: SendOptions): Signature!RpcFailure
+}
+
+effect function decoded<A>(method: string, outcome: Decoded<A, string>) {
+  if (outcome.kind === "malformed") throw new RpcMalformed({ method, issue: outcome.issue })
+  return outcome.value
+}
+
+effect function exact<A>(method: string, value: A | undefined, issue: string) {
+  if (value === undefined) throw new RpcMalformed({ method, issue })
+  return value
+}
+
+function genesisOf(result: unknown) {
+  return typeof result === "string" ? result : undefined
+}
+
+effect function transport(options: SolanaRpcOptions) {
+  if (options.genesis === "") throw new GenesisPinMissing()
+  return try jsonRpc({
+    urls: options.urls,
+    timeoutMs: options.timeoutMs ?? 15000,
+    maxBytes: options.maxBytes ?? 4194304,
+    identity: { method: "getGenesisHash", expected: options.genesis, read: genesisOf },
+  })
+}
+
+function optionalPage(page: SignaturePage) {
+  return { ...(page.before === undefined ? {} : { before: page.before }), ...(page.until === undefined ? {} : { until: page.until }) }
+}
+
+function reader(rpc: JsonRpc): SolanaRpc.Shape {
+  return {
+    genesisHash: () => rpc.call("getGenesisHash", [], Schema.String),
+    slot: (commitment) => effect {
+      return try exact("getSlot", exactCount(try rpc.call("getSlot", [{ commitment }], Schema.Number)), "slot is not an exact integer")
+    },
+    blockHeight: (commitment) => effect {
+      return try exact("getBlockHeight", exactCount(try rpc.call("getBlockHeight", [{ commitment }], Schema.Number)), "block height is not an exact integer")
+    },
+    blockhash: (commitment) => effect {
+      return try decoded("getLatestBlockhash", blockhashFromRpc(try rpc.call("getLatestBlockhash", [{ commitment }], RpcBlockhashReply)))
+    },
+    blockhashValid: (blockhash, commitment, minContextSlot) => effect {
+      const reply = try rpc.call("isBlockhashValid", [blockhash, { commitment, ...(minContextSlot === undefined ? {} : { minContextSlot }) }], RpcValidReply)
+      return { slot: try exact("isBlockhashValid", exactCount(reply.context.slot), "slot is not an exact integer"), value: reply.value }
+    },
+    firstAvailableBlock: () => effect {
+      return try exact("getFirstAvailableBlock", exactCount(try rpc.call("getFirstAvailableBlock", [], Schema.Number)), "first available block is not an exact integer")
+    },
+    block: (slot, commitment) => effect {
+      const reply = try rpc.call("getBlock", [slot, { commitment, transactionDetails: "none", rewards: false, maxSupportedTransactionVersion: 0 }], RpcBlock)
+      return try decoded("getBlock", blockFromRpc(reply))
+    },
+    blockTime: (slot) => effect {
+      const time = try rpc.call("getBlockTime", [slot], Schema.NullOr(Schema.Number))
+      return time === null ? undefined : try exact("getBlockTime", exactCount(time), "block time is not an exact integer")
+    },
+    account: (address, commitment) => effect {
+      return try decoded("getAccountInfo", accountFromRpc(try rpc.call("getAccountInfo", [address, { commitment, encoding: "base64" }], RpcAccountReply)))
+    },
+    accounts: (addresses, commitment) => effect {
+      const reply = try rpc.call("getMultipleAccounts", [addresses, { commitment, encoding: "base64" }], RpcAccountsReply)
+      return try decoded("getMultipleAccounts", accountsFromRpc(reply, addresses.length))
+    },
+    programAccounts: (program, filters, commitment) => effect {
+      const reply = try rpc.call("getProgramAccounts", [program, { commitment, encoding: "base64", filters: filterParams(filters) }], RpcProgramAccounts)
+      return try decoded("getProgramAccounts", programAccountsFromRpc(reply))
+    },
+    rentExemption: (size, commitment) => effect {
+      return try exact("getMinimumBalanceForRentExemption", exactLamports(try rpc.call("getMinimumBalanceForRentExemption", [size, { commitment }], Schema.Number)), "rent is not an exact integer")
+    },
+    signatures: (address, page, commitment) => effect {
+      const reply = try rpc.call("getSignaturesForAddress", [address, { commitment, limit: page.limit, ...optionalPage(page) }], RpcSignatureEntries)
+      return try decoded("getSignaturesForAddress", signaturesFromRpc(reply, page.limit))
+    },
+    transaction: (signature, commitment) => effect {
+      const reply = try rpc.call("getTransaction", [signature, { commitment, encoding: "base64", maxSupportedTransactionVersion: 0 }], RpcTransaction)
+      return try decoded("getTransaction", transactionFromRpc(reply, signature))
+    },
+    signatureStatuses: (signatures) => effect {
+      const reply = try rpc.call("getSignatureStatuses", [signatures, { searchTransactionHistory: true }], RpcStatusesReply)
+      return try decoded("getSignatureStatuses", statusesFromRpc(reply, signatures.length))
+    },
+    feeForMessage: (message, commitment) => effect {
+      const reply = try rpc.call("getFeeForMessage", [base64Encode(message), { commitment }], RpcFeeReply)
+      return reply.value === null ? undefined : try exact("getFeeForMessage", exactLamports(reply.value), "fee is not an exact integer")
+    },
+    simulate: (transaction, accounts, commitment) => effect {
+      const reply = try rpc.call("simulateTransaction", [base64Encode(transaction), {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: false,
+        commitment,
+        accounts: { encoding: "base64", addresses: accounts },
+      }], RpcSimulationReply)
+      return try decoded("simulateTransaction", simulationFromRpc(reply, accounts.length))
+    },
+    sendRaw: (transaction, options) => effect {
+      const expected = try exact("sendTransaction", firstSignature(transaction), "transaction bytes are not a signed Solana transaction")
+      const sent = try rpc.call("sendTransaction", [base64Encode(transaction), {
+        encoding: "base64",
+        skipPreflight: options.skipPreflight,
+        preflightCommitment: "confirmed",
+        maxRetries: options.maxRetries,
+      }], Schema.String)
+      if (sent !== expected) throw new RpcMalformed({ method: "sendTransaction", issue: "answered signature differs from the transaction's first signature" })
+      return expected
+    },
+  }
+}
+
+export function solanaRpc(options: SolanaRpcOptions) {
+  return Layer.effect(SolanaRpc, effect {
+    const rpc = try transport(options)
+    try rpc.call("getGenesisHash", [], Schema.String)
+    return reader(rpc)
+  })
+}
+
+function identityAfter(error: GenesisPinMissing | RpcFailure): ChainIdentity {
+  return error._tag === "GenesisPinMissing" ? "MissingPin" : error._tag === "WrongChain" ? "WrongGenesis" : "GenesisUnavailable"
+}
+
+export effect function chainIdentity(options: SolanaRpcOptions) {
+  const observed = effect {
+    const rpc = try transport(options)
+    try rpc.call("getGenesisHash", [], Schema.String)
+    return "PinnedGenesis" satisfies ChainIdentity
+  }
+  return observed catch (error) => identityAfter(error)
+}
+
+export effect function verifyMessageSignature(key: Uint8Array, message: Uint8Array, signature: Uint8Array) {
+  if (key.length !== 32 || signature.length !== 64) return false
+  return try ed25519Verify(key, message, signature)
+}
+
+export effect function verifyTransactionSignatures(transaction: DecodedTransaction) {
+  for (const [index, signature] of transaction.signatures.entries()) {
+    const signer = publicKey(transaction.message.accountKeys[index] ?? "")
+    if (signer === undefined || !(try verifyMessageSignature(signer, transaction.messageBytes, signature))) return false
+  }
+  return transaction.signatures.length > 0
+}

@@ -1,12 +1,50 @@
+// spec/backend/accounts.md, "Account identity, sessions and membership"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import type { Fetcher } from "./bindings.ts"
+import type { D1Error } from "./d1.vibe"
 import { fetchVia } from "./fetcher.ts"
+import { type Access, type AnyRoute, type Refusal, type Route, cacheControl, corsHeadersOf } from "./route.vibe"
+import { type SignatureRefused, type SignedRequest, serviceKeys, verifySigned } from "./signed.vibe"
 
-export error Refused { status: number; code: string }
+export error Refused { status: number; code: string; message: string }
 
-export const fixedHeaders = { "cache-control": "no-store", "x-content-type-options": "nosniff" }
+export function refuse(status: number, code: string, message: string) {
+  return new Refused({ status, code, message })
+}
 
-export function json(body: unknown, status = 200) {
-  return HttpServerResponse.jsonUnsafe(body, { status, headers: fixedHeaders })
+export const admission = {
+  origin: { status: 403, code: "origin_forbidden", message: "Requests must come from this site" },
+  mediaType: { status: 415, code: "unsupported_media_type", message: "This request body type is not accepted" },
+  invalidJson: { status: 400, code: "invalid_request", message: "Request body must be a JSON object" },
+  invalidUtf8Json: { status: 400, code: "invalid_request", message: "Request body must be valid UTF-8 JSON" },
+  unexpectedFields: { status: 400, code: "invalid_request", message: "Request body has unexpected fields" },
+  contentLength: { status: 400, code: "invalid_content_length", message: "Content-Length must contain only decimal digits" },
+  corsOrigin: { status: 403, code: "origin_not_allowed", message: "This origin may not call this route" },
+  corsHeaders: { status: 403, code: "headers_not_allowed", message: "These request headers are not allowed" },
+  corsMethod: { status: 404, code: "not_found", message: "Not found" },
+  unauthenticated: { status: 401, code: "unauthorized", message: "Sign in with GitHub" },
+  bearer: { status: 401, code: "unauthorized", message: "Authentication failed" },
+  signatureStale: { status: 401, code: "invalid_signature", message: "The signed timestamp is missing or stale" },
+  signatureInvalid: { status: 401, code: "invalid_signature", message: "The vetting signature is not valid" },
+  signersUnconfigured: { status: 503, code: "vetting_unavailable", message: "The vetting service is not configured" },
+  actorChanged: { status: 403, code: "actor_changed", message: "Your account changed. Reload your private view before continuing." },
+  rejected: { status: 409, code: "rejected", message: "This request is not allowed in the current state" },
+  conflict: { status: 409, code: "changed_concurrently", message: "This record changed while saving. Reload and try again." },
+  github: { status: 503, code: "github_unavailable", message: "GitHub could not be checked. Retry." },
+  rpc: { status: 503, code: "rpc_unavailable", message: "The network could not be checked. Retry." },
+  service: { status: 503, code: "service_unavailable", message: "A required service is unavailable. Retry." },
+  internal: { status: 500, code: "internal_error", message: "Internal error" },
+} satisfies Readonly<Record<string, Refusal>>
+
+export function payloadTooLarge(limitBytes: number): Refusal {
+  return { status: 413, code: "payload_too_large", message: `Request body exceeds ${limitBytes} bytes` }
+}
+
+export const fixedHeaders = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" }
+
+const jsonContentType = "application/json; charset=utf-8"
+
+export function json(body: unknown, status = 200, headers: Readonly<Record<string, string>> = {}) {
+  return HttpServerResponse.jsonUnsafe(body, { status, headers: { ...fixedHeaders, ...headers }, contentType: jsonContentType })
 }
 
 export const outbound = FetchHttpClient.layer
@@ -18,24 +56,310 @@ export function outboundVia(fetcher: Fetcher) {
   }), FetchHttpClient.layer)
 }
 
+function refusedBy(refusal: Refusal) {
+  return new Refused(refusal)
+}
+
+function declaredType(request: HttpServerRequest.HttpServerRequest) {
+  return (request.headers["content-type"] ?? "").split(";")[0] ?? ""
+}
+
+function mediaType(request: HttpServerRequest.HttpServerRequest) {
+  return declaredType(request).trim().toLowerCase()
+}
+
+function originOf(request: HttpServerRequest.HttpServerRequest) {
+  return new URL(request.originalUrl).origin
+}
+
+function tooLarge(error: { readonly reason: { readonly _tag: string } }) {
+  return error.reason._tag === "RequestParseError" && "reason" in error.reason && error.reason.reason === "BodyTooLarge"
+}
+
+function sameOriginJson(request: HttpServerRequest.HttpServerRequest) {
+  return request.headers.origin === originOf(request) && declaredType(request) === "application/json"
+}
+
+function isJsonObject(value: unknown) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export effect function sameOriginWrite() {
+  return sameOriginJson(try HttpServerRequest.HttpServerRequest)
+}
+
 export effect function jsonBody(limitKib: number) {
   const request = try HttpServerRequest.HttpServerRequest
-  if (!(request.headers["content-type"] ?? "").startsWith("application/json")) throw new Refused({ status: 415, code: "json_required" })
-  return provideService(request.json, HttpServerRequest.MaxBodySize, ByteSize.kibibytes(limitKib)) catch effect (error) => {
-    throw error.reason._tag === "RequestParseError" && error.reason.reason === "BodyTooLarge"
-      ? new Refused({ status: 413, code: "body_too_large" })
-      : new Refused({ status: 400, code: "invalid_json" })
+  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.kibibytes(limitKib)) catch effect () => {
+    throw refusedBy(admission.invalidJson)
   }
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(buffer))), catch: () => refusedBy(admission.invalidJson) })
+  if (!isJsonObject(value)) throw refusedBy(admission.invalidJson)
+  return value
+}
+
+effect function shaped<S extends Schema.Constraint>(schema: S, input: unknown) {
+  return Schema.decodeUnknownEffect(schema)(input, { onExcessProperty: "error" }) catch effect () => { throw refusedBy(admission.unexpectedFields) }
 }
 
 export effect function body<S extends Schema.Constraint>(schema: S, limitKib: number) {
   const input = try jsonBody(limitKib)
-  return Schema.decodeUnknownEffect(schema)(input, { onExcessProperty: "error" }) catch effect () => { throw new Refused({ status: 400, code: "invalid_body" }) }
+  return try shaped(schema, input)
 }
 
-export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResponse!(E | Refused)!R) {
-  return handler catch effect (error) => match (error) {
-    when Refused: json({ error: error.code }, error.status);
-    default: throw error;
+effect function boundedBytes(request: HttpServerRequest.HttpServerRequest, limitBytes: number) {
+  const declared = request.headers["content-length"]
+  if (declared !== undefined && !/^\d+$/u.test(declared)) throw refusedBy(admission.contentLength)
+  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(limitBytes)) catch effect (error) => {
+    if (tooLarge(error)) throw refusedBy(payloadTooLarge(limitBytes))
+    return try die(error)
   }
+  return new Uint8Array(buffer)
+}
+
+export effect function strictBody<S extends Schema.Constraint>(schema: S, limitBytes: number) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const bytes = try boundedBytes(request, limitBytes)
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), catch: () => refusedBy(admission.invalidUtf8Json) })
+  if (!isJsonObject(value)) throw refusedBy(admission.invalidJson)
+  return try shaped(schema, value)
+}
+
+export effect function bytesBody(limitBytes: number, contentTypes: readonly [string, ...string[]]) {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (!contentTypes.includes(mediaType(request))) throw refusedBy(admission.mediaType)
+  return try boundedBytes(request, limitBytes)
+}
+
+export effect function formBody(limitBytes: number) {
+  const bytes = try bytesBody(limitBytes, ["application/x-www-form-urlencoded"])
+  return new URLSearchParams(new TextDecoder().decode(bytes))
+}
+
+export schema Actor { githubId: string; login: string; actorId: string }
+
+export error Unauthenticated
+
+export error ActorChanged { expected: string }
+
+export service Caller {
+  current(): Actor!(Unauthenticated | ActorChanged | Refused | D1Error)!HttpServerRequest.HttpServerRequest
+}
+
+export schema Bearer { githubId: string; login: string; roles: ReadonlyArray<string>; tokenId: string }
+
+export service Bearers {
+  verify(token: Redacted.Redacted<string>): Bearer!(Unauthenticated | Refused | D1Error)
+}
+
+export interface ServiceSigner {
+  readonly keyId: string
+}
+
+export service ServiceAuth {
+  verify(request: SignedRequest): ServiceSigner!(SignatureRefused | Refused)
+}
+
+export function serviceAuth(configured: string | undefined) {
+  return Layer.effect(ServiceAuth, effect {
+    const keys = try serviceKeys(configured)
+    const crypto = try Experimental.Crypto.Crypto
+    return {
+      verify: (request: SignedRequest) => effect {
+        if (keys.size === 0) throw refusedBy(admission.signersUnconfigured)
+        return try provideService(verifySigned(request, keys), Experimental.Crypto.Crypto, crypto)
+      },
+    }
+  })
+}
+
+export interface Routing {
+  readonly rejected: string
+  readonly actorMismatch: Refusal
+}
+
+const unrouted: Routing = { rejected: admission.rejected.code, actorMismatch: admission.actorChanged }
+
+function routingOf(route: AnyRoute): Routing {
+  return { rejected: route.rejected, actorMismatch: route.actorMismatch ?? admission.actorChanged }
+}
+
+function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? error._tag : undefined
+}
+
+function refusalOf(error: unknown, routing: Routing): Refusal | undefined {
+  if (error instanceof Refused) return { status: error.status, code: error.code, message: error.message }
+  switch (tagOf(error)) {
+    case "Rejected": return { ...admission.rejected, code: routing.rejected }
+    case "Conflict": return admission.conflict
+    case "Unauthenticated": return admission.unauthenticated
+    case "ActorChanged": return routing.actorMismatch
+    case "GitHubUnavailable": return admission.github
+    case "RateLimited": return admission.github
+    case "RpcUnavailable": return admission.rpc
+    case "RpcMalformed": return admission.rpc
+    case "ServiceUnavailable": return admission.service
+    default: return undefined
+  }
+}
+
+function refusalResponse(refusal: Refusal) {
+  return json({ error: refusal.code, message: refusal.message }, refusal.status)
+}
+
+effect function internal() {
+  const request = try HttpServerRequest.HttpServerRequest
+  try Effect.logError(admission.internal.code, request.headers["cf-ray"] ?? "")
+  return refusalResponse(admission.internal)
+}
+
+effect function respond(error: unknown, routing: Routing) {
+  const refusal = refusalOf(error, routing)
+  if (refusal !== undefined) return refusalResponse(refusal)
+  return try internal()
+}
+
+export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResponse!E!R, routing: Routing = unrouted) {
+  return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), () => internal())
+}
+
+function allowedOrigin(route: AnyRoute, request: HttpServerRequest.HttpServerRequest) {
+  const origin = request.headers.origin
+  if (route.cors === undefined) return undefined
+  if (route.cors.includes("*")) return "*"
+  return origin !== undefined && route.cors.includes(origin) ? origin : undefined
+}
+
+function withCors(response: HttpServerResponse.HttpServerResponse, origin: string | undefined) {
+  if (origin === undefined) return response
+  const allowed = HttpServerResponse.setHeader(response, "access-control-allow-origin", origin)
+  return origin === "*" ? allowed : HttpServerResponse.setHeader(allowed, "vary", "Origin")
+}
+
+effect function crossOriginAdmitted(route: AnyRoute, request: HttpServerRequest.HttpServerRequest) {
+  const origin = request.headers.origin
+  if (route.cors === undefined || origin === undefined || origin === originOf(request)) return
+  if (allowedOrigin(route, request) === undefined) throw refusedBy(admission.corsOrigin)
+}
+
+effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpServerResponse!E!R) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const response = try answered(effect {
+    try crossOriginAdmitted(route, request)
+    return try program
+  }, routingOf(route))
+  return withCors(response, allowedOrigin(route, request))
+}
+
+const bearerToken = /^Bearer (\S+)$/u
+
+effect function bearerOf(request: HttpServerRequest.HttpServerRequest) {
+  const token = bearerToken.exec(request.headers.authorization ?? "")?.[1]
+  if (token === undefined) throw refusedBy(admission.bearer)
+  const bearers = try Effect.serviceOption(Bearers)
+  if (Option.isNone(bearers)) return try die(new Error("A bearer route is served without Bearers"))
+  return bearers.value.verify(Redacted.make(token)) catch effect (error) => {
+    if (error._tag === "Unauthenticated") throw refusedBy(admission.bearer)
+    throw error
+  }
+}
+
+effect function signerOf(request: HttpServerRequest.HttpServerRequest, limitBytes: number) {
+  const auth = try Effect.serviceOption(ServiceAuth)
+  if (Option.isNone(auth)) return try die(new Error("A service route is served without ServiceAuth"))
+  const body = try boundedBytes(request, limitBytes)
+  const url = new URL(request.originalUrl)
+  return auth.value.verify({ method: request.method, path: `${url.pathname}${url.search}`, headers: request.headers, body }) catch effect (error) => {
+    if (error._tag !== "SignatureRefused") throw error
+    throw refusedBy(error.reason === "unknownKey" || error.reason === "signature" ? admission.signatureInvalid : admission.signatureStale)
+  }
+}
+
+effect function credentialOf(route: AnyRoute, requireJson: boolean) {
+  const request = try HttpServerRequest.HttpServerRequest
+  switch (route.access) {
+    case "sessionWrite": {
+      if (requireJson ? !sameOriginJson(request) : request.headers.origin !== originOf(request)) throw refusedBy(admission.origin)
+      return undefined
+    }
+    case "bearer": return try bearerOf(request)
+    case "service": return try signerOf(request, route.limitKib * 1024)
+    default: return undefined
+  }
+}
+
+export type Credential<X extends Access> = X extends "session" | "sessionWrite" ? Actor : X extends "bearer" ? Bearer : X extends "service" ? ServiceSigner : undefined
+
+type Verifier<X extends Access> = X extends "bearer" ? Bearers : X extends "service" ? ServiceAuth : never
+
+type Handled<X extends Access, R> = Layer.Layer<never, never, HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Caller> | HttpRouter.Request.From<"Requires", Exclude<R | Verifier<X>, HttpRouter.Provided>>>
+
+export interface Admission<X extends Access> {
+  readonly params: Readonly<Record<string, string>>
+  readonly query: URLSearchParams
+  readonly actor: Credential<X>
+}
+
+export interface Admitted<B, X extends Access> extends Admission<X> {
+  readonly body: B
+}
+
+effect function admissionOf<X extends Access>(route: Route<unknown, unknown, X>, credential: Bearer | ServiceSigner | undefined) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const found = try HttpRouter.params
+  const params = Object.fromEntries(Object.entries(found).filter((entry): entry is [string, string] => entry[1] !== undefined))
+  const caller = try Caller
+  let actor: Actor | Bearer | ServiceSigner | undefined = credential
+  if (route.access === "session" || route.access === "sessionWrite") actor = try caller.current()
+  return { params, query: new URL(request.originalUrl).searchParams, actor } as Admission<X>
+}
+
+export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admitted<B, X>) => A!E!R): Handled<X, R> {
+  return HttpRouter.add(route.method, route.path, served(route, effect {
+    const credential = try credentialOf(route, true)
+    let decoded: unknown = undefined
+    if (route.request !== undefined) decoded = try body(route.request, route.limitKib)
+    const admitted = try admissionOf(route, credential)
+    const answer = try f({ ...admitted, body: decoded as B })
+    const encoded = try orDie(Schema.encodeUnknownEffect(route.answer)(answer))
+    return json(encoded, route.status ?? 200, { "cache-control": cacheControl(route.cache) })
+  }))
+}
+
+export function handleRaw<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (input: Admission<X>) => HttpServerResponse.HttpServerResponse!E!R): Handled<X, R> {
+  return HttpRouter.add(route.method, route.path, served(route, effect {
+    const credential = try credentialOf(route, false)
+    const response = try f(try admissionOf(route, credential))
+    if (response.headers["cache-control"] !== undefined) return response
+    const succeeded = response.status >= 200 && response.status <= 299
+    return HttpServerResponse.setHeader(response, "cache-control", succeeded ? cacheControl(route.cache) : "no-store")
+  }))
+}
+
+effect function preflighted(group: ReadonlyArray<AnyRoute>) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const origin = request.headers.origin
+  const route = group.find((candidate) => candidate.method === request.headers["access-control-request-method"])
+  if (route === undefined) throw refusedBy(admission.corsMethod)
+  if (origin === undefined || allowedOrigin(route, request) === undefined) throw refusedBy(admission.corsOrigin)
+  const allowed = corsHeadersOf(route)
+  const requested = (request.headers["access-control-request-headers"] ?? "").split(",").map((header) => header.trim().toLowerCase()).filter((header) => header !== "")
+  if (requested.some((header) => !allowed.includes(header))) throw refusedBy(admission.corsHeaders)
+  return HttpServerResponse.empty({
+    status: 204,
+    headers: {
+      "access-control-allow-origin": origin,
+      "access-control-allow-methods": route.method,
+      "access-control-allow-headers": allowed.join(", "),
+      vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+      "cache-control": "no-store",
+    },
+  })
+}
+
+export function preflight(routes: ReadonlyArray<AnyRoute>) {
+  const crossOrigin = routes.filter((route) => route.cors !== undefined)
+  const paths = [...new Set(crossOrigin.map((route) => route.path))]
+  return HttpRouter.addAll(paths.map((path) => HttpRouter.route("OPTIONS", path, answered(preflighted(crossOrigin.filter((route) => route.path === path))))))
 }

@@ -1,0 +1,66 @@
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"
+import type { Answer, Content, Exchange, ModelCall } from "./client.vibe"
+import { boundedText, count, recordOf } from "./anthropic.vibe"
+
+function plain(content: Content) {
+  return typeof content === "string" ? content : content.map((part) => part.text).join("\n\n")
+}
+
+export function responsesRequest(call: ModelCall) {
+  const [first] = call.messages
+  const input = call.messages.length === 1 && first?.role === "user" ? plain(first.content) : call.messages.map((message) => ({ role: message.role, content: plain(message.content) }))
+  return {
+    model: call.model,
+    instructions: plain(call.system),
+    input,
+    tools: [],
+    store: false,
+    truncation: "disabled",
+    max_output_tokens: call.maxTokens,
+    ...(call.temperature === undefined ? {} : { temperature: call.temperature }),
+    ...(call.effort === undefined ? {} : { reasoning: { effort: call.effort } }),
+    ...(call.responseFormat === undefined ? {} : { text: { format: { type: "json_schema", name: "response", schema: call.responseFormat, strict: true } } }),
+  }
+}
+
+export function responsesExchange(body: unknown): Exchange | undefined {
+  const reply = recordOf(body)
+  const usage = recordOf(reply?.usage)
+  const id = boundedText(reply?.id, 256)
+  const model = boundedText(reply?.model, 128)
+  const total = count(usage?.input_tokens)
+  const cached = count(recordOf(usage?.input_tokens_details)?.cached_tokens)
+  const output = count(usage?.output_tokens)
+  if (id === undefined || model === undefined || total === undefined || cached === undefined || output === undefined || total < cached) return undefined
+  return { id, model, usage: { input: total - cached, output, cacheRead: cached, cacheWrite: 0 } }
+}
+
+const incompleteReasons: ReadonlySet<unknown> = new Set(["max_output_tokens", "content_filter"])
+const outputItems: ReadonlySet<unknown> = new Set(["message", "reasoning"])
+
+export function responsesAnswer(body: unknown): Answer {
+  const reply = recordOf(body)
+  const status = reply?.status
+  const incomplete = reply?.incomplete_details
+  if (reply === undefined || status !== "completed" || (reply.error !== undefined && reply.error !== null) || (incomplete !== undefined && incomplete !== null)) {
+    const why = recordOf(incomplete)?.reason
+    const reason = typeof why === "string" && incompleteReasons.has(why) ? why : "other"
+    return { kind: "stopped", category: reason === "content_filter" ? "Refused" : "Incomplete", reason: `incomplete-${reason}` }
+  }
+  const items = Array.isArray(reply.output) ? reply.output.map(recordOf) : []
+  const messages = items.filter((item) => item?.type === "message")
+  const [message] = messages
+  const content = Array.isArray(message?.content) ? message.content.map(recordOf) : []
+  const text = boundedText(content[0]?.text, Number.MAX_SAFE_INTEGER)
+  if (
+    items.length === 0 ||
+    items.some((item) => !outputItems.has(item?.type)) ||
+    messages.length !== 1 ||
+    message?.role !== "assistant" ||
+    content.length !== 1 ||
+    content[0]?.type !== "output_text" ||
+    text === undefined
+  )
+    return { kind: "malformed" }
+  return { kind: "text", text, stopReason: status }
+}

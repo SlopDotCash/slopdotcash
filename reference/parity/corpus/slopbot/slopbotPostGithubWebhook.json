@@ -1,0 +1,123 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /github/webhook @worker:slopbot",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:slopbot"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "GITHUB_WEBHOOK_SECRET": "<test value>",
+  "bindings": [
+   "SLOPBOT_DB",
+   "SLOPBOT_QUEUE"
+  ]
+ },
+ "cases": [
+  {
+   "name": "signed-out same-origin JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slopbot.internal/github/webhook",
+    "headers": {
+     "origin": "https://slopbot.internal",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "invalid signature",
+    "bodySha256": "6e477778846eaaf90b9850a6b00165439018b8ac03b55749a1b1bd49ac1271c6"
+   }
+  },
+  {
+   "name": "cross-site JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slopbot.internal/github/webhook",
+    "headers": {
+     "origin": "https://attacker.example",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "invalid signature",
+    "bodySha256": "6e477778846eaaf90b9850a6b00165439018b8ac03b55749a1b1bd49ac1271c6"
+   }
+  },
+  {
+   "name": "form-encoded write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slopbot.internal/github/webhook",
+    "headers": {
+     "origin": "https://slopbot.internal",
+     "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": "a=b"
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "invalid signature",
+    "bodySha256": "6e477778846eaaf90b9850a6b00165439018b8ac03b55749a1b1bd49ac1271c6"
+   }
+  },
+  {
+   "name": "malformed JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://slopbot.internal/github/webhook",
+    "headers": {
+     "origin": "https://slopbot.internal",
+     "content-type": "application/json"
+    },
+    "body": "{"
+   },
+   "response": {
+    "status": 401,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "invalid signature",
+    "bodySha256": "6e477778846eaaf90b9850a6b00165439018b8ac03b55749a1b1bd49ac1271c6"
+   }
+  },
+  {
+   "name": "GET on a write route",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://slopbot.internal/github/webhook",
+    "headers": {
+     "origin": "https://slopbot.internal"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "text/plain;charset=UTF-8"
+    },
+    "body": "not found",
+    "bodySha256": "907ba78b4545338d3539683e63ecb51cf51c10adc9dabd86e92bd52339f298b9"
+   }
+  }
+ ]
+}

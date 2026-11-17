@@ -1,0 +1,12 @@
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"
+import * as Hex from "effect/encoding/Hex"
+import { hmacSha256, timingSafeEqual } from "../crypto.vibe"
+
+const signatureHeader = /^sha256=([0-9a-f]{64})$/u
+
+export effect function verifyWebhook(bytes: Uint8Array, signature256: string | undefined, secret: Redacted.Redacted<string>) {
+  const hex = signature256 === undefined ? undefined : signatureHeader.exec(signature256)?.[1]
+  const claimed = hex === undefined ? undefined : Result.getOrUndefined(Hex.decode(hex))
+  if (claimed === undefined || Redacted.value(secret) === "") return false
+  return timingSafeEqual(try hmacSha256(secret, bytes), claimed)
+}

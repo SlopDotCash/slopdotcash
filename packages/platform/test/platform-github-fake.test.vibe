@@ -1,0 +1,307 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "../src/crypto.vibe"
+import { GitHubApp, githubApp } from "../src/github/app.vibe"
+import { authorizeUrl, currentUser, exchangeCode, pkce } from "../src/github/oauth.vibe"
+import { verifyWebhook } from "../src/github/webhook.vibe"
+import { outboundVia } from "../src/http.vibe"
+import { type Handler, startWorker } from "../src/testing.ts"
+import { githubFake } from "../src/testing/github.ts"
+
+type Fake = ReturnType<typeof githubFake>
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: unknown
+}
+
+const api = "https://api.github.com"
+const callback = "https://identity.slop.test/v1/oauth/callback"
+
+function at(day: number) {
+  return `2026-10-${String(day).padStart(2, "0")}T12:00:00Z`
+}
+
+async function seeded(): Promise<Fake> {
+  const fake = githubFake({ webhookSecret: "fake-journey-webhook-secret" })
+  const world = fake.world
+  world.addUser({ id: 583231, login: "octocat", nodeId: "MDQ6VXNlcjU4MzIzMQ==", createdAt: "2011-01-25T18:44:36Z" })
+  world.addUser({ id: 900002, login: "contributor", createdAt: at(1) })
+  world.addOrg({ id: 987654, login: "slop-org", createdAt: at(1) })
+  world.addMember("slop-org", "octocat", "admin")
+  world.addRepo({ id: 1296269, owner: "octocat", name: "hello-world", createdAt: at(1), license: { spdx: "MIT" } })
+  world.addRepo({ id: 1296270, owner: "slop-org", name: "vault", private: true, createdAt: at(1) })
+  for (const day of [2, 3, 4, 5, 6]) world.addPull({ repo: "octocat/hello-world", author: "contributor", createdAt: at(day), mergedAt: at(day + 1), files: [{ path: `src/${day}.ts`, additions: day, deletions: 1, status: "modified" }] })
+  world.addInstallation({ id: 77, account: "octocat", repositories: ["hello-world"], permissions: { contents: "read", issues: "write", pull_requests: "read" } })
+  return fake
+}
+
+async function call(fake: Fake, url: string, init: RequestInit = {}): Promise<Answer> {
+  const response = await fake.fetch(url, init)
+  const text = await response.text()
+  return { status: response.status, headers: Object.fromEntries(response.headers), body: text === "" ? null : JSON.parse(text) }
+}
+
+function bearer(token: string): RequestInit {
+  return { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } }
+}
+
+function query(token: string, text: string, variables: Readonly<Record<string, unknown>> = {}): RequestInit {
+  return { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ query: text, variables }) }
+}
+
+function next(answer: Answer) {
+  return /<([^>]+)>; rel="next"/u.exec(answer.headers.link ?? "")?.[1]
+}
+
+function numbers(answer: Answer) {
+  return (answer.body as ReadonlyArray<{ number: number }>).map((pull) => pull.number)
+}
+
+function limits(answer: Answer) {
+  return [answer.headers["x-ratelimit-limit"], answer.headers["x-ratelimit-remaining"], answer.headers["x-ratelimit-resource"]]
+}
+
+function client(fake: Fake) {
+  return outboundVia({ fetch: fake.fetch })
+}
+
+const relay = `export default {
+  async fetch(request) {
+    const sent = await request.json();
+    try {
+      const response = await fetch(sent.url, { method: sent.method, headers: sent.headers, body: sent.body });
+      return Response.json({ status: response.status });
+    } catch (error) {
+      return Response.json({ lost: error.message });
+    }
+  },
+};`
+
+layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect('A renamed account and repository keep their ids, and the old repository path redirects to the id (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/points/profiles.md, "A renamed repository is followed by its permanent registry identity")', () => effect {
+    const fake = try promise(() => seeded())
+    const token = try promise(async () => fake.tokens.user("contributor"))
+    const before = try promise(() => call(fake, `${api}/users/octocat`, bearer(token)))
+    try promise(async () => {
+      fake.world.renameUser("octocat", "monalisa")
+      fake.world.renameRepo("monalisa/hello-world", "monalisa/hello-galaxy")
+    })
+    const gone = try promise(() => call(fake, `${api}/users/octocat`, bearer(token)))
+    const after = try promise(() => call(fake, `${api}/users/monalisa`, bearer(token)))
+    const moved = try promise(() => call(fake, `${api}/repos/octocat/hello-world/pulls/1`, bearer(token)))
+    const followed = try promise(() => call(fake, moved.headers.location ?? "", bearer(token)))
+    const node = try promise(() => call(fake, `${api}/graphql`, query(token, "query Renamed($id: ID!) { node(id: $id) { __typename ... on Repository { databaseId nameWithOwner owner { login ... on User { databaseId } } } } }", { id: "R_kgDO" + (1296269).toString(36) })))
+    const identity = (answer: Answer) => [(answer.body as { id: number }).id, (answer.body as { node_id: string }).node_id, (answer.body as { login: string }).login]
+    try Effect.try(() => assert.deepStrictEqual({
+      before: identity(before),
+      gone: gone.status,
+      after: identity(after),
+      moved: [moved.status, moved.headers.location],
+      followed: [followed.status, (followed.body as { number: number; base: { repo: { id: number; full_name: string } } }).base.repo.full_name, (followed.body as { base: { repo: { id: number } } }).base.repo.id],
+      node: node.body,
+    }, {
+      before: [583231, "MDQ6VXNlcjU4MzIzMQ==", "octocat"],
+      gone: 404,
+      after: [583231, "MDQ6VXNlcjU4MzIzMQ==", "monalisa"],
+      moved: [301, `${api}/repositories/1296269/pulls/1`],
+      followed: [200, "monalisa/hello-galaxy", 1296269],
+      node: { data: { node: { __typename: "Repository", databaseId: 1296269, nameWithOwner: "monalisa/hello-galaxy", owner: { login: "monalisa", databaseId: 583231 } } } },
+    }))
+  })
+
+  it.effect('Lists page through Link headers, every answer carries its rate limit, and primary and secondary limits are told apart (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const fake = try promise(() => seeded())
+    const token = try promise(async () => fake.tokens.user("contributor"))
+    const first = try promise(() => call(fake, `${api}/repos/octocat/hello-world/pulls?state=all&per_page=2`, bearer(token)))
+    const second = try promise(() => call(fake, next(first) ?? "", bearer(token)))
+    const third = try promise(() => call(fake, next(second) ?? "", bearer(token)))
+    const anonymous = try promise(() => call(fake, `${api}/users/octocat`))
+    const hidden = try promise(() => call(fake, `${api}/repos/slop-org/vault`, bearer(token)))
+    const graph = try promise(() => call(fake, `${api}/graphql`, query(token, "query Merged($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequests(first: 2, states: [MERGED]) { totalCount pageInfo { hasNextPage } nodes { number mergedAt author { login ... on User { databaseId } } } } } rateLimit { cost limit remaining } }", { owner: "octocat", name: "hello-world" })))
+    const unknown = try promise(() => call(fake, `${api}/graphql`, query(token, "query { viewer { login karma } }")))
+    try sync(() => fake.failNext("/users/octocat", { rateLimit: { secondary: false, retryAfterSeconds: 120 } }))
+    const primary = try promise(() => call(fake, `${api}/users/octocat`, bearer(token)))
+    try sync(() => fake.failNext("/users/octocat", { rateLimit: { secondary: true, retryAfterSeconds: 30 } }))
+    const secondary = try promise(() => call(fake, `${api}/users/octocat`, bearer(token)))
+    try sync(() => fake.failNext("/graphql", { rateLimit: { secondary: false, retryAfterSeconds: 60 } }))
+    const graphLimited = try promise(() => call(fake, `${api}/graphql`, query(token, "query { viewer { login } }")))
+    const reset = Number(primary.headers["x-ratelimit-reset"]) - Math.floor(Date.now() / 1000)
+    try Effect.try(() => assert.deepStrictEqual({
+      pages: [numbers(first), numbers(second), numbers(third)],
+      lastLink: next(third),
+      limits: [limits(first), limits(second), limits(third), limits(anonymous)],
+      hidden: hidden.status,
+      graph: graph.body,
+      unknown: (unknown.body as { errors: ReadonlyArray<{ extensions: unknown }> }).errors.map((error) => error.extensions),
+      primary: [primary.status, primary.headers["x-ratelimit-remaining"], reset >= 118 && reset <= 121, primary.headers["retry-after"]],
+      secondary: [secondary.status, secondary.headers["retry-after"], (secondary.body as { message: string }).message.includes("secondary rate limit")],
+      graphLimited: [graphLimited.status, (graphLimited.body as { errors: ReadonlyArray<{ type: string }> }).errors.map((error) => error.type)],
+    }, {
+      pages: [[5, 4], [3, 2], [1]],
+      lastLink: undefined,
+      limits: [["5000", "4999", "core"], ["5000", "4998", "core"], ["5000", "4997", "core"], ["60", "59", "core"]],
+      hidden: 404,
+      graph: {
+        data: {
+          repository: { pullRequests: { totalCount: 5, pageInfo: { hasNextPage: true }, nodes: [{ number: 1, mergedAt: at(3), author: { login: "contributor", databaseId: 900002 } }, { number: 2, mergedAt: at(4), author: { login: "contributor", databaseId: 900002 } }] } },
+          rateLimit: { cost: 1, limit: 5000, remaining: 4999 },
+        },
+      },
+      unknown: [{ code: "undefinedField", typeName: "User", fieldName: "karma" }],
+      primary: [403, "0", true, undefined],
+      secondary: [403, "30", true],
+      graphLimited: [200, ["RATE_LIMITED"]],
+    }))
+  })
+
+  it.effect('A lost connection reaches a Worker as a network failure, after the write applied or before it, and a broken fake is never mistaken for one (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+    const fake = try promise(() => seeded())
+    const token = try promise(async () => fake.tokens.user("octocat"))
+    const outbound: Handler = (request) => new URL(request.url).pathname === "/broken" ? Promise.reject(new TypeError("a bug in the fake")) : fake.handler(request)
+    const mf = try acquireRelease(sync(() => startWorker({ module: relay, outbound })), (started) => promise(() => started.dispose()))
+    const labels = `${api}/repos/octocat/hello-world/issues/1/labels`
+    const through = (method: string, url: string, body?: unknown) => promise(async () => {
+      const response = await mf.dispatchFetch("https://relay.test/", { method: "POST", body: JSON.stringify({ method, url, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }) })
+      return (await response.json()) as { status?: number; lost?: string }
+    })
+    try sync(() => fake.failNext("POST /repos/octocat/hello-world/issues/1/labels", { disconnect: true, applied: true }))
+    const created = try through("POST", labels, { labels: ["slop:intake"] })
+    try sync(() => fake.failNext("GET /repos/octocat/hello-world/issues/1/labels", { disconnect: true }))
+    const read = try through("GET", labels)
+    const after = try promise(() => call(fake, labels, bearer(token)))
+    const lostOnly = [...mf.outboundErrors]
+    const broken = try through("GET", `${api}/broken`)
+    try Effect.try(() => assert.deepStrictEqual({
+      lostOnly,
+      broken: [broken.status, mf.outboundErrors.length, mf.outboundErrors[0]?.includes("a bug in the fake")],
+      created: typeof created.lost,
+      read: typeof read.lost,
+      after: [after.status, (after.body as ReadonlyArray<{ name: string }>).map((label) => label.name)],
+      requests: fake.requests.slice(0, 2).map((request) => request.status),
+    }, {
+      lostOnly: [],
+      broken: [500, 1, true],
+      created: "string",
+      read: "string",
+      after: [200, ["slop:intake"]],
+      requests: ["disconnected", "disconnected"],
+    }))
+  })
+
+  it.effect('A sign-in code works once and only with its PKCE verifier (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub")', () => effect {
+    const fake = try promise(() => seeded())
+    const web = client(fake)
+    const challenge = try pkce()
+    const signIn = (state: string) => promise(async () => {
+      const answer = await call(fake, authorizeUrl({ clientId: fake.app.clientId, redirectUri: callback, state, challenge: challenge.challenge, login: "octocat" }))
+      return new URL(answer.headers.location ?? callback)
+    })
+    const exchange = (code: string, verifier: string) => exchangeCode({ clientId: fake.app.clientId, clientSecret: Redacted.make(fake.app.clientSecret), code, verifier, redirectUri: callback })
+    const first = try signIn("state-one")
+    const code = first.searchParams.get("code") ?? ""
+    const second = try signIn("state-two")
+    let wrong: unknown, replayed: unknown, user: unknown
+    provide web {
+      wrong = exchange(code, `${challenge.verifier}x`) catch (error) => error._tag
+      replayed = exchange(code, challenge.verifier) catch (error) => error._tag
+      user = try currentUser(try exchange(second.searchParams.get("code") ?? "", challenge.verifier))
+    }
+    const unauthorized = try promise(() => call(fake, authorizeUrl({ clientId: fake.app.clientId, redirectUri: callback, state: "state-three", challenge: challenge.challenge, login: "nobody" })))
+    try Effect.try(() => assert.deepStrictEqual({
+      redirect: [first.origin + first.pathname, first.searchParams.get("state"), second.searchParams.get("state")],
+      wrong,
+      replayed,
+      user,
+      unauthorized: unauthorized.status,
+      exchanges: fake.requests.filter((request) => request.url.endsWith("/login/oauth/access_token")).map((request) => request.status),
+    }, {
+      redirect: [callback, "state-one", "state-two"],
+      wrong: "GitHubRefused",
+      replayed: "GitHubRefused",
+      user: { id: "583231", nodeId: "MDQ6VXNlcjU4MzIzMQ==", login: "octocat", createdAt: "2011-01-25T18:44:36Z" },
+      unauthorized: 400,
+      exchanges: [200, 200, 200],
+    }))
+  })
+
+  it.effect('An App installation token is issued only for a valid App JWT and reads only its installation (spec/slopbot/installation.md, "Every Slopbot effect requires an active installation")', () => effect {
+    const fake = try promise(() => seeded())
+    const stranger = try promise(async () => githubFake({ appId: fake.app.id }))
+    const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem) }), client(fake))
+    let token = Redacted.make("")
+    provide app {
+      token = try (try GitHubApp).installationToken("77")
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const mint = (jwt: () => Promise<string>) => promise(async () => call(fake, `${api}/app/installations/77/access_tokens`, { method: "POST", headers: { authorization: `Bearer ${await jwt()}` } }))
+    const expired = try mint(async () => fake.tokens.app({ issuedAt: now - 700, expiresAt: now - 100 }))
+    const tooLong = try mint(async () => fake.tokens.app({ issuedAt: now, expiresAt: now + 3600 }))
+    const foreign = try mint(async () => stranger.tokens.app())
+    const userToken = try mint(async () => fake.tokens.user("contributor"))
+    const listed = try promise(() => call(fake, `${api}/installation/repositories`, bearer(Redacted.value(token))))
+    const own = try promise(() => call(fake, `${api}/repos/octocat/hello-world/contents/LICENSE`, bearer(Redacted.value(token))))
+    const elsewhere = try promise(() => call(fake, `${api}/repos/slop-org/vault`, bearer(Redacted.value(token))))
+    const writes = try promise(() => call(fake, `${api}/repos/octocat/hello-world/issues/1/labels`, { method: "POST", headers: { authorization: `Bearer ${Redacted.value(token)}`, "content-type": "application/json" }, body: JSON.stringify({ labels: ["slop:reviewed"] }) }))
+    try promise(async () => fake.world.suspendInstallation(77, true))
+    const suspended = try mint(async () => fake.tokens.app())
+    const afterSuspension = try promise(() => call(fake, `${api}/repos/octocat/hello-world/contents/LICENSE`, bearer(Redacted.value(token))))
+    try Effect.try(() => assert.deepStrictEqual({
+      expired: expired.status,
+      tooLong: tooLong.status,
+      foreign: foreign.status,
+      userToken: userToken.status,
+      listed: [listed.status, (listed.body as { total_count: number; repositories: ReadonlyArray<{ full_name: string }> }).repositories.map((repo) => repo.full_name)],
+      own: [own.status, (own.body as { encoding: string }).encoding],
+      elsewhere: elsewhere.status,
+      writes: [writes.status, (writes.body as ReadonlyArray<{ name: string }>).map((label) => label.name)],
+      suspended: suspended.status,
+      afterSuspension: [afterSuspension.status, (afterSuspension.body as { message: string }).message],
+      minted: fake.requests.filter((request) => request.url.endsWith("/access_tokens")).map((request) => [request.credential, request.status]),
+    }, {
+      expired: 401,
+      tooLong: 401,
+      foreign: 401,
+      userToken: 401,
+      listed: [200, ["octocat/hello-world"]],
+      own: [200, "base64"],
+      elsewhere: 404,
+      writes: [200, ["slop:reviewed"]],
+      suspended: 403,
+      afterSuspension: [403, "This installation has been suspended"],
+      minted: [["app:slop-fake", 201], ["invalid", 401], ["invalid", 401], ["invalid", 401], ["user:contributor", 401], ["app:slop-fake", 403]],
+    }))
+  })
+
+  it.effect('A delivered webhook verifies over its exact bytes and fails on one changed byte (spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
+    const fake = try promise(() => seeded())
+    const delivered = try promise(async () => {
+      const request = fake.deliver("pull_request", { action: "opened", number: 1, pull_request: fake.represent.pull("octocat/hello-world", 1), repository: fake.represent.repository("octocat/hello-world") }, { installationId: 77 })
+      return { bytes: new Uint8Array(await request.arrayBuffer()), signature: request.headers.get("x-hub-signature-256") ?? undefined, event: request.headers.get("x-github-event"), delivery: request.headers.get("x-github-delivery") ?? "" }
+    })
+    const secret = Redacted.make("fake-journey-webhook-secret")
+    const changed = delivered.bytes.map((byte, index) => (index === delivered.bytes.length - 2 ? byte ^ 1 : byte))
+    const payload = try promise(async () => JSON.parse(new TextDecoder().decode(delivered.bytes)) as { installation: { id: number }; pull_request: { number: number; user: { id: number } } })
+    const accepted = try verifyWebhook(delivered.bytes, delivered.signature, secret)
+    const altered = try verifyWebhook(changed, delivered.signature, secret)
+    const otherSecret = try verifyWebhook(delivered.bytes, delivered.signature, Redacted.make("another-secret"))
+    const unsigned = try verifyWebhook(delivered.bytes, undefined, secret)
+    try Effect.try(() => assert.deepStrictEqual({
+      accepted,
+      changed: altered,
+      otherSecret,
+      unsigned,
+      event: delivered.event,
+      delivery: /^[0-9a-f-]{36}$/u.test(delivered.delivery),
+      payload: [payload.installation.id, payload.pull_request.number, payload.pull_request.user.id],
+    }, {
+      accepted: true,
+      changed: false,
+      otherSecret: false,
+      unsigned: false,
+      event: "pull_request",
+      delivery: true,
+      payload: [77, 1, 900002],
+    }))
+  })
+})

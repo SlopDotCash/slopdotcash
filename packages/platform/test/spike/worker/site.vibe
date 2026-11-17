@@ -1,15 +1,11 @@
-// spike prototypes for K1/K2: pages() (Pages advanced-mode _worker.js with ASSETS fall-through and waitUntil),
-// route() descriptors and handle(route, f) over HttpRouter.add/answered/body
 import type { Fetcher } from "../../../src/bindings.ts"
 import { answered, body, json } from "../../../src/http.vibe"
 import type { Routes } from "../../../src/worker.vibe"
 import type { ExecutionContext } from "../bindings.ts"
 import { keepRunning } from "./subtle.ts"
 
-// The request's ExecutionContext, given per request as the web handler's context (not a Layer: it changes per request).
 export service Execution { readonly context: ExecutionContext }
 
-// Runs `program` after the response is sent, on the same services, through waitUntil.
 export effect function later<E, R>(program: void!E!R) {
   const services = try Effect.context<R>()
   const { context } = try Execution

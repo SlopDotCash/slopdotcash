@@ -1,0 +1,133 @@
+{
+ "schema": "slop-parity-corpus-v1",
+ "route": "POST /v1/assertions/consume @worker:slop-identity",
+ "source": {
+  "branch": "origin/development",
+  "commit": "cc7cc3200e802917b92ca2e32682e2ef2f59aed6",
+  "entry": "worker:slop-identity"
+ },
+ "recorded": "each response was produced by the old handler code of that commit, bundled and run locally with a fixed clock (2026-11-01T00:00:00Z) and the environment below; a probe that reached D1, a service binding, the edge cache, the network or a third-party package before answering was discarded, so every case is decided by the request and the configuration alone; never recorded from a deployment",
+ "environment": {
+  "SLOP_ENVIRONMENT": "production",
+  "IDENTITY_PUBLIC_ORIGIN": "https://identity.slop.cash",
+  "IDENTITY_STATE_KEY": "<test value>",
+  "IDENTITY_ASSERTION_KEY": "<test value>",
+  "GITHUB_APP_CLIENT_ID": "Iv1.parity",
+  "bindings": [
+   "IDENTITY_DB",
+   "IDENTITY_START_LIMITER",
+   "IDENTITY_POLL_LIMITER"
+  ]
+ },
+ "cases": [
+  {
+   "name": "signed-out same-origin JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://identity.slop.cash/v1/assertions/consume",
+    "headers": {
+     "origin": "https://identity.slop.cash",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "cross-site JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://identity.slop.cash/v1/assertions/consume",
+    "headers": {
+     "origin": "https://attacker.example",
+     "content-type": "application/json"
+    },
+    "body": "{}"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "form-encoded write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://identity.slop.cash/v1/assertions/consume",
+    "headers": {
+     "origin": "https://identity.slop.cash",
+     "content-type": "application/x-www-form-urlencoded"
+    },
+    "body": "a=b"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "malformed JSON write",
+   "kind": "request",
+   "request": {
+    "method": "POST",
+    "url": "https://identity.slop.cash/v1/assertions/consume",
+    "headers": {
+     "origin": "https://identity.slop.cash",
+     "content-type": "application/json"
+    },
+    "body": "{"
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  },
+  {
+   "name": "GET on a write route",
+   "kind": "request",
+   "request": {
+    "method": "GET",
+    "url": "https://identity.slop.cash/v1/assertions/consume",
+    "headers": {
+     "origin": "https://identity.slop.cash"
+    },
+    "body": null
+   },
+   "response": {
+    "status": 404,
+    "headers": {
+     "content-type": "application/json; charset=utf-8",
+     "cache-control": "no-store"
+    },
+    "body": "{\"error\":\"not_found\"}",
+    "bodySha256": "d2dfdc9511fbeaa0701d1f8730f4989313b062ca1b61a2bd8bed8f4f5d654b5d"
+   }
+  }
+ ]
+}

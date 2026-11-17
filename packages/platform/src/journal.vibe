@@ -1,0 +1,50 @@
+// spec/settlement/signer.md, "Both possible winners stay retained"
+import type { DurableObjectState } from "./bindings.ts"
+import type { Statement } from "./d1.vibe"
+import { type SqlEngine, durableEngine, fileEngine, messageOf } from "./journalEngine.ts"
+import type { Rows } from "./stored.vibe"
+
+export error JournalFailure { message: string }
+
+export interface SqlTx {
+  all(statement: Statement): Rows!JournalFailure
+  run(statement: Statement): number!JournalFailure
+}
+
+export service Journal {
+  transaction<A, E, R>(work: (tx: SqlTx) => A!E!R): A!(E | JournalFailure)!R
+}
+
+function failed(cause: unknown) {
+  return new JournalFailure({ message: messageOf(cause) })
+}
+
+function txOver(engine: SqlEngine): SqlTx {
+  return {
+    all: (statement) => Effect.try({ try: () => engine.all(statement.text, statement.params), catch: failed }),
+    run: (statement) => Effect.try({ try: () => engine.run(statement.text, statement.params), catch: failed }),
+  }
+}
+
+effect function transactionOn<A, E, R>(engine: SqlEngine, work: (tx: SqlTx) => A!E!R) {
+  const services = try Effect.context<R>()
+  const tx = txOver(engine)
+  const settled = engine.atomically(() => Effect.runSyncExitWith(services)(work(tx)))
+  if (settled.kind === "unavailable") throw new JournalFailure({ message: settled.message })
+  return try settled.exit
+}
+
+function journalOver(engine: SqlEngine): Journal.Shape {
+  return { transaction: (work) => transactionOn(engine, work) }
+}
+
+export function durableJournal(state: Pick<DurableObjectState, "storage">) {
+  return Layer.succeed(Journal, journalOver(durableEngine(state.storage)))
+}
+
+export function fileJournal(path: string) {
+  return Layer.effect(Journal, effect {
+    const engine = try acquireRelease(Effect.try({ try: () => fileEngine(path), catch: failed }), (opened) => sync(() => opened.close()))
+    return journalOver(engine)
+  })
+}

@@ -1,5 +1,3 @@
-// spike: the Pages advanced-mode _worker.js — HttpRouter routes, ASSETS fall-through, DO and entrypoint calls,
-// queue producer, Cache API, rate limit, send_email, waitUntil, D1 limits, unmapped errors and crypto primitives
 import type { D1Database, Fetcher } from "../../../src/bindings.ts"
 import { webCrypto } from "../../../src/crypto.vibe"
 import { D1, type Statement, d1, sql } from "../../../src/d1.vibe"
@@ -98,7 +96,7 @@ effect function mail() {
     const crypto = try Experimental.Crypto.Crypto
     const message = emailMessage("notifications@slop.cash", to, "Spike notice", text, try orDie(crypto.randomUUIDv4()))
     const { env } = try Bindings
-    call("email.send", () => env.EMAIL.send(message)) catch effect () => { throw new Refused({ status: 403, code: "email_refused" }) }
+    call("email.send", () => env.EMAIL.send(message)) catch effect () => { throw new Refused({ status: 403, code: "email_refused", message: "The email was refused" }) }
     return json({ sent: true })
   })
 }

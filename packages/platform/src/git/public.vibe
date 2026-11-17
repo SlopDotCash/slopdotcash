@@ -1,0 +1,109 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { gitObjectId, utf8Text } from "./bytes.ts"
+import { MERGE_GIT_VERSION, type MergeInput, type MergeRecipe, VALUE_FILE_EXPANSION_LIMIT, mergeInputSha256, objectId, refused, validFileRequest, validMergeRecipe } from "./model.vibe"
+import { gitBytes } from "./process.vibe"
+import { collectVerifiedMergeResolutions } from "./resolution.vibe"
+
+export interface PublicMergeRepository {
+  readonly id: number
+  readonly node_id: string
+  readonly private: boolean
+  readonly full_name?: string
+}
+
+export interface PublicFile {
+  readonly sha: string
+  readonly bytes: Uint8Array
+}
+
+const publicRepository = "Merge reconstruction requires the verified public repository"
+const publicGit = "Public Git object acquisition refused"
+
+export function publicGitArguments(directory: string, args: ReadonlyArray<string>): ReadonlyArray<string> {
+  return [
+    "-c", "credential.helper=",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "http.followRedirects=false",
+    "-c", "fetch.fsckObjects=true",
+    "-c", "protocol.allow=never",
+    "-c", "protocol.https.allow=always",
+    "-C", directory,
+    ...args,
+  ]
+}
+
+function publicEnvironment(directory: string) {
+  return { GIT_ATTR_NOSYSTEM: "1", HOME: directory, XDG_CONFIG_HOME: directory }
+}
+
+effect function publicBytes(directory: string, args: ReadonlyArray<string>, limit: number, seconds = 120) {
+  return try gitBytes({ args: publicGitArguments(directory, args), env: publicEnvironment(directory), limit, seconds }, publicGit)
+}
+
+function verifiedPublic(repository: PublicMergeRepository) {
+  const name = repository.full_name
+  return (
+    repository.private === false &&
+    Number.isSafeInteger(repository.id) &&
+    repository.id > 0 &&
+    repository.node_id !== "" &&
+    name !== undefined &&
+    name.length <= 201 &&
+    /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(name) &&
+    !name.split("/").some((part) => part === "." || part === "..")
+  )
+}
+
+export effect function withPublicGitObjects<A, E, R>(repository: PublicMergeRepository, objects: ReadonlyArray<string>, read: (directory: string) => A!E!R) {
+  if (!verifiedPublic(repository)) throw refused(publicRepository)
+  if (objects.length === 0 || !objects.every((sha) => objectId.test(sha))) throw refused("Invalid immutable merge object identity")
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = fs.makeTempDirectoryScoped({ prefix: "slop-value-merge-ingestion-" }) catch effect () => {
+      throw refused(publicGit)
+    }
+    const version = (utf8Text(try publicBytes(directory, ["--version"], 1024 * 1024)) ?? "").trim()
+    if (version !== MERGE_GIT_VERSION) throw refused("Required merge reconstruction Git version unavailable")
+    try publicBytes(directory, ["init", "--bare", "--template="], 1024 * 1024)
+    try publicBytes(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", `https://github.com/${repository.full_name ?? ""}.git`, ...new Set(objects)], 1024 * 1024, 1800)
+    try publicBytes(directory, ["fsck", "--full", "--strict", "--no-reflogs"], 1024 * 1024)
+    return try read(directory)
+  })
+}
+
+export function publicFiles(directory: string, repository: PublicMergeRepository) {
+  const blobs = new Map<string, PublicFile>()
+  const spent = { bytes: 0 }
+  return {
+    effect read(name: string, ref: string, path: string) {
+      const expected = repository.full_name ?? ""
+      if (name.toLowerCase() !== expected.toLowerCase() || !validFileRequest({ repository: name, repositoryNodeId: repository.node_id, ref, path })) throw refused("Invalid immutable file recovery selection")
+      const entry = utf8Text(try publicBytes(directory, ["ls-tree", "-z", ref, "--", `:(literal)${path}`], 8192)) ?? ""
+      if (entry === "") return null
+      const match = /^([0-7]{6}) blob ([a-f0-9]{40})\t([^\0]+)\0$/u.exec(entry)
+      if (match === null || match[3] !== path || !["100644", "100755"].includes(match[1])) return null
+      const prior = blobs.get(match[2])
+      if (prior !== undefined) return prior
+      const bytes = try publicBytes(directory, ["cat-file", "blob", match[2]], VALUE_FILE_EXPANSION_LIMIT)
+      spent.bytes += bytes.length
+      if (spent.bytes > VALUE_FILE_EXPANSION_LIMIT || gitObjectId("blob", bytes) !== match[2]) throw refused("Immutable file recovery exceeds its bound or differs")
+      const value: PublicFile = { sha: match[2], bytes }
+      blobs.set(match[2], value)
+      return value
+    },
+  }
+}
+
+export interface VerifiedSource {
+  readonly input: MergeInput
+  readonly recipe: MergeRecipe
+  readonly repository: PublicMergeRepository
+  readonly objects: ReadonlyArray<string>
+}
+
+export effect function verifiedRecipeResolutions(source: VerifiedSource) {
+  if (!validMergeRecipe(source.recipe) || mergeInputSha256(source.input) !== source.recipe.inputSha256) throw refused("Merge reconstruction inputs differ from the journal")
+  if (source.repository.node_id !== source.input.repositoryNodeId || source.repository.id !== source.input.repositoryDatabaseId) throw refused(publicRepository)
+  const objects = [source.input.pull.head.sha, ...source.objects, ...source.input.commits.flatMap(({ sha, parents }) => [sha, ...parents.map((parent) => parent.sha)])]
+  return try withPublicGitObjects(source.repository, objects, (directory) => collectVerifiedMergeResolutions(source.input, directory, source.recipe.profile))
+}

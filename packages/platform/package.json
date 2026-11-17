@@ -34,6 +34,8 @@
     "./chain/rpc": "./src/chain/rpc.vibe",
     "./chain/evm": "./src/chain/evm.vibe",
     "./chain/solana": "./src/chain/solana.vibe",
+    "./git": "./src/git/index.ts",
+    "./git/evidence": "./src/git/evidence.ts",
     "./testing/area": "./src/testing/area.ts",
     "./testing/internet": "./src/testing/internet.ts",
     "./testing/mail": "./src/testing/mail.ts",
@@ -51,6 +53,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@scure/base": "catalog:",

@@ -1,5 +1,3 @@
-// What Experimental.Crypto does not offer, through crypto.subtle (the same code in workerd and Node):
-// RSASSA-PKCS1-v1_5 SHA-256 (the GitHub App JWT) and AES-GCM (the identity Worker's sealed values).
 import { type Context, Effect } from "effect";
 import type { EdgeCache, ExecutionContext } from "../bindings.ts";
 
@@ -28,7 +26,6 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
 
 const rs256 = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" } as const;
 
-/** A GitHub App JWT (RS256) from a PKCS#8 DER private key. */
 export async function githubAppJwt(pkcs8Hex: string, appId: string, nowSeconds: number): Promise<string> {
   const key = await crypto.subtle.importKey("pkcs8", hexBytes(pkcs8Hex), rs256, false, ["sign"]);
   const encode = (value: unknown) => base64Url(new TextEncoder().encode(JSON.stringify(value)));
@@ -37,7 +34,6 @@ export async function githubAppJwt(pkcs8Hex: string, appId: string, nowSeconds: 
   return `${unsigned}.${base64Url(signature)}`;
 }
 
-/** Verifies an RS256 JWT's signature against an SPKI DER public key and returns its claims, or undefined. */
 export async function verifiedJwt(spkiHex: string, jwt: string): Promise<unknown> {
   const [header = "", payload = "", signature = ""] = jwt.split(".");
   const key = await crypto.subtle.importKey("spki", hexBytes(spkiHex), rs256, false, ["verify"]);
@@ -45,7 +41,6 @@ export async function verifiedJwt(spkiHex: string, jwt: string): Promise<unknown
   return valid ? JSON.parse(new TextDecoder().decode(fromBase64Url(payload))) : undefined;
 }
 
-/** AES-256-GCM: `iv:ciphertext` in hex, a fresh 12-byte IV per message. */
 export async function seal(keyHex: string, plaintext: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", hexBytes(keyHex), "AES-GCM", false, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -53,14 +48,12 @@ export async function seal(keyHex: string, plaintext: string): Promise<string> {
   return `${bytesHex(iv)}:${bytesHex(sealed)}`;
 }
 
-/** Opens a value from `seal`; a changed byte rejects (the GCM tag). */
 export async function open(keyHex: string, sealed: string): Promise<string> {
   const [iv = "", body = ""] = sealed.split(":");
   const key = await crypto.subtle.importKey("raw", hexBytes(keyHex), "AES-GCM", false, ["decrypt"]);
   return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: hexBytes(iv) }, key, hexBytes(body)));
 }
 
-/** The Workers default cache (`caches.default`); `new Request` must be written in a `.ts` file (IDIOMS §16). */
 /** @throws {never} */
 export function edgeCache(): EdgeCache {
   return (globalThis as unknown as { caches: { default: EdgeCache } }).caches.default;
@@ -76,13 +69,11 @@ export function cacheable(body: string, seconds: number): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/plain", "cache-control": `public, s-maxage=${seconds}` } });
 }
 
-/** Hands a promise to waitUntil (a Promise-producing call, so it lives in `.ts`). */
 /** @throws {never} */
 export function keep(context: ExecutionContext, run: () => Promise<unknown>): void {
   context.waitUntil(run());
 }
 
-/** Runs `program` on `services` as a new root fiber kept alive by waitUntil. */
 /** @throws {never} */
 export function keepRunning<E, R>(context: ExecutionContext, services: Context.Context<R>, program: Effect.Effect<void, E, R>): void {
   context.waitUntil(Effect.runPromiseWith(services)(program));

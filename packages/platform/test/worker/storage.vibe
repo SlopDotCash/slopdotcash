@@ -1,0 +1,185 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/settlement/signer.md, "Both possible winners stay retained"
+import * as Hex from "effect/encoding/Hex"
+import type { CacheStorage, DurableObjectNamespace, DurableObjectState } from "../../src/bindings.ts"
+import { EdgeCache, cacheKey, edgeCache, noEdgeCache } from "../../src/cache.vibe"
+import { randomId, sha256Hex, webCrypto } from "../../src/crypto.vibe"
+import { D1, list, sql } from "../../src/d1.vibe"
+import { runningSha256 } from "../../src/digest.ts"
+import { d1Http } from "../../src/d1Http.vibe"
+import { answered, body, json, outbound, refuse } from "../../src/http.vibe"
+import { Journal, durableJournal } from "../../src/journal.vibe"
+import { AlreadyStored, DigestMismatch, type RetentionBucket, type RetentionR2Bucket, retentionBucket } from "../../src/r2.vibe"
+import { worker } from "../../src/worker.vibe"
+
+interface Env {
+  readonly OBJECTS: RetentionR2Bucket
+  readonly JOURNAL: DurableObjectNamespace
+  readonly D1_API_TOKEN: string
+}
+
+service Objects: RetentionBucket {}
+
+service Bindings {
+  readonly journal: DurableObjectNamespace
+  readonly token: string
+}
+
+schema PartRow { key: string; sha256: string; size: number }
+export schema PartedRow { key: string; sha256: string; size: number; parts: ReadonlyArray<PartRow> }
+schema JournalRequest { texts: ReadonlyArray<string>; refuse: boolean }
+schema Entry { seq: number; text: string }
+
+export error Refusal { reason: string }
+
+effect function key() {
+  return (try HttpRouter.params).key ?? ""
+}
+
+effect function query(name: string) {
+  const request = try HttpServerRequest.HttpServerRequest
+  return new URL(request.originalUrl).searchParams.get(name) ?? undefined
+}
+
+effect function storeParts() {
+  return try answered(effect {
+    const size = Number(try query("size"))
+    const bytes = Uint8Array.from({ length: size }, (_, index) => index % 251)
+    const parted = (try Objects).putParts(`parts/${try key()}`, bytes, { sha256: try sha256Hex(bytes), contentType: "application/octet-stream" }) catch effect (error) => match (error) {
+      when AlreadyStored: throw refuse(409, "already_stored", "Other bytes already hold a part of this object");
+      when DigestMismatch: throw refuse(409, "digest_mismatch", "The bytes do not match their digest");
+      default: throw error;
+    }
+    return json(parted)
+  })
+}
+
+effect function readParts() {
+  return try answered(effect {
+    const parted = try body(PartedRow, 64)
+    const served = runningSha256()
+    const sizes: number[] = []
+    const complete = (try Objects).getParts(parted, (bytes) => effect {
+      served.update(bytes)
+      sizes.push(bytes.length)
+    }) catch effect (error) => match (error) {
+      when DigestMismatch: throw refuse(409, "digest_mismatch", "The bytes do not match their digest");
+      default: throw error;
+    }
+    if (!complete) throw refuse(404, "missing", "A part of the object is missing")
+    return json({ sizes, sha256: Hex.encode(served.finish()) })
+  })
+}
+
+effect function listed() {
+  const limit = Number((try query("limit")) ?? "1000")
+  return json(try (try Objects).list((try query("prefix")) ?? "", try query("cursor"), limit))
+}
+
+effect function removed() {
+  const target = (try query("key")) ?? ""
+  try (try Objects).remove(target)
+  return json({ removed: target })
+}
+
+effect function cachedAnswer(name: string) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const generation = Number(request.headers["x-generation"] ?? "0")
+  const cache = try EdgeCache
+  const cached = cacheKey(request.originalUrl, generation)
+  const found = try cache.match(cached)
+  if (found !== undefined) return HttpServerResponse.setHeader(found, "x-slop-cache", "hit")
+  const text = HttpServerResponse.text(`${name} ${try randomId()}`)
+  const built = name === "vault" ? HttpServerResponse.setHeader(text, "cache-control", "public, max-age=60, s-maxage=60") : text
+  const stored = try cache.put(cached, built, 30)
+  return HttpServerResponse.setHeader(stored, "x-slop-cache", "miss")
+}
+
+effect function uncachedAnswer() {
+  provide noEdgeCache {
+    return try cachedAnswer(try key())
+  }
+}
+
+effect function httpOutcomes() {
+  const db = try D1
+  const rows = try db.all(sql`SELECT id, name FROM items WHERE id IN ${list([1, 2])}`)
+  const changes = try db.run(sql`UPDATE items SET name = ${"renamed"} WHERE id = ${1}`)
+  const batch = db.batch([sql`SELECT 1`, sql`SELECT 2`]) catch (error) => `${error._tag}: ${error.message}`
+  const constraint = db.run(sql`INSERT INTO items (id, name) VALUES (${1}, ${"again"})`) catch (error) => error._tag
+  return { rows, changes, batch, constraint }
+}
+
+effect function overHttp() {
+  const { token } = try Bindings
+  provide Layer.provide(d1Http({ accountId: "account-1", databaseId: "database-1", token: Redacted.make(token) }), outbound) {
+    return json(try httpOutcomes())
+  }
+}
+
+effect function journaled() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const { journal } = try Bindings
+  const name = try key()
+  const stub = journal.get(journal.idFromName(name))
+  const web = try orDie(HttpServerRequest.toWeb(request))
+  return HttpServerResponse.fromWeb(try orDie(tryPromise(() => stub.fetch(web))))
+}
+
+export effect function prepared() {
+  try (try Journal).transaction((tx) => tx.run(sql`CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE)`))
+}
+
+export effect function recorded(texts: ReadonlyArray<string>, refuse: boolean) {
+  return try (try Journal).transaction((tx) => effect {
+    for (const text of texts) try tx.run(sql`INSERT INTO entries (text) VALUES (${text})`)
+    if (refuse) throw new Refusal({ reason: "refused after writing" })
+    return texts.length
+  })
+}
+
+export effect function entries() {
+  const found = try (try Journal).transaction((tx) => tx.all(sql`SELECT seq, text FROM entries ORDER BY seq`))
+  return try orDie(Schema.decodeUnknownEffect(Schema.Array(Entry))(found))
+}
+
+effect function journalStep(input: unknown) {
+  const { texts, refuse } = try orDie(Schema.decodeUnknownEffect(JournalRequest)(input))
+  try prepared()
+  const outcome = recorded(texts, refuse) catch (error) => error._tag
+  return json({ outcome, entries: try entries() })
+}
+
+export class StorageJournal {
+  readonly runtime: ManagedRuntime.ManagedRuntime<Journal, never>
+
+  constructor(state: DurableObjectState) {
+    this.runtime = ManagedRuntime.make(durableJournal(state))
+  }
+
+  async fetch(request: globalThis.Request): Promise<globalThis.Response> {
+    const input: unknown = await request.json()
+    return HttpServerResponse.toWeb(await this.runtime.runPromise(journalStep(input)))
+  }
+}
+
+declare const caches: CacheStorage
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    webCrypto,
+    outbound,
+    edgeCache(caches),
+    Layer.succeed(Objects, retentionBucket(env.OBJECTS)),
+    Layer.succeed(Bindings, { journal: env.JOURNAL, token: env.D1_API_TOKEN }),
+  ),
+  routes: Layer.mergeAll(
+    HttpRouter.add("PUT", "/parts/:key", storeParts()),
+    HttpRouter.add("POST", "/parts", readParts()),
+    HttpRouter.add("GET", "/retention", listed()),
+    HttpRouter.add("DELETE", "/retention", removed()),
+    HttpRouter.add("GET", "/cached/:key", effect { return try cachedAnswer(try key()) }),
+    HttpRouter.add("GET", "/uncached/:key", uncachedAnswer()),
+    HttpRouter.add("POST", "/d1http", overHttp()),
+    HttpRouter.add("POST", "/journal/:key", journaled()),
+  ),
+})

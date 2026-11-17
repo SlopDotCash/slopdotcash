@@ -1,3 +1,4 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import type { D1Database, D1Result, SqlValue } from "./bindings.ts"
 
 export interface Statement {
@@ -15,6 +16,10 @@ export error ConstraintViolation { message: string }
 export error RowMismatch { text: string; issue: string }
 
 export type D1Error = DatabaseFailure | ConstraintViolation
+
+export type NonEmpty<T> = readonly [T, ...ReadonlyArray<T>]
+
+export const maxParameters = 90
 
 function isStatement(value: SqlValue | Statement): value is Statement {
   return typeof value === "object" && value !== null
@@ -36,9 +41,12 @@ export function sql(strings: TemplateStringsArray, ...values: ReadonlyArray<SqlV
   return { text, params }
 }
 
-function failure(operation: string, cause: unknown): D1Error {
-  const message = cause instanceof Error ? cause.message : String(cause)
+export function classified(operation: string, message: string): D1Error {
   return /constraint failed/u.test(message) ? new ConstraintViolation({ message }) : new DatabaseFailure({ operation, message })
+}
+
+function failure(operation: string, cause: unknown): D1Error {
+  return classified(operation, cause instanceof Error ? cause.message : String(cause))
 }
 
 function outcome(result: D1Result): Outcome {
@@ -71,4 +79,27 @@ export effect function rows<S extends Schema.Constraint>(schema: S, statement: S
 export effect function first<S extends Schema.Constraint>(schema: S, statement: Statement) {
   const found = try rows(schema, statement)
   return found[0]
+}
+
+export function list(values: NonEmpty<SqlValue>): Statement {
+  return { text: `(${values.map(() => "?").join(", ")})`, params: values }
+}
+
+function isNonEmpty<T>(values: ReadonlyArray<T>): values is NonEmpty<T> {
+  return values.length > 0
+}
+
+export function chunked<T>(values: ReadonlyArray<T>, statement: (chunk: NonEmpty<T>) => Statement): ReadonlyArray<Statement> {
+  const statements: Statement[] = []
+  for (let start = 0; start < values.length; start += maxParameters) {
+    const chunk = values.slice(start, start + maxParameters)
+    if (isNonEmpty(chunk)) statements.push(statement(chunk))
+  }
+  return statements
+}
+
+export effect function allChunked<S extends Schema.Constraint, T>(schema: S, values: ReadonlyArray<T>, statement: (chunk: NonEmpty<T>) => Statement) {
+  const found: Array<S["Type"]> = []
+  for (const each of chunked(values, statement)) found.push(...(try rows(schema, each)))
+  return found
 }

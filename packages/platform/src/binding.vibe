@@ -1,0 +1,46 @@
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import type { Fetcher } from "./bindings.ts"
+import { type Outcome, exchanged, outgoing } from "./browser.vibe"
+import { fetchVia } from "./fetcher.ts"
+import { Refused } from "./http.vibe"
+import type { Method } from "./route.vibe"
+
+export error ServiceUnavailable { binding: string; status?: number }
+
+export interface ServiceClient {
+  call<T>(method: Method, path: `/${string}`, body: unknown, answer: Schema.ConstraintDecoder<T>, limitBytes: number, headers?: Readonly<Record<string, string>>): T!(ServiceUnavailable | Refused)
+}
+
+export interface ServiceBinding {
+  readonly binding: string
+  readonly origin: string
+}
+
+schema CalleeRefusal { error: string; message: string }
+
+function unavailable(binding: string, status?: number) {
+  return new ServiceUnavailable(status === undefined ? { binding } : { binding, status })
+}
+
+effect function answerOf<T>(binding: string, answer: Schema.ConstraintDecoder<T>, outcome: Outcome) {
+  if (outcome.kind === "unreachable") throw unavailable(binding)
+  if (outcome.kind !== "answered") throw unavailable(binding, outcome.status)
+  const status = outcome.status
+  if (status >= 200 && status <= 299) return Schema.decodeUnknownEffect(answer)(outcome.value) catch effect () => { throw unavailable(binding, status) }
+  const refusal = Schema.decodeUnknownEffect(CalleeRefusal)(outcome.value) catch effect () => { throw unavailable(binding, status) }
+  throw new Refused({ status, code: refusal.error, message: refusal.message })
+}
+
+export function serviceClient(fetcher: Fetcher, service: ServiceBinding): ServiceClient {
+  const fetch = fetchVia(fetcher)
+  return {
+    call<T>(method: Method, path: `/${string}`, body: unknown, answer: Schema.ConstraintDecoder<T>, limitBytes: number, headers: Readonly<Record<string, string>> = {}) {
+      return effect {
+        provide FetchHttpClient.layer {
+          const outcome = try provideService(exchanged(outgoing(method, `${service.origin}${path}`, body, headers), limitBytes), FetchHttpClient.Fetch, fetch)
+          return try answerOf(service.binding, answer, outcome)
+        }
+      }
+    },
+  }
+}

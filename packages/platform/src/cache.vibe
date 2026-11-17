@@ -1,0 +1,48 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import type { CacheStorage } from "./bindings.ts"
+
+export service EdgeCache {
+  match(key: string): (HttpServerResponse.HttpServerResponse | undefined)!!
+  put(key: string, response: HttpServerResponse.HttpServerResponse, maxAgeSeconds: number): HttpServerResponse.HttpServerResponse!!
+}
+
+const keyPrefix = "/__slop-cache"
+
+function parsedUrl(url: string): URL | undefined {
+  try {
+    return new URL(url)
+  } catch {
+    return undefined
+  }
+}
+
+export function cacheKey(url: string, generation: number): string {
+  const parsed = parsedUrl(url)
+  const scope = `${keyPrefix}/g${generation}`
+  return parsed === undefined ? `https://cache.invalid${scope}/${encodeURIComponent(url)}` : `${parsed.origin}${scope}${parsed.pathname}${parsed.search}`
+}
+
+function cacheable(response: HttpServerResponse.HttpServerResponse, maxAgeSeconds: number): HttpServerResponse.HttpServerResponse {
+  return response.headers["cache-control"] === undefined ? HttpServerResponse.setHeader(response, "cache-control", `public, max-age=0, s-maxage=${maxAgeSeconds}`) : response
+}
+
+export function edgeCache(caches: CacheStorage) {
+  const store = caches.default
+  return Layer.succeed(EdgeCache, {
+    match: (key) => effect {
+      const found = tryPromise(() => store.match(key)) catch () => undefined
+      return found === undefined ? undefined : HttpServerResponse.fromWeb(found)
+    },
+    put: (key, response, maxAgeSeconds) => effect {
+      if (response.status !== 200) return response
+      const kept = cacheable(response, maxAgeSeconds)
+      tryPromise(() => store.put(key, HttpServerResponse.toWeb(kept))) catch () => undefined
+      return kept
+    },
+  })
+}
+
+export const noEdgeCache = Layer.succeed(EdgeCache, {
+  match: () => succeed(undefined),
+  put: (_key, response, maxAgeSeconds) => succeed(response.status === 200 ? cacheable(response, maxAgeSeconds) : response),
+})

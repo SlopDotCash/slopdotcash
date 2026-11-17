@@ -2,7 +2,7 @@
 import type { D1Database, Fetcher, QueueMessage, R2Bucket } from "../../src/bindings.ts"
 import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
 import { D1, d1, first, sql } from "../../src/d1.vibe"
-import { Refused, answered, json, outbound, outboundVia } from "../../src/http.vibe"
+import { answered, json, outbound, outboundVia, refuse } from "../../src/http.vibe"
 import { type Bucket, bucket } from "../../src/r2.vibe"
 import { update } from "../../src/stored.vibe"
 import { worker } from "../../src/worker.vibe"
@@ -48,7 +48,7 @@ effect function put() {
     const once = new URL(request.url, "https://platform.test").searchParams.get("once") === "1"
     const objects = try Objects
     const stored = objects.put(try key(), bytes, { sha256: try sha256Hex(bytes), contentType: "application/octet-stream", once }) catch effect (error) => {
-      throw error._tag === "AlreadyStored" ? new Refused({ status: 409, code: "already_stored" }) : error
+      throw error._tag === "AlreadyStored" ? refuse(409, "already_stored", "These bytes are already stored") : error
     }
     return json(stored, 201)
   })
@@ -82,7 +82,7 @@ effect function increment(interfere: boolean) {
     const next = update(counter(id), (value) => effect {
       if (interfere) try db.run(sql`UPDATE counters SET value = value + 100 WHERE id = ${id}`)
       return { value: value + 1, writes: [sql`UPDATE counters SET value = ${value + 1} WHERE id = ${id}`] }
-    }) catch effect (error) => { throw error._tag === "Conflict" ? new Refused({ status: 409, code: "conflict" }) : error }
+    }) catch effect (error) => { throw error._tag === "Conflict" ? refuse(409, "conflict", "The counter changed concurrently") : error }
     const stored = try first(Counter, sql`SELECT value FROM counters WHERE id = ${id}`)
     return json({ next, stored: stored?.value })
   })

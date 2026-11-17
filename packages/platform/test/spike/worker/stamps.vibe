@@ -1,4 +1,3 @@
-// spike: the services of the second Worker and the programs its entrypoint class and queue consumers run
 import type { D1Database, QueueMessage } from "../../../src/bindings.ts"
 import { sha256Hex, webCrypto } from "../../../src/crypto.vibe"
 import { D1, d1, sql } from "../../../src/d1.vibe"

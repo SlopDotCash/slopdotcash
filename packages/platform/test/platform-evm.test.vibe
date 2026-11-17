@@ -1,0 +1,304 @@
+import { assert, layer } from "@effect/vitest"
+import { type Abi, type Address, type Hex, encodeDeployData, hexToBigInt, toHex } from "viem"
+import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain, boundedMessage } from "../src/chain/rpc.vibe"
+import {
+  EvmRpc,
+  type ScanPage,
+  canonicalSignature,
+  checksum,
+  decodeEvents,
+  decodeResult,
+  encodeCall,
+  evmRpc,
+  maxPageBlocks,
+  recoverPersonalSign,
+  recoverTypedData,
+  scanPage,
+  typedDataDigest,
+} from "../src/chain/evm.vibe"
+import { outbound } from "../src/http.vibe"
+import type { Handler } from "../src/testing.ts"
+import { type Account, type Anvil, anvil, artifact, forgeBuild } from "../src/testing/chains/anvil.ts"
+import { type Served, forward, replay, rpcCalls, rpcFaults, serve } from "../src/testing/chains/faults.ts"
+
+service Chain {
+  readonly anvil: Anvil
+  readonly distributor: Abi
+  readonly bytecode: Hex
+  serve(handler: Handler): string!!
+}
+
+const contracts = new URL("../../contracts/evm", import.meta.url).pathname
+const robinhood = 4663n
+const groupOrder = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+const zero = "0x0000000000000000000000000000000000000000"
+const HexText = Schema.TemplateLiteral(["0x", Schema.String])
+const pausedOnly = [{ type: "event", name: "Paused", anonymous: false, inputs: [{ name: "account", type: "address", indexed: false }] }] as const satisfies Abi
+
+const Started = Layer.effect(Chain, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: Number(robinhood) })), (started) => promise(() => started.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["src/ReferralDistributor.sol"])), (output) => promise(() => output.close()))
+  const compiled = try promise(() => artifact(`${built.out}/ReferralDistributor.sol/ReferralDistributor.json`))
+  const proxies = try acquireRelease(sync((): Served[] => []), (opened) => promise(() => Promise.all(opened.map((proxy) => proxy.close()))))
+  return {
+    anvil: chain,
+    distributor: compiled.abi,
+    bytecode: compiled.bytecode,
+    serve: (handler) => promise(async () => {
+      const proxy = await serve(handler)
+      proxies.push(proxy)
+      return proxy.url
+    }),
+  }
+})
+
+function provided<A, E>(program: A!E!EvmRpc, urls: ReadonlyArray<string>, chainId = robinhood, timeoutMs = 5000) {
+  return Effect.provide(program, Layer.provide(evmRpc({ urls: Redacted.make(urls), chainId, timeoutMs }), outbound))
+}
+
+function recorded(url: string, methods: string[]): Handler {
+  return async (request) => {
+    const bytes = new Uint8Array(await request.arrayBuffer())
+    for (const call of rpcCalls(bytes)?.calls ?? []) methods.push(call.method)
+    return forward(url)(replay(request, bytes))
+  }
+}
+
+function described(error: unknown) {
+  if (error instanceof RpcUnavailable) return { tag: "RpcUnavailable", method: error.method, endpoint: error.endpoint, message: error.message }
+  if (error instanceof RpcMalformed) return { tag: "RpcMalformed", method: error.method, issue: error.issue }
+  if (error instanceof WrongChain) return { tag: "WrongChain", expected: error.expected, actual: error.actual }
+  if (error instanceof RpcRefused) return { tag: "RpcRefused", reverted: /revert/iu.test(error.message), emptyRevert: error.emptyRevert }
+  return { tag: "unexpected", text: String(error) }
+}
+
+effect function account(index: number) {
+  const found: Account | undefined = (try Chain).anvil.accounts[index]
+  if (found === undefined) return try die(new Error(`anvil has no account ${index}`))
+  return found.address
+}
+
+effect function deployed() {
+  const { anvil: chain, distributor, bytecode } = try Chain
+  const [owner, poster, token] = [try account(0), try account(1), try account(2)]
+  const data = try Effect.try(() => encodeDeployData({ abi: distributor, bytecode, args: [token, owner, poster, 1n, 0n] }))
+  const receipt = try promise(() => chain.transact({ from: owner, data }))
+  if (receipt.contractAddress === undefined) return try die(new Error("the distributor was not deployed"))
+  return { address: receipt.contractAddress, block: receipt.blockNumber, owner, poster }
+}
+
+effect function transact(to: Address, functionName: string) {
+  const { anvil: chain, distributor } = try Chain
+  const data = try encodeCall(distributor, functionName, [])
+  return try promise(() => chain.transact({ from: chain.accounts[0]?.address ?? zero, to, data }))
+}
+
+effect function reverting(to: Address, functionName: string) {
+  const { anvil: chain, distributor } = try Chain
+  const data = try encodeCall(distributor, functionName, [])
+  const hash = try promise(() => chain.rpc("eth_sendTransaction", [{ from: chain.accounts[0]?.address ?? zero, to, data, gas: "0x30000" }]))
+  return try Schema.decodeUnknownEffect(HexText)(hash)
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A wrong chain id is refused before any read (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page")', () => effect {
+    const chain = try Chain
+    const methods: string[] = []
+    const url = try chain.serve(recorded(chain.anvil.url, methods))
+    const refused = provided(effect { return try (try EvmRpc).head("finalized") }, [url], 8453n) catch (error) => described(error)
+    const refusedMethods = [...methods]
+    const accepted = try provided(effect { return try (try EvmRpc).chainId() }, [url])
+    try Effect.try(() => assert.deepStrictEqual({ refused, refusedMethods, accepted }, {
+      refused: { tag: "WrongChain", expected: "8453", actual: "4663" },
+      refusedMethods: ["eth_chainId"],
+      accepted: robinhood,
+    }))
+  })
+
+  it.effect('A receipt counts as final only at or below the finalized head and in its canonical block (spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block")', () => effect {
+    const chain = try Chain
+    const { address } = try deployed()
+    const paused = try transact(address, "pause")
+    const revertHash = try reverting(address, "pause")
+    const unknownHash = `0x${"ab".repeat(32)}` as const
+    const seen = try provided(effect {
+      const evm = try EvmRpc
+      const included = try evm.receipt(revertHash)
+      const revertBlock = included?.blockNumber ?? 0n
+      try sync(() => chain.anvil.setFinalized(paused.blockNumber - 1n))
+      const early = [(try evm.finalizedReceipt(paused.transactionHash))?.status, (try evm.finalizedReceipt(revertHash))?.status]
+      try sync(() => chain.anvil.setFinalized(revertBlock - 1n))
+      const between = [(try evm.finalizedReceipt(paused.transactionHash))?.status, (try evm.finalizedReceipt(revertHash))?.status]
+      try sync(() => chain.anvil.setFinalized(revertBlock))
+      const final = try evm.finalizedReceipt(revertHash)
+      const after = [(try evm.finalizedReceipt(paused.transactionHash))?.status, final?.status]
+      const missing = try evm.finalizedReceipt(unknownHash)
+      try sync(() => chain.anvil.setFinalized(undefined))
+      return { included: included?.status, ordered: revertBlock > paused.blockNumber, early, between, after, canonical: final?.blockNumber === revertBlock, missing }
+    }, [chain.anvil.url])
+    try Effect.try(() => assert.deepStrictEqual(seen, {
+      included: "reverted",
+      ordered: true,
+      early: [undefined, undefined],
+      between: ["success", undefined],
+      after: ["success", "reverted"],
+      canonical: true,
+      missing: undefined,
+    }))
+  })
+
+  it.effect('A 20,000-block range is scanned in pages of at most 9,000 blocks that stop at the finalized head (spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head")', () => effect {
+    const chain = try Chain
+    const { address, block: origin } = try deployed()
+    try transact(address, "pause")
+    try promise(() => chain.anvil.mine(20_000))
+    const unpaused = try transact(address, "unpause")
+    const scanned = try provided(effect {
+      const evm = try EvmRpc
+      const names = (page: ScanPage) => decodeEvents(chain.distributor, page.logs).map((event) => event.kind === "event" ? event.name : event.kind)
+      try sync(() => chain.anvil.setFinalized(unpaused.blockNumber - 1n))
+      const head = (try evm.head("finalized")).number
+      const pages: Array<readonly [bigint, bigint, ReadonlyArray<string>]> = []
+      let cursor = origin - 1n
+      for (;;) {
+        const page = try scanPage({ address, topics: [], cursor, pageBlocks: 9_000n, finalizedHead: head })
+        if (page === "caughtUp") break
+        pages.push([page.from, page.to, names(page)])
+        cursor = page.to
+      }
+      try sync(() => chain.anvil.setFinalized(unpaused.blockNumber))
+      const nextHead = (try evm.head("finalized")).number
+      const later = try scanPage({ address, topics: [], cursor, pageBlocks: 9_000n, finalizedHead: nextHead })
+      const done = try scanPage({ address, topics: [], cursor: nextHead, pageBlocks: 9_000n, finalizedHead: nextHead })
+      const oversized = scanPage({ address, topics: [], cursor, pageBlocks: maxPageBlocks + 1n, finalizedHead: nextHead }) catch (error) => error._tag
+      try sync(() => chain.anvil.setFinalized(undefined))
+      return { head, pages, later: later === "caughtUp" ? later : [later.from, later.to, names(later)], done, oversized }
+    }, [chain.anvil.url])
+    const head = unpaused.blockNumber - 1n
+    try Effect.try(() => assert.deepStrictEqual(scanned, {
+      head,
+      pages: [
+        [origin, origin + 8_999n, ["OwnershipTransferred", "PosterChanged", "Paused"]],
+        [origin + 9_000n, origin + 17_999n, []],
+        [origin + 18_000n, head, []],
+      ],
+      later: [unpaused.blockNumber, unpaused.blockNumber, ["Unpaused"]],
+      done: "caughtUp",
+      oversized: "ScanInvalid",
+    }))
+  })
+
+  it.effect('The events and answers of a deployed contract artifact decode, and an unknown topic is reported (spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies")', () => effect {
+    const chain = try Chain
+    const { address, block, owner, poster } = try deployed()
+    const read = try provided(effect {
+      const evm = try EvmRpc
+      const logs = try evm.logs({ address, topics: [], fromBlock: block, toBlock: block })
+      const answer = try evm.call({ to: address, data: try encodeCall(chain.distributor, "poster", []), block: "latest" })
+      const refused = evm.call({ to: address, data: try encodeCall(chain.distributor, "pause", []), from: poster, block: "latest" }) catch (error) => described(error)
+      const code = try evm.code(address, "latest")
+      const pendingNonce = try evm.nonce(owner, "pending")
+      const latestNonce = try evm.nonce(owner, "latest")
+      const baseFee = (try evm.head("latest")).baseFeePerGas
+      return { logs, answer, refused, deployed: code.length > 2, pendingNonce: pendingNonce === latestNonce && pendingNonce > 0n, baseFee: baseFee !== undefined && baseFee > 0n }
+    }, [chain.anvil.url])
+    const decoded = decodeEvents(chain.distributor, read.logs).map((event) => event.kind === "event" ? [event.name, event.args] : [event.kind])
+    const foreign = decodeEvents(pausedOnly, read.logs).map((event) => event.kind)
+    const decodedPoster = try decodeResult(chain.distributor, "poster", read.answer)
+    const wrongArity = encodeCall(chain.distributor, "poster", [1n]) catch (error) => error._tag
+    try Effect.try(() => assert.deepStrictEqual({ decoded, foreign, decodedPoster, wrongArity, refused: read.refused, deployed: read.deployed, pendingNonce: read.pendingNonce, baseFee: read.baseFee }, {
+      decoded: [["OwnershipTransferred", { previousOwner: zero, newOwner: owner }], ["PosterChanged", { previousPoster: zero, newPoster: poster }]],
+      foreign: ["unknown", "unknown"],
+      decodedPoster: poster,
+      wrongArity: "AbiMismatch",
+      refused: { tag: "RpcRefused", reverted: true, emptyRevert: false },
+      deployed: true,
+      pendingNonce: true,
+      baseFee: true,
+    }))
+  })
+
+  it.effect('personal_sign and EIP-712 signatures recover their signer, and only the canonical encoding is accepted (spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block")', () => effect {
+    const chain = try Chain
+    const { address } = try deployed()
+    const [owner, other] = [try account(0), try account(3)]
+    const message = `Authorize Slop automatic contributor payouts\nAudience: slop.cash\nGitHub actor: 7\nChain: robinhood\nWallet: ${owner}\nClaim: claim_1\nDigest: ${"0".repeat(64)}\nNonce: n1\nExpires: 2026-11-16T00:00:00.000Z`
+    const personal = try Schema.decodeUnknownEffect(HexText)(try promise(() => chain.anvil.rpc("personal_sign", [toHex(message), owner])))
+    const typedData = {
+      domain: { name: "ProjectEscrow", version: "5", chainId: Number(robinhood), verifyingContract: address },
+      types: {
+        EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }],
+        Binding: [{ name: "actorId", type: "uint64" }, { name: "destination", type: "address" }, { name: "version", type: "uint64" }],
+      },
+      primaryType: "Binding",
+      message: { actorId: 7, destination: other, version: 1 },
+    } as const
+    const typed = try Schema.decodeUnknownEffect(HexText)(try promise(() => chain.anvil.rpc("eth_signTypedData_v4", [owner, typedData])))
+    const s = try Effect.try(() => hexToBigInt(`0x${personal.slice(66, 130)}`))
+    const v = personal.slice(130)
+    const flipped = v === "1b" ? "1c" : "1b"
+    const highS = `0x${personal.slice(2, 66)}${(groupOrder - s).toString(16).padStart(64, "0")}${flipped}`
+    const zeroBased = `0x${personal.slice(2, 130)}${v === "1b" ? "00" : "01"}`
+    const digest = try typedDataDigest(typedData)
+    try Effect.try(() => assert.deepStrictEqual({
+      personal: recoverPersonalSign(message, personal),
+      changed: recoverPersonalSign(`${message}.`, personal) === owner,
+      typed: recoverTypedData(typedData, typed),
+      digest: /^0x[0-9a-f]{64}$/u.test(digest),
+      canonical: canonicalSignature(personal),
+      zeroBased: [canonicalSignature(zeroBased), recoverPersonalSign(message, zeroBased)],
+      highS: canonicalSignature(highS),
+      malformed: [canonicalSignature("0x1234"), recoverPersonalSign(message, "0x1234")],
+      checksummed: [checksum(owner.toLowerCase()), checksum("0x1234"), checksum(zero)],
+    }, {
+      personal: owner,
+      changed: false,
+      typed: owner,
+      digest: true,
+      canonical: personal.toLowerCase(),
+      zeroBased: [personal.toLowerCase(), owner],
+      highS: undefined,
+      malformed: [undefined, undefined],
+      checksummed: [owner, undefined, zero],
+    }))
+  })
+
+  it.effect('An RPC timeout and a malformed answer fail over in order, and no endpoint URL reaches an error (spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page")', () => effect {
+    const chain = try Chain
+    const secret = "v2/key-4f1c2b9e"
+    const upstream = chain.anvil.url
+    const timeoutRpc = try Effect.try(() => rpcFaults(forward(upstream), [{ fault: "timeout" }]))
+    const malformedRpc = try Effect.try(() => rpcFaults(forward(upstream), [{ fault: "malformed" }]))
+    const brokenRpc = try Effect.try(() => rpcFaults(forward(upstream), [{ fault: "http500" }]))
+    const otherChainRpc = try Effect.try(() => rpcFaults(forward(upstream), [{ method: "eth_chainId", fault: "wrongChain" }]))
+    const slow = `${try chain.serve(timeoutRpc)}/${secret}`
+    const garbled = `${try chain.serve(malformedRpc)}/${secret}`
+    const broken = `${try chain.serve(brokenRpc)}/${secret}`
+    const otherChain = `${try chain.serve(otherChainRpc)}/${secret}`
+    const plain = `${try chain.serve(try Effect.try(() => forward(upstream)))}/${secret}`
+    const latest = effect { return (try (try EvmRpc).head("latest")).number > 0n }
+    const answered = try provided(latest, [slow, garbled, plain], robinhood, 300)
+    const exhausted = provided(latest, [garbled, slow], robinhood, 300) catch (error) => described(error)
+    const failed = provided(latest, [broken], robinhood, 300) catch (error) => described(error)
+    const elsewhere = provided(latest, [slow, otherChain], robinhood, 300) catch (error) => described(error)
+    const errors = [exhausted, failed, elsewhere]
+    const leaked = JSON.stringify(errors)
+    try Effect.try(() => assert.deepStrictEqual({
+      answered,
+      fired: [timeoutRpc.fired[0]?.fault, malformedRpc.fired[0]?.fault],
+      errors,
+      leaked: [leaked.includes("127.0.0.1"), leaked.includes("key-4f1c2b9e"), leaked.includes("http")],
+      bounded: boundedMessage(new Error(`fetch ${plain} failed\n  twice Request body: {"params":["secret"]}`)),
+    }, {
+      answered: true,
+      fired: ["timeout", "malformed"],
+      errors: [
+        { tag: "RpcUnavailable", method: "eth_chainId", endpoint: 1, message: "timed out after 300 ms" },
+        { tag: "RpcUnavailable", method: "eth_chainId", endpoint: 0, message: "RPC HTTP failure: 500" },
+        { tag: "WrongChain", expected: "4663", actual: "4664" },
+      ],
+      leaked: [false, false, false],
+      bounded: "fetch <url> failed twice",
+    }))
+  })
+})

@@ -17,7 +17,7 @@ service Platform {
 const Started = Layer.effect(Platform, effect {
   const outbound: string[] = []
   const relayed: unknown[] = []
-  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "main" }))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { DB: "platform" },
@@ -59,7 +59,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       stored: stored.status, again: [again.status, again.body], read: read.body, head: head.body, missing: missing.status, size: direct?.size,
     }, {
       stored: 201,
-      again: [409, { error: "already_stored" }],
+      again: [409, { error: "already_stored", message: "These bytes are already stored" }],
       read: { bytes: "exact trace bytes", sha256: (stored.body as { sha256: string }).sha256 },
       head: stored.body,
       missing: 404,
@@ -81,7 +81,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     }, {
       first: { next: 1, stored: 1 },
       raced: [2, 3],
-      interfered: [409, { error: "conflict" }],
+      interfered: [409, { error: "conflict", message: "The counter changed concurrently" }],
     }))
   })
 

@@ -1,4 +1,3 @@
-// The raw-MIME EmailMessage the old notify Worker sends (workers/notify/index.ts); `cloudflare:email` stays external.
 import { EmailMessage } from "cloudflare:email";
 
 /** @throws {never} */

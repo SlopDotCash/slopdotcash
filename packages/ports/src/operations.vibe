@@ -1,0 +1,60 @@
+// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Control future email with consent bound to a verified destination"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"
+import type { Statement } from "@repo/platform/d1"
+import type { MailCategory, Network, ReadFailure } from "./backend.vibe"
+
+export schema NoticeKind = "ApplicationApproved" | "ApplicationRejected" | "ProjectRevision" | "AwardReserved" | "PaymentPaid" | "PayoutHeld" | "WalletChanged" | "ProjectQuarantined" | "ProjectBanned" | "ReinstatementRequested" | "ProjectReinstated" | "ReinstatementDenied" | "ReinstatementReview" | "PayoutException" | "SecurityCase" | "ProjectReady" | "ProjectScanFailed" | "ProjectInstallationLost" | "SecurityReportReceived" | "SlopbotAppealReview" | "SlopbotScamReview"
+
+export schema Notice {
+  readonly eventKey: string
+  readonly recipientGithubId: string
+  readonly kind: NoticeKind
+  readonly subject: string
+  readonly detail?: string
+  readonly actionPath: string
+  readonly sourceAt: string
+}
+
+export interface NoticeBatch {
+  readonly notices: ReadonlyArray<Notice>
+  readonly onlyIf?: Statement
+}
+
+export interface NoticeFanout {
+  readonly eventKey: string
+  readonly recipients: Statement
+  readonly excludedGithubId?: string
+  readonly kind: NoticeKind
+  readonly subject: string
+  readonly detail?: string
+  readonly actionPath: string
+  readonly sourceAt: string
+  readonly onlyIf?: Statement
+}
+
+export service Notices {
+  statements(batch: NoticeBatch): ReadonlyArray<Statement>!!
+  fanout(fanout: NoticeFanout): ReadonlyArray<Statement>!!
+}
+
+export interface Suppression {
+  readonly recipientGithubId: string
+  readonly version: string
+  readonly categories: ReadonlyArray<MailCategory>
+}
+
+export service NoticeOutbox {
+  suppress(suppression: Suppression): ReadonlyArray<Statement>!!
+}
+
+export interface JobKey {
+  readonly kind: string
+  readonly key: string
+  readonly network?: Network
+}
+
+export schema Admission = "Admitted" | "Busy"
+
+export service JobAdmission {
+  admit(job: JobKey): Admission!ReadFailure
+  finish(job: JobKey): void!ReadFailure
+}

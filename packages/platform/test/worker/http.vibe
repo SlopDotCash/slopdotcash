@@ -1,0 +1,96 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import type { Fetcher } from "../../src/bindings.ts"
+import { type ServiceClient, serviceClient } from "../../src/binding.vibe"
+import { webCrypto } from "../../src/crypto.vibe"
+import { ActorChanged, Bearers, Caller, Unauthenticated, bytesBody, formBody, handle, handleRaw, json, preflight, refuse, serviceAuth } from "../../src/http.vibe"
+import { route } from "../../src/route.vibe"
+import { Conflict } from "../../src/stored.vibe"
+import { worker } from "../../src/worker.vibe"
+
+interface Env {
+  readonly UPSTREAM: Fetcher
+  readonly SERVICE_KEYS: string
+}
+
+service Upstream: ServiceClient {}
+
+error Rejected { reason: string }
+error GitHubUnavailable { status: number }
+error Unmapped { detail: string }
+
+const fixtureCaller = Layer.succeed(Caller, {
+  current: () => effect {
+    const request = try HttpServerRequest.HttpServerRequest
+    const githubId = request.cookies["__Host-slop_points"] ?? ""
+    if (!/^[1-9][0-9]{0,19}$/u.test(githubId)) throw new Unauthenticated()
+    const expected = request.headers["x-slop-expected-github-id"]
+    if (expected !== undefined && !/^[1-9][0-9]{0,19}$/u.test(expected)) throw refuse(400, "invalid_expected_actor", "Expected GitHub actor is invalid")
+    if (expected !== undefined && expected !== githubId) throw new ActorChanged({ expected })
+    return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+  },
+})
+
+const fixtureBearers = Layer.succeed(Bearers, {
+  verify: (token) => effect {
+    if (Redacted.value(token) !== "fixture") throw new Unauthenticated()
+    return { githubId: "9", login: "member-9", roles: ["contributor"], tokenId: "token-1" }
+  },
+})
+
+schema Item { id: string; q: string }
+schema Me { githubId: string; login: string }
+schema Note { text: string }
+schema Saved { saved: string; by: string }
+schema Received { id: string; bytes: number }
+schema Entries { entries: ReadonlyArray<ReadonlyArray<string>> }
+schema Relayed { text: string }
+schema Closed { closed: string }
+
+const item = route({ method: "GET", path: "/api/v1/fixture/items/:id", access: "public", limitKib: 1, request: undefined, answer: Item, rejected: "item_refused", cache: { browserSeconds: 0, edgeSeconds: 300, staleSeconds: 60 }, cors: ["*"] })
+const me = route({ method: "GET", path: "/api/v1/fixture/me", access: "session", limitKib: 1, request: undefined, answer: Me, rejected: "me_refused", cache: "private" })
+const notes = route({ method: "POST", path: "/api/v1/fixture/notes", access: "sessionWrite", limitKib: 1, request: Note, answer: Saved, rejected: "note_refused", cache: "no-store", status: 201 })
+const disputes = route({ method: "POST", path: "/api/v1/fixture/disputes", access: "sessionWrite", limitKib: 1, request: Note, answer: Saved, rejected: "dispute_refused", cache: "no-store", actorMismatch: { status: 409, code: "account_changed", message: "The selected GitHub account changed." } })
+const wallets = route({ method: "POST", path: "/api/v1/fixture/wallets", access: "bearer", limitKib: 1, request: Note, answer: Saved, rejected: "wallet_refused", cache: "no-store", cors: ["https://slop.cash"] })
+const closeSession = route({ method: "POST", path: "/api/v1/fixture/session/close", access: "sessionWrite", limitKib: 1, request: undefined, answer: Closed, rejected: "close_refused", cache: "no-store" })
+const results = route({ method: "POST", path: "/api/v1/vetting/fixture/results", access: "service", limitKib: 1, request: Note, answer: Saved, rejected: "result_refused", cache: "no-store" })
+const traces = route({ method: "PUT", path: "/api/v1/fixture/traces/:id", access: "public", limitKib: 1, request: undefined, answer: Received, rejected: "trace_refused", cache: { browserSeconds: 60, mustRevalidate: true } })
+const unsubscribe = route({ method: "POST", path: "/api/v1/fixture/unsubscribe", access: "public", limitKib: 1, request: undefined, answer: Entries, rejected: "unsubscribe_refused", cache: "no-store" })
+const relay = route({ method: "GET", path: "/api/v1/fixture/relay/:size", access: "public", limitKib: 1, request: undefined, answer: Relayed, rejected: "relay_refused", cache: { browserSeconds: 31536000, immutable: true } })
+
+const api = [item, me, notes, disputes, closeSession, wallets, results, traces, unsubscribe, relay]
+
+effect function saved(text: string, by: string) {
+  if (text === "stale") throw new Conflict({ aggregate: "fixture notes", attempts: 3 })
+  if (text === "rejected") throw new Rejected({ reason: "closed" })
+  if (text === "github") throw new GitHubUnavailable({ status: 502 })
+  if (text === "refused") throw refuse(422, "note_invalid", "Notes must not say refused")
+  if (text === "unmapped") throw new Unmapped({ detail: "private detail" })
+  if (text === "defect") return try die(new Error("fixture defect"))
+  return { saved: text, by }
+}
+
+const routes = Layer.mergeAll(
+  handle(item, (input) => effect { return { id: input.params.id ?? "", q: input.query.get("q") ?? "" } }),
+  handle(me, (input) => effect { return { githubId: input.actor.githubId, login: input.actor.login } }),
+  handle(notes, (input) => saved(input.body.text, input.actor.githubId)),
+  handle(disputes, (input) => saved(input.body.text, input.actor.githubId)),
+  handle(closeSession, (input) => effect { return { closed: input.actor.githubId } }),
+  handle(wallets, (input) => saved(input.body.text, input.actor.githubId)),
+  handle(results, (input) => saved(input.body.text, input.actor.keyId)),
+  handleRaw(traces, (input) => effect {
+    if (input.params.id === "missing") return HttpServerResponse.text("missing", { status: 404 })
+    const bytes = try bytesBody(16, ["application/x-ndjson", "text/plain"])
+    return HttpServerResponse.jsonUnsafe({ id: input.params.id ?? "", bytes: bytes.length })
+  }),
+  handleRaw(unsubscribe, () => effect {
+    const form = try formBody(128)
+    return json({ entries: [...form.entries()] })
+  }),
+  handle(relay, (input) => effect { return try (try Upstream).call("GET", `/v1/answers/${input.params.size ?? ""}`, undefined, Relayed, 64, { authorization: "Bearer relay-assertion" }) }),
+  preflight(api),
+)
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(fixtureCaller, fixtureBearers, Layer.provide(serviceAuth(env.SERVICE_KEYS), webCrypto), Layer.succeed(Upstream, serviceClient(env.UPSTREAM, { binding: "UPSTREAM", origin: "https://upstream.internal" }))),
+  routes,
+})

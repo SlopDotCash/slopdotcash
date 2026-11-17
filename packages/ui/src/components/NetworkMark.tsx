@@ -7,12 +7,24 @@ const markVariants = cva("shrink-0", {
   defaultVariants: { size: "md" },
 });
 
+const families = {
+  Base: "Base",
+  "Base Sepolia": "Base",
+  Ethereum: "Ethereum",
+  "Ethereum Sepolia": "Ethereum",
+  "Robinhood Chain": "Robinhood Chain",
+  "Robinhood Chain Testnet": "Robinhood Chain",
+  Solana: "Solana",
+} as const;
+
 export type NetworkMarkProps = Omit<ComponentProps<"span">, "children"> &
   VariantProps<typeof markVariants> & {
-    /** The network a project, vault or payment is on. */
-    network: "Base" | "Ethereum" | "Robinhood Chain" | "Solana";
+    /** The network a project, vault or payment is on; a test network wears its main network's mark beside its own name. */
+    network: keyof typeof families;
     /** Shows the network's name beside its mark; hidden, it stays the accessible name. */
     showName?: boolean;
+    /** Hides the mark and its name from assistive technology, for when the network is already named beside it. */
+    decorative?: boolean;
   };
 
 // The marks and colors the Slop app shipped: another party's identity, not a role of this palette (design.md).
@@ -35,7 +47,7 @@ const brand = {
   solanaPurple: "#9945ff",
 };
 
-function Mark({ network, className }: { network: NetworkMarkProps["network"]; className: string }) {
+function Mark({ network, className }: { network: (typeof families)[NetworkMarkProps["network"]]; className: string }) {
   const svg = { "aria-hidden": true, focusable: false, className };
   if (network === "Base")
     return (
@@ -67,11 +79,11 @@ function Mark({ network, className }: { network: NetworkMarkProps["network"]; cl
 }
 
 /** A network's mark, named by its network. Show a network's state with a `Status` beside it. */
-export function NetworkMark({ network, showName = true, size, className, ...props }: NetworkMarkProps) {
+export function NetworkMark({ network, showName = true, decorative = false, size, className, ...props }: NetworkMarkProps) {
   return (
-    <span className={cn("inline-flex items-center gap-2", className)} {...props}>
-      <Mark network={network} className={markVariants({ size })} />
-      <span className={showName ? undefined : "sr-only"}>{network}</span>
+    <span aria-hidden={decorative || undefined} className={cn("inline-flex items-center gap-2", className)} {...props}>
+      <Mark network={families[network]} className={markVariants({ size })} />
+      {decorative && !showName ? null : <span className={showName ? undefined : "sr-only"}>{network}</span>}
     </span>
   );
 }

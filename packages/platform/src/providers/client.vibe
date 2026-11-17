@@ -1,0 +1,278 @@
+// spec/slopbot/review.md, "Every call is free, attributed and accounted"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"
+import * as Hex from "effect/encoding/Hex"
+import { boundedBytes } from "../browser.vibe"
+import { utf8 } from "../crypto.vibe"
+import { messagesAnswer, messagesExchange, messagesRequest, recordOf, spendResetAt } from "./anthropic.vibe"
+import { responsesAnswer, responsesExchange, responsesRequest } from "./openai.vibe"
+import { orbioBase, orbioCost } from "./orbio.vibe"
+
+export type Route = "surplus-anthropic" | "surplus-openai" | "orbio"
+export type Effort = "low" | "medium" | "high"
+export type Acceptance = "firstText" | "allText" | "exact"
+
+export interface Part {
+  readonly text: string
+  readonly cached?: boolean
+}
+
+export type Content = string | ReadonlyArray<Part>
+
+export interface ModelMessage {
+  readonly role: "user" | "assistant"
+  readonly content: Content
+}
+
+export interface ModelCall {
+  readonly route: Route
+  readonly model: string
+  readonly system: Content
+  readonly messages: ReadonlyArray<ModelMessage>
+  readonly maxTokens: number
+  readonly temperature?: number
+  readonly effort?: Effort
+  readonly responseFormat?: unknown
+  readonly timeoutMs?: number
+  readonly accept?: Acceptance
+}
+
+export interface Usage {
+  readonly input: number
+  readonly output: number
+  readonly cacheRead: number
+  readonly cacheWrite: number
+}
+
+export interface Exchange {
+  readonly id: string
+  readonly model: string
+  readonly usage: Usage
+}
+
+export type Answer =
+  | { readonly kind: "text"; readonly text: string; readonly stopReason: string }
+  | { readonly kind: "stopped"; readonly category: "Refused" | "Incomplete"; readonly reason: string }
+  | { readonly kind: "malformed" }
+
+export interface ModelReply {
+  readonly route: Route
+  readonly model: string
+  readonly text: string
+  readonly usage: Usage
+  readonly costMicroUsd: number | null
+  readonly requestId: string | null
+  readonly responseId: string
+  readonly responseSha256: string
+  readonly stopReason: string
+}
+
+export interface Receipt {
+  readonly model: string | null
+  readonly usage: Usage | null
+  readonly costMicroUsd: number | null
+  readonly requestId: string | null
+  readonly responseId: string | null
+  readonly responseSha256: string | null
+}
+
+export type FailureCategory = "SpendDenied" | "RateLimited" | "Unavailable" | "Malformed" | "Refused" | "Incomplete" | "Timeout" | "TooLarge"
+
+export error ProviderFailure {
+  route: Route
+  category: FailureCategory
+  reason: string
+  status?: number
+  retryAfterSeconds?: number
+  resetAt?: number
+  receipt: Receipt
+}
+
+export interface Gateway {
+  readonly apiKey: Redacted.Redacted<string>
+  readonly baseUrl?: string
+}
+
+export interface ProvidersConfig {
+  readonly surplus?: Gateway
+  readonly orbio?: Gateway
+  readonly timeoutMs: number
+  readonly maxReplyBytes: number
+}
+
+export service Provider {
+  readonly configured: ReadonlySet<Route>
+  complete(call: ModelCall): ModelReply!ProviderFailure
+}
+
+interface Endpoint {
+  readonly url: string
+  readonly apiKey: Redacted.Redacted<string>
+  readonly wire: "messages" | "responses"
+  readonly gateway: "surplus" | "orbio"
+}
+
+type Read = { readonly kind: "text"; readonly text: string } | { readonly kind: "tooLarge" } | { readonly kind: "unreadable" }
+
+export const surplusBase = "https://api.surplusintelligence.ai"
+const errorBodyBytes = 16 * 1024
+const noReceipt: Receipt = { model: null, usage: null, costMicroUsd: null, requestId: null, responseId: null, responseSha256: null }
+
+function keyed(gateway: Gateway | undefined) {
+  return gateway !== undefined && Redacted.value(gateway.apiKey).trim() !== "" ? gateway : undefined
+}
+
+function endpoints(config: ProvidersConfig): ReadonlyMap<Route, Endpoint> {
+  const found = new Map<Route, Endpoint>()
+  const orbio = keyed(config.orbio)
+  const surplus = keyed(config.surplus)
+  if (orbio !== undefined) found.set("orbio", { url: `${orbio.baseUrl ?? orbioBase}/v1/messages`, apiKey: orbio.apiKey, wire: "messages", gateway: "orbio" })
+  if (surplus !== undefined) {
+    const base = surplus.baseUrl ?? surplusBase
+    found.set("surplus-anthropic", { url: `${base}/anthropic/v1/messages`, apiKey: surplus.apiKey, wire: "messages", gateway: "surplus" })
+    found.set("surplus-openai", { url: `${base}/v1/responses`, apiKey: surplus.apiKey, wire: "responses", gateway: "surplus" })
+  }
+  return found
+}
+
+function headersFor(endpoint: Endpoint): Record<string, string> {
+  const authorization = { "content-type": "application/json", authorization: `Bearer ${Redacted.value(endpoint.apiKey)}` }
+  return endpoint.wire === "messages" ? { ...authorization, "anthropic-version": "2023-06-01" } : authorization
+}
+
+type Headers = Readonly<Record<string, string | undefined>>
+
+function requestIdOf(headers: Headers) {
+  const id = headers["x-request-id"]
+  return id !== undefined && /^[A-Za-z0-9_-]{1,128}$/u.test(id) ? id : null
+}
+
+function surplusCost(headers: Headers, body: unknown): number | null {
+  const usage = recordOf(recordOf(body)?.usage)
+  if (usage !== undefined && Object.hasOwn(usage, "buyer_cost_micro")) {
+    const cost = usage.buyer_cost_micro
+    return typeof cost === "number" && Number.isSafeInteger(cost) && cost >= 0 ? cost : null
+  }
+  const cost = headers["x-si-buyer-cost-micro"]
+  return cost !== undefined && /^(0|[1-9][0-9]*)$/u.test(cost) && Number.isSafeInteger(Number(cost)) ? Number(cost) : null
+}
+
+function costOf(endpoint: Endpoint, headers: Headers, body: unknown) {
+  return endpoint.gateway === "orbio" ? orbioCost(body) : surplusCost(headers, body)
+}
+
+function truncatedBy(endpoint: Endpoint, headers: Headers, body: unknown) {
+  return endpoint.gateway === "surplus" && (headers["x-si-truncated"] === "1" || recordOf(recordOf(body)?.surplus)?.truncated === true)
+}
+
+function retryAfter(headers: Headers) {
+  const value = headers["retry-after"]
+  return value !== undefined && /^\d{1,9}$/u.test(value) ? Number(value) : undefined
+}
+
+const tooLong = /prompt is too long|exceeds? (?:the )?context|context (?:length|window|limit)|too many (?:input )?tokens/iu
+
+function digits(value: string) {
+  return value.replaceAll(",", "")
+}
+
+function errorDetail(body: unknown): string | undefined {
+  const error = recordOf(recordOf(body)?.error)
+  if (error === undefined) return undefined
+  if (typeof error.message === "string" && tooLong.test(error.message)) {
+    const sum = /(\d[\d,]*) \+ (\d[\d,]*) > (\d[\d,]*)/u.exec(error.message)
+    if (sum !== null) return `input-too-long-${digits(sum[1] ?? "")}-plus-${digits(sum[2] ?? "")}-over-${digits(sum[3] ?? "")}`
+    const over = /(\d[\d,]*) tokens? > (\d[\d,]*)/u.exec(error.message)
+    return over === null ? "input-too-long" : `input-too-long-${digits(over[1] ?? "")}-over-${digits(over[2] ?? "")}`
+  }
+  return typeof error.type === "string" && /^[a-z][a-z_]{0,47}$/u.test(error.type) ? error.type : undefined
+}
+
+function refusedByStatus(route: Route, status: number, headers: Headers, body: unknown, receipt: Receipt) {
+  const resetAt = route === "surplus-anthropic" ? spendResetAt(status, body) : undefined
+  if (resetAt !== undefined) return new ProviderFailure({ route, category: "SpendDenied", reason: "spend-denied", status, resetAt, receipt })
+  const detail = errorDetail(body)
+  const reason = detail === undefined ? `provider-http-${status}` : `provider-http-${status}-${detail}`
+  const seconds = retryAfter(headers)
+  if (status === 429) return new ProviderFailure({ route, category: "RateLimited", reason, status, ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }), receipt })
+  return new ProviderFailure({ route, category: "Unavailable", reason, status, receipt })
+}
+
+effect function readText(response: HttpClientResponse.HttpClientResponse, limit: number) {
+  const bytes = boundedBytes(response, limit, "the provider reply") catch (error) => error._tag
+  if (bytes === "BodyTooLarge") return { kind: "tooLarge" } satisfies Read
+  if (bytes === "BodyUnreadable") return { kind: "unreadable" } satisfies Read
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
+  return (text === undefined ? { kind: "unreadable" } : { kind: "text", text }) satisfies Read
+}
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
+effect function parsed(text: string) {
+  return decodeJson(text) catch () => undefined
+}
+
+effect function attempt(client: HttpClient.HttpClient, crypto: Experimental.Crypto.Service, endpoint: Endpoint, call: ModelCall, maxReplyBytes: number) {
+  const route = call.route
+  const body = endpoint.wire === "messages" ? messagesRequest(call) : responsesRequest(call)
+  const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(endpoint.url, { headers: headersFor(endpoint) }), body)
+  const response = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" }) catch effect () => {
+    throw new ProviderFailure({ route, category: "Unavailable", reason: "network", receipt: noReceipt })
+  }
+  const headers: Headers = response.headers
+  const requestId = requestIdOf(headers)
+  if (response.status < 200 || response.status > 299) {
+    const read = try readText(response, errorBodyBytes)
+    const failed = read.kind === "text" ? try parsed(read.text) : undefined
+    throw refusedByStatus(route, response.status, headers, failed, { ...noReceipt, costMicroUsd: costOf(endpoint, headers, failed), requestId })
+  }
+  const read = try readText(response, maxReplyBytes)
+  if (read.kind === "tooLarge") throw new ProviderFailure({ route, category: "TooLarge", reason: "response-unreadable", status: response.status, receipt: { ...noReceipt, requestId } })
+  if (read.kind === "unreadable") throw new ProviderFailure({ route, category: "Malformed", reason: "response-unreadable", status: response.status, receipt: { ...noReceipt, requestId } })
+  const responseSha256 = Hex.encode(try orDie(crypto.digest("SHA-256", utf8(read.text))))
+  const reply = try parsed(read.text)
+  const truncated = truncatedBy(endpoint, headers, reply)
+  const answered: Receipt = { ...noReceipt, costMicroUsd: costOf(endpoint, headers, reply), requestId, responseSha256 }
+  const fields = recordOf(reply)
+  if (endpoint.wire === "messages" && fields !== undefined && Object.hasOwn(fields, "error")) throw refusedByStatus(route, response.status, headers, reply, answered)
+  const exchange = endpoint.wire === "messages" ? messagesExchange(reply) : responsesExchange(reply)
+  if (exchange === undefined) {
+    throw truncated
+      ? new ProviderFailure({ route, category: "Incomplete", reason: "truncated", status: response.status, receipt: answered })
+      : new ProviderFailure({ route, category: "Malformed", reason: "invalid-response", status: response.status, receipt: answered })
+  }
+  const receipt: Receipt = { ...answered, model: exchange.model, usage: exchange.usage, responseId: exchange.id }
+  if (truncated) throw new ProviderFailure({ route, category: "Incomplete", reason: "truncated", status: response.status, receipt })
+  const answer = endpoint.wire === "messages" ? messagesAnswer(reply, call.accept ?? "firstText") : responsesAnswer(reply)
+  if (answer.kind === "stopped") throw new ProviderFailure({ route, category: answer.category, reason: answer.reason, status: response.status, receipt })
+  if (answer.kind === "malformed") throw new ProviderFailure({ route, category: "Malformed", reason: "invalid-response", status: response.status, receipt })
+  return {
+    route,
+    model: exchange.model,
+    text: answer.text,
+    usage: exchange.usage,
+    costMicroUsd: receipt.costMicroUsd,
+    requestId,
+    responseId: exchange.id,
+    responseSha256,
+    stopReason: answer.stopReason,
+  } satisfies ModelReply
+}
+
+export function providers(config: ProvidersConfig) {
+  const routes = endpoints(config)
+  return Layer.effect(Provider, effect {
+    const client = try HttpClient.HttpClient
+    const crypto = try Experimental.Crypto.Crypto
+    return {
+      configured: new Set(routes.keys()),
+      complete: (call: ModelCall) => effect {
+        const route = call.route
+        const endpoint = routes.get(route)
+        if (endpoint === undefined) throw new ProviderFailure({ route, category: "Unavailable", reason: "not-configured", receipt: noReceipt })
+        return try timeoutOrElse(attempt(client, crypto, endpoint, call, config.maxReplyBytes), {
+          duration: call.timeoutMs ?? config.timeoutMs,
+          orElse: () => fail(new ProviderFailure({ route, category: "Timeout", reason: "timeout", receipt: noReceipt })),
+        })
+      },
+    }
+  })
+}

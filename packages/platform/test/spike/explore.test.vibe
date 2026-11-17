@@ -1,0 +1,12 @@
+import { assert, layer } from "@effect/vitest"
+import { exploreRoot, exploreStage } from "./site.ts"
+
+service Nothing { readonly none: true }
+
+layer(Layer.succeed(Nothing, { none: true }), { excludeTestServices: true, timeout: "400 seconds" })((it) => {
+  it.effect('The explore stage serves the built page with its start script and Bombadil holds every property (spec/frontend/requests.md, "Story: Read current data without losing the last good result")', () => effect {
+    const reported = try promise(() => exploreStage(exploreRoot))
+    try Effect.log(JSON.stringify(reported))
+    try Effect.try(() => assert.deepStrictEqual(reported.map(([ok, stage]) => [ok, stage]), [[true, "explore"]]))
+  }, 400_000)
+})

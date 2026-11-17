@@ -1,4 +1,3 @@
-// spike: Experimental.Crypto hmac/sign/verify plus RS256 and AES-GCM through crypto.subtle (.ts), one program for workerd and Node
 import * as Hex from "effect/encoding/Hex"
 import { utf8 } from "../../../src/crypto.vibe"
 import type { KeySet } from "../keys.ts"
@@ -28,7 +27,6 @@ effect function subtle<A>(operation: string, run: () => Promise<A>) {
   return try tryPromise({ try: run, catch: (cause) => new SubtleFailure({ operation, message: String(cause) }) })
 }
 
-// RFC 4231 test case 2: HMAC-SHA-256("Jefe", "what do ya want for nothing?")
 export const rfc4231 = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
 
 export effect function signAll(keys: KeySet, message: string, nowSeconds: number) {

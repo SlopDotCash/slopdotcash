@@ -1,0 +1,123 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"
+import type { Access, Method, Route } from "./route.vibe"
+
+export error RequestFailed { status: number; error: string; message: string }
+
+export error DeadlineExceeded
+
+export interface RequestInput<B> {
+  readonly body?: B
+  readonly params?: Readonly<Record<string, string>>
+  readonly query?: Readonly<Record<string, string>>
+}
+
+export interface RequestOptions {
+  readonly expectedActor?: string
+  readonly limitBytes?: number
+  readonly deadlineMs?: number
+}
+
+export type Outcome =
+  | { readonly kind: "answered"; readonly status: number; readonly value: unknown }
+  | { readonly kind: "unreadable"; readonly status: number }
+  | { readonly kind: "oversized"; readonly status: number }
+  | { readonly kind: "unreachable" }
+
+schema ErrorCode { error: string }
+schema ErrorMessage { message: string }
+
+export const defaultDeadlineMs = 15_000
+
+export const defaultLimitBytes = 1_048_576
+
+const browserInit: globalThis.RequestInit = { credentials: "same-origin", redirect: "error", cache: "no-store" }
+
+const declaredLength = /^[0-9]+$/u
+
+const unreachable = { status: 0, error: "network_error", message: "The network request failed. Try again." }
+
+export error BodyTooLarge { label: string; limitBytes: number }
+export error BodyUnreadable { label: string; reason: string }
+
+export effect function boundedBytes(response: HttpClientResponse.HttpClientResponse, limitBytes: number, label: string) {
+  const declared = response.headers["content-length"]
+  if (declared !== undefined && !declaredLength.test(declared)) throw new BodyUnreadable({ label, reason: `${label} returned an invalid content length` })
+  if (declared !== undefined && Number(declared) > limitBytes) throw new BodyTooLarge({ label, limitBytes })
+  const chunks: Uint8Array[] = []
+  let size = 0
+  const body = Stream.mapError(response.stream, () => new BodyUnreadable({ label, reason: `${label} returned no readable body` }))
+  for try (const chunk of body) {
+    size += chunk.byteLength
+    if (size > limitBytes) throw new BodyTooLarge({ label, limitBytes })
+    chunks.push(chunk)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+export function outgoing(method: Method, url: string, body: unknown, headers: Readonly<Record<string, string>>) {
+  const base = HttpClientRequest.make(method)(url, { headers: { accept: "application/json", ...headers } })
+  return body === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, body)
+}
+
+export effect function exchanged(request: HttpClientRequest.HttpClientRequest, limitBytes: number) {
+  const response = HttpClient.execute(request) catch () => undefined
+  if (response === undefined) return { kind: "unreachable" } satisfies Outcome
+  const status = response.status
+  const bytes = boundedBytes(response, limitBytes, request.url) catch (error) => error._tag
+  if (bytes === "BodyTooLarge") return { kind: "oversized", status } satisfies Outcome
+  if (bytes === "BodyUnreadable") return { kind: "unreadable", status } satisfies Outcome
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+  return (value === undefined ? { kind: "unreadable", status } : { kind: "answered", status, value }) satisfies Outcome
+}
+
+effect function target(path: string, params: Readonly<Record<string, string>>, query: Readonly<Record<string, string>>) {
+  const segments: string[] = []
+  for (const segment of path.split("/")) {
+    if (!segment.startsWith(":")) {
+      segments.push(segment)
+      continue
+    }
+    const value = params[segment.slice(1)] ?? ""
+    if (value === "") return try die(new RangeError(`Path parameter ${segment.slice(1)} is missing`))
+    segments.push(try orDie(Effect.try(() => encodeURIComponent(value))))
+  }
+  const search = new URLSearchParams(Object.entries(query)).toString()
+  return search === "" ? segments.join("/") : `${segments.join("/")}?${search}`
+}
+
+function unreadable(status: number) {
+  return new RequestFailed({ status, error: "invalid_response", message: "The server returned an unreadable response." })
+}
+
+effect function refusal(status: number, value: unknown) {
+  const code = Schema.decodeUnknownEffect(ErrorCode)(value) catch () => undefined
+  const text = Schema.decodeUnknownEffect(ErrorMessage)(value) catch () => undefined
+  return new RequestFailed({ status, error: code?.error ?? "request_failed", message: text?.message ?? `The request failed with HTTP ${status}.` })
+}
+
+effect function answerOf<A>(answer: Schema.ConstraintCodec<A, unknown>, outcome: Outcome) {
+  if (outcome.kind === "unreachable") throw new RequestFailed(unreachable)
+  if (outcome.kind !== "answered") throw unreadable(outcome.status)
+  if (outcome.status < 200 || outcome.status > 299) throw try refusal(outcome.status, outcome.value)
+  return Schema.decodeUnknownEffect(answer)(outcome.value) catch effect () => { throw unreadable(outcome.status) }
+}
+
+export effect function request<B, A>(route: Route<B, A, Access>, input: RequestInput<B> = {}, options: RequestOptions = {}) {
+  const url = try target(route.path, input.params ?? {}, input.query ?? {})
+  let body: unknown = undefined
+  if (route.request !== undefined) body = try orDie(Schema.encodeUnknownEffect(route.request)(input.body))
+  else if (route.access === "sessionWrite") body = {}
+  const headers: Readonly<Record<string, string>> = options.expectedActor === undefined ? {} : { "x-slop-expected-github-id": options.expectedActor }
+  const exchange = provideService(exchanged(outgoing(route.method, url, body, headers), options.limitBytes ?? defaultLimitBytes), FetchHttpClient.RequestInit, browserInit)
+  const outcome = try Effect.timeoutOrElse(exchange, {
+    duration: options.deadlineMs ?? defaultDeadlineMs,
+    orElse: () => Effect.fail(new DeadlineExceeded()),
+  })
+  return try answerOf(route.answer, outcome)
+}

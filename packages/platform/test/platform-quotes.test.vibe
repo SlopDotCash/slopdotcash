@@ -1,0 +1,268 @@
+import { assert, layer } from "@effect/vitest"
+import { decodeFunctionData, isHex } from "viem"
+import { webCrypto } from "../src/crypto.vibe"
+import { Provider, providers } from "../src/providers/client.vibe"
+import type { Handler } from "../src/testing.ts"
+import { providerFake } from "../src/testing/providers.ts"
+import { asFetch, dlnSourceAbi, kyberRouterAbi, parsedJson, quotesFake } from "../src/testing/quotes.ts"
+
+interface Exchanged { readonly status: number; readonly text: string; readonly body: unknown }
+
+effect function exchange(handler: Handler, url: string, post?: unknown) {
+  const request = post === undefined ? HttpClientRequest.get(url) : HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(url), post)
+  provide FetchHttpClient.layer, FetchHttpClient.Fetch = asFetch(handler) {
+    const response = try HttpClient.execute(request)
+    const text = try response.text
+    return { status: response.status, text, body: parsedJson(text) } satisfies Exchanged
+  }
+}
+
+schema BuiltSwap { data: string; routerAddress: string; transactionValue: string; amountOut: string }
+schema Built { data: BuiltSwap }
+schema ProposedTx { to: string; data: string; value: string }
+schema Arrival { amount: string }
+schema Estimation { dstChainTokenOut: Arrival }
+schema Proposal { orderId: string; fixFee: string; tx: ProposedTx; estimation: Estimation }
+
+const router = "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5"
+const weth = "0x4200000000000000000000000000000000000006"
+const usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+const wallet = "0x8f77C37D8650776bFe73c9b12B15209eE15D9b86"
+const kyber = "https://aggregator-api.kyberswap.com/base/api/v1"
+const jupiterApi = "https://api.jup.ag/swap/v1"
+const sol = "So11111111111111111111111111111111111111112"
+const solanaUsdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+const capturedDln = {
+  giveToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  usdg: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+  wallet: "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86",
+  to: "0xeF4fB24aD0916217251F553c0596F8Edc630EB66",
+  value: "1000000000000000",
+  orderId: "0x80020c95b8023f24d76a22843f45e0d551032bd810d9e9014c10fe632812c002",
+  takeAmount: "498895199",
+  data: "0xb930370100000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000001a1c712fa000000000000000000000000000000000000000000000000000000000000000380000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a000000000000000000000000000000000000000000000000000000000000003c0000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda02913000000000000000000000000000000000000000000000000000000001dcd65000000000000000000000000000000000000000000000000000000000000000160000000000000000000000000000000000000000000000000000000001dbc895f000000000000000000000000000000000000000000000000000000000000123700000000000000000000000000000000000000000000000000000000000001a00000000000000000000000008f77c37d8650776bfe73c9b12b15209ee15d9b8600000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000002200000000000000000000000000000000000000000000000000000000000000260000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000000145fc5360d0400a0fd4f2af552add042d716f1d16800000000000000000000000000000000000000000000000000000000000000000000000000000000000000148f77c37d8650776bfe73c9b12b15209ee15d9b8600000000000000000000000000000000000000000000000000000000000000000000000000000000000000148f77c37d8650776bfe73c9b12b15209ee15d9b860000000000000000000000000000000000000000000000000000000000000000000000000000000000000014555ce236c0220695b68341bc48c68d52210cc35b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000148f77c37d8650776bfe73c9b12b15209ee15d9b86000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000042010100000055e40300000000000000000000000000000000005f89bc1d00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+} as const
+
+const dlnQuery = [
+  "srcChainId=8453",
+  `srcChainTokenIn=${capturedDln.giveToken}`,
+  "srcChainTokenInAmount=500000000",
+  "dstChainId=4663",
+  `dstChainTokenOut=${capturedDln.usdg}`,
+  "dstChainTokenOutAmount=auto",
+  `dstChainTokenOutRecipient=${capturedDln.wallet}`,
+  `srcChainOrderAuthorityAddress=${capturedDln.wallet}`,
+  `dstChainOrderAuthorityAddress=${capturedDln.wallet}`,
+  `srcAllowedCancelBeneficiary=${capturedDln.wallet}`,
+  "prependOperatingExpenses=false",
+  "referralCode=0",
+].join("&")
+
+const summary = {
+  tokenIn: weth,
+  amountIn: "1000",
+  amountInUsd: "3.2",
+  tokenOut: usdc,
+  amountOut: "2000",
+  amountOutUsd: "3.19",
+  gas: "250000",
+  gasPrice: "1000000000",
+  gasUsd: "0.02",
+  l1FeeUsd: "0.001",
+  extraFee: { feeAmount: "", chargeFeeBy: "", isInBps: false, feeReceiver: "" },
+  route: [],
+  routeID: "route-1",
+  checksum: "checksum-route-1",
+}
+
+layer(Layer.empty, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect('Each quote API answers its scripted route in the wire shape the fee converter decodes (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/buyback.md, "Story: Bridge the available share through one exact order at a time")', () => effect {
+    const quotes = quotesFake()
+    quotes.kyberswap.route({ chain: "base", tokenIn: weth, tokenOut: usdc, amountOut: (amountIn) => amountIn * 2n, routerAddress: router, amountInUsd: "3.2", amountOutUsd: "3.19", gasUsd: "0.02", l1FeeUsd: "0.001" })
+    quotes.jupiter.quote({ inputMint: sol, outputMint: solanaUsdc, amount: 1000000n, outAmount: 2000001n, priceImpactPct: "0.0012" })
+    try Effect.try(() => quotes.dln.order({ family: "evm", srcChainId: 8453n, giveToken: capturedDln.giveToken, takeChainId: 4663n, takeToken: capturedDln.usdg, takeAmount: 498895199n, source: capturedDln.to, salt: 1794341272064n, nativeFee: 1000000000000000n, allowedTaker: "0x555ce236c0220695b68341bc48c68d52210cc35b", metadata: "0x010100000055e40300000000000000000000000000000000005f89bc1d00000000000000000000000000000000000000000000000000000000000000000000000000", orderId: capturedDln.orderId }))
+    quotes.solanaHistory.signatures("Escrow1111111111111111111111111111111111111", [
+      { signature: "sig-3", slot: 30, confirmationStatus: "confirmed" },
+      { signature: "sig-2", slot: 20, blockTime: 1794341200 },
+      { signature: "sig-1", slot: 10, err: { InstructionError: [0, { Custom: 1 }] } },
+    ])
+
+    const routed = try exchange(quotes.handler, `${kyber}/routes?tokenIn=${weth}&tokenOut=${usdc}&amountIn=1000&gasInclude=true`)
+    const noPool = try exchange(quotes.handler, `${kyber}/routes?tokenIn=${usdc}&tokenOut=${weth}&amountIn=1000&gasInclude=true`)
+    const built = try exchange(quotes.handler, `${kyber}/route/build`, { routeSummary: summary, sender: wallet, recipient: wallet, slippageTolerance: 25, deadline: 1794341300, source: "slop-fee-converter" })
+    const build = try Schema.decodeUnknownEffect(Built)(built.body)
+    const swap = try Effect.try(() => isHex(build.data.data) ? decodeFunctionData({ abi: kyberRouterAbi, data: build.data.data }) : undefined)
+
+    const quoted = try exchange(quotes.handler, `${jupiterApi}/quote?inputMint=${sol}&outputMint=${solanaUsdc}&amount=1000000&slippageBps=50&swapMode=ExactIn&restrictIntermediateTokens=true&asLegacyTransaction=false&instructionVersion=V2`)
+    const unquoted = try exchange(quotes.handler, `${jupiterApi}/quote?inputMint=${solanaUsdc}&outputMint=${sol}&amount=1&slippageBps=50&swapMode=ExactIn`)
+    const forged = try exchange(quotes.handler, `${jupiterApi}/swap`, { quoteResponse: { inputMint: sol, outAmount: "9" }, userPublicKey: "Wallet111111111111111111111111111111111111" })
+
+    const proposed = try exchange(quotes.handler, `https://dln.debridge.finance/v1.0/dln/order/create-tx?${dlnQuery}`)
+    const proposal = try Schema.decodeUnknownEffect(Proposal)(proposed.body)
+    const order = try Effect.try(() => isHex(proposal.tx.data) ? decodeFunctionData({ abi: dlnSourceAbi, data: proposal.tx.data }) : undefined)
+
+    const page = (options: unknown) => exchange(quotes.solanaHistory.rpc, "http://127.0.0.1:8899", { jsonrpc: "2.0", id: 7, method: "getSignaturesForAddress", params: ["Escrow1111111111111111111111111111111111111", options] })
+    const first = try page({ commitment: "finalized", limit: 1 })
+    const next = try page({ commitment: "finalized", limit: 1, before: "sig-2" })
+    const confirmed = try page({ commitment: "confirmed", limit: 10, until: "sig-1" })
+
+    try Effect.try(() => assert.deepStrictEqual({
+      routed: [routed.status, routed.body],
+      noPool: [noPool.status, noPool.body],
+      built: [built.status, build.data.routerAddress, build.data.transactionValue, build.data.amountOut],
+      swap,
+      quoted: [quoted.status, quoted.body],
+      unquoted: [unquoted.status, unquoted.body],
+      forged: [forged.status, forged.body],
+      proposal: { status: proposed.status, to: proposal.tx.to, value: proposal.tx.value, sameBytes: proposal.tx.data === capturedDln.data, orderId: proposal.orderId, fixFee: proposal.fixFee, arrival: proposal.estimation.dstChainTokenOut.amount, call: order?.functionName },
+      history: [first.body, next.body, confirmed.body],
+      unexpected: quotes.unexpected,
+      scripted: quotes.calls.map((call) => [call.service, call.scripted]),
+    }, {
+      routed: [200, { code: 0, message: "successfully", data: { routeSummary: summary, routerAddress: router }, requestId: "kyber-0-200" }],
+      noPool: [400, { code: 4008, message: "route not found", requestId: "kyber-4008-400" }],
+      built: [200, router, "0", "2000"],
+      swap: {
+        functionName: "swap",
+        args: [{
+          callTarget: router,
+          approveTarget: router,
+          targetData: "0x",
+          desc: { srcToken: weth, dstToken: usdc, srcReceivers: [], srcAmounts: [], feeReceivers: [], feeAmounts: [], dstReceiver: wallet, amount: 1000n, minReturnAmount: 1995n, flags: 0n, permit: "0x" },
+          clientData: "0x",
+        }],
+      },
+      quoted: [200, {
+        inputMint: sol,
+        inAmount: "1000000",
+        outputMint: solanaUsdc,
+        outAmount: "2000001",
+        otherAmountThreshold: "1990001",
+        swapMode: "ExactIn",
+        slippageBps: 50,
+        platformFee: null,
+        priceImpactPct: "0.0012",
+        routePlan: [{ swapInfo: { label: "Whirlpool", inputMint: sol, outputMint: solanaUsdc, inAmount: "1000000", outAmount: "2000001", feeAmount: "0", feeMint: sol }, percent: 100 }],
+        contextSlot: 1,
+        timeTaken: 0.001,
+      }],
+      unquoted: [400, { error: "Could not find any route", errorCode: "COULD_NOT_FIND_ANY_ROUTE" }],
+      forged: [400, { error: "Quote response is not a quote this API issued", errorCode: "INVALID_QUOTE" }],
+      proposal: { status: 200, to: capturedDln.to, value: capturedDln.value, sameBytes: true, orderId: capturedDln.orderId, fixFee: capturedDln.value, arrival: capturedDln.takeAmount, call: "createSaltedOrder" },
+      history: [
+        { jsonrpc: "2.0", id: 7, result: [{ signature: "sig-2", slot: 20, err: null, memo: null, blockTime: 1794341200, confirmationStatus: "finalized" }] },
+        { jsonrpc: "2.0", id: 7, result: [{ signature: "sig-1", slot: 10, err: { InstructionError: [0, { Custom: 1 }] }, memo: null, blockTime: null, confirmationStatus: "finalized" }] },
+        { jsonrpc: "2.0", id: 7, result: [
+          { signature: "sig-3", slot: 30, err: null, memo: null, blockTime: null, confirmationStatus: "confirmed" },
+          { signature: "sig-2", slot: 20, err: null, memo: null, blockTime: 1794341200, confirmationStatus: "finalized" },
+        ] },
+      ],
+      unexpected: [],
+      scripted: [
+        ["kyberswap", true], ["kyberswap", false], ["kyberswap", true],
+        ["jupiter", true], ["jupiter", false], ["jupiter", false],
+        ["dln", true],
+        ["solanaHistory", true], ["solanaHistory", true], ["solanaHistory", true],
+      ],
+    }))
+  })
+
+  it.effect('Each quote API fails in its own wire shape when told to (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/buyback.md, "Story: Bridge the available share through one exact order at a time")', () => effect {
+    const quotes = quotesFake({ holdMs: 50 })
+    quotes.kyberswap.route({ tokenIn: weth, tokenOut: usdc, amountOut: 2000n, routerAddress: router })
+    quotes.fail("kyberswap", "noRoute")
+    quotes.fail("kyberswap", "tooLarge")
+    quotes.fail("jupiter", "unavailable")
+    quotes.fail("dln", "malformed")
+    quotes.fail("dln", "timeout")
+    quotes.fail("solanaHistory", "unavailable")
+    const interleaved = exchange(quotes.solanaHistory.rpc, "http://127.0.0.1:8899", { jsonrpc: "2.0", id: 0, method: "getLatestBlockhash", params: [{ commitment: "confirmed" }] }) catch () => undefined
+    const route = `${kyber}/routes?tokenIn=${weth}&tokenOut=${usdc}&amountIn=1000&gasInclude=true`
+    const refused = try exchange(quotes.handler, route)
+    const oversized = try exchange(quotes.handler, route)
+    const recovered = try exchange(quotes.handler, route)
+    const down = try exchange(quotes.handler, `${jupiterApi}/quote?inputMint=${sol}&outputMint=${solanaUsdc}&amount=1&slippageBps=50`)
+    const garbled = try exchange(quotes.handler, `https://dln.debridge.finance/v1.0/dln/order/create-tx?${dlnQuery}`)
+    const late = try exchange(quotes.handler, `https://dln.debridge.finance/v1.0/dln/order/create-tx?${dlnQuery}`)
+    const history = try exchange(quotes.solanaHistory.rpc, "http://127.0.0.1:8899", { jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: ["Escrow1111111111111111111111111111111111111"] })
+    const stray = try exchange(quotes.handler, "https://quote.example.test/v1/price")
+    try Effect.try(() => assert.deepStrictEqual({
+      refused: [refused.status, refused.body],
+      oversized: [oversized.status, oversized.text.length > 2000000],
+      recovered: recovered.status,
+      down: [down.status, down.body],
+      garbled: [garbled.status, garbled.body],
+      late: late.status,
+      interleaved: interleaved?.status,
+      history: history.status,
+      stray: stray.status,
+      unexpected: quotes.unexpected,
+      failures: quotes.calls.map((call) => [call.service, call.failure ?? "none"]),
+    }, {
+      refused: [400, { code: 4008, message: "route not found", requestId: "kyber-4008-400" }],
+      oversized: [200, true],
+      recovered: 200,
+      down: [503, { error: "Service unavailable", errorCode: "SERVICE_UNAVAILABLE" }],
+      garbled: [200, undefined],
+      late: 504,
+      interleaved: undefined,
+      history: 503,
+      stray: 599,
+      unexpected: [{ method: "GET", url: "https://quote.example.test/v1/price" }],
+      failures: [
+        ["kyberswap", "noRoute"], ["kyberswap", "tooLarge"], ["kyberswap", "none"],
+        ["jupiter", "unavailable"], ["dln", "malformed"], ["dln", "timeout"], ["solanaHistory", "unavailable"],
+      ],
+    }))
+  })
+
+  it.effect('The provider client classifies a Surplus spending denial and serves a scripted answer with its usage (spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
+    const fake = providerFake()
+    fake.reply((call) => call.route === "surplus-anthropic" && call.system === "Judge the item", { text: "{\"accepted\":true}" }, { input: 120, output: 30, cacheRead: 5, cacheWrite: 7, costMicro: 75 })
+    fake.reply((call) => call.system === "Judge again", { failure: "spendDenied", resetsAt: "2026-12-01T00:00:00.000Z" })
+    fake.reply((call) => call.system === "Judge after commit", { failure: "spendDenied", resetsAt: "2026-12-01T00:00:00.000Z", status: 200 }, { costHeader: "999" })
+    fake.reply((call) => call.system === "Judge with bad detail", { raw: { status: 400, body: { type: "error", error: { type: "invalid_request_error", message: "budget exhausted", detail: { window: "month", limit_micro: 100, spent_micro: "100", resets_at: "2026-12-01T00:00:00.000Z" } }, usage: { buyer_cost_micro: 0 } } } })
+    fake.reply((call) => call.route === "orbio", { failure: "spendDenied" })
+    const live = providers({
+      surplus: { apiKey: Redacted.make("surplus-test-key"), baseUrl: "https://api.surplusintelligence.ai" },
+      orbio: { apiKey: Redacted.make("orbio-test-key"), baseUrl: "https://api.orbio.so/api" },
+      timeoutMs: 5000,
+      maxReplyBytes: 1024 * 1024,
+    })
+    provide Layer.provide(live, Layer.merge(FetchHttpClient.layer, webCrypto)), FetchHttpClient.Fetch = asFetch(fake.handler) {
+      const provider = try Provider
+      const call = { route: "surplus-anthropic" as const, model: "claude-sonnet-5.5", system: "Judge the item", messages: [{ role: "user" as const, content: "item" }], maxTokens: 256 }
+      const served = try provider.complete(call)
+      const denied = try Effect.flip(provider.complete({ ...call, system: "Judge again" }))
+      const committed = try Effect.flip(provider.complete({ ...call, system: "Judge after commit" }))
+      const badDetail = try Effect.flip(provider.complete({ ...call, system: "Judge with bad detail" }))
+      const orbio = try Effect.flip(provider.complete({ ...call, route: "orbio" as const, model: "anthropic/claude-sonnet-5.5" }))
+      try Effect.try(() => assert.deepStrictEqual({
+        served: [served.text, served.model, served.usage, served.costMicroUsd],
+        denied: [denied.category, denied.resetAt],
+        committed: [committed.category, committed.status, committed.resetAt, committed.receipt.costMicroUsd],
+        badDetail: [badDetail.category, badDetail.reason, badDetail.resetAt, badDetail.receipt.costMicroUsd],
+        orbioDenialBlocks: orbio.category === "SpendDenied",
+        keys: fake.calls.map((entry) => [entry.route, entry.model, entry.key]),
+        unanswered: fake.unanswered.length,
+        unexpected: fake.unexpected,
+      }, {
+        served: ["{\"accepted\":true}", "claude-sonnet-5.5", { input: 120, output: 30, cacheRead: 5, cacheWrite: 7 }, 75],
+        denied: ["SpendDenied", 1796083200000],
+        committed: ["SpendDenied", 200, 1796083200000, 0],
+        badDetail: ["Unavailable", "provider-http-400-invalid_request_error", undefined, 0],
+        orbioDenialBlocks: false,
+        keys: [
+          ["surplus-anthropic", "claude-sonnet-5.5", "surplus-test-key"],
+          ["surplus-anthropic", "claude-sonnet-5.5", "surplus-test-key"],
+          ["surplus-anthropic", "claude-sonnet-5.5", "surplus-test-key"],
+          ["surplus-anthropic", "claude-sonnet-5.5", "surplus-test-key"],
+          ["orbio", "anthropic/claude-sonnet-5.5", "orbio-test-key"],
+        ],
+        unanswered: 0,
+        unexpected: [],
+      }))
+    }
+  })
+})

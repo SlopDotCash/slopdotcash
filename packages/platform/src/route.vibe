@@ -1,0 +1,75 @@
+// spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+
+export type Method = "GET" | "POST" | "PUT" | "DELETE"
+
+export type Access = "public" | "session" | "sessionWrite" | "bearer" | "service"
+
+export interface PublicCache {
+  readonly scope?: "public"
+  readonly browserSeconds: number
+  readonly edgeSeconds?: number
+  readonly staleSeconds?: number
+  readonly mustRevalidate?: true
+  readonly immutable?: true
+}
+
+export interface PrivateCache {
+  readonly scope: "private"
+  readonly browserSeconds: number
+}
+
+export type Cache = "no-store" | "private" | PublicCache | PrivateCache
+
+export interface Refusal {
+  readonly status: number
+  readonly code: string
+  readonly message: string
+}
+
+export interface Route<B, A, X extends Access = Access> {
+  readonly method: Method
+  readonly path: `/${string}`
+  readonly access: X
+  readonly limitKib: number
+  readonly request: Schema.ConstraintCodec<B, unknown> | undefined
+  readonly answer: Schema.ConstraintCodec<A, unknown>
+  readonly rejected: string
+  readonly cache: Cache
+  readonly status?: 200 | 201 | 202
+  readonly cors?: ReadonlyArray<string>
+  readonly corsHeaders?: ReadonlyArray<string>
+  readonly actorMismatch?: Refusal
+}
+
+export type AnyRoute = Route<unknown, unknown, Access>
+
+export function route<B = undefined, A = unknown, X extends Access = Access>(descriptor: Route<B, A, X>): Route<B, A, X> {
+  return descriptor
+}
+
+export function cacheControl(cache: Cache): string {
+  if (cache === "no-store") return "no-store"
+  if (cache === "private") return "private, no-store"
+  if (cache.scope === "private") return `private, max-age=${cache.browserSeconds}`
+  return [
+    `public, max-age=${cache.browserSeconds}`,
+    ...cache.edgeSeconds === undefined ? [] : [`s-maxage=${cache.edgeSeconds}`],
+    ...cache.staleSeconds === undefined ? [] : [`stale-while-revalidate=${cache.staleSeconds}`],
+    ...cache.mustRevalidate === true ? ["must-revalidate"] : [],
+    ...cache.immutable === true ? ["immutable"] : [],
+  ].join(", ")
+}
+
+export function corsHeadersOf(route: AnyRoute): ReadonlyArray<string> {
+  return route.corsHeaders ?? [...(route.access === "bearer" ? ["authorization"] : []), ...(route.request === undefined ? [] : ["content-type"])]
+}
+
+function normalizedPath(path: string): string {
+  const segments = path.split("/").filter((segment) => segment !== "")
+  return `/${segments.map((segment) => segment.startsWith(":") ? ":" : segment).join("/")}`
+}
+
+export function duplicateRoutes(routes: ReadonlyArray<AnyRoute>): ReadonlyArray<string> {
+  const keys = routes.map((descriptor) => `${descriptor.method} ${normalizedPath(descriptor.path)}`)
+  return [...new Set(keys.filter((key, index) => keys.indexOf(key) !== index))]
+}

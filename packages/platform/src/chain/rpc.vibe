@@ -1,0 +1,111 @@
+// spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
+
+export error RpcUnavailable { method: string; endpoint: number; message: string }
+export error RpcMalformed { method: string; issue: string }
+export error RpcRefused {
+  method: string
+  code: number
+  message: string
+  data: string | undefined
+  get emptyRevert(): boolean { return this.data === "0x" && /revert/iu.test(this.message) }
+}
+export error WrongChain { expected: string; actual: string }
+
+export type RpcFailure = RpcUnavailable | RpcMalformed | RpcRefused | WrongChain
+
+export function boundedMessage(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error)
+  return text.split(/Request body:/u)[0]?.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>").replace(/\s+/gu, " ").trim().slice(0, 400) || "unknown error"
+}
+
+function scrubbed(text: string, urls: ReadonlyArray<string>) {
+  const secrets = urls.flatMap((url) => {
+    const parsed = URL.parse(url)
+    return parsed === null ? [url] : [url, parsed.host, parsed.hostname, `${parsed.pathname}${parsed.search}`].filter((part) => part.length > 1)
+  })
+  return boundedMessage(secrets.reduce((current, secret) => current.split(secret).join("<redacted>"), text))
+}
+
+export interface Identity {
+  readonly method: string
+  readonly expected: string
+  readonly read: (result: unknown) => string | undefined
+}
+
+export interface JsonRpcOptions {
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly timeoutMs: number
+  readonly maxBytes: number
+  readonly identity?: Identity
+}
+
+export interface JsonRpc {
+  readonly endpoints: number
+  call<A>(method: string, params: ReadonlyArray<unknown>, schema: Schema.Decoder<A>): A!RpcFailure
+}
+
+const Envelope = Schema.Struct({ id: Schema.Unknown, result: Schema.optionalKey(Schema.Unknown), error: Schema.optionalKey(Schema.Unknown) })
+
+const WireError = Schema.Struct({ code: Schema.Number, message: Schema.String, data: Schema.optionalKey(Schema.Unknown) })
+
+effect function request(client: HttpClient.HttpClient, url: string, endpoint: number, method: string, params: ReadonlyArray<unknown>, options: JsonRpcOptions, urls: ReadonlyArray<string>) {
+  const unavailable = (message: string) => new RpcUnavailable({ method, endpoint, message: scrubbed(message, urls) })
+  const payload = try orDie(Effect.try(() => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })))
+  const outgoing = HttpClientRequest.bodyText(HttpClientRequest.post(url, { acceptJson: true }), payload, "application/json")
+  const bytes = timeout(effect {
+    const response = client.execute(outgoing) catch effect (error) => { throw unavailable(`transport failure: ${boundedMessage(error)}`) }
+    if (response.status < 200 || response.status > 299) throw unavailable(`RPC HTTP failure: ${response.status}`)
+    const declared = Number(response.headers["content-length"] ?? "0")
+    if (declared > options.maxBytes) throw new RpcMalformed({ method, issue: `answer of ${declared} bytes exceeds ${options.maxBytes}` })
+    const body = response.arrayBuffer catch effect (error) => { throw unavailable(`unreadable answer: ${boundedMessage(error)}`) }
+    if (body.byteLength > options.maxBytes) throw new RpcMalformed({ method, issue: `answer of ${body.byteLength} bytes exceeds ${options.maxBytes}` })
+    return new Uint8Array(body)
+  }, Duration.millis(options.timeoutMs)) catch effect (error) => match (error) {
+    when RpcUnavailable: throw error;
+    when RpcMalformed: throw error;
+    default: throw unavailable(`timed out after ${options.timeoutMs} ms`);
+  }
+  const parsed = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new RpcMalformed({ method, issue: "answer is not JSON" })
+  }
+  const envelope = Schema.decodeUnknownEffect(Envelope)(parsed) catch effect () => { throw new RpcMalformed({ method, issue: "answer is not a JSON-RPC object" }) }
+  if (envelope.id !== 1) throw new RpcMalformed({ method, issue: "answer id does not match the request" })
+  if (envelope.error !== undefined && envelope.error !== null) {
+    const wire = Schema.decodeUnknownEffect(WireError)(envelope.error) catch effect () => { throw new RpcMalformed({ method, issue: "error object is malformed" }) }
+    throw new RpcRefused({ method, code: wire.code, message: scrubbed(wire.message, urls), data: typeof wire.data === "string" ? wire.data : undefined })
+  }
+  if (!("result" in envelope)) throw new RpcMalformed({ method, issue: "answer has no result" })
+  return envelope.result
+}
+
+export effect function jsonRpc(options: JsonRpcOptions) {
+  const client = try HttpClient.HttpClient
+  const urls = Redacted.value(options.urls)
+  const identified = new Set<number>()
+  effect function identify(url: string, endpoint: number) {
+    const identity = options.identity
+    if (identity === undefined || identified.has(endpoint)) return
+    const answer = try request(client, url, endpoint, identity.method, [], options, urls)
+    const actual = identity.read(answer)
+    if (actual === undefined) throw new RpcMalformed({ method: identity.method, issue: "identity answer is malformed" })
+    if (actual !== identity.expected) throw new WrongChain({ expected: identity.expected, actual })
+    identified.add(endpoint)
+  }
+  effect function attempt<A>(endpoint: number, method: string, params: ReadonlyArray<unknown>, schema: Schema.Decoder<A>): A!RpcFailure {
+    const url = urls[endpoint]
+    if (url === undefined) throw new RpcUnavailable({ method, endpoint, message: "no RPC endpoint is configured" })
+    const answered = effect {
+      try identify(url, endpoint)
+      const result = try request(client, url, endpoint, method, params, options, urls)
+      return Schema.decodeUnknownEffect(schema)(result) catch effect () => { throw new RpcMalformed({ method, issue: "result does not match the expected shape" }) }
+    }
+    return answered catch effect (error) => {
+      if ((error._tag === "RpcUnavailable" || error._tag === "RpcMalformed") && endpoint + 1 < urls.length) return try attempt(endpoint + 1, method, params, schema)
+      throw error
+    }
+  }
+  return {
+    endpoints: urls.length,
+    call: (method, params, schema) => attempt(0, method, params, schema),
+  } satisfies JsonRpc
+}

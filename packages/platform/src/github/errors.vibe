@@ -1,0 +1,61 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+export error NotFound { path: string }
+export error GitHubRefused { status: RefusalStatus; path: string; message: string }
+export error RateLimited { primaryDelay: number; retryAfter: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error GitHubUnavailable { status?: number; path: string }
+export error GitHubMalformed { path: string; issue: string }
+
+export type GitHubFailure = NotFound | GitHubRefused | RateLimited | GitHubUnavailable | GitHubMalformed
+
+export type RefusalStatus = 401 | 403 | 410 | 422
+
+export type Classification = "ok" | "notFound" | "refused" | "rateLimited" | "unavailable"
+
+export type ResponseHeaders = Readonly<Record<string, string | undefined>>
+
+export interface RateLimitHints {
+  readonly primaryDelay: number
+  readonly retryAfter: number
+}
+
+const digits = /^\d{1,15}$/u
+const maxReportedSeconds = 60 * 60
+
+export function isRefusal(status: number): status is RefusalStatus {
+  return status === 401 || status === 403 || status === 410 || status === 422
+}
+
+export function classify(status: number, headers: ResponseHeaders): Classification {
+  if (status >= 200 && status < 300) return "ok"
+  if (status === 429 || (status === 403 && (headers["x-ratelimit-remaining"] === "0" || headers["retry-after"] !== undefined))) return "rateLimited"
+  if (status === 404) return "notFound"
+  if (isRefusal(status)) return "refused"
+  return "unavailable"
+}
+
+function usableReset(headers: ResponseHeaders) {
+  const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
+  return headers["x-ratelimit-remaining"] === "0" && digits.test(reset) ? Number(reset) * 1_000 : undefined
+}
+
+function usableRetryAfter(headers: ResponseHeaders) {
+  const after = headers["retry-after"]?.trim() ?? ""
+  return digits.test(after) ? Number(after) * 1_000 : undefined
+}
+
+export function rateLimitHints(headers: ResponseHeaders, nowMillis: number): RateLimitHints {
+  const reset = usableReset(headers)
+  return { primaryDelay: reset === undefined ? 0 : Math.max(0, reset - nowMillis + 1_000), retryAfter: usableRetryAfter(headers) ?? 0 }
+}
+
+export function rateLimited(headers: ResponseHeaders, nowMillis: number): RateLimited {
+  const hints = rateLimitHints(headers, nowMillis)
+  const hinted = usableReset(headers) !== undefined || usableRetryAfter(headers) !== undefined
+  const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
+  return new RateLimited({
+    ...hints,
+    ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(Math.max(hints.primaryDelay, hints.retryAfter) / 1_000)) } : {}),
+    ...(digits.test(reset) ? { resetAt: Number(reset) * 1_000 } : {}),
+    secondary: headers["x-ratelimit-remaining"] !== "0",
+  })
+}
