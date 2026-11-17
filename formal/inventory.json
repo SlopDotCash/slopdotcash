@@ -8980,9 +8980,9 @@
     },
     {
       "path": "workers/slopbot/value-commit-pages.ts",
-      "sha256": "f8caa6293a9eaad5256b9a444335d3c6946efeb1968398784816f13a0098b92d",
+      "sha256": "9695efe125e883dd9c0d6bab8c6b8e702414ab9523c9b6366f4aa25ee77d94c8",
       "models": ["formal/models/points/value_source_cache.qnt"],
-      "candidateLines": [38, 39, 76],
+      "candidateLines": [38, 39, 117],
       "review": "mapped-abstraction"
     },
     {
@@ -9220,7 +9220,7 @@
     },
     {
       "path": "workers/slopbot/value-patch.ts",
-      "sha256": "f6192da7e06f2ae94721a545617a910bbb6e61a17c78d8723ce676c7e79a7dfc",
+      "sha256": "161daae62447810cbffd8ad7fa32bb9bcd48763e33a913c546a7d32c8091095d",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
       "candidateLines": [8, 33, 110],
       "review": "mapped-abstraction"
@@ -14590,17 +14590,25 @@
     },
     {
       "path": "formal/models/points/value_source_cache.qnt",
-      "sha256": "f84e89315b30af08da593d0796716d2df52313048369e2041d521f476b585aa1",
+      "sha256": "2fbc5b8f58edeeb7a2573f38b7cbb796d449ccd186b586264be6b177628453e0",
       "sources": [
         "scripts/value-ingestion.ts",
         "workers/slopbot/value-commit-pages.ts"
       ],
       "scenarios": [
         "currentPublicIdentityPermitsReuseTest",
+        "exactRepeatedAndDistinctValuesTest",
         "incompleteCannotRetainTest",
         "mutableCannotRetainTest",
         "newClientNeedsRepositoryTest",
-        "privateRepositoryCannotReuseTest"
+        "overflowIsReturnedWithoutRetentionTest",
+        "oversizedUncachedTextStillSharesTest",
+        "poolLifetimeIsPublicationTest",
+        "privateClientCanShareButNotReplayTest",
+        "privateRepositoryCannotReuseTest",
+        "shortTextDoesNotEnterPoolTest",
+        "textSharingCannotReplayTest",
+        "textSharingDoesNotAuthorizeTest"
       ]
     },
     {
