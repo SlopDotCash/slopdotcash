@@ -8057,13 +8057,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "a8973013b64c26cf23a77dc39578b66e35d353f1ab20c780fc1b6a5ecc00bf13",
+      "sha256": "eb1b017a686007e4f351db7d694721d1e99ff65e7a964a47e5e4c1666fe2d45a",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [301, 303, 322, 328, 342],
+      "candidateLines": [310, 312, 331, 337, 351],
       "review": "mapped-abstraction"
     },
     {

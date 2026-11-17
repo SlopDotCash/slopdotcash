@@ -11727,11 +11727,11 @@
 {"name":"consumeExactRateLimit","kind":"FunctionDeclaration","line":19,"sha256":"f54ff13ce31807934f2a6b118b36bd289556a9f696d26b50dd81907305cb0406","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"deleteExpiredRateLimits","kind":"FunctionDeclaration","line":80,"sha256":"c0dbdee5370a98c3e612542b3c2c5e79b0ecdc55e6a33b2d6b539c827fb8378b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
-{"path":"workers/notify/activity.ts","sha256":"a8973013b64c26cf23a77dc39578b66e35d353f1ab20c780fc1b6a5ecc00bf13","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"workers/notify/activity.ts","sha256":"eb1b017a686007e4f351db7d694721d1e99ff65e7a964a47e5e4c1666fe2d45a","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"parseActivityMailConfig","kind":"FunctionDeclaration","line":46,"sha256":"05aafc8c8b308b0ee4ef8752e38926eee4a07be470ecd594c2b27a7bc44aecf9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"activityMailEligibility","kind":"FunctionDeclaration","line":51,"sha256":"0ef0b0b339c105a3f0e30eeebeabcdbd45764f3a2bf8fc1b08dfe444aba6b196","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"stillProjectRecipient","kind":"FunctionDeclaration","line":86,"sha256":"160e22851a0fe2a38b8e100079580cafda24f6e655db2e8593718b97d5ab39cf","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"dispatchActivityMail","kind":"FunctionDeclaration","line":143,"sha256":"30cfc8458f814debd131badac72730eadfc3274b1fa292fa57c66d8581e80bea","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
+{"name":"stillProjectRecipient","kind":"FunctionDeclaration","line":87,"sha256":"a4615002bf17088fd84e8b5c2805674c8c89a3baf9260b80759e7e1c5c187847","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"dispatchActivityMail","kind":"FunctionDeclaration","line":152,"sha256":"30cfc8458f814debd131badac72730eadfc3274b1fa292fa57c66d8581e80bea","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"workers/notify/contracts.ts","sha256":"9f442645691a0010cad362b270025ea9bef15cbbd6f716da50953e4f2659efa8","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"retryableEmailRejection","kind":"FunctionDeclaration","line":15,"sha256":"e75c1623740b74a29e8edfdfbac52f7c9f5f99e008a240b807ff03219ce7fcfd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

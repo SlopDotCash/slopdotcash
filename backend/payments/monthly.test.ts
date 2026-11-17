@@ -32,6 +32,11 @@ import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
+import {
+  activityMailEligibility,
+  dispatchActivityMail,
+  parseActivityMailConfig,
+} from "../../workers/notify/activity";
 import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { runMonthlyAttester } from "../../workers/payment-executor/index";
 import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
@@ -39,10 +44,13 @@ import {
   runMonthlyCommitments,
   runMonthlyCoordinator,
 } from "../../workers/payments/index";
+import { handleEmailPreferences } from "../notifications/email";
+import type { NotificationsDependencies } from "../notifications/handler";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../projects/cloudflare-persistence";
+import type { SecurityD1Database } from "../security/case-store";
 import { handlePaymentsApi } from "./handler";
 import {
   CUT_NOTICE_MS,
@@ -3997,6 +4005,76 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
     expect(detail).toContain("The month locks at 2082-12-04 00:00 UTC");
     expect(detail).toContain("not before 2082-12-03 23:30 UTC");
     expect(detail).not.toMatch(/earned|owed|—/u);
+  });
+
+  test("a cut's notice reaches the opted-in contributor's activity email", async () => {
+    clock = beforeCutoff;
+    const config = parseActivityMailConfig(
+      JSON.stringify({
+        inboxUrl: "https://staging.slop.cash/inbox",
+        recipients: {
+          [B]: {
+            email: "contributor@example.com",
+            verifiedAt: clock.toISOString(),
+            evidenceReference: "private-operator-receipt",
+          },
+        },
+      }),
+    );
+    if (!config) throw new Error("Activity mail fixture invalid");
+    const preference = async (method: string, body?: unknown) => {
+      const response = await handleEmailPreferences(
+        new Request("https://slop.test/api/v1/notifications/email", {
+          method,
+          headers: {
+            origin: "https://slop.test",
+            "content-type": "application/json",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+        {
+          db: db as unknown as NotificationsDependencies["db"],
+          sessionActor: async () => ({ githubId: B }),
+          now: () => clock,
+          eligibility: (id) => activityMailEligibility(config, id, clock),
+        },
+      );
+      if (!response) throw new Error("Preference route missing");
+      return (await response.json()) as { destinationVersion?: string };
+    };
+    // Contributor B, not the project's steward, opts in before the cut.
+    const { destinationVersion } = await preference("GET");
+    await preference("POST", { enabled: true, destinationVersion });
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    const sent: string[] = [];
+    await dispatchActivityMail({
+      db: db as unknown as SecurityD1Database,
+      config,
+      fromAddress: "notifications@slop.cash",
+      now: () => clock,
+      sendEmail: async (_from, _to, mime) => {
+        sent.push(mime);
+      },
+    });
+    expect(
+      sqlite
+        .query(
+          "SELECT event_key,recipient_github_id,state FROM activity_notification_outbox",
+        )
+        .all(),
+    ).toEqual([
+      {
+        event_key: `monthly-cut:${project.id}:2082-11:1`,
+        recipient_github_id: B,
+        state: "provider-accepted",
+      },
+    ]);
+    expect(sent).toHaveLength(1);
   });
 
   test("with automatic finalization on, a cut is refused in the final 24 hours before the cutoff", async () => {

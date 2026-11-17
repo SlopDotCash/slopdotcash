@@ -79,7 +79,8 @@ const PROJECT_OWNER_KINDS = new Set([
 /**
  * PRD section 9: recheck roles before sending. A payout exception mails only
  * its current audience (the user steward, or an Organization steward's lister), and an owner notice only a current
- * owner. A vetting ban also reaches its current affected contributors and
+ * owner. An owner cut's notice is a payout exception for the contributor its
+ * cut record names (PRD section 6). A vetting ban also reaches its current affected contributors and
  * staff; the shared event key can retain an owner link for a staff recipient.
  * A contributor-flag pause reaches current staff and owners.
  */
@@ -93,6 +94,12 @@ async function stillProjectRecipient(
       `SELECT n.kind,
               n.action_path,
               n.recipient_github_id IN ${PAYOUT_EXCEPTION_RECIPIENTS("n.subject")} AS steward,
+              EXISTS (
+                SELECT 1 FROM monthly_allocation_cut_reasons c
+                 WHERE n.event_key = 'monthly-cut:' || c.project_id || ':' || c.period || ':' || c.sequence
+                   AND c.project_id = n.subject
+                   AND c.github_user_id = n.recipient_github_id
+              ) AS cut_contributor,
               n.recipient_github_id IN ${PROJECT_OWNERS("n.subject")} AS owner,
               EXISTS (
                 SELECT 1 FROM project_enforcements e
@@ -110,12 +117,14 @@ async function stillProjectRecipient(
       kind: string;
       action_path: string;
       steward: number | null;
+      cut_contributor: number;
       owner: number | null;
       vetting_ban: number;
       affected_contributor: number;
     }>();
   if (!notice) return true;
-  if (notice.kind === "payout_exception") return notice.steward === 1;
+  if (notice.kind === "payout_exception")
+    return notice.steward === 1 || notice.cut_contributor === 1;
   // The owner writer can win the shared event key before the staff writer.
   // Recheck the actual audience, not the link that happened to be retained.
   if (notice.kind === "project_banned" && notice.vetting_ban === 1)
