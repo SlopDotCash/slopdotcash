@@ -491,7 +491,11 @@ async function reserveBindingConsentBudget(
   for (const [key, attempt] of prior) {
     if (
       attempt === null &&
-      ![...prior.keys()].some((name) => name.startsWith(`${key}:reverted:`)) &&
+      ![...prior.keys()].some(
+        (name) =>
+          name.startsWith(`${key}:reverted:`) ||
+          name.startsWith(`${key}:rotated:`),
+      ) &&
       ![...observed.values()].some(
         (record) => record?.key === key && record.attempt,
       )
@@ -2015,6 +2019,31 @@ async function cancelObsoleteStoredBinding(
     );
   // Canonical receipts win over current D1 state, including after a lost send.
   if ((await observe()).state !== "pending") return { settled: true };
+  // A binding whose broadcast was lost before a registrar rotation can never
+  // land: its bytes were signed by an authority the factory no longer
+  // recognizes, so including them can only revert, and no same-nonce
+  // cancellation can be signed for another sender's nonce. Retire the journal
+  // entry locally with a tombstone instead of failing every scheduled run on
+  // it; the contributor can bind again with fresh bytes once the signer is
+  // swapped, and the tombstone keeps the history auditable.
+  const sender = await recoverTransactionAddress({
+    serializedTransaction: attempt.rawTransaction as `0x02${string}`,
+  });
+  const authority = await call(deployment, "0x13fa3c08", 1);
+  if (!same(`0x${authority[0].slice(24)}`, sender)) {
+    const retired = await env.JOURNAL.transaction(async (store) => {
+      const current = await store.get<Attempt | null>(key);
+      if (!current || current.transactionId !== attempt.transactionId)
+        return false;
+      await store.put(`${key}:rotated:${attempt.transactionId}`, {
+        ...current,
+        rotatedAuthority: `0x${authority[0].slice(24)}`.toLowerCase(),
+      });
+      await store.put(key, null);
+      return true;
+    });
+    if (retired) return { settled: true };
+  }
   await assertBindingConsentBudget(env.JOURNAL, deployment, attempt);
   await assertIdentitySigner(env, deployment);
   const {

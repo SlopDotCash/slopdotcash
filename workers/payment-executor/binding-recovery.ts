@@ -78,7 +78,10 @@ const signatureScalar = (value: unknown): Hex => {
   return `0x${value.slice(2).padStart(64, "0")}`;
 };
 
-/** Observe one already-finalized winner. This environment has no signer or key. */
+/** Observe one already-finalized winner. This environment has no signer or key.
+ * A finalized receipt is read before the reviewed pin is checked: the receipt
+ * is an on-chain fact, so a binding mined before a rotation still reconciles
+ * after the pin is updated. */
 export async function reconcileBindingWinner(
   env: Environment,
   input: BindingRecoveryInput,
@@ -121,6 +124,13 @@ export async function reconcileBindingWinner(
   const deployment = await preflightEvmDeployment(env, input);
   const raw = attempt.rawTransaction;
   const original = parseTransaction(raw);
+  // The recovered sender is checked against the reviewed pin only after a
+  // finalized receipt is read below: a receipt is an on-chain fact, so a
+  // binding mined before a rotation still reconciles after the pin names the
+  // new authority. The structural checks still throw immediately.
+  const sender = await recoverTransactionAddress({
+    serializedTransaction: raw as `0x02${string}`,
+  });
   if (
     !raw.startsWith("0x02") ||
     !same(keccak256(raw), attempt.transactionId) ||
@@ -129,13 +139,7 @@ export async function reconcileBindingWinner(
     (original.value ?? 0n) !== 0n ||
     !original.data ||
     typeof original.nonce !== "number" ||
-    !Number.isSafeInteger(original.nonce) ||
-    !same(
-      await recoverTransactionAddress({
-        serializedTransaction: raw as `0x02${string}`,
-      }),
-      deployment.identityAuthority,
-    )
+    !Number.isSafeInteger(original.nonce)
   )
     throw new Error("Stored binding identity differs");
   decodeFunctionData({ abi: storedBindingAbi, data: original.data });
@@ -208,6 +212,18 @@ export async function reconcileBindingWinner(
           : "original_reverted",
     };
   } else {
+    // No finalized receipt for the original yet. Only now is the recovered
+    // sender checked against the reviewed pin: when the registrar has rotated
+    // the authority and the operator has updated the pin, the old signer
+    // differs, and throwing here would wedge the scheduled run on this key
+    // before the caller can retire bytes that can never land. The scheduled
+    // path (allowMissingReceipt) therefore reports pending and lets the
+    // caller run its rotated-authority retirement; the reconcile endpoint
+    // still throws, as before.
+    if (!same(sender, deployment.identityAuthority)) {
+      if (allowMissingReceipt) return { state: "pending" as const };
+      throw new Error("Stored binding identity differs");
+    }
     if (same(input.winnerTransactionId, attempt.transactionId)) {
       if (allowMissingReceipt) return { state: "pending" as const };
       throw new Error("Original binding receipt unavailable");

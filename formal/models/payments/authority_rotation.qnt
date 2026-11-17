@@ -6,7 +6,11 @@
 // The EVM journal is a separately bounded refinement: an old already-signed
 // binding can arrive after rotation and revert, while a binding mined before
 // rotation remains usable. Reconciliation needs canonical finalized evidence
-// even after this signer has lost authority. Two keys and two binding versions.
+// even after this signer has lost authority. When the broadcast was lost and
+// no receipt exists, the scheduled run retires the held entry locally with a
+// tombstone instead of waiting for a receipt that can never arrive; the old
+// bytes still revert if delivered outside the service. Two keys and two
+// binding versions.
 module authority_rotation {
   type S = { chain: str, current: int, pending: int, confirmed: bool,
     ready: bool, bindings: int, awards: int, bindingVersion: int,
@@ -42,10 +46,23 @@ module authority_rotation {
   action finalizeReceipt = all {s.held,s.canonical,s'=s.with("finalized",true)}
   action reconcile = all {s.held,s.canonical,s.finalized,
     s'=s.with("held",false).with("attemptState","reconciled")}
+  // The broadcast was lost before the rotation, so no receipt exists and the
+  // old bytes can never land as a valid binding: the scheduled run retires
+  // the held journal entry locally (tombstone in the implementation) instead
+  // of failing on it every run. Only an entry signed by the replaced
+  // authority can retire this way; a receipted binding reconciles instead.
+  action retireRotatedBinding = all {s.held,
+    Set("signed","broadcast").contains(s.attemptState),s.attemptBy!=s.current,
+    s'=s.with("held",false).with("attemptState","retired")}
+  // The retired bytes delivered outside the service still revert on-chain
+  // without changing the binding, even though the journal entry is gone.
+  action deliverRetiredBinding = all {not(s.held),s.attemptState=="retired",
+    s.attemptBy!=s.current,s'=s.with("attemptState","reverted")}
   action payExisting = all {s.bindingVersion>0,not(s.paid),s'=s.with("paid",true)}
   action step = any { evm, propose(1), propose(2), confirm, waitDelay, cancel, execute,
     walletConsent,journalBinding,broadcastBinding,delayedDelivery,observeCanonical(false),
-    observeCanonical(true),finalizeReceipt,reconcile,payExisting,s' = s }
+    observeCanonical(true),finalizeReceipt,reconcile,payExisting,retireRotatedBinding,
+    deliverRetiredBinding,s' = s }
   val invariant = all {s.bindings == 2,s.awards == 3,s.current > 0,
     s.bindingVersion<=2,s.paid implies s.bindingVersion>0,
     s.finalized implies s.canonical,
@@ -59,6 +76,14 @@ module authority_rotation {
     .then(journalBinding).then(propose(2)).then(execute).then(delayedDelivery)
     .then(observeCanonical(true)).then(finalizeReceipt).then(reconcile)
     .expect(s.bindingVersion==0 and not(s.held) and s.current==2 and invariant)
+  // Lost broadcast across rotation: the first scheduled run retires the held
+  // entry locally (no receipt exists), and the old bytes delivered outside
+  // the service afterwards still revert without changing the binding.
+  run rotatedBindingRetiresWithoutReceiptTest = init.then(evm).then(walletConsent)
+    .then(journalBinding).then(propose(2)).then(execute).then(retireRotatedBinding)
+    .then(deliverRetiredBinding)
+    .expect(s.bindingVersion==0 and not(s.held) and s.current==2
+      and s.attemptState=="reverted" and invariant)
   run noncanonicalReceiptKeepsBindingHeldTest = init.then(evm).then(walletConsent)
     .then(journalBinding).then(delayedDelivery).then(observeCanonical(false))
     .expect(s.held).then(finalizeReceipt.fail())
