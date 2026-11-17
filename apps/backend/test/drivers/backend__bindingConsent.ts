@@ -6,6 +6,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { Notices } from "@repo/ports/operations";
 import { Audit } from "@repo/ports/security";
+import { BindingAttempts } from "@repo/ports/settlement";
 import type { Driver, Options } from "../../gen/backend__bindingConsent.conformance.ts";
 import type { Binding, CaseAccess, Consent, Deployment, Event, PaymentEvidence } from "../../gen/backend__bindingConsent.ts";
 import type { Event as WalletEvent, WalletChain } from "../../gen/backend__wallets.ts";
@@ -58,8 +59,12 @@ await db.batch([
   db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'paused', 1, ?, ?, ?, ?)").bind(projectId, manifest, "b".repeat(64), seededAt, seededAt),
 ]);
 const unrecorded = Layer.mergeAll(
-  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]) }),
+  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]), payoutRecipient: (project) => Effect.succeed(project.stewardGithubId) }),
   Layer.succeed(Audit, { statements: () => Effect.succeed([]) }),
+  Layer.succeed(BindingAttempts, {
+    readiness: () => Effect.succeed({ text: "SELECT NULL AS state WHERE 0", params: [] }),
+    admit: (input) => Effect.succeed({ text: "SELECT ? AS admitted", params: [input.attemptId] }),
+  }),
 );
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, unrecorded));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
@@ -208,11 +213,20 @@ function scopeOf(track: Track): Scope<undefined, never, never> {
   };
 }
 
+async function privateCaseOf(track: Track, obligation: number): Promise<string | undefined> {
+  const evidence = track.outside.payments.find((payment) => payment.obligation === obligation);
+  return evidence === undefined || evidence.privateCase <= 0 ? undefined : caseFor(track, evidence.privateCase);
+}
+
 async function factsFor(track: Track, event: Event): Promise<Facts> {
   if (event.type === "bindAuthorize") return { kind: "consent", signature: `0x${hex(`${generation}:${track.key}:${track.made++}`)}` };
+  if (event.type === "solanaAdmitAttempt") {
+    const attempt = `${generation}-${track.key}-${track.made++}`;
+    return { kind: "admit", obligationId: hex(`${generation}:${track.key}:obligation-${event.obligation}`), attemptId: `attempt-${attempt}`, privateCaseId: await privateCaseOf(track, event.obligation) };
+  }
   if (event.type !== "solanaPrepare" && event.type !== "solanaComplete" && event.type !== "solanaRefused") return noFacts;
-  const evidence = track.outside.payments.find((payment) => payment.obligation === event.obligation);
-  return evidence === undefined || evidence.privateCase <= 0 ? noFacts : { kind: "access", caseId: await caseFor(track, evidence.privateCase) };
+  const caseId = await privateCaseOf(track, event.obligation);
+  return caseId === undefined ? noFacts : { kind: "access", caseId };
 }
 
 async function bindingStep(track: Track, event: Event, by: string): Promise<"accepted" | "refused"> {

@@ -36,6 +36,8 @@ function viewOf(projectKey: string): ProjectView | undefined {
     listingTier: current.listed ? "Community" : "Retired",
     retirement: current.listed ? "NotRetired" : "OwnerRemoved",
     stewardGithubId: "1",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: current.repositoriesRegistered ? [{ id: "1", nodeId: "R_1", fullName: path, integrationBranch: "main", aliases: [] }] : [],
     closureConsent: true,
   };

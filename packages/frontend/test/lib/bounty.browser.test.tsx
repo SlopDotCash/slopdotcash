@@ -4,7 +4,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { afterEach, describe, expect, it } from "vitest";
-import { Deployment, originsOf } from "../../src/platform/config.vibe";
+import { Deployment } from "../../src/platform/config.vibe";
+import { deploymentOrigins } from "@repo/platform/config";
 import { locks } from "../../src/platform/locks.vibe";
 import { localStore, sessionStore } from "../../src/platform/storage.vibe";
 import { BrowserSession, sessionServices } from "../../src/session/browserSession.vibe";
@@ -111,7 +112,7 @@ function fakeSite(wallet: ReturnType<typeof fakeWallet>) {
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: { ...originsOf("production"), site, api: site, browserOrigins: new Set([site]) },
+  origins: { ...deploymentOrigins("production"), site, api: site, browserOrigins: new Set([site]) },
   pageOrigin: site,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),

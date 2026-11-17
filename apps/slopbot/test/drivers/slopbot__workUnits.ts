@@ -22,7 +22,7 @@ if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${fa
 
 const quiet = Layer.mergeAll(
   Layer.succeed(ProjectAudience, { listedBy: () => Effect.succeed(sql`SELECT NULL AS recipient WHERE 0`), owners: () => Effect.succeed(sql`SELECT NULL AS recipient WHERE 0`) }),
-  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]) }),
+  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]), payoutRecipient: (project) => Effect.succeed(project.stewardGithubId) }),
 );
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOPBOT_DB")), webCrypto, quiet));
 

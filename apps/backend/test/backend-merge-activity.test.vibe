@@ -1,0 +1,206 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { refreshMergeActivity } from "../src/projects/mergeActivity/job.vibe"
+import { mergeActivityAnswer } from "../src/projects/mergeActivity/routes.vibe"
+
+const hour = 3_600_000
+const start = 1_794_916_800_000
+const t0 = "2026-11-17T12:00:00.000Z"
+const t21 = "2026-11-18T09:30:00.000Z"
+const t43 = "2026-11-19T07:00:00.000Z"
+const t44 = "2026-11-19T08:00:00.000Z"
+const latestMerge = "2026-11-17T10:00:00.000Z"
+const owner = "slop-test"
+const many = Array.from({ length: 16 }, (_, index) => `${owner}/r${String(index + 1).padStart(2, "0")}`)
+
+service World {
+  readonly fake: GitHubFake
+  readonly clock: SettableClock
+  readonly db: D1Database
+}
+
+error MigrationFailed { file: string }
+
+schema Failure { project_id: string; repository: string; failure: string }
+
+function iso(hours: number) {
+  return new Date(start + hours * hour).toISOString()
+}
+
+effect function populate(fake: GitHubFake) {
+  const world = fake.world
+  try orDie(Effect.try(() => {
+    world.addOrg({ id: 5000, login: owner })
+    world.addUser({ id: 5001, login: "maint" })
+    world.addUser({ id: 5002, login: "alice" })
+    world.addUser({ id: 5003, login: "bob" })
+    world.addUser({ id: 5004, login: "carol" })
+    world.addUser({ id: 5005, login: "helper[bot]", type: "Bot" })
+    world.addMember(owner, "maint")
+    world.addRepo({ id: 7001, owner, name: "alpha" })
+    world.addRepo({ id: 7002, owner, name: "beta" })
+    many.forEach((path, index) => world.addRepo({ id: 7101 + index, owner, name: path.split("/")[1] ?? "" }))
+    world.addInstallation({ id: 77, account: owner, repositories: "all", permissions: { pull_requests: "read" } })
+    const repo = `${owner}/alpha`
+    world.addPull({ repo, author: "alice", createdAt: iso(-240) })
+    const answered = world.addPull({ repo, author: "bob", createdAt: iso(-240) })
+    world.addReview(repo, answered, { author: "maint", state: "COMMENTED", submittedAt: iso(-216) })
+    world.addPull({ repo, author: "alice", draft: true, createdAt: iso(-240) })
+    world.addPull({ repo, author: "helper[bot]", createdAt: iso(-240) })
+    world.addPull({ repo, author: "maint", createdAt: iso(-240) })
+    world.addPull({ repo, author: "carol", createdAt: iso(-48) })
+    world.addPull({ repo, author: "alice", createdAt: iso(-120), mergedAt: iso(-96) })
+    world.addPull({ repo, author: "bob", createdAt: iso(-72), mergedAt: iso(-24) })
+    world.addPull({ repo, author: "maint", createdAt: iso(-3), mergedAt: iso(-2) })
+    world.addPull({ repo, author: "alice", createdAt: iso(-1440), mergedAt: iso(-1416) })
+  }))
+}
+
+function manifest(id: string, status: string, paths: ReadonlyArray<string>) {
+  return JSON.stringify({ id, status, listingTier: "community", repositories: paths.map((path) => ({ id: path, githubUrl: `https://github.com/${path}` })) })
+}
+
+const Started = Layer.effect(World, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "merge-activity" } })), (running) => promise(() => running.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) throw new MigrationFailed({ file: broken.file })
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  const clock = settableClock(start)
+  const fake = try orDie(Effect.try(() => githubFake({ now: () => clock.now() })))
+  try populate(fake)
+  return { fake, clock, db }
+})
+
+const Shell = Layer.unwrap(effect {
+  const { fake, clock, db } = try World
+  const viaFake: Fetcher = { fetch: (sent) => Promise.resolve(fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]> }
+  const http = outboundVia(viaFake)
+  const app = Layer.provide(githubApp({ appId: fake.app.id, privateKey: Redacted.make(fake.app.privateKeyPem), authority: fake.authority, userAgent: "slop.cash-merge-activity" }), Layer.mergeAll(http, webCrypto, clock.layer))
+  return Layer.mergeAll(d1(db), http, app)
+})
+
+effect function project(id: string, status: string, paths: ReadonlyArray<string>) {
+  const text = try orDie(Effect.try(() => manifest(id, status, paths)))
+  try (try D1).run(sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${id}, ${status}, 1, ${text}, ${"a".repeat(64)}, ${t0}, ${t0})
+    ON CONFLICT (id) DO UPDATE SET status = excluded.status, manifest = excluded.manifest`)
+}
+
+effect function counted(before: number) {
+  const { fake } = try World
+  const asked = fake.requests.slice(before)
+  return {
+    graphql: asked.filter((request) => request.method === "POST" && request.url.endsWith("/graphql")).length,
+    beta: asked.some((request) => request.url.includes("/beta")),
+  }
+}
+
+effect function refreshed(advanceMillis: number) {
+  const { clock, fake } = try World
+  clock.advance(advanceMillis)
+  const before = fake.requests.length
+  provide clock.layer {
+    const counts = try refreshMergeActivity()
+    return { ...counts, ...try counted(before) }
+  }
+}
+
+function alphaAt(repository: string, observedAt: string, lastAttemptFailed: boolean) {
+  return { repository, observedAt, lastAttemptFailed, lastMergedAt: latestMerge, waitingOutside: 1, waitingCapped: false, mergedOutsideLast30Days: 2, medianHoursToMerge: 36 }
+}
+
+function emptyAt(repository: string, observedAt: string) {
+  return { repository, observedAt, lastAttemptFailed: false, lastMergedAt: null, waitingOutside: 0, waitingCapped: false, mergedOutsideLast30Days: 0, medianHoursToMerge: null }
+}
+
+const gone = { repository: "gone-org/gone", observedAt: "2026-11-10T00:00:00.000Z", lastAttemptFailed: false, lastMergedAt: "2026-11-09T00:00:00.000Z", waitingOutside: 3, waitingCapped: false, mergedOutsideLast30Days: 4, medianHoursToMerge: 12.5 }
+
+function answerOf(projects: ReadonlyArray<{ readonly projectId: string; readonly repositories: ReadonlyArray<unknown> }>) {
+  return { schema: "slop-merge-activity-v1", waitingDays: 7, medianWindowDays: 30, projects }
+}
+
+layer(Layer.provideMerge(Shell, Started), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Merge activity refresh with a failed read keeps last values with their date (spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date")', () => effect {
+    const { fake } = try World
+    const db = try D1
+    try project("alpha", "active", [`${owner}/alpha`])
+    try project("beta", "active", [`${owner}/beta`])
+    try project("noapp", "active", ["elsewhere/noapp"])
+    try db.run(sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours) VALUES ('gone', 'gone-org/gone', '2026-11-10T00:00:00.000Z', '2026-11-10T00:00:00.000Z', NULL, '2026-11-09T00:00:00.000Z', 3, 0, 4, 12.5)`)
+
+    const first = try refreshed(0)
+    const firstServed = try mergeActivityAnswer()
+    const unchanged = try refreshed(hour / 2)
+
+    try orDie(Effect.try(() => fake.failNext("POST /graphql", { status: 502 })))
+    const failing = try refreshed(21 * hour)
+    const failingServed = try mergeActivityAnswer()
+    const failures = try rows(Failure, sql`SELECT project_id, repository, failure FROM repository_merge_activity WHERE failure IS NOT NULL ORDER BY project_id, repository`)
+
+    try project("beta", "paused", [`${owner}/beta`])
+    try project("alpha", "active", [`${owner}/alpha-renamed`])
+    try orDie(Effect.try(() => fake.world.renameRepo(`${owner}/alpha`, `${owner}/alpha-renamed`)))
+    const moved = try refreshed(21.5 * hour)
+    const movedServed = try mergeActivityAnswer()
+
+    try project("many", "active", many)
+    const bounded = try refreshed(hour)
+    const boundedServed = try mergeActivityAnswer()
+    const rest = try refreshed(hour / 2)
+    const restServed = try mergeActivityAnswer()
+    const listedOf = (answer: typeof restServed) => answer.projects.find((found) => found.projectId === "many")?.repositories.map((repository) => repository.repository) ?? []
+
+    try Effect.try(() => assert.deepStrictEqual({
+      first,
+      firstServed,
+      unchanged,
+      failing,
+      failingServed,
+      failures,
+      moved,
+      movedServed,
+      bounded,
+      boundedMany: listedOf(boundedServed),
+      boundedRow: boundedServed.projects.find((found) => found.projectId === "many")?.repositories[0],
+      rest,
+      restMany: listedOf(restServed),
+    }, {
+      first: { read: 2, failed: 1, graphql: 4, beta: true },
+      firstServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, false)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t0)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      unchanged: { read: 0, failed: 0, graphql: 0, beta: false },
+      failing: { read: 1, failed: 2, graphql: 3, beta: true },
+      failingServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha`, t0, true)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      failures: [
+        { project_id: "alpha", repository: `${owner}/alpha`, failure: "github-502" },
+        { project_id: "noapp", repository: "elsewhere/noapp", failure: "app-not-installed" },
+      ],
+      moved: { read: 1, failed: 1, graphql: 2, beta: false },
+      movedServed: answerOf([
+        { projectId: "alpha", repositories: [alphaAt(`${owner}/alpha-renamed`, t43, false)] },
+        { projectId: "beta", repositories: [emptyAt(`${owner}/beta`, t21)] },
+        { projectId: "gone", repositories: [gone] },
+      ]),
+      bounded: { read: 15, failed: 0, graphql: 30, beta: false },
+      boundedMany: many.slice(0, 15),
+      boundedRow: emptyAt(many[0] ?? "", t44),
+      rest: { read: 1, failed: 1, graphql: 2, beta: false },
+      restMany: many,
+    }))
+  })
+})

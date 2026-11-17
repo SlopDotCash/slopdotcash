@@ -1,10 +1,11 @@
-// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"
+// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
 import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
-import { type DecisionRole, EnforcementRecord, type RecordDetails } from "@repo/ports/security"
+import { type DecisionRole, EnforcementRecord, EnforcementRows, type RecordDetails, type ReinstatementRead } from "@repo/ports/security"
 import type { Event as AccessEvent } from "../../../gen/backend__access.effect.vibe"
-import { type Event, type Registry, apply } from "../../../gen/backend__projectComposition.effect.vibe"
+import { type Event, type Registry, apply, canReinstate } from "../../../gen/backend__projectComposition.effect.vibe"
+import { allFreshAtPin, pinsComplete, platform } from "../../../gen/security__enforcement.effect.vibe"
 import { AccessRoutes, projectContract } from "../../access/routes.vibe"
 import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, decisionOf, dryRun, loadAccess, maliceDecision, projectAppeal, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
 import { AppealRequest, EnforcementRequest, enforcementDecision, enforcementPreview, projectAppeals } from "../../client/admin.vibe"
@@ -17,7 +18,7 @@ import { type ProjectRow, type Row, boundedText, positiveInteger, projectIdPatte
 import { recordView } from "./views.vibe"
 
 const bodyBytes = 65536
-const actions = ["quarantine", "ban", "request_reinstatement", "reinstate_accounts", "deny_reinstatement"] as const
+const actions = ["quarantine", "ban", "request_reinstatement", "reinstate", "reinstate_accounts", "deny_reinstatement"] as const
 type Action = typeof actions[number]
 const decisionRows = postAdminProjectsByIdEnforcement
 
@@ -32,8 +33,10 @@ interface Request {
   readonly scope: "account" | "any"
 }
 
+type Sent = Parameters<typeof send>[0] & { readonly observations: ReadonlyArray<Event> }
+
 type Plan =
-  | { readonly kind: "composition"; readonly preview: Preview; readonly action: Parameters<typeof send>[0]; readonly record: RecordDetails }
+  | { readonly kind: "composition"; readonly preview: Preview; readonly action: Sent; readonly record: RecordDetails }
   | { readonly kind: "access"; readonly preview: Preview; readonly event: AccessEvent; readonly by: number; readonly context: Context }
 
 interface Preview {
@@ -102,7 +105,7 @@ function resultOf(before: Registry, after: Registry): string {
 }
 
 function revisionReason(action: Action): string {
-  return action === "ban" ? "Banned by a project moderator" : "Quarantined by a project moderator"
+  return action === "reinstate" ? "Reinstated after independent review" : action === "ban" ? "Banned by a project moderator" : "Quarantined by a project moderator"
 }
 
 function compositionPreview(request: Request, name: string, before: Registry, after: Registry, pendingReason: string | null, bans: ReadonlyArray<GithubActor>): Preview {
@@ -200,14 +203,14 @@ function decisionRole(request: Request, registry: Registry): DecisionRole {
   return by === registry.project.steward ? "project-steward" : by === registry.project.creator ? "project-applicant" : "project-moderator"
 }
 
-effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>) {
+effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>, observations: ReadonlyArray<Event> = []) {
   const by = Number(request.actor.githubId)
   const after = try apply(registry, event, by)
   const alongside = event.type === "decideMalice" ? (try maliceDecision(access, by, request.projectId, registry.security.journal.length + 1, malice)).writes : []
   const preview = compositionPreview(request, try projectName(row), registry, after, pendingReason, malice)
   const revision = { manifestText: row.manifest, reason: revisionReason(request.action), actor: { githubId: request.actor.githubId, login: request.actor.login } }
   const record: RecordDetails = { kind: "decision", reason: request.reason, evidenceReference: request.evidenceReference, actor: { githubId: request.actor.githubId, login: request.actor.login }, role: decisionRole(request, registry) }
-  return { kind: "composition", preview, action: { projectId: request.projectId, event, by, revision, alongside }, record } satisfies Plan
+  return { kind: "composition", preview, action: { projectId: request.projectId, event, by, revision, alongside, observations }, record } satisfies Plan
 }
 
 effect function commit(plan: Plan) {
@@ -216,6 +219,30 @@ effect function commit(plan: Plan) {
     try send(plan.action)
   }
   return undefined
+}
+
+function observationsOf(read: ReinstatementRead): ReadonlyArray<Event> {
+  return [
+    ...read.evidence.map((entry): Event => ({ type: "observeEvidence", repository: Number(entry.repository), evidenceRead: { assessment: Number(entry.evidenceRead.assessment), present: entry.evidenceRead.present } })),
+    { type: "observePins", pins: read.pins.map((entry) => ({ repository: Number(entry.repository), assessment: Number(entry.assessment), pin: entry.pin })) },
+  ]
+}
+
+effect function observedFor(projectId: string, registry: Registry) {
+  const observations = observationsOf(try (try EnforcementRows).reinstatement(projectId))
+  let observed = registry
+  for (const observation of observations) {
+    const next = apply(observed, observation, platform) catch effect () => { throw refused(decisionRows.vettingRequiredReinstatementRequiresAFresh) }
+    observed = next
+  }
+  return { observations, observed }
+}
+
+effect function reinstatePlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, fence: { readonly revision: number; readonly sequence: number }, pendingReason: string | null) {
+  const { observations, observed } = try observedFor(request.projectId, registry)
+  const scans = observed.security
+  if (!canReinstate(observed, Number(request.actor.githubId), fence) && !(pinsComplete(scans, scans.pinReads) && allFreshAtPin(scans, scans.pinReads))) throw refused(decisionRows.vettingRequiredReinstatementRequiresAFresh)
+  return try compositionPlan(request, row, observed, access, { type: "reinstate", fence }, pendingReason, [], observations)
 }
 
 effect function planOf(request: Request, row: ProjectRow, registry: Registry, access: Loaded) {
@@ -231,6 +258,7 @@ effect function planOf(request: Request, row: ProjectRow, registry: Registry, ac
       if (decidesMalice) return try compositionPlan(request, row, registry, access, { type: "decideMalice", fence, accounts: request.accounts.map((account) => Number(account.githubId)) }, pendingReason, request.accounts)
       return try compositionPlan(request, row, registry, access, { type: "ban", fence, policy }, pendingReason, [])
     }
+    case "reinstate": return try reinstatePlan(request, row, registry, access, fence, pendingReason)
     case "reinstate_accounts": return try accountPlan(request, row, registry, access)
     case "deny_reinstatement": {
       if (registry.security.appeal === "AppealRequested") return try compositionPlan(request, row, registry, access, { type: "denyAppeal", fence }, pendingReason, [])

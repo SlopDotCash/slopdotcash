@@ -8,6 +8,7 @@ import { rolesFrom } from "@repo/platform/roles"
 import type { Handler } from "@repo/platform/testing"
 import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { jsonValue } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { planned } from "../src/cases/actions.vibe"
 import { AwardClearances } from "../src/cases/clearance.vibe"
@@ -16,6 +17,7 @@ import { acted, opened } from "../src/cases/routes.vibe"
 import { committed, observedCase } from "../src/cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../src/client/refusals.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
+import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { type World, maintainer, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 import { receiptNotices } from "./support/intake/notices.vibe"
@@ -50,6 +52,8 @@ function fixture(projectId: string): ProjectView {
     listingTier: "Community",
     retirement: "NotRetired",
     stewardGithubId: "900",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }
@@ -267,6 +271,26 @@ effect function revokedAndBanned(cases: Cases.Shape) {
   })
 }
 
+const ownerLine = "Losses that need the vault to stay paused for more than a week"
+
+effect function appealScope(cases: Cases.Shape) {
+  const { world, fake } = cases
+  const scope = { sourceRevisions: [{ repository: "slop-test/intake", commit: "0".repeat(40) }], deployments: [], includedAssets: ["slop-test/intake"], excludedDependencies: [], excludedFindings: [ownerLine], testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds." }
+  try promise(() => rows(world, "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, json_set(manifest, '$.securityBounty.scope', json(?)), ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1", 3, JSON.stringify(scope), "c".repeat(64), new Date(Date.now() - 1000).toISOString(), paid))
+  const appealed = try submit(world, reporter, paid, "Paused vault still settles queued withdrawals")
+  try act(maintainer, appealed, "decide", decision("paused-withdrawals", "rejected"))
+  fake.reply(draftAbout("settles while paused"), { text: JSON.stringify({ proposedOutcome: "return", rationale: "The pause check is missing from the queue.", confidence: 0.8 }) })
+  const opening = stateOf(try act(reporter, appealed, "appeal", { reason: "The queue settles while paused, which the owner line does not cover." }))
+  const sent = fake.calls.find(draftAbout("settles while paused"))
+  const message = jsonValue(sent?.messages[0]?.content ?? "null") as { readonly scope?: unknown } | null | undefined
+  const triage = try promise(() => rows(world, "SELECT state, proposed_outcome, escalation_reasons FROM security_appeal_triages WHERE case_id=?", appealed))
+  try same({ opening: opening.appeal, scope: message?.scope, triage }, {
+    opening: "open",
+    scope: { includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, ownerLine] },
+    triage: [{ state: "complete", proposed_outcome: "return", escalation_reasons: "[\"private-security-case\",\"confidence-below-floor\"]" }],
+  })
+}
+
 layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
   it.effect('Receipt-time terms stay frozen and an unpaid receipt creates no award (spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance")', () => effect {
     const cases = try Cases
@@ -286,6 +310,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const cases = try Cases
     provide shellOf(cases) {
       try revokedAndBanned(cases)
+    }
+  })
+
+  it.effect('Appeal triage receives the receipt scope with every "does not qualify" line and still escalates (spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice")', () => effect {
+    const cases = try Cases
+    provide shellOf(cases) {
+      try appealScope(cases)
     }
   })
 })

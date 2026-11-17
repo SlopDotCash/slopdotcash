@@ -45,7 +45,7 @@ export function SolanaBountyRecoverySection({ runtime, record, form, onChanged }
   const action = useAction();
   return (
     <SolanaBountyRecovery
-      wallets={offers.filter((offer) => offer.family === "solana").map((offer) => ({ id: String(offer.id), name: offer.name }))}
+      wallets={offers.filter((offer) => offer.family === "solana").map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
       address={connected?.connection.address}
       busy={action.busy}
       error={action.error}

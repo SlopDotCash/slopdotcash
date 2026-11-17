@@ -2,7 +2,7 @@
 import { type Account, type Simulation, SolanaRpc, decodeTokenAccount } from "@repo/platform/chain/solana"
 import type { Mint } from "@repo/settlement/kernels/token2022"
 import { type AccountObservation, type AccountProof, type RouteExpectation, associatedCreations, isWritable } from "../solana/accounts.vibe"
-import { sha256Hex, u32At } from "../solana/bytes.ts"
+import { sha256Hex, u32At, u64At } from "../solana/bytes.ts"
 import { addressed, admittedHolding, mintOf } from "../solana/client.vibe"
 import { type ParsedTransaction, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, refuse } from "../solana/wire.vibe"
 import { boundRoute } from "./route.vibe"
@@ -151,6 +151,12 @@ export effect function reviewRouteAccounts(raw: Uint8Array, parsed: ParsedTransa
   } satisfies ReviewedRoute
 }
 
+effect function wrappedLamports(holding: Holding) {
+  const reserve = u64At(holding.account.data, 113)
+  if (u32At(holding.account.data, 109) !== 1 || reserve === undefined) return try refuse("Route native input is not a wrapped SOL account")
+  return holding.account.lamports - reserve
+}
+
 function unchanged(before: Holding, after: Holding) {
   const [old, next] = [before.account.data, after.account.data]
   return before.account.owner === after.account.owner && old.length === next.length && old.every((byte, index) => (index >= 64 && index < 72) || byte === next[index])
@@ -174,7 +180,8 @@ export effect function checkRouteSimulation(review: ReviewedRoute, simulation: S
     if (created !== undefined && (u32At(created.account.data, 72) !== 0 || u32At(created.account.data, 129) !== 0)) return try refuse("Route simulation delegated a new token account")
   }
   if (!owns(source, expected.inputProgram, expected.wallet, expected.inputMint)) return try refuse("Route simulation redirected the input")
-  const debit = (review.source?.amount ?? 0n) - source.amount
+  const held = expected.nativeInput && review.source !== undefined ? try wrappedLamports(review.source) : review.source?.amount ?? 0n
+  const debit = held - source.amount
   const credit = destination.amount - (review.destination?.amount ?? 0n)
   if (debit !== (expected.nativeInput ? 0n : expected.amountIn) || credit < expected.minimumOut) return try refuse("Route simulation does not match the exact input and minimum output")
 }

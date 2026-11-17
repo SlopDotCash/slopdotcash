@@ -12,7 +12,6 @@ schema DueRow { readonly due_at: string }
 
 export error HoldNotStored { reviewKey: string }
 
-
 export effect function recordHold(request: HoldRequest) {
   const { session, closure, category, verdict } = request
   const scope: HoldScope = {

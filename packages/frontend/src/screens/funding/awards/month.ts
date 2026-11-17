@@ -1,10 +1,10 @@
-// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/ui/status.md, "Payment states keep award, funding and settlement apart"
 import { decodeBytes32, escrowAbi } from "@repo/settlement/chain/evm/abi";
 import { commitAwardCalldata } from "@repo/settlement/chain/evm/actions";
 import type { MonthlyAsset, MonthlyAwardState } from "@repo/settlement/client";
 import { decimalRefusalMessage, formatBaseUnits, parseDecimalAmount } from "@repo/settlement/kernels/amounts";
 import { FIRST_PERIOD, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "@repo/settlement/kernels/calendar";
-import type { StatusProps } from "@repo/ui";
+import { type StatusProps, awardPresentation as decisionPresentation, paymentPresentation } from "@repo/ui";
 import { decodeFunctionData } from "viem";
 import { type AwardDisplay, type AwardFacts, paymentDisplay } from "../../../../gen/frontend__projections.ts";
 import { assetSymbol, knownAssetSymbol } from "../../../kernels/assetText.ts";
@@ -164,26 +164,14 @@ function look(display: AwardDisplay): Omit<Presentation, "label"> {
   switch (display.tag) {
     case "InvalidAward":
       return { tone: "Negative", icon: "Alert" };
-    case "DecisionState":
-      return display.decision === "ExcludedAward" ? { tone: "Neutral", icon: "Ban" } : { tone: "Notice", icon: "Eye" };
-    case "PaymentState":
-      switch (display.payment) {
-        case "PaidPayment":
-          return { tone: "Positive", icon: "Check" };
-        case "PaymentUnderfunded":
-          return { tone: "Caution", icon: "Wallet" };
-        case "HeldPayment":
-          return { tone: "Caution", icon: "Pause" };
-        case "ScheduledPayment":
-        case "SubmittedPayment":
-          return { tone: "Notice", icon: "Clock" };
-        case "AwaitingWallet":
-          return { tone: "Notice", icon: "Wallet" };
-        case "PaymentUnavailable":
-          return { tone: "Neutral", icon: "Slash" };
-        case "ReadyToPay":
-          return { tone: "Neutral", icon: "Clock" };
-      }
+    case "DecisionState": {
+      const { tone, icon } = decisionPresentation(display.decision);
+      return { tone, icon };
+    }
+    case "PaymentState": {
+      const { tone, icon } = paymentPresentation(display.payment);
+      return { tone, icon };
+    }
   }
 }
 

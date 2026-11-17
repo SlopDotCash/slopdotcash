@@ -1,16 +1,19 @@
-// spec/contracts/solanaEscrow.md, "The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"
+// spec/contracts/solanaEscrow.md, "The vault holds exactly the free, reserved and accrued funds plus uncredited transfers, above its rent reserve"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Account, type Address, type Decoded, type TokenAccount, SYSTEM_PROGRAM, addressOf, decodeTokenAccount } from "@repo/platform/chain/solana";
 import { type Digest, type I64, type U64, digestOf, readI64, readU32, readU64, sameBytes, utf8 } from "./bytes.ts";
 import { type Purpose, type TokenProgram, isTokenProgram } from "./pda.ts";
 
 export const CONFIG_SIZE = 105;
-export const PROJECT_SIZE = 332;
+export const PROJECT_SIZE = 340;
+export const PRE_PLEDGE_PROJECT_SIZE = 332;
+export const PROJECT_SIZES: ReadonlyArray<number> = [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE];
 export const AWARD_SIZE = 145;
 export const BINDING_SIZE = 169;
 export const MONTH_SIZE = 109;
 export const ORIGIN_SIZE = 40;
 export const MARKER_SIZE = 8;
+export const MONTH_PLEDGE_SIZE = 54;
 
 export type AccountIssue =
   | "missing"
@@ -38,6 +41,7 @@ const discriminators = {
   MonthlyAllocation: accountDiscriminator("MonthlyAllocation"),
   Origin: accountDiscriminator("Origin"),
   BindingVeto: accountDiscriminator("BindingVeto"),
+  MonthPledge: accountDiscriminator("MonthPledge"),
 };
 
 class Refused {
@@ -53,11 +57,11 @@ function decodedBy<A>(read: () => A): Decoded<A, AccountIssue> {
   }
 }
 
-function anchored(account: Account | undefined, program: Address, size: number, name: keyof typeof discriminators): Uint8Array {
+function anchored(account: Account | undefined, program: Address, size: number | ReadonlyArray<number>, name: keyof typeof discriminators): Uint8Array {
   if (account === undefined) throw new Refused("missing");
   if (account.owner !== program) throw new Refused("wrongOwner");
   if (account.executable) throw new Refused("executable");
-  if (account.data.length !== size) throw new Refused("wrongSize");
+  if (!(typeof size === "number" ? [size] : size).includes(account.data.length)) throw new Refused("wrongSize");
   if (!sameBytes(account.data.subarray(0, 8), discriminators[name])) throw new Refused("wrongDiscriminator");
   return account.data;
 }
@@ -132,7 +136,7 @@ function purposeAt(data: Uint8Array, at: number): Purpose {
 /** @throws {never} */
 export function decodeProject(account: Account | undefined, program: Address): Decoded<ProjectAccount, AccountIssue> {
   return decodedBy(() => {
-    const data = anchored(account, program, PROJECT_SIZE, "Project");
+    const data = anchored(account, program, PROJECT_SIZES, "Project");
     const pending = key(data, 257);
     return {
       owner: key(data, 8),
@@ -260,6 +264,15 @@ export function decodeMarker(account: Account | undefined, program: Address): De
   return decodedBy(() => {
     anchored(account, program, MARKER_SIZE, "BindingVeto");
     return true as const;
+  });
+}
+
+/** @throws {never} */
+export function decodeMonthPledgePresence(account: Account | undefined, program: Address): Decoded<boolean, AccountIssue> {
+  return decodedBy(() => {
+    if (account === undefined) return false;
+    anchored(account, program, MONTH_PLEDGE_SIZE, "MonthPledge");
+    return true;
   });
 }
 

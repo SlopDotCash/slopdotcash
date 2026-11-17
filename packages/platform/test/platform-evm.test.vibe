@@ -1,4 +1,5 @@
 import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
 import { type Abi, type Address, type Hex, encodeDeployData, hexToBigInt, toHex } from "viem"
 import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain, boundedMessage } from "../src/chain/rpc.vibe"
 import {
@@ -61,6 +62,15 @@ function recorded(url: string, methods: string[]): Handler {
     const bytes = new Uint8Array(await request.arrayBuffer())
     for (const call of rpcCalls(bytes)?.calls ?? []) methods.push(call.method)
     return forward(url)(replay(request, bytes))
+  }
+}
+
+function revertingCalls(url: string, error: Readonly<Record<string, unknown>>): Handler {
+  return async (request) => {
+    const bytes = new Uint8Array(await request.arrayBuffer())
+    const call = rpcCalls(bytes)?.calls[0]
+    if (call?.method !== "eth_call") return forward(url)(replay(request, bytes))
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: call.id, error }), { headers: { "content-type": "application/json" } })
   }
 }
 
@@ -263,7 +273,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     }))
   })
 
-  it.effect('An RPC timeout and a malformed answer fail over in order, and no endpoint URL reaches an error (spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page")', () => effect {
+  it.effect('An RPC timeout and a malformed answer fail over in order, no endpoint URL reaches an error, and only a revert without data is empty (spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page")', () => effect {
     const chain = try Chain
     const secret = "v2/key-4f1c2b9e"
     const upstream = chain.anvil.url
@@ -282,12 +292,18 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const failed = provided(latest, [broken], robinhood, 300) catch (error) => described(error)
     const elsewhere = provided(latest, [slow, otherChain], robinhood, 300) catch (error) => described(error)
     const errors = [exhausted, failed, elsewhere]
+    const reverts: unknown[] = []
+    for (const error of [{ code: 3, message: "execution reverted", data: "0x" }, { code: 3, message: "execution reverted" }, { code: 3, message: "execution reverted", data: "0x498acb6b" }]) {
+      const reverting = try chain.serve(revertingCalls(upstream, error))
+      reverts.push(provided(effect { return try (try EvmRpc).call({ to: zero, data: "0x", block: "latest" }) }, [reverting]) catch (failure) => described(failure))
+    }
     const leaked = JSON.stringify(errors)
     try Effect.try(() => assert.deepStrictEqual({
       answered,
       fired: [timeoutRpc.fired[0]?.fault, malformedRpc.fired[0]?.fault],
       errors,
       leaked: [leaked.includes("127.0.0.1"), leaked.includes("key-4f1c2b9e"), leaked.includes("http")],
+      reverts,
       bounded: boundedMessage(new Error(`fetch ${plain} failed\n  twice Request body: {"params":["secret"]}`)),
     }, {
       answered: true,
@@ -298,6 +314,11 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         { tag: "WrongChain", expected: "4663", actual: "4664" },
       ],
       leaked: [false, false, false],
+      reverts: [
+        { tag: "RpcRefused", reverted: true, emptyRevert: true },
+        { tag: "RpcRefused", reverted: true, emptyRevert: true },
+        { tag: "RpcRefused", reverted: true, emptyRevert: false },
+      ],
       bounded: "fetch <url> failed twice",
     }))
   })

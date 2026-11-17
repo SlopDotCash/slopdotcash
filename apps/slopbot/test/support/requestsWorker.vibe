@@ -35,6 +35,7 @@ const unrestricted = Layer.mergeAll(
     generation: () => effect { return sql`0` },
     restrictions: () => effect { return [] },
     recordedAt: () => effect { return undefined },
+    reinstatement: () => effect { return { pins: [], evidence: [] } },
   }),
 )
 

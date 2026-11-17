@@ -1,5 +1,5 @@
-// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
-import { type Address, type Hex, encodeAbiParameters, encodeFunctionData, keccak256, parseAbi } from "viem";
+// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/contracts/evmEscrow.md, "The owner withdraws free funds to itself less the 2% fee"
+import { type Address, type Hex, encodeAbiParameters, encodeFunctionData, keccak256, parseAbi, toFunctionSelector } from "viem";
 import type { VaultPurpose } from "../../../gen/settlement__escrow.ts";
 
 export type { Address, Hex, VaultPurpose };
@@ -138,7 +138,11 @@ export const escrowAbi = parseAbi([
   "function pay(bytes32 id, uint64 expectedBindingVersion)",
   "function withdrawUnused(uint128 gross)",
   "function claimFees()",
+  "error PledgedFunds()",
 ]);
+
+export const PLEDGED_FUNDS_ERROR = "PledgedFunds";
+export const PLEDGED_FUNDS_SELECTOR: Hex = toFunctionSelector(`${PLEDGED_FUNDS_ERROR}()`);
 
 export const factoryAbi = parseAbi([
   "function initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)",

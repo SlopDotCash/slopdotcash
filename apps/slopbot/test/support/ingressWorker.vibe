@@ -50,6 +50,8 @@ function viewOf(project: typeof TestProject.Type): ProjectView {
     listingTier: project.retirement === "NotRetired" ? "Community" : "Retired",
     retirement: project.retirement,
     stewardGithubId: project.owner,
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }
@@ -94,6 +96,7 @@ function portsOver(text: string) {
             SELECT ${fanout.eventKey}, recipient, ${fanout.kind}, ${fanout.sourceAt} FROM audience WHERE (${fanout.onlyIf ?? sql`1`})
             ON CONFLICT (event_key, recipient) DO NOTHING`]
         },
+        payoutRecipient: (project) => effect { return project.stewardGithubId },
       }),
     )
   })

@@ -1,0 +1,386 @@
+// spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"
+import { EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { RegistryManifests, Wallets } from "@repo/ports/backend"
+import { type Bytes32, type Hex, awardId, bytes32, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
+import { commitAwardCalldata, payCalldata } from "../chain/evm/actions.ts"
+import { readSignedType2 } from "../chain/evm/transactions.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { parsePeriod } from "../kernels/calendar.ts"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { awardSource } from "../monthly/store.vibe"
+import { registryProjectDigest } from "../owner/ownerInstructions.ts"
+import { paymentDeploymentOf } from "../scan/index.vibe"
+import { projectDeployments } from "../vault/deployments.vibe"
+import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import type { EvmDeployment } from "../vault/policy.vibe"
+import { indexPaymentEvent } from "./ledger.vibe"
+import { type EventReference, type EvmPaymentDeployment, networkOf } from "./terms.vibe"
+import { verifyFinalized } from "./verify.vibe"
+
+export error ReconciliationRefused { message: string }
+
+function refused(message: string) {
+  return new ReconciliationRefused({ message })
+}
+
+export const packetLimitBytes = 48 * 1024
+
+const sha = /^[a-f0-9]{64}$/u
+const uint = /^(0|[1-9][0-9]*)$/u
+const projectName = /^[a-z0-9][a-z0-9-]*$/u
+const monthText = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const transactionHash = /^0x[a-f0-9]{64}$/u
+const rawBytes = /^0x(?:[a-fA-F0-9]{2})+$/u
+const lowerAddress = /^0x[a-f0-9]{40}$/u
+const decimalId = /^[1-9][0-9]{0,19}$/u
+const claimName = /^[A-Za-z0-9:_-]{1,200}$/u
+const nonZero = /[1-9a-f]/u
+const unbounded = 2n ** 4096n
+
+schema PacketKind = "reserved" | "paid"
+
+schema PacketEvent {
+  readonly kind?: PacketKind
+  readonly transactionId: string
+  readonly rawTransaction: string
+  readonly eventIndex: number
+  readonly obligationId: string
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly sourceDigest: string
+  readonly destination?: string
+  readonly claimId?: string
+  readonly payer?: string
+  readonly bindingVersion?: string
+}
+
+const Listed = Schema.Unknown
+
+schema PacketShape {
+  readonly schemaVersion: string
+  readonly projectId: string
+  readonly network: string
+  readonly period: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly snapshotSha256: string
+  readonly events: ReadonlyArray<Listed>
+}
+
+interface AwardFacts {
+  readonly transactionId: Bytes32
+  readonly rawTransaction: Hex
+  readonly eventIndex: number
+  readonly obligationId: Bytes32
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly sourceDigest: string
+}
+
+export type ReviewedEvent =
+  | AwardFacts & { readonly kind: "reserved" }
+  | AwardFacts & { readonly kind: "paid"; readonly destination: Hex; readonly claimId: string; readonly payer: Hex; readonly bindingVersion: string }
+
+export interface ReconciliationPacket {
+  readonly schemaVersion: "reviewed-payment-events:v1"
+  readonly projectId: string
+  readonly network: string
+  readonly period: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly snapshotSha256: string
+  readonly events: ReadonlyArray<ReviewedEvent>
+}
+
+export interface Reconciled {
+  readonly verified: number
+  readonly indexed: number
+  readonly replayVerified: boolean
+}
+
+function amountsValid(event: PacketEvent) {
+  const gross = parseBaseUnits(event.grossBase, unbounded)
+  const fee = parseBaseUnits(event.feeBase, unbounded)
+  const net = parseBaseUnits(event.netBase, unbounded)
+  return [event.grossBase, event.feeBase, event.netBase].every((value) => uint.test(value)) && gross !== undefined && fee !== undefined && net !== undefined
+    && gross !== 0n && fee === (gross + 49n) / 50n && net + fee === gross
+}
+
+function reviewedEventOf(event: PacketEvent): ReviewedEvent | undefined {
+  const transactionId = bytes32(event.transactionId)
+  const obligationId = bytes32(event.obligationId)
+  const valid = transactionHash.test(event.transactionId) && transactionHash.test(event.obligationId) && rawBytes.test(event.rawTransaction)
+    && Number.isSafeInteger(event.eventIndex) && event.eventIndex >= 0 && decimalId.test(event.githubUserId) && sha.test(event.sourceDigest) && amountsValid(event)
+  if (!valid || transactionId === undefined || obligationId === undefined) return undefined
+  const facts: AwardFacts = {
+    transactionId,
+    rawTransaction: event.rawTransaction as Hex,
+    eventIndex: event.eventIndex,
+    obligationId,
+    githubUserId: event.githubUserId,
+    grossBase: event.grossBase,
+    feeBase: event.feeBase,
+    netBase: event.netBase,
+    sourceDigest: event.sourceDigest,
+  }
+  if (event.kind !== "paid") return { ...facts, kind: "reserved" }
+  const { destination = "", payer = "", claimId = "", bindingVersion = "" } = event
+  if (!lowerAddress.test(destination) || !nonZero.test(destination.slice(2)) || !lowerAddress.test(payer) || !claimName.test(claimId) || !decimalId.test(bindingVersion)) return undefined
+  return { ...facts, kind: "paid", destination: destination as Hex, claimId, payer: payer as Hex, bindingVersion }
+}
+
+export effect function readReconciliationPacket(text: string, expected: string) {
+  if (!sha.test(expected) || utf8(text).length > packetLimitBytes || (try sha256Hex(text)) !== expected) throw refused("Reviewed reconciliation packet changed")
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  const packet = Schema.decodeUnknownEffect(PacketShape)(parsed) catch effect () => { throw refused("Invalid reviewed reconciliation packet") }
+  if (packet.schemaVersion !== "reviewed-payment-events:v1" || !projectName.test(packet.projectId) || !monthText.test(packet.period) || !Number.isSafeInteger(packet.revision) || packet.revision < 1
+    || !sha.test(packet.manifestSha256) || !sha.test(packet.snapshotSha256) || packet.events.length < 1 || packet.events.length > 20)
+    throw refused("Invalid reviewed reconciliation packet")
+  const events: ReviewedEvent[] = []
+  for (const listed of packet.events) {
+    const decoded = Schema.decodeUnknownEffect(PacketEvent)(listed) catch () => undefined
+    const event = decoded === undefined ? undefined : reviewedEventOf(decoded)
+    if (event === undefined) throw refused("Invalid reviewed payment reference")
+    events.push(event)
+  }
+  if (new Set(events.map((event) => event.obligationId)).size !== events.length) throw refused("Invalid reviewed reconciliation packet")
+  return { ...packet, schemaVersion: "reviewed-payment-events:v1", events } satisfies ReconciliationPacket
+}
+
+schema RunRow {
+  readonly snapshot: string
+  readonly snapshot_sha256: string
+  readonly network: string
+  readonly vault: string
+  readonly obligations_created_at: string | null
+}
+
+schema SnapshotAward {
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly sourceDigest: string
+}
+
+schema FrozenSnapshot {
+  readonly schemaVersion: string
+  readonly kind: string
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+  readonly manifestSha256: string
+  readonly awards: ReadonlyArray<SnapshotAward>
+}
+
+schema MonthlyRow {
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly source_digest: string
+}
+
+schema ReservedRow {
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
+  readonly chain: string
+  readonly github_user_id: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly source_digest: string
+  readonly asset_address: string
+  readonly state: string
+  readonly paid_transaction: string | null
+}
+
+schema EvidenceRow {
+  readonly evidence_json: string
+}
+
+schema ObligationStateRow {
+  readonly state: string
+  readonly paid_transaction: string | null
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+effect function fieldsOf(text: string) {
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Fields : undefined
+}
+
+effect function mainnetNetwork(name: string) {
+  const facts = isNetworkKey(name) ? NETWORKS[name] : undefined
+  const chainId = facts?.family === "evm" && !facts.testnet ? parseBaseUnits(String(facts.chainId)) : undefined
+  if (chainId === undefined) throw refused("Registered mainnet EVM network required")
+  return chainId
+}
+
+effect function registeredDeployment(packet: ReconciliationPacket) {
+  const project = try (try RegistryManifests).project(packet.projectId)
+  if (project === undefined || project.revision !== packet.revision || project.manifestSha256 !== packet.manifestSha256) throw refused("Reviewed project revision changed")
+  const matches = (try projectDeployments(project, "ordinary")).filter((deployment) => deployment.network === packet.network)
+  const [deployment] = matches
+  if (matches.length !== 1 || deployment === undefined) throw refused("Unique registered deployment required")
+  if (deployment.family !== "evm" || deployment.factory === "" || deployment.factoryCodeSha256 === "" || deployment.registrar === "") throw refused("Reviewed factory binding required")
+  return { ...deployment, revision: project.revision }
+}
+
+effect function finalizedFactoryDeployment(deployment: EvmDeployment, rpc: Redacted.Redacted<ReadonlyArray<string>>) {
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined) throw refused("Unique registered deployment required")
+  provide evmRpc({ urls: rpc, chainId: deployment.chainId }) {
+    try verifyEvmDeployment(deployment, "finalized")
+    const projectId = bytes32(try (try EvmRpc).call({ to: vault, data: escrowGetter("projectId"), block: "finalized" }))
+    if (projectId !== `0x${registryProjectDigest(deployment.projectId)}`) throw refused("The vault belongs to a different registry project")
+  }
+}
+
+effect function frozenSnapshot(packet: ReconciliationPacket, deployment: EvmDeployment) {
+  const run = try first(RunRow, sql`SELECT snapshot, snapshot_sha256, network, vault, obligations_created_at FROM monthly_payment_runs WHERE project_id = ${packet.projectId} AND period = ${packet.period}`)
+  if (run === undefined || run.obligations_created_at === null || run.obligations_created_at === "" || run.snapshot_sha256 !== packet.snapshotSha256
+    || (try sha256Hex(run.snapshot)) !== packet.snapshotSha256 || run.network !== packet.network || run.vault !== deployment.vault)
+    throw refused("Frozen funded allocation changed")
+  const parsed = Effect.try(() => JSON.parse(run.snapshot) as unknown) catch () => undefined
+  const snapshot = Schema.decodeUnknownEffect(FrozenSnapshot)(parsed) catch effect () => { throw refused("Frozen allocation identity differs") }
+  if (snapshot.schemaVersion !== "1" || snapshot.kind !== "monthly-execution-snapshot" || snapshot.network !== packet.network || snapshot.vault !== deployment.vault
+    || snapshot.asset !== deployment.asset || snapshot.projectId !== packet.projectId || snapshot.period !== packet.period || snapshot.manifestSha256 !== packet.manifestSha256)
+    throw refused("Frozen allocation identity differs")
+  return snapshot
+}
+
+effect function frozenAward(packet: ReconciliationPacket, snapshot: FrozenSnapshot, event: ReviewedEvent) {
+  const period = parsePeriod(packet.period)
+  const actor = Number(event.githubUserId)
+  const expectedSource = period === undefined || !Number.isSafeInteger(actor) ? undefined : try awardSource(packet.projectId, period, actor)
+  const award = snapshot.awards.find((item) => item.githubUserId === event.githubUserId)
+  const monthly = try first(MonthlyRow, sql`SELECT gross_base, fee_base, source_digest FROM monthly_payment_obligations WHERE project_id = ${packet.projectId} AND period = ${packet.period} AND github_user_id = ${event.githubUserId}`)
+  if (award === undefined || monthly === undefined || award.grossBase !== event.grossBase || award.feeBase !== event.feeBase || award.netBase !== event.netBase || award.sourceDigest !== event.sourceDigest
+    || monthly.gross_base !== event.grossBase || monthly.fee_base !== event.feeBase || monthly.source_digest !== event.sourceDigest || expectedSource !== event.sourceDigest)
+    throw refused("Reviewed award differs from frozen allocation")
+}
+
+effect function indexedReservation(packet: ReconciliationPacket, deployment: EvmDeployment, event: Extract<ReviewedEvent, { readonly kind: "paid" }>) {
+  const reserved = try first(ReservedRow, sql`SELECT project_id, network, vault, chain, github_user_id, gross_base, fee_base, source_digest, asset_address, state, paid_transaction FROM payment_obligations WHERE id = ${event.obligationId}`)
+  const recorded = try first(EvidenceRow, sql`SELECT evidence_json FROM payment_events WHERE obligation_id = ${event.obligationId} AND kind = 'reserved' ORDER BY observed_at LIMIT 1`)
+  const prior = recorded === undefined ? undefined : try fieldsOf(recorded.evidence_json)
+  const claims = try (try Wallets).authorized({ githubId: event.githubUserId, network: networkOf(deployment.chain) })
+  const wallet = claims.find((claim) => claim.claimId === event.claimId)
+  const reservedMatches = reserved !== undefined && reserved.project_id === packet.projectId && reserved.network === packet.network && reserved.vault === deployment.vault
+    && reserved.chain === deployment.chain && reserved.github_user_id === event.githubUserId && reserved.gross_base === event.grossBase && reserved.fee_base === event.feeBase
+    && reserved.source_digest === event.sourceDigest && reserved.asset_address.toLowerCase() === deployment.asset.toLowerCase()
+    && (reserved.state === "reserved" || (reserved.state === "paid" && reserved.paid_transaction === event.transactionId))
+  const priorMatches = prior !== undefined && prior.kind === "reserved" && prior.obligationId === event.obligationId && prior.projectId === packet.projectId
+    && prior.network === packet.network && prior.vault === deployment.vault && prior.githubUserId === event.githubUserId && prior.sourceDigest === event.sourceDigest
+    && prior.grossMicro === event.grossBase && prior.feeMicro === event.feeBase && prior.netMicro === event.netBase
+  if (!reservedMatches || !priorMatches || wallet === undefined || wallet.address.toLowerCase() !== event.destination)
+    throw refused("Indexed reservation or authorized destination differs")
+}
+
+effect function expectedCalldata(event: ReviewedEvent) {
+  const sourceDigest = bytes32(`0x${event.sourceDigest}`)
+  if (sourceDigest === undefined) return undefined
+  return Effect.try(() => event.kind === "paid"
+    ? payCalldata(event.obligationId, BigInt(event.bindingVersion))
+    : commitAwardCalldata({ purpose: "OrdinaryPurpose", id: event.obligationId, actor: BigInt(event.githubUserId), gross: BigInt(event.grossBase), sourceDigest })) catch () => undefined
+}
+
+effect function expectedAwardId(chainId: bigint, vault: string, sourceDigest: string) {
+  const address = evmAddress(vault)
+  const source = bytes32(`0x${sourceDigest}`)
+  if (address === undefined || source === undefined) return undefined
+  return Effect.try(() => awardId(chainId, address, source)) catch () => undefined
+}
+
+effect function retainedTransaction(deployment: EvmDeployment, chainId: bigint, event: ReviewedEvent) {
+  const signed = readSignedType2(event.rawTransaction)
+  const signer = event.kind === "paid" ? event.payer : deployment.owner.toLowerCase()
+  const data = try expectedCalldata(event)
+  const award = try expectedAwardId(chainId, deployment.vault, event.sourceDigest)
+  if (signed === undefined || data === undefined || award === undefined || signed.id !== event.transactionId || signed.sender !== signer || signed.request.chainId !== Number(chainId)
+    || signed.request.to !== deployment.vault.toLowerCase() || signed.request.value !== 0n || signed.request.data !== data || event.obligationId !== award)
+    throw refused("Retained payment signature or calldata differs")
+}
+
+function referenceOf(event: ReviewedEvent): EventReference {
+  return { kind: event.kind, transactionId: event.transactionId, eventIndex: event.eventIndex, obligationId: event.obligationId }
+}
+
+effect function finalizedEvent(payment: EvmPaymentDeployment, event: ReviewedEvent) {
+  const finalized = try verifyFinalized(payment, referenceOf(event), event.sourceDigest)
+  const amounts = finalized.githubUserId === event.githubUserId && finalized.gross.toString() === event.grossBase && finalized.fee.toString() === event.feeBase && finalized.net.toString() === event.netBase
+  const identity = event.kind === "paid"
+    ? finalized.destination?.toLowerCase() === event.destination && finalized.bindingVersion === event.bindingVersion
+    : finalized.sourceDigest === event.sourceDigest
+  if (!amounts || !identity) throw refused("Finalized payment event differs from reviewed award")
+  return finalized.blockId
+}
+
+export interface VerifiedEvent {
+  readonly event: ReviewedEvent
+  readonly blockId: string
+}
+
+export interface VerifiedPacket {
+  readonly deployment: EvmPaymentDeployment
+  readonly verified: ReadonlyArray<VerifiedEvent>
+}
+
+export effect function verifyReviewedPaymentEvents(packet: ReconciliationPacket, rpc: Redacted.Redacted<ReadonlyArray<string>>) {
+  const chainId = try mainnetNetwork(packet.network)
+  const deployment = try registeredDeployment(packet)
+  if (deployment.chainId !== chainId) throw refused("Registered mainnet EVM network required")
+  const urls: Partial<Record<NetworkKey, Redacted.Redacted<ReadonlyArray<string>>>> = {}
+  urls[deployment.network] = rpc
+  const payment = paymentDeploymentOf(deployment, { urls, genesis: {} })
+  if (payment === undefined || payment.family !== "evm") throw refused("Reviewed factory binding required")
+  try finalizedFactoryDeployment(deployment, rpc)
+  const snapshot = try frozenSnapshot(packet, deployment)
+  const verified: VerifiedEvent[] = []
+  for (const event of packet.events) {
+    try frozenAward(packet, snapshot, event)
+    if (event.kind === "paid") try indexedReservation(packet, deployment, event)
+    try retainedTransaction(deployment, chainId, event)
+    verified.push({ event, blockId: try finalizedEvent(payment, event) })
+  }
+  return { deployment: payment, verified } satisfies VerifiedPacket
+}
+
+effect function indexedEvidence(network: string, event: ReviewedEvent) {
+  return try first(EvidenceRow, sql`SELECT evidence_json FROM payment_events WHERE network = ${network} AND transaction_id = ${event.transactionId} AND event_index = ${event.eventIndex}`)
+}
+
+function storedMatches(stored: Fields | undefined, packet: ReconciliationPacket, deployment: EvmPaymentDeployment, { event, blockId }: VerifiedEvent) {
+  return stored !== undefined && stored.kind === event.kind && stored.transactionId === event.transactionId && stored.eventIndex === event.eventIndex && stored.blockId === blockId
+    && stored.obligationId === event.obligationId && stored.projectId === packet.projectId && stored.network === packet.network && stored.vault === deployment.vault
+    && stored.githubUserId === event.githubUserId && stored.grossMicro === event.grossBase && stored.feeMicro === event.feeBase && stored.netMicro === event.netBase
+    && stored.sourceDigest === event.sourceDigest && (event.kind !== "paid" || stored.destination === event.destination)
+}
+
+effect function indexedOnce(packet: ReconciliationPacket, deployment: EvmPaymentDeployment, verified: VerifiedEvent) {
+  const { event } = verified
+  try indexPaymentEvent(deployment, referenceOf(event))
+  const before = try indexedEvidence(packet.network, event)
+  try indexPaymentEvent(deployment, referenceOf(event))
+  const after = try indexedEvidence(packet.network, event)
+  const obligation = try first(ObligationStateRow, sql`SELECT state, paid_transaction FROM payment_obligations WHERE id = ${event.obligationId}`)
+  if (event.kind === "paid" && (obligation?.state !== "paid" || obligation.paid_transaction !== event.transactionId)) throw refused("Canonical paid obligation readback differs")
+  const stored = before === undefined ? undefined : try fieldsOf(before.evidence_json)
+  if (!storedMatches(stored, packet, deployment, verified)) throw refused("Canonical stored event readback differs")
+  if (before === undefined || after === undefined || before.evidence_json !== after.evidence_json) throw refused("Canonical indexing replay changed evidence")
+}
+
+export effect function reconcileReviewedPaymentEvents(packet: ReconciliationPacket, rpc: Redacted.Redacted<ReadonlyArray<string>>, apply: boolean) {
+  const prepared = try verifyReviewedPaymentEvents(packet, rpc)
+  if (!apply) return { verified: prepared.verified.length, indexed: 0, replayVerified: false } satisfies Reconciled
+  for (const verified of prepared.verified) try indexedOnce(packet, prepared.deployment, verified)
+  return { verified: prepared.verified.length, indexed: prepared.verified.length, replayVerified: true } satisfies Reconciled
+}

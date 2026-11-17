@@ -23,6 +23,8 @@ const widget: ProjectView = {
   listingTier: "Community",
   retirement: "NotRetired",
   stewardGithubId: "7",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
   repositories: [{ id: "acme/widget", nodeId: "R_kgDOwidget", fullName: "acme/widget", integrationBranch: "main", aliases: [] }],
   closureConsent: false,
 }

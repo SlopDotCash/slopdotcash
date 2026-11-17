@@ -10,6 +10,7 @@ import { useView } from "../../account/useView.ts";
 import { bountyPrompt } from "../../funding/awards/BountyIntroduction.tsx";
 import { run, useOnce } from "./hooks.ts";
 import { AgentPrompt } from "../../home/AgentPrompt.tsx";
+import { ProjectNav } from "../../projects/ProjectNav.tsx";
 import { programShares } from "./amounts.ts";
 import { IntakePanel } from "./IntakePanel.tsx";
 import { AwardTerms, ScopeTerms, TrustTerms } from "./ProgramTerms.tsx";
@@ -33,12 +34,14 @@ export type SecurityProgramViewProps = {
   intake: ReactNode;
   /** The owner's program settings, shown below the report for a maintainer. */
   settings?: ReactNode;
+  /** The project's section tabs, shown unless the project is a bounty-only listing. */
+  nav?: ReactNode;
   onCopy: (text: string) => Promise<void>;
 };
 
 const pageClass = "mx-auto flex w-full max-w-(--breakpoint-md) flex-1 flex-col gap-8 px-4 py-12";
 
-function Unpublished({ project, intake, settings }: Pick<SecurityProgramViewProps, "project" | "intake" | "settings">) {
+function Unpublished({ project, intake, settings, nav }: Pick<SecurityProgramViewProps, "project" | "intake" | "settings" | "nav">) {
   return (
     <main className={pageClass}>
       <PageHeader
@@ -52,6 +55,7 @@ function Unpublished({ project, intake, settings }: Pick<SecurityProgramViewProp
           </>
         }
       />
+      {nav}
       <p className="text-muted-foreground">No published bounty terms, so no award is promised.</p>
       {intake}
       {settings}
@@ -60,9 +64,9 @@ function Unpublished({ project, intake, settings }: Pick<SecurityProgramViewProp
 }
 
 /** A project's security page: its published bounty terms, the agent setup and the private report path. */
-export function SecurityProgramView({ project, origin, intake, settings, onCopy }: SecurityProgramViewProps) {
+export function SecurityProgramView({ project, origin, intake, settings, nav, onCopy }: SecurityProgramViewProps) {
   const terms = project.securityBounty;
-  if (terms === undefined) return <Unpublished project={project} intake={intake} settings={settings} />;
+  if (terms === undefined) return <Unpublished project={project} intake={intake} settings={settings} nav={nav} />;
   const gross = programShares(terms)?.gross;
   const open = terms.status === "open";
   return (
@@ -75,6 +79,7 @@ export function SecurityProgramView({ project, origin, intake, settings, onCopy 
         />
         {gross ? <p className="text-lg text-muted-foreground">{gross} security bounty</p> : null}
       </div>
+      {terms.rewardMode === "bounty-only" ? null : nav}
       <p>
         Find {terms.eligibility === "critical-loss-of-funds" ? "a critical" : "an in-scope"} security vulnerability in {project.name}
       </p>
@@ -146,6 +151,7 @@ export function SecurityProgramPage({ runtime, route, settings }: PageProps & { 
       origin={pageOrigin()}
       intake={<Intake section={section} project={project} signedIn={shown?.view.status === "signedIn"} form={<ReportForm runtime={runtime} section={section} project={project} />} />}
       settings={settings?.(project)}
+      nav={<ProjectNav runtime={runtime} project={{ id: project.id, slug: project.slug, bountyOnly: project.securityBounty?.rewardMode === "bounty-only" }} current="security" />}
       onCopy={writeClipboard}
     />
   );

@@ -1,14 +1,16 @@
-// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { isoNow } from "@repo/platform/clock"
 import { hmacSha256Hex, sha256Hex } from "@repo/platform/crypto"
 import { D1, type Statement, first, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
-import { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@repo/ports/backend"
+import { EmailConsent, EmailEnrollment, ProjectAudience, type ProjectView, Registry } from "@repo/ports/backend"
 import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
 import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
 import { SlopbotAudience } from "@repo/ports/slopbot"
 import { type AccessCheck, type AppealSource, type Kind, type Notice, type NoticeAudience, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
+import { inPayoutAudience } from "../../gen/operations__payoutAudience.effect.vibe"
 import type { Projection } from "../notifications/rows.vibe"
+import { githubNumber, payoutProjectOf } from "../notifications/statements.vibe"
 import { digestText } from "../notifications/store.vibe"
 import type { Claimed } from "./claim.vibe"
 import type { Configured } from "./config.vibe"
@@ -88,13 +90,17 @@ effect function scamFacts(facts: NoticeFacts) {
   return { stands: penalty !== undefined && !penalty.reversed, author: penalty?.authorGithubId === facts.recipient }
 }
 
+function payoutAudienceHolds(view: ProjectView | undefined, recipient: string): boolean {
+  return view !== undefined && inPayoutAudience(payoutProjectOf(view), githubNumber(recipient))
+}
+
 effect function audienceOf(facts: NoticeFacts) {
   const roles = try Roles
   const kind = facts.kind
   const project = sql`${facts.subject}`
   const vettingBan = kind === "ProjectBanned" && facts.eventKey.startsWith(enforcementPrefix)
     && (try (try VettingBans).serviceBan({ enforcementId: facts.eventKey.slice(enforcementPrefix.length), projectId: facts.subject }))
-  const steward = kind === "PayoutException" && (try (try Registry).project(facts.subject))?.stewardGithubId === facts.recipient
+  const steward = kind === "PayoutException" && payoutAudienceHolds(try (try Registry).project(facts.subject), facts.recipient)
   const owner = (ownerKind(kind) || vettingBan) && (try within(try (try ProjectAudience).owners(project), facts.recipient))
   const affectedContributor = vettingBan && (try within(try (try ContributorAudience).affected(project), facts.recipient))
   const staffPath = ownerKind(kind) && (try first(NoticeLink, sql`SELECT action_path FROM notifications WHERE event_key = ${facts.eventKey} AND recipient_github_id = ${facts.recipient}`))?.action_path === "/admin"

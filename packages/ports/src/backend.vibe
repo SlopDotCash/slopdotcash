@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
 
 export type ReadFailure = D1Error | RowMismatch
@@ -39,6 +39,14 @@ export schema ProjectRepository {
   readonly aliases: ReadonlyArray<string>
 }
 
+export schema StewardAccount = "UserSteward" | "OrganizationSteward"
+
+export schema ProjectListing {
+  readonly fromApplication: boolean
+  readonly applicantGithubId?: string
+  readonly firstActorGithubId?: string
+}
+
 export schema ProjectView {
   readonly projectId: string
   readonly revision: number
@@ -48,7 +56,8 @@ export schema ProjectView {
   readonly listingTier: ListingTier
   readonly retirement: Retirement
   readonly stewardGithubId: string
-  readonly listedByGithubId?: string
+  readonly stewardAccount: StewardAccount
+  readonly listing: ProjectListing
   readonly repositories: ReadonlyArray<ProjectRepository>
   readonly network?: Network
   readonly asset?: string

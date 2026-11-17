@@ -4,17 +4,15 @@ import { Alert, Button, PageHeader, Status } from "@repo/ui";
 import { Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PageProps } from "../../app/pages.ts";
-import type { PageRuntime } from "../../app/runtime.vibe";
 import type { AccessLost } from "../../wallets/core/binding.vibe";
 import { loginHrefFor, useSession } from "../../app/useSession.ts";
 import { payoutMessages } from "../../flows/account/payouts.vibe";
 import { CHAIN_NAMES } from "../../kernels/assetText.ts";
 import { transactionUrl } from "../../kernels/explorers.ts";
-import { ContributorAllocationRow } from "./ContributorAllocationRow.tsx";
 import { useFeed } from "./feed.ts";
 import { netAmountProps } from "./PayoutAmount.tsx";
 import { PayoutConsent } from "./PayoutConsent.tsx";
-import { allocationOf, followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
+import { followPayouts, type PayoutsShown } from "./payoutDesk.vibe";
 import { PayoutRow } from "./PayoutRow.tsx";
 import { awardStatus, paymentStatus, receivedStatus } from "./status.ts";
 
@@ -40,8 +38,6 @@ export type PayoutsViewProps = {
   onRetry: () => void;
   /** What the payee can do for a reserved payout. */
   consent?: (payment: AccountPayment) => ReactNode;
-  /** The account's row of the contributor token allocation. */
-  allocation?: ReactNode;
 };
 
 const linkClass = "text-sm text-primary underline underline-offset-4 hover:decoration-2";
@@ -123,8 +119,8 @@ function DirectTransfers({ account }: { account: PaymentsAccount }) {
   );
 }
 
-/** The signed-in account's awards, payments, direct transfers and contributor allocation, each with its own state; nothing is shown as paid without finalized evidence. */
-export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent, allocation }: PayoutsViewProps) {
+/** The signed-in account's awards, payments, and direct transfers, each with its own state; nothing is shown as paid without finalized evidence. */
+export function PayoutsView({ loading, signedOut, loginHref, problem, account, onRetry, consent }: PayoutsViewProps) {
   return (
     <main className="mx-auto flex w-full max-w-(--breakpoint-lg) flex-1 flex-col gap-6 px-4 py-8">
       <PageHeader
@@ -154,20 +150,10 @@ export function PayoutsView({ loading, signedOut, loginHref, problem, account, o
         <>
           <AwardsAndPayments account={account} consent={consent} />
           <DirectTransfers account={account} />
-          {allocation}
         </>
       ) : null}
     </main>
   );
-}
-
-function walletKey(account: PaymentsAccount): string {
-  return account.wallets.map((wallet) => [wallet.chain, wallet.address, wallet.authorized, wallet.firstAuthorizedAt ?? ""].join(":")).join("|");
-}
-
-function AllocationSection({ runtime, account }: { runtime: PageRuntime; account: PaymentsAccount }) {
-  const feed = useFeed(runtime, `allocation:${account.githubUserId}:${walletKey(account)}`, allocationOf(account));
-  return <ContributorAllocationRow shown={feed.value} failed={feed.failed} onRetry={feed.restart} />;
 }
 
 function lostShown(lost: AccessLost): PayoutsShown {
@@ -190,7 +176,6 @@ export function PayoutsPage({ runtime }: PageProps) {
       account={account}
       onRetry={feed.restart}
       consent={account ? (payment) => <PayoutConsent runtime={runtime} account={account} payment={payment} onAccessLost={(lost) => feed.publish(lostShown(lost))} /> : undefined}
-      allocation={account ? <AllocationSection runtime={runtime} account={account} /> : undefined}
     />
   );
 }

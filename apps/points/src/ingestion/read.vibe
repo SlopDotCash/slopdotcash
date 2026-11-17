@@ -3,7 +3,7 @@ import { HttpClientError } from "effect/http"
 import { boundedBytes } from "@repo/platform/browser"
 import { isoAt } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
-import { GitHub, github, rateLimitHints } from "@repo/platform/github"
+import { GitHub, github, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
 import { type Event, type Method, type Origin, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
 import { type CachedDiscussion, type DiscussionCache, type DiscussionEntry, parsedJson } from "./discussions.vibe"
 import { replayed } from "./replayed.ts"
@@ -101,6 +101,12 @@ effect function identified(answer: Answer, identity: string) {
   const { sha, type } = value as { readonly sha?: unknown; readonly type?: unknown }
   if (typeof sha !== "string") return false
   return identity === "contents" ? type === "file" && fullSha.test(sha) : sha === identity
+}
+
+effect function namesSecondaryLimit(answer: Answer) {
+  if (answer.status !== 403) return false
+  const value = Effect.try(() => JSON.parse(new TextDecoder().decode(answer.bytes)) as unknown) catch () => undefined
+  return typeof value === "object" && value !== null && secondaryLimitMessage((value as { readonly message?: unknown }).message)
 }
 
 function originOf(url: string): Origin {
@@ -211,7 +217,8 @@ export function ingestion(options: TransportOptions = {}) {
         validator = attempt.validator
         const hints = rateLimitHints(answer.headers, try Clock.currentTimeMillis)
         try advanced(machine)
-        const state = try stepped(machine, { type: "respond", x: { status: answer.status, primaryDelay: hints.primaryDelay, retryAfter: hints.retryAfter, secondaryMessage: false } })
+        const secondaryMessage = try namesSecondaryLimit(answer)
+        const state = try stepped(machine, { type: "respond", x: { status: answer.status, primaryDelay: hints.primaryDelay, retryAfter: hints.retryAfter, secondaryMessage } })
         if (state.phase === "Checkpointed") throw transportError(request, checkpointMessage)
         if (state.phase === "Returned") {
           try retain(key, identity, answer)

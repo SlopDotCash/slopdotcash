@@ -1,0 +1,111 @@
+// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import type { Event } from "../../../gen/backend__mergeActivity.ts"
+import { canReadFailed, decodeEvent, due, readable, schedule } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { validRepositoryPath } from "../github/lookup.vibe"
+import { type Read, repositoryRead } from "./github.vibe"
+import { type Evidence, type Facts, type Key, type StoredRow, rowOf, send, stateOf, storedRows } from "./store.vibe"
+
+schema ProjectManifest { id: string; manifest: string }
+schema ListedRepository { id: string; githubUrl?: string }
+schema Listing { status: string; listingTier: string; repositories: ReadonlyArray<ListedRepository> }
+
+export interface Refreshed {
+  readonly read: number
+  readonly failed: number
+}
+
+interface Registered {
+  readonly projectId: string
+  readonly listed: ReadonlyArray<string>
+  readonly measured: boolean
+}
+
+interface Queued {
+  readonly key: Key
+  readonly stored: StoredRow | undefined
+}
+
+function pathOf(repository: ListedRepository) {
+  if (repository.githubUrl === undefined) return repository.id
+  return URL.parse(repository.githubUrl)?.pathname.replace(/^\/|\/$/gu, "") ?? ""
+}
+
+function keyText(projectId: string, repository: string) {
+  return `${projectId}\n${repository}`
+}
+
+effect function listingOf(row: ProjectManifest) {
+  const text = `project ${row.id}`
+  const parsed = try Effect.try({ try: () => JSON.parse(row.manifest) as unknown, catch: () => new RowMismatch({ text, issue: "manifest is not JSON" }) })
+  return Schema.decodeUnknownEffect(Listing)(parsed) catch effect (error) => { throw new RowMismatch({ text, issue: String(error) }) }
+}
+
+effect function registered() {
+  const found = try rows(ProjectManifest, sql`SELECT id, manifest FROM projects ORDER BY id`)
+  const projects: Registered[] = []
+  for (const row of found) {
+    const listing = try listingOf(row)
+    projects.push({
+      projectId: row.id,
+      listed: listing.repositories.map(pathOf).filter(validRepositoryPath),
+      measured: listing.status === "active" && listing.listingTier !== "retired",
+    })
+  }
+  return projects
+}
+
+effect function sent(key: Key, facts: Facts, event: Event, evidence?: Evidence) {
+  return send(key, facts, event, schedule, evidence) catch effect (error) => {
+    if (error._tag !== "Rejected") throw error
+    return undefined
+  }
+}
+
+effect function readEvent(read: Read) {
+  if (read.kind === "failed") return { event: { type: "readFailed" }, evidence: { failure: read.failure, mergedAt: [] } } as const
+  const { open, capped, merged, mergedAt } = read.pulls
+  const event = decodeEvent({ type: "readSucceeded", open, capped, merged }) catch () => undefined
+  if (event === undefined) return { event: { type: "readFailed" }, evidence: { failure: "read-failed", mergedAt: [] } } as const
+  return { event, evidence: { failure: "read-failed", mergedAt } } as const
+}
+
+export effect function refreshMergeActivity() {
+  const at = try Clock.currentTimeMillis
+  const projects = try registered()
+  const stored = try storedRows()
+  const storedBy = new Map(stored.map((row) => [keyText(row.project_id, row.repository), row] as const))
+  const listedBy = new Map(projects.map((project) => [project.projectId, project.listed] as const))
+  for (const row of stored) {
+    const listed = listedBy.get(row.project_id)
+    if (listed === undefined || listed.includes(row.repository)) continue
+    try sent({ projectId: row.project_id, repository: row.repository }, { at, measured: false, listed: false, running: true, reads: 0 }, { type: "prune" })
+  }
+  const queue: Queued[] = []
+  for (const project of projects) {
+    if (!project.measured) continue
+    for (const repository of project.listed) {
+      const found = storedBy.get(keyText(project.projectId, repository))
+      if (due(stateOf({ at, measured: true, listed: true, running: true, reads: 0 }, rowOf(found)))) queue.push({ key: { projectId: project.projectId, repository }, stored: found })
+    }
+  }
+  const since = (item: Queued) => item.stored === undefined ? 0 : millisOf(item.stored.attempted_at)
+  queue.sort((a, b) => since(a) - since(b))
+  let reads = 0
+  let read = 0
+  let failed = 0
+  for (const item of queue) {
+    const facts: Facts = { at, measured: true, listed: true, running: true, reads }
+    const state = stateOf(facts, rowOf(item.stored))
+    if (!readable(state, schedule)) break
+    if (!canReadFailed(state, schedule)) continue
+    const outcome = try readEvent(try repositoryRead(item.key.repository, at))
+    reads += 1
+    const next = try sent(item.key, facts, outcome.event, outcome.evidence)
+    if (next === undefined) continue
+    if (outcome.event.type === "readSucceeded") read += 1
+    else failed += 1
+  }
+  return { read, failed } satisfies Refreshed
+}

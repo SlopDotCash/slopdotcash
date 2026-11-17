@@ -1,5 +1,6 @@
 // spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"; spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained"; spec/points/quotaRecovery.md, "Resume requires progress or a bounded number of refusals before the deadline"
 import { isoAt } from "@repo/platform/clock"
+import { secondaryLimitMessage } from "@repo/platform/github"
 import { type Admission, type Attempt, type Event, type Hint, type Output, type Reply, type Run, Machine, machineOver, newInvocation, productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
 
 module verified {
@@ -45,7 +46,6 @@ export service QuotaRun {
 export const productionLimits = { budget: productionBudget, durationMs: productionDuration }
 
 const digits = /^\d+$/u
-const secondaryMessage = /secondary rate limit|abuse detection/iu
 
 function safeTime(millis: number) {
   return Number.isSafeInteger(millis) ? hintTime(millis) : 0
@@ -71,7 +71,7 @@ export function hintOf(facts: ResponseFacts, now: number): Hint {
     graphql: facts.graphql,
     graphqlLimited: Array.isArray(errors) && errors.some((error) => objectOf(error)?.type === "RATE_LIMITED"),
     remainingZero: facts.headers["x-ratelimit-remaining"] === "0",
-    secondaryMessage: typeof payload?.message === "string" && secondaryMessage.test(payload.message),
+    secondaryMessage: secondaryLimitMessage(payload?.message),
     retryAt: Number.isSafeInteger(retrySeconds) && Number.isSafeInteger(now) ? safeTime(secondsLater(now, retrySeconds)) : 0,
     headerReset: Number.isSafeInteger(resetSeconds) ? safeTime(secondsLater(0, resetSeconds)) : 0,
     graphReset: Number.isFinite(graphReset) ? safeTime(graphReset) : 0,

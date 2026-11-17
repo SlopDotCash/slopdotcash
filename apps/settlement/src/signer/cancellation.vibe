@@ -1,4 +1,4 @@
-// spec/settlement/signer.md, "Cancellation of an obsolete intent uses the same nonce and an empty zero-value self-transfer"; spec/settlement/signer.md, "A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry"; spec/settlement/signer.md, "A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"
+// spec/settlement/signer.md, "Cancellation of an obsolete intent uses the same nonce and an empty zero-value self-transfer"; spec/settlement/signer.md, "A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry"; spec/settlement/signer.md, "A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Both possible winners stay retained"
 import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
 import { type SignedType2, readSignedType2 } from "../chain/evm/transactions.ts"
 import { type Step, advance, withAttempt } from "../journal/bindings.vibe"
@@ -6,7 +6,7 @@ import { type Entries, type Scope, within } from "../journal/journal.vibe"
 import { adoptedBinding, cancellationKey, consentCandidate, observationKey, pendingKeys, retainedConsent } from "../journal/stored.vibe"
 import { cancellationFees } from "../../gen/settlement__signer.effect.vibe"
 import { CANCELLATION_GAS as cancellationGas, MAX_FEE_PER_GAS } from "../kernels/attesterLimits.ts"
-import { Attempt, AttemptHeld, type Deployment, LimitRefused, MAX_GAS_CEILING, SignerUnavailable, attesterAccount, authorityInForce, frozenLimit, plainSigner, readAttempt, sameAttempt, signedWithin, transactionAllowed } from "./evm.vibe"
+import { Attempt, AttemptHeld, type Deployment, LimitRefused, MAX_GAS_CEILING, SignerUnavailable, attesterAccount, authorityInForce, frozenLimit, knownTransaction, plainSigner, readAttempt, sameAttempt, signedWithin, transactionAllowed } from "./evm.vibe"
 import { reconcileBindingWinner } from "./winner.vibe"
 
 export interface ObsoleteIntent {
@@ -96,6 +96,18 @@ effect function verifiedCancellation(deployment: Deployment, attempt: Attempt, s
   return signed
 }
 
+effect function offered(stored: BindingCancellation) {
+  const id = stored.transactionId.toLowerCase()
+  const send = effect {
+    const sent = try (try EvmRpc).sendRaw(stored.rawTransaction as Hex)
+    if (sent.toLowerCase() !== id) throw held("Cancellation hash mismatch")
+  }
+  send catch effect (error) => {
+    const known = knownTransaction(id) catch () => false
+    if (!known) throw error
+  }
+}
+
 export effect function cancelObsoleteStoredBinding<IE, IR, SE, SR>(scope: Scope, deployment: Deployment, key: string, attempt: Attempt, facts: CancellationFacts<IE, IR, SE, SR>) {
   const archiveKey = cancellationKey(attempt)
   let archived = try within(scope, (entries) => readCancellation(entries, archiveKey))
@@ -137,8 +149,7 @@ export effect function cancelObsoleteStoredBinding<IE, IR, SE, SR>(scope: Scope,
   try within(scope, (entries) => consentCandidate(entries, deployment, attempt, { nonce: signed.request.nonce, gas: signed.request.gas, maxFeePerGas: signed.request.maxFeePerGas, maxPriorityFeePerGas: signed.request.maxPriorityFeePerGas }))
   if ((try observe(stored.transactionId)).state !== "pending") return settled
   try plainSigner(deployment)
-  const sent = try (try EvmRpc).sendRaw(stored.rawTransaction as Hex)
-  if (sent.toLowerCase() !== stored.transactionId.toLowerCase()) throw held("Cancellation hash mismatch")
+  try offered(stored)
   const sentResult: CancellationResult = { settled: false, transactionId: stored.transactionId }
   return sentResult
 }

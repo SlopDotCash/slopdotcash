@@ -1,34 +1,8 @@
 // spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"
-import { ConfigInvalid, localDevelopmentOrigin } from "@repo/platform/config"
+import { ConfigInvalid, type Origins, type PublicTier, deploymentOrigins, localDevelopmentOrigin } from "@repo/platform/config"
 import { buildFlags, loginPath, pageOrigin } from "./environment.ts"
-import { SITE_ORIGIN } from "./site.ts"
 
-export type Tier = "production" | "staging"
-
-export interface Origins {
-  readonly branch: "main" | "development"
-  readonly site: string
-  readonly api: string
-  readonly identity: string
-  readonly browserOrigins: ReadonlySet<string>
-  readonly traceBrowserOrigins: ReadonlySet<string>
-}
-
-export function originsOf(tier: Tier): Origins {
-  if (tier === "staging") {
-    const site = "https://staging.slop.cash"
-    return { branch: "development", site, api: site, identity: "https://identity-staging.slop.cash", browserOrigins: new Set([site]), traceBrowserOrigins: new Set([site]) }
-  }
-  const browserOrigins = [SITE_ORIGIN, "https://slop.tech", "https://eliza.army"]
-  return {
-    branch: "main",
-    site: SITE_ORIGIN,
-    api: "https://api.slop.cash",
-    identity: "https://identity.slop.cash",
-    browserOrigins: new Set(browserOrigins),
-    traceBrowserOrigins: new Set([...browserOrigins, "https://www.slop.cash", "https://www.slop.tech"]),
-  }
-}
+export type Tier = PublicTier
 
 export effect function tierOf(value: string | undefined) {
   if (value === undefined || value === "production") return "production" satisfies Tier
@@ -49,7 +23,7 @@ export const deployment = Layer.effect(Deployment, effect {
   const tier: Tier = try tierOf(flags.tier)
   const origin = pageOrigin()
   const localBackendOrigin = flags.development && flags.localBackend && localDevelopmentOrigin(origin) ? origin : undefined
-  const base = originsOf(tier)
+  const base = deploymentOrigins(tier)
   const origins = localBackendOrigin === undefined ? base : { ...base, browserOrigins: new Set([...base.browserOrigins, localBackendOrigin]) }
   return {
     tier,

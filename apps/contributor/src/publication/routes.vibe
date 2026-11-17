@@ -1,12 +1,13 @@
-// spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project"
+// spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project"
 import { RowMismatch } from "@repo/platform/d1"
-import { RegistryManifests } from "@repo/ports/backend"
+import { type RegistryManifest, RegistryManifests } from "@repo/ports/backend"
 import { type Answer, type ArtifactFacts, type HttpMethod, type RouteKind, artifactAnswer, canonicalArtifact, discoverable, discoveryRows, handled, respond } from "../../gen/contributor__publication.effect.vibe"
 import { type DiscoveryRow, artifactNames, discoveryPath } from "../client/publication.vibe"
 import { getProjectsByIdByArtifact as rows } from "../client/refusals.vibe"
 import { publicSiteOrigin } from "../render/fields.ts"
 import { buildProjectPublication } from "../render/publication.ts"
 import { type RestrictionState, clearanceOf, gateOf, manifestOf, optimistic, publicReadOf, restrictionStateOf } from "./gate.vibe"
+import { fundingRead, monthListingFor } from "./listing.vibe"
 import { passThrough, templateBytes, templateIndex } from "./templates.vibe"
 
 schema ListedRepository { readonly id: string; readonly aliases?: ReadonlyArray<string> }
@@ -24,6 +25,12 @@ interface Reply {
   readonly contentType: string
   readonly headers: Readonly<Record<string, string>>
   readonly bytes: Uint8Array
+}
+
+interface Candidate {
+  readonly project: RegistryManifest
+  readonly manifest: unknown
+  readonly facts: ArtifactFacts
 }
 
 interface TextRefusal {
@@ -165,14 +172,20 @@ effect function discoveryFieldsOf(projectId: string, manifest: unknown) {
 effect function discoveryReply(origin: string) {
   const projects = try (try RegistryManifests).current()
   const index = try templateIndex(origin)
-  const listed: DiscoveryRow[] = []
+  const candidates: Candidate[] = []
   for (const project of projects) {
     const manifest = try manifestOf(project)
     const hopeful = optimistic(project, manifest, "Listed", "FundingUnread")
     if (!discoverable(hopeful)) continue
-    const read = try publicReadOf(project, manifest)
-    if (!discoverable({ ...hopeful, read })) continue
-    const known = { ...hopeful, read, clearance: try clearanceOf(project, index.templateSha256) }
+    const facts = { ...hopeful, read: try publicReadOf(project, manifest) }
+    if (discoverable(facts)) candidates.push({ project, manifest, facts })
+  }
+  const funding = try fundingRead(candidates.map(({ project, manifest }) => ({ projectId: project.projectId, manifest })))
+  const listed: DiscoveryRow[] = []
+  for (const { project, manifest, facts } of candidates) {
+    const month = { ...facts, monthListing: monthListingFor(funding, project, manifest) }
+    if (!discoverable(month)) continue
+    const known = { ...month, clearance: try clearanceOf(project, index.templateSha256) }
     if (!discoverable(known)) continue
     const fields = try discoveryFieldsOf(project.projectId, manifest)
     const repositories = fields.repositories.map((repository) => ({ id: repository.id, lastAlias: repository.aliases?.at(-1) ?? "" }))

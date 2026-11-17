@@ -2,7 +2,7 @@
 import { boundedBytes } from "@repo/platform/browser"
 import { millisOf } from "@repo/platform/clock"
 import { ConfigInvalid } from "@repo/platform/config"
-import { githubApi, rateLimitHints } from "@repo/platform/github"
+import { githubApi, rateLimitHints, secondaryLimitMessage } from "@repo/platform/github"
 import { type Budget, budgetDecision, maxGenerationCost, rateLimitReserve } from "../../gen/points__census.effect.vibe"
 
 export const graphqlPageSize = 100
@@ -16,9 +16,9 @@ export const minimumStartingRateLimit = 900
 export const graphqlUserAgent = "eliza-computer-leaderboard"
 
 const gatewayFailures: ReadonlyArray<number> = [502, 503, 504]
-const secondaryLimit = /secondary rate limit|abuse detection/iu
 const comparisonTimeout = "Server Error: Sorry, this diff is taking too long to generate."
 const decimalHeader = /^\d+$/u
+const unresolvedNodeMessage = "GitHub could not resolve an enumerated source node; a fresh complete census is required"
 
 export type JsonRecord = Readonly<Record<string, unknown>>
 export type Variables = Readonly<Record<string, unknown>>
@@ -106,7 +106,7 @@ effect function comparisonBuildTimedOut(status: number, body: string) {
 effect function secondaryRateLimitDelayMs(status: number, headers: Readonly<Record<string, string>>, body: string) {
   if (status !== 403 && status !== 429) return undefined
   const message = record(try parsedText(body))?.message
-  if (typeof message !== "string" || !secondaryLimit.test(message)) return undefined
+  if (!secondaryLimitMessage(message)) return undefined
   const after = headers["retry-after"]
   if (after !== undefined && decimalHeader.test(after) && Number.isSafeInteger(Number(after))) return Number(after) * 1_000
   return 60_000
@@ -207,8 +207,17 @@ export effect function executeNodeBatch(document: string, ids: ReadonlyArray<str
   return client.execute(document, { ...variables, ids }, options) catch effect (error) => {
     if (error._tag !== "GraphqlUpstream" || ids.length < 2) throw error
     const middle = Math.ceil(ids.length / 2)
-    const head = try executeNodeBatch(document, ids.slice(0, middle), variables, options)
-    const tail = try executeNodeBatch(document, ids.slice(middle), variables, options)
+    const unavailable = new Map<string, UnavailableSource>()
+    effect function probe(half: ReadonlyArray<string>) {
+      return executeNodeBatch(document, half, variables, options) catch effect (failure) => {
+        if (failure._tag !== "SourceNodeUnavailable") throw failure
+        for (const source of failure.sources) unavailable.set(source.nodeId, source)
+        return undefined
+      }
+    }
+    const head = try probe(ids.slice(0, middle))
+    const tail = try probe(ids.slice(middle))
+    if (head === undefined || tail === undefined) throw new SourceNodeUnavailable({ message: unresolvedNodeMessage, sources: [...unavailable.values()] })
     if (!Array.isArray(head.nodes) || !Array.isArray(tail.nodes)) throw new GraphqlFailed({ message: "data.nodes must be an array" })
     return { ...tail, nodes: [...head.nodes, ...tail.nodes] }
   }
@@ -371,7 +380,7 @@ export function graphqlClient(options: GraphqlOptions) {
       rateLimit = { ...reported, consumedDuringRun: consumedCost }
       const effective = effectiveMaxGenerationCost()
       if (windowConsumedCost > effective) throw new BudgetExceeded({ message: `${label} safety budget exceeded (${windowConsumedCost}/${effective} points consumed in the current window, ${reported.remaining} remaining; reserve ${rateLimitReserve})` })
-      if (unavailable.length > 0) throw new SourceNodeUnavailable({ message: "GitHub could not resolve an enumerated source node; a fresh complete census is required", sources: unavailable })
+      if (unavailable.length > 0) throw new SourceNodeUnavailable({ message: unresolvedNodeMessage, sources: unavailable })
       if (statistics !== undefined) throw statistics
       return data
     }

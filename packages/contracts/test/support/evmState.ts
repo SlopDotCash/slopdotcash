@@ -1,4 +1,4 @@
-// spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"; spec/contracts/evmEscrow.md, "Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes"
+// spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"; spec/contracts/evmEscrow.md, "The owner pledges an amount to each of up to twelve months, raising but never lowering an open pledge"; spec/contracts/evmEscrow.md, "Anyone expires a pledge whose period's window closed without admission"; spec/contracts/evmEscrow.md, "Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes"; spec/contracts/evmEscrow.md, "Each period has one root, its gross stays within the cap at admission, and the pending reserve is the sum of remainders"
 import { type Address, type Hex, getAddress, hexToBigInt, isAddressEqual, sliceHex, zeroAddress } from "viem";
 import type { Binding, Escrow, Month, Pledge, Vault, VaultKey } from "../../gen/contracts__evmEscrow.ts";
 import type { Award, Leaf, Purpose } from "../../gen/contracts__ledger.ts";
@@ -179,15 +179,15 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
       cancelled, attester: name(transaction.from), paidVersion: count(paidVersion), cancels,
     };
   }));
-  const capAt = (log: { readonly blockNumber: bigint; readonly logIndex: number; readonly period: number }) => {
-    const policy = ordered(policies).filter((entry) => position(entry) < position(log)).at(-1)?.args;
+  const capAt = (admission: { readonly blockNumber: bigint; readonly logIndex: number; readonly transactionHash: Hex; readonly period: number }) => {
+    const policy = ordered(policies).filter((entry) => position(entry) < position(admission)).at(-1)?.args;
     const cap = policy?.enabled === true ? policy.cap : 0n;
-    const pledge = closedPledges.find(({ args }) => args.period === log.period && args.reserved)?.args.amount ?? 0n;
+    const pledge = closedPledges.find(({ transactionHash, args }) => transactionHash === admission.transactionHash && args.period === admission.period && args.reserved)?.args.amount ?? 0n;
     return pledge > cap ? pledge : cap;
   };
-  const admissions = ordered<{ readonly blockNumber: bigint; readonly logIndex: number; readonly period: number; readonly version2: boolean; readonly wholeGross: bigint; readonly entries: bigint }>([
-    ...legacy.map(({ blockNumber, logIndex, args }) => ({ blockNumber, logIndex, period: args.period, version2: false, wholeGross: args.gross, entries: args.awards })),
-    ...reserved.map(({ blockNumber, logIndex, args }) => ({ blockNumber, logIndex, period: args.period, version2: true, wholeGross: args.wholeGross, entries: BigInt(args.count) })),
+  const admissions = ordered<{ readonly blockNumber: bigint; readonly logIndex: number; readonly transactionHash: Hex; readonly period: number; readonly version2: boolean; readonly wholeGross: bigint; readonly entries: bigint }>([
+    ...legacy.map(({ blockNumber, logIndex, transactionHash, args }) => ({ blockNumber, logIndex, transactionHash, period: args.period, version2: false, wholeGross: args.gross, entries: args.awards })),
+    ...reserved.map(({ blockNumber, logIndex, transactionHash, args }) => ({ blockNumber, logIndex, transactionHash, period: args.period, version2: true, wholeGross: args.wholeGross, entries: BigInt(args.count) })),
   ]);
   const months: ObservedMonth[] = await Promise.all(admissions.map(async (admission) => {
     const { period } = admission;

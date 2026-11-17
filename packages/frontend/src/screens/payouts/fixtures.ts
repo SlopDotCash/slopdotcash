@@ -1,6 +1,5 @@
 // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
 import type { AccountPayment, PaymentsAccount } from "@repo/settlement/client";
-import type { AllocationShown } from "./payoutDesk.vibe";
 
 const usdc = { network: "base-mainnet", chain: "base", assetAddress: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", assetDecimals: 6 } as const;
 
@@ -57,23 +56,3 @@ export const payouts: PaymentsAccount = {
 };
 
 export const noPayouts: PaymentsAccount = { ...payouts, payments: [], monthlyAwards: [], directTransfers: [] };
-
-export const awaitingAllocation: AllocationShown = {
-  allocation: {
-    network: "base-mainnet",
-    chain: "base",
-    token: { symbol: "SLOP", decimals: 18, address: "0x1111000000000000000000000000000000000001" },
-    registrationClosesAt: "2026-11-30T00:00:00.000Z",
-    closed: false,
-    recipients: [{ githubId: "4242", amountBase: "1500000000000000000000", transactionId: null }],
-    digest: "0".repeat(64),
-  },
-  recipient: { githubId: "4242", amountBase: "1500000000000000000000", transactionId: null },
-  state: "awaiting-wallet",
-};
-
-export const sentAllocation: AllocationShown = {
-  ...awaitingAllocation,
-  recipient: { ...awaitingAllocation.recipient, transactionId: "0x3c1d4c0a4b0e3c7d2f1e6a5b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f70815" },
-  state: "sent",
-};

@@ -42,6 +42,10 @@ const giveAmount = 500_000_000n
 const takeAmount = 499_000_000n
 const fixedFee = 100_000_000_000_000n
 const minted = 2_000_000_000n
+const minimumBridge = 25_000_000n
+const thresholdBalance = 30_000_000n
+const nativeMicro = 250n
+const capCost = 2_500_000n
 const tokenAbi = parseAbi(["function mint(address to, uint256 amount)"])
 const createdAbi = parseAbi([
   "struct Order { uint64 makerOrderNonce; bytes makerSrc; uint256 giveChainId; bytes giveTokenAddress; uint256 giveAmount; uint256 takeChainId; bytes takeTokenAddress; uint256 takeAmount; bytes receiverDst; bytes givePatchAuthoritySrc; bytes orderAuthorityAddressDst; bytes allowedTakerDst; bytes allowedCancelBeneficiarySrc; bytes externalCall; }",
@@ -49,7 +53,7 @@ const createdAbi = parseAbi([
 ])
 const ethereumLimits: NativeLimits = { perTransaction: 1_000_000_000_000_000n, perDay: 10_000_000_000_000_000n, additionalFeeReserve: 0n }
 const buybackLimits: BuybackLimits = {
-  startAt: start, shareBps: 5_000n, burnBps: 5_000n, minBridgeMicro: 500_000_000n, maxBridgeCostBps: 150n, maxBridgeNativeFee: [], minBuyMicro: 1_000_000n,
+  startAt: start, shareBps: 5_000n, burnBps: 5_000n, minBridgeMicro: 25_000_000n, maxBridgeCostBps: 1_000n, maxBridgeNativeFee: [], minBuyMicro: 1_000_000n,
   minBurnMicro: 1_000_000n, maxSlippageBps: 100, maxPriceImpactBps: 100, runCapMicro: giveAmount, dailyCapMicro: 5_000_000_000n, unfilledAlertSeconds: 3_600n, solanaBridgeNative: undefined,
 }
 const dryRunEthereum = { source: 1, converterMode: "Live", buybackMode: "DryRun", networks: ["Ethereum", "Robinhood"], keys: ["Ethereum", "Robinhood"], nativeLimits: ["Ethereum", "Robinhood"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
@@ -73,13 +77,13 @@ function wide(value: number) {
   return value.toString(16).padStart(4, "0")
 }
 
-interface Placed { readonly orderId: Hex; readonly slot: bigint; readonly salt: bigint }
+interface Placed { readonly orderId: Hex; readonly slot: bigint; readonly salt: bigint; readonly give: bigint; readonly take: bigint }
 
 function sourceCode(wallet: Hex, placed: Placed) {
-  const transfer = encodeFunctionData({ abi: erc20Abi, functionName: "transferFrom", args: [wallet, dln.source as Address, giveAmount] }).slice(2)
+  const transfer = encodeFunctionData({ abi: erc20Abi, functionName: "transferFrom", args: [wallet, dln.source as Address, placed.give] }).slice(2)
   const [created] = createdAbi
   const order = {
-    makerOrderNonce: placed.salt, makerSrc: wallet, giveChainId: 1n, giveTokenAddress: ethereumUsdc, giveAmount, takeChainId: 4663n, takeTokenAddress: robinhoodUsdg as Hex, takeAmount,
+    makerOrderNonce: placed.salt, makerSrc: wallet, giveChainId: 1n, giveTokenAddress: ethereumUsdc, giveAmount: placed.give, takeChainId: 4663n, takeTokenAddress: robinhoodUsdg as Hex, takeAmount: placed.take,
     receiverDst: wallet, givePatchAuthoritySrc: wallet, orderAuthorityAddressDst: wallet, allowedTakerDst: "0x" as Hex, allowedCancelBeneficiarySrc: wallet, externalCall: "0x" as Hex,
   }
   const log = encodeAbiParameters(created.inputs, [order, placed.orderId, "0x", fixedFee, 0n, 0, "0x"]).slice(2)
@@ -184,22 +188,22 @@ effect function leased(world: World, network: Network) {
   return runText(instance.scope, world.names.text("run", runId) ?? "", "Recovery")
 }
 
-function placedOf(index: bigint): Placed {
+function placedOf(index: bigint, give: bigint, take: bigint): Placed {
   let slot = 0n
   for (let byte = 0; byte < 32; byte += 1) slot = slot * 256n + index
-  return { orderId: word(slot) as Hex, slot, salt: index }
+  return { orderId: word(slot) as Hex, slot, salt: index, give, take }
 }
 
-effect function scripted(world: World, index: bigint) {
+effect function scripted(world: World, index: bigint, give: bigint = giveAmount, take: bigint = takeAmount) {
   const { ethereum, quotes } = try Fixture
-  const placed = placedOf(index)
-  try orDie(Effect.try(() => quotes.dln.order({ family: "evm", srcChainId: 1n, source: dln.source as Hex, giveToken: ethereumUsdc, takeChainId: 4663n, takeToken: robinhoodUsdg as Hex, takeAmount, orderId: placed.orderId, salt: placed.salt, nativeFee: fixedFee })))
+  const placed = placedOf(index, give, take)
+  try orDie(Effect.try(() => quotes.dln.order({ family: "evm", srcChainId: 1n, source: dln.source as Hex, giveToken: ethereumUsdc, giveAmount: give, takeChainId: 4663n, takeToken: robinhoodUsdg as Hex, takeAmount: take, orderId: placed.orderId, salt: placed.salt, nativeFee: fixedFee })))
   try promise(() => ethereum.rpc("anvil_setCode", [dln.source, sourceCode(wallet(world) as Hex, placed)]))
   return placed
 }
 
 function settingsOf(world: World, runId: string): LegSettings {
-  return { runId, wallet: wallet(world), limits: buybackLimits, native: ethereumLimits, receiver: wallet(world) as Address, kyber: { clientId: kyberswap.clientId, buyback: { receiver: wallet(world) as Address, maxBridgeCostBps: 150n } } }
+  return { runId, wallet: wallet(world), limits: buybackLimits, native: ethereumLimits, receiver: wallet(world) as Address, kyber: { clientId: kyberswap.clientId, buyback: { receiver: wallet(world) as Address, maxBridgeCostBps: 1_000n } } }
 }
 
 effect function bridged(world: World, runId: string) {
@@ -236,6 +240,19 @@ function recorded(run: LegResult) {
 
 schema SendCheck { kind: string; state: string; mode: string; reason: string | null; tx_id: string | null }
 schema OutcomeCheck { outcome: string; amount: string; evidence_network: string; run_id: string }
+schema BalanceCheck { kind: string; state: string; reason: string | null; amount_in: string; token_balance_before: string | null }
+
+function dlnQuotes(quotes: QuotesFake) {
+  return quotes.calls.filter((call) => call.service === "dln").length
+}
+
+effect function signedRow(world: World, balance: string | null) {
+  const scope = world.leg.scope
+  try Effect.provide(effect {
+    try (try D1).run(sql`UPDATE fee_conversions SET token_balance_before = ${balance} WHERE network = 'ethereum' AND kind = 'bridge' AND tx_id IS NOT NULL AND substr(run_id, 1, ${scope.length}) = ${scope}`)
+  }, d1(world.db))
+  return Effect.as(Effect.provide(ledgerOf(world.leg), services(world)), "loaded") catch (error) => error._tag
+}
 
 effect function seed(db: D1Database, generation: number, id: string, kind: "conversion" | "claim", target: string, amountOut: string, finalizedAt: number) {
   const at = try isoAt(offsetOf(generation) + finalizedAt)
@@ -387,6 +404,68 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         ["approval", "finalized", "live", null], ["bridge", "failed", "live", "bridge order transaction reverted"],
       ],
       outcomeRows: [["arrived", "499000000", "robinhood", true], ["refunded", "500000000", "ethereum", true]],
+    })
+  })
+
+  it.effect('A bridge order waits below 25 USDC available, is skipped above a 10 percent total cost, is approved and ordered at exactly 10 percent within the finalized balance it records, and replays only with that balance (spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Cumulative accounting stays within its shares and every journal entry is past and positive")', () => effect {
+    const { ethereum, quotes } = try Fixture
+    const income: IncomeEntry = { kind: "ConversionOutput", text: "g5-output", amount: [0, 0, 40], chainTime: start + hour }
+    const topUp: IncomeEntry = { kind: "ConversionOutput", text: "g5-output-2", amount: [0, 0, 10], chainTime: start + hour }
+    const world = try opened(5, "Ethereum", [income])
+    const funder = ethereum.accounts[0]?.address ?? wallet(world)
+    try promise(() => ethereum.rpc("anvil_setBalance", [wallet(world), word(10n ** 19n)]))
+    try promise(() => ethereum.transact({ from: funder, to: ethereumUsdc, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [wallet(world) as Address, thresholdBalance] }) }))
+    try promise(() => ethereum.rpc("anvil_setStorageAt", [dln.source, word(1n), word(0n)]))
+    try finalize(ethereum)
+    quotes.kyberswap.route({ chain: "ethereum", tokenIn: kyberNative, tokenOut: ethereumUsdc, amountOut: nativeMicro, routerAddress: kyberswap.router as Hex, gasUsd: "0", l1FeeUsd: null })
+    try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+    try step(world, { type: "publishWorker", config: dryRunEthereum }, "ReleaseWorkflow")
+    try step(world, { type: "verifyReadiness", readyNetwork: "Ethereum" }, "Owner")
+    try step(world, { type: "verifyReadiness", readyNetwork: "Robinhood" }, "Owner")
+    try step(world, { type: "publishWorker", config: { ...dryRunEthereum, source: 2, buybackMode: "Live" } }, "ReleaseWorkflow")
+    const runId = try leased(world, "Ethereum")
+    const asked = dlnQuotes(quotes)
+    const below = try bridged(world, runId)
+    const unasked = dlnQuotes(quotes) - asked
+
+    world.leg = { ...world.leg, evidence: [...world.leg.evidence, topUp], income: [...world.leg.income, topUp] }
+    try scripted(world, 0xd4n, minimumBridge, minimumBridge - capCost - 1n + 2n * nativeMicro)
+    const skipped = try bridged(world, runId)
+    const unsigned = try promise(() => ethereum.rpc("eth_getTransactionCount", [wallet(world), "latest"]))
+    try scripted(world, 0xe5n, minimumBridge, minimumBridge - capCost + 2n * nativeMicro)
+    const approving = try bridged(world, runId)
+    try finalize(ethereum)
+    const ordering = try bridged(world, runId)
+    const reloaded = (try Effect.provide(ledgerOf(world.leg), services(world))).state
+    const scope = world.leg.scope
+    const balances = try Effect.provide(rows(BalanceCheck, sql`SELECT kind, state, reason, amount_in, token_balance_before FROM fee_conversions WHERE network = 'ethereum' AND substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))
+    const replay = [try signedRow(world, null), try signedRow(world, String(minimumBridge - 1n)), try signedRow(world, thresholdBalance.toString())]
+
+    try same({
+      below: [recorded(below), below.state.orderPhase],
+      unasked,
+      skipped: [recorded(skipped), skipped.state.orderPhase],
+      unsigned,
+      approving: [recorded(approving), approving.state.orderPhase, approving.state.approval.amount],
+      ordering: [recorded(ordering), ordering.state.orderPhase, ordering.state.orderSend.amount],
+      reloadedEqual: JSON.stringify(reloaded) === JSON.stringify(ordering.state),
+      balances: balances.map((row) => [row.kind, row.state, row.reason, row.amount_in, row.token_balance_before]),
+      replay,
+    }, {
+      below: [["decide"], "NoOrder"],
+      unasked: 0,
+      skipped: [["decide"], "NoOrder"],
+      unsigned: "0x0",
+      approving: [["approveOrder"], "Approving", 25_000_000],
+      ordering: [["settleApproval", "order"], "Ordering", 25_000_000],
+      reloadedEqual: true,
+      balances: [
+        ["bridge", "pending", "below the minimum bridge value", "20000000", "30000000"],
+        ["bridge", "skipped", "bridge cost above the cap", "25000000", "30000000"],
+        ["approval", "finalized", null, "25000000", "30000000"],
+        ["bridge", "submitted", null, "25000000", "30000000"],
+      ],
+      replay: ["RowMismatch", "RowMismatch", "loaded"],
     })
   })
 })

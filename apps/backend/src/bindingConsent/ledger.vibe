@@ -1,10 +1,11 @@
-// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
 import { first, rows, sql } from "@repo/platform/d1"
+import type { AttemptLedger } from "@repo/ports/settlement"
 import { type PaymentEvidence, type SolanaGeneration, blockhashValidity } from "../../gen/backend__bindingConsent.effect.vibe"
 import { activeAuthorization } from "../../gen/backend__wallets.effect.vibe"
 import { type Loaded as Partition, claimAt, positionOf } from "../wallets/store.vibe"
 import type { AttesterPayment } from "./attester.vibe"
-import { type Found, nothingOutside } from "./store.vibe"
+import { type Found, bindingAttempts, nothingOutside } from "./store.vibe"
 
 schema ObligationRow {
   readonly network: string
@@ -17,6 +18,10 @@ schema AttemptRow {
   readonly claim_id: string
 }
 
+schema OutboxRow {
+  readonly state: string
+}
+
 schema SettlementRow {
   readonly case_id: string
   readonly network: string
@@ -25,8 +30,8 @@ schema SettlementRow {
 
 export type Ledger =
   | { readonly kind: "absent" }
-  | { readonly kind: "ordinary"; readonly obligation: ObligationRow; readonly attempts: ReadonlyArray<AttemptRow> }
-  | { readonly kind: "private"; readonly settlement: SettlementRow; readonly obligation: ObligationRow | undefined; readonly attempts: ReadonlyArray<AttemptRow> }
+  | { readonly kind: "ordinary"; readonly obligation: ObligationRow; readonly attempts: ReadonlyArray<AttemptRow>; readonly outbox: string | undefined }
+  | { readonly kind: "private"; readonly settlement: SettlementRow; readonly obligation: ObligationRow | undefined; readonly attempts: ReadonlyArray<AttemptRow>; readonly outbox: string | undefined }
 
 export interface Readiness {
   readonly ledger: Ledger
@@ -36,24 +41,45 @@ export interface Readiness {
 export const modelObligation = 1
 const modelCase = 1
 
-export function ledgerFingerprint(obligationId: string) {
+effect function readinessStatement(ledger: AttemptLedger, obligationId: string) {
+  const attempts = try bindingAttempts()
+  if (Option.isNone(attempts)) return undefined
+  return try attempts.value.readiness({ ledger, obligationId })
+}
+
+effect function outboxFingerprint(ledger: AttemptLedger, obligationId: string) {
+  const readiness = try readinessStatement(ledger, obligationId)
+  return readiness === undefined ? sql`'-'` : sql`coalesce((${readiness}), '-')`
+}
+
+export effect function ledgerFingerprint(obligationId: string) {
+  const ordinaryOutbox = try outboxFingerprint("Ordinary", obligationId)
+  const privateOutbox = try outboxFingerprint("Private", obligationId)
   return sql`SELECT coalesce((SELECT state FROM payment_obligations WHERE id = ${obligationId}), '-')
     || ':' || coalesce((SELECT group_concat(id || '=' || state || '=' || claim_id, ',') FROM (SELECT id, state, claim_id FROM payment_attempts WHERE obligation_id = ${obligationId} ORDER BY rowid)), '')
+    || ':' || ${ordinaryOutbox}
     || ':' || coalesce((SELECT state FROM security_payment_obligations WHERE id = ${obligationId}), '-')
-    || ':' || coalesce((SELECT group_concat(id || '=' || state || '=' || claim_id, ',') FROM (SELECT id, state, claim_id FROM security_payment_attempts WHERE obligation_id = ${obligationId} ORDER BY rowid)), '')`
+    || ':' || coalesce((SELECT group_concat(id || '=' || state || '=' || claim_id, ',') FROM (SELECT id, state, claim_id FROM security_payment_attempts WHERE obligation_id = ${obligationId} ORDER BY rowid)), '')
+    || ':' || ${privateOutbox}`
+}
+
+effect function outboxOf(ledger: AttemptLedger, obligationId: string) {
+  const readiness = try readinessStatement(ledger, obligationId)
+  if (readiness === undefined) return undefined
+  return (try first(OutboxRow, readiness))?.state
 }
 
 export effect function ledgerOf(actor: string, obligationId: string) {
   const ordinary = try first(ObligationRow, sql`SELECT network, vault, state FROM payment_obligations WHERE id = ${obligationId} AND github_user_id = ${actor} AND chain = 'solana'`)
   if (ordinary !== undefined) {
     const attempts = try rows(AttemptRow, sql`SELECT id, claim_id FROM payment_attempts WHERE obligation_id = ${obligationId} AND state IN ('prepared', 'unknown', 'submitted') ORDER BY created_at, rowid`)
-    return { kind: "ordinary", obligation: ordinary, attempts } satisfies Ledger
+    return { kind: "ordinary", obligation: ordinary, attempts, outbox: try outboxOf("Ordinary", obligationId) } satisfies Ledger
   }
   const settlement = try first(SettlementRow, sql`SELECT s.case_id, s.network, s.vault FROM security_settlements s JOIN security_cases c ON c.id = s.case_id WHERE s.obligation_id = ${obligationId} AND c.reporter_github_id = ${actor}`)
   if (settlement === undefined) return { kind: "absent" } satisfies Ledger
   const obligation = try first(ObligationRow, sql`SELECT network, vault, state FROM security_payment_obligations WHERE id = ${obligationId} AND github_user_id = ${actor} AND chain = 'solana'`)
   const attempts = try rows(AttemptRow, sql`SELECT id, claim_id FROM security_payment_attempts WHERE obligation_id = ${obligationId} AND state IN ('prepared', 'unknown', 'submitted') ORDER BY created_at, rowid`)
-  return { kind: "private", settlement, obligation, attempts } satisfies Ledger
+  return { kind: "private", settlement, obligation, attempts, outbox: try outboxOf("Private", obligationId) } satisfies Ledger
 }
 
 function attemptFor(solana: Partition, attempts: ReadonlyArray<AttemptRow>) {
@@ -85,7 +111,7 @@ export function readinessOf(ledger: Ledger, actor: string, obligationId: string,
     attemptClaim: claim,
     attemptOpen: attempt !== undefined,
     privateCase: ledger.kind === "private" ? modelCase : 0,
-    outboxReady: false,
+    outboxReady: ledger.outbox === "ready",
   }
   const payment = attempt === undefined || wallet === undefined ? undefined : {
     obligationId,

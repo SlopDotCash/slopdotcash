@@ -41,6 +41,8 @@ function viewOf(project: (typeof registered)[number]): ProjectView {
     listingTier: "Community",
     retirement: "NotRetired",
     stewardGithubId: "101",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: [{ id: project.repositoryId, nodeId: `R_${project.projectId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   }

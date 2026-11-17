@@ -1,0 +1,108 @@
+// spec/points/retainedFreshness.md, "Story: A retained release never moves production back to older data"; spec/points/retainedFreshness.md, "A retained snapshot is refused when its leaderboard or profiles were generated before production's current ones"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+import { boundedBytes } from "@repo/platform/browser"
+import { randomId } from "@repo/platform/crypto"
+import { type GenerationTime, type SnapshotTimes, notOlder, retainedCurrent } from "../../gen/points__retainedFreshness.effect.vibe"
+import { maxFileBytes } from "../client/snapshot/parts.vibe"
+import { validateSnapshot } from "../client/snapshot/validate.vibe"
+import { repositoryIdentity } from "../profiles/identity.vibe"
+import { profileIndexOf } from "../profiles/shape.vibe"
+import { assertRetainedProfiles } from "../profiles/validate.vibe"
+import { readRegistry } from "../snapshot/adaptPr.vibe"
+import { attempt, readSnapshotFile } from "../snapshot/files.vibe"
+import { type RestoreOptions, restoreSnapshot } from "../snapshot/restore.vibe"
+
+export error RetainedRefused { message: string }
+export error RetainedUsage { message: string }
+
+export const publishedLeaderboardUrl = "https://slop.cash/data/leaderboard.json"
+export const publishedProfilesUrl = "https://slop.cash/data/profiles.json"
+
+export interface GenerationTimes {
+  readonly leaderboard: string
+  readonly profiles: string
+}
+
+const profilesTimeoutMs = 30_000
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const readInit: globalThis.RequestInit = { redirect: "error", cache: "no-store" }
+const unavailable = "Published profiles unavailable"
+
+function generationTime(text: string): GenerationTime {
+  const millis = exactUtc.test(text) ? Date.parse(text) : Number.NaN
+  const valid = Number.isFinite(millis) && new Date(millis).toISOString() === text
+  return { valid, millis: valid ? millis : 0 }
+}
+
+function snapshotTimes(times: GenerationTimes): SnapshotTimes {
+  return { leaderboard: generationTime(times.leaderboard), profiles: generationTime(times.profiles) }
+}
+
+export function retainedRefusal(retained: GenerationTimes, published: GenerationTimes): string | undefined {
+  const kept = snapshotTimes(retained)
+  const served = snapshotTimes(published)
+  if (retainedCurrent(kept, served)) return undefined
+  const kind = notOlder(kept.leaderboard, served.leaderboard) ? "profiles" : "leaderboard"
+  return kept[kind].valid && served[kind].valid ? `Retained ${kind} is older than current publication` : `Invalid ${kind} generation time`
+}
+
+effect function jsonOf(bytes: Uint8Array, message: string) {
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new RetainedRefused({ message })
+  }
+  return value
+}
+
+effect function readProfiles() {
+  const url = new URL(publishedProfilesUrl)
+  url.searchParams.set("snapshot", try randomId())
+  const answered = effect {
+    const response = HttpClient.execute(HttpClientRequest.get(url.toString())) catch effect () => {
+      throw new RetainedRefused({ message: unavailable })
+    }
+    if (response.status < 200 || response.status > 299) throw new RetainedRefused({ message: unavailable })
+    return boundedBytes(response, maxFileBytes, "profiles") catch effect (error) => {
+      throw new RetainedRefused({ message: error._tag === "BodyTooLarge" ? `profiles exceeded the ${maxFileBytes}-byte limit` : error.reason })
+    }
+  }
+  const bytes = try Effect.timeoutOrElse(provideService(answered, FetchHttpClient.RequestInit, readInit), {
+    duration: profilesTimeoutMs,
+    orElse: () => Effect.fail(new RetainedRefused({ message: unavailable })),
+  })
+  return try profileIndexOf(try jsonOf(bytes, "profiles returned invalid JSON"))
+}
+
+export effect function checkRetainedRelease(directory: string, registryPath: string, options: RestoreOptions = {}) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const root = files.resolve(directory)
+  const registry = try readRegistry(registryPath)
+  const retainedLeaderboard = try jsonOf(try readSnapshotFile(files.join(root, "data", "leaderboard.json")), "Retained leaderboard is not UTF-8 JSON")
+  const profilesPath = files.join(root, "data", "profiles.json")
+  const retainedProfiles = try profileIndexOf(try jsonOf(try attempt(fs.readFile(profilesPath), profilesPath, "Retained profiles are unavailable"), "Retained profiles are not UTF-8 JSON"))
+  const kept = try validateSnapshot(retainedLeaderboard, registry)
+  const identity = repositoryIdentity([{ repositories: registry.registered }])
+  try assertRetainedProfiles(retainedProfiles, identity)
+  const served = try scoped(effect {
+    const workspace = try fs.makeTempDirectoryScoped({ prefix: "slop-release-freshness-" })
+    const path = files.join(workspace, "leaderboard.json")
+    try restoreSnapshot(publishedLeaderboardUrl, path, options)
+    const published = try jsonOf(try attempt(fs.readFile(path), path, "Published leaderboard is unavailable"), "Published leaderboard is not UTF-8 JSON")
+    return try validateSnapshot(published, registry)
+  })
+  const publishedProfiles = try readProfiles()
+  try assertRetainedProfiles(publishedProfiles, identity)
+  const refusal = retainedRefusal(
+    { leaderboard: kept.generatedAt, profiles: retainedProfiles.generatedAt },
+    { leaderboard: served.generatedAt, profiles: publishedProfiles.generatedAt },
+  )
+  if (refusal !== undefined) throw new RetainedRefused({ message: refusal })
+}
+
+export effect function retainedFresh(args: ReadonlyArray<string>) {
+  const [bundle, registry] = args
+  if (args.length !== 2 || bundle === undefined || registry === undefined) {
+    throw new RetainedUsage({ message: "Usage: retained-fresh <checked bundle> <registry.json>" })
+  }
+  try checkRetainedRelease(bundle, registry)
+  try Console.log("Retained production data is current")
+}

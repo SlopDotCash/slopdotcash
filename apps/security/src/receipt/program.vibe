@@ -1,4 +1,4 @@
-// spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import { D1, RowMismatch, type Statement, first, sql } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Json, ReadFailure } from "@repo/ports/backend"
@@ -6,6 +6,8 @@ import type { Amount } from "../../gen/settlement__money.ts"
 import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { unpaidTerms } from "../../gen/security__terms.effect.vibe"
 import type { ProgramApprovers } from "../caseAuthority/snapshot.vibe"
+import { exclusionLengths } from "../program/exclusions.ts"
+import { scopeExclusions } from "../program/manifest.ts"
 
 export type FrozenTerms = { readonly [key: string]: Json }
 
@@ -21,6 +23,7 @@ export interface ProgramAtReceipt {
   readonly revision: number
   readonly publishedAt: string
   readonly terms: FrozenTerms | undefined
+  readonly excludedFindings?: ReadonlyArray<number>
 }
 
 export service ReportingPrograms {
@@ -141,7 +144,8 @@ effect function atReceipt(read: { readonly projectId: string; readonly receivedA
   const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
   const bounty = manifest.securityBounty
   const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
-  return { revision: row.revision, publishedAt: row.created_at, terms: open ? try frozenTerms(bounty, raw) : undefined } satisfies ProgramAtReceipt
+  if (!open) return { revision: row.revision, publishedAt: row.created_at, terms: undefined } satisfies ProgramAtReceipt
+  return { revision: row.revision, publishedAt: row.created_at, terms: try frozenTerms(bounty, raw), excludedFindings: exclusionLengths(scopeExclusions(member(raw, "securityBounty"))) } satisfies ProgramAtReceipt
 }
 
 function unbanned(githubId: string): Statement {
@@ -189,6 +193,6 @@ export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number,
     offeredGross: limbs(text(terms, "grossMinor") ?? ""),
     split: terms.split === undefined ? "StandardSplit" : "FullAward",
     asset: assetOf(terms),
-    excludedFindings: [],
+    excludedFindings: [...program.excludedFindings ?? []],
   }
 }

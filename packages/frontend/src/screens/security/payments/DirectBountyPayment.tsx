@@ -142,7 +142,7 @@ function OpenedPayment({ runtime, record, cancellation, legs, onChanged, opened 
         unsent={shown.unsent}
         uncertain={shown.uncertain}
         mismatched={shown.mismatched}
-        wallets={offers.filter((offer) => offer.family === "evm").map((offer) => ({ id: String(offer.id), name: offer.name }))}
+        wallets={offers.filter((offer) => offer.family === "evm").map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
         address={wallet?.address}
         busy={action.busy || sending}
         hashes={hashes}

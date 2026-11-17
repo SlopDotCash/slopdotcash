@@ -1,6 +1,7 @@
 // spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
 import { githubUserIdFromNodeId } from "../nodeId.ts";
 import { legacyHolder } from "../store/legacy.ts";
+import { readyLabelProblem } from "./readyLabel.ts";
 
 type Json = Readonly<Record<string, unknown>>;
 
@@ -621,7 +622,7 @@ interface RewardOptions {
 
 function validateReward(value: unknown, field: string, { allowLegacyExternalPrizeFee, escrow, rewardAsset }: RewardOptions): Json {
   const reward = record(value, field);
-  const optional = ["externalOpportunity", "externalEvaluations", "cycleCaps", "payoutExclusions", "reviewBudget"].filter((key) => Object.hasOwn(reward, key));
+  const optional = ["externalOpportunity", "externalEvaluations", "cycleCaps", "honorSystem", "payoutExclusions", "reviewBudget"].filter((key) => Object.hasOwn(reward, key));
   exactKeys(reward, ["chain", "committedMinor", "currency", "cycle", "feeBasisPoints", "fundingState", "kind", "monthlyCapDisplay", "monthlyCapMinor", "paymentMode", "rewardStartAt", "unusedFunds", ...optional], field);
   if (Object.hasOwn(reward, "payoutExclusions")) validatePayoutExclusions(reward.payoutExclusions, `${field}.payoutExclusions`);
   if (Object.hasOwn(reward, "externalEvaluations")) {
@@ -631,6 +632,7 @@ function validateReward(value: unknown, field: string, { allowLegacyExternalPriz
   }
   const monthlyCapMinor = minor(reward.monthlyCapMinor, `${field}.monthlyCapMinor`);
   const committedMinor = minor(reward.committedMinor, `${field}.committedMinor`);
+  if (Object.hasOwn(reward, "honorSystem") && (reward.honorSystem !== true || reward.kind !== "monthly-pool" || BigInt(monthlyCapMinor) === 0n)) fail(`${field}.honorSystem must be true on a positive monthly pool, or omitted`);
   if (reward.paymentMode !== "disabled" && reward.paymentMode !== "enabled") fail(`${field}.paymentMode is invalid`);
   text(reward.monthlyCapDisplay, `${field}.monthlyCapDisplay`, { max: 80 });
   timestamp(reward.rewardStartAt, `${field}.rewardStartAt`);
@@ -741,8 +743,11 @@ function validateProjectDefinition(value: unknown, { trusted, historical }: Defi
   if (project.contribution !== undefined) validateContribution(project.contribution);
   if (project.slopbot !== undefined) {
     const slopbot = record(project.slopbot, "project.slopbot");
-    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
-    if (typeof slopbot.automaticClosure !== "boolean") fail("project.slopbot.automaticClosure must be a boolean");
+    const consentKey = slopbot.readyLabel === undefined || Object.hasOwn(slopbot, "automaticClosure") ? ["automaticClosure"] : [];
+    exactKeys(slopbot, slopbot.readyLabel === undefined ? consentKey : [...consentKey, "readyLabel"], "project.slopbot");
+    if (consentKey.length > 0 && typeof slopbot.automaticClosure !== "boolean") fail("project.slopbot.automaticClosure must be a boolean");
+    const readyLabel = slopbot.readyLabel === undefined ? undefined : readyLabelProblem(slopbot.readyLabel, "project.slopbot.readyLabel");
+    if (readyLabel !== undefined) fail(readyLabel);
   }
   if (!legacyListing && project.listingTier !== "featured" && project.listingTier !== "community" && project.listingTier !== "retired") fail("project.listingTier is invalid");
   if (project.status !== "active" && project.status !== "paused") fail("project.status is invalid");

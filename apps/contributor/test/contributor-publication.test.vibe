@@ -54,6 +54,7 @@ interface Fixture {
   readonly contribution: boolean
   readonly repositories: ReadonlyArray<Repository>
   readonly securityBounty?: unknown
+  readonly extra?: Readonly<Record<string, unknown>>
 }
 
 interface Stored {
@@ -84,6 +85,13 @@ const delisted: Fixture = { id: "delisted", status: "paused", listingTier: "reti
 const gamma: Fixture = { id: "gamma", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma" }] }
 const shared: Fixture = { id: "shared", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "gamma-org/gamma-docs" }] }
 const fixtures = [alpha, beta, pausedTool, unsure, unscanned, draft, delisted, gamma, shared]
+const monthlyPool = {
+  reward: { kind: "monthly-pool", currency: "USDC", chain: "base", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000" },
+  escrow: { deployments: [{ network: "base-mainnet", vault: "0x4f891b8c3d3fab9150fcdc94176b96863cd02899" }] },
+}
+const poolProject: Fixture = { id: "pool-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/pool-project" }], extra: monthlyPool }
+const securityProject: Fixture = { id: "security-project", status: "active", listingTier: "community", contribution: true, repositories: [{ id: "example/security-project" }], securityBounty: { status: "open" }, extra: monthlyPool }
+const pausedPool: Fixture = { id: "paused-pool", status: "paused", listingTier: "community", contribution: true, repositories: [{ id: "example/paused-pool" }], extra: monthlyPool }
 
 const contributionFields = {
   approvedScope: "Bug fixes and documented features in the toolkit.",
@@ -112,6 +120,7 @@ function manifestOf(fixture: Fixture, headline = "Reproducible research tooling.
     skill: { id: `contribute-to-${fixture.id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${fixture.id}/skill.md` },
     reviewSkill: { id: `review-${fixture.id}-contributions`, sourcePath: "skills/project-reviewer-template" },
     ...fixture.contribution ? { contribution: contributionFields } : {},
+    ...fixture.extra,
   }
 }
 
@@ -196,6 +205,51 @@ effect function bodyOf(path: string, bytes: Uint8Array) {
   return try Effect.try((): unknown => JSON.parse(text))
 }
 
+const fundingUnavailable = "project discovery pool funding unavailable"
+const cap = [0, 0, 0, 1]
+
+interface Seen {
+  readonly asked: ReadonlyArray<ReadonlyArray<string>>
+  readonly logged: ReadonlyArray<string>
+}
+
+type FundingAnswer = "Facts" | "Short" | "Fail" | "Nothing"
+
+function pool(freeNow: ReadonlyArray<number>, pledged: ReadonlyArray<number> = [0]) {
+  return { read: "PoolCurrent", monthlyPool: true, period: 202611, amount: cap, priorAmount: [0], priorPending: false, freeNow, monthStartRead: false, freeAtStart: [0], withdrawnSince: false, pledgeSupport: pledged.some((limb) => limb !== 0), pledged }
+}
+
+function funding(answer: FundingAnswer, poolProjectFree: ReadonlyArray<number> = [0], pledged: ReadonlyArray<number> = [0]) {
+  return {
+    answer,
+    pools: [
+      { projectId: "pool-project", pool: pool(poolProjectFree, pledged) },
+      { projectId: "paused-pool", pool: pool(cap) },
+      ...answer === "Short" ? [] : [{ projectId: "security-project", pool: pool([0]) }],
+    ],
+  }
+}
+
+effect function planFunding(plan: ReturnType<typeof funding>) {
+  const answer = try (try Area).post("/api/v1/test/publication-funding", plan)
+  if (answer.status !== 200) return try Effect.die(new Error(`the funding plan was refused: ${answer.status}`))
+  return answer.body as Seen
+}
+
+effect function underFunding<A>(plan: ReturnType<typeof funding>, step: A!!) {
+  try planFunding(plan)
+  const result = try step
+  const seen = try planFunding(plan)
+  return { result, asked: seen.asked, unavailable: seen.logged.filter((line) => line === fundingUnavailable).length }
+}
+
+effect function discoveredUnder(plan: ReturnType<typeof funding>) {
+  const area = try Area
+  const { result, asked, unavailable } = try underFunding(plan, area.request("/.well-known/slop/projects.json"))
+  const body = result.body as { readonly projects: ReadonlyArray<{ readonly project_id: string }> }
+  return { status: result.status, cache: result.headers["cache-control"], listed: body.projects.map((entry) => entry.project_id), asked, unavailable }
+}
+
 function shown(answer: Answer) {
   return { status: answer.status, body: answer.body }
 }
@@ -253,7 +307,7 @@ effect function served(fixture: Fixture, record: Stored, revision: number) {
 }
 
 layer(Running, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+  it.effect('Serve each project\'s skills, terms and discovery row only while it is listed and cleared (spec/contributor/publication.md, "Story: Serve a project\'s skills only while it is listed and cleared"; spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "Discovery leaves out a project not listed this month, and a failed funding read lists every cleared project"; spec/frontend/poolListing.md, "An active monthly pool without an open security program is listed only while its pool shows as funded"; spec/frontend/poolListing.md, "A project left out of the lists still opens by direct link and says why"; spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"; spec/frontend/projections.md, "Removed public evidence pages and downloads stay unavailable"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
     const area = try Area
     const records = new Map<string, Stored>()
     for (const fixture of fixtures) records.set(fixture.id, try stored(fixture, 1, manifestOf(fixture)))
@@ -347,6 +401,42 @@ layer(Running, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const elsewhere = try.all [area.request("/projects/Alpha/skill.md"), area.request("/downloads/contribute-to-eliza.skill")]
     try same(elsewhere.map((answer) => ({ status: answer.status, origin: answer.headers["access-control-allow-origin"] })), [{ status: 200, origin: undefined }, { status: 404, origin: undefined }])
     try same(elsewhere[0]?.body, passThroughPage)
+
+    for (const fixture of [poolProject, securityProject, pausedPool]) try stored(fixture, 1, manifestOf(fixture))
+    try secured(
+      [{ projectId: "gamma", sourceProjectId: "gamma", restriction: "ModeratorBan" }, { projectId: "shared", sourceProjectId: "gamma", restriction: "ModeratorBan" }],
+      [cleared("alpha"), cleared("beta"), cleared("pool-project"), cleared("security-project"), cleared("paused-pool")],
+    )
+    const candidates = ["alpha", "beta", "pool-project", "security-project", "unscanned", "unsure"]
+    const withPool = ["alpha", "alpha", "beta", "pool-project", "security-project"]
+    const withoutPool = ["alpha", "alpha", "beta", "security-project"]
+    const listedAs = (listed: ReadonlyArray<string>, unavailable: number) => ({ status: 200, cache: "no-store", listed, asked: [candidates], unavailable })
+    const months = {
+      underfunded: try discoveredUnder(funding("Facts", [999, 999, 999])),
+      emptyVault: try discoveredUnder(funding("Facts", [0])),
+      funded: try discoveredUnder(funding("Facts", cap)),
+      pledged: try discoveredUnder(funding("Facts", [0], cap)),
+      failed: try discoveredUnder(funding("Fail", [999, 999, 999])),
+      nothing: try discoveredUnder(funding("Nothing", [999, 999, 999])),
+      short: try discoveredUnder(funding("Short", [999, 999, 999])),
+    }
+    try same(months, {
+      underfunded: listedAs(withoutPool, 0),
+      emptyVault: listedAs(withoutPool, 0),
+      funded: listedAs(withPool, 0),
+      pledged: listedAs(withPool, 0),
+      failed: listedAs(withPool, 1),
+      nothing: listedAs(withPool, 1),
+      short: listedAs(withPool, 1),
+    })
+
+    const direct = ["skill.md", "skill-manifest.json", "downloads/contribute-to-pool-project.skill", "terms.json"].map((path) => `/projects/pool-project/${path}`)
+    const directly = (plan: ReturnType<typeof funding>) => underFunding(plan, Effect.forEach(direct, (path) => area.request(path)))
+    const unfundedDirect = try directly(funding("Facts", [999, 999, 999]))
+    const fundedDirect = try directly(funding("Facts", cap))
+    try same({ unfunded: unfundedDirect.result.map(shown), asked: [unfundedDirect.asked, fundedDirect.asked] }, { unfunded: fundedDirect.result.map(shown), asked: [[], []] })
+    try same(unfundedDirect.result.map((answer) => answer.status), [200, 200, 200, 200])
+    try planFunding(funding("Nothing"))
   })
 
   it.effect('A restriction or a new registry revision that lands between two requests governs the next one (spec/contributor/publication.md, "A restricted project\'s artifacts answer gone and an unlisted or retired project\'s answer not found"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {

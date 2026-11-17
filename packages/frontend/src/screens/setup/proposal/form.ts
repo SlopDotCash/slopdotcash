@@ -2,7 +2,7 @@
 import { isIntegrationBranch } from "@repo/contributor/render/fields";
 import { type Chain, isChain } from "@repo/settlement/kernels/networks";
 import { referrerOf } from "../../../flows/projects/draftStore.vibe";
-import type { RepositoryLookup } from "../../../flows/projects/github.vibe";
+import type { RepositoryLookup } from "@repo/backend/client";
 import {
   boundedText,
   emptyProposal,
@@ -201,7 +201,7 @@ export function withFacts(wizard: Wizard, key: string, facts: RepositoryLookup):
       repositoryNumericId: facts.numericId,
       repositoryNodeId: facts.nodeId,
       integrationBranch: branch,
-      sourceCommit: facts.branchCommits?.[branch] ?? "",
+      sourceCommit: facts.branchCommits[branch] ?? "",
       stewardKind: facts.owner.kind,
       stewardLogin: facts.owner.login,
       stewardActorId: facts.owner.actorId,

@@ -102,7 +102,7 @@ export function SolanaBountyPaymentSection({ runtime, record, opened, onChanged 
       phase={state.phase}
       saved={visible(state)}
       confirmed={record.settlement?.confirmedTransactionIds ?? []}
-      wallets={offers.filter((offer) => offer.family === "solana" && offer.solanaFunding).map((offer) => ({ id: String(offer.id), name: offer.name }))}
+      wallets={offers.filter((offer) => offer.family === "solana" && offer.solanaFunding).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
       address={wallet?.address}
       busy={action.busy || state.phase === "Awaiting" || state.phase === "Checking"}
       typed={typed}

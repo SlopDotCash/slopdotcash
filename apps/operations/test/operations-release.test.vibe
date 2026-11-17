@@ -1,13 +1,50 @@
 import { assert, layer } from "@effect/vitest"
+module stagedGitHub {
+  import { execFileSync } from "node:child_process"
+  import type { GitHubFake } from "@repo/platform/testing/github"
+
+  export interface StagedRecord {
+    readonly sha: string
+    readonly workflow?: string
+    readonly productionEnvironment?: boolean
+  }
+
+  export interface Meanwhile {
+    readonly history?: ReadonlyArray<StagedRecord>
+    readonly branch?: { readonly origin: string; readonly name: string; readonly sha: string }
+  }
+
+  /** @throws {Error} */
+  export function stagedHistory(fake: GitHubFake, repository: string, records: ReadonlyArray<StagedRecord>): void {
+    fake.world.repo(repository).deployments.splice(0)
+    for (const record of records) {
+      const deployment = fake.world.addDeployment(repository, { sha: record.sha, ref: "development", environment: "slop-staging", productionEnvironment: record.productionEnvironment ?? false })
+      if (record.workflow === undefined) continue
+      const run = fake.world.addWorkflowRun(repository, { headSha: record.sha, path: record.workflow })
+      fake.world.addDeploymentStatus(repository, deployment.id, { state: "success", logUrl: `https://github.com/${repository}/actions/runs/${run.id}/job/1` })
+    }
+  }
+
+  /** @throws {never} */
+  export function refuseNext(fake: GitHubFake, repository: string, match: string, status: number, headers: Readonly<Record<string, string>>, meanwhile: Meanwhile = {}): void {
+    fake.alterNext(match, () => {
+      if (meanwhile.history !== undefined) stagedHistory(fake, repository, meanwhile.history)
+      if (meanwhile.branch !== undefined) execFileSync("git", ["-C", meanwhile.branch.origin, "branch", "-f", meanwhile.branch.name, meanwhile.branch.sha])
+      return new Response(JSON.stringify({ message: "API rate limit exceeded for user synthetic" }), { status, headers: { "content-type": "application/json", ...headers } })
+    })
+  }
+}
+import { type StagedRecord, refuseNext, stagedHistory } from stagedGitHub
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
 import { github } from "@repo/platform/github"
-import { githubFake } from "@repo/platform/testing/github"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
 import { release } from "../src/programs/release.vibe"
 import { LockUnobserved } from "../src/publicationLock/group.vibe"
 import { BundleRefused } from "../src/release/manifest/inventory.vibe"
 import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
+import { StagingHistoryRefused } from "../src/release/run/history.vibe"
 import { writeCollection } from "../src/release/manifest/release.vibe"
 import { PublicationFailed, Publisher } from "../src/release/run/publisher.vibe"
 import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
@@ -30,6 +67,13 @@ const workflow = [
   "      cancel-in-progress: false",
   "    environment:",
   "      name: slop-production",
+  "  staging:",
+  "    runs-on: ubuntu-24.04",
+  "    concurrency:",
+  "      group: slop-staging",
+  "      cancel-in-progress: false",
+  "    environment:",
+  "      name: slop-staging",
   "",
 ].join("\n")
 
@@ -38,6 +82,7 @@ function described(error: unknown) {
   if (error instanceof ReleaseRefused) return `ReleaseRefused:${error.step}`
   if (error instanceof LockUnobserved) return "LockUnobserved"
   if (error instanceof BundleRefused) return "BundleRefused"
+  if (error instanceof StagingHistoryRefused) return `StagingHistoryRefused: ${error.message.replace(/epoch seconds \d+/u, "epoch seconds N")}`
   return error instanceof Error ? error.name : String(error)
 }
 
@@ -46,7 +91,17 @@ effect function seeded() {
     const fake = githubFake({ now: () => Date.UTC(2026, 10, 17) })
     fake.world.addOrg({ id: 1, login: "SlopDotCash" })
     fake.world.addRepo({ id: 100, owner: "SlopDotCash", name: "slopdotcash" })
-    return fake
+    fake.world.addUser({ id: 2, login: "release-bot" })
+    return { fake, token: fake.tokens.user("release-bot") }
+  })
+}
+
+function readsSince(fake: GitHubFake, from: number) {
+  return fake.requests.slice(from).map((request) => {
+    const path = new URL(request.url).pathname
+    if (path.endsWith("/deployments")) return "history"
+    if (path.endsWith("/statuses")) return "statuses"
+    return path.includes("/actions/runs/") ? "run" : path
   })
 }
 
@@ -79,10 +134,10 @@ effect function written(path: string, text: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer.provide(systemGit, NodeServices.layer)), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran")', () => scoped(effect {
+  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"; spec/operations/stagingOrder.md, "Story: Allow staging publication only from one complete, fresh history read"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
-    const fake = try seeded()
+    const { fake, token } = try seeded()
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-release-" })
     const origin = files.join(directory, "origin")
     const root = files.join(directory, "checkout")
@@ -136,12 +191,12 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
       return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
     }
-    effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial) {
+    effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial, from = bundle) {
       const run = effect {
         const facts = try runFacts()
-        return try publishRelease({ environment, facts, bundle, receipts: receiptsPath, root, anchor })
+        return try publishRelease({ environment, facts, bundle: from, receipts: receiptsPath, root, anchor })
       }
-      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: undefined, userAgent: "slop-release-test" }))
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: Redacted.make(token), userAgent: "slop-release-test" }))
       return try settled(Effect.provide(run, services))
     }
     effect function receipts(name: string, gates: ReadonlyArray<string>, manifestSha256: string) {
@@ -177,6 +232,85 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     const current = try publishing("Production", complete)
     const currentCalls = calls.splice(0)
 
+    const stagingBundle = files.join(directory, "staging-bundle")
+    try written(files.join(stagingBundle, "site/index.html"), "<!doctype html><title>staging.slop.cash</title>\n")
+    try written(files.join(stagingBundle, "site/skill-manifest.json"), "{}\n")
+    try written(files.join(stagingBundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(stagingBundle, "github/leaderboard.json"), "{\"records\":[]}\n")
+    try written(files.join(stagingBundle, registrySnapshotPath), snapshot)
+    try writeCollection(stagingBundle, {
+      schemaVersion: 1,
+      environment: "staging",
+      kind: "fresh",
+      registrySha256: try sha256Hex(snapshot),
+      githubSha256: try githubDigest(stagingBundle),
+      recordedAt: "2026-11-17T00:00:00.000Z",
+    })
+    const stagingManifested = try attempt(["manifest", "staging", stagingBundle])
+    const stagingReceipts = try receipts("staging-receipts", [...fullGates, "BrowserSmoke"], try sha256Hex(try fs.readFile(files.join(stagingBundle, "release-manifest.json"))))
+    try git(origin, ["branch", "development", tested])
+    const divergent = try git(origin, ["commit-tree", `${initial}^{tree}`, "-p", initial, "-m", "divergent"])
+    const newer = try git(root, ["commit-tree", `${tested}^{tree}`, "-p", tested, "-m", "newer attempt"])
+    const controller = ".github/workflows/vetting-controller.yml"
+    const historyPage = "/deployments?environment=slop-staging"
+    effect function staged(records: ReadonlyArray<StagedRecord>, refusals: (nowSeconds: number) => void = () => undefined, headroomSeconds = 120) {
+      const startedAt = try Clock.currentTimeMillis
+      const nowSeconds = Math.floor(startedAt / 1_000)
+      try Effect.try(() => stagedHistory(fake, repository, records))
+      refusals(nowSeconds)
+      const from = fake.requests.length
+      const until = String(nowSeconds + headroomSeconds)
+      const outcome = try publishing("Staging", stagingReceipts, {
+        GITHUB_REF: "refs/heads/development",
+        GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/heads/development`,
+        GITHUB_JOB: "staging",
+        SLOP_GITHUB_ENVIRONMENT: "slop-staging",
+        STAGING_ORDER_RETRY_UNTIL: until,
+      }, initial, stagingBundle)
+      const waitedMillis = (try Clock.currentTimeMillis) - startedAt
+      const urls = fake.requests.slice(from).map((request) => request.url)
+      return { step: { outcome, reads: readsSince(fake, from), calls: calls.splice(0), rereadSamePage: urls.length === 2 && urls[0] === urls[1] }, waitedMillis }
+    }
+    const inOrder: ReadonlyArray<StagedRecord> = [{ sha: initial }, { sha: tested }]
+    const provenanceChanged: ReadonlyArray<StagedRecord> = [{ sha: tested, productionEnvironment: true }]
+
+    const stagedInOrder = try staged(inOrder)
+    const stagedSkipped = try staged([{ sha: tested }, { sha: newer, workflow: controller }])
+    const stagedNewer = try staged([{ sha: tested }, { sha: newer, workflow: ".github/workflows/deploy.yml" }])
+    const quotaReset = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1) }))
+    const quotaAtStatuses = try staged([{ sha: tested }, { sha: newer, workflow: controller }], () => refuseNext(fake, repository, "/statuses", 429, { "retry-after": "0" }, { history: provenanceChanged }))
+    const quotaAtRun = try staged([{ sha: tested }, { sha: newer, workflow: controller }], () => refuseNext(fake, repository, "/actions/runs/", 429, { "retry-after": "0" }, { history: provenanceChanged }))
+    const unauthorized = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 401, { "retry-after": "0" }))
+    const forbidden = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, {}))
+    const invalidReset = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "invalid" }))
+    const pastReset = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now - 10) }))
+    const beyondBudget = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1), "retry-after": "180" }), 300)
+    const beyondJob = try staged(inOrder, (now) => refuseNext(fake, repository, historyPage, 403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now + 1), "retry-after": "60" }), 30)
+    const quotaTwice = try staged(inOrder, () => {
+      refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
+      refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" })
+    })
+    const forcePushed = try staged(inOrder, () => refuseNext(fake, repository, historyPage, 429, { "retry-after": "0" }, { branch: { origin, name: "development", sha: divergent } }))
+    try git(origin, ["branch", "-f", "development", tested])
+    const staging = {
+      stagingManifested,
+      stagedInOrder: stagedInOrder.step,
+      stagedSkipped: stagedSkipped.step,
+      stagedNewer: stagedNewer.step,
+      quotaReset: quotaReset.step,
+      quotaResetWaited: quotaReset.waitedMillis >= 1_000,
+      quotaAtStatuses: quotaAtStatuses.step,
+      quotaAtRun: quotaAtRun.step,
+      unauthorized: unauthorized.step,
+      forbidden: forbidden.step,
+      invalidReset: invalidReset.step,
+      pastReset: pastReset.step,
+      beyondBudget: beyondBudget.step,
+      beyondJob: beyondJob.step,
+      quotaTwice: quotaTwice.step,
+      forcePushed: forcePushed.step,
+    }
+
     try written(files.join(origin, "apps/operations/src/notice.txt"), "newer\n")
     try git(origin, ["commit", "-q", "-a", "-m", "newer"])
     const advanced = try publishing("Production", complete)
@@ -191,6 +325,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
     try Effect.try(() => assert.deepStrictEqual({
       withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, beforeCurrent,
       current, currentCalls, advanced, advancedCalls, rewritten, rewrittenCalls,
+      staging,
     }, {
       withoutSite: "BundleRefused",
       retainedWithoutTime: "BundleRefused",
@@ -210,6 +345,24 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer
       advancedCalls: [],
       rewritten: "ReleaseStopped:Refused",
       rewrittenCalls: [],
+      staging: {
+        stagingManifested: "ok",
+        stagedInOrder: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history"], calls: ["prepare"], rereadSamePage: false },
+        stagedSkipped: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history", "statuses", "run"], calls: ["prepare"], rereadSamePage: false },
+        stagedNewer: { outcome: "ReleaseStopped:Superseded", reads: ["history", "statuses", "run"], calls: [], rereadSamePage: false },
+        quotaReset: { outcome: "ReleaseStopped:PartiallyPublished", reads: ["history", "history"], calls: ["prepare"], rereadSamePage: true },
+        quotaResetWaited: true,
+        quotaAtStatuses: { outcome: "StagingHistoryRefused: Unknown staging deployment provenance; require human review", reads: ["history", "statuses", "history"], calls: [], rereadSamePage: false },
+        quotaAtRun: { outcome: "StagingHistoryRefused: Unknown staging deployment provenance; require human review", reads: ["history", "statuses", "run", "history"], calls: [], rereadSamePage: false },
+        unauthorized: { outcome: "StagingHistoryRefused: GitHub staging provenance read failed (HTTP 401)", reads: ["history"], calls: [], rereadSamePage: false },
+        forbidden: { outcome: "StagingHistoryRefused: GitHub staging provenance read failed (HTTP 403)", reads: ["history"], calls: [], rereadSamePage: false },
+        invalidReset: { outcome: "StagingHistoryRefused: GitHub staging provenance read failed (HTTP 403)", reads: ["history"], calls: [], rereadSamePage: false },
+        pastReset: { outcome: "StagingHistoryRefused: GitHub staging provenance read failed (HTTP 403)", reads: ["history"], calls: [], rereadSamePage: false },
+        beyondBudget: { outcome: "StagingHistoryRefused: GitHub staging quota reset is outside the staging order retry budget (retry at epoch seconds N)", reads: ["history"], calls: [], rereadSamePage: false },
+        beyondJob: { outcome: "StagingHistoryRefused: GitHub staging quota reset is outside the staging order retry budget (retry at epoch seconds N)", reads: ["history"], calls: [], rereadSamePage: false },
+        quotaTwice: { outcome: "StagingHistoryRefused: GitHub staging deployment history quota exhausted", reads: ["history", "history"], calls: [], rereadSamePage: true },
+        forcePushed: { outcome: "ReleaseStopped:Refused", reads: ["history"], calls: [], rereadSamePage: false },
+      },
     }))
   }))
 })

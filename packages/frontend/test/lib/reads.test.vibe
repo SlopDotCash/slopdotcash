@@ -7,7 +7,8 @@ import { asFetch, held } from "@repo/platform/testing/quotes"
 import { type RepositoryRegistry, encodeParts, leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, verificationWindowDays } from "@repo/points/client"
 import { readEntry } from "../../gen/frontend__snapshotCache.effect.vibe"
 import { fetchBounded } from "../../src/platform/bounded.vibe"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { readCompletePages } from "../../src/reads/paged.vibe"
 import { Unreadable, resource } from "../../src/reads/resource.vibe"
 import { leaderboard } from "../../src/reads/snapshot.vibe"
@@ -193,7 +194,7 @@ const clock = settableClock(generatedMs)
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: originsOf("production"),
+  origins: deploymentOrigins("production"),
   pageOrigin: origin,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(`/login?next=${next}`),

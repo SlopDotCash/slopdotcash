@@ -1,4 +1,5 @@
 import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
 import { type Address, type Hex, encodeFunctionData, hexToBytes, keccak256, parseAbi, toHex } from "viem"
@@ -6,15 +7,18 @@ import type { D1Database } from "@repo/platform/bindings"
 import { EvmRpc, checksum } from "@repo/platform/chain/evm"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { d1, rows, sql } from "@repo/platform/d1"
-import { type Account, type Anvil, anvil, deploy, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
+import { SolanaRpc, address as solanaAddress, base58Decode, base58Encode, base64Encode, findPda, publicKey } from "@repo/platform/chain/solana"
+import type { Handler } from "@repo/platform/testing"
+import { type Account, type Anvil, type Served, anvil, deploy, forgeBuild, forward, refuseMainnet, serve } from "@repo/platform/testing/chains"
 import { internet } from "@repo/platform/testing/internet"
 import { asFetch, kyberNative, quotesFake } from "@repo/platform/testing/quotes"
 import { apply, initial } from "../gen/fees__runtime.effect.vibe"
 import type { Runtime, WorkerConfig } from "../gen/fees__runtime.ts"
 import { evmFinalizedAccrual, ownClaims, vaultAccruals, withoutOwnClaims } from "../src/claims/accrual.vibe"
-import { DeploymentRefused, VaultDeployments } from "../src/claims/deployments.vibe"
+import { DeploymentRefused, type SolanaVaultDeployment, VaultDeployments } from "../src/claims/deployments.vibe"
 import { evmClaimEvidence, evmVault, failureText } from "../src/claims/evm.vibe"
 import { claimsIn, evmVaultClaims } from "../src/claims/run.vibe"
+import { claimSettled, solanaVault } from "../src/claims/solana.vibe"
 import { ChainUnavailable, ConversionChain, type OpenSend } from "../src/conversion/chain.vibe"
 import { runNetwork } from "../src/conversion/run.vibe"
 import { ExpiryOperators } from "../src/expiry/operators.vibe"
@@ -27,6 +31,7 @@ import { definitions } from "../src/runtime/networks.vibe"
 import { circleUsdc, kyberswap, solanaGenesis } from "../src/runtime/pins.ts"
 import type { TokenFact, VaultFact } from "../src/runtime/reviewed.vibe"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
+import { FeeSolana, feeSolana } from "../src/solana/client.vibe"
 import { generationInstance, journalDatabase } from "./support/journal.ts"
 
 const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
@@ -349,6 +354,117 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       after: { free: 7_500_000_000n, principal: 980_000_000n, awardFees: 20_000_000n, accrued: 0n },
       wallet: 30_000_000n,
       quietRun: ["ran", 0, [10_000_000n]],
+    })
+  })
+})
+
+function solanaKey(fill: number) {
+  return base58Encode(new Uint8Array(32).fill(fill))
+}
+
+const solanaWallet = solanaKey(31)
+const escrowProgram = solanaKey(40)
+const escrowProject = solanaKey(41)
+const escrowMint = circleUsdc.solana
+const prePledgeProject = 332
+const pledgeProject = 340
+const solanaAccrued = 7_000_000n
+
+function escrowAddress(seeds: ReadonlyArray<Uint8Array>) {
+  const program = solanaAddress(escrowProgram)
+  return program === undefined ? "" : findPda(seeds, program)?.address ?? ""
+}
+
+const escrowConfig = escrowAddress([new TextEncoder().encode("config")])
+const escrowVault = escrowAddress([new TextEncoder().encode("vault"), publicKey(escrowProject) ?? new Uint8Array(32)])
+const solanaDeployment: SolanaVaultDeployment = { program: escrowProgram, project: escrowProject, vault: escrowVault, mint: escrowMint, feeRecipient: solanaWallet, upgradeAuthority: null }
+const solanaFact: VaultFact = { vault: escrowVault, projectId: "fees-claims-solana", payoutPolicy: "ordinary", token: escrowMint, deployment: solanaDeployment }
+
+function keyBytes(text: string) {
+  return base58Decode(text) ?? new Uint8Array(32)
+}
+
+function configData() {
+  const data = new Uint8Array(105)
+  data.set([155, 12, 170, 224, 30, 250, 204, 130])
+  data.set(keyBytes(solanaWallet), 40)
+  return data
+}
+
+function projectData(size: number) {
+  const data = new Uint8Array(size)
+  data.set([205, 168, 189, 202, 181, 247, 142, 19])
+  data.set(keyBytes(solanaWallet), 136)
+  data.set(keyBytes(escrowMint), 168)
+  new DataView(data.buffer).setBigUint64(316, solanaAccrued, true)
+  return data
+}
+
+function escrowRpc(projectSize: () => number): Handler {
+  return async (request) => {
+    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<unknown> }
+    const answered = (result: unknown) => Response.json({ jsonrpc: "2.0", id: 1, result })
+    const held = new Map([[escrowConfig, configData()], [escrowProject, projectData(projectSize())]])
+    switch (method) {
+      case "getGenesisHash": return answered(solanaGenesis)
+      case "getAccountInfo": {
+        const data = held.get(String(params[0]))
+        return answered({ context: { slot: 100 }, value: data === undefined ? null : { owner: escrowProgram, lamports: 10_000_000, data: [base64Encode(data), "base64"], executable: false } })
+      }
+      case "getSignaturesForAddress": return answered([])
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+    }
+  }
+}
+
+service SolanaEscrow {
+  readonly rpc: string
+  readonly fetch: typeof globalThis.fetch
+  resize(size: number): void!!
+}
+
+const SolanaStarted = Layer.effect(SolanaEscrow, effect {
+  let size = prePledgeProject
+  const handler = escrowRpc(() => size)
+  const served: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
+  const net = internet({ rpc: { [served.url]: handler } })
+  return { rpc: served.url, fetch: asFetch(net.handler), resize: (next) => sync(() => { size = next }) }
+})
+
+const solanaDeployments = Layer.succeed(VaultDeployments, {
+  evm: () => effect { throw new DeploymentRefused({ message: "no EVM deployment in this journey" }) },
+  solana: () => effect { return solanaDeployment },
+})
+
+effect function onEscrow<A, E>(program: A!E!(FeeSolana | SolanaRpc | VaultDeployments | HttpClient.HttpClient)) {
+  const escrow = try SolanaEscrow
+  const services = Layer.merge(feeSolana({ wallet: solanaWallet, urls: Redacted.make([escrow.rpc]), genesis: solanaGenesis, timeoutMs: 10_000 }), solanaDeployments)
+  return try Effect.provideService(Effect.provide(Effect.provide(program, services), FetchHttpClient.layer), FetchHttpClient.Fetch, escrow.fetch)
+}
+
+function issueOf(error: unknown) {
+  if (typeof error === "object" && error !== null && "issue" in error) return String(error.issue)
+  return typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error)
+}
+
+effect function claimReads(size: number) {
+  try (try SolanaEscrow).resize(size)
+  const vault = onEscrow(solanaVault(solanaFact, "finalized")) catch (error) => issueOf(error)
+  const settled = onEscrow(claimSettled(solanaDeployment)) catch (error) => issueOf(error)
+  return { accrued: typeof vault === "string" ? vault : vault?.accrued, settled }
+}
+
+layer(SolanaStarted, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect('A Solana claim reads the reviewed vault\'s accrued fee from a Project of 332 bytes before the month-pledge upgrade and of 340 bytes after migrate_project, and refuses a Project of any other length (spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const refused = "project account differs from the reviewed escrow program"
+    try same({
+      prepledge: try claimReads(prePledgeProject),
+      migrated: try claimReads(pledgeProject),
+      other: try claimReads(pledgeProject + 1),
+    }, {
+      prepledge: { accrued: solanaAccrued, settled: undefined },
+      migrated: { accrued: solanaAccrued, settled: undefined },
+      other: { accrued: refused, settled: refused },
     })
   })
 })

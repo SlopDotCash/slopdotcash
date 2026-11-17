@@ -1,3 +1,4 @@
-// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projectRegistry.md, "Each permanent repository id and each path key belongs to at most one project"
+// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projectRegistry.md, "Each permanent repository id and each path key belongs to at most one project"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
+import { writes as mergeActivity } from "./mergeActivity/tables.ts";
 
-export const writes = ["projects", "project_revisions", "project_repositories", "project_applications"] as const;
+export const writes = ["projects", "project_revisions", "project_repositories", "project_applications", ...mergeActivity] as const;

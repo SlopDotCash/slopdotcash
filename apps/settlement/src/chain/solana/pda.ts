@@ -1,4 +1,4 @@
-// spec/contracts/solanaEscrow.md, "The owner creates a token or native project with the Config's identity authority and fee recipient"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"
+// spec/contracts/solanaEscrow.md, "The owner creates a token or native project with the Config's identity authority and fee recipient"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Address, type ProgramAddress, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, associatedTokenAddress, findPda, publicKey } from "@repo/platform/chain/solana";
 import type { Period } from "../../kernels/calendar.ts";
@@ -68,6 +68,11 @@ export function monthlySourceAddress(program: Address, project: Address, source:
 /** @throws {never} */
 export function monthAddress(program: Address, project: Address, period: Period): Address {
   return derive([utf8("month"), keyBytes(project), u32le(period)], program);
+}
+
+/** @throws {never} */
+export function monthPledgeAddress(program: Address, project: Address, period: Period): Address {
+  return derive([utf8("pledge"), keyBytes(project), u32le(period)], program);
 }
 
 /** @throws {never} */

@@ -63,8 +63,8 @@ export function ed25519Verification(authority: Address, signature: Uint8Array, m
 }
 
 /** @throws {never} */
-export function commitMonthly(input: { readonly program: Address; readonly project: Address; readonly payer: Address; readonly period: Period; readonly root: Digest; readonly total: U64; readonly frozenAt: I64 }): Instruction {
-  const { program, project } = input;
+export function commitMonthly(input: { readonly program: Address; readonly project: Address; readonly payer: Address; readonly period: Period; readonly root: Digest; readonly total: U64; readonly frozenAt: I64; readonly monthPledge?: Address }): Instruction {
+  const { program, project, monthPledge } = input;
   return {
     program,
     accounts: [
@@ -74,6 +74,7 @@ export function commitMonthly(input: { readonly program: Address; readonly proje
       meta(monthAddress(program, project, input.period), true),
       meta(INSTRUCTIONS_SYSVAR, false),
       meta(SYSTEM_PROGRAM, false),
+      ...(monthPledge === undefined ? [] : [meta(monthPledge, true)]),
     ],
     data: anchorData("commit_monthly", u32le(input.period), digestBytes(input.root), u64le(input.total), i64le(input.frozenAt)),
   };

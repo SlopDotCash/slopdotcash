@@ -1,7 +1,8 @@
-// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"
 import { type Address, type Blockhash, type FetchedTransaction, SolanaRpc, base64Encode, decodeTokenAccount } from "@repo/platform/chain/solana"
 import { type U64, U64_MAX, u64 } from "../chain/solana/bytes.ts"
 import { tokenAccountAddress } from "../chain/solana/pda.ts"
+import { type Instruction, compileLegacy, unsignedTransaction } from "../chain/solana/transactions.ts"
 import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { normalizedNativeDelta } from "../kernels/budget.ts"
 import { ordinaryFeeBase } from "../kernels/fees.ts"
@@ -34,6 +35,9 @@ export interface FundingPlan {
 }
 
 const NATIVE_TOKEN_PROGRAM = "11111111111111111111111111111111"
+const PLEDGED_FUNDS = 6040
+const LOCKED_FUNDS = "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
+const CUSTOM_PROGRAM_ERROR = /^\{"InstructionError":\[(\d+),\{"Custom":(\d+)\}\]\}$/u
 
 function refused(message: string) {
   return new WalletActionRefused({ message })
@@ -65,6 +69,25 @@ export effect function fundingMessage(verified: VerifiedDeployment, intent: Fund
   return try walletMessage(intent.wallet, blockhash, try instructionsFor(verified, intent))
 }
 
+effect function takesPledgedFunds(verified: VerifiedDeployment, payer: Address, instructions: ReadonlyArray<Instruction>) {
+  const rpc = try SolanaRpc
+  const latest = try rpc.blockhash("finalized")
+  const compiled = compileLegacy({ payer, blockhash: latest.blockhash, instructions })
+  const wire = compiled.kind === "compiled" ? unsignedTransaction(compiled.message) : undefined
+  if (wire === undefined) return false
+  const failed = CUSTOM_PROGRAM_ERROR.exec((try rpc.simulate(wire, [], "finalized")).failure ?? "")
+  return failed !== null && instructions[Number(failed[1])]?.program === verified.program && Number(failed[2]) === PLEDGED_FUNDS
+}
+
+effect function preparedFunding(verified: VerifiedDeployment, intent: FundingIntent, instructions: ReadonlyArray<Instruction>) {
+  return prepareWalletTransaction(intent.wallet, instructions) catch effect (error) => {
+    if (error._tag !== "WalletActionRefused" || intent.operation !== "withdraw") throw error
+    const locked = takesPledgedFunds(verified, intent.wallet, instructions) catch () => false
+    if (locked) throw refused(LOCKED_FUNDS)
+    throw error
+  }
+}
+
 effect function depositorHolds(verified: VerifiedDeployment, intent: FundingIntent) {
   const rpc = try SolanaRpc
   const { asset } = verified
@@ -86,7 +109,7 @@ export effect function reviewFunding(verified: VerifiedDeployment, intent: Fundi
   const funds = try finalizedFunds(verified)
   if (intent.operation === "withdraw" && intent.gross > funds.free) throw refused("The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.")
   if (intent.operation === "deposit") try depositorHolds(verified, intent)
-  const prepared = try prepareWalletTransaction(intent.wallet, instructions)
+  const prepared = try preparedFunding(verified, intent, instructions)
   if (verified.asset.kind === "Native" && intent.operation === "deposit") {
     const wallet = try (try SolanaRpc).account(intent.wallet, "finalized")
     if ((wallet?.lamports ?? 0n) < intent.gross + prepared.networkFee) throw refused("Your wallet needs enough SOL for this deposit and the network fee.")

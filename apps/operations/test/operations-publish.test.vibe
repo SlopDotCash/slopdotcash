@@ -10,7 +10,8 @@ import { Response } from "miniflare"
 import { createPagesManifest } from "../src/release/manifest/pages.vibe"
 import { publisher } from "../src/release/publish/publisher.vibe"
 import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
-import { pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
+import { identityApp } from "../src/release/verify/probes.vibe"
+import { ToolFailed, pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
 
 const accountId = "0123456789abcdef0123456789abcdef"
 const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
@@ -76,7 +77,15 @@ function json(value: unknown, status: number, headers: Readonly<Record<string, s
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...headers } })
 }
 
-const productionEdges: Handler = (request) => {
+interface IdentityLookups {
+  readonly answers: Array<{ readonly status: number; readonly headers?: Readonly<Record<string, string>>; readonly contract?: Readonly<Record<string, unknown>> }>
+  page: number
+  readonly asked: string[]
+}
+
+const identityContract = { slug: "slop-identity", name: "Slop Identity", client_id: clientId, owner: { login: "elizaOS" }, permissions: {}, events: [] }
+
+const productionEdges = (identity: IdentityLookups): Handler => (request) => {
   const url = new URL(request.url)
   if (url.origin === identityOrigin && url.pathname === "/v1/oauth/start") {
     return json({ authorizationUrl: `${identityOrigin}/v1/oauth/authorize?flow=journey`, expiresAt: "2026-11-17T01:00:00.000Z", flowId: `flow_${"a".repeat(24)}`, pollAfterSeconds: 2, pollCapability: "b".repeat(43) }, 201)
@@ -90,7 +99,13 @@ const productionEdges: Handler = (request) => {
     return json({ error: "unauthorized" }, 401, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
   }
   if (url.href === "https://api.github.com/apps/slop-identity") {
-    return json({ slug: "slop-identity", name: "Slop Identity", client_id: clientId, owner: { login: "elizaOS" }, permissions: {}, events: [] }, 200)
+    identity.asked.push("api")
+    const answer = identity.answers.shift() ?? { status: 200 }
+    return answer.status === 200 ? json(answer.contract ?? identityContract, 200) : json({ message: "API rate limit exceeded" }, answer.status, answer.headers)
+  }
+  if (url.href === "https://github.com/apps/slop-identity") {
+    identity.asked.push("page")
+    return new Response("<!doctype html><title>Slop Identity</title>\n", { status: identity.page })
   }
   return new Response(`no fake answers ${url.host}`, { status: 599 })
 }
@@ -99,6 +114,7 @@ const scannerJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6
 
 function described(error: unknown) {
   if (error instanceof PublicationFailed) return `${error.stage}: ${error.message}`
+  if (error instanceof ToolFailed) return `${error.step}: ${error.message}`
   return error instanceof Error ? error.name : String(error)
 }
 
@@ -131,7 +147,7 @@ effect function secret(served: Served, method: "PUT" | "DELETE", name: string) {
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
-  it.effect('Publish Workers then the site and verify served bytes (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source")', () => scoped(effect {
+  it.effect('Publish Workers then the site and verify served bytes (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source"; spec/operations/identityApp.md, "Story: Contributors can still find the unchanged Slop Identity App"; spec/operations/identityApp.md, "The public App lookup is retried on refusal and its contract fields must match exactly")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const api = cloudflareFake({ accountId })
@@ -161,11 +177,13 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     for (const name of ["index.html", "skill-manifest.json", "deployment-manifest.json"]) hosted.set(name, try fs.readFile(files.join(site, name)))
     const canonical: Site = { files: hosted, tampered: false }
     const host = siteHost(canonical)
+    const identity: IdentityLookups = { answers: [], page: 200, asked: [] }
+    const edges = productionEdges(identity)
     const outbound: Handler = (request) => {
       const url = new URL(request.url)
       if (url.origin === served.url) return api.handler(request)
       if (url.host === "slop.cash" || url.host.endsWith(`.${siteProject}.pages.dev`)) return host(request)
-      return productionEdges(request)
+      return edges(request)
     }
     const searchPath = try Config.withDefault(Config.String("PATH"), "")
     const config = ConfigProvider.layer(ConfigProvider.fromUnknown({
@@ -214,6 +232,23 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       const honest = publishing.served(target, deploymentId) catch (error) => described(error)
       canonical.tampered = true
       const tampered = publishing.served(target, deploymentId) catch (error) => described(error)
+      effect function lookup(answers: IdentityLookups["answers"], page: number) {
+        identity.answers.push(...answers)
+        identity.page = page
+        identity.asked.splice(0)
+        const verdict = identityApp(clientId, { attempts: 4, delaySeconds: 0 }) catch (error) => described(error)
+        return { verdict, asked: [...identity.asked] }
+      }
+      const spent = { status: 429 }
+      const exhausted = { status: 403, headers: { "x-ratelimit-remaining": "0" } }
+      const forbidden = { status: 403 }
+      const identityChecks = {
+        publicOnly: try lookup([spent, spent, spent, spent], 200),
+        pageMissing: try lookup([exhausted, exhausted, exhausted, exhausted], 404),
+        undiscoverable: try lookup([forbidden, forbidden, forbidden, forbidden], 200),
+        recovered: try lookup([spent, { status: 200 }], 404),
+        drifted: try lookup([{ status: 200, contract: { ...identityContract, permissions: { contents: "read" } } }], 200),
+      }
       return {
         isolation,
         isolationAsked,
@@ -231,6 +266,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         reconciled: reconciled.length,
         honest: typeof honest === "object" ? { matches: honest.artifactSha256 === target.manifestSha256, environment: honest.environment, dnsTlsHeaders: honest.dnsTlsHeaders } : honest,
         tampered: typeof tampered === "object" ? { matches: tampered.artifactSha256 === target.manifestSha256, served: tampered.artifactSha256.startsWith("served:") } : tampered,
+        identityChecks,
       }
     }
     const live = Layer.provideMerge(publisher({ root, wrangler: pinnedWrangler(repoRoot), patience: { rounds: 1, delaySeconds: 0 } }), config)
@@ -254,6 +290,13 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       reconciled: 1,
       honest: { matches: true, environment: "Production", dnsTlsHeaders: true },
       tampered: { matches: false, served: true },
+      identityChecks: {
+        publicOnly: { verdict: "IdentityPublicOnly", asked: ["api", "api", "api", "api", "page"] },
+        pageMissing: { verdict: "identity app: The Slop Identity GitHub App lookup was rate limited (HTTP 403) and its public page answered HTTP 404.", asked: ["api", "api", "api", "api", "page"] },
+        undiscoverable: { verdict: "identity app: the Slop Identity GitHub App is not publicly discoverable (HTTP 403)", asked: ["api", "api", "api", "api"] },
+        recovered: { verdict: "IdentityVerified", asked: ["api", "api"] },
+        drifted: { verdict: "identity app: the public Slop Identity GitHub App contract drifted", asked: ["api"] },
+      },
     }))
   }))
 })

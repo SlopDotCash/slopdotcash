@@ -17,6 +17,7 @@ const Built = Layer.effect(World, effect {
   const github = try orDie(Effect.try(() => githubFake()))
   try orDie(Effect.try(() => {
     github.world.addUser({ id: 41, login: "own-login" })
+    github.world.addUser({ id: 42, login: "bob-now" })
     github.world.addUser({ id: 999, login: "taken-login" })
     github.world.addUser({ id: 5000, login: "slop-reader" })
   }))
@@ -63,6 +64,10 @@ effect function choose(code: unknown, as: Session, headers: Readonly<Record<stri
 effect function follow(path: string, method = "GET") {
   const answer = try (try Area).request(path, { method })
   return [answer.status, answer.headers.location ?? answer.body, answer.headers["cache-control"] ?? null]
+}
+
+function retyped(type: string) {
+  return (response: { json(): Promise<unknown> }) => response.json().then((user: unknown) => HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe(typeof user === "object" && user !== null ? { ...user, type } : user)))
 }
 
 function lookedUp(request: GitHubRequest) {
@@ -134,6 +139,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     const raced = try.all [choose("alpha1", bob), choose("bravo1", bob)]
     const codes = try area.sql("SELECT code, github_id, retired_at IS NULL AS active FROM referral_codes ORDER BY rowid")
     const bobActive = codes.find((row) => row.github_id === "42" && row.active === 1)?.code
+    const chosen = github.requests.length
 
     const links = {
       active: try follow("/referral/own-login"),
@@ -154,6 +160,23 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
     try area.sql("ALTER TABLE referral_codes_held RENAME TO referral_codes")
     const recovered = try follow("/referral/own-login")
 
+    try orDie(Effect.try(() => {
+      github.world.renameUser("own-login", "alice-renamed")
+      github.world.addUser({ id: 777, login: "own-login" })
+    }))
+    const renamed = try follow("/referral/own-login")
+    const cachedLogin = try area.sql("SELECT login FROM points_members WHERE github_id = '41'")
+    try orDie(Effect.try(() => github.failNext("GET /user/41", { status: 404 })))
+    const gone = try follow("/referral/own-login")
+    try orDie(Effect.try(() => github.alterNext("GET /user/41", retyped("Organization"))))
+    const organization = try follow("/referral/own-login")
+    try orDie(Effect.try(() => github.alterNext("GET /user/41", retyped("Bot"))))
+    const bot = try follow("/referral/own-login")
+    try orDie(Effect.try(() => github.failNext("GET /user/41", { status: 503 })))
+    const down = try follow("/referral/own-login")
+    const nobody = try follow("/referral/nobody-here")
+    const current = { renamed, cachedLogin, gone, organization, bot, down, nobody }
+
     const form = `${site}/projects/new`
     try same({
       admission,
@@ -166,8 +189,10 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       closed,
       unreadable,
       recovered,
+      current,
       lookups: github.requests.slice(0, 9).map(lookedUp),
-      racedLookups: github.requests.slice(9).map(lookedUp).sort(),
+      racedLookups: github.requests.slice(9, chosen).map(lookedUp).sort(),
+      followLookups: github.requests.slice(chosen).map(lookedUp),
       unexpected: net.unexpected,
       outboundErrors: area.outboundErrors,
     }, {
@@ -203,8 +228,8 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
       bobCodes: ["alpha1", "bravo1"],
       bobActive: 1,
       links: {
-        active: [302, `${form}?ref=member-41`, "no-store"],
-        head: [302, `${form}?ref=member-41`, "no-store"],
+        active: [302, `${form}?ref=own-login`, "no-store"],
+        head: [302, `${form}?ref=own-login`, "no-store"],
         replaced: [302, form, "no-store"],
         unknown: [302, form, "no-store"],
         malformed: [302, form, "no-store"],
@@ -212,11 +237,20 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
         bare: [302, `${site}/account#referral`, "no-store"],
         bareSlash: [302, `${site}/account#referral`, "no-store"],
         bareUnsafe: [405, "Method not allowed", "no-store"],
-        bobBeforeClosure: [302, `${form}?ref=member-42`, "no-store"],
+        bobBeforeClosure: [302, `${form}?ref=bob-now`, "no-store"],
       },
       closed: [302, form, "no-store"],
       unreadable: [503, "This referral link is unavailable. Retry.", "no-store"],
-      recovered: [302, `${form}?ref=member-41`, "no-store"],
+      recovered: [302, `${form}?ref=own-login`, "no-store"],
+      current: {
+        renamed: [302, `${form}?ref=alice-renamed`, "no-store"],
+        cachedLogin: [{ login: "member-41" }],
+        gone: [302, form, "no-store"],
+        organization: [302, form, "no-store"],
+        bot: [302, form, "no-store"],
+        down: [503, "This referral link is unavailable. Retry.", "no-store"],
+        nobody: [302, form, "no-store"],
+      },
       lookups: [
         "GET /users/taken-login user:slop-reader 200",
         "GET /users/down-login user:slop-reader 502",
@@ -229,6 +263,17 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "18
         "GET /users/sixth user:slop-reader 404",
       ],
       racedLookups: ["GET /users/alpha1 user:slop-reader 404", "GET /users/bravo1 user:slop-reader 404"],
+      followLookups: [
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/42 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 404",
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 200",
+        "GET /user/41 user:slop-reader 503",
+      ],
       unexpected: [],
       outboundErrors: [],
     })

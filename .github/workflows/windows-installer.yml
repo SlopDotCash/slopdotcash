@@ -1,0 +1,45 @@
+name: Windows installer contract
+
+on:
+  pull_request:
+    branches: [vibestack, development, main]
+    paths:
+      - ".github/workflows/windows-installer.yml"
+      - ".github/actions/setup/action.yml"
+      - "skills/**"
+      - "apps/contributor/**"
+      - "packages/platform/**"
+      - "packages/ports/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+
+jobs:
+  installer:
+    name: Native Windows installer lifecycle
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact pull request revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13"
+      - uses: ./.github/actions/setup
+        with:
+          job: windows-installer
+          verification: "false"
+      - name: Exercise install, update, rollback, active reads and locking
+        shell: bash
+        run: pnpm all test --filter=@repo/contributor

@@ -1,0 +1,89 @@
+// spec/contributor/installation.md, "Story: Install, update, and roll back a verified project skill"
+import { afterEach, it } from "@effect/vitest"
+import { removeRoots } from "./support/installer/harness.ts"
+import {
+  aBackwardClockPublishesNoInvalidReceipt,
+  aKilledHolderReleasesTheLock,
+  bytesOutsideTheApprovedDigestRefuse,
+  cleanupFailureKeepsTheFirstError,
+  closedProjectsRefuseContributorsButNotReviewers,
+  competingInstallersLeaveOneVerifiedVersion,
+  everyIntegrationBranchInstallsTheServerRendering,
+  exactRenderingInstallsAdvancesAndRollsBack,
+  installNoOpAndAdvance,
+  legacyRepositoryIdentityAdvancesOnlyWhenRegistered,
+  onlyAQualifiedPythonRuns,
+  readbackFailureReportsTheCommittedTarget,
+  rollbackOnlyToARetainedUnmodifiedRevision,
+  rollbackToAnApprovedAncestorWithOtherBytes,
+  scriptRequestsRefuseRedirects,
+  slowAndClosedConnectionsRetryAtMostThreeTimes,
+  symlinkPrivilegeRefusalReusesTheVerifiedVersion,
+  tamperedInstallationsAndCheckoutsAreNotAuthorized,
+  templateSelectionHasNoAncestryOrRevocationGate,
+  thePublicationRouteArchiveInstalls,
+  tlsFailuresAreClassified,
+  tokenReachesOnlyTheApi,
+  unboundedOrIrregularContentsRefuse,
+  unmanagedTargetStaysUntouched,
+  workingTreeForgeryAndWrongCommitRefuse,
+} from "./support/installer/scenarios.ts"
+
+const slow = { timeout: 900_000 }
+
+afterEach(() => removeRoots())
+
+it.effect('Install only the exact commit and complete tree from a production authority (spec/contributor/skillAuthority.md, "Story: Resolve every immutable object with its own bounded retry"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"; spec/contributor/installation.md, "A living process acquires the lock before staging an admitted revision")', () => effect {
+  try Effect.try(() => workingTreeForgeryAndWrongCommitRefuse())
+  try Effect.try(() => unboundedOrIrregularContentsRefuse())
+  try Effect.try(() => onlyAQualifiedPythonRuns())
+  try Effect.tryPromise(() => tokenReachesOnlyTheApi())
+}, slow)
+
+it.effect('Retry each object at most three times and never on an integrity failure (spec/contributor/skillAuthority.md, "Retry transient transport failures up to three attempts")', () => effect {
+  try Effect.try(() => tlsFailuresAreClassified())
+  try Effect.tryPromise(() => slowAndClosedConnectionsRetryAtMostThreeTimes())
+}, slow)
+
+it.effect('Install the approved revision of a generated skill and refuse bytes the registry did not approve (spec/contributor/skillAuthority.md, "Story: Admit the exact role and rendered payload"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry")', () => effect {
+  try Effect.try(() => bytesOutsideTheApprovedDigestRefuse())
+  try Effect.try(() => closedProjectsRefuseContributorsButNotReviewers())
+  try Effect.tryPromise(() => thePublicationRouteArchiveInstalls())
+}, slow)
+
+it.effect('The installer installs the server renderer\'s exact bytes for every integration branch (spec/contributor/rendering.md, "The server renderer and the installer\'s Python renderer produce identical bytes for every committed template")', () => effect {
+  try Effect.try(() => everyIntegrationBranchInstallsTheServerRendering())
+}, slow)
+
+it.effect('Competing installers and a killed lock holder leave one verified version (spec/contributor/installation.md, "A living process acquires the lock before staging an admitted revision"; spec/contributor/installation.md, "Every installation attempt eventually releases its lock")', () => effect {
+  try Effect.tryPromise(() => aKilledHolderReleasesTheLock())
+  try Effect.tryPromise(() => competingInstallersLeaveOneVerifiedVersion())
+}, slow)
+
+it.effect('Install, keep an unchanged revision, and advance to a higher one (spec/contributor/installation.md, "An exact unchanged release keeps the installed identity"; spec/contributor/installation.md, "A living process acquires the lock before staging an admitted revision")', () => effect {
+  try Effect.try(() => installNoOpAndAdvance())
+  try Effect.try(() => legacyRepositoryIdentityAdvancesOnlyWhenRegistered())
+  try Effect.try(() => templateSelectionHasNoAncestryOrRevocationGate())
+  try Effect.try(() => unmanagedTargetStaysUntouched())
+  try Effect.try(() => exactRenderingInstallsAdvancesAndRollsBack())
+}, slow)
+
+it.effect('Activation stays committed through readback and cleanup failures and reports the first error (spec/contributor/installation.md, "Atomic publication keeps the committed target through cleanup and readback failure"; spec/contributor/installation.md, "Finish reports its first failure and leaves unrelated attempt artifacts alone"; spec/contributor/installation.md, "Installation tracks verification, activation, and readback separately")', () => effect {
+  try Effect.try(() => readbackFailureReportsTheCommittedTarget())
+  try Effect.try(() => cleanupFailureKeepsTheFirstError())
+  try Effect.try(() => symlinkPrivilegeRefusalReusesTheVerifiedVersion())
+}, slow)
+
+it.effect('Roll back only to a retained, reverified and unmodified version (spec/contributor/installation.md, "A living process acquires the lock before staging an admitted revision"; spec/contributor/installation.md, "An exact unchanged release keeps the installed identity")', () => effect {
+  try Effect.try(() => rollbackOnlyToARetainedUnmodifiedRevision())
+  try Effect.try(() => rollbackToAnApprovedAncestorWithOtherBytes())
+}, slow)
+
+it.effect('An installed skill authorizes and starts offline from its verified files only (spec/contributor/installation.md, "Local authorization uses only the verified installed files"; spec/contributor/localReceipt.md, "Prepare and validate the candidate before moving any durable completion")', () => effect {
+  try Effect.try(() => tamperedInstallationsAndCheckoutsAreNotAuthorized())
+  try Effect.try(() => aBackwardClockPublishesNoInvalidReceipt())
+}, slow)
+
+it.effect('Each script request refuses a redirect before contacting another origin (spec/contributor/sessionExchange.md, "Story: Exchange one fresh assertion for a private-use session")', () => effect {
+  try Effect.tryPromise(() => scriptRequestsRefuseRedirects())
+}, slow)

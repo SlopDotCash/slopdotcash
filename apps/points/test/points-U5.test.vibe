@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { Fetcher } from "@repo/platform/bindings"
 import { outboundVia } from "@repo/platform/http"
 import { systemGit } from "@repo/platform/git"
 import { graphqlClient, maxGraphqlRequestAttempts } from "../src/ingestion/graphql.vibe"
@@ -12,9 +13,9 @@ effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
 
-function githubLayer(world: ReturnType<typeof seeded>) {
+function githubLayer(world: ReturnType<typeof seeded>, fetcher: Fetcher = fetcherOf(world)) {
   return Layer.mergeAll(
-    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcherOf(world))),
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcher)),
     NodeServices.layer,
     Layer.provide(systemGit, NodeServices.layer),
   )
@@ -27,6 +28,30 @@ function target(world: ReturnType<typeof seeded>) {
 function sorted(ids: ReadonlyArray<string>) {
   return [...ids].sort()
 }
+
+module availability {
+  import { Response as WebResponse } from "miniflare"
+  import type { Fetcher } from "@repo/platform/bindings"
+
+  interface Sent { readonly query?: string; readonly variables?: { readonly ids?: ReadonlyArray<string> } }
+
+  /** @throws {never} */
+  export function stillUnavailable(inner: Fetcher, probes: Array<ReadonlyArray<string>>): Fetcher {
+    return {
+      fetch: async (request) => {
+        const sent = (request.method === "POST" ? JSON.parse(await request.clone().text()) : {}) as Sent
+        const ids = sent.variables?.ids ?? []
+        if (sent.query?.includes("LeaderboardSourceAvailability") !== true) return inner.fetch(request)
+        probes.push(ids)
+        if (ids.length > 1) return new WebResponse("<html>gateway unavailable</html>", { status: 504, headers: { "content-type": "text/html" } }) as unknown as globalThis.Response
+        const payload = (await (await inner.fetch(request)).json()) as { readonly data: Readonly<Record<string, unknown>> }
+        const errors = ids.map((_, index) => ({ type: "NOT_FOUND", path: ["nodes", index], message: "Could not resolve requested node" }))
+        return new WebResponse(JSON.stringify({ data: { ...payload.data, nodes: ids.map(() => null) }, errors }), { status: 200, headers: { "content-type": "application/json" } }) as unknown as globalThis.Response
+      },
+    }
+  }
+}
+import { stillUnavailable } from availability
 
 function actor(login: string) {
   return { id: `U_${login}`, login, avatarUrl: `https://avatars.example/${login}`, url: `https://github.com/${login}`, kind: "User" }
@@ -79,6 +104,32 @@ it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect 
     slices: 4,
     unavailable: [],
     afterRepository: [{ repository: "widgets", outcomes: 3, finalReviewCensusCost: 1 }],
+  })
+
+  const probes: ReadonlyArray<string>[] = []
+  const prior = [world.ids.paired, world.ids.stacked].map((nodeId) => ({ nodeId, reason: "NOT_FOUND" as const }))
+  const recollected = try Effect.provide(collectMergedWork({
+    targets: [target(world)],
+    nowMs: start,
+    windowFromMs: start - 35 * day,
+    verificationFromMs: start - 35 * day,
+    valuePolicyFromMs: start - 10 * day,
+    evaluatedReviewKeys: new Set(),
+    recollection: { attempt: 1, unavailableSources: prior, allowJointHolds: true },
+  }, (repository) => Effect.succeed(repository.outcomes.length)), githubLayer(world, stillUnavailable(fetcherOf(world), probes)))
+  const [order = []] = probes
+  try same({
+    batch: sorted(order),
+    probes,
+    held: recollected.unavailableSources.filter((source) => source.unavailableInMergedCensus === true),
+    outcomes: recollected.outcomes.map((entry) => entry.id),
+    afterRepository: recollected.collections.map((collection) => collection.open),
+  }, {
+    batch: sorted([world.ids.paired, world.ids.stacked]),
+    probes: [...Array.from({ length: maxGraphqlRequestAttempts }, () => order), ...order.map((id) => [id])],
+    held: order.map((nodeId) => ({ nodeId, reason: "NOT_FOUND", unavailableInMergedCensus: true })),
+    outcomes: [world.ids.bulk],
+    afterRepository: [1],
   })
 })
 

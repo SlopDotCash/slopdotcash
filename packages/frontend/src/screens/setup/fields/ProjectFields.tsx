@@ -1,5 +1,5 @@
 // spec/ui/controls.md, "An invalid field is described by its error, then its hint"
-import { Input, Label, RadioGroup, type RadioOption, Select, StatusIcon, Textarea } from "@repo/ui";
+import { describedBy, Input, Label, RadioGroup, type RadioOption, Select, StatusIcon, Textarea } from "@repo/ui";
 import type { ReactNode } from "react";
 
 /** @throws {never} */
@@ -9,7 +9,7 @@ export function fieldId(name: string): string {
 
 function description(name: string, error: ReactNode, hint: ReactNode) {
   const id = fieldId(name);
-  const ids = [error ? `${id}-error` : "", hint ? `${id}-hint` : ""].filter((part) => part !== "");
+  const ids = describedBy({ invalid: Boolean(error), hasError: Boolean(error), hasHint: Boolean(hint) }).map((part) => (part === "ErrorText" ? `${id}-error` : `${id}-hint`));
   return {
     control: { id, name, "aria-invalid": error ? true : undefined, "aria-describedby": ids.length > 0 ? ids.join(" ") : undefined },
     messages: (

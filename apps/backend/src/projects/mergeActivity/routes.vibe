@@ -1,0 +1,72 @@
+// spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"
+import { rows, sql } from "@repo/platform/d1"
+import { answered, fixedHeaders, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { type MergeActivityAnswer, type MergeRepository, mergeActivity } from "../../client/projects.vibe"
+import { getMergeActivity } from "../../client/refusals.vibe"
+
+schema ServedRow {
+  project_id: string
+  repository: string
+  observed_at: string
+  failure: string | null
+  last_merged_at: string | null
+  waiting_outside: number
+  waiting_capped: number
+  merged_outside_30d: number
+  median_merge_hours: number | null
+}
+
+interface Refusal {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: { readonly "cache-control": string }
+}
+
+const hoursPerDay = 24
+const servedCache = { "cache-control": cacheControl(mergeActivity.cache) }
+
+function refused(row: Refusal) {
+  return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": row.headers["cache-control"] })
+}
+
+function repositoryOf(row: ServedRow): MergeRepository {
+  return {
+    repository: row.repository,
+    observedAt: row.observed_at,
+    lastAttemptFailed: row.failure !== null,
+    lastMergedAt: row.last_merged_at,
+    waitingOutside: row.waiting_outside,
+    waitingCapped: row.waiting_capped === 1,
+    mergedOutsideLast30Days: row.merged_outside_30d,
+    medianHoursToMerge: row.median_merge_hours,
+  }
+}
+
+export effect function mergeActivityAnswer() {
+  const found = try rows(ServedRow, sql`SELECT project_id, repository, observed_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours FROM repository_merge_activity WHERE observed_at IS NOT NULL ORDER BY project_id, repository`)
+  const projects = new Map<string, MergeRepository[]>()
+  for (const row of found) projects.set(row.project_id, [...projects.get(row.project_id) ?? [], repositoryOf(row)])
+  return {
+    schema: "slop-merge-activity-v1",
+    waitingDays: waitingHours / hoursPerDay,
+    medianWindowDays: medianWindowHours / hoursPerDay,
+    projects: [...projects].map(([projectId, repositories]) => ({ projectId, repositories })),
+  } satisfies MergeActivityAnswer
+}
+
+effect function answer() {
+  const method = (try HttpServerRequest.HttpServerRequest).method
+  if (method !== "GET" && method !== "HEAD") return refused(getMergeActivity.otherMethods.methodNotAllowed)
+  const body = mergeActivityAnswer() catch effect (error) => {
+    try Effect.logError("merge activity API failure", error._tag)
+    return undefined
+  }
+  if (body === undefined) return refused(getMergeActivity.internalError)
+  if (method === "HEAD") return HttpServerResponse.empty({ status: 200, headers: { ...fixedHeaders, ...servedCache, "content-type": "application/json; charset=utf-8" } })
+  return json(body, 200, servedCache)
+}
+
+export const MergeActivityRoutes = HttpRouter.add("*", mergeActivity.path, answered(answer()))

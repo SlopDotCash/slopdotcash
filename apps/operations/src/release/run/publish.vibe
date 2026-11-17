@@ -1,6 +1,6 @@
 // spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
 import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
-import { type Environment, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, serviceAt } from "../../../gen/operations__release.effect.vibe"
+import { type Environment, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, headAhead, serviceAt } from "../../../gen/operations__release.effect.vibe"
 import { observeLock } from "../../publicationLock/group.vibe"
 import { thisRun } from "../../publicationLock/lock.vibe"
 import { selectCoverage } from "../coverage/options.vibe"
@@ -214,9 +214,13 @@ export effect function release(input: ReleaseInput) {
   const branch = facts.ref.branch
   const done = { outcome: "Superseded", deployment: "", sourceSha: facts.sha } satisfies Released
   const heads = try branchHeads(run, input.root, branch, facts.sha)
-  try heads.observe()
-  try settle(run, publisher.order, branch, facts.sha)
-  if (environment === "Staging") try stagingHistory(run, facts.ref.repository, input.root, facts.sha)
+  effect function observed() {
+    try heads.observe()
+    try settle(run, publisher.order, branch, facts.sha)
+    return headAhead(try run.state())
+  }
+  if (environment === "Staging") try stagingHistory(run, facts.ref.repository, input.root, facts.sha, observed)
+  else try observed()
   try observeLock(input.root, facts.workflowPath, facts.job, environment)
   try readVariables(run)
   const target = { environment, sourceSha: facts.sha, bundle: input.bundle, manifestSha256: verified.manifestSha256 } satisfies Target

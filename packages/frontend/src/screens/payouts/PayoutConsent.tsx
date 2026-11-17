@@ -30,7 +30,7 @@ function ConsentControl({ runtime, account, payment, claim, onAccessLost }: Cons
   const consent: ConsentRuntime = consentRuntime(runtime, account.githubUserId, claim);
   const family = chainFamily(payment.chain);
   const offers = useFeed(consent, "offers", watchOffers).value ?? [];
-  const wallets: WalletOption[] = offers.filter((offer) => offer.family === family && (family !== "solana" || offer.solanaBinding)).map((offer) => ({ id: String(offer.id), name: offer.name }));
+  const wallets: WalletOption[] = offers.filter((offer) => offer.family === family && (family !== "solana" || offer.solanaBinding)).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }));
   const reserved = reservedPayment(payment, claim);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);

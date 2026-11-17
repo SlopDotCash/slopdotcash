@@ -1,0 +1,29 @@
+// spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"
+import type { D1Database } from "@repo/platform/bindings"
+import { CallerLive } from "@repo/backend/caller"
+import { type BackendVars, backend, backendServices } from "@repo/backend/live"
+import { noEdgeCache } from "@repo/platform/cache"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { pages } from "@repo/platform/worker"
+import { noticePorts } from "@repo/operations/live"
+import { type SecurityEnv, enforcementPorts, security, securityBindings } from "@repo/security/live"
+import { contributorAudience } from "../../../src/live.vibe"
+
+interface Env extends RoleVars, BackendVars, SecurityEnv {
+  readonly SLOP_DB: D1Database
+  readonly SLOP_GITHUB_READ_TOKEN: string
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(env))
+  const reads = Layer.provide(github({ token: Redacted.make(env.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-points-backend-routes" }), outbound)
+  const notices = Layer.provideMerge(Layer.merge(noticePorts, contributorAudience), base)
+  const shell = Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(env), securityBindings(env), reads), notices)
+  return Layer.provideMerge(enforcementPorts, shell)
+}
+
+export default pages({ areas: [backend, security], services, assets: "ASSETS" })

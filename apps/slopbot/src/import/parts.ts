@@ -6,13 +6,14 @@ export interface HistoricalParts {
 }
 
 /** @throws {never} */
-export async function historicalParts(bytes: Uint8Array, contentType: string): Promise<HistoricalParts | undefined> {
+export async function historicalParts(bytes: Uint8Array<ArrayBuffer>, contentType: string): Promise<HistoricalParts | undefined> {
   const form = await new Response(bytes, { headers: { "content-type": contentType } }).formData().catch(() => undefined);
   if (form === undefined || [...form.keys()].sort().join() !== "bundle,envelope") return undefined;
   const envelope = form.get("envelope");
   const bundle = form.get("bundle");
   if (!(envelope instanceof File) || envelope.type !== "application/json" || !(bundle instanceof File) || bundle.size === 0) return undefined;
-  return { envelope: await envelope.text(), bundle: new Uint8Array(await bundle.arrayBuffer()) };
+  const text = utf8Text(new Uint8Array(await envelope.arrayBuffer()));
+  return text === undefined ? undefined : { envelope: text, bundle: new Uint8Array(await bundle.arrayBuffer()) };
 }
 
 /** @throws {never} */

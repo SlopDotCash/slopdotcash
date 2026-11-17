@@ -1,8 +1,9 @@
-// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Receipt terms come only from the open published revision"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/program.md, "Receipt terms come only from the open published revision"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
 import type { Network } from "@repo/ports/backend";
 import type { Offer, ProgramStatus } from "../../gen/security__program.ts";
 import type { AwardSplit, Eligibility, FundingPolicy } from "../../gen/security__terms.ts";
 import { limbsOf } from "../terms/asset.ts";
+import { type ExclusionScope, SECURITY_EXCLUSION_LIMITS, exclusionLengths } from "./exclusions.ts";
 import type { OwnerChange } from "./kernel.ts";
 
 export type Json = string | number | boolean | null | ReadonlyArray<Json> | { readonly [key: string]: Json };
@@ -237,7 +238,7 @@ function validateAmount(terms: Fields, fullAward: boolean): void {
 /** @throws {ManifestProblem} */
 function validateScope(terms: Fields, repositoryIds: ReadonlyArray<string>): void {
   const scope = record(terms.scope, "scope");
-  exactKeys(scope, ["deployments", "excludedDependencies", "includedAssets", "lossDefinition", "severityRubric", "sourceRevisions", "testingPermission"], "scope");
+  exactKeys(scope, ["deployments", "excludedDependencies", ...(scope.excludedFindings === undefined ? [] : ["excludedFindings"]), "includedAssets", "lossDefinition", "severityRubric", "sourceRevisions", "testingPermission"], "scope");
   list(scope.sourceRevisions, "scope.sourceRevisions", 1, 20, (entry, field) => {
     const source = record(entry, field);
     exactKeys(source, ["commit", "repository"], field);
@@ -253,6 +254,11 @@ function validateScope(terms: Fields, repositoryIds: ReadonlyArray<string>): voi
   });
   list(scope.includedAssets, "scope.includedAssets", 1, 50, (entry, field) => text(entry, field, 200, 2));
   list(scope.excludedDependencies, "scope.excludedDependencies", 0, 50, (entry, field) => text(entry, field, 200, 2));
+  if (scope.excludedFindings !== undefined) {
+    const { maxLines, maxLength, minLength } = SECURITY_EXCLUSION_LIMITS;
+    const keys = list(scope.excludedFindings, "scope.excludedFindings", 0, maxLines, (entry, field) => text(entry, field, maxLength, minLength, /^[^\r\n]+$/u)).map((entry) => String(entry).toLowerCase());
+    if (new Set(keys).size !== keys.length) fail("scope.excludedFindings", "contains duplicates");
+  }
   text(scope.testingPermission, "scope.testingPermission", 2000, 12);
   text(scope.severityRubric, "scope.severityRubric", 2000, 12);
   text(scope.lossDefinition, "scope.lossDefinition", 2000, 12);
@@ -443,13 +449,19 @@ export function programStatus(terms: unknown): ProgramStatus {
 }
 
 /** @throws {never} */
+export function scopeExclusions(terms: unknown): ExclusionScope {
+  const lines = member(member(terms, "scope"), "excludedFindings");
+  return Array.isArray(lines) && lines.every((line) => typeof line === "string") ? { excludedFindings: lines } : {};
+}
+
+/** @throws {never} */
 export function offerOf(terms: unknown): Offer {
   const amount = member(terms, "amount");
   const gross = member(amount, "grossMinor");
   const policy: FundingPolicy = member(terms, "fundingPolicy") === "after-approval" ? "AfterApproval" : "Prefunded";
   const eligibility: Eligibility = member(terms, "eligibility") === "in-scope-security" ? "InScopeSecurity" : "CriticalLossOfFunds";
   const split: AwardSplit = isFullAwardSplit(member(terms, "split")) ? "FullAward" : "StandardSplit";
-  return { status: programStatus(terms), policy, eligibility, gross: limbsOf(typeof gross === "string" ? gross : ""), split, asset: modelAsset(amount), excludedFindings: [] };
+  return { status: programStatus(terms), policy, eligibility, gross: limbsOf(typeof gross === "string" ? gross : ""), split, asset: modelAsset(amount), excludedFindings: exclusionLengths(scopeExclusions(terms)) };
 }
 
 /** @throws {never} */

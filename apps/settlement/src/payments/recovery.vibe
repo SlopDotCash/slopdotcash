@@ -7,8 +7,9 @@ import { type Decision, load, update } from "@repo/platform/stored"
 import { type Dispatch, type Event as DispatchEvent, type ExecutorObservation, type Inspection, apply as applyDispatch, attempt } from "../../gen/settlement__paymentDispatch.effect.vibe"
 import { type AttemptIdentity, type AttemptStatus, PaymentExecutor, type ServedVault } from "./dispatch.vibe"
 import { projectionFor } from "./ledger.vibe"
+import type { NetworkKey } from "../kernels/networks.ts"
 import { type ObligationRows, attemptStates, obligationAggregate, outboxStates, project } from "./obligation.vibe"
-import { type PaymentDeployment, failureTag } from "./terms.vibe"
+import { type PaymentDeployment, failureTag, sameAddress } from "./terms.vibe"
 
 export error RecoveryFailed { failures: ReadonlyArray<string> }
 
@@ -21,6 +22,9 @@ schema SubmittedRow {
   readonly id: string
   readonly obligation_id: string
   readonly transaction_id: string
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
 }
 
 effect function stepped(current: Dispatch, event: DispatchEvent) {
@@ -174,16 +178,22 @@ effect function retireReverted(served: ServedVault, row: SubmittedRow) {
   })
 }
 
-export effect function reconcileFailedAttempts(vaults: ReadonlyArray<ServedVault>) {
+function servedFor(vaults: ReadonlyArray<ServedVault>, row: SubmittedRow) {
+  const matches = vaults.filter(({ deployment }) => deployment.projectId === row.project_id && deployment.network === row.network && sameAddress(deployment.chain, deployment.vault, row.vault))
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+export effect function reconcileFailedAttempts(networks: ReadonlyArray<NetworkKey>, vaults: ReadonlyArray<ServedVault>) {
   const failures: string[] = []
-  for (const served of vaults) {
-    const { deployment } = served
-    const submitted = try rows(SubmittedRow, sql`SELECT a.id, a.obligation_id, a.transaction_id FROM payment_attempts a JOIN payment_obligations o ON o.id = a.obligation_id WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND a.state IN ('submitted', 'unknown') AND a.transaction_id IS NOT NULL AND o.state = 'reserved' ORDER BY a.rowid`)
-    for (const row of submitted) {
-      const outcome = retireReverted(served, row) catch (error) => `${row.id}: ${failureTag(error)}`
-      if (typeof outcome === "string") failures.push(outcome)
+  const submitted = try rows(SubmittedRow, sql`SELECT a.id, a.obligation_id, a.transaction_id, o.project_id, o.network, o.vault FROM payment_attempts a JOIN payment_obligations o ON o.id = a.obligation_id WHERE o.network IN (SELECT value FROM json_each(${JSON.stringify(networks)})) AND a.state IN ('submitted', 'unknown') AND a.transaction_id IS NOT NULL AND o.state = 'reserved' ORDER BY a.rowid`)
+  for (const row of submitted) {
+    const served = servedFor(vaults, row)
+    if (served === undefined) {
+      failures.push(`${row.id}: Reviewed deployment missing for reconciliation`)
+      continue
     }
+    const outcome = retireReverted(served, row) catch (error) => `${row.id}: ${failureTag(error)}`
+    if (typeof outcome === "string") failures.push(outcome)
   }
   if (failures.length > 0) throw new RecoveryFailed({ failures })
 }
-

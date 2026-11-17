@@ -1,12 +1,11 @@
-// spec/frontend/paymentHistory.md, "Pages advance a strictly increasing cursor against the first page's boundary and total"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "The cycle page lists public cuts with distinct loading, error, empty and list states"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/contributorAllocation.md, "An unpublished distribution exposes no recipient row"
+// spec/frontend/paymentHistory.md, "Pages advance a strictly increasing cursor against the first page's boundary and total"; spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "The cycle page lists public cuts with distinct loading, error, empty and list states"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
 import { millisOf } from "@repo/platform/clock"
 import { exchanged, outgoing } from "@repo/platform/browser"
-import { type AccountWallet, type ContributorAllocation, type DirectTransfer, type MonthlyCut, type ProjectVault, type PublicVaultPayment, type ReceivedTotals, type VaultSnapshot, DirectTransferList, DirectTransferPage, PublicVaultPaymentPage, contributorAllocation, contributorAllocationUrl, directHistoryHeader, monthlyCuts, projectVault, receivedTotals, recipientAllocation } from "@repo/settlement/client"
+import { type DirectTransfer, type MonthlyCut, type ProjectVault, type PublicVaultPayment, type ReceivedTotals, type VaultSnapshot, DirectTransferList, DirectTransferPage, PublicVaultPaymentPage, directHistoryHeader, monthlyCuts, projectVault, receivedTotals } from "@repo/settlement/client"
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
 import { type Event as HistoryEvent, type Failure, type Mode, initial as historyStart, machineOver as historyOver } from "../../gen/frontend__paymentHistory.effect.vibe"
 import { transactionUrl } from "../kernels/explorers.ts"
 import { ActorChanged, type CallFailure, InvalidResponse, NetworkError, Refused, call, deadlineMs } from "../platform/api.vibe"
-import { fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Deployment } from "../platform/config.vibe"
 import { Unreadable, resource } from "./resource.vibe"
 
@@ -55,7 +54,6 @@ export const paymentMessages = {
   vaultUnavailable: "Vault totals are unavailable.",
   vaultInvalid: "The vault totals could not be verified.",
   receivedInvalid: "Received totals could not be verified",
-  allocationInvalid: "The contributor allocation could not be verified.",
 } as const
 
 export interface HistoryPage<T> {
@@ -364,18 +362,4 @@ export effect function receivedTotalReads() {
   return try resource((_key: string) => loadReceivedTotals(), (value: ReceivedTotals) => value.contributors.length)
 }
 
-export effect function loadContributorAllocation() {
-  const bytes = try fetchBoundedBytes(contributorAllocationUrl, paymentsLimitBytes, "contributor allocation")
-  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => { throw new Unreadable({ message: paymentMessages.allocationInvalid }) }
-  const allocation: ContributorAllocation | undefined = contributorAllocation(text) catch effect () => { throw new Unreadable({ message: paymentMessages.allocationInvalid }) }
-  return allocation
-}
-
-export effect function contributorAllocationReads() {
-  return try resource((_key: string) => loadContributorAllocation(), (allocation: ContributorAllocation | undefined) => allocation === undefined ? 0 : allocation.recipients.length, paymentsTimeoutMs)
-}
-
-export effect function allocationFor(allocation: ContributorAllocation, viewer: string, wallets: ReadonlyArray<AccountWallet>) {
-  return try recipientAllocation(allocation, viewer, wallets, try Clock.currentTimeMillis)
-}
 

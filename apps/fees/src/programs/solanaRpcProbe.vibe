@@ -1,0 +1,191 @@
+// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { cloudflareAnswer, cloudflareToken, fieldOf, listOf, pinnedVersion, privateFile, sameVersion, setting, succeeded } from "./feeOperations.vibe"
+import { solanaProbeModule, solanaProbeWorker } from "./probeWorker.ts"
+
+export type ProbeOperation = "candidate" | "subdomain-read" | "session-create" | "session-exchange" | "preview-upload" | "preview-invoke"
+
+type ProbeStage = "trusted-context" | "active-version-before" | "remote-read-probe" | "active-version-after"
+
+export error ProbeFailure { operation: ProbeOperation; httpStatus: number | null; cloudflareCode: number | null }
+export error ProbeInvalid { message: string }
+export error SolanaProbeRefused { message: string; refusal: ProbeRefusal }
+
+export interface ProbeRefusal {
+  readonly error: "fee_solana_rpc_probe_refused"
+  readonly stage: ProbeStage
+  readonly operation: ProbeOperation | "unknown"
+  readonly httpStatus: number | null
+  readonly cloudflareCode: number | null
+}
+
+export interface ProbeRead {
+  readonly method: string
+  readonly ok: boolean
+  readonly httpStatus: number | null
+  readonly rpcCode: number | null
+  readonly errorCategory: string | null
+}
+
+export interface ProbeRow {
+  readonly provider: "candidate" | "recovery"
+  readonly mainnet: boolean
+  readonly finalizedSlot: number | null
+  readonly finalizedBlock: boolean
+  readonly mintVerified: boolean
+  readonly firstAvailableSlot: number | null
+  readonly reads: ReadonlyArray<ProbeRead>
+}
+
+export const probeUsage = "probe-solana-rpc [repository-root]"
+export const probeFile = "fee-solana-rpc-probe.json"
+
+const previewName = "slop-fee-rpc-read-probe"
+const cloudflareApi = "https://api.cloudflare.com/client/v4"
+const apiSeconds = 30
+const invokeSeconds = 180
+const account = /^[a-f0-9]{32}$/u
+const subdomainName = /^[a-z0-9-]+$/u
+const providers = ["candidate", "recovery"] as const
+const methods = new Set<unknown>(["getGenesisHash", "getSlot", "getBlock", "getAccountInfo", "getFirstAvailableBlock"])
+const readCategories = new Set<unknown>(["invalid-json", "redirect", "rpc-refused", "TypeError", "SyntaxError", "AbortError", "TimeoutError", "request-error"])
+
+function failure(operation: ProbeOperation, httpStatus: number | null = null, cloudflareCode: number | null = null) {
+  return new ProbeFailure({ operation, httpStatus, cloudflareCode })
+}
+
+function invalid(message: string) {
+  return new ProbeInvalid({ message })
+}
+
+function integerOr<T>(value: unknown, accepted: (value: number) => boolean, otherwise: T): number | T {
+  return typeof value === "number" && Number.isSafeInteger(value) && accepted(value) ? value : otherwise
+}
+
+export function safeProbeFailure(error: unknown) {
+  return error instanceof ProbeFailure
+    ? { operation: error.operation, httpStatus: error.httpStatus, cloudflareCode: error.cloudflareCode }
+    : { operation: "unknown" as const, httpStatus: null, cloudflareCode: null }
+}
+
+export function requireSolanaProbeCandidate(value: string): string | undefined {
+  const url = URL.parse(value)
+  if (url === null || url.protocol !== "https:" || !url.hostname.endsWith(".helius-rpc.com") || url.username !== "" || url.password !== "" || url.hash !== "" || (url.port !== "" && url.port !== "443")) return undefined
+  return url.href
+}
+
+effect function safeRead(read: unknown) {
+  const method = fieldOf(read, "method")
+  if (!methods.has(method) || typeof method !== "string") throw invalid("Unexpected RPC probe method")
+  const category = fieldOf(read, "errorCategory")
+  return {
+    method,
+    ok: fieldOf(read, "ok") === true,
+    httpStatus: integerOr(fieldOf(read, "httpStatus"), (status) => status >= 100 && status <= 599, null),
+    rpcCode: integerOr(fieldOf(read, "rpcCode"), () => true, null),
+    errorCategory: readCategories.has(category) && typeof category === "string" ? category : null,
+  } satisfies ProbeRead
+}
+
+export effect function safeSolanaProbeResult(value: unknown) {
+  const rows = fieldOf(value, "rows")
+  if (fieldOf(value, "schemaVersion") !== 1 || !Array.isArray(rows) || rows.length !== providers.length) throw invalid("Invalid RPC probe response")
+  const safe: ProbeRow[] = []
+  for (const [index, provider] of providers.entries()) {
+    const row: unknown = rows[index]
+    const reads = fieldOf(row, "reads")
+    if (fieldOf(row, "provider") !== provider || !Array.isArray(reads) || reads.length < 4 || reads.length > 5) throw invalid("Invalid RPC probe provider")
+    const checked: ProbeRead[] = []
+    for (const read of listOf(reads)) checked.push(try safeRead(read))
+    safe.push({
+      provider,
+      mainnet: fieldOf(row, "mainnet") === true,
+      finalizedSlot: integerOr(fieldOf(row, "finalizedSlot"), (slot) => slot >= 0, null),
+      finalizedBlock: fieldOf(row, "finalizedBlock") === true,
+      mintVerified: fieldOf(row, "mintVerified") === true,
+      firstAvailableSlot: integerOr(fieldOf(row, "firstAvailableSlot"), (slot) => slot >= 0, null),
+      reads: checked,
+    })
+  }
+  return { schemaVersion: 1 as const, rows: safe }
+}
+
+effect function previewApi(request: HttpClientRequest.HttpClientRequest, operation: ProbeOperation) {
+  const answer = cloudflareAnswer(request, apiSeconds) catch effect () => { throw failure(operation) }
+  if (!succeeded(answer)) throw failure(operation, answer.status, integerOr(fieldOf(listOf(fieldOf(answer.body, "errors"))[0], "code"), () => true, null))
+  return fieldOf(answer.body, "result")
+}
+
+interface ProbeInput {
+  readonly accountId: string
+  readonly token: Redacted.Redacted<string>
+  readonly candidate: Redacted.Redacted<string>
+}
+
+effect function exchangedToken(exchange: URL, token: unknown) {
+  const answer = cloudflareAnswer(HttpClientRequest.get(exchange.href), apiSeconds) catch () => undefined
+  const fresh = answer !== undefined && answer.status >= 200 && answer.status <= 299 ? fieldOf(answer.body, "token") : undefined
+  return typeof fresh === "string" && fresh !== "" ? fresh : token
+}
+
+export effect function probeFeeSolanaRpc(input: ProbeInput) {
+  if (!account.test(input.accountId) || Redacted.value(input.token) === "") throw invalid("Missing preview credentials")
+  const candidate = requireSolanaProbeCandidate(Redacted.value(input.candidate))
+  if (candidate === undefined) throw failure("candidate")
+  const base = `${cloudflareApi}/accounts/${input.accountId}`
+  const authorization = { authorization: `Bearer ${Redacted.value(input.token)}` }
+  const subdomain = fieldOf(try previewApi(HttpClientRequest.setHeaders(HttpClientRequest.get(`${base}/workers/subdomain`), authorization), "subdomain-read"), "subdomain")
+  if (typeof subdomain !== "string" || !subdomainName.test(subdomain)) throw failure("subdomain-read")
+  const session = try previewApi(HttpClientRequest.setHeaders(HttpClientRequest.get(`${base}/workers/scripts/${previewName}/subdomain/edge-preview`), authorization), "session-create")
+  let token = fieldOf(session, "token")
+  let previewHost = `${previewName}.${subdomain}.workers.dev`
+  const exchangeUrl = fieldOf(session, "exchange_url")
+  if (exchangeUrl) {
+    const exchange = URL.parse(String(exchangeUrl))
+    if (exchange === null) throw invalid("Invalid preview exchange URL")
+    if (exchange.protocol !== "https:" || !(exchange.hostname.endsWith(".workers.dev") || exchange.hostname.endsWith(".cloudflareworkers.com")) || exchange.username !== "" || exchange.password !== "") throw failure("session-exchange")
+    previewHost = previewName + exchange.hostname.slice(exchange.hostname.indexOf("."))
+    token = try exchangedToken(exchange, token)
+  }
+  if (typeof token !== "string" || token === "") throw failure("session-create")
+  const upload = HttpClientRequest.bodyFormDataRecord(HttpClientRequest.setHeaders(HttpClientRequest.post(`${base}/workers/scripts/${previewName}/edge-preview`), { ...authorization, "cf-preview-upload-config-token": token }), {
+    metadata: JSON.stringify({ main_module: "probe.js", bindings: [], compatibility_date: "2026-10-01" }),
+    "probe.js": solanaProbeModule(),
+    "wrangler-session-config": JSON.stringify({ workers_dev: true, minimal_mode: true }),
+  })
+  const previewToken = fieldOf(try previewApi(upload, "preview-upload"), "preview_token")
+  if (typeof previewToken !== "string" || previewToken === "") throw failure("preview-upload")
+  const invocation = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.setHeaders(HttpClientRequest.post(`https://${previewHost}/probe`), { "cf-workers-preview-token": previewToken }), { candidate })
+  const answer = cloudflareAnswer(invocation, invokeSeconds) catch effect () => { throw failure("preview-invoke") }
+  if (answer.status < 200 || answer.status > 299) throw failure("preview-invoke", answer.status)
+  return { ...(try safeSolanaProbeResult(answer.body)), workerSha256: try sha256Hex(solanaProbeWorker), previewOnly: true, persistentBindings: 0 }
+}
+
+effect function probed(args: ReadonlyArray<string>, progress: { stage: ProbeStage }) {
+  const [root = ".", ...rest] = args
+  if (rest.length > 0) throw invalid(`usage: ${probeUsage}`)
+  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
+  if ((try setting("GITHUB_REF")) !== "refs/heads/main" || runnerTemp === "") throw invalid("Main diagnostic runner required")
+  progress.stage = "active-version-before"
+  const before = try pinnedVersion(root)
+  progress.stage = "remote-read-probe"
+  const candidate = Option.getOrUndefined(try Config.option(Config.Redacted("SLOP_SOLANA_RPC_CANDIDATE"))) ?? Redacted.make("")
+  const result = try probeFeeSolanaRpc({ accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token: try cloudflareToken(), candidate })
+  progress.stage = "active-version-after"
+  const after = try pinnedVersion(root)
+  if (!sameVersion(before, after)) throw invalid("Active fee version changed")
+  const output = { ...result, checkedAt: try isoNow(), feeVersionId: before.versionId, feeSourceCommit: before.sourceCommit, checkedSource: before.checkedSource, qualification: "bounded-readiness-only" }
+  try privateFile(runnerTemp, probeFile, `${JSON.stringify(output, null, 2)}\n`)
+  try Console.log(JSON.stringify(output))
+  return output
+}
+
+export effect function probeSolanaRpc(args: ReadonlyArray<string>) {
+  const progress: { stage: ProbeStage } = { stage: "trusted-context" }
+  return probed(args, progress) catch effect (error) => {
+    const refusal: ProbeRefusal = { error: "fee_solana_rpc_probe_refused", stage: progress.stage, ...safeProbeFailure(error) }
+    try Console.error(JSON.stringify(refusal))
+    throw new SolanaProbeRefused({ message: "Solana RPC preview refused", refusal })
+  }
+}

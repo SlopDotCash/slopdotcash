@@ -1,5 +1,6 @@
-// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/identityApp.md, "The public App lookup is retried on refusal and its contract fields must match exactly"
 import { boundedBytes } from "@repo/platform/browser"
+import { type AppContract, identityVerdict, maxLookups, retryAfter, retryWaitSeconds } from "../../../gen/operations__identityApp.effect.vibe"
 import { Cloudflare, ToolFailed } from "../wrangler/cloudflare.vibe"
 import { queryRows } from "../wrangler/outputs.vibe"
 
@@ -54,9 +55,17 @@ const clientPattern = /^[A-Za-z0-9._-]{1,128}$/u
 const startKeys = "authorizationUrl,expiresAt,flowId,pollAfterSeconds,pollCapability"
 const traceContract = "private-trace-v1-opaque-hmac-v1"
 const identityAppUrl = "https://api.github.com/apps/slop-identity"
+const identityAppPage = "https://github.com/apps/slop-identity"
+const unreadContract: AppContract = { slug: "", name: "", clientMatches: false, owner: "", noPermissions: false, noEvents: false }
+
+export interface IdentityAppPatience {
+  readonly attempts: number
+  readonly delaySeconds: number
+}
 
 export const traceApiOrigin = "https://api.slop.cash"
 export const tracePatience = { rounds: 18, delaySeconds: 5 } as const
+export const identityAppPatience: IdentityAppPatience = { attempts: maxLookups, delaySeconds: retryWaitSeconds(1) }
 
 function probeFailed(step: string, message: string) {
   return new ToolFailed({ tool: "probe", step, message })
@@ -198,13 +207,50 @@ export effect function traceBoundary(origin: string, token: string, patience: { 
   throw probeFailed("private trace boundary", "the active private trace API did not reach its fail-closed unauthenticated boundary")
 }
 
-export effect function identityApp(clientId: string) {
+function httpCode(status: number) {
+  return status === 0 ? "000" : String(status)
+}
+
+effect function publicPageStatus() {
+  const response = timeout(provideService(HttpClient.execute(HttpClientRequest.get(identityAppPage)), FetchHttpClient.RequestInit, { redirect: "manual", cache: "no-store" }), Duration.seconds(probeSeconds)) catch () => undefined
+  return response?.status ?? 0
+}
+
+effect function lookedUpContract(step: string, bytes: Uint8Array, clientId: string) {
+  const app = decodedBody(PublicApp, step, bytes) catch () => undefined
+  if (app === undefined) return unreadContract
+  return {
+    slug: app.slug,
+    name: app.name,
+    clientMatches: app.client_id === clientId,
+    owner: app.owner.login,
+    noPermissions: Object.keys(app.permissions).length === 0,
+    noEvents: app.events.length === 0,
+  } satisfies AppContract
+}
+
+export effect function identityApp(clientId: string, patience: IdentityAppPatience = identityAppPatience) {
   const step = "identity app"
   const request = HttpClientRequest.get(identityAppUrl, { headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" } })
-  const answer = try exchanged(step, request, bodyLimit)
-  if (answer.status !== 200) throw probeFailed(step, `the Slop Identity GitHub App is not publicly discoverable (HTTP ${answer.status})`)
-  const app = try decodedBody(PublicApp, step, answer.bytes)
-  if (app.slug !== "slop-identity" || app.name !== "Slop Identity" || app.client_id !== clientId || app.owner.login !== "elizaOS" || Object.keys(app.permissions).length !== 0 || app.events.length !== 0) {
-    throw probeFailed(step, "the public Slop Identity GitHub App contract drifted")
+  for (let attempt = 1; ; attempt += 1) {
+    const answer = exchanged(step, request, bodyLimit) catch () => undefined
+    const status = answer?.status ?? 0
+    if (attempt < patience.attempts && retryAfter(status, attempt)) {
+      try Console.log(`GitHub answered HTTP ${httpCode(status)} for the public App lookup; retrying (attempt ${attempt}).`)
+      try sleep(Duration.seconds(attempt * patience.delaySeconds))
+      continue
+    }
+    const rateLimited = answer?.headers["x-ratelimit-remaining"]?.trim() === "0"
+    const spent = status !== 200 && (status === 429 || rateLimited)
+    const contract = answer !== undefined && answer.status === 200 ? try lookedUpContract(step, answer.bytes, clientId) : unreadContract
+    const pageStatus = spent ? try publicPageStatus() : 0
+    const verdict = identityVerdict({ status, rateLimited, contract, pageStatus })
+    if (verdict === "IdentityPublicOnly") {
+      try Console.log(`::warning::GitHub's unauthenticated API quota for this runner was spent (HTTP ${httpCode(status)}); the public Slop Identity App page answered 200, so the App is still public. Contract fields were not re-read this release.`)
+    }
+    if (verdict !== "IdentityFailed") return verdict
+    if (status === 200) throw probeFailed(step, "the public Slop Identity GitHub App contract drifted")
+    if (spent) throw probeFailed(step, `The Slop Identity GitHub App lookup was rate limited (HTTP ${httpCode(status)}) and its public page answered HTTP ${httpCode(pageStatus)}.`)
+    throw probeFailed(step, `the Slop Identity GitHub App is not publicly discoverable (HTTP ${httpCode(status)})`)
   }
 }

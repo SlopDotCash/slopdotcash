@@ -5,7 +5,8 @@ import type { Handler } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { type RepositoryRegistry, leaderboardMethodology, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, validatePaymentSnapshot, verificationWindowDays } from "@repo/points/client"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { leaderboard } from "../../src/reads/snapshot.vibe"
 import { type ProjectTerms, projectCycleView } from "../../src/projections/projectView.ts"
 import { globalStandings, reviewerStandings, standingHistory, standingsFor } from "../../src/projections/standings.ts"
@@ -143,7 +144,7 @@ const serve: Handler = (request) => {
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: originsOf("production"),
+  origins: deploymentOrigins("production"),
   pageOrigin: origin,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(`/login?next=${next}`),

@@ -12,8 +12,8 @@ import { awardClearancesLive } from "../src/bounty/store.vibe"
 import { caseRecord } from "../src/cases/rows.vibe"
 import { acted } from "../src/cases/routes.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
-import type { ProgramFundsView } from "../src/program/manifest.ts"
-import { publication } from "../src/program/store.vibe"
+import type { Json, ProgramFundsView } from "../src/program/manifest.ts"
+import { type Publication, programOf, publication } from "../src/program/store.vibe"
 import { reportingProgramsLive } from "../src/receipt/program.vibe"
 import { remediationHandlersLive } from "../src/remediation/routes.vibe"
 import { type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
@@ -40,6 +40,7 @@ const otherPatch = "b2".repeat(32)
 const redacted = "c3".repeat(32)
 const changedBytes = "d4".repeat(32)
 let keys = 0
+const registryRevisions = new Map<string, number>()
 
 const Started = Layer.effect(Program, effect {
   const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
@@ -56,8 +57,8 @@ const Started = Layer.effect(Program, effect {
 
 function fixture(projectId: string): ProjectView {
   return {
-    projectId, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired",
-    stewardGithubId: steward, repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }], closureConsent: false,
+    projectId, revision: registryRevisions.get(projectId) ?? 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired",
+    stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }], closureConsent: false,
   }
 }
 
@@ -193,6 +194,68 @@ effect function fullAward(program: Program.Shape) {
   })
 }
 
+function verdict(published: Publication) {
+  if (published.kind === "Published") return published.kind
+  return published.refusal.kind === "InvalidTerms" ? published.refusal.problem : published.refusal.kind
+}
+
+effect function publishedLines(lines: unknown) {
+  const terms = fullTerms()
+  const scope = lines === undefined ? terms.scope : { ...terms.scope, excludedFindings: lines }
+  return try publication({ projectId: "slopdotcash", actor: actor(administrator), next: { ...terms, scope } as unknown as Json, status: undefined, reward: bountyOnly, canManageContacts: true })
+}
+
+effect function stored(world: World, revision: number, securityBounty: unknown) {
+  const manifest = JSON.stringify({ id: "slopdotcash", status: "active", repositories: [{ id: "slop-test/intake" }], securityBounty })
+  const at = new Date(Date.now() - 1000).toISOString()
+  try promise(() => world.db.batch([
+    world.db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES('slopdotcash',?,?,?,'Program terms',?,'administrator',?)").bind(revision, manifest, String(revision).repeat(64), administrator, at),
+    world.db.prepare("UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ?, updated_at = ? WHERE id = 'slopdotcash'").bind(revision, manifest, String(revision).repeat(64), at),
+  ]))
+  registryRevisions.set("slopdotcash", revision)
+}
+
+effect function ownerExclusions(program: Program.Shape) {
+  const { world } = program
+  program.funds.current = undefined
+  const field = "project.securityBounty.scope.excludedFindings"
+  const accepted = [
+    verdict(try publishedLines(undefined)),
+    verdict(try publishedLines([])),
+    verdict(try publishedLines(Array.from({ length: 20 }, (_, index) => `Line ${index}`))),
+    verdict(try publishedLines(["abc", "x".repeat(300)])),
+  ]
+  const refused = [
+    verdict(try publishedLines(Array.from({ length: 21 }, (_, index) => `Line ${index}`))),
+    verdict(try publishedLines(["ab"])),
+    verdict(try publishedLines(["x".repeat(301)])),
+    verdict(try publishedLines([" Leading space"])),
+    verdict(try publishedLines(["Two\nlines"])),
+    verdict(try publishedLines(["Same finding", "same FINDING"])),
+    verdict(try publishedLines([42])),
+    verdict(try publishedLines("One string")),
+  ]
+  const first = try publishedLines(undefined)
+  if (first.kind !== "Published") return try die(new Error("the program without owner lines was not published"))
+  try stored(world, 2, first.securityBounty)
+  const lines = ["Gas refund rounding", "Issues fixed in a later release"]
+  const second = try publishedLines(lines)
+  if (second.kind !== "Published") return try die(new Error("the program with owner lines was not published"))
+  try stored(world, 3, second.securityBounty)
+  const repeated = verdict(try publishedLines([...lines, "GAS REFUND ROUNDING"]))
+  const history = try programOf("slopdotcash")
+  const revisions = try promise(() => rows(world, "SELECT revision, json_extract(manifest, '$.securityBounty.scope.excludedFindings') AS lines FROM project_revisions WHERE project_id = 'slopdotcash' ORDER BY revision"))
+  try same({ accepted, refused, programRevisions: [first.programRevision, second.programRevision], repeated, offer: history.program.offer.excludedFindings, history: history.program.revisions, revisions }, {
+    accepted: ["Published", "Published", "Published", "Published"],
+    refused: [`${field} must list 0 to 20 entries`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field}[0] is invalid`, `${field} contains duplicates`, `${field}[0] is invalid`, `${field} must list 0 to 20 entries`],
+    programRevisions: [1, 2],
+    repeated: `${field} contains duplicates`,
+    offer: lines.map((line) => line.length),
+    history: [1, 2],
+    revisions: [{ revision: 1, lines: null }, { revision: 2, lines: null }, { revision: 3, lines: JSON.stringify(lines) }],
+  })
+}
+
 effect function exactDisclosure(program: Program.Shape) {
   const { world } = program
   const fixed = try submit(world, reporter, paid, "Signature replay across chains")
@@ -269,6 +332,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     provide shellOf(program) {
       try exactDisclosure(program)
       try legacyJournal(program)
+    }
+  })
+
+  it.effect('Owner "does not qualify" lines are validated and published as a new terms revision while the earlier revision keeps its text (spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/security/program.md, "Receipt terms come only from the open published revision")', () => effect {
+    const program = try Program
+    provide shellOf(program) {
+      try ownerExclusions(program)
     }
   })
 })

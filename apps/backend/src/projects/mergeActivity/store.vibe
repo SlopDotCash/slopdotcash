@@ -1,0 +1,137 @@
+// spec/backend/mergeActivity.md, "A bounded daily run reads due repositories of active projects"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"; spec/backend/mergeActivity.md, "A path the project no longer lists is never read again and the next run deletes its row"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, update } from "@repo/platform/stored"
+import type { Event, Merges, Row, Summary } from "../../../gen/backend__mergeActivity.ts"
+import { type NotAState, apply, decodeEvent, decodeState, noRow, noSummary } from "../../../gen/backend__mergeActivity.effect.vibe"
+import { hourMillis, hourOf } from "./github.vibe"
+
+export schema StoredRow {
+  project_id: string
+  repository: string
+  observed_at: string | null
+  attempted_at: string
+  failure: string | null
+  last_merged_at: string | null
+  waiting_outside: number | null
+  waiting_capped: number | null
+  merged_outside_30d: number | null
+  median_merge_hours: number | null
+}
+
+export interface Key {
+  readonly projectId: string
+  readonly repository: string
+}
+
+export interface Facts {
+  readonly at: number
+  readonly measured: boolean
+  readonly listed: boolean
+  readonly running: boolean
+  readonly reads: number
+}
+
+export interface Evidence {
+  readonly failure: string
+  readonly mergedAt: ReadonlyArray<string>
+}
+
+export const columns = sql`project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours`
+
+const noEvidence: Evidence = { failure: "read-failed", mergedAt: [] }
+
+function hoursOf(iso: string | null) {
+  return iso === null ? 0 : hourOf(millisOf(iso))
+}
+
+function summaryOf(stored: StoredRow): Summary {
+  if (stored.observed_at === null) return noSummary
+  return {
+    lastMergedAt: hoursOf(stored.last_merged_at),
+    waitingOutside: stored.waiting_outside ?? 0,
+    waitingCapped: stored.waiting_capped === 1,
+    mergedOutside30d: stored.merged_outside_30d ?? 0,
+    medianDoubled: stored.median_merge_hours === null ? -1 : Math.round(stored.median_merge_hours * 2),
+  }
+}
+
+export function rowOf(stored: StoredRow | undefined): Row {
+  if (stored === undefined) return noRow
+  return { stored: true, observedAt: hoursOf(stored.observed_at), attemptedAt: hoursOf(stored.attempted_at), failed: stored.failure !== null, summary: summaryOf(stored) }
+}
+
+export function stateOf(facts: Facts, row: Row): Merges {
+  return { repository: 1, now: hourOf(facts.at), measured: facts.measured, listed: facts.listed, row, running: facts.running, reads: facts.reads }
+}
+
+function scope(key: Key) {
+  return sql`project_id = ${key.projectId} AND repository = ${key.repository}`
+}
+
+effect function loaded(facts: Facts, [found]: ReadonlyArray<Rows>) {
+  const [stored] = try decoded(StoredRow, found ?? [], "repository merge activity")
+  return try decodeState(stateOf(facts, rowOf(stored)))
+}
+
+function aggregate(key: Key, facts: Facts): Aggregate<Merges, RowMismatch | NotAState, never> {
+  return {
+    name: `merge activity of ${key.projectId} ${key.repository}`,
+    version: sql`SELECT coalesce((SELECT json_array(${columns}) FROM repository_merge_activity WHERE ${scope(key)}), '') AS version`,
+    reads: [sql`SELECT ${columns} FROM repository_merge_activity WHERE ${scope(key)}`],
+    decode: (found: ReadonlyArray<Rows>) => loaded(facts, found),
+  }
+}
+
+effect function lastMerged(hours: number, mergedAt: ReadonlyArray<string>) {
+  if (hours === 0) return null
+  const exact = mergedAt.filter((text) => hourOf(millisOf(text)) === hours).sort().at(-1)
+  if (exact !== undefined) return exact
+  return try isoAt(hours * hourMillis)
+}
+
+effect function writeOf(key: Key, at: number, event: Event, after: Row, evidence: Evidence) {
+  const now = try isoAt(at)
+  switch (event.type) {
+    case "readSucceeded": {
+      const summary = after.summary
+      return sql`INSERT INTO repository_merge_activity (project_id, repository, observed_at, attempted_at, failure, last_merged_at, waiting_outside, waiting_capped, merged_outside_30d, median_merge_hours)
+        VALUES (${key.projectId}, ${key.repository}, ${now}, ${now}, NULL, ${try lastMerged(summary.lastMergedAt, evidence.mergedAt)}, ${summary.waitingOutside}, ${summary.waitingCapped ? 1 : 0}, ${summary.mergedOutside30d}, ${summary.medianDoubled === -1 ? null : summary.medianDoubled / 2})
+        ON CONFLICT (project_id, repository) DO UPDATE SET observed_at = excluded.observed_at, attempted_at = excluded.attempted_at, failure = NULL, last_merged_at = excluded.last_merged_at, waiting_outside = excluded.waiting_outside, waiting_capped = excluded.waiting_capped, merged_outside_30d = excluded.merged_outside_30d, median_merge_hours = excluded.median_merge_hours`
+    }
+    case "readFailed":
+      return sql`INSERT INTO repository_merge_activity (project_id, repository, attempted_at, failure) VALUES (${key.projectId}, ${key.repository}, ${now}, ${evidence.failure})
+        ON CONFLICT (project_id, repository) DO UPDATE SET attempted_at = excluded.attempted_at, failure = excluded.failure`
+    case "prune":
+      return sql`DELETE FROM repository_merge_activity WHERE ${scope(key)}`
+    default:
+      return undefined
+  }
+}
+
+effect function decide(key: Key, facts: Facts, event: Event, by: string, evidence: Evidence, current: Merges) {
+  const next = try apply(current, event, by)
+  const writes: Statement[] = []
+  for (const write of next.out) {
+    if (write.table !== "MergeActivityRows" || write.repository !== current.repository) continue
+    const statement = try writeOf(key, facts.at, event, next.state.row, evidence)
+    if (statement !== undefined) writes.push(statement)
+  }
+  return { value: next.state, writes }
+}
+
+export effect function send(key: Key, facts: Facts, event: Event, by: string, evidence: Evidence = noEvidence) {
+  return try update(aggregate(key, facts), (current) => decide(key, facts, event, by, evidence, current))
+}
+
+export effect function receive(key: Key, facts: Facts, input: unknown, by: string) {
+  return try send(key, facts, try decodeEvent(input), by)
+}
+
+export effect function storedRows() {
+  return try rows(StoredRow, sql`SELECT ${columns} FROM repository_merge_activity ORDER BY project_id, repository`)
+}
+
+export effect function storedRow(key: Key) {
+  return rowOf(try first(StoredRow, sql`SELECT ${columns} FROM repository_merge_activity WHERE ${scope(key)}`))
+}

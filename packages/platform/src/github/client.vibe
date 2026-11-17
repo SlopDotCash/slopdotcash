@@ -1,8 +1,8 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"; spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
 import { boundedBytes } from "../browser.vibe"
-import { type GitHubFailure, GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, classify, isRefusal, rateLimited } from "./errors.vibe"
+import { type GitHubFailure, GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, classify, isRefusal, rateLimited, secondaryLimitMessage } from "./errors.vibe"
 
-export { GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, RateLimited, rateLimitHints } from "./errors.vibe"
+export { GitHubMalformed, GitHubRefused, GitHubUnavailable, NotFound, RateLimited, rateLimitHints, secondaryLimitMessage } from "./errors.vibe"
 export type { GitHubFailure, RateLimitHints } from "./errors.vibe"
 
 export const githubApi = "https://api.github.com"
@@ -105,7 +105,7 @@ export service GitHub {
 
 schema GraphQLProblem { type?: string; message?: string; path?: ReadonlyArray<string | number> }
 const GraphQLEnvelope = Schema.Struct({ data: Schema.optionalKey(Schema.Unknown), errors: Schema.optionalKey(Schema.Array(GraphQLProblem)) })
-schema Refusal { message?: string }
+const Refusal = Schema.Struct({ message: Schema.optionalKey(Schema.Unknown) })
 
 const anyList = Schema.Array(Schema.Unknown)
 const anyObject = Schema.Record(Schema.String, Schema.Unknown)
@@ -178,7 +178,7 @@ effect function refusalMessage(response: HttpClientResponse.HttpClientResponse, 
   const bytes = try drained(response, path)
   const value = parsed(bytes, path) catch () => undefined
   const refusal = decoded(Refusal, value, path) catch () => undefined
-  return (refusal?.message ?? "").slice(0, 300)
+  return refusal?.message
 }
 
 export effect function answered(response: HttpClientResponse.HttpClientResponse, limitBytes: number, path: string) {
@@ -187,7 +187,11 @@ export effect function answered(response: HttpClientResponse.HttpClientResponse,
   const kind = classify(status, headers)
   if (kind === "notFound") throw new NotFound({ path })
   if (kind === "rateLimited") throw rateLimited(status, headers, try Clock.currentTimeMillis)
-  if (kind === "refused" && isRefusal(status)) throw new GitHubRefused({ status, path, message: try refusalMessage(response, path) })
+  if (kind === "refused" && isRefusal(status)) {
+    const message = try refusalMessage(response, path)
+    if (status === 403 && secondaryLimitMessage(message)) throw rateLimited(status, headers, try Clock.currentTimeMillis, true)
+    throw new GitHubRefused({ status, path, message: (typeof message === "string" ? message : "").slice(0, 300) })
+  }
   if (kind !== "ok") throw new GitHubUnavailable({ status, path })
   return { status, headers, bytes: try bounded(response, limitBytes, path) } satisfies Answer
 }

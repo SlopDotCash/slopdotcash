@@ -1,4 +1,4 @@
-// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/frontend/projections.md, "The merge line stays hidden until a repository is read, and a failed read shows its date"
 import { type AnyRoute, route } from "@repo/platform/route"
 import { AppealState } from "@repo/ports/security"
 
@@ -51,6 +51,29 @@ export const ProjectDetail = Schema.Struct({
   vetting: JsonObject,
 })
 
+export schema MergeRepository {
+  readonly repository: string
+  readonly observedAt: string
+  readonly lastAttemptFailed: boolean
+  readonly lastMergedAt: string | null
+  readonly waitingOutside: number
+  readonly waitingCapped: boolean
+  readonly mergedOutsideLast30Days: number
+  readonly medianHoursToMerge: number | null
+}
+
+export schema MergeProject {
+  readonly projectId: string
+  readonly repositories: ReadonlyArray<MergeRepository>
+}
+
+export schema MergeActivityAnswer {
+  readonly schema: "slop-merge-activity-v1"
+  readonly waitingDays: number
+  readonly medianWindowDays: number
+  readonly projects: ReadonlyArray<MergeProject>
+}
+
 const listCache = { browserSeconds: 0, edgeSeconds: 30 } as const
 
 export const publicProjects = route({ method: "GET", path: "/api/v1/projects", access: "public", limitKib: 1, request: undefined, answer: ProjectList, rejected: "not_found", cache: listCache, cors: ["*"] })
@@ -58,4 +81,6 @@ export const publicRevisions = route({ method: "GET", path: "/api/v1/project-rev
 export const publicProject = route({ method: "GET", path: "/api/v1/projects/:id", access: "public", limitKib: 1, request: undefined, answer: ProjectDetail, rejected: "not_found", cache: "no-store", cors: ["*"] })
 export const revisionReceipt = route({ method: "GET", path: "/api/v1/project-revisions/:id/:revision", access: "public", limitKib: 1, request: undefined, answer: RevisionReceipt, rejected: "not_found", cache: { browserSeconds: 31536000, immutable: true } })
 
-export const api: ReadonlyArray<AnyRoute> = [publicProjects, publicRevisions, publicProject, revisionReceipt]
+export const mergeActivity = route({ method: "GET", path: "/api/v1/merge-activity", access: "public", limitKib: 1, request: undefined, answer: MergeActivityAnswer, rejected: "not_found", cache: { browserSeconds: 300 } })
+
+export const api: ReadonlyArray<AnyRoute> = [publicProjects, publicRevisions, publicProject, revisionReceipt, mergeActivity]

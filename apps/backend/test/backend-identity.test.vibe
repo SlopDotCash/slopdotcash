@@ -1,11 +1,11 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
-import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ScheduledOutcome, bundle, database, migrate, scheduled, workerOptions } from "@repo/platform/testing"
+import { type GitHubFake, type ScriptedFailure, githubFake } from "@repo/platform/testing/github"
 import { type Internet, internet } from "@repo/platform/testing/internet"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { Request as WebRequest } from "miniflare"
+import { Miniflare, Request as WebRequest } from "miniflare"
 import { Started as StartedFlow } from "../src/client/identity.vibe"
 
 const identity = "https://identity.slop.test"
@@ -15,6 +15,11 @@ const stateKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
 const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/u
 const pastCreated = "2026-01-01T00:00:00.000Z"
 const pastExpired = "2026-01-01T00:05:00.000Z"
+const tokenCall = /^POST \/login\/oauth\/access_token$/u
+const userCall = /^GET \/user$/u
+const oauthDescription = "description-carrying-a-secret-value"
+const oauthErrorUri = "https://github.test/error-uri-carrying-a-code"
+const unlistedError = "unlisted-error-carrying-a-secret"
 
 interface Answer {
   readonly status: number
@@ -29,11 +34,17 @@ interface Fetching {
   readonly headers?: Readonly<Record<string, string>>
 }
 
+interface IdentityLog {
+  readonly level: string
+  readonly message: string
+}
+
 service Identity {
   readonly db: D1Database
   readonly github: GitHubFake
   readonly net: Internet
   readonly outboundErrors: ReadonlyArray<string>
+  readonly logs: ReadonlyArray<IdentityLog>
   fetch(url: string, init?: Fetching): Answer!!
   scheduled(cron: string): ScheduledOutcome!!
 }
@@ -45,7 +56,9 @@ const Started = Layer.effect(Identity, effect {
   try orDie(Effect.try(() => github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })))
   const net = internet({ github: github.handler })
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
-  const mf = try acquireRelease(sync(() => startWorker({
+  const outboundErrors: string[] = []
+  const logs: IdentityLog[] = []
+  const mf = try acquireRelease(sync(() => new Miniflare({ ...workerOptions({
     script,
     d1: { IDENTITY_DB: "slop-private" },
     ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
@@ -57,7 +70,7 @@ const Started = Layer.effect(Identity, effect {
       IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
     },
     outbound: net.handler,
-  })), (started) => promise(() => started.dispose()))
+  }, outboundErrors), handleStructuredLogs: (log) => { logs.push({ level: log.level, message: log.message }) } })), (started) => promise(() => started.dispose()))
   const applied = try promise(() => migrate(mf, "IDENTITY_DB", migrationsDir))
   const failed = applied.find((file) => file.error !== undefined)
   if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
@@ -66,7 +79,8 @@ const Started = Layer.effect(Identity, effect {
     db,
     github,
     net,
-    outboundErrors: mf.outboundErrors,
+    outboundErrors,
+    logs,
     fetch: (url, init = {}) => promise(async () => {
       const response = await mf.dispatchFetch(url, {
         method: init.method ?? (init.json === undefined ? "GET" : "POST"),
@@ -125,6 +139,39 @@ effect function consume(assertion: unknown, audience: string, origin = internal)
   return [answer.status, answer.body]
 }
 
+function diagnosticsIn(logs: ReadonlyArray<IdentityLog>) {
+  return logs.flatMap((log) => log.level === "error" && log.message.startsWith('{"event":"github_identity_failed"') ? [log.message] : [])
+}
+
+effect function diagnostics(expected: number) {
+  const { logs } = try Identity
+  for (let attempt = 0; attempt < 100 && diagnosticsIn(logs).length < expected; attempt++) try sleep("20 millis")
+  return diagnosticsIn(logs)
+}
+
+function diagnosis(stage: string, reason: string, httpStatus?: number, oauthError?: string) {
+  return JSON.stringify({ event: "github_identity_failed", stage, reason, ...httpStatus === undefined ? {} : { httpStatus }, ...oauthError === undefined ? {} : { oauthError } })
+}
+
+function tokenAnswer(body: string) {
+  return (github: GitHubFake) => github.alterNext(tokenCall, () => HttpServerResponse.toWeb(HttpServerResponse.text(body, { contentType: "application/json; charset=utf-8" })))
+}
+
+function failing(call: RegExp, failure: ScriptedFailure) {
+  return (github: GitHubFake) => github.failNext(call, failure)
+}
+
+effect function failedSignIn(address: string, fault: (github: GitHubFake) => void) {
+  const browser = { origin: site, "cf-connecting-ip": address }
+  const started = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+  const signIn = try authorized(started.flow, "octo")
+  const { github } = try Identity
+  try orDie(Effect.try(() => fault(github)))
+  const answer = try callback(signIn.callback, signIn.state)
+  const polled = try poll("/v1/oauth/poll", started.flow, "slop-points-web", browser)
+  return { outcome: [answer.status, answer.text.includes("GitHub identity could not be verified."), polled[0]], code: new URL(signIn.callback).searchParams.get("code") ?? "" }
+}
+
 function assertionOf(answer: unknown) {
   return typeof answer === "object" && answer !== null && "assertion" in answer ? answer.assertion : undefined
 }
@@ -169,6 +216,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       cli: [cli.answer.status, cli.answer.headers["access-control-allow-origin"], cliCompleted.status, cliIssued.status],
       cliConsumed,
       stored,
+      diagnostics: try diagnostics(0),
     }, {
       started: [201, site, true, identity, "/v1/oauth/authorize", true, true, 2],
       waiting: [202, { status: "pending", retryAfterSeconds: 2 }],
@@ -186,11 +234,13 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       cli: [201, undefined, 200, 200],
       cliConsumed: [200, { githubActorId: "7", githubLogin: "octo", audience: "private-trace-api", githubNodeId: "U_octo" }],
       stored: [{ status: "assertion_issued", encrypted_pkce_verifier: null, github_actor_id: "7", github_login: "octo", github_node_id: "U_octo" }],
+      diagnostics: [],
     })
   })
 
   it.effect('A failed or expired sign-in ends its flow, and every start and poll counts in its client\'s window (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
     const browser = { origin: site, "cf-connecting-ip": "198.51.100.3" }
+    const diagnosedBefore = (try diagnostics(0)).length
     const denied = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
     const deniedSignIn = try authorized(denied.flow, "octo")
     const deniedCallback = try callback(`${identity}/v1/oauth/callback?state=${deniedSignIn.state}&error=access_denied`, deniedSignIn.state)
@@ -202,6 +252,34 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     try orDie(Effect.try(() => github.failNext(/access_token/u, { status: 500 })))
     const brokenCallback = try callback(brokenSignIn.callback, brokenSignIn.state)
     const brokenPoll = try poll("/v1/oauth/poll", broken.flow, "slop-points-web", browser)
+
+    const faults: ReadonlyArray<readonly [string, (github: GitHubFake) => void]> = [
+      ["allowlisted error", tokenAnswer(JSON.stringify({ error: "bad_verification_code", error_description: oauthDescription, error_uri: oauthErrorUri }))],
+      ["unlisted error", tokenAnswer(JSON.stringify({ error: unlistedError, error_description: oauthDescription }))],
+      ["token 401", failing(tokenCall, { status: 401 })],
+      ["token 403", failing(tokenCall, { status: 403 })],
+      ["token 429", failing(tokenCall, { status: 429 })],
+      ["token 503", failing(tokenCall, { status: 503 })],
+      ["token transport", failing(tokenCall, { disconnect: true })],
+      ["token unparseable", tokenAnswer("{\"access_token\": ")],
+      ["user 401", failing(userCall, { status: 401 })],
+      ["user 403", failing(userCall, { status: 403 })],
+      ["user 429", failing(userCall, { status: 429 })],
+      ["user 503", failing(userCall, { status: 503 })],
+      ["user transport", failing(userCall, { disconnect: true })],
+      ["user malformed", (github: GitHubFake) => github.alterNext(userCall, () => HttpServerResponse.toWeb(HttpServerResponse.jsonUnsafe({ id: "7", login: "octo", node_id: "U_octo", created_at: pastCreated })))],
+    ]
+    const failedSignIns: Array<readonly [string, unknown]> = []
+    const codes: string[] = []
+    for (const [index, [name, fault]] of faults.entries()) {
+      const failed = try failedSignIn(`198.51.100.${String(40 + index)}`, fault)
+      failedSignIns.push([name, failed.outcome])
+      codes.push(failed.code)
+    }
+    const diagnosed = (try diagnostics(diagnosedBefore + faults.length + 1)).slice(diagnosedBefore)
+    const { logs, github: oauth } = try Identity
+    const withheld = [...codes, new URL(brokenSignIn.callback).searchParams.get("code") ?? "", oauth.app.clientSecret, oauthDescription, oauthErrorUri, unlistedError, "ghu_", "code_verifier", "client_secret"]
+    const leaked = withheld.filter((value) => value !== "" && logs.some((log) => log.message.includes(value)))
 
     const late = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
     try sql("UPDATE identity_oauth_flows SET created_at = ?, expires_at = ? WHERE id = ?", pastCreated, pastExpired, late.flow.flowId)
@@ -234,6 +312,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     try same({
       denied: [deniedCallback.status, deniedCallback.text.includes("The sign-in response was invalid or expired."), deniedPoll],
       broken: [brokenCallback.status, brokenCallback.text.includes("GitHub identity could not be verified."), brokenPoll],
+      failedSignIns,
+      diagnosed,
+      leaked,
       late: [lateAuthorize.status, lateAuthorize.body, latePoll],
       starts,
       limited: [limited.status, limited.body, Number(limited.headers["retry-after"]) >= 1],
@@ -245,6 +326,25 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
     }, {
       denied: [400, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
       broken: [502, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
+      failedSignIns: faults.map(([name]) => [name, [502, true, 410]]),
+      diagnosed: [
+        diagnosis("token", "http-rejected", 500),
+        diagnosis("token", "invalid-response", 200, "bad_verification_code"),
+        diagnosis("token", "invalid-response", 200),
+        diagnosis("token", "http-rejected", 401),
+        diagnosis("token", "http-rejected", 403),
+        diagnosis("token", "http-rejected", 429),
+        diagnosis("token", "http-rejected", 503),
+        diagnosis("token", "request-or-response-failed"),
+        diagnosis("token", "request-or-response-failed"),
+        diagnosis("user", "http-rejected", 401),
+        diagnosis("user", "http-rejected", 403),
+        diagnosis("user", "http-rejected", 429),
+        diagnosis("user", "http-rejected", 503),
+        diagnosis("user", "request-or-response-failed"),
+        diagnosis("user", "invalid-response", 200),
+      ],
+      leaked: [],
       late: [410, { error: "flow_expired", message: "Authorization flow is unavailable" }, [410, { error: "flow_unavailable", message: "Identity flow is unavailable" }]],
       starts: [201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 429],
       limited: [429, { error: "rate_limited", message: "Too many requests. Try again later." }, true],

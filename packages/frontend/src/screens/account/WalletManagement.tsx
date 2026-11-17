@@ -207,7 +207,7 @@ export function WalletManagement({ panel, offers, signInHref, onReload, onConnec
             <WalletChooser
               legend="Wallets in this browser"
               family={picking.id}
-              wallets={offers.filter((offer) => offer.family === picking.id).map((offer) => ({ id: String(offer.id), name: offer.name }))}
+              wallets={offers.filter((offer) => offer.family === picking.id).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
               empty={<Downloads family={picking.id} />}
               onConnect={(wallet) => {
                 setPicker(undefined);

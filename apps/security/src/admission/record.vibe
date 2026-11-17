@@ -5,7 +5,7 @@ import { Registry } from "@repo/ports/backend"
 import type { Confirmation, Outcome } from "../../gen/security__admission.ts"
 import { validOutcome } from "../../gen/security__admission.effect.vibe"
 import type { Enforcement, PinRead } from "../../gen/security__enforcement.ts"
-import { canReinstateFlagPause, identityOf, latestOf } from "../../gen/security__enforcement.effect.vibe"
+import { canReinstateFlagPause, identityOf, latestOf, provenance } from "../../gen/security__enforcement.effect.vibe"
 import { withDecidingEvidence } from "../enforcement/retained.vibe"
 import { loadEnforcement } from "../enforcement/store.vibe"
 import { compose, manifestText, policyCheck, vettingService } from "./compose.vibe"
@@ -16,6 +16,7 @@ import { type Assessment, projectAssessments, resultWrites } from "./store.vibe"
 export const maliceReason = "Confirmed malicious evidence under the reviewed security vetting rule"
 const reinstatementReason = "A clean fresh security scan lifted a pause that contributor flags alone placed"
 const reinstatementRule = "clean-fresh-scan-after-flags"
+const deferredInsert = /enforcement sequence|scan reinstatement needs|UNIQUE constraint/u
 
 const dispositions = { clean: "DClean", incomplete: "DIncomplete", malicious: "DMalicious" } as const
 const bases: Readonly<Record<"reproducible-behavior" | "verified-source-evidence", Confirmation>> = { "reproducible-behavior": "ReproducibleBehavior", "verified-source-evidence": "VerifiedSourceEvidence" }
@@ -91,9 +92,14 @@ export effect function reinstateFromScan(projectId: string, scan: Assessment) {
   }
   const observed = try withDecidingEvidence(loadedState, pins)
   if (!canReinstateFlagPause(observed, vettingService, pins)) return false
+  if (!provenance(observed, pins).includes(scan.row)) return false
   const issuer = { keySha256: scan.signingKeySha256, assessmentId: scan.id, policyVersion: scan.policyVersion, rule: reinstatementRule }
   const sent = compose({ projectId, event: { type: "reinstateFlagPause", pins }, by: vettingService }, { kind: "service", reason: reinstatementReason, evidenceReference: scan.id, issuer }) catch effect (error) => {
     if (error._tag === "ProjectRefused" || error._tag === "Conflict") return false
+    if ((error._tag === "ConstraintViolation" || error._tag === "DatabaseFailure") && deferredInsert.test(error.message)) {
+      try Effect.logWarning("flag reinstatement deferred by storage", { assessment: scan.id })
+      return false
+    }
     throw error
   }
   return sent !== false

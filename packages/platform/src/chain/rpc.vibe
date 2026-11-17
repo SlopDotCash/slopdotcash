@@ -7,7 +7,8 @@ export error RpcRefused {
   code: number
   message: string
   data: string | undefined
-  get emptyRevert(): boolean { return this.data === "0x" && /revert/iu.test(this.message) }
+  dataAbsent: boolean
+  get emptyRevert(): boolean { return (this.data === "0x" || this.dataAbsent) && /revert/iu.test(this.message) }
 }
 export error WrongChain { expected: string; actual: string }
 
@@ -72,7 +73,7 @@ effect function request(client: HttpClient.HttpClient, url: string, endpoint: nu
   if (envelope.id !== 1) throw new RpcMalformed({ method, issue: "answer id does not match the request" })
   if (envelope.error !== undefined && envelope.error !== null) {
     const wire = Schema.decodeUnknownEffect(WireError)(envelope.error) catch effect () => { throw new RpcMalformed({ method, issue: "error object is malformed" }) }
-    throw new RpcRefused({ method, code: wire.code, message: scrubbed(wire.message, urls), data: typeof wire.data === "string" ? wire.data : undefined })
+    throw new RpcRefused({ method, code: wire.code, message: scrubbed(wire.message, urls), data: typeof wire.data === "string" ? wire.data : undefined, dataAbsent: !("data" in wire) })
   }
   if (!("result" in envelope)) throw new RpcMalformed({ method, issue: "answer has no result" })
   return envelope.result

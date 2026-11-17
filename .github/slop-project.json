@@ -1,0 +1,17 @@
+{
+  "kind": "slop-project-authority",
+  "policyRevision": "2026-10-11.1",
+  "projectId": "slopdotcash",
+  "proposal": "https://github.com/SlopDotCash/slopdotcash/issues/645",
+  "repository": {
+    "fullName": "SlopDotCash/slopdotcash",
+    "id": "1319812413",
+    "integrationBranch": "development"
+  },
+  "schemaVersion": "1",
+  "steward": {
+    "actorId": "318901292",
+    "login": "SlopDotCash",
+    "nodeId": "O_kgDOEwIMLA"
+  }
+}

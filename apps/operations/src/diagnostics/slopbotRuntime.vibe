@@ -1,0 +1,149 @@
+// spec/operations/slopbotRuntime.md, "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"; spec/operations/slopbotRuntime.md, "A readback is selected alone, for an exact source, before any credential is used"; spec/operations/slopbotRuntime.md, "An observation needs one 100% version of the expected source, a valid runtime and an unchanged deployment"
+import { isoNow } from "@repo/platform/clock"
+import { type Event, type RuntimeReadback, type UsageModel, initial, machineOver } from "../../gen/operations__slopbotRuntime.effect.vibe"
+import { Cloudflare, cloudflare, pinnedWrangler } from "../release/wrangler/cloudflare.vibe"
+
+export error ReadbackRefused { step: string; phase: string }
+error MetadataUnavailable { stage: Stage; httpStatus?: number }
+
+export interface Readback {
+  state(): RuntimeReadback!!
+  send(event: Event): RuntimeReadback!ReadbackRefused
+}
+
+export type Stage = "authority" | "expected-source" | "tls" | "deployment-read" | "version-read" | "version-identity" | "version-source" | "runtime-shape" | "deployment-recheck"
+
+export interface Observation {
+  readonly sourceCommit: string
+  readonly versionId: string
+  readonly cpuMs: number
+  readonly usageModel: string
+  readonly deploymentStable: true
+}
+
+interface ReportBase {
+  readonly schemaVersion: 1
+  readonly worker: string
+  readonly checkedAt: string
+  readonly expectedSource: string | null
+}
+
+export type RuntimeReport = ReportBase & (
+  | { readonly status: "observed"; readonly observation: Observation }
+  | { readonly status: "unavailable"; readonly observation: null; readonly failure: { readonly stage: Stage; readonly httpStatus?: number } }
+)
+
+const worker = "slop-slopbot"
+const exactSource = /^[a-f0-9]{40}$/u
+const accountPattern = /^[a-f0-9]{32}$/u
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const readSeconds = 20
+const usageModels: ReadonlyMap<string, UsageModel> = new Map([["standard", "Standard"], ["bundled", "Bundled"], ["unbound", "Unbound"]])
+
+function unavailable(stage: Stage, httpStatus?: number) {
+  return new MetadataUnavailable({ stage, ...httpStatus === undefined ? {} : { httpStatus } })
+}
+
+function objectOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : undefined
+}
+
+function active(value: unknown) {
+  const deployments = objectOf(value)?.deployments
+  const current = Array.isArray(deployments) ? objectOf(deployments[0]) : undefined
+  const versions = current?.versions
+  const selected = Array.isArray(versions) && versions.length === 1 ? objectOf(versions[0]) : undefined
+  const deploymentId = current?.id
+  const versionId = selected?.version_id
+  if (typeof deploymentId !== "string" || !uuid.test(deploymentId) || typeof versionId !== "string" || !uuid.test(versionId) || selected?.percentage !== 100) return undefined
+  return { deploymentId, versionId }
+}
+
+function versionFacts(value: unknown, versionId: string, expected: string) {
+  const version = objectOf(value)
+  const tag = objectOf(version?.annotations)?.["workers/tag"]
+  const runtime = objectOf(objectOf(version?.resources)?.script_runtime)
+  const cpu = objectOf(runtime?.limits)?.cpu_ms
+  const model = runtime?.usage_model
+  return {
+    coherent: version?.id === versionId,
+    matches: tag === expected,
+    cpuMs: typeof cpu === "number" && Number.isSafeInteger(cpu) ? cpu : 0,
+    usage: (typeof model === "string" ? usageModels.get(model) : undefined) ?? "OtherUsage",
+    usageModel: typeof model === "string" ? model : "",
+  }
+}
+
+effect function text(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function startReadback() {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  effect function send(event: Event) {
+    return machine.send(event) catch effect (error) => {
+      throw new ReadbackRefused({ step: event.type, phase: error.state.phase })
+    }
+  }
+  return { state: () => machine.get(), send } satisfies Readback
+}
+
+export effect function selectSlopbotReadback(readback: Readback) {
+  const readbackOnly = (try text("GITHUB_REF")) === "refs/heads/main"
+    && (try text("SLOP_SLOPBOT_PROBE_SOLANA_RPC")) === "false"
+    && (try text("SLOP_SLOPBOT_ROTATE_SOLANA_FROM")) === ""
+    && (try text("SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE")) === ""
+    && (try text("SLOP_SLOPBOT_PRIOR_PROOF_RUN")) === ""
+  const selected = try readback.send({ type: "selectReadback", exactSource: exactSource.test(try text("SLOP_SLOPBOT_EXPECTED_SOURCE")), readbackOnly })
+  return selected.phase === "Authorizing"
+}
+
+effect function answer(readback: Readback, path: string, stage: Stage) {
+  const api = try Cloudflare
+  return api.read(`slopbot runtime ${stage}`, `/workers/scripts/${worker}/${path}`, { seconds: readSeconds }) catch effect (error) => {
+    try readback.send({ type: "refuseCall" })
+    throw unavailable(stage, error.httpStatus)
+  }
+}
+
+effect function observe(readback: Readback, expected: string) {
+  const first = active(try answer(readback, "deployments", "deployment-read"))
+  const listed = try readback.send({ type: "readDeployment", valid: first !== undefined })
+  if (first === undefined || listed.phase !== "ReadingVersion") throw unavailable("deployment-read")
+  const facts = versionFacts(try answer(readback, `versions/${first.versionId}`, "version-read"), first.versionId, expected)
+  const read = try readback.send({ type: "readVersion", coherent: facts.coherent, matches: facts.matches, cpuMs: facts.cpuMs, usage: facts.usage })
+  if (read.phase !== "RereadingDeployment") throw unavailable(!facts.coherent ? "version-identity" : !facts.matches ? "version-source" : "runtime-shape")
+  const second = active(try answer(readback, "deployments", "deployment-recheck"))
+  const unchanged = second !== undefined && second.deploymentId === first.deploymentId && second.versionId === first.versionId
+  const reread = try readback.send({ type: "rereadDeployment", valid: second !== undefined, unchanged })
+  if (reread.phase !== "RuntimeObserved") throw unavailable("deployment-recheck")
+  return { sourceCommit: expected, versionId: first.versionId, cpuMs: facts.cpuMs, usageModel: facts.usageModel, deploymentStable: true } satisfies Observation
+}
+
+effect function admitted(readback: Readback, expected: string) {
+  const account = try text("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.withDefault(Config.Redacted("CLOUDFLARE_API_TOKEN"), Redacted.make(""))
+  const authority = accountPattern.test(account) && Redacted.value(token).trim() !== ""
+  const source = exactSource.test(expected)
+  const tls = (try text("NODE_TLS_REJECT_UNAUTHORIZED")) !== "0"
+  const admission = try readback.send({ type: "admit", authority, expected: source, tls })
+  if (admission.phase !== "ReadingDeployment") throw unavailable(!authority ? "authority" : !source ? "expected-source" : "tls")
+  provide cloudflare({ root: ".", wrangler: pinnedWrangler(".") }) {
+    return try observe(readback, expected)
+  }
+}
+
+export effect function inspectSlopbotRuntime(readback: Readback) {
+  const expected = try text("SLOP_SLOPBOT_EXPECTED_SOURCE")
+  const base: ReportBase = { schemaVersion: 1, worker, checkedAt: try isoNow(), expectedSource: exactSource.test(expected) ? expected : null }
+  const outcome = try exit(admitted(readback, expected))
+  if (Exit.isSuccess(outcome)) {
+    const observed: RuntimeReport = { ...base, status: "observed", observation: outcome.value }
+    return observed
+  }
+  const error = Cause.squash(outcome.cause)
+  const failure = error instanceof MetadataUnavailable ? error : unavailable("version-read")
+  const report: RuntimeReport = { ...base, status: "unavailable", observation: null, failure: { stage: failure.stage, ...failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus } } }
+  return report
+}

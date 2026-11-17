@@ -36,6 +36,7 @@ const unrecorded = Layer.succeed(EnforcementRows, {
   generation: () => unread("generation"),
   restrictions: () => unread("restrictions"),
   recordedAt: () => succeed(undefined),
+  reinstatement: () => unread("reinstatement"),
 } satisfies EnforcementRows.Shape)
 
 export default worker({

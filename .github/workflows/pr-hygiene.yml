@@ -1,0 +1,133 @@
+name: Pull request hygiene
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+
+jobs:
+  cancel-closed:
+    name: Cancel CI for the closed pull request
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel active pull request runs for the closed head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELF_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing pull request head commit."; exit 1; }
+          runs="$(gh run list --commit "$HEAD_SHA" --limit 100 --json databaseId,event,status \
+            --jq '.[] | select(.status != "completed") | select(.event == "pull_request" or .event == "pull_request_target") | .databaseId')"
+          echo "Active pull request runs for $HEAD_SHA: $(echo "$runs" | grep -c . || true)"
+          for run in $runs; do
+            if [ "$run" != "$SELF_RUN" ]; then
+              gh api -X POST "repos/$GH_REPO/actions/runs/$run/force-cancel" >/dev/null \
+                && echo "Cancelled run $run." || echo "Run $run already finished."
+            fi
+          done
+
+  unsafe-destination-transitions:
+    name: Trusted unsafe destination transition gate
+    if: >-
+      github.event.action != 'closed' &&
+      (github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: trusted-unsafe-destination-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout immutable trusted base only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+      - name: Install the trusted base's locked tools
+        uses: ./.github/actions/setup
+        with:
+          job: unsafe-destination-transitions
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/settlement
+      - name: Preserve accepted cycle and unsafe destination evidence
+        env:
+          CYCLE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CYCLE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CYCLE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CYCLE_BASE_SHA"
+          git fetch --no-tags --depth=1 origin \
+            "+refs/pull/$CYCLE_PR_NUMBER/head:refs/remotes/origin/slop-cycle-head"
+          test "$(git rev-parse refs/remotes/origin/slop-cycle-head)" = "$CYCLE_HEAD_SHA"
+          node apps/settlement/dist/programs/main.js unsafe-destinations "$CYCLE_BASE_SHA" "$CYCLE_HEAD_SHA"
+
+  remove-stale-approval:
+    name: Remove stale release-candidate label
+    if: >-
+      github.event.action == 'synchronize' &&
+      (github.event.pull_request.base.ref == 'development' || github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: slop-release-label-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Invalidate approval for the changed head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          target_label="slop-release-candidate"
+
+          if [[ "$EVENT_NAME" != "pull_request_target" ||
+                "$EVENT_ACTION" != "synchronize" ||
+                ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ||
+                ! "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Refusing to mutate labels outside an exact pull-request head synchronization."
+            exit 1
+          fi
+
+          labels="$(
+            gh api --paginate \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/${REPOSITORY}/issues/${PR_NUMBER}/labels" \
+              --jq '.[].name'
+          )"
+          if ! grep --fixed-strings --line-regexp --quiet -- "$target_label" <<<"$labels"; then
+            echo "Release approval is already absent for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          gh api \
+            --method DELETE \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/labels/${target_label}" \
+            >/dev/null
+          echo "Removed ${target_label} from PR #${PR_NUMBER} after its head changed."

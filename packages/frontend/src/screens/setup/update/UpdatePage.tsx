@@ -12,6 +12,7 @@ import { loginHrefFor, useSession } from "../../../app/useSession.ts";
 import { lookupRepository } from "../../../flows/projects/github.vibe";
 import { normalizeRepositoryInput } from "../../../flows/projects/proposal.ts";
 import { maintainerCheck } from "../../../session/maintainer.vibe";
+import { ProjectNav } from "../../projects/ProjectNav.tsx";
 import { networkPays } from "../../../kernels/payingNetworks.ts";
 import { EscrowFunding, type FundingProject, fundingProjectOf } from "../../funding/vault/index.ts";
 import { useShownRead } from "../../projects/hooks.ts";
@@ -192,6 +193,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
         </a>
       </nav>
       <PageHeader icon={<Settings2 aria-hidden />} title="Manage project" />
+      <ProjectNav runtime={runtime} project={{ id: base.projectId, slug: manifest.slug, bountyOnly: review.bountyOnly }} current="settings" />
       <SetupStatusPanel generation={published ? `revision-${published.revision}` : "initial"} runtime={runtime} projectId={base.projectId} actorId={actorId} initial={published?.setup} onSetup={setSetup} showProjectLink={false} />
       <UpdateForm
         review={review}

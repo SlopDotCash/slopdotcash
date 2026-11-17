@@ -1,4 +1,4 @@
-// spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+// spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"
 import { isoAt } from "@repo/platform/clock"
 import { first, sql } from "@repo/platform/d1"
 import { update } from "@repo/platform/stored"
@@ -9,6 +9,7 @@ import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { Rejected, apply, canRetryTriage } from "../../gen/security__cases.effect.vibe"
 import { appealDraft } from "../analysis/proposals.vibe"
 import { appealMessage, appealPrompt, appealTriagePromptRevision, jsonValue } from "../analysis/prompts.ts"
+import { scopeOfManifest } from "../analysis/scope.vibe"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { type CaseRecord, type TriageRow, appealRevisionOf, caseAggregate } from "./rows.vibe"
 
@@ -55,9 +56,6 @@ schema InputRow {
   summary: string | null
 }
 schema AppealReason { reason: string | null }
-schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
-schema Bounty { scope?: Scope }
-schema ManifestScope { securityBounty?: Bounty }
 
 function stringList(text: string | null) {
   const value = text === null ? [] : jsonValue(text)
@@ -145,14 +143,13 @@ effect function appealInput(run: TriageRun) {
         ORDER BY a.attempt DESC LIMIT 1) AS summary
     FROM security_cases c LEFT JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE c.id = ${run.caseId}`)
   if (appeal?.reason === null || appeal === undefined || row === undefined) return undefined
-  const parsed = row.manifest === null ? {} : Schema.decodeUnknownEffect(ManifestScope)(jsonValue(row.manifest)) catch () => undefined
-  if (parsed === undefined) return undefined
-  const scope = parsed.securityBounty?.scope
+  const scope = try scopeOfManifest(row.manifest)
+  if (scope.kind === "unreadable") return undefined
   return appealMessage({
     decision: { outcome: row.appeal_from_state ?? "unknown", severity: row.severity, loss: row.loss_finding, rootCauseKey: row.root_cause_key, awardState: row.award_state, reason: row.decision_reason },
     appeal: { reason: appeal.reason },
     analysisSummary: row.summary,
-    scope: scope === undefined ? null : { includedAssets: [...scope.includedAssets], severityRubric: scope.severityRubric, lossDefinition: scope.lossDefinition },
+    scope: scope.scope,
   })
 }
 

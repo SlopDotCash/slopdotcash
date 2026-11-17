@@ -139,7 +139,7 @@ async function factsFor(event: Event): Promise<Facts> {
   const base: Facts = { runId: `${pool.scope}buyback-pool-decisions`, wallet: pool.wallet };
   const receipt = { landedTxId: "", actualWei: "1000", blockHash: `0x${hex(generation, 64)}` };
   switch (event.type) {
-    case "decidePurchase": return { ...base, detail: "KyberSwap routes: route not found", quote: { amountOut: "1", impactBps: event.quote.impactBps < 0 ? null : event.quote.impactBps, summary: "{}" } };
+    case "decidePurchase": return { ...base, detail: event.quote.route === "ValueUnavailable" ? "value unavailable: KyberSwap routes: route not found" : "KyberSwap routes: route not found", quote: { amountOut: "1", impactBps: event.quote.impactBps < 0 ? null : event.quote.impactBps, summary: "{}" } };
     case "decideBurn": return base;
     case "purchase": return { ...base, ...(await sendFacts(event.quote.tx, true)) };
     case "burn": return { ...base, ...(await sendFacts(event.burnRequest.tx, false)) };

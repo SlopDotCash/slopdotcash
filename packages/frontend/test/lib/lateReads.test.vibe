@@ -10,7 +10,8 @@ import { pages } from "@repo/platform/worker"
 import { type RevisionBody, pointRevisionId } from "@repo/points/client"
 import { settlement } from "@repo/settlement/live"
 import { decideDispute, listDisputes, openDispute, readDispute } from "../../src/flows/account/disputes.vibe"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { type ProfileActorSource, recentPoints, resolveProfileActor } from "../../src/projections/profile.ts"
 import { loadPoolFunding } from "../../src/reads/funding.vibe"
@@ -125,7 +126,7 @@ service Browser { readonly world: World }
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: { ...originsOf("production"), site, api: site, browserOrigins: new Set([site]) },
+  origins: { ...deploymentOrigins("production"), site, api: site, browserOrigins: new Set([site]) },
   pageOrigin: site,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),

@@ -3,7 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Of, textBytes } from "../src/git/bytes.ts"
 import { type CombinedParentMergeResolution, type FileRequest, Git, LEGACY_MERGE_PROFILE, type MergeInput, type MergeResolution, type PublicMergeRepository, collectMergeResolutions, collectVerifiedMergeResolutionBatch, collectVerifiedMergeResolutions, createMergeBundle, fileRequestsSha256, mergeRecipe, mergeResolutionLineCounts, publicFiles, recoverFiles, sameMergeRecipeInput, unbundledStore, verifyMergeObjectStore } from "../src/git/index.ts"
 import { outbound } from "../src/http.vibe"
-import { acceptedMerges, addUnrelatedObjects, bareRepository, borrowObjects, gunzipBase64, hexOfBytes, octopusMerge, replayedTree, twoParentMerge } from "./support/git/fixtures.ts"
+import { type Repository, acceptedMerges, addUnrelatedObjects, bareRepository, borrowObjects, gunzipBase64, hexOfBytes, octopusMerge, replayedTree, twoParentMerge } from "./support/git/fixtures.ts"
 import { pinnedGit } from "./support/git/pinned.vibe"
 
 const packageRoot = new URL("..", import.meta.url).pathname
@@ -62,6 +62,27 @@ function faults(value: CombinedParentMergeResolution): Readonly<Record<string, C
     "overlapping-hunk": rehashed({ ...value, patch: value.patch + value.patch.slice(value.patch.indexOf("@@@@@@@@@@ ")) }),
   }
 }
+
+effect function tree(repository: Repository, name: string, text: string) {
+  return try orDie(Effect.try(() => repository.tree({ [name]: text })))
+}
+
+effect function commit(repository: Repository, tree: string, parents: ReadonlyArray<string>, message: string) {
+  return try orDie(Effect.try(() => repository.commit(tree, parents, message)))
+}
+
+effect function threeParentOctopus(repository: Repository, name: string, result: string) {
+  const base = try commit(repository, try tree(repository, name, "a\nb\nc\nd\ne\n"), [], "base")
+  const parents = [base, try commit(repository, try tree(repository, name, "A\nb\nc\nd\ne\n"), [base], "branch one"), try commit(repository, try tree(repository, name, "a\nb\nc\nd\nE\n"), [base], "branch two")]
+  return { parents, head: try commit(repository, try tree(repository, name, result), parents, "octopus") }
+}
+
+const threeParentCases: ReadonlyArray<readonly [string, string]> = [
+  ["fix.ts", "A\nb\nc\nd\nE\n"],
+  ["@@@@ x.ts", "A\nb\nc\nd\nE\n"],
+  ["@@@@ x.ts", "A\nb\nc\nresolved\nd\nE\n"],
+  ["fix.ts", "A\nb\nc\nresolved\nd\nE\n"],
+]
 
 layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(NodeServices.layer, outbound))), { excludeTestServices: true, timeout: "30 minutes" })((it) => {
   it.effect('Two-parent merge determinism: the retained resolution, object closure and bundle do not depend on unrelated objects or on the store (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
@@ -122,7 +143,7 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
     )
   }))
 
-  it.effect('Octopus merge determinism: a nine-parent delta is retained identically, counted exactly, refused when tampered and recovered natively (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
+  it.effect('Octopus merge determinism: a nine-parent delta is retained identically, counted exactly, refused when tampered and recovered natively, and a three-parent octopus reads change prefixes only after its first hunk header (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => scoped(effect {
     const repository = try fixture("octopus")
     const ids = try orDie(Effect.try(() => octopusMerge(repository)))
     const input = mergeInput(ids.head, [{ sha: ids.head, parents: ids.parents }], ["fix.ts"])
@@ -147,6 +168,15 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
     const reread = try files.read(repositoryName, ids.head, "fix.ts")
     const missing = try files.read(repositoryName, ids.head, "absent.ts")
     const foreign = (try Effect.flip(files.read("someone/else", ids.head, "fix.ts"))).reason
+    const threeParent: Array<{ readonly resolutions: number; readonly paths: ReadonlyArray<string>; readonly clean: boolean; readonly counts: unknown }> = []
+    for (const [name, result] of threeParentCases) {
+      const merge = try threeParentOctopus(repository, name, result)
+      const merged = mergeInput(merge.head, [{ sha: merge.head, parents: merge.parents }], [name])
+      try verifyMergeObjectStore([merged], repository.path)
+      const found = try collectVerifiedMergeResolutions(merged, repository.path)
+      const delta = combined(found[0])
+      threeParent.push({ resolutions: found.length, paths: delta.paths, clean: delta.patch === "", counts: mergeResolutionLineCounts(delta, commitOf(merged)) })
+    }
     try same(
       {
         again,
@@ -165,6 +195,7 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
           blob: blob === undefined ? undefined : { sha: blob.sha, size: blob.size, sha256: blob.sha256, content },
         },
         public: { sha: read?.sha, content: read === null ? "" : hexOfBytes(read.bytes), cached: read === reread, missing, foreign },
+        threeParent,
       },
       {
         again: verified,
@@ -186,6 +217,12 @@ layer(Layer.mergeAll(NodeServices.layer, Layer.provide(pinnedGit, Layer.merge(No
           blob: { sha: resolution.files[0]?.result.blobSha, size: 23, sha256: sha256Of("common\naccepted repair\n"), content: hexOfBytes(textBytes("common\naccepted repair\n")) },
         },
         public: { sha: resolution.files[0]?.result.blobSha, content: hexOfBytes(textBytes("common\naccepted repair\n")), cached: true, missing: null, foreign: "Invalid immutable file recovery selection" },
+        threeParent: [
+          { resolutions: 1, paths: [], clean: true, counts: [] },
+          { resolutions: 1, paths: [], clean: true, counts: [] },
+          { resolutions: 1, paths: ["@@@@ x.ts"], clean: false, counts: [{ path: "@@@@ x.ts", additions: 1, deletions: 0 }] },
+          { resolutions: 1, paths: ["fix.ts"], clean: false, counts: [{ path: "fix.ts", additions: 1, deletions: 0 }] },
+        ],
       },
     )
   }))

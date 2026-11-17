@@ -126,15 +126,19 @@ export effect function routeCredit(send: RouteSend, fetched: FetchedTransaction)
     programId: identity(value.programId),
     amount: value.amount,
   }))
+  const changes = expected.nativeInput ? try lamportDeltas(fetched.meta, keys) : undefined
+  const synced = changes === undefined ? undefined : after.find((value) => value.accountIndex === source)
   const wallet = identity(expected.wallet)
-  const [tokenBefore, tokenAfter] = [project(before), project(after)]
+  const tokenBefore = project(before).map((value) => changes !== undefined && synced !== undefined && value.accountIndex === source
+    ? { ...value, amount: synced.amount - (changes.get(keys[source] ?? "") ?? 0n) }
+    : value)
+  const tokenAfter = project(after)
   const credit = routeTokenCredit(tokenBefore, tokenAfter, source, destination, wallet, identity(expected.inputMint), identity(expected.outputMint),
     identity(expected.inputProgram), identity(expected.outputProgram), expected.nativeInput, expected.amountIn, expected.minimumOut)
   if (credit.error === 1) return try refuse("Finalized swap token identity differs from its reviewed account")
   if (credit.error === 2) return try refuse("Finalized swap token account evidence is incomplete")
   if (credit.error === 3) return try refuse("Finalized swap did not debit its exact input and credit its minimum output")
-  if (expected.nativeInput) {
-    const changes = try lamportDeltas(fetched.meta, keys)
+  if (changes !== undefined) {
     const creations = try associatedCreations(signed.parsed, keys, expected.wallet)
     const rent = creations.reduce((sum, creation) => {
       const change = changes.get(keys[creation.index] ?? "") ?? 0n

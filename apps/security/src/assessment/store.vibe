@@ -1,4 +1,4 @@
-// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
@@ -12,7 +12,8 @@ import { qualified } from "../../gen/security__screening.effect.vibe"
 import type { ExclusionContext } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { type AnalysisProposal, analysisProposal } from "../analysis/proposals.vibe"
-import { type AnalysisReport, type PriorCase, type ProgramScope, analysisMessage, analysisPrompt, analysisPromptRevision, digestInput, jsonValue, priorCaseLimit } from "../analysis/prompts.ts"
+import { type AnalysisReport, type PriorCase, analysisMessage, analysisPrompt, analysisPromptRevision, digestInput, jsonValue, priorCaseLimit } from "../analysis/prompts.ts"
+import { type ReceiptScope, receiptManifest, receiptScope, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { StoredIntake, screeningOf } from "../intake/rows.vibe"
@@ -39,18 +40,14 @@ export schema AttemptRow {
 
 schema CaseRow { project_id: string; submission_state: string; advisory_ghsa: string | null; policy_revision: number | null; terms: string | null; received_at: string | null }
 schema PriorRow { id: string; root_cause_key: string | null; summary: string | null }
-schema Manifest { manifest: string }
-schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
-schema Bounty { scope?: Scope }
-schema ManifestScope { securityBounty?: Bounty }
 
 export interface CaseAssessment {
   readonly caseId: string
   readonly projectId: string
   readonly submissionId: string
   readonly advisoryGhsa: string | null
-  readonly policyRevision: number | null
   readonly exclusions: ExclusionContext
+  readonly scope: ReceiptScope
   readonly assessment: Assessment
   readonly rows: ReadonlyArray<AttemptRow>
 }
@@ -75,14 +72,19 @@ function attemptOf(row: AttemptRow, found: ReadonlyArray<AttemptRow>, exclusions
   return { version: row.report_version ?? 0, mode, state: states[row.state], startedAt: millisOf(row.started_at), budgetMs: budgetOf(mode), exclusions }
 }
 
-effect function exclusionsOf(row: Pick<CaseRow, "terms" | "policy_revision" | "received_at">) {
-  return receiptExclusions(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: null }))
+effect function exclusionsOf(row: Pick<CaseRow, "terms" | "policy_revision" | "received_at">, scope: ReceiptScope) {
+  return receiptExclusions(withOwnerLines(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: null }), scope))
+}
+
+export effect function caseReceipt(caseId: string) {
+  const row = try first(CaseRow, sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`)
+  if (row === undefined) throw new NotAssessable({ caseId })
+  const scope = try receiptScope(row.project_id, row.policy_revision)
+  return { exclusions: try exclusionsOf(row, scope), scope }
 }
 
 export effect function caseExclusions(caseId: string) {
-  const row = try first(CaseRow, sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`)
-  if (row === undefined) throw new NotAssessable({ caseId })
-  return try exclusionsOf(row)
+  return (try caseReceipt(caseId)).exclusions
 }
 
 function lastFinished(left: AttemptRow, right: AttemptRow) {
@@ -113,20 +115,22 @@ function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessme
       sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`,
       sql`SELECT submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision FROM security_submission_intake WHERE case_id=${caseId}`,
       sql`SELECT ${attemptColumns} FROM security_case_analyses WHERE case_id=${caseId} ORDER BY attempt`,
+      receiptManifest(caseId),
     ],
-    decode: ([cases, intakes, attempts]: ReadonlyArray<Rows>) => effect {
+    decode: ([cases, intakes, attempts, manifests]: ReadonlyArray<Rows>) => effect {
       const [record] = try decoded(CaseRow, cases ?? [], "security case")
       const [intake] = try decoded(StoredIntake, intakes ?? [], "security intake")
       const found = try decoded(AttemptRow, attempts ?? [], "security case analyses")
       if (record === undefined || intake === undefined || record.submission_state !== "verified") throw new NotAssessable({ caseId })
-      const exclusions = try exclusionsOf(record)
+      const scope = try scopeOfRows(manifests ?? [])
+      const exclusions = try exclusionsOf(record, scope)
       return {
         caseId,
         projectId: record.project_id,
         submissionId: intake.submission_id,
         advisoryGhsa: record.advisory_ghsa,
-        policyRevision: record.policy_revision,
         exclusions,
+        scope,
         assessment: try decodeState(assessmentOf(intake, found, authority, exclusions)),
         rows: found,
       } satisfies CaseAssessment
@@ -217,16 +221,6 @@ export effect function exactReport(submissionId: string, version: number) {
   } satisfies AnalysisReport
 }
 
-export effect function scopeAt(projectId: string, policyRevision: number | null) {
-  if (policyRevision === null) return { kind: "scope", scope: null } as const
-  const found = try first(Manifest, sql`SELECT manifest FROM project_revisions WHERE project_id=${projectId} AND revision=${policyRevision}`)
-  if (found === undefined) return { kind: "scope", scope: null } as const
-  const parsed = Schema.decodeUnknownEffect(ManifestScope)(jsonValue(found.manifest)) catch () => undefined
-  if (parsed === undefined) return { kind: "unreadable" } as const
-  const scope = parsed.securityBounty?.scope
-  return { kind: "scope", scope: scope === undefined ? null : { includedAssets: [...scope.includedAssets], severityRubric: scope.severityRubric, lossDefinition: scope.lossDefinition } satisfies ProgramScope } as const
-}
-
 export effect function priorCases(projectId: string, caseId: string | null) {
   const found = try rows(PriorRow, sql`SELECT c.id, c.root_cause_key, (SELECT a.summary FROM security_case_analyses a
       LEFT JOIN security_submission_intake i ON i.case_id=a.case_id
@@ -251,7 +245,7 @@ export effect function attempted(run: Run, timeoutMs: number) {
   const report = try exactReport(current.submissionId, current.assessment.reportVersion)
   if (report === undefined) return try unavailable(run, null)
   const digest = try sha256Hex(digestInput(current.advisoryGhsa, report))
-  const scope = try scopeAt(current.projectId, current.policyRevision)
+  const { scope } = current
   if (scope.kind === "unreadable") return try unavailable(run, digest)
   const prior = try priorCases(current.projectId, current.caseId)
   if (!(try stillCurrent(run))) return try unavailable(run, digest)

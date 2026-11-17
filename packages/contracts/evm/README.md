@@ -314,6 +314,93 @@ The first version uses individual commit and pay calls. Dispatchers isolate
 failed recipients by submitting separate transactions. No account can sweep
 unclaimed awards. Missing destinations cause a revert and leave reserves intact.
 
+## Month pledges
+
+Before a month is reserved its money sits in `freeBalance`, which the owner
+could withdraw at any time. A month pledge (operator decision, 15 November
+2026) holds it in the vault on chain until the month is reserved
+([spec/contracts/evmEscrow.md, "Story: Pledge free funds to future months irrevocably"](../../../spec/contracts/evmEscrow.md)):
+
+- The owner calls `pledgeMonths(fromPeriod, count, amount)` on an ordinary
+  vault. It pledges `amount` to each of `count` (1 to 12) consecutive periods
+  from `fromPeriod`, which must be from `currentPeriod()` (the UTC `YYYYMM` of
+  the current block) to eleven months ahead and not yet reserved. A zero
+  amount, a count outside 1 to 12 or a period outside that range reverts
+  `InvalidInput`; a reserved period reverts `MonthlyAlreadyCommitted`. A pledge
+  only rises: a lower amount reverts `PledgeTooLow`, an equal one changes
+  nothing. The new total must fit: `freeBalance >= openPledgedGross`
+  afterwards, or `InsufficientFreeBalance`. Each new or raised period emits
+  `MonthPledged(period, amount)`.
+- `withdrawUnused` and every commit from free funds (owner `commitAward`, the
+  legacy `commitMonthly`, `reserveMonthly`) must leave
+  `freeBalance >= openPledgedGross`, else `PledgedFunds`. The owner pays by hand
+  only from unpledged funds. Deposits, leaves, payments, releases and fee claims
+  are unchanged.
+- While the period whose commit window is open has an open pledge, owner
+  `commitAward` reverts `PledgedMonthOpen`. Each new award moves
+  `ordinarySourceSequence`, so without this the owner could make every signed
+  reservation of the pledged month stale until the pledge lapsed. Awards by hand
+  work again once that month is reserved and its leaves are proven, or once its
+  window has closed.
+- An open pledge is consent to reserve its period: `reserveMonthly` and
+  `commitMonthly` accept the period even while monthly commitments are off.
+  With monthly commitments on, the cap is `max(monthlyCap, pledge)`; with them
+  off, the cap is the pledge alone, so a small pledge cannot reopen a stale
+  `monthlyCap`. Turning monthly off or cutting the cap affects only unpledged
+  months. A reserve may use its own period's pledge but never another
+  period's.
+- A pledge closes when its period is reserved (`PledgeClosed(period, amount,
+  true)`); any pledge above the reserved gross returns to unpledged free funds.
+  If the period is never reserved, anyone may call `expirePledge(period)` once
+  `monthlyWindow(period)` has closed (`PledgeClosed(period, amount, false)`);
+  before that it reverts `PledgeNotLapsed`, and on a period with no open pledge
+  `InvalidInput`. `monthPledges(period)` keeps the amount after it closes, with
+  `open` false, and a closed period can never be pledged again.
+- Bounty vaults refuse both calls with `WrongPurpose`.
+
+A release (["Monthly reserve release"](../README.md#monthly-reserve-release))
+returns the whole untouched reserve of its period to free funds and leaves
+every open pledge as it was; this package's release refuses partial and
+repeated releases, so `test_pledgesLeaveAWholeReleaseAlone` checks the whole
+release on a fully pledged vault.
+
+The storage is appended after `monthlyReleased` (`monthPledges` slot 22,
+`openPledgedGross` slot 23); every earlier slot is unchanged, so an upgraded
+vault reads zero pledged and behaves as before until its owner pledges.
+
+The limit that stays: vaults remain upgradeable by the factory's upgrade
+authority without a delay, so whoever holds that key can replace this rule.
+The lock stops withdrawal, not the owner's cuts to individual allocations
+before the cutoff, and a pledge lapses if the executor misses the period's
+whole commit window.
+
+`test/MonthPledge.t.sol` covers each rule, including the three routes the
+pledge closes (a direct withdrawal during the month, monthly turned off or
+the cap cut before the reserve, and a reserve that would use another month's
+pledge), the owner-award starvation route and the pledge-only cap with monthly
+off, and `test/MonthPledgeInvariant.t.sol` checks
+`freeBalance >= openPledgedGross` and the open-pledge sum over random
+sequences.
+
+A client builds `pledgeMonths` and `expirePledge` calldata, refusing a period
+outside `YYYYMM` (years 2000 to 9999, months 1 to 12), a count outside 1 to 12
+and an amount outside 1 to 2^128 - 1 before it encodes. It reads
+`openPledgedGross()` and `monthPledges(period)` at one pinned block, and reads
+a vault without pledge support as no pledges, never as zero pledged: an
+address with no code, or an `openPledgedGross()` that reverts empty (including
+a revert reported with no `data` field, as `mainnet.base.org` answers), means
+no support; any other failure is an error. The source repository's adapter
+does this with `buildPledgeMonthsCalldata`, `buildExpirePledgeCalldata` and
+`readEvmMonthPledges`, and `pledge.test.ts` covers those answers. Its
+`pledge.integration.ts`, carried here unchanged, runs them on Anvil; with
+`SLOP_PLEDGE_LEGACY_ROOT` set to a pre-pledge `contracts/evm` tree it first
+deploys that code, then upgrades the funded vault and checks every existing
+storage slot and counter is unchanged.
+
+`ProjectEscrow` is close to the 24,576-byte limit (see
+[the package README](../README.md#money-invariants)); run
+`forge build --sizes` before any change to it.
+
 ## Accounting
 
 All values are integer token base units, stored as checked `uint128`. The vault
@@ -411,11 +498,15 @@ ProjectEscrow
   FeesClaimed(address indexed feeRecipient, uint128 amount)
   MonthlyCommitmentSet(uint128 cap, bool enabled)
   MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)
+  MonthPledged(uint32 indexed period, uint128 amount)
+  PledgeClosed(uint32 indexed period, uint128 amount, bool reserved)
   deposit(uint128) commitAward(bytes32,uint64,uint128,bytes32) commitBountyAward(bytes32,uint64,uint128,bytes32)
   withdrawUnused(uint128) pay(bytes32,uint64) claimFees() totals() decimals() purpose()
   setMonthlyCommitment(uint128,bool) commitMonthly(uint32,(uint64,uint128,bytes32)[],bytes)
   monthlyCap() monthlyEnabled() monthlyRoots(uint32) monthlyWindow(uint32)
   monthlyDigest(uint32,bytes32) allocationRoot((uint64,uint128,bytes32)[])
+  pledgeMonths(uint32,uint8,uint128) expirePledge(uint32) currentPeriod()
+  monthPledges(uint32) -> (uint128 amount, bool open) openPledgedGross()
   payoutFee(uint128) = gross / 50   withdrawalFee(uint128) = payoutFee(gross)
 EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address vaultImplementation)
@@ -426,8 +517,9 @@ EscrowFactory (UUPS proxy; the implementation constructor disables initializers)
   VaultCreated(bytes32 indexed projectId, address indexed token, address indexed vault, address owner, uint8 purpose, uint8 decimals)
 ```
 
-The adapter exports the topics as `EVM_ESCROW_EVENT_TOPICS`, computed from
-these signatures. For the full ABI, use `forge inspect ProjectEscrow abi`.
+The adapter exports the topics as `EVM_ESCROW_EVENT_TOPICS`, and the two pledge
+topics as `EVM_PLEDGE_EVENT_TOPICS`, computed from these signatures. For the
+full ABI, use `forge inspect ProjectEscrow abi`.
 
 ## Local validation
 

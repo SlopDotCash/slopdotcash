@@ -15,6 +15,7 @@ import { assessmentAt, attempted, caseExclusions, started } from "../src/assessm
 import { caseAuthority } from "../src/caseAuthority/snapshot.vibe"
 import { caseStanding } from "../src/intake/rows.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
+import { SECURITY_DEFAULT_EXCLUSIONS } from "../src/program/exclusions.ts"
 import { ReportingPrograms, reportingProgramsLive } from "../src/receipt/program.vibe"
 import { type Answer, type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
 
@@ -44,6 +45,8 @@ const fixture: ProjectView = {
   listingTier: "Community",
   retirement: "NotRetired",
   stewardGithubId: "900",
+  stewardAccount: "UserSteward",
+  listing: { fromApplication: false },
   repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
   closureConsent: false,
 }
@@ -289,6 +292,57 @@ effect function onceAtATime(assessed: Assessed.Shape) {
   })
 }
 
+const reportF = { summary: "Withdrawal queue skips the pause", description: "Queued withdrawals still settle while the vault is paused, so a paused vault keeps paying out.", severity: "high" }
+const revisedF = { summary: "Withdrawal queue skips the pause, revised", description: "Queued withdrawals still settle while the vault is paused; the attached test drains a paused vault.", severity: "critical" }
+const ownerLine = "Losses that need the vault to stay paused for more than a week"
+const laterLine = "Anything reported after the program moved to its second revision"
+
+function scopeWith(line: string) {
+  return { sourceRevisions: [{ repository: "slop-test/intake", commit: "0".repeat(40) }], deployments: [], includedAssets: ["slop-test/intake"], excludedDependencies: [], excludedFindings: [line], testingPermission: "Use local tests with synthetic funds only.", severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds." }
+}
+
+effect function scoped(world: World, revision: number, line: string, createdAt: string) {
+  try promise(() => rows(world, "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) SELECT project_id, ?, json_set(manifest, '$.securityBounty.scope', json(?)), ?, 'Scope fixture', ? FROM project_revisions WHERE project_id = ? AND revision = 1", revision, JSON.stringify(scopeWith(line)), String(revision).repeat(64), createdAt, project))
+}
+
+effect function receiptScopeKept(assessed: Assessed.Shape) {
+  const { world, fake } = assessed
+  try scoped(world, 3, ownerLine, new Date(Date.now() - 1000).toISOString())
+  const f = try submit(world, "assessment-case-f-01", reportF)
+  try scoped(world, 4, laterLine, new Date().toISOString())
+  try qualify(world, f.id)
+  fake.reply(about(reportF.summary), { failure: "unavailable" })
+  try assessQualified({ caseId: f.caseId, version: 1 })
+  const automatic = fake.calls.at(-1)
+  fake.reply(about(reportF.summary), { text: proposal("Paused vaults keep settling queued withdrawals.", []) })
+  try outcome(analyze({ caseId: f.caseId, actor: actor(maintainer) }))
+  const ownerRun = fake.calls.at(-1)
+  try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Attach the failing test.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, f.id))
+  const [intakeF] = try promise(() => rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", f.id))
+  const revised = try promise(() => request(world, `/api/v1/security-submissions/${f.id}/report`, { as: reporter, json: { expectedRevision: intakeF?.revision, report: revisedF } }))
+  try qualify(world, f.id)
+  fake.reply(about(revisedF.summary), { text: proposal("Paused vaults keep settling queued withdrawals.", []) })
+  try assessQualified({ caseId: f.caseId, version: 2 })
+  const revisedRun = fake.calls.at(-1)
+  const scopeOf = (call: ProviderCall | undefined) => (jsonValue(said(call)) as { readonly programScope?: unknown } | undefined)?.programScope
+  const receiptScope = { includedAssets: ["slop-test/intake"], severityRubric: "Critical findings lose funds.", lossDefinition: "Any loss of user funds.", doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, ownerLine] }
+  try same({
+    automatic: scopeOf(automatic),
+    ownerRun: scopeOf(ownerRun),
+    revised: revised.status,
+    revisedRun: scopeOf(revisedRun),
+    exclusions: try caseExclusions(f.caseId),
+    rows: (try attempts(world, f.caseId)).map((row) => [row.attempt, row.report_version, row.state, row.prompt_revision]),
+  }, {
+    automatic: receiptScope,
+    ownerRun: receiptScope,
+    revised: 200,
+    revisedRun: receiptScope,
+    exclusions: { defaults: 10, owner: [ownerLine.length] },
+    rows: [[1, 1, "failed", "slop-security-case-analysis-2"], [2, 1, "complete", "slop-security-case-analysis-2"], [3, 2, "complete", "slop-security-case-analysis-2"]],
+  })
+}
+
 effect function advisedOnly(assessed: Assessed.Shape) {
   const { world, fake } = assessed
   const d = try submit(world, "assessment-case-d-01", reportD)
@@ -336,6 +390,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const assessed = try Assessed
     provide shellOf(assessed) {
       try advisedOnly(assessed)
+    }
+  })
+
+  it.effect('Assessment runs carry the receipt-time "does not qualify" lines, for every version, under the current prompt revision (spec/security/reportNotices.md, "Story: Exclusions inform advice without deciding"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version")', () => effect {
+    const assessed = try Assessed
+    provide shellOf(assessed) {
+      try receiptScopeKept(assessed)
     }
   })
 })

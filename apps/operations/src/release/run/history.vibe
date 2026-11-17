@@ -1,9 +1,12 @@
-// spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"
-import { GitHub } from "@repo/platform/github"
+// spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/stagingOrder.md, "A quota refusal is retried once, from scratch, only when the wait ends inside the shared deadline"
+import { GitHub, type GitHubFailure, type RateLimited } from "@repo/platform/github"
+import { type Event as OrderEvent, canAdvanceClock, canExpire, canFinish, canResume, initial as unchecked, machineOver } from "../../../gen/operations__stagingOrder.effect.vibe"
 import { isAncestor } from "./heads.vibe"
 import type { Run } from "./run.vibe"
 
 export error StagingHistoryRefused { message: string }
+
+error QuotaWait { delay: number }
 
 schema Deployment {
   readonly id: number
@@ -16,7 +19,9 @@ schema DeploymentStatus { readonly log_url?: string | null }
 schema WorkflowRun { readonly head_sha: string; readonly path: string }
 
 const stagingEnvironment = "slop-staging"
+const deadlineVariable = "STAGING_ORDER_RETRY_UNTIL"
 const revision = /^[0-9a-f]{40}$/u
+const epochSeconds = /^\d+$/u
 const nonReleaseWorkflows: ReadonlySet<string> = new Set([
   ".github/workflows/vetting-recovery-qualification.yml",
   ".github/workflows/vetting-sandbox-qualification.yml",
@@ -26,6 +31,47 @@ const nonReleaseWorkflows: ReadonlySet<string> = new Set([
 ])
 
 export type HistoryOutcome = "InOrder" | "NewerAttempt"
+
+interface Verdict {
+  readonly ignored: ReadonlyArray<string>
+  readonly newer: boolean
+}
+
+interface QuotaDelay {
+  readonly valid: boolean
+  readonly retryAt: number
+}
+
+export effect function startOrder() {
+  const held = try Ref.make(unchecked)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export type Order = Effect.Success<ReturnType<typeof startOrder>>
+
+function quotaDelay(failure: RateLimited, now: number): QuotaDelay {
+  const reset = failure.secondary || failure.resetAt === undefined ? undefined : failure.resetAt + 1_000
+  const valid = failure.secondary ? failure.retryAfterSeconds !== undefined : reset !== undefined && reset > now
+  return { valid, retryAt: Math.max(reset ?? now, now + failure.retryAfter) }
+}
+
+function statusOf(failure: GitHubFailure) {
+  if (failure._tag === "NotFound") return 404
+  if (failure._tag === "GitHubMalformed") return 0
+  return failure.status ?? 0
+}
+
+function readRefusal(failure: GitHubFailure) {
+  if (failure._tag === "GitHubMalformed") return "Staging history exceeds its bound or is malformed; require human review"
+  const status = statusOf(failure)
+  return status === 0 ? "GitHub staging provenance read could not complete" : `GitHub staging provenance read failed (HTTP ${status})`
+}
+
+effect function jobDeadline(startedAt: number) {
+  const until = try Config.withDefault(Config.String(deadlineVariable), "")
+  const millis = epochSeconds.test(until) ? Number(until) * 1_000 : Number.NaN
+  return Number.isSafeInteger(millis) ? Math.max(0, millis - startedAt) : 0
+}
 
 effect function createdOutsideRelease(repository: string, deployment: Deployment) {
   const github = try GitHub
@@ -51,29 +97,110 @@ effect function replayNewerAttempt(run: Run) {
   try run.send({ type: "rivalFinish", rival })
 }
 
-export effect function stagingHistory(run: Run, repository: string, root: string, tested: string) {
+export effect function stagingHistory<E, R>(run: Run, repository: string, root: string, tested: string, observe: () => boolean!E!R) {
   const github = try GitHub
-  const history = github.pages(`/repos/${repository}/deployments?environment=${stagingEnvironment}`, Deployment, { perPage: 100, maxPages: 10 }) catch effect (error) => {
-    throw new StagingHistoryRefused({ message: error._tag === "GitHubMalformed" ? "Staging history exceeds its bound or is malformed; require human review" : `Staging history is unreadable (${error._tag})` })
+  const order = try startOrder()
+  const startedAt = try Clock.currentTimeMillis
+
+  effect function sent(event: OrderEvent) {
+    return order.send(event) catch effect () => {
+      throw new StagingHistoryRefused({ message: `The staging order check does not allow ${event.type} now` })
+    }
   }
-  const checked = new Set<string>()
-  for (const deployment of history) {
-    if (deployment.environment !== stagingEnvironment || deployment.ref !== "development" || deployment.production_environment || !revision.test(deployment.sha)) {
-      throw new StagingHistoryRefused({ message: "Unknown staging deployment provenance; require human review" })
+
+  effect function elapsed() {
+    const state = try order.get()
+    const passed = (try Clock.currentTimeMillis) - startedAt - state.now
+    if (canAdvanceClock(state, passed)) try sent({ type: "advanceClock", elapsed: passed })
+    if (canExpire(try order.get())) {
+      try sent({ type: "expire" })
+      throw new StagingHistoryRefused({ message: "Staging order retry exceeded its deadline" })
     }
-    if (checked.has(deployment.sha)) continue
-    if (try isAncestor(root, deployment.sha, tested)) {
-      checked.add(deployment.sha)
-      continue
+    return try order.get()
+  }
+
+  effect function failed(failure: GitHubFailure) {
+    const before = try elapsed()
+    const now = try Clock.currentTimeMillis
+    const quota = failure._tag === "RateLimited" ? quotaDelay(failure, now) : undefined
+    const delay = quota === undefined ? 0 : quota.retryAt - now
+    const after = try sent({ type: "failRead", status: statusOf(failure), validDelay: quota?.valid ?? false, delay })
+    if (after.phase === "WaitingForQuota") throw new QuotaWait({ delay })
+    if (quota === undefined || !quota.valid) throw new StagingHistoryRefused({ message: readRefusal(failure) })
+    if (before.retries > 0) throw new StagingHistoryRefused({ message: "GitHub staging deployment history quota exhausted" })
+    throw new StagingHistoryRefused({ message: `GitHub staging quota reset is outside the staging order retry budget (retry at epoch seconds ${Math.ceil(quota.retryAt / 1_000)})` })
+  }
+
+  effect function creator(deployment: Deployment) {
+    return createdOutsideRelease(repository, deployment) catch effect (failure) => {
+      if (failure._tag === "RateLimited") return try failed(failure)
+      return false
     }
-    const outside = createdOutsideRelease(repository, deployment) catch () => false
-    if (outside) {
-      try run.send({ type: "recordNonReleaseDeployment" })
-      continue
+  }
+
+  effect function pass() {
+    try elapsed()
+    const ancestor = try observe()
+    try elapsed()
+    try sent({ type: "inspect", ancestor })
+    if (!ancestor) throw new StagingHistoryRefused({ message: `Live development no longer contains the staging candidate ${tested}` })
+    const history = github.pages(`/repos/${repository}/deployments?environment=${stagingEnvironment}`, Deployment, { perPage: 100, maxPages: 10 }) catch effect (failure) => {
+      return try failed(failure)
     }
+    const checked = new Set<string>()
+    const ignored: string[] = []
+    for (const deployment of history) {
+      if (deployment.environment !== stagingEnvironment || deployment.ref !== "development" || deployment.production_environment || !revision.test(deployment.sha)) {
+        throw new StagingHistoryRefused({ message: "Unknown staging deployment provenance; require human review" })
+      }
+      if (checked.has(deployment.sha)) continue
+      const ancestorOrEqual = try isAncestor(root, deployment.sha, tested)
+      const nonRelease = ancestorOrEqual ? false : try creator(deployment)
+      try elapsed()
+      const read = try sent({ type: "readHistory", revision: try run.idOf("staging revision", deployment.sha), ancestorOrEqual, nonRelease })
+      if (read.phase === "OrderRefused") return { ignored, newer: true } satisfies Verdict
+      if (ancestorOrEqual) checked.add(deployment.sha)
+      else ignored.push(deployment.sha)
+    }
+    if (!canFinish(try elapsed())) throw new StagingHistoryRefused({ message: "Current staging attempt is absent from deployment history" })
+    try sent({ type: "finish" })
+    return { ignored, newer: false } satisfies Verdict
+  }
+
+  effect function retried(wait: QuotaWait) {
+    try Console.log(`GitHub staging quota exhausted; retrying the full order check after ${Math.ceil(wait.delay / 1_000)}s`)
+    try sleep(Duration.millis(wait.delay))
+    let waited = try elapsed()
+    while (waited.phase === "WaitingForQuota" && waited.now < waited.wakeAt) {
+      try sleep(Duration.millis(waited.wakeAt - waited.now))
+      waited = try elapsed()
+    }
+    if (!canResume(waited)) throw new StagingHistoryRefused({ message: "Staging order retry exceeded its deadline" })
+    const resumed = try sent({ type: "resume" })
+    const finished = try timeoutOption(effect {
+      return pass() catch effect (error) => {
+        if (error instanceof QuotaWait) throw new StagingHistoryRefused({ message: "GitHub staging deployment history quota exhausted" })
+        throw error
+      }
+    }, Duration.millis(resumed.deadline - resumed.now))
+    if (Option.isSome(finished)) return finished.value
+    try elapsed()
+    throw new StagingHistoryRefused({ message: "Staging order retry exceeded its deadline" })
+  }
+
+  try sent({ type: "begin", candidate: try run.idOf("staging revision", tested), jobDeadline: try jobDeadline(startedAt) })
+  const verdict = pass() catch effect (error) => {
+    if (error instanceof QuotaWait) return try retried(error)
+    throw error
+  }
+  for (const sha of verdict.ignored) {
+    try Console.log(`Ignoring non-release staging environment record ${sha}`)
+    try run.send({ type: "recordNonReleaseDeployment" })
+  }
+  if (verdict.newer) {
     try replayNewerAttempt(run)
     return "NewerAttempt" satisfies HistoryOutcome
   }
-  if (!checked.has(tested)) throw new StagingHistoryRefused({ message: "Current staging attempt is absent from deployment history" })
+  try Console.log(`Staging order verified for ${tested}`)
   return "InOrder" satisfies HistoryOutcome
 }

@@ -1,10 +1,10 @@
 // spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"
-import { classifyRevisionChanges, type RevisionChanges } from "@repo/backend/owner/classify";
+import { classified, type RevisionChanges } from "@repo/backend/revisionChanges";
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isChain } from "@repo/settlement/kernels/networks";
 import { Result, Schema } from "effect";
 import { checkedOnLoad, consents, type SavedConsent, savedEdit } from "../../../../gen/backend__closureConsent.ts";
-import type { RepositoryLookup } from "../../../flows/projects/github.vibe";
+import type { RepositoryLookup } from "@repo/backend/client";
 import { boundedText, type FundingChoice, type MonthlyPoolValue, monthlyCapDisplay, monthlyPoolValue, type RewardAssetKind, rewardFields, validRepositoryPath } from "../../../flows/projects/proposal.ts";
 import { type AssetKind, assetSymbol, formatRewardCapDisplay } from "../../../kernels/assetText.ts";
 import { contributionLabels, type SkillRuleField, skillRuleFields } from "../fields/contribution.ts";
@@ -91,13 +91,6 @@ function listOf(value: unknown): ReadonlyArray<unknown> {
 }
 
 /** @throws {never} */
-export function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (isJson(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
-  return JSON.stringify(value) ?? "null";
-}
-
-/** @throws {never} */
 export function baseUnits(minor: string, decimals: number, grouping = true): string | undefined {
   return baseUnitsText.test(minor) && Number.isInteger(decimals) && decimals >= 0 && decimals <= 36 ? formatBaseUnits({ value: BigInt(minor), decimals, grouping }) : undefined;
 }
@@ -173,8 +166,8 @@ export function listedNames(manifest: ManagedManifest, added: ReadonlyArray<Pend
 
 /** Why a looked-up repository cannot be added, or undefined. @throws {never} */
 export function additionRefusal(facts: RepositoryLookup, listed: ReadonlyArray<string>): string | undefined {
-  if (facts.fork !== false) return `${facts.repository} is a fork. Add the original repository instead.`;
-  if (facts.archived !== false) return `${facts.repository} is archived on GitHub.`;
+  if (facts.fork) return `${facts.repository} is a fork. Add the original repository instead.`;
+  if (facts.archived) return `${facts.repository} is archived on GitHub.`;
   return listed.includes(facts.repository.toLowerCase()) ? `${facts.repository} is already listed.` : undefined;
 }
 
@@ -331,10 +324,6 @@ function nextManifest(proposed: Proposed): Json {
   };
 }
 
-function changedFields(previous: Json, next: Json): string[] {
-  return [...new Set([...Object.keys(previous), ...Object.keys(next)])].sort().filter((field) => canonical(previous[field] ?? null) !== canonical(next[field] ?? null));
-}
-
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -394,7 +383,7 @@ export function reviewOf(managed: Managed, edit: Edit, now: Date): UpdateReview 
   const countsFrom = nextUtcMonthStart(now);
   const proposed: Proposed = { managed, value, added, funding, bountyOnly, countsFrom, now: now.toISOString() };
   const next = nextManifest(proposed);
-  const changes = classifyRevisionChanges(changedFields(managed.raw, next), added.length > 0);
+  const changes = classified(managed.raw, next);
   return {
     value,
     added,

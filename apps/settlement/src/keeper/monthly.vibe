@@ -174,12 +174,13 @@ effect function reserveState(context: SendContext, period: Period) {
   return state
 }
 
-effect function sendJournaledUntilMined(context: SendContext, key: string) {
+effect function sendJournaledUntilFinalized(context: SendContext, key: string) {
   const attempt = try inTransaction((tx) => readAttempt(tx, key))
   if (attempt === undefined || attempt === null) return true
   const signed = try parsedAttempt(attempt.rawTransaction, context.config.signer)
-  const mined = try (try EvmRpc).nonce(context.config.signer, "latest")
-  if (mined > widen(signed.request.nonce)) return true
+  const nonce = widen(signed.request.nonce)
+  const rpc = try EvmRpc
+  if ((try rpc.nonce(context.config.signer, "latest")) > nonce) return (try rpc.nonce(context.config.signer, "finalized")) > nonce
   try submitSigned(context, key, attempt)
   return false
 }
@@ -254,7 +255,7 @@ effect function submitReserve(context: SendContext, authorization: Authorization
   const legacyKey = `monthly:${network}:${lowerVault}:${plan.request.period}`
   let rootSettled = true
   if (!isZero(state.root))
-    for (const journaled of [legacyKey, key]) rootSettled = (try sendJournaledUntilMined(context, journaled)) && rootSettled
+    for (const journaled of [legacyKey, key]) rootSettled = (try sendJournaledUntilFinalized(context, journaled)) && rootSettled
   if (!isZero(state.root) && isZero(state.allocationDigest)) {
     try legacyRootHeld(context, legacy, period, state)
     return { transactionId: null, alreadyCommitted: true, complete: rootSettled } satisfies MonthlySubmission
@@ -283,7 +284,7 @@ effect function submitReserve(context: SendContext, authorization: Authorization
   if (state.remaining === 0n) {
     let index = cursor
     for (; index < entries.length && index < cursor + bound; index += 1) {
-      if (!(try sendJournaledUntilMined(context, `${key}:${tree.root.hash}:leaf:${index}`))) break
+      if (!(try sendJournaledUntilFinalized(context, `${key}:${tree.root.hash}:leaf:${index}`))) break
       try keepCursor(cursorKey, index + 1)
     }
     return { transactionId: null, alreadyCommitted: true, complete: rootSettled && index === entries.length } satisfies MonthlySubmission
@@ -301,7 +302,7 @@ effect function submitReserve(context: SendContext, authorization: Authorization
     if (award.actor !== 0n) {
       if (award.actor !== entry.actor || award.gross !== entry.gross || !payoutFeeAccepted(award.gross, award.fee, false))
         throw refused("Admitted monthly source conflicts with a funded award")
-      const settled = try sendJournaledUntilMined(context, leafKey)
+      const settled = try sendJournaledUntilFinalized(context, leafKey)
       const next = nextLeafCursor(cursor, index, true, settled)
       if (next !== cursor) {
         cursor = next
@@ -338,7 +339,7 @@ export effect function submitEvmMonthly(context: SendContext, authorization: Aut
   if (current === undefined) throw refused("Malformed contract state")
   const key = `monthly:${config.network}:${deployment.vault.toLowerCase()}:${plan.request.period}`
   if (!isZero(current)) {
-    const settled = try sendJournaledUntilMined(context, key)
+    const settled = try sendJournaledUntilFinalized(context, key)
     if (current !== root) throw refused("Another monthly root is already committed")
     return { transactionId: null, alreadyCommitted: true, ...settled ? {} : { complete: false } } satisfies MonthlySubmission
   }

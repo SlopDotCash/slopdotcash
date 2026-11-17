@@ -29,7 +29,7 @@ const db = await database(mf, "SLOPBOT_DB");
 
 const noNotices = Layer.mergeAll(
   Layer.succeed(ProjectAudience, { listedBy: () => Effect.succeed(sql`SELECT NULL AS recipient WHERE 0`), owners: () => Effect.succeed(sql`SELECT NULL AS recipient WHERE 0`) }),
-  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]) }),
+  Layer.succeed(Notices, { statements: () => Effect.succeed([]), fanout: () => Effect.succeed([]), payoutRecipient: (project) => Effect.succeed(project.stewardGithubId) }),
 );
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, noNotices));
 const appKey = githubFake().app.privateKeyPem;
@@ -142,6 +142,8 @@ function viewOf(projectId: string, registry: RegistryObservation, repository: nu
     listingTier: "Community",
     retirement: retirements[registry.retirement],
     stewardGithubId: "101",
+    stewardAccount: "UserSteward",
+    listing: { fromApplication: false },
     repositories: [{ id: String(repositoryBase() + repository), nodeId: repositoryNodeId(repository), fullName: `ada/${repositoryName(repository)}`, integrationBranch: "main", aliases: [] }],
     closureConsent: false,
   };

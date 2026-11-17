@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest"
-import type { D1Database } from "@repo/platform/bindings"
+import type { D1Database, SqlValue } from "@repo/platform/bindings"
 import { type Hex } from "@repo/platform/chain/evm"
 import { SolanaRpc, address as solanaAddress, publicKey, solanaRpc } from "@repo/platform/chain/solana"
 import { isoNow } from "@repo/platform/clock"
@@ -13,18 +13,23 @@ import { EffectiveWallet, type Network, Registry, Wallets } from "@repo/ports/ba
 import { Notices } from "@repo/ports/operations"
 import { Response, fetch } from "miniflare"
 import { type Address, encodeFunctionData, parseAbi } from "viem"
-import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress, uintWord } from "../src/chain/evm/abi.ts"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, awardId, bytes32, evmAddress, uintWord } from "../src/chain/evm/abi.ts"
 import { commitAwardCalldata, payCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { transactionId } from "../src/chain/evm/transactions.ts"
 import { type BindingInput, bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
 import { decodeProject } from "../src/chain/solana/accounts.ts"
 import { decodeEscrowCall } from "../src/chain/solana/instructions.ts"
+import { parsePeriod } from "../src/kernels/calendar.ts"
 import { readMint } from "../src/kernels/token2022.ts"
+import { awardSource, executionSnapshot } from "../src/monthly/store.vibe"
 import { chainAwards, holdsAward } from "../src/payments/chainAwards.vibe"
 import { type AttemptStatus, type PaymentRequest, ExecutorUnavailable, PaymentExecutor, type Retirement, dispatchPayment, releaseAuthorized, runPaymentDispatch } from "../src/payments/dispatch.vibe"
 import { type Indexed, indexPaymentEvent, obligationState, reindexHeld } from "../src/payments/ledger.vibe"
-import { reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
+import { RecoveryFailed, reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
+import { ReconciliationRefused, readReconciliationPacket, reconcileReviewedPaymentEvents } from "../src/payments/reviewedEvents.vibe"
 import { type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
+import { type LedgerAccess, reconciliationServices } from "../src/programs/reconcileEvents.vibe"
 import type { EvmDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, tokenProjects } from "./support/solana/escrow.ts"
@@ -113,9 +118,10 @@ const ports = Layer.mergeAll(
   Layer.succeed(Notices, {
     statements: (batch) => effect { return batch.notices.map((notice) => sql`INSERT OR IGNORE INTO journey_notices (event_key, recipient, kind) VALUES (${notice.eventKey}, ${notice.recipientGithubId}, ${notice.kind})`) },
     fanout: () => effect { return [] },
+    payoutRecipient: (project) => effect { return project.stewardGithubId },
   }),
   Layer.succeed(Registry, {
-    project: (projectId) => effect { return { projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active" as const, manifestStatus: "Active" as const, listingTier: "Community" as const, retirement: "NotRetired" as const, stewardGithubId: "7", repositories: [], closureConsent: false } },
+    project: (projectId) => effect { return { projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active" as const, manifestStatus: "Active" as const, listingTier: "Community" as const, retirement: "NotRetired" as const, stewardGithubId: "7", stewardAccount: "UserSteward" as const, listing: { fromApplication: false }, repositories: [], closureConsent: false } },
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
@@ -333,11 +339,141 @@ effect function throughTamper<A>(transaction: Hex, edit: ReceiptEdit, program: A
   return try ensuring(program, sync(() => { edits.delete(key) }))
 }
 
+effect function strayAttempts(asset: string) {
+  const now = try isoNow()
+  const obligation = (id: string, networkKey: string, chain: string, vault: string, source: string) => sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (${id}, ${id}, '47', ${networkKey}, ${chain}, ${vault}, ${asset}, 6, '1000000', '20000', ${source}, 'reserved', ${now}, NULL)`
+  const attempt = (id: string, obligationId: string, transaction: string) => sql`INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, state, transaction_id) VALUES (${id}, ${obligationId}, 'claim-47-a', ${now}, 'submitted', ${transaction})`
+  try written([
+    obligation("stray-unserved", "ethereum-mainnet", "ethereum", `0x${"e1".repeat(20)}`, "e1".repeat(32)),
+    attempt("attempt-unserved", "stray-unserved", `0x${"e2".repeat(32)}`),
+    obligation("stray-unreviewed", network, "base", `0x${"e3".repeat(20)}`, "e3".repeat(32)),
+    attempt("attempt-unreviewed", "stray-unreviewed", `0x${"e4".repeat(32)}`),
+  ])
+}
+
 effect function secondToken() {
   const { escrow } = try Journey
   const built = try acquireRelease(promise(() => forgeBuild(contracts, ["integration/TestDollar.sol"])), (output) => promise(() => output.close()))
   const deployed = try promise(() => deploy(escrow.chain, `${built.out}/TestDollar.sol/TestDollar.json`, [], escrow.roles.registrar.address))
   return try address(deployed)
+}
+
+type ApiCall = ReadonlyArray<string>
+
+interface WireStatement {
+  readonly sql: string
+  readonly params: ReadonlyArray<SqlValue>
+}
+
+function d1Api(db: D1Database, calls: ApiCall[]): Handler {
+  return async (request) => {
+    const body = (await request.json()) as { readonly sql?: string; readonly params?: ReadonlyArray<SqlValue>; readonly batch?: ReadonlyArray<WireStatement> }
+    const statements: ReadonlyArray<WireStatement> = body.batch ?? [{ sql: body.sql ?? "", params: body.params ?? [] }]
+    calls.push(statements.map((statement) => statement.sql))
+    try {
+      const results = await db.batch(statements.map((statement) => db.prepare(statement.sql).bind(...statement.params)))
+      return new Response(JSON.stringify({ success: true, errors: [], result: results.map((result) => ({ success: true, results: result.results, meta: { changes: result.meta.changes } })) }), { headers: { "content-type": "application/json" } })
+    } catch (error) {
+      return new Response(JSON.stringify({ success: false, errors: [{ message: error instanceof Error ? error.message : String(error) }], result: [] }), { status: 400, headers: { "content-type": "application/json" } })
+    }
+  }
+}
+
+function writesIn(calls: ReadonlyArray<ApiCall>) {
+  return calls.filter((call) => call.some((text) => !/^\s*SELECT\b/iu.test(text))).length
+}
+
+const reviewedProject = "reviewed-events"
+const reviewedPeriod = "2026-10"
+const reviewedActor = 52
+const reviewedActorId = 52n
+
+effect function reviewedManifest(vault: EvmAddress) {
+  const { escrow } = try Journey
+  const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${slot.slice(-40)}`
+  const deployment = {
+    network, vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar, owner: try address(escrow.roles.owner.address),
+    identityAuthority: try address(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, deploymentTransaction: `0x${"77".repeat(32)}`,
+    sourceCommit: "a".repeat(40), codeSha256: try codeDigest(vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow.factory), registrar: try address(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try address(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+    },
+  }
+  return JSON.stringify({ id: reviewedProject, status: "active", escrow: { schemaVersion: "1", effectiveCycle: "2026-10", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] } })
+}
+
+effect function frozenMonth(vault: EvmAddress, gross: bigint) {
+  const { escrow } = try Journey
+  const period = parsePeriod(reviewedPeriod)
+  if (period === undefined) return try die(new Error("the reviewed period does not parse"))
+  const now = try isoNow()
+  const manifest = try reviewedManifest(vault)
+  const manifestSha256 = try sha256Hex(manifest)
+  const sourceDigest = try awardSource(reviewedProject, period, reviewedActor)
+  const frozen = try executionSnapshot({
+    base: { projectId: reviewedProject, period: reviewedPeriod, manifestSha256, sourceSnapshotSha256: "d".repeat(64), capBase: gross.toString() },
+    rows: [{ githubUserId: String(reviewedActor), login: `member-${reviewedActor}`, grossBase: gross, sourceDigest }],
+    allocationSequence: 0,
+    trigger: "owner",
+    manifestSha256,
+    network,
+    vault,
+    asset: escrow.dollar,
+    frozenAt: now,
+  })
+  const text = JSON.stringify(frozen)
+  const snapshotSha256 = try sha256Hex(text)
+  const [award] = frozen.awards
+  if (award === undefined) return try die(new Error("the frozen month holds no award"))
+  try written([
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${reviewedProject}, 1, ${manifest}, ${manifestSha256}, 'journey', ${now})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${reviewedProject}, 'active', 1, ${manifest}, ${manifestSha256}, ${now}, ${now})`,
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${reviewedProject}, ${reviewedPeriod}, ${manifest}, ${manifestSha256}, ${"d".repeat(64)}, ${gross.toString()}, 1, ${now})`,
+    sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${reviewedProject}, ${reviewedPeriod}, 'owner', '7', 0, ${text}, ${snapshotSha256}, ${network}, ${vault}, ${gross.toString()}, ${now}, ${now})`,
+    sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at) VALUES (${reviewedProject}, ${reviewedPeriod}, ${award.githubUserId}, ${award.login}, ${award.grossBase}, ${award.feeBase}, ${sourceDigest}, ${network}, ${vault}, ${now})`,
+    sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES (${reviewedProject}, ${network}, '50', ${now})`,
+  ])
+  try snapshot(reviewedProject, vault, escrow.dollar)
+  return { manifestSha256, snapshotSha256, award }
+}
+
+effect function reviewedCommit(vault: EvmAddress, sourceDigest: string, gross: bigint, signer: Address) {
+  const { escrow } = try Journey
+  const source = bytes32(`0x${sourceDigest}`)
+  if (source === undefined) return try die(new Error("the award source is not a digest"))
+  const id = try Effect.try(() => awardId(escrow.chainId, vault, source))
+  const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor: reviewedActorId, gross, sourceDigest: source }))
+  return { id, raw: try promise(() => escrow.signTransaction(signer, vault, data)) }
+}
+
+function refusalOf(error: unknown) {
+  return error instanceof ReconciliationRefused ? `refused: ${error.message}` : said(error)
+}
+
+effect function reconciledWith(access: LedgerAccess, text: string) {
+  const { escrow } = try Journey
+  provide Layer.provideMerge(reconciliationServices(access), Layer.mergeAll(webCrypto, outbound)) {
+    const read = try readReconciliationPacket(text, try sha256Hex(text))
+    return try reconcileReviewedPaymentEvents(read, Redacted.make([escrow.chain.url]), access.apply)
+  }
+}
+
+effect function reviewedRun(api: string, packet: unknown, apply: boolean) {
+  const refusals = try Ref.make<number | undefined>(undefined)
+  const access: LedgerAccess = { accountId: "a".repeat(32), databaseId: "reviewed-journey", token: Redacted.make("journey-token"), apply, refusals, api }
+  return reconciledWith(access, JSON.stringify(packet)) catch (error) => refusalOf(error)
+}
+
+effect function packetRead(text: string, digestOf: string) {
+  provide webCrypto {
+    return readReconciliationPacket(text, try sha256Hex(digestOf)) catch (error) => refusalOf(error)
+  }
 }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
@@ -447,7 +583,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     })
   })
 
-  it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, and a refused cancellation leaves the attempt unknown (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+  it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, a refused cancellation leaves the attempt unknown, and reconciliation selects only the served networks, reporting and holding an attempt whose vault is not reviewed (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
     const { escrow, script } = try Journey
     const { vault, deployment, asset } = try opened(14n, escrow.roles.owner.address)
     try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
@@ -465,9 +601,11 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const keys = script.submits.map((submitted) => submitted.idempotencyKey)
     const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_getTransactionReceipt", fault: "timeout" }]))
     const faulty = try acquireRelease(promise(() => serve(faults)), (served) => promise(() => served.close()))
-    const unreachable = shell(reconcileFailedAttempts([{ deployment: { ...deployment, rpc: Redacted.make([faulty.url]) }, asset }])) catch (error) => failureTag(error)
+    const unreachable = shell(reconcileFailedAttempts([network], [{ deployment: { ...deployment, rpc: Redacted.make([faulty.url]) }, asset }])) catch (error) => failureTag(error)
     const beforeProof = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_attempts WHERE obligation_id = ${award.id} ORDER BY rowid`))
-    try shell(reconcileFailedAttempts([{ deployment, asset }]))
+    try strayAttempts(asset.address)
+    const proven = shell(reconcileFailedAttempts([network], [{ deployment, asset }])) catch (error) => error instanceof RecoveryFailed ? error.failures : [failureTag(error)]
+    const strays = try shell(rows(Schema.Struct({ id: Schema.String, state: Schema.String }), sql`SELECT id, state FROM payment_attempts WHERE id IN ('attempt-unserved', 'attempt-unreviewed') ORDER BY id`))
     const afterProof = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_attempts WHERE obligation_id = ${award.id} ORDER BY rowid`))
     const failures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT f.attempt_id FROM payment_attempt_failures f JOIN payment_attempts a ON a.id = f.attempt_id WHERE a.obligation_id = ${award.id}`))
     script.answers.push("lose")
@@ -488,13 +626,15 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
     const refusedCancel = shell(recoverUncertainAttempts([{ deployment, asset }])) catch (error) => failureTag(error)
     const afterRefusal = try shell(rows(Schema.Struct({ state: Schema.String, transaction_id: Schema.NullOr(Schema.String) }), sql`SELECT state, transaction_id FROM payment_attempts WHERE id = ${pending}`))
     const refusalFailures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT attempt_id FROM payment_attempt_failures WHERE attempt_id = ${pending}`))
-    try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures }, {
+    try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, proven, strays, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures }, {
       lost: "ExecutorUnavailable",
       afterLoss: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
       resent: "Submitted",
       sameKey: true,
       unreachable: "RecoveryFailed",
       beforeProof: [{ state: "submitted" }],
+      proven: ["attempt-unreviewed: Reviewed deployment missing for reconciliation"],
+      strays: [{ id: "attempt-unreviewed", state: "submitted" }, { id: "attempt-unserved", state: "submitted" }],
       afterProof: [{ state: "failed" }],
       failures: 1,
       freshKey: true,
@@ -586,6 +726,97 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "90
       ],
       revertedStatus: "reverted",
       phase: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
+    })
+  })
+
+  it.effect('Reviewed finalized events are indexed through the canonical ledger once: preview writes nothing, a changed packet, stale revision, changed allocation, wrong signer or calldata, unauthorized destination or unindexed reservation is refused before any write, and apply and its replay record one award, one payout and one notice each without moving the scanner cursor (spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation")', () => effect {
+    const { escrow, db } = try Journey
+    const calls: ApiCall[] = []
+    const api = try acquireRelease(promise(() => serve(d1Api(db, calls))), (served) => promise(() => served.close()))
+    const owner = try address(escrow.roles.owner.address)
+    const projectWord = bytes32(`0x${try sha256Hex(`slop-project:${reviewedProject}`)}`)
+    if (projectWord === undefined) return try die(new Error("the registry project digest is not a word"))
+    const vault = try promise(() => escrow.createVault({ owner, projectId: projectWord, asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: false }))
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const gross = 10_000_000n
+    const month = try frozenMonth(vault, gross)
+    const recipient = try address(escrow.roles.recipient.address)
+    const claimDigest = try authorize(String(reviewedActor), recipient, "claim-52-a", null)
+    const committed = try reviewedCommit(vault, month.award.sourceDigest, gross, escrow.roles.owner.address)
+    const reservation = try promise(() => escrow.sendRaw(committed.raw))
+    const reserved = {
+      transactionId: reservation.transactionHash.toLowerCase(),
+      rawTransaction: committed.raw,
+      eventIndex: try eventIndex(vault, reservation.blockNumber, reservation.transactionHash, "AwardCommitted"),
+      obligationId: committed.id,
+      githubUserId: String(reviewedActor),
+      grossBase: month.award.grossBase,
+      feeBase: month.award.feeBase,
+      netBase: month.award.netBase,
+      sourceDigest: month.award.sourceDigest,
+    }
+    try bound(vault, reviewedActorId, recipient, 0n, claimDigest)
+    const payData = try Effect.try(() => payCalldata(committed.id, 1n))
+    const paidRaw = try promise(() => escrow.signTransaction(escrow.roles.donor.address, vault, payData))
+    const payout = try promise(() => escrow.sendRaw(paidRaw))
+    const paidEvent = {
+      ...reserved,
+      kind: "paid",
+      transactionId: payout.transactionHash.toLowerCase(),
+      rawTransaction: paidRaw,
+      eventIndex: try eventIndex(vault, payout.blockNumber, payout.transactionHash, "Paid"),
+      destination: recipient,
+      claimId: "claim-52-a",
+      payer: escrow.roles.donor.address.toLowerCase(),
+      bindingVersion: "1",
+    }
+    const packet = { schemaVersion: "reviewed-payment-events:v1", projectId: reviewedProject, network, period: reviewedPeriod, revision: 1, manifestSha256: month.manifestSha256, snapshotSha256: month.snapshotSha256, events: [reserved] }
+    const paidPacket = { ...packet, events: [paidEvent] }
+    const wrongSigner = try reviewedCommit(vault, month.award.sourceDigest, gross, escrow.roles.donor.address)
+    const otherAward = try reviewedCommit(vault, "5".repeat(64), gross, escrow.roles.owner.address)
+    const changedDigest = try packetRead(`${JSON.stringify(packet)} `, JSON.stringify(packet))
+    const preview = try reviewedRun(api.url, packet, false)
+    const previewWrites = writesIn(calls)
+    const refusedBeforeWrites = [
+      try reviewedRun(api.url, { ...packet, revision: 2 }, true),
+      try reviewedRun(api.url, { ...packet, snapshotSha256: "0".repeat(64) }, true),
+      try reviewedRun(api.url, { ...packet, events: [{ ...reserved, rawTransaction: wrongSigner.raw, transactionId: transactionId(wrongSigner.raw) }] }, true),
+      try reviewedRun(api.url, { ...packet, events: [{ ...reserved, rawTransaction: otherAward.raw, transactionId: transactionId(otherAward.raw) }] }, true),
+      try reviewedRun(api.url, paidPacket, true),
+    ]
+    const writesBeforeApply = writesIn(calls)
+    const applied = try reviewedRun(api.url, packet, true)
+    const replayed = try reviewedRun(api.url, packet, true)
+    const unauthorized = try reviewedRun(api.url, { ...paidPacket, events: [{ ...paidEvent, destination: escrow.roles.donor.address.toLowerCase() }] }, true)
+    const paid = try reviewedRun(api.url, paidPacket, true)
+    const paidAgain = try reviewedRun(api.url, paidPacket, true)
+    const events = try shell(rows(Schema.Struct({ kind: Schema.String, transaction_id: Schema.String }), sql`SELECT kind, transaction_id FROM payment_events WHERE obligation_id = ${committed.id} ORDER BY rowid`))
+    const obligations = try shell(rows(Schema.Struct({ state: Schema.String, paid_transaction: Schema.NullOr(Schema.String) }), sql`SELECT state, paid_transaction FROM payment_obligations WHERE id = ${committed.id}`))
+    const outbox = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_outbox WHERE obligation_id = ${committed.id}`))
+    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String }), sql`SELECT event_key FROM notifications WHERE event_key LIKE ${`%${committed.id}%`} ORDER BY event_key`))
+    const cursor = try shell(rows(Schema.Struct({ position: Schema.String }), sql`SELECT position FROM payment_chain_cursors WHERE project_id = ${reviewedProject}`))
+    try same({ changedDigest, preview, previewWrites, refusedBeforeWrites, writesBeforeApply, applied, replayed, unauthorized, paid, paidAgain, events, obligations, outbox, notices, cursor }, {
+      changedDigest: "refused: Reviewed reconciliation packet changed",
+      preview: { verified: 1, indexed: 0, replayVerified: false },
+      previewWrites: 0,
+      refusedBeforeWrites: [
+        "refused: Reviewed project revision changed",
+        "refused: Frozen funded allocation changed",
+        "refused: Retained payment signature or calldata differs",
+        "refused: Retained payment signature or calldata differs",
+        "refused: Indexed reservation or authorized destination differs",
+      ],
+      writesBeforeApply: 0,
+      applied: { verified: 1, indexed: 1, replayVerified: true },
+      replayed: { verified: 1, indexed: 1, replayVerified: true },
+      unauthorized: "refused: Indexed reservation or authorized destination differs",
+      paid: { verified: 1, indexed: 1, replayVerified: true },
+      paidAgain: { verified: 1, indexed: 1, replayVerified: true },
+      events: [{ kind: "reserved", transaction_id: reservation.transactionHash.toLowerCase() }, { kind: "paid", transaction_id: payout.transactionHash.toLowerCase() }],
+      obligations: [{ state: "paid", paid_transaction: payout.transactionHash.toLowerCase() }],
+      outbox: [{ state: "paid" }],
+      notices: [{ event_key: `payment-paid:${committed.id}` }, { event_key: `payment-reserved:${committed.id}` }],
+      cursor: [{ position: "50" }],
     })
   })
 })

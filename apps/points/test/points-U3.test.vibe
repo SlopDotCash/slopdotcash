@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { webCrypto } from "@repo/platform/crypto"
+import type { Fetcher } from "@repo/platform/bindings"
 import { GitHub, github } from "@repo/platform/github"
 import { outboundVia } from "@repo/platform/http"
 import { settableClock } from "@repo/platform/testing/clock"
+import type { GitHubFake } from "@repo/platform/testing/github"
 import { discussionCache } from "../src/ingestion/discussions.vibe"
 import { Graphql, executeNodeBatch, graphqlClient } from "../src/ingestion/graphql.vibe"
 import { Ingestion, ingestionGitHub } from "../src/ingestion/read.vibe"
@@ -18,6 +20,10 @@ schema Pull { number: number; node_id: string; html_url: string }
 const repoPath = `/repos/${repository}`
 const repoMatch = /^GET \/repos\/ada\/widgets$/u
 const pullMatch = /^GET \/repos\/ada\/widgets\/pulls\/1$/u
+const secondaryLimitMessages = [
+  "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+  "You have triggered an abuse detection mechanism. Please wait a few minutes before you try again.",
+]
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -30,7 +36,7 @@ it.live('Rate-limited reads wait only for a rate limit, never retry a write and 
   const waits: number[] = []
   const reads = ingestionGitHub({
     token: Redacted.make(world.token),
-    deadlineMs: start + 600_000,
+    deadlineMs: start + 960_000,
     sleep: (millis) => effect {
       waits.push(millis)
       clock.advance(millis)
@@ -54,10 +60,16 @@ it.live('Rate-limited reads wait only for a rate limit, never retry a write and 
     const primary = try counted(github.json(repoPath, Repo))
     failNext(fake, repoMatch, { rateLimit: { secondary: true, retryAfterSeconds: 5 } })
     const secondary = try counted(github.json(repoPath, Repo))
+    const secondaryUnhinted = try Effect.forEach(secondaryLimitMessages, (message) => effect {
+      failNext(fake, repoMatch, { status: 403, message })
+      return try counted(github.json(repoPath, Repo))
+    })
     failNext(fake, repoMatch, { status: 403, message: "Resource not accessible by integration" })
     const refused = try counted(github.json(repoPath, Repo))
     failNext(fake, repoMatch, { status: 429 }, 5)
     const exhausted = try counted(github.json(repoPath, Repo))
+    failNext(fake, repoMatch, { status: 403, message: secondaryLimitMessages[0] }, 5)
+    const secondaryExhausted = try counted(github.json(repoPath, Repo))
     const commitPath = `${repoPath}/git/commits/${world.commit}`
     const immutable = try counted(effect {
       const first = try github.json(commitPath, Commit)
@@ -73,20 +85,25 @@ it.live('Rate-limited reads wait only for a rate limit, never retry a write and 
     const later = try counted(github.json(repoPath, Repo))
     const widgets = { id: 7001, full_name: repository }
     try same(
-      { unhinted, primary, secondary, refused, exhausted, immutable, write, beforeCheckpoint, checkpointed, asserted, later, elapsed: clock.now() - start },
+      { unhinted, primary, secondary, secondaryUnhinted, refused, exhausted, secondaryExhausted, immutable, write, beforeCheckpoint, checkpointed, asserted, later, elapsed: clock.now() - start },
       {
         unhinted: { value: widgets, statuses: [429, 200], waits: [60_000] },
         primary: { value: widgets, statuses: [403, 200], waits: [31_000] },
         secondary: { value: widgets, statuses: [403, 200], waits: [5_000] },
+        secondaryUnhinted: [
+          { value: widgets, statuses: [403, 200], waits: [60_000] },
+          { value: widgets, statuses: [403, 200], waits: [60_000] },
+        ],
         refused: { value: "GitHubRefused", statuses: [403], waits: [] },
         exhausted: { value: "RateLimited", statuses: [429, 429, 429, 429, 429], waits: [60_000, 60_000, 60_000, 60_000] },
+        secondaryExhausted: { value: "RateLimited", statuses: [403, 403, 403, 403, 403], waits: [60_000, 60_000, 60_000, 60_000] },
         immutable: { value: [true, true], statuses: [200], waits: [] },
         write: { value: "RateLimited", statuses: [429], waits: [] },
         beforeCheckpoint: { value: undefined, statuses: [], waits: [] },
         checkpointed: { value: "GitHubUnavailable", statuses: [403], waits: [] },
         asserted: { value: "IngestionCheckpoint", statuses: [], waits: [] },
         later: { value: "GitHubUnavailable", statuses: [], waits: [] },
-        elapsed: 336_000,
+        elapsed: 696_000,
       },
     )
   }
@@ -129,6 +146,19 @@ it.live('A trusted main run revalidates a checkpointed discussion with its recor
 
 const nodesQuery = "query BatchNodes($ids: [ID!]!) { nodes(ids: $ids) { __typename ... on PullRequest { id number } } rateLimit { cost limit remaining resetAt } }"
 const rateLimitQuery = "query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }"
+const goneIds = ["PR_gone_head", "PR_gone_tail"]
+
+function batchRecorder(fake: GitHubFake) {
+  const batches: ReadonlyArray<string>[] = []
+  const fetcher: Fetcher = {
+    fetch: async (request) => {
+      const sent = JSON.parse(await request.clone().text()) as { readonly variables?: { readonly ids?: ReadonlyArray<string> } }
+      batches.push(sent.variables?.ids ?? [])
+      return fake.fetch(request)
+    },
+  }
+  return { batches, fetcher }
+}
 
 it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, waits once for a drained window and then stops (spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
   const clock = settableClock(start)
@@ -143,13 +173,30 @@ it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, wa
       clock.advance(millis)
     },
   })
-  provide Layer.provide(client, outboundVia(fetcherOf(fake))), clock.layer {
+  const recorder = batchRecorder(fake)
+  provide Layer.provide(client, outboundVia(recorder.fetcher)), clock.layer {
     const graphql = try Graphql
     gatewayText(fake, 5)
     const before = fake.requests.length
     const batch = try executeNodeBatch(nodesQuery, ids)
     const nodes = Array.isArray(batch.nodes) ? batch.nodes.map((node: unknown) => (node as { readonly id?: unknown }).id) : []
     const split = { nodes, statuses: statuses(fake, before), waits: waits.splice(0) }
+
+    effect function probed(batch: ReadonlyArray<string>) {
+      const from = recorder.batches.length
+      const outcome = Effect.as(executeNodeBatch(nodesQuery, batch), "answered") catch (error) => error._tag === "SourceNodeUnavailable" ? `${error._tag} ${error.sources.map((source) => source.nodeId).join(" ")}` : `${error._tag} ${error.message}`
+      return { outcome, requested: recorder.batches.slice(from), waits: waits.splice(0) }
+    }
+
+    const [kept = ""] = ids
+    const [goneHead = "", goneTail = ""] = goneIds
+    gatewayText(fake, 5)
+    const bothGone = try probed(goneIds)
+    gatewayText(fake, 5)
+    const tailGone = try probed([kept, goneTail])
+    const label = try Effect.try(() => fake.world.addLabel(repository, { name: "triage" }))
+    gatewayText(fake, 5)
+    const headRejected = try probed([label.nodeId, kept])
     const resetAt = start + 7_200_000
     withRateLimit(fake, 150, resetAt)
     try graphql.execute(rateLimitQuery)
@@ -160,14 +207,19 @@ it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, wa
     withRateLimit(fake, 50, resetAt)
     try graphql.execute(rateLimitQuery)
     const stopped = graphql.ensureBudget(100) catch (error) => error._tag
+    const backoff = [250, 500, 1_000, 2_000]
+    const refused = (batch: ReadonlyArray<string>) => Array.from({ length: 5 }, () => batch)
     try same(
-      { split, waited, spendable, stopped, requests: try graphql.requestCount() },
+      { split, bothGone, tailGone, headRejected, waited, spendable, stopped, requests: try graphql.requestCount() },
       {
-        split: { nodes: ids, statuses: [502, 502, 502, 502, 502, 200, 200], waits: [250, 500, 1_000, 2_000] },
+        split: { nodes: ids, statuses: [502, 502, 502, 502, 502, 200, 200], waits: backoff },
+        bothGone: { outcome: `SourceNodeUnavailable ${goneHead} ${goneTail}`, requested: [...refused(goneIds), [goneHead], [goneTail]], waits: backoff },
+        tailGone: { outcome: `SourceNodeUnavailable ${goneTail}`, requested: [...refused([kept, goneTail]), [kept], [goneTail]], waits: backoff },
+        headRejected: { outcome: "GraphqlFailed GitHub GraphQL rejected the leaderboard query: The GitHub fake resolves node(id) for repositories, issues, pull requests, commits and accounts, not Label.", requested: [...refused([label.nodeId, kept]), [label.nodeId]], waits: backoff },
         waited: { waits: [resetAt - drainedAt + 1_000], remaining: 5_000 },
         spendable: undefined,
         stopped: "BudgetExceeded",
-        requests: 9,
+        requests: 29,
       },
     )
   }

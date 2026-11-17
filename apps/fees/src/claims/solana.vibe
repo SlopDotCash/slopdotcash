@@ -10,8 +10,8 @@ import { wrappedSol } from "../solana/wire.vibe"
 import { DeploymentRefused, type SolanaVaultDeployment, VaultDeployments } from "./deployments.vibe"
 import { type ClaimEvidence, ClaimRefused, failedClaim } from "./evm.vibe"
 
-const projectSize = 332
-const configSize = 105
+const projectSizes = [332, 340]
+const configSizes = [105]
 const accruedOffset = 316
 const projectDiscriminator = Uint8Array.of(205, 168, 189, 202, 181, 247, 142, 19)
 const configDiscriminator = Uint8Array.of(155, 12, 170, 224, 30, 250, 204, 130)
@@ -57,10 +57,10 @@ effect function refuse(issue: string) {
   throw new ClaimRefused({ issue })
 }
 
-effect function programAccount(owner: string, at: string, size: number, discriminator: Uint8Array, commitment: Commitment, what: string) {
+effect function programAccount(owner: string, at: string, sizes: ReadonlyArray<number>, discriminator: Uint8Array, commitment: Commitment, what: string) {
   const account = try (try SolanaRpc).account(try addressed(at), commitment)
   if (account === undefined) return try refuse(`${what} account missing`)
-  if (account.owner !== owner || account.data.length !== size || !startsWith(account.data, discriminator)) return try refuse(`${what} account differs from the reviewed escrow program`)
+  if (account.owner !== owner || !sizes.includes(account.data.length) || !startsWith(account.data, discriminator)) return try refuse(`${what} account differs from the reviewed escrow program`)
   return account.data
 }
 
@@ -77,9 +77,9 @@ effect function vaultAddress(target: ClaimTarget) {
 }
 
 effect function rolesHeld(deployment: SolanaVaultDeployment, wallet: string, commitment: Commitment) {
-  const config = try programAccount(deployment.program, try derived([new TextEncoder().encode("config")], deployment.program, "config"), configSize, configDiscriminator, commitment, "Config")
+  const config = try programAccount(deployment.program, try derived([new TextEncoder().encode("config")], deployment.program, "config"), configSizes, configDiscriminator, commitment, "Config")
   if (keyAt(config, 40) !== wallet) return try refuse("the escrow Config pays another fee recipient")
-  const project = try programAccount(deployment.program, deployment.project, projectSize, projectDiscriminator, commitment, "project")
+  const project = try programAccount(deployment.program, deployment.project, projectSizes, projectDiscriminator, commitment, "project")
   if (keyAt(project, 136) !== wallet || keyAt(project, 168) !== deployment.mint) return try refuse("project account differs from its reviewed deployment")
   return deployment.upgradeAuthority === wallet || [keyAt(config, 8), keyAt(config, 72), keyAt(project, 8), keyAt(project, 104), keyAt(project, 257)].includes(wallet)
 }
@@ -92,7 +92,7 @@ export effect function solanaVault(fact: VaultFact, commitment: Commitment) {
   if (deployment.upgradeAuthority === wallet) return try refuse("Fee wallet must not be the program upgrade authority")
   if ((try vaultAddress(deployment)) !== deployment.vault) return try refuse("vault is not the reviewed project's vault address")
   if (try rolesHeld(deployment, wallet, commitment)) return try refuse("The fee wallet holds or is proposed for a vault role")
-  const accrued = u64At(try programAccount(deployment.program, deployment.project, projectSize, projectDiscriminator, commitment, "project"), accruedOffset)
+  const accrued = u64At(try programAccount(deployment.program, deployment.project, projectSizes, projectDiscriminator, commitment, "project"), accruedOffset)
   if (accrued === undefined) return try refuse("project account missing")
   return { deployment, accrued } satisfies SolanaVaultState
 }
@@ -105,7 +105,7 @@ export effect function verifySolanaClaim(vaults: ReadonlyArray<VaultFact>, vault
 
 export effect function claimSettled(target: ClaimTarget) {
   const rpc = try SolanaRpc
-  if (u64At(try programAccount(target.program, target.project, projectSize, projectDiscriminator, "confirmed", "project"), accruedOffset) === 0n) return try refuse("an earlier claim is confirmed but not yet finalized")
+  if (u64At(try programAccount(target.program, target.project, projectSizes, projectDiscriminator, "confirmed", "project"), accruedOffset) === 0n) return try refuse("an earlier claim is confirmed but not yet finalized")
   const recent = try rpc.signatures(try addressed(target.project), { limit: recentProjectSignatures }, "confirmed")
   const succeeded = recent.filter((entry) => !entry.err).map((entry) => entry.signature)
   if (succeeded.length === 0) return

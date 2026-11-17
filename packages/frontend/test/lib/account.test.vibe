@@ -13,7 +13,8 @@ import { EmailPreferences, emailLayer, emailMessages } from "../../src/flows/acc
 import { Inbox, type InboxView, inboxLayer, inboxMessages, unreadKeys } from "../../src/flows/account/inbox.vibe"
 import { ReferralName, referralLayer, referralMessages } from "../../src/flows/account/referral.vibe"
 import { call } from "../../src/platform/api.vibe"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { BrowserSession, sessionServices } from "../../src/session/browserSession.vibe"
 import { EmailLink, emailActionLayer } from "../../src/session/emailAction.vibe"
@@ -169,7 +170,7 @@ const Seeds = Layer.unwrap(effect {
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: { ...originsOf("production"), site, api: site, browserOrigins: new Set([site]) },
+  origins: { ...deploymentOrigins("production"), site, api: site, browserOrigins: new Set([site]) },
   pageOrigin: site,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),

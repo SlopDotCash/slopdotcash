@@ -1,6 +1,8 @@
 import { assert, layer } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { hexToBytes } from "@noble/hashes/utils.js"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import type { Hex } from "@repo/platform/chain/evm"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { decoded, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
@@ -13,11 +15,13 @@ import { workerBuild } from "@repo/platform/vite"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { type Request, Response } from "miniflare"
 import { createBuilder } from "vite"
-import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress } from "../src/chain/evm/abi.ts"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, awardId, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
 import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { type MonthlyEntry, SOURCE_SEQUENCE_CALL, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, monthlyDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
 import { readSignedType2 } from "../src/chain/evm/transactions.ts"
 import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
+import { type Period, formatPeriod, periodContaining, periodEndSeconds } from "../src/kernels/calendar.ts"
 import { fingerprintOf } from "../src/keeper/attempts.vibe"
 import { journalRegistry, keeperConfig, modelConfiguration } from "../src/keeper/config.vibe"
 import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
@@ -29,6 +33,9 @@ import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/ev
 service Bench {
   readonly escrow: EscrowStack
   readonly vault: EvmAddress
+  readonly reserveVault: EvmAddress
+  readonly legacyVault: EvmAddress
+  readonly published: Map<string, string>
   readonly operator: Account
   readonly registry: string
   readonly registryBody: string
@@ -38,6 +45,9 @@ service Bench {
 }
 
 const project = "33333333-4444-4555-8666-777777777777"
+const reserveProject = "44444444-5555-4666-8777-888888888888"
+const legacyProject = "55555555-6666-4777-8888-999999999999"
+const CUTOFF_SECONDS = 259_200
 const sourceCommit = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
 const ORACLE = "0x420000000000000000000000000000000000000f"
 const TERA_WORD_CODE = "0x64e8d4a5100060005260206000f3"
@@ -61,14 +71,14 @@ effect function codeDigest(escrow: EscrowStack, at: string) {
   return try sha256Hex(try Effect.try(() => hexToBytes(code.slice(2))))
 }
 
-effect function manifest(escrow: EscrowStack, vault: EvmAddress) {
+effect function deploymentOf(escrow: EscrowStack, vault: EvmAddress) {
   const head = try promise(() => escrow.head())
   const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
     .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
   if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
   const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
   const factoryImplementation = try lower(`0x${slot.slice(-40)}`)
-  const deployment = {
+  return {
     network: "base-mainnet", vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar,
     owner: try lower(escrow.roles.owner.address), identityAuthority: try lower(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT,
     deploymentTransaction: created.at.transaction, sourceCommit, codeSha256: try codeDigest(escrow, vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
@@ -81,8 +91,15 @@ effect function manifest(escrow: EscrowStack, vault: EvmAddress) {
       factoryImplementationCodeSha256: try codeDigest(escrow, factoryImplementation),
     },
   }
-  const policy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] }
-  return try Effect.try(() => JSON.stringify({ schemaVersion: "1", projects: [{ id: project, status: "active", escrow: policy }], restrictions: [] }))
+}
+
+effect function manifest(escrow: EscrowStack, listed: ReadonlyArray<{ readonly id: string; readonly vault: EvmAddress }>) {
+  const projects: unknown[] = []
+  for (const { id, vault } of listed) {
+    const policy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [try deploymentOf(escrow, vault)] }
+    projects.push({ id, status: "active", escrow: policy })
+  }
+  return try Effect.try(() => JSON.stringify({ schemaVersion: "1", projects, restrictions: [] }))
 }
 
 effect function finalize() {
@@ -97,13 +114,24 @@ const Started = Layer.effect(Bench, effect {
   const owner = try lower(escrow.roles.owner.address)
   const vault = try promise(() => escrow.createVault({ owner, projectId: word(0x7e3n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 0n, monthlyEnabled: false }))
   try promise(() => escrow.fund(vault, 100_000n, escrow.roles.owner.address))
+  const reserveVault = try promise(() => escrow.createVault({ owner, projectId: word(0x7e4n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(reserveVault, 10_000n, escrow.roles.donor.address))
+  const legacyVault = try promise(() => escrow.createVault({ owner, projectId: word(0x7e5n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(legacyVault, 10_000n, escrow.roles.donor.address))
   const operator = chain.accounts[6]
   if (operator === undefined) return try die(new Error("anvil has no seventh account"))
-  const body = try manifest(escrow, vault)
-  const served = try acquireRelease(promise(() => serve(async (request) => new URL(request.url).pathname === "/api/v1/projects" ? new Response(body, { headers: { "content-type": "application/json" } }) : new Response("missing", { status: 404 }))), (server) => promise(() => server.close()))
+  const body = try manifest(escrow, [{ id: project, vault }, { id: reserveProject, vault: reserveVault }, { id: legacyProject, vault: legacyVault }])
+  const published = new Map<string, string>()
+  const json = (text: string) => new Response(text, { headers: { "content-type": "application/json" } })
+  const served = try acquireRelease(promise(() => serve(async (request) => {
+    const path = new URL(request.url).pathname
+    const authorization = published.get(path)
+    if (path === "/api/v1/projects") return json(body)
+    return authorization === undefined ? new Response("missing", { status: 404 }) : json(authorization)
+  })), (server) => promise(() => server.close()))
   const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
   chain.setFinalized(try promise(() => escrow.head()))
-  return { escrow, vault, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)) }
+  return { escrow, vault, reserveVault, legacyVault, published, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)) }
 })
 
 interface Budget {
@@ -112,11 +140,17 @@ interface Budget {
   readonly additionalFeeReserve?: string
 }
 
-effect function operatorConfig(rpcUrl: string, budget: Budget = {}, apiOrigin?: string) {
+interface Months {
+  readonly projectId: string
+  readonly firstPeriod: Period
+}
+
+effect function operatorConfig(rpcUrl: string, budget: Budget = {}, apiOrigin?: string, months?: Months) {
   const { registry, operator } = try Bench
   return try Effect.try(() => JSON.stringify({
-    apiOrigin: apiOrigin ?? registry, network: "base-mainnet", projectIds: [project], signer: operator.address, rpcUrl, perRun: 10, replacementActivated: true,
+    apiOrigin: apiOrigin ?? registry, network: "base-mainnet", projectIds: [months?.projectId ?? project], signer: operator.address, rpcUrl, perRun: 10, replacementActivated: true,
     gas: { perTransaction: budget.perTransaction ?? "5000000000000000", perDay: budget.perDay ?? "9000000000000000", additionalFeeReserve: budget.additionalFeeReserve ?? "0" },
+    ...months === undefined ? {} : { monthlySchedule: { firstPeriod: formatPeriod(months.firstPeriod), cutoffSecondsAfterPeriodEnd: CUTOFF_SECONDS } },
   }))
 }
 
@@ -183,6 +217,92 @@ effect function settled() {
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function signedBy(account: Account, digest: Bytes32) {
+  const signature = try Effect.try(() => secp256k1.sign(hexToBytes(digest.slice(2)), hexToBytes(account.privateKey.slice(2)), { prehash: false, lowS: true, format: "recovered" }))
+  return `${try Effect.try(() => bytesToHex(signature.slice(1, 65)))}${(27 + (signature[0] ?? 0)).toString(16)}`
+}
+
+interface MonthPlan {
+  readonly projectId: string
+  readonly vault: EvmAddress
+  readonly period: Period
+  readonly snapshot: Bytes32
+  readonly entries: ReadonlyArray<MonthlyEntry>
+}
+
+function planOf(month: MonthPlan, allocation: string, digest: Bytes32, total: bigint) {
+  return { request: { projectId: month.projectId, period: formatPeriod(month.period), network: "base-mainnet", snapshotSha256: month.snapshot.slice(2) }, family: "evm", allocationRoot: allocation, messageHex: digest.slice(2), totalGrossBase: total.toString(), entries: month.entries.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.sourceDigest })) }
+}
+
+effect function publish(month: MonthPlan, authorization: unknown) {
+  const { published } = try Bench
+  published.set(`/api/v1/payments/projects/${month.projectId}/monthly/${formatPeriod(month.period)}/authorization/base-mainnet`, try Effect.try(() => JSON.stringify({ authorization })))
+}
+
+effect function legacyMonth(month: MonthPlan) {
+  const { escrow } = try Bench
+  const root = try Effect.try(() => allocationRoot(month.entries))
+  const digest = try Effect.try(() => monthlyDigest({ chainId: escrow.chainId, vault: month.vault }, month.period, root))
+  const signatureHex = try signedBy(escrow.roles.authority, digest)
+  const total = month.entries.reduce((sum, entry) => sum + entry.gross, 0n)
+  const plan = planOf(month, root, digest, total)
+  try publish(month, { plan: { ...plan, deployment: { vault: month.vault, asset: escrow.dollar } }, signatureHex })
+  return try Effect.try(() => commitMonthlyCalldata(month.period, month.entries, `0x${signatureHex}` as Hex))
+}
+
+effect function reservedMonth(month: MonthPlan) {
+  const { escrow } = try Bench
+  const tree = try Effect.try(() => sumTree(month.entries))
+  const sequence = decodeUint(try promise(() => escrow.call(month.vault, SOURCE_SEQUENCE_CALL)), U256_MAX)
+  if (sequence === undefined) return try die(new Error("the vault answered a malformed source sequence"))
+  const reservation = { allocationDigest: month.snapshot, allocationRoot: tree.root.hash, wholeGross: tree.root.total, remainingGross: tree.root.total, count: month.entries.length, sourceSequence: sequence }
+  const digest = try Effect.try(() => monthlyReserveDigest({ chainId: escrow.chainId, vault: month.vault }, month.period, reservation))
+  const signatureHex = try signedBy(escrow.roles.authority, digest)
+  const evmReservation = { version: 2, allocationDigest: month.snapshot, allocationRoot: tree.root.hash, wholeGross: tree.root.total.toString(), remainingGross: tree.root.total.toString(), count: month.entries.length, sourceSequence: sequence.toString() }
+  const plan = planOf(month, tree.root.hash, digest, tree.root.total)
+  try publish(month, { plan: { ...plan, deployment: { vault: month.vault, asset: escrow.dollar, identityAuthority: try lower(escrow.roles.authority.address) }, evmReservation }, signatureHex })
+  const leaves: Hex[] = []
+  for (const [index, entry] of month.entries.entries()) leaves.push(try Effect.try(() => commitMonthlyLeafCalldata(month.period, entry, index, tree.proofs[index] ?? [])))
+  return { admission: try Effect.try(() => reserveMonthlyCalldata(month.period, reservation, `0x${signatureHex}` as Hex)), leaves, cursorKey: `monthly:v2:base-mainnet:${month.vault}:${formatPeriod(month.period)}:${tree.root.hash}:finalized-cursor` }
+}
+
+effect function monthOpen() {
+  const { escrow, clock } = try Bench
+  const head = try promise(() => escrow.chain.rpc("eth_getBlockByNumber", ["latest", false]))
+  const seconds = try Effect.try(() => Number(BigInt((head as { readonly timestamp: string }).timestamp)))
+  const period = try Effect.try(() => periodContaining(seconds))
+  const opensAt = periodEndSeconds(period) + CUTOFF_SECONDS
+  try promise(() => escrow.chain.rpc("evm_setNextBlockTimestamp", [opensAt + 600]))
+  try promise(() => escrow.chain.mine())
+  clock.set((opensAt + 900) * 1000)
+  try finalize()
+  return period
+}
+
+effect function automine(on: boolean) {
+  const { escrow } = try Bench
+  try promise(() => escrow.chain.rpc("evm_setAutomine", [on]))
+}
+
+effect function anotherKeeper(vault: EvmAddress, calls: ReadonlyArray<Hex>) {
+  const { escrow } = try Bench
+  try promise(() => escrow.chain.rpc("anvil_dropAllTransactions"))
+  try automine(true)
+  for (const data of calls) try promise(() => escrow.send(escrow.roles.donor.address, vault, data))
+  try finalize()
+}
+
+function monthAnswer(run: KeeperRun, projectId: string, period: Period) {
+  const found = run.results.find((result) => result.projectId === projectId && result.operation === `monthly:${formatPeriod(period)}`)
+  if (found === undefined) return undefined
+  return { state: found.state, alreadyCommitted: found.alreadyCommitted, complete: "complete" in found ? found.complete : "absent", error: found.error }
+}
+
+effect function landed(id: string | null | undefined) {
+  const { escrow } = try Bench
+  return (try promise(() => escrow.chain.rpc("eth_getTransactionReceipt", [id ?? "0x"]))) !== null
 }
 
 const REGISTRY_HOST = "registry.keeper.test"
@@ -442,6 +562,78 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
       replaced: 5,
       reserved: 6,
       bounded: true,
+    })
+  })
+
+  it.effect('A month another keeper finished stays incomplete until this keeper\'s journaled nonces finalize (spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes")', () => effect {
+    const { escrow, reserveVault, legacyVault } = try Bench
+    const period = try monthOpen()
+    const legacy = { projectId: legacyProject, vault: legacyVault, period, snapshot: word(0x5a01n), entries: [{ actor: 301n, gross: 100n, sourceDigest: word(0xc301n) }, { actor: 302n, gross: 200n, sourceDigest: word(0xc302n) }] } satisfies MonthPlan
+    const legacyCommit = try legacyMonth(legacy)
+    const legacyText = try operatorConfig(escrow.chain.url, {}, undefined, { projectId: legacyProject, firstPeriod: period })
+    try automine(false)
+    const legacySent = monthAnswer(try keeperRun(legacyText), legacyProject, period)
+    try anotherKeeper(legacyVault, [legacyCommit])
+    const legacyResent = monthAnswer(try keeperRun(legacyText), legacyProject, period)
+    const legacyNonce = try operatorNonce()
+    const legacyWaiting = monthAnswer(try keeperRun(legacyText), legacyProject, period)
+    const legacyWaitNonce = try operatorNonce()
+    try finalize()
+    const legacyDone = monthAnswer(try keeperRun(legacyText), legacyProject, period)
+
+    const reserve = { projectId: reserveProject, vault: reserveVault, period, snapshot: word(0x5a02n), entries: [{ actor: 201n, gross: 100n, sourceDigest: word(0xc201n) }, { actor: 202n, gross: 200n, sourceDigest: word(0xc202n) }] } satisfies MonthPlan
+    const reserved = try reservedMonth(reserve)
+    const text = try operatorConfig(escrow.chain.url, {}, undefined, { projectId: reserveProject, firstPeriod: period })
+    const base = try operatorNonce()
+    try automine(false)
+    const admitting = try keeperRun(text)
+    const reserveId = admitting.results.find((result) => result.projectId === reserveProject && result.operation === `monthly:${formatPeriod(period)}`)?.transactionId
+    try anotherKeeper(reserveVault, [reserved.admission])
+    try automine(false)
+    const leafRun = try keeperRun(text)
+    const leafIds = leafRun.results.find((result) => result.projectId === reserveProject && result.operation === `monthly:${formatPeriod(period)}`)?.committedSources?.length
+    try anotherKeeper(reserveVault, reserved.leaves)
+    const beforeResend = try promise(() => escrow.chain.snapshot())
+    const resent = monthAnswer(try keeperRun(text), reserveProject, period)
+    const resentNonce = try operatorNonce()
+    const waiting = monthAnswer(try keeperRun(text), reserveProject, period)
+    const waitingNonce = try operatorNonce()
+    const waitingCursor = try journal(recordOf(reserved.cursorKey))
+    try promise(() => escrow.chain.revert(beforeResend))
+    const reorganized = try operatorNonce()
+    const afterReorg = monthAnswer(try keeperRun(text), reserveProject, period)
+    const reofferedNonce = try operatorNonce()
+    const reoffered = try landed(reserveId)
+    try finalize()
+    const firstLeaf = monthAnswer(try keeperRun(text), reserveProject, period)
+    const firstLeafCursor = try journal(recordOf(reserved.cursorKey))
+    try finalize()
+    const doneNonce = try operatorNonce()
+    const done = monthAnswer(try keeperRun(text), reserveProject, period)
+    const finalNonce = try operatorNonce()
+    const finalCursor = try journal(recordOf(reserved.cursorKey))
+
+    const incomplete = { state: "execution-checked", alreadyCommitted: true, complete: false, error: undefined }
+    try same({
+      legacy: { sent: legacySent?.alreadyCommitted, resent: legacyResent, waiting: legacyWaiting, rebroadcast: legacyWaitNonce - legacyNonce, done: legacyDone },
+      reserve: {
+        admitted: [admitting.results.some((result) => result.projectId === reserveProject && result.alreadyCommitted === false && typeof result.transactionId === "string"), leafIds],
+        resent: [resent, resentNonce - base],
+        waiting: [waiting, waitingNonce - resentNonce, waitingCursor],
+        reorganized: [reorganized - base, afterReorg, reofferedNonce - base, reoffered],
+        firstLeaf: [firstLeaf, firstLeafCursor],
+        done: [done, finalNonce - doneNonce, finalCursor],
+      },
+    }, {
+      legacy: { sent: false, resent: { ...incomplete }, waiting: { ...incomplete }, rebroadcast: 0n, done: { state: "execution-checked", alreadyCommitted: true, complete: "absent", error: undefined } },
+      reserve: {
+        admitted: [true, 2],
+        resent: [incomplete, 2n],
+        waiting: [incomplete, 0n, undefined],
+        reorganized: [0n, incomplete, 2n, true],
+        firstLeaf: [incomplete, 1],
+        done: [{ ...incomplete, complete: true }, 0n, 2],
+      },
     })
   })
 })

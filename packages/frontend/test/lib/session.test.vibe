@@ -3,7 +3,8 @@ import { emailVerification } from "@repo/backend/client"
 import { webCrypto } from "@repo/platform/crypto"
 import { Machine as EmailActions } from "../../gen/frontend__emailAction.effect.vibe"
 import { call } from "../../src/platform/api.vibe"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { type BrowserStore, LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { BrowserSession, compositionState, navigationState, sessionServices } from "../../src/session/browserSession.vibe"
 import { EmailLink, emailActionLayer, emailActionMessages } from "../../src/session/emailAction.vibe"
@@ -192,7 +193,7 @@ const Started = Layer.effect(Browser, effect {
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: { ...originsOf("production"), site, api: site, identity, browserOrigins: new Set([site]) },
+  origins: { ...deploymentOrigins("production"), site, api: site, identity, browserOrigins: new Set([site]) },
   pageOrigin: site,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),

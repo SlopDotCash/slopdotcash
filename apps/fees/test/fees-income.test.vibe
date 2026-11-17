@@ -10,16 +10,20 @@ import { D1, type Statement, d1, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { type Anvil, anvil, forward } from "@repo/platform/testing/chains"
-import { internet } from "@repo/platform/testing/internet"
+import { type Handler, internet } from "@repo/platform/testing/internet"
 import { asFetch } from "@repo/platform/testing/quotes"
 import { area, pages } from "@repo/platform/worker"
+import { Socket } from "effect/socket"
 import { feeOnly, separatePaid } from "../gen/fees__directBountyIncome.ts"
 import type { Transfer } from "../gen/settlement__directBounty.ts"
 import { feeConversionsPath, reportApi } from "../src/client/report.vibe"
 import { type DirectAward, bookedDirectFees, receivedDirectFees, recognized } from "../src/directIncome/store.vibe"
 import { evmReceiptTime } from "../src/directIncome/times.vibe"
+import { FeeOperationsUnavailable, inspectFeeOperations } from "../src/programs/feeOperations.vibe"
 import { inspectFeeWorker } from "../src/programs/inspectFeeWorker.vibe"
+import { solanaProbeWorker } from "../src/programs/probeWorker.ts"
 import { qualifyRobinhoodRpc } from "../src/programs/robinhoodRpc.vibe"
+import { probeSolanaRpc } from "../src/programs/solanaRpcProbe.vibe"
 import { feeReportRoutes } from "../src/report/routes.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
 import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
@@ -196,7 +200,7 @@ effect function ask(path: string, options: { readonly method?: string; readonly 
   return { status: response.status, cache: response.headers.get("cache-control"), text, body }
 }
 
-interface Binding { readonly name: string; readonly type: string; readonly text?: string }
+interface Binding { readonly name: string; readonly type: string; readonly text?: string; readonly id?: string }
 
 function cloudflare(bindings: ReadonlyArray<Binding>, calls: Array<string>, source = checkedSource) {
   return internet({
@@ -217,6 +221,149 @@ effect function inspected(fetch: typeof globalThis.fetch, temp: string) {
   const settings = ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "private-token", GITHUB_SHA: checkedSource, RUNNER_TEMP: temp }))
   const run = Effect.provide(inspectFeeWorker([repositoryRoot, "production"]), Layer.merge(FetchHttpClient.layer, settings))
   return Effect.provideService(run, FetchHttpClient.Fetch, fetch) catch (error) => String("message" in error ? error.message : error)
+}
+
+const feeWorker = "slop-fee-converter"
+const tailUrl = "wss://tail.cloudflare.com/tail-0001"
+const leaked = "PRIVATE_SECRET_https://private.invalid/key"
+const solanaVault = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
+const helius = "https://mainnet.helius-rpc.com/?api-key=PRIVATE_CANDIDATE_KEY"
+const probeHosts = ["slop-fee-rpc-read-probe.fixture.workers.dev", "exchange.preview.cloudflareworkers.com", "slop-fee-rpc-read-probe.preview.cloudflareworkers.com"]
+const probeMethods = ["getGenesisHash", "getSlot", "getBlock", "getAccountInfo", "getFirstAvailableBlock"]
+
+interface FeeWorld {
+  readonly bindings: ReadonlyArray<Binding>
+  readonly tagAt?: (read: number) => string
+  readonly gas?: ReadonlyArray<Readonly<Record<string, unknown>>>
+  readonly tailDeleted?: boolean
+  readonly session?: Readonly<Record<string, unknown>>
+  readonly uploadRefused?: boolean
+  readonly probeAnswer?: unknown
+}
+
+interface Seen { readonly route: string; readonly headers: string; readonly body: string }
+
+interface Upload { readonly metadata: unknown; readonly module: string; readonly session: unknown; readonly token: string | null }
+
+interface FeeTraffic {
+  readonly seen: Array<Seen>
+  readonly statements: Array<{ readonly select: boolean; readonly params: number; readonly ran: boolean }>
+  readonly uploads: Array<Upload>
+}
+
+const defaultGas = [
+  { network: "base", state: "signed", maximum_wei: "9007199254740993", actual_wei: "5000", created_at: "2026-11-16T08:00:00.000Z", settled_day: "2026-11-16", raw_tx: leaked },
+  { network: "base", state: "signed", maximum_wei: "7", actual_wei: null, created_at: "2026-11-16T08:01:00.000Z", settled_day: null },
+]
+
+function probeRows(count: number, firstMethod: string) {
+  return {
+    schemaVersion: 1,
+    rows: ["candidate", "recovery", "recovery"].slice(0, count).map((provider) => ({
+      provider, mainnet: true, finalizedSlot: 10, finalizedBlock: true, mintVerified: true, firstAvailableSlot: 0,
+      reads: [firstMethod, ...probeMethods.slice(1)].map((method) => ({ method, ok: true, httpStatus: 200, rpcCode: null })),
+    })),
+  }
+}
+
+function feeCloudflare(world: FeeWorld, db: D1Database) {
+  const traffic: FeeTraffic = { seen: [], statements: [], uploads: [] }
+  const scripts = `/workers/scripts/${feeWorker}`
+  let versionReads = 0
+  const envelope = (result: unknown) => WebResponse.json({ success: true, errors: [], messages: [], result })
+  const refused = (status: number) => WebResponse.json({ success: false, errors: [{ code: 10000, message: leaked }], messages: [], result: null }, { status })
+  const handler: Handler = async (request) => {
+    const url = new URL(request.url)
+    const route = `${request.method} ${url.host === "api.cloudflare.com" ? url.pathname.replace(`/client/v4/accounts/${accountId}`, "") : `${url.host}${url.pathname}`}`
+    traffic.seen.push({ route, headers: JSON.stringify(Object.fromEntries(request.headers)), body: await request.clone().text() })
+    if (route === `GET ${scripts}/deployments`) return envelope({ deployments: [{ id: deploymentId, versions: [{ version_id: versionId, percentage: 100 }] }] })
+    if (route === `GET ${scripts}/versions/${versionId}`) {
+      versionReads += 1
+      return envelope({ id: versionId, annotations: { "workers/tag": world.tagAt?.(versionReads) ?? checkedSource }, resources: { bindings: world.bindings } })
+    }
+    if (route === `GET ${scripts}/schedules`) return envelope({ schedules: [{ cron: "* * * * *" }] })
+    if (route.startsWith("POST /d1/database/") && route.endsWith("/query")) {
+      const query = (await request.json()) as { readonly sql: string; readonly params: ReadonlyArray<string> }
+      const ran = await db.prepare(query.sql).bind(...query.params).all().then(() => true, () => false)
+      traffic.statements.push({ select: query.sql.startsWith("SELECT ") && !/raw_tx|quote|signature/u.test(query.sql), params: query.params.length, ran })
+      const results = query.sql.includes("fee_converter_locks")
+        ? [{ network: "solana", expires_at: "2099-01-01T00:00:00.000Z", gas_revision: 1, run_id: leaked }]
+        : query.sql.includes("fee_native_gas")
+          ? world.gas ?? defaultGas
+          : [{ network: "solana", kind: "claim", state: "failed", created_at: "2026-11-16T08:29:00.000Z", reason: `${leaked} timeout` }]
+      return envelope([{ success: true, results, meta: { changes: 0 } }])
+    }
+    if (route === `POST ${scripts}/tails`) return envelope({ id: "tail-0001", url: tailUrl })
+    if (route === `DELETE ${scripts}/tails/tail-0001`) return world.tailDeleted === false ? refused(200) : envelope(null)
+    if (route === "GET /workers/subdomain") return envelope({ subdomain: "fixture" })
+    if (route === "GET /workers/scripts/slop-fee-rpc-read-probe/subdomain/edge-preview") return envelope(world.session ?? { token: "PRIVATE_PREVIEW_SESSION" })
+    if (route === "POST /workers/scripts/slop-fee-rpc-read-probe/edge-preview") {
+      const form = await request.formData()
+      const text = async (name: string) => {
+        const value = form.get(name)
+        return value === null ? "" : typeof value === "string" ? value : await value.text()
+      }
+      traffic.uploads.push({ metadata: JSON.parse(await text("metadata")) as unknown, module: await text("probe.js"), session: JSON.parse(await text("wrangler-session-config")) as unknown, token: request.headers.get("cf-preview-upload-config-token") })
+      return world.uploadRefused === true ? refused(403) : envelope({ preview_token: "PRIVATE_PREVIEW_TOKEN" })
+    }
+    if (route === "GET exchange.preview.cloudflareworkers.com/exchange") return new WebResponse("PRIVATE_BODY", { status: 400 })
+    if (route.endsWith("/probe")) return WebResponse.json(world.probeAnswer ?? { ...probeRows(2, "getGenesisHash"), private: "PRIVATE_PREVIEW_TOKEN" })
+    return new WebResponse("unexpected", { status: 404 })
+  }
+  const net = internet({ hosts: Object.fromEntries(["api.cloudflare.com", ...probeHosts].map((host) => [host, handler])) })
+  return { traffic, fetch: asFetch(net.handler) }
+}
+
+interface TailSeen { readonly url: string; readonly protocols: unknown; readonly sent: Array<string> }
+
+type Sockets = (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike
+
+function tailSockets(frames: ReadonlyArray<string>, ending: "close" | "error", seen: Array<TailSeen>): Sockets {
+  return (url, protocols) => {
+    const record: TailSeen = { url, protocols, sent: [] }
+    seen.push(record)
+    const listeners = new Map<string, ReadonlyArray<(event: Socket.WebSocketEvent) => void>>()
+    const emit = (type: string, event: Socket.WebSocketEvent) => {
+      for (const listener of listeners.get(type) ?? []) listener(event)
+    }
+    return {
+      readyState: 1,
+      addEventListener: (type, listener) => { listeners.set(type, [...(listeners.get(type) ?? []), listener]) },
+      removeEventListener: (type, listener) => { listeners.set(type, (listeners.get(type) ?? []).filter((known) => known !== listener)) },
+      close: () => undefined,
+      send: (data) => {
+        record.sent.push(typeof data === "string" ? data : new TextDecoder().decode(data))
+        for (const frame of frames) emit("message", { type: "message", data: frame })
+        emit(ending, ending === "close" ? { type: "close", code: 1000 } : { type: "error" })
+      },
+    }
+  }
+}
+
+interface Ran {
+  readonly passed?: Readonly<Record<string, unknown>>
+  readonly failed?: Readonly<Record<string, unknown>>
+}
+
+function diagnosticSettings(temp: string, candidate: string) {
+  return ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_REF: "refs/heads/main", CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "private-token", GITHUB_SHA: checkedSource, RUNNER_TEMP: temp, SLOP_SOLANA_RPC_CANDIDATE: candidate }))
+}
+
+effect function operated(fetch: typeof globalThis.fetch, temp: string, sockets: Sockets) {
+  const run = Effect.provide(inspectFeeOperations([repositoryRoot]), Layer.merge(FetchHttpClient.layer, diagnosticSettings(temp, helius)))
+  const provided = Effect.provideService(Effect.provideService(run, Socket.WebSocketConstructor, sockets), FetchHttpClient.Fetch, fetch)
+  return Effect.map(provided, (output): Ran => ({ passed: output })) catch (error): Ran => ({ failed: error instanceof FeeOperationsUnavailable ? error.failure : { tag: error._tag } })
+}
+
+effect function probedWith(fetch: typeof globalThis.fetch, temp: string, candidate: string) {
+  const run = Effect.provide(probeSolanaRpc([repositoryRoot]), Layer.merge(FetchHttpClient.layer, diagnosticSettings(temp, candidate)))
+  const provided = Effect.provideService(run, FetchHttpClient.Fetch, fetch)
+  return Effect.map(provided, (output): Ran => ({ passed: output })) catch (error): Ran => ({ failed: { ...error.refusal } })
+}
+
+function withoutCheckedAt(value: Readonly<Record<string, unknown>> | undefined) {
+  const { checkedAt, ...rest } = value ?? {}
+  return { checked: typeof checkedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(checkedAt), ...rest }
 }
 
 layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
@@ -372,10 +519,10 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
     })
   })
 
-  it.effect('Inspect the deployed fee Worker bindings by name and kind against the reviewed configuration, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+  it.effect('Inspect the deployed fee Worker bindings, its schedules, journal and tail, and probe the Solana RPC candidate from an unbound preview, never returning a secret value (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const text = try fs.readFileString(`${repositoryRoot}apps/fees/wrangler/feeConverter.production.jsonc`)
-    const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string> }
+    const reviewed = (try orDie(Effect.try(() => JSON.parse(text) as unknown))) as { readonly vars: Readonly<Record<string, string>>; readonly expectedSecrets: ReadonlyArray<string>; readonly d1_databases: ReadonlyArray<{ readonly database_id: string }> }
     const matching: ReadonlyArray<Binding> = [
       { name: "FEE_DB", type: "d1" },
       ...Object.entries(reviewed.vars).map(([name, text]) => ({ name, type: "plain_text", text })),
@@ -423,6 +570,146 @@ layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, tim
         "The deployed fee Worker bindings differ from the reviewed configuration: missing RPC_URL_SOLANA,SOLANA_RECOVERY_RPC_URL; extra none; wrong kind none",
         "The deployed fee Worker bindings differ from the reviewed configuration: missing none; extra none; wrong kind SOLANA_RECOVERY_RPC_URL",
       ],
+    })
+
+    const { db } = try Fixture
+    const databaseId = reviewed.d1_databases[0]?.database_id ?? ""
+    const bound = matching.map((binding) => binding.name === "FEE_DB" ? { ...binding, id: databaseId } : binding)
+    const scripts = `/workers/scripts/${feeWorker}`
+    const pin = [`GET ${scripts}/deployments`, `GET ${scripts}/versions/${versionId}`, `GET ${scripts}/deployments`]
+    const queryRoute = `POST /d1/database/${databaseId}/query`
+    const tailRoutes = [`POST ${scripts}/tails`, `DELETE ${scripts}/tails/tail-0001`]
+    const pinned = { deploymentId, versionId, sourceCommit: checkedSource, checkedSource, sourceMatchesCheckout: true }
+    const unavailable = (stage: string, category: string) => ({ ...pinned, activeVersionRechecked: false, status: "unavailable", stage, category, rawLogsRetained: false })
+    const database = {
+      locks: [{ network: "solana", expiresAt: "2099-01-01T00:00:00.000Z", active: true, gasRevision: 1 }],
+      gas: [{ network: "base", state: "signed", count: 2, maximumBase: "9007199254741000", settledBase: "5000" }],
+      gasRowsLimited: false,
+      attempts: [{ network: "solana", kind: "claim", state: "failed", createdAt: "2026-11-16T08:29:00.000Z", errorCategory: "timeout" }],
+      attemptRowsLimited: false,
+    }
+    const completed = { checked: true, worker: feeWorker, versionId, schedules: ["* * * * *"], expectedEveryMinute: true, database }
+    const frames = [
+      JSON.stringify({ scriptName: feeWorker, outcome: "exception", exceptions: [{ message: `${leaked} rate limit 429` }], logs: [{ message: [JSON.stringify({ event: "fee_claim_error", network: "solana", error: `${leaked} invalid signer key`, raw: leaked }), JSON.stringify({ event: leaked, network: "solana" })] }] }),
+      JSON.stringify({ scriptName: feeWorker, outcome: "ok", logs: [
+        { level: "warn", message: ["[2026-11-17T00:00:00.000Z] WARN (#4):", "fee_buyback_error", { network: "Robinhood", leg: "buyback 0x1234567890123456789012345678901234567890", error: "RpcUnavailable", endpoint: "https://private.invalid/rpc?api-key=PRIVATE_RPC_KEY" }] },
+        { level: "log", message: ["[2026-11-17T00:00:01.000Z] INFO (#4):", "fee_claim_skipped", { network: "Solana", vault: solanaVault, amount: "1", reason: "below the minimum" }] },
+        { level: "warn", message: ["[2026-11-17T00:00:02.000Z] WARN (#4):", "fee_claim_error", { network: "Solana", error: "Solana getAccountInfo: IP blocked PRIVATE_RPC_KEY" }] },
+      ] }),
+      JSON.stringify({ scriptName: "another-worker", logs: [{ message: [leaked] }] }),
+      JSON.stringify({ scriptName: feeWorker, outcome: "ok", logs: [{ message: [JSON.stringify({ event: "fee_claim_error", error: "x".repeat(1024 * 1024) })] }] }),
+      "not json PRIVATE_FRAME",
+    ]
+    const observations = [
+      { outcome: "exception", exceptionCategories: ["rpc-rate-limit"], records: [{ event: "fee_claim_error", network: "solana", errorCategory: "signer-configuration" }] },
+      { outcome: "ok", exceptionCategories: [], records: [
+        { event: "fee_buyback_error", network: "robinhood", leg: "buyback", errorCategory: "rpc-unavailable" },
+        { event: "fee_claim_skipped", network: "solana", vault: solanaVault, errorCategory: "below-minimum" },
+        { event: "fee_claim_error", network: "solana", errorCategory: "rpc-blocked", rpcMethod: "getAccountInfo" },
+      ] },
+    ]
+    const operationsFile = `${temp}/fee-worker-operations.json`
+    const sockets: TailSeen[] = []
+    const inspection = feeCloudflare({ bindings: bound }, db)
+    const diagnosed = try operated(inspection.fetch, temp, tailSockets(frames, "close", sockets))
+    const operationsText = try fs.readFileString(operationsFile)
+    const operationsMode = (try fs.stat(operationsFile)).mode & 0o777
+    const changed = feeCloudflare({ bindings: bound, tagAt: (read) => read >= 3 ? "d".repeat(40) : checkedSource }, db)
+    const changedRun = try operated(changed.fetch, temp, tailSockets([], "close", []))
+    const wrongDatabase = feeCloudflare({ bindings: bound.map((binding) => binding.name === "FEE_DB" ? { ...binding, id: "00000000-0000-4000-8000-000000000000" } : binding) }, db)
+    const wrongDatabaseRun = try operated(wrongDatabase.fetch, temp, tailSockets([], "close", []))
+    const badGas = feeCloudflare({ bindings: bound, gas: [{ network: "base", state: "spent", maximum_wei: "1", actual_wei: null }] }, db)
+    const badGasRun = try operated(badGas.fetch, temp, tailSockets([], "close", []))
+    const kept = feeCloudflare({ bindings: bound, tailDeleted: false }, db)
+    const keptRun = try operated(kept.fetch, temp, tailSockets(frames, "close", []))
+    const keptText = try fs.readFileString(operationsFile)
+    const broken = feeCloudflare({ bindings: bound }, db)
+    const brokenRun = try operated(broken.fetch, temp, tailSockets(frames, "error", []))
+    const routes = (traffic: FeeTraffic) => traffic.seen.map((seen) => seen.route)
+    try same({
+      output: withoutCheckedAt(diagnosed.passed),
+      routes: routes(inspection.traffic),
+      statements: inspection.traffic.statements,
+      tailFilter: inspection.traffic.seen.find((seen) => seen.route === tailRoutes[0])?.body,
+      sockets,
+      operationsPrivate: ["PRIVATE", "private.invalid", "private-token"].some((needle) => operationsText.includes(needle)),
+      operationsMode,
+      changed: [changedRun.failed, routes(changed.traffic).filter((route) => tailRoutes.includes(route))],
+      wrongDatabase: [wrongDatabaseRun.failed, routes(wrongDatabase.traffic).some((route) => route === queryRoute || tailRoutes.includes(route))],
+      badGas: [badGasRun.failed, routes(badGas.traffic).filter((route) => tailRoutes.includes(route))],
+      kept: [withoutCheckedAt(keptRun.failed), routes(kept.traffic).filter((route) => tailRoutes.includes(route)), keptText === `${JSON.stringify(keptRun.failed)}\n`, keptText.includes("PRIVATE")],
+      broken: [withoutCheckedAt(brokenRun.failed), routes(broken.traffic).filter((route) => tailRoutes.includes(route))],
+    }, {
+      output: { ...completed, tailSeconds: 90, observations, rawLogsRetained: false, deploymentId, sourceCommit: checkedSource, checkedSource, sourceMatchesCheckout: true },
+      routes: [...pin, `GET ${scripts}/versions/${versionId}`, `GET ${scripts}/schedules`, queryRoute, queryRoute, queryRoute, ...tailRoutes, ...pin],
+      statements: [{ select: true, params: 0, ran: true }, { select: true, params: 1, ran: true }, { select: true, params: 1, ran: true }],
+      tailFilter: JSON.stringify({ filters: [{ scriptVersion: versionId }] }),
+      sockets: [{ url: tailUrl, protocols: "trace-v1", sent: [JSON.stringify({ debug: false })] }],
+      operationsPrivate: false,
+      operationsMode: 0o600,
+      changed: [unavailable("active-version-after", "metadata-unavailable"), tailRoutes],
+      wrongDatabase: [unavailable("database-binding", "other"), false],
+      badGas: [unavailable("attempts-query", "native-budget"), []],
+      kept: [{ ...unavailable("tail-delete", "other"), ...completed }, tailRoutes, true, false],
+      broken: [{ ...unavailable("tail-transport", "other"), ...completed }, tailRoutes],
+    })
+
+    const probeFile = `${temp}/fee-solana-rpc-probe.json`
+    const previewRoutes = ["GET /workers/subdomain", "GET /workers/scripts/slop-fee-rpc-read-probe/subdomain/edge-preview", "POST /workers/scripts/slop-fee-rpc-read-probe/edge-preview"]
+    const probed = feeCloudflare({ bindings: bound }, db)
+    const probedRun = try probedWith(probed.fetch, temp, helius)
+    const probeText = try fs.readFileString(probeFile)
+    const probeMode = (try fs.stat(probeFile)).mode & 0o777
+    const exchanged = feeCloudflare({ bindings: bound, session: { token: "ORIGINAL_TOKEN", exchange_url: "https://exchange.preview.cloudflareworkers.com/exchange" } }, db)
+    const exchangedRun = try probedWith(exchanged.fetch, temp, helius)
+    const elsewhere = feeCloudflare({ bindings: bound }, db)
+    const elsewhereRun = try probedWith(elsewhere.fetch, temp, "https://private.invalid/?api-key=PRIVATE_CANDIDATE_KEY")
+    const uploadRefused = feeCloudflare({ bindings: bound, uploadRefused: true }, db)
+    const uploadRefusedRun = try probedWith(uploadRefused.fetch, temp, helius)
+    const unknownMethod = feeCloudflare({ bindings: bound, probeAnswer: probeRows(2, "sendTransaction") }, db)
+    const unknownMethodRun = try probedWith(unknownMethod.fetch, temp, helius)
+    const thirdRow = feeCloudflare({ bindings: bound, probeAnswer: probeRows(3, "getGenesisHash") }, db)
+    const thirdRowRun = try probedWith(thirdRow.fetch, temp, helius)
+    const refusal = (operation: string, httpStatus: number | null, cloudflareCode: number | null) => ({ error: "fee_solana_rpc_probe_refused", stage: "remote-read-probe", operation, httpStatus, cloudflareCode })
+    const candidateCarriers = probed.traffic.seen.filter((seen) => [seen.route, seen.headers, seen.body].some((text) => text.includes("PRIVATE_CANDIDATE_KEY")))
+    try same({
+      output: withoutCheckedAt(probedRun.passed),
+      routes: routes(probed.traffic),
+      uploads: probed.traffic.uploads,
+      candidateCarriers: candidateCarriers.map((seen) => [seen.route, seen.body, seen.headers.includes("PRIVATE_PREVIEW_TOKEN")]),
+      probePrivate: ["PRIVATE", "helius", "private-token"].some((needle) => probeText.includes(needle)),
+      probeMode,
+      exchanged: [exchangedRun.passed === undefined, routes(exchanged.traffic).slice(3, -3), exchanged.traffic.uploads.map((upload) => upload.token)],
+      elsewhere: [elsewhereRun.failed, routes(elsewhere.traffic)],
+      uploadRefused: uploadRefusedRun.failed,
+      unknownMethod: unknownMethodRun.failed,
+      thirdRow: thirdRowRun.failed,
+    }, {
+      output: {
+        checked: true,
+        schemaVersion: 1,
+        rows: ["candidate", "recovery"].map((provider) => ({
+          provider, mainnet: true, finalizedSlot: 10, finalizedBlock: true, mintVerified: true, firstAvailableSlot: 0,
+          reads: probeMethods.map((method) => ({ method, ok: true, httpStatus: 200, rpcCode: null, errorCategory: null })),
+        })),
+        workerSha256: try sha256Hex(solanaProbeWorker),
+        previewOnly: true,
+        persistentBindings: 0,
+        feeVersionId: versionId,
+        feeSourceCommit: checkedSource,
+        checkedSource,
+        qualification: "bounded-readiness-only",
+      },
+      routes: [...pin, ...previewRoutes, "POST slop-fee-rpc-read-probe.fixture.workers.dev/probe", ...pin],
+      uploads: [{ metadata: { main_module: "probe.js", bindings: [], compatibility_date: "2026-10-01" }, module: solanaProbeWorker, session: { workers_dev: true, minimal_mode: true }, token: "PRIVATE_PREVIEW_SESSION" }],
+      candidateCarriers: [["POST slop-fee-rpc-read-probe.fixture.workers.dev/probe", JSON.stringify({ candidate: helius }), true]],
+      probePrivate: false,
+      probeMode: 0o600,
+      exchanged: [false, [...previewRoutes.slice(0, 2), "GET exchange.preview.cloudflareworkers.com/exchange", previewRoutes[2], "POST slop-fee-rpc-read-probe.preview.cloudflareworkers.com/probe"], ["ORIGINAL_TOKEN"]],
+      elsewhere: [refusal("candidate", null, null), pin],
+      uploadRefused: refusal("preview-upload", 403, 10000),
+      unknownMethod: refusal("unknown", null, null),
+      thirdRow: refusal("unknown", null, null),
     })
   }))
 })

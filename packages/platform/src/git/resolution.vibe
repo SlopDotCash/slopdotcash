@@ -77,7 +77,9 @@ effect function combinedParentResolution(workspace: Workspace, commit: MergeInpu
     const path = section.slice(0, section.indexOf("\n"))
     if (!combinedPaths.includes(path) || observed.includes(path)) throw refused("Incomplete combined merge paths")
     observed.push(path)
-    const prefixes = section.split("\n").map((line) => line.slice(0, parents.length))
+    const lines = section.split("\n")
+    const hunk = lines.findIndex((line, index) => index > 0 && line.startsWith(`${"@".repeat(parents.length + 1)} `))
+    const prefixes = (hunk < 0 ? [] : lines.slice(hunk + 1)).map((line) => line.slice(0, parents.length))
     if (!prefixes.some((prefix) => prefix === "+".repeat(parents.length) || prefix === "-".repeat(parents.length))) continue
     const entries: Array<{ mode: string; blobSha: string }> = []
     for (const ref of [...parents, commit.sha]) {

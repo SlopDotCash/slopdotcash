@@ -1,12 +1,13 @@
-// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
 import { ConstraintViolation, first, sql } from "@repo/platform/d1"
 import { Refused, admission, answered, body, handle } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
-import { type Choice, type Lookup, type ReferralPath, type ReferralRoute, Rejected, choice, initial, linkRoute } from "../../gen/backend__referralCodes.effect.vibe"
+import { type Choice, type Lookup, type ReferralPath, type ReferralRoute, Rejected, choice, destination, initial, linkRoute } from "../../gen/backend__referralCodes.effect.vibe"
 import { CodeFields, chooseCode } from "../client/referrals.vibe"
-import { getReferralByCode, postReferralsCode } from "../client/refusals.vibe"
+import { getReferralByCode, postProjects, postReferralsCode } from "../client/refusals.vibe"
+import { lookupActor } from "../projects/github/lookup.vibe"
 import { type GitHubLookup, githubEvidence, nameEvidence, referralCode } from "./name.vibe"
 import { ReferredProjectRoutes } from "./projects.vibe"
 import { type Followed, linkOf, send } from "./store.vibe"
@@ -60,12 +61,29 @@ function pathOf(pathname: string): ReferralPath {
   return pathname.startsWith(linkPrefix) ? "NamedReferral" : "OutsideReferral"
 }
 
-const unread: Followed = { state: initial, membership: { tag: "MemberAbsent" } }
+const absent: Lookup = { tag: "MemberAbsent" }
+const unread: Followed = { state: initial, membership: absent }
 const unavailable: Lookup = { tag: "ReadUnavailable" }
+const notAPerson = postProjects.personalAccountRequired.error
+
+effect function currentMember(actor: string, cachedLogin: string) {
+  const found = lookupActor(cachedLogin, actor) catch effect (failure) => {
+    if (failure instanceof Refused && failure.code === notAPerson) return undefined
+    throw failure
+  }
+  return found === undefined ? absent : { tag: "MemberFound", actor: found.githubId, login: found.githubLogin } satisfies Lookup
+}
+
+effect function linked(key: string) {
+  const link = try linkOf(key)
+  const { state, membership } = link
+  if (membership.tag !== "MemberFound" || destination(state, true, key, true, membership).tag !== "FormWithRef") return link
+  return { state, membership: try currentMember(membership.actor, membership.login) } satisfies Followed
+}
 
 effect function followed(key: string | undefined) {
   if (key === undefined) return unread
-  return linkOf(key) catch effect () => {
+  return linked(key) catch effect () => {
     try Effect.logError("referral link read failure")
     return { state: initial, membership: unavailable } satisfies Followed
   }

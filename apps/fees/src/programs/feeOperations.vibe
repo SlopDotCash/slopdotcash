@@ -1,0 +1,502 @@
+// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoAt } from "@repo/platform/clock"
+import { D1, type Statement } from "@repo/platform/d1"
+import { d1Http } from "@repo/platform/d1Http"
+import { Socket } from "effect/socket"
+import { jsonValue } from "../solana/bytes.ts"
+import { inspectFeeWorker } from "./inspectFeeWorker.vibe"
+
+export error DiagnosticStep { message: string }
+export error FeeOperationsUnavailable { message: string; failure: Readonly<Record<string, unknown>> }
+export error CloudflareUnreachable { message: string }
+
+export const operationsUsage = "inspect-fee-operations [repository-root]"
+export const operationsFile = "fee-worker-operations.json"
+
+const cloudflareApi = "https://api.cloudflare.com/client/v4"
+const responseLimit = 1024 * 1024
+const requestSeconds = 20
+const tailSeconds = 90
+const tailMessageLimit = 1024 * 1024
+const tailItems = 100
+const dayMs = 86_400_000
+const account = /^[a-f0-9]{32}$/u
+const diagnosticBinding = /^[a-f0-9-]{36}$/u
+const tailId = /^[a-zA-Z0-9-]+$/u
+const cron = /^[0-9*,/ -]{1,100}$/u
+
+type TailNetwork = "base" | "ethereum" | "robinhood" | "solana"
+
+const networkLabels = new Map<unknown, TailNetwork>([
+  ["base", "base"], ["Base", "base"],
+  ["ethereum", "ethereum"], ["Ethereum", "ethereum"],
+  ["robinhood", "robinhood"], ["Robinhood", "robinhood"],
+  ["solana", "solana"], ["Solana", "solana"],
+])
+
+const events = new Set<unknown>([
+  "fee_converter_run",
+  "fee_converter_network_error",
+  "fee_buyback_error",
+  "fee_bridge_arrived",
+  "fee_bridge_refunded",
+  "fee_conversion_error",
+  "fee_conversion_reconcile_error",
+  "fee_conversion_lock_lost",
+  "fee_conversion_not_converted",
+  "fee_balance_unavailable",
+  "fee_send_waiting",
+  "fee_send_replaced",
+  "fee_claim_skipped",
+  "fee_claim_quoted",
+  "fee_claim_included",
+  "fee_claim_error",
+  "fee_claim_finalized",
+])
+const outcomes = new Set<unknown>(["ok", "canceled", "exceededCpu", "exceededMemory", "exception", "unknown"])
+const buybackLegs = new Set<unknown>(["bridge", "arrival", "refund", "burn"])
+const states = new Set<unknown>(["ran", "locked", "not_converted", "quoted", "pending", "skipped", "no_route", "submitted", "finalized", "failed", "unknown"])
+const gasStates = new Set<unknown>(["reserved", "signed", "abandoned"])
+const attemptKinds = new Set<unknown>(["conversion", "claim", "approval", "bridge", "buyback", "burn"])
+
+const queries = {
+  locks: "SELECT network,expires_at,gas_revision FROM fee_converter_locks ORDER BY network LIMIT 4",
+  gas: "SELECT network,state,maximum_wei,actual_wei,created_at,settled_day FROM fee_native_gas WHERE created_at >= ? OR (state IN ('reserved','signed') AND actual_wei IS NULL) ORDER BY created_at DESC LIMIT 500",
+  attempts: "SELECT network,kind,state,created_at,reason FROM fee_conversions WHERE created_at >= ? OR state IN ('submitted','unknown') ORDER BY created_at DESC LIMIT 100",
+} as const
+
+type Query = keyof typeof queries
+
+type Stage =
+  | "active-version-before"
+  | "database-binding"
+  | "schedule-read"
+  | `${Query}-query`
+  | "tail-create"
+  | "tail-transport"
+  | "tail-delete"
+  | "database-summary"
+  | "active-version-after"
+  | "operational-inspection"
+
+export interface RunResult {
+  readonly network: TailNetwork
+  readonly status: string
+  readonly claimed: number | null
+  readonly reconciled: number | null
+}
+
+export interface TailRecord {
+  readonly event: string
+  network?: TailNetwork
+  leg?: string
+  token?: string
+  vault?: string
+  errorCategory?: string
+  rpcMethod?: string
+  trigger?: "recovery" | "receipts" | "unknown"
+  results?: ReadonlyArray<RunResult>
+}
+
+export interface TailObservation {
+  readonly outcome: string
+  readonly exceptionCategories: ReadonlyArray<string>
+  readonly records: ReadonlyArray<TailRecord>
+}
+
+export interface PinnedVersion {
+  readonly deploymentId: string
+  readonly versionId: string
+  readonly sourceCommit: string
+  readonly checkedSource: string
+  readonly sourceMatchesCheckout: boolean
+}
+
+interface Progress {
+  stage: Stage
+  inner: boolean
+  pinned: Partial<PinnedVersion>
+  completed: Readonly<Record<string, unknown>>
+}
+
+interface Rows {
+  locks: ReadonlyArray<unknown>
+  gas: ReadonlyArray<unknown>
+  attempts: ReadonlyArray<unknown>
+}
+
+export interface CloudflareAnswer {
+  readonly status: number
+  readonly body: unknown
+}
+
+export function fieldOf(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && Object.hasOwn(value, key) ? (value as Readonly<Record<string, unknown>>)[key] : undefined
+}
+
+export function listOf(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function countOf(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function step(message: string) {
+  return new DiagnosticStep({ message })
+}
+
+export function feeErrorCategory(value: unknown): string {
+  if (typeof value !== "string") return "unspecified"
+  const message = value.toLowerCase()
+  if (/^unexpected (?:token|end)|json (?:parse|parsing)|is not valid json|unparseable response/.test(message)) return "response-json"
+  if (/^invalid rpc (?:object|string|list)|^cannot read properties of (?:undefined|null)|^undefined is not an object/.test(message)) return "rpc-shape"
+  if (/not a supported token program account|truncated (?:mint|token)|classic (?:mint|token).*mismatch|unsupported token-2022|duplicate token-2022|^token account (?:data is unavailable|is malformed)|^duplicate fee token account|^fee token holding differs/.test(message)) return "unsupported-token-account"
+  if (/\bblocked\b|access denied|not allowed|not permitted/.test(message)) return "rpc-blocked"
+  if (/401|403|unauthorized|forbidden|authentication/.test(message)) return "authentication"
+  if (/below the minimum/.test(message)) return "below-minimum"
+  if (/gas-cost multiple/.test(message)) return "below-gas-multiple"
+  if (/429|rate.?limit/.test(message)) return "rpc-rate-limit"
+  if (/timeout|timed out|abort/.test(message)) return "timeout"
+  if (/^jupiter /.test(message)) return "quote-provider"
+  if (/^bridge (?:row lacks|quote differs)|^signed bridge order differs|^dln (?:order|proposal|response)|^robinhood chain order status is unavailable/.test(message)) return "bridge-verification"
+  if (/recovery|full.history|independent/.test(message)) return "recovery-proof"
+  if (/key|signer|seed/.test(message)) return "signer-configuration"
+  if (/reviewed.*project|project.*reviewed/.test(message)) return "project-readiness"
+  if (/deploy|authority|program|code hash|mint|vault/.test(message)) return "deployment-verification"
+  if (/native|lamport|insufficient|budget|ceiling/.test(message)) return "native-budget"
+  if (/\b(?:locked|lease)\b/.test(message)) return "lease"
+  if (/^solana |rpc|fetch|connect|http|network/.test(message)) return "rpc-unavailable"
+  return "other"
+}
+
+export function feeRpcMethod(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  return /^Solana (getAccountInfo|getMultipleAccounts|getBalance|getTokenAccountsByOwner|getGenesisHash|getLatestBlockhash|getBlockHeight|getFeeForMessage|simulateTransaction|getSignatureStatuses|getSignaturesForAddress|getTransaction|getBlock|sendTransaction):/.exec(value)?.[1]
+}
+
+function loggedEvents(message: ReadonlyArray<unknown>): ReadonlyArray<unknown> {
+  const named = message.findIndex((part) => events.has(part))
+  if (named === -1) return message.map((part) => typeof part === "string" ? jsonValue(part) : part)
+  const fields = message.slice(named + 1).filter(isRecord).reduce<Readonly<Record<string, unknown>>>((merged, part) => ({ ...merged, ...part }), {})
+  return [{ ...fields, event: message[named] }]
+}
+
+function publicAddress(network: TailNetwork | undefined, value: unknown) {
+  if (network === undefined || typeof value !== "string") return false
+  return network === "solana" ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(value) : /^0x[a-fA-F0-9]{40}$/u.test(value)
+}
+
+function runResults(value: unknown): ReadonlyArray<RunResult> {
+  return listOf(value).slice(0, 4).flatMap((result) => {
+    const network = networkLabels.get(fieldOf(result, "network"))
+    if (network === undefined) return []
+    const status = fieldOf(result, "status")
+    return [{ network, status: states.has(status) && typeof status === "string" ? status : "unknown", claimed: countOf(fieldOf(result, "claimed")), reconciled: countOf(fieldOf(result, "reconciled")) }]
+  })
+}
+
+function tailRecord(event: unknown): TailRecord | undefined {
+  const name = fieldOf(event, "event")
+  if (!events.has(name) || typeof name !== "string") return undefined
+  const row: TailRecord = { event: name }
+  const network = networkLabels.get(fieldOf(event, "network"))
+  if (network !== undefined) row.network = network
+  const leg = fieldOf(event, "leg")
+  if (name === "fee_buyback_error" && buybackLegs.has(leg) && typeof leg === "string") row.leg = leg
+  if (name === "fee_buyback_error" && typeof leg === "string" && /^buyback 0x[a-fA-F0-9]{40}$/u.test(leg)) row.leg = "buyback"
+  const token = fieldOf(event, "token")
+  if (publicAddress(network, token) && typeof token === "string") row.token = token
+  const vault = fieldOf(event, "vault")
+  if (publicAddress(network, vault) && typeof vault === "string") row.vault = vault
+  const stated = fieldOf(event, "reason")
+  const failed = fieldOf(event, "error")
+  if (stated !== undefined || failed !== undefined) {
+    const reason = stated ?? failed
+    row.errorCategory = feeErrorCategory(reason)
+    const method = feeRpcMethod(reason)
+    if (method !== undefined) row.rpcMethod = method
+  }
+  if (name === "fee_converter_run") {
+    const trigger = fieldOf(event, "trigger")
+    row.trigger = trigger === "recovery" ? "recovery" : trigger === "receipts" ? "receipts" : "unknown"
+    row.results = runResults(fieldOf(event, "results"))
+  }
+  return row
+}
+
+export function sanitizeFeeTail(value: unknown, worker: string): TailObservation | null {
+  if (fieldOf(value, "scriptName") !== worker) return null
+  const records = listOf(fieldOf(value, "logs"))
+    .flatMap((log) => loggedEvents(listOf(fieldOf(log, "message"))))
+    .flatMap((event) => tailRecord(event) ?? [])
+  const outcome = fieldOf(value, "outcome")
+  return {
+    outcome: outcomes.has(outcome) && typeof outcome === "string" ? outcome : "unknown",
+    exceptionCategories: listOf(fieldOf(value, "exceptions")).slice(0, 10).map((entry) => feeErrorCategory(fieldOf(entry, "message"))),
+    records: records.slice(0, tailItems),
+  }
+}
+
+function unsignedText(value: unknown): value is string {
+  return typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value)
+}
+
+effect function isTimestamp(value: unknown) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return false
+  const millis = Date.parse(value)
+  return Number.isFinite(millis) && (try isoAt(millis)) === value
+}
+
+effect function baseUnits(value: string) {
+  return try orDie(Effect.try(() => BigInt(value)))
+}
+
+interface GasTotal { readonly network: string; readonly state: string; count: number; maximum: bigint; settled: bigint }
+
+export effect function summarizeFeeDatabase(rows: Rows, now: string) {
+  const gas = new Map<string, GasTotal>()
+  for (const row of rows.gas) {
+    const network = fieldOf(row, "network")
+    const state = fieldOf(row, "state")
+    const maximum = fieldOf(row, "maximum_wei")
+    const actual = fieldOf(row, "actual_wei")
+    if (networkLabels.get(network) !== network || typeof network !== "string" || !gasStates.has(state) || typeof state !== "string" || !unsignedText(maximum) || (actual !== null && !unsignedText(actual))) {
+      throw step("Unexpected fee native-gas row")
+    }
+    const key = `${network}/${state}`
+    const total = gas.get(key) ?? { network, state, count: 0, maximum: 0n, settled: 0n }
+    total.count += 1
+    total.maximum += try baseUnits(maximum)
+    total.settled += try baseUnits(actual ?? "0")
+    gas.set(key, total)
+  }
+  const locks: Array<{ readonly network: string; readonly expiresAt: string; readonly active: boolean; readonly gasRevision: number }> = []
+  for (const row of rows.locks) {
+    const network = fieldOf(row, "network")
+    const expiresAt = fieldOf(row, "expires_at")
+    const revision = fieldOf(row, "gas_revision")
+    if (networkLabels.get(network) !== network || typeof network !== "string" || !(try isTimestamp(expiresAt)) || typeof expiresAt !== "string" || typeof revision !== "number" || !Number.isSafeInteger(revision)) {
+      throw step("Unexpected fee lock row")
+    }
+    locks.push({ network, expiresAt, active: expiresAt >= now, gasRevision: revision })
+  }
+  const attempts: Array<{ readonly network: string; readonly kind: string; readonly state: string; readonly createdAt: string; readonly errorCategory: string }> = []
+  for (const row of rows.attempts) {
+    const network = fieldOf(row, "network")
+    const kind = fieldOf(row, "kind")
+    const state = fieldOf(row, "state")
+    const createdAt = fieldOf(row, "created_at")
+    if (networkLabels.get(network) !== network || typeof network !== "string" || !attemptKinds.has(kind) || typeof kind !== "string" || !states.has(state) || typeof state !== "string" || !(try isTimestamp(createdAt)) || typeof createdAt !== "string") {
+      throw step("Unexpected fee attempt row")
+    }
+    attempts.push({ network, kind, state, createdAt, errorCategory: feeErrorCategory(fieldOf(row, "reason")) })
+  }
+  return {
+    locks,
+    gas: [...gas.values()].map((total) => ({ network: total.network, state: total.state, count: total.count, maximumBase: total.maximum.toString(), settledBase: total.settled.toString() })),
+    gasRowsLimited: rows.gas.length === 500,
+    attempts,
+    attemptRowsLimited: rows.attempts.length === 100,
+  }
+}
+
+export effect function setting(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+export effect function cloudflareToken() {
+  return Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN"))) ?? Redacted.make("")
+}
+
+export effect function cloudflareAnswer(request: HttpClientRequest.HttpClientRequest, seconds: number) {
+  return timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "error" } {
+      const response = try HttpClient.execute(request)
+      const bytes = boundedBytes(response, responseLimit, "Cloudflare API") catch () => undefined
+      return { status: response.status, body: bytes === undefined ? undefined : jsonValue(new TextDecoder().decode(bytes)) } satisfies CloudflareAnswer
+    }
+  }, Duration.seconds(seconds)) catch effect (error) => {
+    throw new CloudflareUnreachable({ message: error._tag === "TimeoutError" ? "The operation timed out" : "fetch failed" })
+  }
+}
+
+export function succeeded(answer: CloudflareAnswer) {
+  return answer.status >= 200 && answer.status <= 299 && fieldOf(answer.body, "success") === true
+}
+
+function feeApi(accountId: string, token: Redacted.Redacted<string>) {
+  const base = `${cloudflareApi}/accounts/${accountId}`
+  return (path: string, body?: unknown) => effect {
+    const headed = HttpClientRequest.setHeaders(body === undefined ? HttpClientRequest.get(`${base}${path}`) : HttpClientRequest.post(`${base}${path}`), { authorization: `Bearer ${Redacted.value(token)}`, "content-type": "application/json" })
+    const request = body === undefined ? headed : HttpClientRequest.bodyJsonUnsafe(headed, body)
+    const answer = cloudflareAnswer(request, requestSeconds) catch effect (error) => { throw step(error.message) }
+    if (answer.status < 200 || answer.status > 299) throw step(`HTTP ${answer.status}`)
+    if (answer.body === undefined) throw step("unparseable response")
+    if (fieldOf(answer.body, "success") !== true) throw step("Fee diagnostic API refused")
+    return fieldOf(answer.body, "result")
+  }
+}
+
+effect function tailRemoved(accountId: string, token: Redacted.Redacted<string>, worker: string, id: string) {
+  const request = HttpClientRequest.setHeaders(HttpClientRequest.delete(`${cloudflareApi}/accounts/${accountId}/workers/scripts/${worker}/tails/${id}`), { authorization: `Bearer ${Redacted.value(token)}` })
+  const answer = cloudflareAnswer(request, requestSeconds) catch effect (error) => { throw step(error.message) }
+  return succeeded(answer)
+}
+
+function tailEnded(error: Cause.TimeoutError | Socket.SocketError) {
+  return error._tag === "TimeoutError" || (error.reason._tag === "SocketCloseError" && error.reason.code === 1000)
+}
+
+effect function tailObservations(url: string, worker: string) {
+  const transport = URL.parse(url)
+  if (transport === null || transport.protocol !== "wss:" || !(transport.hostname.endsWith(".cloudflare.com") || transport.hostname.endsWith(".workers.dev")) || transport.username !== "" || transport.password !== "") {
+    throw step("Unexpected fee tail transport")
+  }
+  const safe: TailObservation[] = []
+  const socket = try Socket.makeWebSocket(url, { protocols: "trace-v1", openTimeout: Duration.seconds(tailSeconds) })
+  const listening = scoped(effect {
+    const reader = try socket.reader
+    const writer = try socket.writer
+    try writer.write(JSON.stringify({ debug: false }))
+    while (true) {
+      const frames = try reader.pull
+      for (const frame of frames) {
+        const raw = typeof frame === "string" ? frame : new TextDecoder().decode(frame)
+        if (raw.length > tailMessageLimit) continue
+        const item = sanitizeFeeTail(jsonValue(raw), worker)
+        if (item !== null && safe.length < tailItems) safe.push(item)
+      }
+    }
+  })
+  timeout(listening, Duration.seconds(tailSeconds)) catch effect (error) => {
+    if (!tailEnded(error)) throw step("Fee tail transport failed")
+  }
+  return safe
+}
+
+effect function queried(statement: Statement) {
+  return try (try D1).all(statement)
+}
+
+interface Inspection {
+  readonly accountId: string
+  readonly token: Redacted.Redacted<string>
+  readonly database: string
+  readonly versionId: string
+  readonly worker: string
+}
+
+effect function operations(input: Inspection, progress: Progress) {
+  const { accountId, token, database, versionId, worker } = input
+  if (!account.test(accountId) || Redacted.value(token) === "" || !diagnosticBinding.test(database) || !diagnosticBinding.test(versionId)) throw step("Invalid diagnostic binding")
+  progress.stage = "database-binding"
+  progress.inner = true
+  const api = feeApi(accountId, token)
+  const version = try api(`/workers/scripts/${worker}/versions/${versionId}`)
+  const databases = listOf(fieldOf(fieldOf(version, "resources"), "bindings")).filter((binding) => fieldOf(binding, "name") === "FEE_DB")
+  const [bound] = databases
+  if (fieldOf(version, "id") !== versionId || databases.length !== 1 || fieldOf(bound, "type") !== "d1" || fieldOf(bound, "id") !== database) throw step("Fee database binding mismatch")
+  progress.stage = "schedule-read"
+  const now = try Clock.currentTimeMillis
+  const checkedAt = try isoAt(now)
+  const since = try isoAt(now - dayMs)
+  const listed = fieldOf(try api(`/workers/scripts/${worker}/schedules`), "schedules")
+  const crons = listOf(listed).map((row) => fieldOf(row, "cron"))
+  if (!Array.isArray(listed) || crons.length > 100 || !crons.every((entry) => typeof entry === "string" && cron.test(entry))) throw step("Fee schedule unavailable")
+  const rows: Rows = { locks: [], gas: [], attempts: [] }
+  const journal = d1Http({ accountId, databaseId: database, token })
+  provide journal {
+    for (const name of ["locks", "gas", "attempts"] as const) {
+      progress.stage = `${name}-query`
+      rows[name] = try queried({ text: queries[name], params: name === "locks" ? [] : [since] })
+    }
+  }
+  const expectedEveryMinute = crons.length === 1 && crons[0] === "* * * * *"
+  const completed = { checkedAt, worker, versionId, schedules: crons, expectedEveryMinute, database: try summarizeFeeDatabase(rows, checkedAt) }
+  progress.completed = completed
+  progress.stage = "tail-create"
+  const tail = try api(`/workers/scripts/${worker}/tails`, { filters: [{ scriptVersion: versionId }] })
+  const id = fieldOf(tail, "id")
+  const url = fieldOf(tail, "url")
+  if (typeof id !== "string" || !tailId.test(id) || typeof url !== "string") throw step("Fee tail unavailable")
+  progress.stage = "tail-transport"
+  const observed = try exit(tailObservations(url, worker))
+  if (Exit.isSuccess(observed)) progress.stage = "tail-delete"
+  const removed = try tailRemoved(accountId, token, worker, id)
+  if (Exit.isFailure(observed)) return try Effect.failCause(observed.cause)
+  if (!removed) throw step("Fee tail cleanup failed")
+  progress.stage = "database-summary"
+  return { ...completed, tailSeconds, observations: observed.value, rawLogsRetained: false }
+}
+
+schema DatabaseEntry { binding: string; database_id: string }
+
+schema ReviewedWorker { name: string; d1_databases: ReadonlyArray<DatabaseEntry> }
+
+effect function reviewedWorker(root: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const text = try fs.readFileString(path.join(root, "apps/fees/wrangler/feeConverter.production.jsonc"))
+  return Schema.decodeUnknownEffect(ReviewedWorker)(jsonValue(text)) catch effect () => { throw step("Fee database configuration missing") }
+}
+
+export effect function pinnedVersion(root: string) {
+  const report = try inspectFeeWorker([root, "production"])
+  return { deploymentId: report.deploymentId, versionId: report.versionId, sourceCommit: report.sourceCommit, checkedSource: report.checkedSource, sourceMatchesCheckout: report.sourceMatchesCheckout } satisfies PinnedVersion
+}
+
+export function sameVersion(before: PinnedVersion, after: PinnedVersion) {
+  return after.versionId === before.versionId && after.deploymentId === before.deploymentId && after.sourceCommit === before.sourceCommit
+}
+
+export effect function privateFile(directory: string, name: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.writeFileString(path.join(directory, name), text, { mode: 0o600 })
+}
+
+effect function diagnosed(args: ReadonlyArray<string>, runnerTemp: string, progress: Progress) {
+  const [root = ".", ...rest] = args
+  if (rest.length > 0) throw step(`usage: ${operationsUsage}`)
+  if ((try setting("GITHUB_REF")) !== "refs/heads/main" || runnerTemp === "") throw step("Main runner required")
+  const reviewed = try reviewedWorker(root)
+  const before = try pinnedVersion(root)
+  progress.pinned = before
+  const database = reviewed.d1_databases.find((entry) => entry.binding === "FEE_DB")?.database_id
+  if (database === undefined || database === "") throw step("Fee database configuration missing")
+  progress.stage = "operational-inspection"
+  const report = try operations({ accountId: (try setting("CLOUDFLARE_ACCOUNT_ID")) ?? "", token: try cloudflareToken(), database, versionId: before.versionId, worker: reviewed.name }, progress)
+  progress.stage = "active-version-after"
+  progress.inner = false
+  const after = try pinnedVersion(root)
+  if (!sameVersion(before, after)) throw step("Fee Worker changed during diagnostics")
+  const output = { ...report, deploymentId: before.deploymentId, sourceCommit: before.sourceCommit, checkedSource: before.checkedSource, sourceMatchesCheckout: before.sourceMatchesCheckout }
+  try privateFile(runnerTemp, operationsFile, `${JSON.stringify(output, null, 2)}\n`)
+  try Console.log(JSON.stringify(output))
+  return output
+}
+
+export effect function inspectFeeOperations(args: ReadonlyArray<string>) {
+  const progress: Progress = { stage: "active-version-before", inner: false, pinned: {}, completed: {} }
+  const runnerTemp = (try setting("RUNNER_TEMP")) ?? ""
+  return diagnosed(args, runnerTemp, progress) catch effect (error) => {
+    const failure = {
+      ...progress.pinned,
+      activeVersionRechecked: false,
+      ...(progress.inner ? progress.completed : {}),
+      status: "unavailable",
+      stage: progress.stage,
+      category: progress.inner ? feeErrorCategory(error instanceof Error ? error.message : undefined) : "metadata-unavailable",
+      rawLogsRetained: false,
+    }
+    if (runnerTemp !== "") try privateFile(runnerTemp, operationsFile, `${JSON.stringify(failure)}\n`)
+    try Console.error(JSON.stringify(failure))
+    throw new FeeOperationsUnavailable({ message: "Fee operational inspection failed", failure })
+  }
+}

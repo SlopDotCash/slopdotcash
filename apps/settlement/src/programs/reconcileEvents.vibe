@@ -1,0 +1,195 @@
+// spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"
+import { RegistryManifestsLive, WalletsLive } from "@repo/backend/ports"
+import { noticePorts } from "@repo/operations/live"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, DatabaseFailure, type NonEmpty, type Outcome, type Statement, classified } from "@repo/platform/d1"
+import { cloudflareApi } from "@repo/platform/d1Http"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { type Reconciled, ReconciliationRefused, readReconciliationPacket, reconcileReviewedPaymentEvents } from "../payments/reviewedEvents.vibe"
+
+export schema ReconciliationStage = "trusted-context" | "reviewed-packet" | "canonical-reconciliation"
+
+export error ReconciliationFailed { stage: ReconciliationStage; httpStatus: number | undefined }
+
+export interface LedgerAccess {
+  readonly accountId: string
+  readonly databaseId: string
+  readonly token: Redacted.Redacted<string>
+  readonly apply: boolean
+  readonly refusals: Ref.Ref<number | undefined>
+  readonly api?: string
+}
+
+const productionDatabase = "1b453124-2709-45af-8389-151a8105c461"
+const trustedRepository = "SlopDotCash/slopdotcash"
+const trustedWorkflow = "SlopDotCash/slopdotcash/.github/workflows/payment-event-reconciliation.yml@refs/heads/main"
+const reportName = "payment-event-reconciliation.json"
+const answerLimitBytes = 16 * 1024 * 1024
+const commit = /^[0-9a-f]{40}$/u
+const cloudflareAccount = /^[a-f0-9]{32}$/u
+const readStatement = /^\s*SELECT\b/iu
+const canonicalInsert = /^\s*INSERT INTO (?:payment_events|payment_obligations|payment_outbox|notifications)\b/iu
+const canonicalUpdates: ReadonlySet<string> = new Set([
+  "UPDATE payment_obligations SET state = 'paid', paid_transaction = ? WHERE id = ? AND state = 'reserved'",
+  "UPDATE payment_outbox SET state = 'paid', lease_token = NULL, lease_until = NULL, updated_at = ? WHERE obligation_id = ?",
+  "UPDATE payment_attempts SET state = 'finalized' WHERE obligation_id = ? AND transaction_id = ?",
+])
+
+const Cell = Schema.Unknown
+
+schema Row = Record<string, Cell>
+schema QueryMeta { changes?: number }
+schema QueryResult { success: boolean; results?: ReadonlyArray<Row>; meta?: QueryMeta }
+schema ApiMessage { message: string }
+schema QueryAnswer { success: boolean; errors?: ReadonlyArray<ApiMessage>; result?: ReadonlyArray<QueryResult> }
+
+function isRead(statement: Statement) {
+  return readStatement.test(statement.text) && !statement.text.includes(";")
+}
+
+function isCanonicalWrite(statement: Statement) {
+  return !statement.text.includes(";") && (canonicalInsert.test(statement.text) || canonicalUpdates.has(statement.text))
+}
+
+function nonEmpty(statements: ReadonlyArray<Statement>): statements is NonEmpty<Statement> {
+  return statements.length > 0
+}
+
+function wire(statement: Statement) {
+  return { sql: statement.text, params: statement.params }
+}
+
+function refusalText(status: number, answer: QueryAnswer | undefined) {
+  const reasons = (answer?.errors ?? []).map((error) => error.message).join("; ")
+  return reasons === "" ? `D1 HTTP API answered ${status}` : reasons
+}
+
+export function reconciliationLedger(access: LedgerAccess) {
+  const url = `${access.api ?? cloudflareApi}/accounts/${access.accountId}/d1/database/${access.databaseId}/query`
+  return Layer.effect(D1, effect {
+    const client = try HttpClient.HttpClient
+    const send = (operation: string, statements: NonEmpty<Statement>, batch: boolean) => effect {
+      const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.bearerToken(HttpClientRequest.post(url), access.token), batch ? { batch: statements.map(wire) } : wire(statements[0]))
+      const response = timeout(provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "error" }), "30 seconds") catch effect (error) => {
+        throw new DatabaseFailure({ operation, message: `D1 HTTP API request failed: ${error._tag}` })
+      }
+      const bytes = boundedBytes(response, answerLimitBytes, "D1 HTTP API answer") catch () => undefined
+      const parsed = bytes === undefined ? undefined : Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown) catch () => undefined
+      const answer = Schema.decodeUnknownEffect(QueryAnswer)(parsed) catch () => undefined
+      const results = answer?.result ?? []
+      if (response.status < 200 || response.status > 299 || answer?.success !== true || results.length !== statements.length || results.some((result) => !result.success)) {
+        try Ref.set(access.refusals, response.status)
+        throw classified(operation, refusalText(response.status, answer))
+      }
+      return results.map((result) => ({ rows: result.results ?? [], changes: result.meta?.changes ?? 0 }) satisfies Outcome)
+    }
+    return {
+      all: (statement) => effect {
+        if (!isRead(statement)) throw new DatabaseFailure({ operation: "all", message: "Canonical read required" })
+        const [outcome] = try send("all", [statement], false)
+        return outcome?.rows ?? []
+      },
+      run: () => Effect.fail(new DatabaseFailure({ operation: "run", message: "Single payment writes are unavailable" })),
+      batch: (statements) => effect {
+        if (!nonEmpty(statements)) return []
+        if (!statements.every(isRead)) {
+          if (!access.apply) throw new DatabaseFailure({ operation: "batch", message: "Preview cannot write payment events" })
+          if (!statements.every((statement) => isRead(statement) || isCanonicalWrite(statement))) throw new DatabaseFailure({ operation: "batch", message: "Only canonical payment indexing statements are allowed" })
+        }
+        return try send("batch", statements, true)
+      },
+    } satisfies D1.Shape
+  })
+}
+
+export function reconciliationServices(access: LedgerAccess) {
+  return Layer.provideMerge(Layer.mergeAll(RegistryManifestsLive, WalletsLive, noticePorts), reconciliationLedger(access))
+}
+
+effect function setting(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function gitOutput(args: ReadonlyArray<string>) {
+  const output = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("git", args, { stdin: "ignore", stderr: "ignore" }))
+    const decoder = new TextDecoder()
+    let text = ""
+    for try (const chunk of handle.stdout) text += decoder.decode(chunk, { stream: true })
+    return Number(try handle.exitCode) === 0 ? text.trim() : undefined
+  })
+  return output catch () => undefined
+}
+
+effect function trustedCheckout() {
+  const trusted = (try setting("GITHUB_ACTIONS")) === "true" && (try setting("GITHUB_REPOSITORY")) === trustedRepository && (try setting("GITHUB_REF")) === "refs/heads/main"
+    && (try setting("GITHUB_EVENT_NAME")) === "workflow_dispatch" && (try setting("GITHUB_WORKFLOW_REF")) === trustedWorkflow
+  if (!trusted) throw new ReconciliationRefused({ message: "Trusted manual main reconciliation required" })
+  const checkout = try gitOutput(["rev-parse", "HEAD"])
+  const changes = try gitOutput(["status", "--porcelain", "--untracked-files=no"])
+  if (checkout === undefined || !commit.test(checkout) || checkout !== (try setting("GITHUB_SHA")) || changes !== "") throw new ReconciliationRefused({ message: "Exact clean reconciliation checkout required" })
+  return checkout
+}
+
+function httpsUrl(text: unknown) {
+  return typeof text === "string" && URL.canParse(text) && new URL(text).protocol === "https:" ? text : undefined
+}
+
+effect function rpcFor(network: string) {
+  const text = try setting("PAYMENT_RPC_URLS")
+  const parsed = Effect.try(() => JSON.parse(text === "" ? "{}" : text) as unknown) catch () => undefined
+  const urls = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? new Map(Object.entries(parsed)) : new Map<string, unknown>()
+  return httpsUrl(urls.get(network))
+}
+
+effect function writeReport(text: string) {
+  const runnerTemp = try setting("RUNNER_TEMP")
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.writeFileString(path.join(runnerTemp === "" ? "." : runnerTemp, reportName), text, { mode: 0o600 })
+}
+
+effect function reconciled(stage: Ref.Ref<ReconciliationStage>, refusals: Ref.Ref<number | undefined>) {
+  const checkout = try trustedCheckout()
+  try Ref.set(stage, "reviewed-packet")
+  const bytes = try setting("SLOP_PAYMENT_RECONCILIATION_PACKET")
+  const packet = try readReconciliationPacket(bytes, try setting("SLOP_PAYMENT_RECONCILIATION_SHA256"))
+  const accountId = try setting("CLOUDFLARE_ACCOUNT_ID")
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN")))
+  const rpcUrl = try rpcFor(packet.network)
+  if (!cloudflareAccount.test(accountId) || token === undefined || Redacted.value(token) === "" || rpcUrl === undefined)
+    throw new ReconciliationRefused({ message: "Protected reconciliation configuration required" })
+  const apply = (try setting("SLOP_PAYMENT_RECONCILIATION_APPLY")) === "true"
+  try Ref.set(stage, "canonical-reconciliation")
+  provide reconciliationServices({ accountId, databaseId: productionDatabase, token, apply, refusals }) {
+    const result: Reconciled = try reconcileReviewedPaymentEvents(packet, Redacted.make([rpcUrl]), apply)
+    return {
+      checkedAt: try isoNow(),
+      sourceCommit: checkout,
+      packetSha256: try sha256Hex(bytes),
+      apply,
+      ...result,
+      cursorChangedByRunner: false,
+    }
+  }
+}
+
+export effect function reconcileEvents(args: ReadonlyArray<string>) {
+  const stage = try Ref.make<ReconciliationStage>("trusted-context")
+  const refusals = try Ref.make<number | undefined>(undefined)
+  const outcome = try exit(args.length === 0 ? reconciled(stage, refusals) : Effect.fail(new ReconciliationRefused({ message: "usage: reconcile-events" })))
+  if (Exit.isSuccess(outcome)) {
+    try writeReport(`${JSON.stringify(outcome.value, null, 2)}\n`)
+    try Console.log(JSON.stringify(outcome.value))
+    return
+  }
+  const failure = Cause.squash(outcome.cause)
+  const httpStatus = failure instanceof DatabaseFailure || failure instanceof ConstraintViolation ? try Ref.get(refusals) : undefined
+  const report = { status: "failed", stage: try Ref.get(stage), ...(httpStatus === undefined ? {} : { httpStatus }) }
+  if ((try setting("RUNNER_TEMP")) !== "") writeReport(`${JSON.stringify(report)}\n`) catch () => undefined
+  try Console.error(JSON.stringify(report))
+  throw new ReconciliationFailed({ stage: report.stage, httpStatus })
+}

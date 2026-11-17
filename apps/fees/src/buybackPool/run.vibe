@@ -2,9 +2,9 @@
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nowSeconds } from "@repo/platform/clock"
 import { positiveAmount, zero } from "../../gen/settlement__money.effect.vibe"
-import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, maximumSafeValue, purchaseDecision, remaining, signs } from "../../gen/fees__buybackPool.effect.vibe"
+import { type BurnRequest, type Event, type Pool, type PurchaseQuote, burnDecision, burnDue, canBeginRun, canBurn, canDecideBurn, canDecidePurchase, canPurchase, canSettleBurn, canSettlePurchase, purchaseDecision, purchaseInput, signs } from "../../gen/fees__buybackPool.effect.vibe"
 import { deadAddress, openSend } from "../../gen/fees__buyback.effect.vibe"
-import { amountOf } from "../buyback/codec.vibe"
+import { amountOf, modelBalance } from "../buyback/codec.vibe"
 import { exactNumber, pausedCalldata, transferCalldata } from "../evm/abi.ts"
 import { approvalNeeded, approvalSettled } from "../evm/approval.vibe"
 import { type Unlanded, attemptStatus, broadcast, credited, feesPerGas, gasLimit, nativeCost, readWord, tokenBalance } from "../evm/client.vibe"
@@ -17,15 +17,12 @@ import { burnTransfers } from "./burnTransfers.ts"
 import { type Facts, type QuoteFacts, type SignedFacts, PoolRefused, closeApproval, failPreparation, journalApproval, loseApproval, poolOf, send, sendFloors, settleApproval, settleClosed } from "./store.vibe"
 
 module verified {
-  import { boundedSend as bounded } from "../kernels/buybackShares.ts"
   import { fromAmount as whole } from "@repo/settlement/kernels/amounts"
   import type { Amount } from "../../gen/settlement__money.ts"
   /** @throws {never} */
-  export function boundedSend(due: bigint, balance: bigint, cap: bigint): bigint { return bounded(due, balance, cap) }
-  /** @throws {never} */
   export function fromAmount(amount: Amount): bigint { return whole(amount) }
 }
-import { boundedSend, fromAmount } from verified
+import { fromAmount } from verified
 
 export interface PoolSettings {
   readonly runId: string
@@ -215,18 +212,12 @@ function unquoted(spent: number, balance: number): PurchaseQuote {
 effect function purchaseLeg(running: Running) {
   const { state, settings } = running
   if (openSend(state.purchase) || state.credit <= 0) return
-  const balance = try tokenBalance(usdg, "finalized")
-  const credit = try big(String(state.credit))
-  const held = boundedSend(credit, balance, credit)
-  if (held <= 0n) return
-  const safe = try big(String(maximumSafeValue))
-  const balanceNumber = Number(boundedSend(balance, safe, safe))
-  const left = remaining(state)
-  if (left <= 0) return try decidedPurchase(running, unquoted(try exact(held, "decidePurchase", "the purchase input"), balanceNumber), {})
-  const amount = boundedSend(credit, balance, try big(String(left)))
-  const spent = try exact(amount, "decidePurchase", "the purchase input")
-  const unrouted = unquoted(spent, balanceNumber)
+  const balance = modelBalance(try tokenBalance(usdg, "finalized"))
+  const spent = purchaseInput(state, balance)
+  if (spent <= 0) return
+  const unrouted = unquoted(spent, balance)
   if (purchaseDecision(state, unrouted).state !== "Quoted") return try decidedPurchase(running, unrouted, {})
+  const amount = try big(String(spent))
   const slippageBps = settings.limits.maxSlippageBps
   const found = try quote("Robinhood", usdg, amount, slop, slippageBps, settings.kyber)
   if (found.kind === "NoRoute") return try decidedPurchase(running, { ...unrouted, route: "NoRouteResult" }, { detail: found.detail })
@@ -242,7 +233,7 @@ effect function purchaseLeg(running: Running) {
     impactBps: priced.priceImpactBps,
     receiver: "fees",
     tokenPaused: paused,
-    balance: balanceNumber,
+    balance,
   }
   const quoted = { amountOut: priced.amountOut.toString(), impactBps: priced.priceImpactBps < 0 ? null : priced.priceImpactBps, summary: priced.summary.slice(0, 8192) } satisfies QuoteFacts
   const verdict = purchaseDecision(running.state, purchaseQuote)

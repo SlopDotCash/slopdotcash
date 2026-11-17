@@ -1,0 +1,44 @@
+// spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/terms.md, "Exclusions are frozen with the terms and stay advice"
+import { type Statement, decoded, first, sql } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { exclusionLengths } from "../program/exclusions.ts"
+import { type ProgramScope, analysisScope, jsonValue } from "./prompts.ts"
+
+schema Manifest { manifest: string }
+schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string; excludedFindings?: ReadonlyArray<string> }
+schema Bounty { scope?: Scope }
+schema ManifestScope { securityBounty?: Bounty }
+
+export type ReceiptScope =
+  | { readonly kind: "scope"; readonly scope: ProgramScope | null; readonly ownerLines: ReadonlyArray<number> }
+  | { readonly kind: "unreadable" }
+
+const noScope: ReceiptScope = { kind: "scope", scope: null, ownerLines: [] }
+
+export effect function scopeOfManifest(manifest: string | null | undefined) {
+  if (manifest === null || manifest === undefined) return noScope
+  const parsed = Schema.decodeUnknownEffect(ManifestScope)(jsonValue(manifest)) catch () => undefined
+  if (parsed === undefined) return { kind: "unreadable" } satisfies ReceiptScope as ReceiptScope
+  const scope = parsed.securityBounty?.scope
+  return { kind: "scope", scope: analysisScope(scope), ownerLines: exclusionLengths(scope) } satisfies ReceiptScope as ReceiptScope
+}
+
+export function receiptManifest(caseId: string): Statement {
+  return sql`SELECT p.manifest FROM security_cases c JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE c.id = ${caseId}`
+}
+
+export effect function scopeOfRows(found: Rows) {
+  const [row] = try decoded(Manifest, found, "receipt project revision")
+  return try scopeOfManifest(row?.manifest)
+}
+
+export effect function receiptScope(projectId: string, policyRevision: number | null) {
+  if (policyRevision === null) return noScope
+  const found = try first(Manifest, sql`SELECT manifest FROM project_revisions WHERE project_id = ${projectId} AND revision = ${policyRevision}`)
+  return try scopeOfManifest(found?.manifest)
+}
+
+export function withOwnerLines(terms: ReceiptTerms, scope: ReceiptScope): ReceiptTerms {
+  return terms.paidTerms && scope.kind === "scope" ? { ...terms, excludedFindings: [...scope.ownerLines] } : terms
+}

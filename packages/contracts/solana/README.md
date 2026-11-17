@@ -348,6 +348,89 @@ entire transaction, including fees and accounting. Frozen destinations do not bl
 other awards. `paid`, reserve, principal paid and fee counters are on-chain. Paid
 records remain permanently allocated to prevent account recreation replay.
 
+## Month pledges
+
+Operator decision of 15 November 2026. Until a month is committed, its money is free
+balance the owner could withdraw. A month pledge locks it in the vault on chain
+([spec/contracts/solanaEscrow.md, "Story: Pledge free funds to future months irrevocably"](../../../spec/contracts/solanaEscrow.md)).
+The owner calls `pledge_month(period, amount)` for a UTC period (`YYYYMM`): the current
+period or one of the next 11. One `MonthPledge` PDA per project and period
+(`["pledge", project, period u32 LE]`, 54 bytes) records the amount and whether it is
+open; `Project.pledged_open` is the sum of open pledges. Clients pledge several periods
+in one transaction, one instruction each; twelve fit in one legacy transaction.
+The owner pays the account's rent (about 0.0013 SOL) and gets it back with
+`close_month_pledge` once the pledge has closed.
+
+- A pledge must fit: free balance stays at or above `pledged_open` after it, otherwise
+  `InsufficientFreeBalance`. A pledge can be raised, never lowered (`PledgeTooLow`); an
+  equal amount changes nothing. A zero amount fails `InvalidAmount`. A past period, one
+  more than 11 months ahead, or a period whose pledge already closed is refused with
+  `PledgePeriodClosed`. A bounty project cannot pledge (`WrongPurpose`). No `month`
+  account is checked: a period's window opens 72 hours after it ends, so the current or
+  a later period cannot be committed yet.
+- `withdraw`, `withdraw_native` and the owner's hand `commit` must leave free balance at
+  or above `pledged_open`, otherwise `PledgedFunds`. Deposits, payments, fee claims and
+  monthly award commits are unchanged.
+- `commit_monthly` takes an optional last account, `month_pledge`, the period's pledge
+  PDA. An open pledge is the owner's consent to that period: the month records even when
+  monthly commitments are off. With them off the limit is the pledge alone, whatever the
+  cap says; with them on it is the larger of the monthly cap and the pledge
+  (`MonthlyCapExceeded` above it). So `set_monthly_commitment(_, false)` or a lowered cap
+  after pledging stops only unpledged months, and turning monthly off never lets a month
+  take more than its pledge. A month never takes funds another period's open pledge
+  holds (`PledgedFunds`). On success the pledge closes and leaves `pledged_open`; any
+  amount above the recorded total is free again. `MonthPledged { project, period,
+  amount }` and `PledgeClosed { project, period, amount, reserved }` are emitted.
+- The program is built with Anchor's `allow-missing-optionals`, so a caller that predates
+  pledges may leave `month_pledge` off entirely (or pass the program ID). Such a commit
+  still counts every open pledge, the period's own included. Anyone can then close that
+  period's pledge at once with `expire_pledge`, which reports `reserved: true`.
+- `expire_pledge(period)` is permissionless. It closes an open pledge whose period was
+  never committed once the period's window has closed (00:00 UTC on the 4th of the
+  second month after it), so pledged funds return to the owner if the executor misses
+  the whole window. Before that, or on a closed pledge, it fails `PledgeNotLapsed`.
+- `close_month_pledge(period)` is the owner's. It deletes a pledge that has already
+  closed (committed or lapsed) and returns its rent to the owner; an open pledge fails
+  `PledgeOpen`. A closed pledge's period is always before the current one (its window
+  opened after the period ended), so `pledge_month` can never reopen it. A closed period
+  with no account reads amount 0 and closed, the same as a period never pledged.
+
+A client reads pledges with one finalized `getMultipleAccounts` of the project and the
+requested periods' pledge PDAs: an absent pledge account reads amount 0 and closed, a
+pledge whose project, period or open flag does not match is an error, and a Project of
+the 332-byte layout reads as no pledge support (not migrated), never as zero pledged.
+The owner's `pledge_month`, `expire_pledge` and `close_month_pledge` transactions are
+planned and simulated unsigned; nothing that plans them signs or sends. In the source
+repository `adapter.ts` does the reading and instruction building
+(`readSolanaMonthPledges`) and `month-pledge.ts` the planning
+(`prepareSolanaPledgeMonths`, `prepareSolanaExpirePledge`, `prepareSolanaClosePledge`,
+`solanaPledgeMonthsMessage`).
+
+Upgrading a live deployment, in this order:
+
+1. Release the site and executor that pass `month_pledge` to `commit_monthly` and read
+   both Project sizes (SlopDotCash/slopdotcash#2828 in the source repository) first, and
+   confirm it is live. In this repository that is settlement's monthly executor, which
+   must name the pledge, and every reader of a Project (settlement's Solana codecs,
+   signer, owner plans and vault totals, and fee claims), which must accept 332 and 340
+   bytes. The new program accepts a commit without the account, but such a commit counts
+   the period's own pledge against it, so the executor must name the pledge before any
+   owner can pledge.
+2. Upgrade the program.
+3. Right after the upgrade, run `migrate_project` on every live ordinary vault (Eliza,
+   Teeny's brain, Hyperliquid Source and pumpfun-source on 15 November 2026). The new
+   program cannot read a 332-byte Project, so every instruction on an unmigrated vault
+   fails (deposits, withdrawals, payments and `commit_monthly`) until it is migrated.
+   `config-plan.mjs migrate` plans one unsigned transaction per unmigrated project; any
+   payer signs it, and it only adds rent and a zero `pledged_open`. A migrated project
+   behaves exactly as before until its owner pledges.
+
+What stays: the program is upgradeable by its upgrade authority, which can replace these
+rules, so a pledge holds funds against the vault owner, not against that key. The owner
+can still lower contributors' amounts before the allocation is frozen; a pledge stops
+withdrawal, not cuts. A pledged month that is never committed lapses when its window
+closes.
+
 ## Local build and end-to-end tests
 
 Validator workflows require a local Docker or Podman engine and the reviewed
@@ -544,19 +627,25 @@ the current upgrade authority after it checks the deployed program bytes and
 that no Config exists. `config-plan.mjs projects` lists every Project account
 and marks which ones the Config pins and which still need migration.
 `config-plan.mjs migrate` builds one unsigned `migrate_project` transaction per
-316-byte project for the input's `payer`. No mode reads keys or sends a
+316- or 332-byte project for the input's `payer`. No mode reads keys or sends a
 transaction.
 
 ### Project account layout
 
-The `Project` account is 332 bytes. The D13 revision removed `service_fees` and
+The `Project` account is 340 bytes. The D13 revision removed `service_fees` and
 appended `purpose`, `monthly_cap` and `monthly_enabled`, and the purpose is a
 project PDA seed. The red-team revision of 24 October 2026 appended
 `accrued_fees` and `monthly_outstanding` (u64 each). A 316-byte project from the
 build before it cannot be read until anyone calls the permissionless
 `migrate_project`, which grows it to 332 bytes, takes any added rent from the
 payer and starts the new fields at zero (that build sent fees out at once).
-The same revision appended `released`, `frozen_at` and `expired` to
+The month pledge revision of 15 November 2026 appended `pledged_open` (u64) at
+offset 332; `migrate_project` also grows a 332-byte project to 340 bytes with
+`pledged_open` at zero, and every earlier offset is unchanged
+([spec/contracts/solanaEscrow.md](../../../spec/contracts/solanaEscrow.md),
+"The pre-pledge build's 332-byte project grows to the current layout with no
+open pledges").
+The 24 October revision appended `released`, `frozen_at` and `expired` to
 `MonthlyAllocation` (now 109 bytes).
 The `expired` field remains for layout compatibility; this build removes
 `expire_month`. New funded months never expire. Before an in-place upgrade,

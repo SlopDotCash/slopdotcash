@@ -35,6 +35,7 @@ service Public {
   readonly imports: D1Database
   readonly outbound: ReadonlyArray<string>
   read(tier: Tier, path: string, headers?: Readonly<Record<string, string>>): Answer!!
+  readImports(path: string): Answer!!
 }
 
 function paidEvent(obligation: string, project: string, network: string, chain: string, vaultAddress: string, actor: string, gross: string, fee: string, net: string, transaction: string) {
@@ -80,6 +81,26 @@ const seed = [
   sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES ('eliza', 'base-mainnet', '12345', '2026-11-17T11:50:00.000Z')`,
 ]
 
+const linkedVault = `0x${"c".repeat(40)}`
+
+function monthlyAward(actor: string, gross: string, fee: string, source: string): Statement {
+  return sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at)
+    VALUES ('month-links', '2026-11', ${actor}, ${`member-${actor}`}, ${gross}, ${fee}, ${digest(source)}, 'base-mainnet', ${linkedVault}, '2026-12-01T00:00:00.000Z')`
+}
+
+const monthLinks = [
+  sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at)
+    VALUES ('month-links', '2026-11', '{}', ${digest("e")}, ${digest("f")}, '698', 2, '2026-12-01T00:00:00.000Z')`,
+  sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at)
+    VALUES ('month-links', '2026-11', 'automatic', NULL, 0, '{}', ${digest("e")}, 'base-mainnet', ${linkedVault}, '698', '2026-12-01T00:00:00.000Z', '2026-12-01T00:00:00.000Z')`,
+  monthlyAward("201", "349", "7", "5"),
+  monthlyAward("202", "349", "5", "6"),
+  obligation("m5", "month-links", "base-mainnet", linkedVault, usdc, "201", "349", "6", "paid", "0xt5"),
+  event("m5", "month-links", "base-mainnet", linkedVault, "201", "349", "6", "343", "0xt5"),
+  obligation("m6", "month-links", "base-mainnet", linkedVault, usdc, "202", "349", "7", "paid", "0xt6"),
+  event("m6", "month-links", "base-mainnet", linkedVault, "202", "349", "7", "342", "0xt6"),
+]
+
 const Started = Layer.effect(Public, effect {
   const mf = try acquireRelease(sync(() => startWorker({ d1: { READS_DB: "public-reads", IMPORT_DB: "disclosure-import" } })), (started) => promise(() => started.dispose()))
   for (const binding of ["READS_DB", "IMPORT_DB"]) {
@@ -91,11 +112,14 @@ const Started = Layer.effect(Public, effect {
   provide d1(reads) {
     try (try D1).batch(seed)
   }
+  provide d1(imports) {
+    try (try D1).batch(monthLinks)
+  }
   const outbound: string[] = []
   const clock = settableClock(now)
-  const site = (tier: Tier) => worker({
+  const site = (tier: Tier, database: D1Database = reads) => worker({
     services: (_env: object) => Layer.mergeAll(
-      d1(reads),
+      d1(database),
       noEdgeCache,
       clock.layer,
       Layer.succeed(DeploymentTier, { tier }),
@@ -113,17 +137,20 @@ const Started = Layer.effect(Public, effect {
     routes: publicRoutes,
   })
   const sites = { production: site("production"), staging: site("staging"), local: site("local") }
+  const importSite = site("production", imports)
+  const answered = (served: typeof importSite, path: string, headers: Readonly<Record<string, string>>) => effect {
+    const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET", headers })))
+    const response = try promise(() => served.fetch(request as unknown as globalThis.Request, {}, context))
+    const text = try promise(() => response.text())
+    const body: unknown = try orDie(Effect.try(() => text === "" ? null : JSON.parse(text) as unknown))
+    return { status: response.status, body, cache: response.headers.get("cache-control") } satisfies Answer
+  }
   return {
     reads,
     imports,
     outbound,
-    read: (tier, path, headers = {}) => effect {
-      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET", headers })))
-      const response = try promise(() => sites[tier].fetch(request as unknown as globalThis.Request, {}, context))
-      const text = try promise(() => response.text())
-      const body: unknown = try orDie(Effect.try(() => text === "" ? null : JSON.parse(text) as unknown))
-      return { status: response.status, body, cache: response.headers.get("cache-control") }
-    },
+    read: (tier, path, headers = {}) => answered(sites[tier], path, headers),
+    readImports: (path) => answered(importSite, path, {}),
   }
 })
 
@@ -141,7 +168,7 @@ const elizaVault = { network: "base-mainnet", vault, freeBalance: "7000000", tot
 const demoVault = { network: "base-sepolia", vault: testVault, freeBalance: "5000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [] }
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Public payment reads serve only stored records and never reach a chain during an RPC outage (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', () => effect {
+  it.effect('Public payment reads serve only stored records, never reach a chain during an RPC outage, and link a paid award to its month under either 2% rounding of the same gross (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', () => effect {
     const site = try Public
     const reads = {
       all: try site.read("production", "/api/v1/payments/vault-payments"),
@@ -217,6 +244,9 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
       },
       outbound: [],
     })
+    const linked = try site.readImports("/api/v1/payments/projects/month-links/vault-payments")
+    const linkedPayment = { ...paidO1, projectId: "month-links", contributionMonth: "2026-11", netBase: "343", id: "base-mainnet:0xt5:0", transactionId: "0xt5" }
+    try same(linked.body, { payments: [linkedPayment, { ...linkedPayment, contributionMonth: null, netBase: "342", id: "base-mainnet:0xt6:0", transactionId: "0xt6" }], through: 2, next: null, total: 2 })
     const shown = reads.vault.body as { snapshots: ReadonlyArray<{ network: string; freeBalance: string | null }>; staleAfterMs: number; servedAt: string }
     try same([shown.snapshots.map((row) => [row.network, row.freeBalance]), shown.staleAfterMs, shown.servedAt], [[["base-mainnet", "7000000"]], 1_800_000, "2026-11-17T12:00:00.000Z"])
     const received = reads.received.body as { contributors: unknown; totals: unknown; generatedAt: string }

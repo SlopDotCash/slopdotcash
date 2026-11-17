@@ -1,34 +1,57 @@
-// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
 import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
-import { d1 } from "@repo/platform/d1"
-import { serviceAuth } from "@repo/platform/http"
+import { d1, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { outboundVia, serviceAuth } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { RegistryLive, RegistryManifestsLive } from "@repo/backend/ports"
-import { admissionServiceRoutes, overviewRoutes, vettingSandbox } from "../../../src/admission/routes.vibe"
+import { Authority } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { ContributorAudience } from "@repo/ports/points"
+import { skillTemplateFrom } from "../../../src/admission/livePin.vibe"
+import { admissionRecordRoutes, admissionServiceRoutes, overviewRoutes, vettingSandbox } from "../../../src/admission/routes.vibe"
+import { EnforcementRowsLive, ProjectEventsLive } from "../../../src/enforcement/port.vibe"
 import { evidenceBucket } from "../../../src/evidence/objects.vibe"
 
 interface Env {
   readonly SLOP_DB: D1Database
   readonly VETTING_EVIDENCE: R2Bucket
   readonly SANDBOX: Fetcher
+  readonly GITHUB: Fetcher
+  readonly ASSETS: Fetcher
   readonly VETTING_RESULT_PUBLIC_KEYS: string
   readonly ADMIN_GITHUB_IDS: string
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
 }
 
+const otherAreas = Layer.mergeAll(
+  Layer.succeed(Notices, {
+    statements: () => succeed([]),
+    fanout: () => succeed([]),
+    payoutRecipient: (project) => succeed(project.stewardGithubId),
+  } satisfies Notices.Shape),
+  Layer.succeed(ContributorAudience, { affected: () => succeed(sql`SELECT NULL AS recipient WHERE 0`) } satisfies ContributorAudience.Shape),
+  Layer.succeed(Authority, { repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) } satisfies Authority.Shape),
+)
+
+function enforcement(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom(env), otherAreas)
+  return Layer.provideMerge(ProjectEventsLive, Layer.provideMerge(EnforcementRowsLive, base))
+}
+
 export default worker({
   services: (env: Env) => Layer.mergeAll(
-    d1(env.SLOP_DB),
-    webCrypto,
+    enforcement(env),
     evidenceBucket(env.VETTING_EVIDENCE),
     vettingSandbox(env.SANDBOX),
-    rolesFrom(env),
+    skillTemplateFrom(env.ASSETS),
+    Layer.provide(github({ authority: "https://api.github.test", token: Redacted.make("ghs_admission_fixture"), userAgent: "security-admission-test" }), outboundVia(env.GITHUB)),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     Layer.provide(Layer.merge(RegistryLive, RegistryManifestsLive), d1(env.SLOP_DB)),
   ),
-  routes: Layer.mergeAll(admissionServiceRoutes, overviewRoutes),
+  routes: Layer.mergeAll(admissionServiceRoutes, overviewRoutes, admissionRecordRoutes),
 })

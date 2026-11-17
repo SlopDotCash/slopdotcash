@@ -15,7 +15,8 @@ import { draftMachine, draftState, editReport, openCompose, openReceipt, reviewR
 import { closeReportDetail, detailStamp, openReportDetail, reportHeadings } from "../../src/flows/security/details.vibe"
 import { type ReportDraft, emptyReport } from "../../src/flows/security/private.vibe"
 import { type TextOwner, loadReportText, pruneReportTexts, reportTextErasure, saveReportText } from "../../src/flows/security/reportText.vibe"
-import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { Deployment } from "../../src/platform/config.vibe"
+import { deploymentOrigins } from "@repo/platform/config"
 import { locks } from "../../src/platform/locks.vibe"
 import { type BrowserStore, LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
 import { BrowserSession, compositionState, sessionServices } from "../../src/session/browserSession.vibe"
@@ -140,7 +141,7 @@ const Seeds = Layer.unwrap(effect {
 
 const deployment = Layer.succeed(Deployment, {
   tier: "production",
-  origins: { ...originsOf("production"), site, api: site, browserOrigins: new Set([site]) },
+  origins: { ...deploymentOrigins("production"), site, api: site, browserOrigins: new Set([site]) },
   pageOrigin: site,
   localBackendOrigin: undefined,
   loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),

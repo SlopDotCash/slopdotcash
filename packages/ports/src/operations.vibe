@@ -1,6 +1,6 @@
-// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"
+// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import type { Statement } from "@repo/platform/d1"
-import type { MailCategory, Network, ReadFailure } from "./backend.vibe"
+import type { MailCategory, Network, ProjectView, ReadFailure } from "./backend.vibe"
 
 export schema NoticeKind = "ApplicationApproved" | "ApplicationRejected" | "ProjectRevision" | "AwardReserved" | "PaymentPaid" | "PayoutHeld" | "WalletChanged" | "ProjectQuarantined" | "ProjectBanned" | "ReinstatementRequested" | "ProjectReinstated" | "ReinstatementDenied" | "ReinstatementReview" | "PayoutException" | "SecurityCase" | "ProjectReady" | "ProjectScanFailed" | "ProjectInstallationLost" | "SecurityReportReceived" | "SlopbotAppealReview" | "SlopbotScamReview"
 
@@ -34,6 +34,7 @@ export interface NoticeFanout {
 export service Notices {
   statements(batch: NoticeBatch): ReadonlyArray<Statement>!!
   fanout(fanout: NoticeFanout): ReadonlyArray<Statement>!!
+  payoutRecipient(project: ProjectView): string!!
 }
 
 export interface Suppression {

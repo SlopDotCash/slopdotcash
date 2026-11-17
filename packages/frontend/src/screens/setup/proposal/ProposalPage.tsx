@@ -9,7 +9,7 @@ import type { PageProps } from "../../../app/pages.ts";
 import type { PageRuntime, SessionShown } from "../../../app/runtime.vibe";
 import { useAddress } from "../../../app/useAddress.ts";
 import { loginHrefFor, useSession } from "../../../app/useSession.ts";
-import type { RepositoryLookup } from "../../../flows/projects/github.vibe";
+import type { RepositoryLookup } from "@repo/backend/client";
 import { normalizeRepositoryInput, type ProposalField } from "../../../flows/projects/proposal.ts";
 import { focusField } from "../fields/ProjectFields.tsx";
 import { slopbotInstallUrl } from "../fields/slopbot.ts";

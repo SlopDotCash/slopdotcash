@@ -1,22 +1,9 @@
 // spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"
 import { type AnyRoute, type Method, type Refusal, route } from "@repo/platform/route"
+import { IncompleteAssessments } from "@repo/ports/slopbot"
 import { getNotificationsIncompleteAssessments as refusals } from "./refusals.vibe"
 
-export schema IncompleteAssessment {
-  readonly projectId: string
-  readonly projectName: string
-  readonly repository: string
-  readonly pullRequest: number
-  readonly since: string
-  readonly retryAt: string | null
-  readonly running: boolean
-}
-
-export schema IncompleteAssessments {
-  readonly recipientGithubId: string
-  readonly items: ReadonlyArray<IncompleteAssessment>
-  readonly next: string | null
-}
+export { IncompleteAssessment, IncompleteAssessments } from "@repo/ports/slopbot"
 
 export const assessmentsPerPage = 25
 

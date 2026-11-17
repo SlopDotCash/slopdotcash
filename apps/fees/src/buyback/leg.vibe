@@ -13,7 +13,7 @@ import { type EvmSigned, FeeWallet } from "../signer/feeWallet.vibe"
 import type { DlnOrderTerms, PreparationAttempt } from "../signer/intents.ts"
 import type { BuybackLimits, NativeLimits } from "../runtime/config.vibe"
 import { chainIds, circleUsdc, robinhoodUsdg } from "../runtime/pins.ts"
-import { type Leg, type Ledger, type SendRecord, type Terms } from "./codec.vibe"
+import { type Leg, type Ledger, type SendRecord, type Terms, modelBalance } from "./codec.vibe"
 import { orderParties } from "./parties.ts"
 import { BuybackRefused, type Facts, type SignedFacts, ledgerOf, send, sendFloors } from "./store.vibe"
 
@@ -38,7 +38,6 @@ import { boundedSend, entitlement, fromAmount, remainingBudget, roundedDivision 
 const orderCeilingMicro = 1_000_000_000n
 const windowCeilingMicro = 5_000_000_000n
 const shareCeilingBps = 5_000n
-const maximumModelBalance = 9_007_199_254_740_991n
 
 export interface LegSettings {
   readonly runId: string
@@ -113,7 +112,7 @@ effect function termsOrder(record: SendRecord) {
 effect function bridgeRequest(running: Running, settings: LegSettings, proposal: EvmOrderProposal, tx: number, quote: BridgeQuote, balance: bigint) {
   const parties = try present(orderParties(proposal.data, { source: running.wallet, receiver: settings.receiver }), "order", "the bridge calldata is not a salted DLN order")
   const { affiliateFeeBytes, ...named } = parties
-  return { ...named, orderId: running.leg.names.number("hash", proposal.order.orderId.toLowerCase()), tx, amount: quote.amount, takeAmount: quote.takeAmount, costBps: quote.costBps, affiliateFee: affiliateFeeBytes, solana: false, nativeFee: quote.nativeFee, balance: Number(smaller(balance, maximumModelBalance)) } satisfies BridgeOrder
+  return { ...named, orderId: running.leg.names.number("hash", proposal.order.orderId.toLowerCase()), tx, amount: quote.amount, takeAmount: quote.takeAmount, costBps: quote.costBps, affiliateFee: affiliateFeeBytes, solana: false, nativeFee: quote.nativeFee, balance: modelBalance(balance) } satisfies BridgeOrder
 }
 
 function costBps(amount: bigint, cost: bigint) {
@@ -189,7 +188,7 @@ effect function approve(running: Running, settings: LegSettings, proposal: EvmOr
   const signed = try wallet.sign({ kind: "DlnApprove", network, nonceFloor: try big(String(floors.evm)), valueMicro: order.giveAmount, amount: order.giveAmount, takeAmount: order.takeAmount, nativeFee: order.nativeFee, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("approveOrder", "a bridge approval is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { summary, takeAmount: order.takeAmount.toString(), signed: signedFacts(settings, signed) })
+  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { summary, takeAmount: order.takeAmount.toString(), balance: balance.toString(), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_approval_submitted", signed.txId)
 }
 
@@ -209,7 +208,7 @@ effect function orderEvm(running: Running, settings: LegSettings) {
   const signed = try (try FeeWallet).sign({ kind: "DlnCreateOrder", network, nonceFloor: try big(String(floors.evm)), valueMicro: amount, order, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("order", "an EVM bridge order is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { terms: termsJson(order), signed: signedFacts(settings, signed) })
+  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { terms: termsJson(order), balance: balance.toString(), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_bridge_submitted", signed.txId)
 }
 

@@ -1,4 +1,4 @@
-// spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"
+// spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"
 import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import type { EnforcementChange, RecordDetails, RecordedActor, RegistryMirror } from "@repo/ports/security"
 import type { Notice, NoticeKind } from "@repo/ports/operations"
@@ -47,6 +47,10 @@ function keysOf(projectId: string, mirror: RegistryMirror): Statement {
   return sql`(SELECT json_group_array(value) FROM (SELECT value FROM json_each(COALESCE((SELECT latest.repository_keys FROM project_enforcements latest WHERE latest.project_id = ${projectId} ORDER BY latest.sequence DESC LIMIT 1), '[]')) UNION SELECT value FROM json_each(${JSON.stringify(mirror.repositoryKeys)})))`
 }
 
+function namedAssessments(rows: ReadonlyArray<number>, issued: string): Statement {
+  return sql`(SELECT json_group_array(id) FROM (SELECT a.id FROM json_each(${JSON.stringify(rows)}) named JOIN vetting_assessments a ON a.rowid = named.value GROUP BY a.id ORDER BY a.id <> ${issued}, MIN(named.key)))`
+}
+
 interface Authored {
   readonly reason: Statement
   readonly evidenceReference: Statement
@@ -65,7 +69,8 @@ effect function authoredBy(entry: JournalEntry, details: RecordDetails | undefin
   if (entry.issuer === "ByVettingService") {
     if (details?.kind !== "service") throw new DetailsMissing({ event: actions[entry.kind], needed: "the signed vetting service issuer" })
     const issuer = details.issuer
-    return { reason: sql`${details.reason}`, evidenceReference: sql`${details.evidenceReference}`, actor: undefined, issuer: sql`json_object('kind', 'vetting-service', 'keySha256', ${issuer.keySha256}, 'assessmentId', ${issuer.assessmentId}, 'policyVersion', ${issuer.policyVersion}, 'rule', ${issuer.rule})`, role: "vetting-service", source: "standing-rule" } satisfies Authored
+    const named = entry.kind === "RecordReinstate" ? sql`, 'assessmentIds', json(${namedAssessments(entry.assessments, issuer.assessmentId)})` : sql``
+    return { reason: sql`${details.reason}`, evidenceReference: sql`${details.evidenceReference}`, actor: undefined, issuer: sql`json_object('kind', 'vetting-service', 'keySha256', ${issuer.keySha256}, 'assessmentId', ${issuer.assessmentId}${named}, 'policyVersion', ${issuer.policyVersion}, 'rule', ${issuer.rule})`, role: "vetting-service", source: "standing-rule" } satisfies Authored
   }
   if (details?.kind !== "decision") throw new DetailsMissing({ event: actions[entry.kind], needed: "the decision's reason, evidence and actor" })
   return { reason: sql`${details.reason}`, evidenceReference: sql`${details.evidenceReference}`, actor: details.actor, issuer: sql`NULL`, role: details.role, source: details.role === "project-moderator" ? "admin-panel" : "owner-request" } satisfies Authored

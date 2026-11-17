@@ -1,11 +1,33 @@
-// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/payoutAudience.md, "The account that listed a project is its source application's applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"
 import { isoNow } from "@repo/platform/clock"
 import { type Statement, sql } from "@repo/platform/d1"
-import type { MailCategory } from "@repo/ports/backend"
+import type { MailCategory, ProjectView } from "@repo/ports/backend"
 import { type Notice, NoticeOutbox, type NoticeFanout, Notices, type Suppression } from "@repo/ports/operations"
+import { type PayoutProject, payoutRecipient } from "../../gen/operations__payoutAudience.effect.vibe"
 import { cancelledEvent, storedKind } from "./rows.vibe"
 
 const always = sql`1`
+
+const canonicalGithubIdText = /^[1-9][0-9]*$/u
+
+export function githubNumber(githubId: string | undefined): number {
+  if (githubId === undefined || !canonicalGithubIdText.test(githubId)) return 0
+  const value = Number(githubId)
+  return Number.isSafeInteger(value) ? value : 0
+}
+
+export function payoutProjectOf(view: Pick<ProjectView, "stewardGithubId" | "stewardAccount" | "listing">): PayoutProject {
+  return {
+    steward: githubNumber(view.stewardGithubId),
+    stewardAccount: view.stewardAccount,
+    listing: { fromApplication: view.listing.fromApplication, applicant: githubNumber(view.listing.applicantGithubId), firstActor: githubNumber(view.listing.firstActorGithubId) },
+  }
+}
+
+function payoutRecipientOf(view: ProjectView): string {
+  const recipient = payoutRecipient(payoutProjectOf(view))
+  return recipient > 0 ? String(recipient) : ""
+}
 
 function canonicalGithubId(value: Statement): Statement {
   return sql`typeof(${value}) = 'text' AND length(${value}) BETWEEN 1 AND 20 AND ${value} GLOB '[1-9]*' AND ${value} NOT GLOB '*[^0-9]*'`
@@ -61,6 +83,9 @@ const noticesLive = Layer.succeed(Notices, {
   },
   fanout: (fanout) => effect {
     return [fanoutNotice(fanout, try isoNow())]
+  },
+  payoutRecipient: (view) => effect {
+    return payoutRecipientOf(view)
   },
 })
 

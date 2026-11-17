@@ -279,7 +279,7 @@ layer(Layer.provideMerge(Started, webCrypto), { excludeTestServices: true, timeo
     }, { submitted: [1, first.submitted, 0, 0], bytes: journaledBefore, nonces: 1, faults: 2 })
   })
 
-  it.effect('Obsolete binding cancellation: the cancellation wins, the old binding wins, and missing evidence is not cancellation (spec/settlement/signer.md, "Cancellation of an obsolete intent uses the same nonce and an empty zero-value self-transfer"; spec/settlement/signer.md, "A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry"; spec/settlement/signer.md, "A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei"; spec/settlement/signer.md, "Both possible winners stay retained")', () => effect {
+  it.effect('Obsolete binding cancellation: the cancellation wins, the old binding wins, a pooled cancellation offered again is accepted, and missing evidence is not cancellation (spec/settlement/signer.md, "Cancellation of an obsolete intent uses the same nonce and an empty zero-value self-transfer"; spec/settlement/signer.md, "A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry"; spec/settlement/signer.md, "A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei"; spec/settlement/signer.md, "Both possible winners stay retained")', () => effect {
     const { escrow } = try Bench
     const accounts = escrow.chain.accounts
     const wallet = (index: number) => accounts[index] ?? escrow.roles.donor
@@ -301,23 +301,34 @@ layer(Layer.provideMerge(Started, webCrypto), { excludeTestServices: true, timeo
     const flaky = try acquireRelease(promise(() => serve(refused)), (opened) => promise(() => opened.close()))
     const cancelling = try run(flaky.url)
     const unprovenAfter = try bindingsOf(unproven.actor)
+    const [pooledBinding] = try bindingsOf(replaced.actor)
+    const archiveKey = `binding-cancel:${pooledBinding?.record.transactions[0] ?? ""}`
+    const archived = try attemptOf(archiveKey)
+    const pooledId = (archived as { readonly transactionId?: string } | undefined)?.transactionId
+    const held = try promise(() => escrow.chain.rpc("eth_getTransactionByHash", [pooledId ?? "0x"]))
+    const againRefused = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_sendRawTransaction", nth: 2, fault: "http500" }]))
+    const againFlaky = try acquireRelease(promise(() => serve(againRefused)), (opened) => promise(() => opened.close()))
+    const offeredAgain = try run(againFlaky.url)
+    const archivedAfter = try attemptOf(archiveKey)
     try mined()
     try automine(true)
     const settled = try run()
     const [cancelledWinner] = try bindingsOf(replaced.actor)
     const [originalWinner] = try bindingsOf(kept.actor)
-    const [held] = try bindingsOf(unproven.actor)
+    const [stillBound] = try bindingsOf(unproven.actor)
     try same({
       signed: signing.submitted.length,
       cancelling: [cancelling.failed, refused.fired.length],
+      pooled: { held: held !== null, failed: offeredAgain.failed, sameId: pooledId !== undefined && offeredAgain.submitted.includes(pooledId), sameBytes: archivedAfter },
       unprovenHasNoCancellation: unprovenAfter.every((found) => !found.cancelled),
       cancelledWinner: [cancelledWinner?.record.state.phase, cancelledWinner?.record.transactions.length],
       originalWinner: [originalWinner?.record.state.phase, (originalWinner?.record.state.cancellationAttempt ?? 0) > 0],
-      held: held?.record.state.phase,
+      held: stillBound?.record.state.phase,
       settledFailures: settled.failed,
     }, {
       signed: 3,
       cancelling: [1, 1],
+      pooled: { held: true, failed: 1, sameId: true, sameBytes: archived },
       unprovenHasNoCancellation: true,
       cancelledWinner: ["Cancelled", 2],
       originalWinner: ["Bound", true],

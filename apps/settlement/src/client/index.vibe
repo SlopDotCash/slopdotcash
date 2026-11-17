@@ -9,6 +9,7 @@ import { referralApi } from "./referrals.vibe"
 import { vaultApi } from "./vault.vibe"
 
 export * from "./contributorAllocation.vibe"
+export { OwnerRequest, PaymentTransaction, RemainingTransfer, SolanaPlan } from "./direct.vibe"
 export * from "./monthly.vibe"
 export * from "./owner.vibe"
 export * from "./public.vibe"

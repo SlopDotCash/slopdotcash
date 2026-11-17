@@ -1,8 +1,9 @@
-// spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+// spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
+import { randomId } from "@repo/platform/crypto"
 import { type D1, type D1Error, type RowMismatch, sql } from "@repo/platform/d1"
 import { type Actor, Refused, body, handleRaw, json, sameOriginWrite } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
-import { type Binding, type ChallengeOutcome, type Deployment, type Event, type EvmConsentSignature, Rejected, challengeOutcome, consentLifetime, deploymentFor, enabled, expirySlack, nowSeconds, offeredExpiry, solanaDeploymentReady, solanaReady, submissionWindow } from "../../gen/backend__bindingConsent.effect.vibe"
+import { type Binding, type ChallengeOutcome, type Deployment, type Event, type EvmConsentSignature, Rejected, canSolanaAdmitAttempt, challengeOutcome, consentLifetime, deploymentFor, enabled, expirySlack, nowSeconds, offeredExpiry, settlementService, solanaAdmitAttempt, solanaDeploymentReady, solanaReady, submissionWindow } from "../../gen/backend__bindingConsent.effect.vibe"
 import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
 import { ConsentFields, SolanaBindFields, bindAuthorize, bindChallenge, solanaBindComplete, solanaBindPrepare } from "../client/bindingConsent.vibe"
 import { postPaymentsWalletsBindAuthorize, postPaymentsWalletsBindChallenge, postPaymentsWalletsSolanaBindComplete, postPaymentsWalletsSolanaBindPrepare } from "../client/refusals.vibe"
@@ -11,7 +12,7 @@ import { AttesterRefused, AttesterUnavailable, attest } from "./attester.vibe"
 import { BindingVersions, type PaymentDeployment, PaymentDeployments, SolanaAttesters, deploymentModel } from "./deployments.vibe"
 import { type Readiness, caseOf, ledgerFingerprint, ledgerOf, modelObligation, readinessOf } from "./ledger.vibe"
 import { type BindingTerms, bindingTypedData, consentSignature, isUint64Decimal, walletSlotSigner, wellFormedSignature } from "./signatures.vibe"
-import { type Scope, loadBinding, noFacts, nothingOutside, sendBinding } from "./store.vibe"
+import { type Facts, type Loaded, type Scope, type Step, loadBinding, noFacts, nothingOutside, sendBinding } from "./store.vibe"
 
 interface Row {
   readonly status: number
@@ -204,6 +205,40 @@ effect function optionalDeployments() {
   return (try PaymentDeployments).served() catch () => undefined
 }
 
+interface SolanaPlan {
+  readonly admitted: boolean
+  readonly accepted: boolean
+  readonly steps: ReadonlyArray<Step>
+}
+
+interface SolanaRequest {
+  readonly step: SolanaStep
+  readonly obligationId: string
+  readonly attemptId: string
+  readonly event: Event
+  readonly by: string
+}
+
+function solanaPlan(loaded: Loaded<Readiness>, request: SolanaRequest): SolanaPlan {
+  const caseId = caseOf(loaded.found.ledger)
+  const admitted = request.step === "prepare" && canSolanaAdmitAttempt(loaded.state, settlementService, modelObligation)
+  const admission: ReadonlyArray<Step> = admitted
+    ? [{ event: { type: "solanaAdmitAttempt", obligation: modelObligation }, by: settlementService, facts: { kind: "admit", obligationId: request.obligationId, attemptId: request.attemptId, privateCaseId: caseId } }]
+    : []
+  const accepted = enabled(admitted ? solanaAdmitAttempt(loaded.state, settlementService, modelObligation) : loaded.state, request.event, request.by)
+  const access: Facts = caseId === undefined ? noFacts : { kind: "access", caseId }
+  const requested: ReadonlyArray<Step> = accepted
+    ? [{ event: request.event, by: request.by, facts: access }]
+    : caseId === undefined ? [] : [{ event: { type: "solanaRefused", obligation: modelObligation }, by: request.by, facts: access }]
+  return { admitted, accepted, steps: [...admission, ...requested] }
+}
+
+effect function admittedPayment(scope: Scope<Readiness, D1Error | RowMismatch, D1>, rows: SolanaRows) {
+  const payment = (try loadBinding(scope)).found.payment
+  if (payment === undefined) throw refused(rows.bindingNotReady)
+  return payment
+}
+
 effect function solanaBind(actor: Actor, step: SolanaStep) {
   const rows = solanaRowsOf(step)
   const { obligationId, transaction } = try fieldsOf(SolanaBindFields, rows)
@@ -220,25 +255,26 @@ effect function solanaBind(actor: Actor, step: SolanaStep) {
     chain: "Base",
     contexts: { evm: freshContext(now), solana: freshContext(now) },
     deployments: (served ?? []).map(deploymentModel),
-    fingerprint: ledgerFingerprint(obligationId),
+    fingerprint: try ledgerFingerprint(obligationId),
     outside: (solana) => effect { return readinessOf(try ledgerOf(by, obligationId), by, obligationId, solana, step === "complete") },
   }
   const loaded = try loadBinding(scope)
-  const caseId = caseOf(loaded.found.ledger)
   const payment = loaded.found.payment
   const event: Event = step === "prepare"
     ? { type: "solanaPrepare", obligation: modelObligation }
     : { type: "solanaComplete", obligation: modelObligation, generation: 1, walletSignature: { recoveredSigner: payment === undefined || signed === undefined ? "" : try walletSlotSigner(signed, payment.destination), transaction: 1 } }
-  const accepted = enabled(loaded.state, event, by)
-  if (!accepted && caseId === undefined) throw solanaRefusal(loaded.state, by, step, served !== undefined)
-  const sent = sendBinding(scope, () => [{ event: accepted ? event : { type: "solanaRefused", obligation: modelObligation }, by, facts: caseId === undefined ? noFacts : { kind: "access", caseId } }]) catch effect (error) => match (error) {
+  const request: SolanaRequest = { step, obligationId, attemptId: step === "prepare" ? try randomId() : "", event, by }
+  if (solanaPlan(loaded, request).steps.length === 0) throw solanaRefusal(loaded.state, by, step, served !== undefined)
+  const sent = sendBinding(scope, (current) => solanaPlan(current, request).steps) catch effect (error) => match (error) {
     when Rejected: throw solanaRefusal(error.state, by, step, served !== undefined);
     default: throw error;
   }
-  if (!accepted) throw solanaRefusal(sent.loaded.state, by, step, served !== undefined)
-  const ready = sent.loaded.found.payment
+  const plan = solanaPlan(sent.loaded, request)
+  if (!plan.accepted) throw solanaRefusal(sent.state, by, step, served !== undefined)
+  const caseId = caseOf(sent.loaded.found.ledger)
   const fetcher = caseId === undefined ? attesters.ordinary : attesters.privateScope
   if (fetcher === undefined) throw refused(rows.identityAttesterUnavailable)
+  const ready = plan.admitted ? try admittedPayment(scope, rows) : sent.loaded.found.payment
   if (ready === undefined) return try die(new Error("a ready Solana binding has no open payout attempt"))
   const bindingContext = step === "prepare" ? contextOf(served ?? [], ready.network, ready.vault) : undefined
   const answer = attest(fetcher, { step: step === "prepare" ? "pay" : "complete-bind", privateScope: caseId !== undefined, payment: ready, transaction: step === "complete" ? signed : undefined }) catch effect (error) => match (error) {

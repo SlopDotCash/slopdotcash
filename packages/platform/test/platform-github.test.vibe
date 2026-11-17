@@ -1,7 +1,9 @@
 import { assert, layer } from "@effect/vitest"
 import { Headers, Response } from "miniflare"
 import { type Handler, bundle, startWorker } from "../src/testing.ts"
-import { githubFake } from "../src/testing/github.ts"
+import { type ScriptedFailure, githubFake } from "../src/testing/github.ts"
+import { GitHub, github } from "../src/github/client.vibe"
+import type { GitHubFailure } from "../src/github/errors.vibe"
 
 interface Answer { readonly status: number; readonly body: unknown }
 
@@ -113,6 +115,39 @@ function at(seen: ReadonlyArray<Seen>, path: string) {
   return seen.filter((request) => request.path === path)
 }
 
+schema Login { login: string }
+
+const secondaryLimitMessages = [
+  "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+  "You have triggered an abuse detection mechanism. Please wait a few minutes before you try again.",
+]
+
+function failureOf(error: GitHubFailure) {
+  if (error._tag === "RateLimited") return { failure: error._tag, status: error.status, wait: error.wait ?? null, retryAfterSeconds: error.retryAfterSeconds ?? null, secondary: error.secondary }
+  if (error._tag === "GitHubRefused") return { failure: error._tag, status: error.status, message: error.message }
+  return { failure: error._tag }
+}
+
+effect function failedWith(fake: Fake, failure: ScriptedFailure) {
+  try sync(() => fake.failNext(/\/users\/octo$/u, failure))
+  return try readOcto(fake)
+}
+
+effect function readOcto(fake: Fake) {
+  const token = try orDie(Effect.try(() => fake.tokens.user("octo")))
+  const client = github({ token: Redacted.make(token), userAgent: "slop-platform-test" })
+  const read = effect {
+    provide client {
+      return { read: (try (try GitHub).json("/users/octo", Login)).login }
+    }
+  }
+  return provideService(Effect.provide(read, FetchHttpClient.layer), FetchHttpClient.Fetch, fake.fetch) catch (error) => failureOf(error)
+}
+
+function sentTo(fake: Fake, path: string) {
+  return fake.requests.filter((request) => new URL(request.url).pathname === path).length
+}
+
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('A list is read across its pages and the token never follows a link off the authority (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
     const harness = try Harness
@@ -219,6 +254,20 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       secondary: { status: 200, body: { failure: "RateLimited", retryAfterSeconds: 30, retryAfter: 30_000, secondary: true } },
       recovered: { status: 200, body: { id: 5001, login: "octo", refusals: [] } },
       waitInRange: true,
+    }))
+    const before = sentTo(harness.fake, "/users/octo")
+    const unhinted = try Effect.forEach(secondaryLimitMessages, (message) => failedWith(harness.fake, { status: 403, message }))
+    const hinted = try failedWith(harness.fake, { rateLimit: { secondary: true, retryAfterSeconds: 45 } })
+    const unrelated = try failedWith(harness.fake, { status: 403, message: "Resource not accessible by integration" })
+    const exhausted = try failedWith(harness.fake, { rateLimit: { secondary: false, retryAfterSeconds: -60 } })
+    const read = try readOcto(harness.fake)
+    try Effect.try(() => assert.deepStrictEqual({ unhinted, hinted, unrelated, exhausted, read, sent: sentTo(harness.fake, "/users/octo") - before }, {
+      unhinted: secondaryLimitMessages.map(() => ({ failure: "RateLimited", status: 403, wait: 60_000, retryAfterSeconds: null, secondary: true })),
+      hinted: { failure: "RateLimited", status: 403, wait: 45_000, retryAfterSeconds: 45, secondary: true },
+      unrelated: { failure: "GitHubRefused", status: 403, message: "Resource not accessible by integration" },
+      exhausted: { failure: "RateLimited", status: 403, wait: null, retryAfterSeconds: 0, secondary: false },
+      read: { read: "octo" },
+      sent: 6,
     }))
   })
 

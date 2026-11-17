@@ -1,4 +1,4 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
@@ -8,6 +8,7 @@ import type { ReceiptTerms } from "../../gen/security__terms.ts"
 import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { jsonValue } from "../analysis/prompts.ts"
+import { type ReceiptScope, receiptManifest, scopeOfRows, withOwnerLines } from "../analysis/scope.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import type { FrozenTerms } from "../receipt/program.vibe"
 import { amountOf, caseTerms, frozenOf, fullAward, losses, severities } from "../terms/receipt.vibe"
@@ -185,12 +186,12 @@ function numbers(ids: ReadonlyArray<string | null>) {
   return ids.flatMap((id) => id === null ? [] : [githubNumber(id)]).filter((id) => id > 0)
 }
 
-effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: ReadonlyArray<EventRow>, members: ReadonlyArray<MemberRow>, triages: ReadonlyArray<TriageRow>) {
+effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: ReadonlyArray<EventRow>, members: ReadonlyArray<MemberRow>, triages: ReadonlyArray<TriageRow>, scope: ReceiptScope) {
   const verified = row.submission_state === "verified"
   const reporter = githubNumber(row.reporter_github_id)
   const deciders = numbers([...events.filter((event) => deciding.has(event.kind)).map((event) => event.actor_github_id), row.technical_decider_github_id, row.related_party_reviewer_github_id])
   const committed = row.award_state === "approved" || row.award_state === "reserved"
-  const terms = verified ? try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }) : initial.terms
+  const terms = verified ? withOwnerLines(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }), scope) : initial.terms
   return try decodeState({
     ...initial,
     reporter,
@@ -231,15 +232,16 @@ export function caseAggregate(id: string): Aggregate<CaseRecord | undefined, Row
       sql`SELECT case_revision, kind, actor_github_id, actor_role, reason, evidence_reference, detail, at, idempotency_key FROM security_case_events WHERE case_id = ${id} ORDER BY case_revision`,
       sql`SELECT github_id, github_login, added_at, revoked_at FROM security_case_members WHERE case_id = ${id} ORDER BY added_at, github_id`,
       sql`SELECT appeal_revision, attempt, state, provider, model, prompt_revision, proposed_outcome, rationale, confidence, escalation_reasons, started_at, finished_at FROM security_appeal_triages WHERE case_id = ${id} ORDER BY appeal_revision, attempt`,
+      receiptManifest(id),
     ],
-    decode: ([cases, events, members, triages]: ReadonlyArray<Rows>) => effect {
+    decode: ([cases, events, members, triages, manifests]: ReadonlyArray<Rows>) => effect {
       const [row] = try decoded(CaseRow, cases ?? [], "security case")
       if (row === undefined) return undefined
       const journal = try decoded(EventRow, events ?? [], "security case events")
       const people = try decoded(MemberRow, members ?? [], "security case members")
       const attempts = try decoded(TriageRow, triages ?? [], "security appeal triages")
       const frozen = try frozenOf(row.terms)
-      return { row, frozen, events: journal, members: people, triages: attempts, model: try modelOf(row, frozen, journal, people, attempts) } satisfies CaseRecord
+      return { row, frozen, events: journal, members: people, triages: attempts, model: try modelOf(row, frozen, journal, people, attempts, try scopeOfRows(manifests ?? [])) } satisfies CaseRecord
     },
   }
 }

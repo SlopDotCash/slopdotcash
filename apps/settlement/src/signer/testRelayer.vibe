@@ -1,14 +1,14 @@
-// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Anyone may admit an attester-signed root once per period inside its window"; spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Anyone may admit an attester-signed root once per period inside its window"; spec/settlement/monthlySettlement.md, "Anyone admits the attester-signed root of exactly the month's unreserved obligations"; spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"
 import { hexToBytes } from "@noble/hashes/utils.js"
 import { type Account, MAX_TRANSACTION_BYTES, SYSTEM_PROGRAM, SolanaRpc, base64Encode } from "@repo/platform/chain/solana"
 import { isoAt } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
-import { decodeAward, decodeMarker, decodeMonth, decodeOrigin, isInitialized } from "../chain/solana/accounts.ts"
+import { decodeAward, decodeMarker, decodeMonth, decodeMonthPledgePresence, decodeOrigin, isInitialized } from "../chain/solana/accounts.ts"
 import { type MonthlyEntry, solanaAllocationRoot } from "../chain/solana/allocationRoot.ts"
 import { digest, hex, i64, u64 } from "../chain/solana/bytes.ts"
-import { type LeafArguments, commitMonthlyAward, payAward, releaseMonthlyAward } from "../chain/solana/instructions.ts"
+import { type LeafArguments, commitMonthly, commitMonthlyAward, payAward, releaseMonthlyAward } from "../chain/solana/instructions.ts"
 import { admitMonth, solanaMonthlyMessage } from "../chain/solana/messages.ts"
-import { awardAddress, monthAddress, originAddress, settledAddress, vetoAddress } from "../chain/solana/pda.ts"
+import { awardAddress, monthAddress, monthPledgeAddress, originAddress, settledAddress, vetoAddress } from "../chain/solana/pda.ts"
 import { type Instruction, compileLegacy, transactionId, unsignedTransaction, withSignature } from "../chain/solana/transactions.ts"
 import { ordinaryFeeBase } from "../kernels/fees.ts"
 import { type Entries, ordinaryScope, within } from "../journal/journal.vibe"
@@ -181,7 +181,13 @@ export effect function commitSolanaMonth(authorization: SignedPlan, admit: boole
       const signature = try Effect.try({ try: () => hexToBytes(signatureHex), catch: () => held("Invalid monthly signature") })
       const admission = admitMonth({ payer: relayer.address, authority: project.identityAuthority, signature, attestation })
       if (admission.kind === "refused") throw held(admission.issue === "payerIsAuthority" ? "Monthly gas signer must be separate from attester" : "Invalid monthly authority")
-      return { transactionIds: [try relayed(verified, relayer, { key: `${journal}:root`, replaceFailed: true, renew: unchanged }, admission.value)], alreadyCommitted: false, notAdmitted: false } satisfies CommitReport
+      const pledge = monthPledgeAddress(verified.program, verified.project, period)
+      const pledged = decodeMonthPledgePresence(try finalizedAccount(pledge), verified.program)
+      if (pledged.kind === "malformed") throw held("Month pledge account layout mismatch")
+      const instructions = pledged.value
+        ? [...admission.value.slice(0, -1), commitMonthly({ ...attestation, payer: relayer.address, monthPledge: pledge })]
+        : admission.value
+      return { transactionIds: [try relayed(verified, relayer, { key: `${journal}:root`, replaceFailed: true, renew: unchanged }, instructions)], alreadyCommitted: false, notAdmitted: false } satisfies CommitReport
     }
     const record = decodeMonth(account, verified.program)
     if (record.kind !== "decoded" || record.value.project !== verified.project || record.value.period !== period || record.value.allocationRoot !== tree.root || record.value.total !== tree.total || record.value.frozenAt !== frozenAt)

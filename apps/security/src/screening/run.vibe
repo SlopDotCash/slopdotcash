@@ -1,14 +1,14 @@
-// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/reportNotices.md, "The receipt-time exclusion context reaches screening, assessment and appeal triage"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
 import { first, sql } from "@repo/platform/d1"
 import { later } from "@repo/platform/worker"
 import type { Claim, Input, Observation, Phase, Screening } from "../../gen/security__screening.ts"
-import type { ExclusionContext } from "../../gen/security__terms.ts"
 import { Rejected, canClaim, mayCall, observedPhase, privateReasonMayUseProposal, qualified } from "../../gen/security__screening.effect.vibe"
 import { analysisMessage, screeningPrompt } from "../analysis/prompts.ts"
 import { type ScreeningDecision, screeningProposal } from "../analysis/proposals.vibe"
 import { backgroundBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { assessQualified } from "../assessment/routes.vibe"
-import { caseExclusions, exactReport, priorCases, scopeAt } from "../assessment/store.vibe"
+import type { ReceiptScope } from "../analysis/scope.vibe"
+import { caseReceipt, exactReport, priorCases } from "../assessment/store.vibe"
 import { routeQualified } from "./notify.vibe"
 import { claimOf, claimed, finished, screeningAt } from "./store.vibe"
 
@@ -23,7 +23,7 @@ export interface Observed {
   readonly proposedReason?: string
 }
 
-schema Facts { project_id: string; created_at: string; case_id: string; policy_revision: number | null }
+schema Facts { project_id: string; created_at: string; case_id: string }
 schema Matched { matched: number }
 
 const duplicateReason = "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report."
@@ -46,7 +46,7 @@ export function screeningReason(observed: Pick<Observed, "observation" | "propos
 }
 
 effect function factsOf(submissionId: string) {
-  return try first(Facts, sql`SELECT s.project_id, s.created_at, i.case_id, c.policy_revision FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id JOIN security_cases c ON c.id = i.case_id WHERE s.id = ${submissionId}`)
+  return try first(Facts, sql`SELECT s.project_id, s.created_at, i.case_id FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id JOIN security_cases c ON c.id = i.case_id WHERE s.id = ${submissionId}`)
 }
 
 effect function earlierEvidence(submissionId: string, facts: Facts, digest: string) {
@@ -70,7 +70,8 @@ effect function earlierEvidence(submissionId: string, facts: Facts, digest: stri
   return reportMatch !== undefined
 }
 
-export effect function observe(submissionId: string, facts: Facts, claim: { readonly screening: Screening; readonly token: Claim }, budgetMs: number, exclusions: ExclusionContext) {
+export effect function observe(submissionId: string, facts: Facts, claim: { readonly screening: Screening; readonly token: Claim }, budgetMs: number, receipt: { readonly exclusions: Input["exclusions"]; readonly scope: ReceiptScope }) {
+  const { exclusions, scope } = receipt
   const route = (try privateRouteReady()) ? "Surplus" as const : "Absent" as const
   if (try earlierEvidence(submissionId, facts, claim.screening.digest)) {
     return { input: { exactVersionLoaded: false, duplicateEvidence: true, route, exclusions }, observation: { tag: "DuplicateEvidence" } } satisfies Observed
@@ -78,7 +79,6 @@ export effect function observe(submissionId: string, facts: Facts, claim: { read
   const report = try exactReport(submissionId, claim.screening.version)
   const input: Input = { exactVersionLoaded: report !== undefined, duplicateEvidence: false, route, exclusions }
   if (report === undefined || !mayCall(claim.screening, claim.token, input)) return { input, observation: { tag: "Unready" } } satisfies Observed
-  const scope = try scopeAt(facts.project_id, facts.policy_revision)
   if (scope.kind === "unreadable") return { input, observation: { tag: "Incomplete" } } satisfies Observed
   const prior = (try priorCases(facts.project_id, facts.case_id)).filter((entry) => entry.summary !== null)
   const answer = try privateCall(screeningPrompt, analysisMessage({ report, scope: scope.scope, priorCases: prior }), budgetMs)
@@ -111,14 +111,14 @@ export effect function screenSubmission(submissionId: string, run: ScreeningRun)
   }
   const nowMs = try Clock.currentTimeMillis
   if (!canClaim(screening, screening.revision, nowMs, run.admitted)) return
-  const exclusions = try caseExclusions(facts.case_id)
+  const receipt = try caseReceipt(facts.case_id)
   const ready = try privateRouteReady()
   const running = try rejectedAsUndefined(claimed(submissionId, { seenRevision: screening.revision, nowMs, admitted: run.admitted }, ready ? { provider: privateProvider, model: privateModel } : undefined))
   if (running === undefined) return
   const token = claimOf(running)
-  const attempt = try exit(observe(submissionId, facts, { screening: running, token }, run.budgetMs, exclusions))
+  const attempt = try exit(observe(submissionId, facts, { screening: running, token }, run.budgetMs, receipt))
   if (Exit.isFailure(attempt)) try Effect.logError("security screening evidence failed", { submissionId })
-  const observed: Observed = Exit.isSuccess(attempt) ? attempt.value : { input: { exactVersionLoaded: false, duplicateEvidence: false, route: ready ? "Surplus" : "Absent", exclusions }, observation: { tag: "Unready" } }
+  const observed: Observed = Exit.isSuccess(attempt) ? attempt.value : { input: { exactVersionLoaded: false, duplicateEvidence: false, route: ready ? "Surplus" : "Absent", exclusions: receipt.exclusions }, observation: { tag: "Unready" } }
   const done = try rejectedAsUndefined(finished(submissionId, token, observed.input, observed.observation, screeningReason(observed)))
   if (done === undefined || !qualified(done)) return
   try routeQualified(submissionId, facts.project_id)

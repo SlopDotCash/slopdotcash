@@ -1,0 +1,182 @@
+// spec/backend/mergeActivity.md, "Outside pull requests come from authors who cannot merge, never bots or drafts"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { GitHubApp, type Scope } from "@repo/platform/github/app"
+import type { Association, MergedPull, OpenPull } from "../../../gen/backend__mergeActivity.ts"
+import { medianWindowHours, waitingHours } from "../../../gen/backend__mergeActivity.effect.vibe"
+
+export const hourMillis = 3_600_000
+
+const openPage = 50
+const openPages = 6
+const mergedPage = 100
+const mergedPages = 3
+const answerLimitBytes = 4 * 1024 * 1024
+const maintainers: ReadonlySet<string> = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
+const associations: Readonly<Record<string, Association>> = {
+  OWNER: "Owner",
+  MEMBER: "Member",
+  COLLABORATOR: "Collaborator",
+  CONTRIBUTOR: "Contributor",
+  FIRST_TIMER: "FirstTimer",
+  FIRST_TIME_CONTRIBUTOR: "FirstTimer",
+}
+
+const openQuery = `query($owner:String!,$name:String!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:${openPage},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{createdAt isDraft authorAssociation author{__typename}
+        reviews(first:40){nodes{authorAssociation author{__typename}}}
+        comments(first:60){nodes{authorAssociation author{__typename}}}}
+    }
+    latest:pullRequests(states:MERGED,first:10,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{createdAt mergedAt authorAssociation author{__typename}}}
+  }
+}`
+
+const mergedQuery = `query($q:String!,$after:String){
+  search(query:$q,type:ISSUE,first:${mergedPage},after:$after){
+    pageInfo{hasNextPage endCursor}
+    nodes{... on PullRequest{createdAt mergedAt authorAssociation author{__typename}}}
+  }
+}`
+
+schema Actor { __typename?: string }
+schema Associated { authorAssociation?: string; author?: Actor | null }
+schema Responses { nodes: ReadonlyArray<Associated> }
+schema PageInfo { hasNextPage: boolean; endCursor: string | null }
+schema OpenNode { createdAt: string; isDraft: boolean; authorAssociation?: string; author?: Actor | null; reviews: Responses; comments: Responses }
+schema OpenConnection { pageInfo: PageInfo; nodes: ReadonlyArray<OpenNode> }
+schema MergedNode { createdAt?: string; mergedAt?: string | null; authorAssociation?: string; author?: Actor | null }
+schema Latest { nodes: ReadonlyArray<MergedNode> }
+schema OpenRepository { pullRequests: OpenConnection; latest: Latest }
+schema OpenData { repository: OpenRepository | null }
+schema SearchConnection { pageInfo: PageInfo; nodes: ReadonlyArray<MergedNode> }
+schema MergedData { search: SearchConnection }
+
+export error ReadFailed { failure: string }
+
+export interface Pulls {
+  readonly open: ReadonlyArray<OpenPull>
+  readonly capped: boolean
+  readonly merged: ReadonlyArray<MergedPull>
+  readonly mergedAt: ReadonlyArray<string>
+}
+
+export type Read = { readonly kind: "read"; readonly pulls: Pulls } | { readonly kind: "failed"; readonly failure: string }
+
+export function hourOf(millis: number) {
+  return Math.floor(millis / hourMillis)
+}
+
+function botOf(node: Associated) {
+  return node.author?.__typename === "Bot"
+}
+
+function associationOf(node: Associated): Association {
+  return associations[node.authorAssociation ?? ""] ?? "NoAssociation"
+}
+
+function maintainer(node: Associated) {
+  return !botOf(node) && maintainers.has(node.authorAssociation ?? "")
+}
+
+function failureOf(error: GitHubFailure) {
+  switch (error._tag) {
+    case "NotFound": return "github-404"
+    case "GitHubMalformed": return "github-graphql-error"
+    case "GitHubUnavailable": return error.status === undefined ? "read-failed" : `github-${error.status}`
+    case "GitHubRefused": return `github-${error.status}`
+    case "RateLimited": return `github-${error.status}`
+  }
+}
+
+function scopeOf(name: string) {
+  return { repositories: [name], permissions: { pull_requests: "read" } } satisfies Scope
+}
+
+function mergedOf(node: MergedNode, createdAt: string, mergedAt: string): MergedPull {
+  return { association: associationOf(node), bot: botOf(node), openedAt: hourOf(millisOf(createdAt)), mergedAt: hourOf(millisOf(mergedAt)) }
+}
+
+effect function asked<S extends Schema.ConstraintDecoder<unknown>>(query: string, variables: Readonly<Record<string, unknown>>, schema: S) {
+  return (try GitHub).graphql(query, variables, schema, { limitBytes: answerLimitBytes }) catch effect (error) => {
+    throw new ReadFailed({ failure: failureOf(error) })
+  }
+}
+
+effect function openPulls(owner: string, name: string, nowMillis: number) {
+  const waitingBefore = nowMillis - waitingHours * hourMillis
+  const open: OpenPull[] = []
+  const latest: MergedNode[] = []
+  let after: string | null = null
+  let capped = false
+  for (let page = 0; page < openPages; page++) {
+    const data: OpenData = try asked(openQuery, { owner, name, after }, OpenData)
+    const repository = data.repository
+    if (repository === null) throw new ReadFailed({ failure: "github-repository-missing" })
+    if (page === 0) latest.push(...repository.latest.nodes)
+    let reachedRecent = false
+    for (const node of repository.pullRequests.nodes) {
+      if (millisOf(node.createdAt) > waitingBefore) reachedRecent = true
+      open.push({
+        association: associationOf(node),
+        bot: botOf(node),
+        draft: node.isDraft,
+        openedAt: hourOf(millisOf(node.createdAt)),
+        maintainerResponded: node.reviews.nodes.some((response) => maintainer(response)) || node.comments.nodes.some((response) => maintainer(response)),
+      })
+    }
+    const info: PageInfo = repository.pullRequests.pageInfo
+    if (!info.hasNextPage || reachedRecent) break
+    if (page === openPages - 1) capped = true
+    after = info.endCursor
+  }
+  return { open, capped, latest }
+}
+
+effect function searchedMerges(repository: string, nowMillis: number) {
+  const since = (try isoAt(nowMillis - medianWindowHours * hourMillis)).slice(0, 10)
+  const q = `repo:${repository} is:pr is:merged merged:>=${since} sort:updated-desc`
+  const found: MergedNode[] = []
+  let after: string | null = null
+  for (let page = 0; page < mergedPages; page++) {
+    const data: MergedData = try asked(mergedQuery, { q, after }, MergedData)
+    found.push(...data.search.nodes)
+    if (!data.search.pageInfo.hasNextPage) break
+    after = data.search.pageInfo.endCursor
+  }
+  return found
+}
+
+effect function pullsOf(repository: string, owner: string, name: string, nowMillis: number) {
+  const { open, capped, latest } = try openPulls(owner, name, nowMillis)
+  const searched = try searchedMerges(repository, nowMillis)
+  const windowStart = hourOf(nowMillis) - medianWindowHours
+  const olderLatest = latest.filter((node) => typeof node.mergedAt === "string" && hourOf(millisOf(node.mergedAt)) < windowStart)
+  const merged: MergedPull[] = []
+  const mergedAt: string[] = []
+  for (const node of [...searched, ...olderLatest]) {
+    if (typeof node.createdAt !== "string" || typeof node.mergedAt !== "string") continue
+    merged.push(mergedOf(node, node.createdAt, node.mergedAt))
+    mergedAt.push(node.mergedAt)
+  }
+  return { kind: "read", pulls: { open, capped, merged, mergedAt } } satisfies Read
+}
+
+effect function installation(owner: string, name: string) {
+  const app = try GitHubApp
+  const id = app.installationFor(owner, name) catch () => undefined
+  if (id === undefined) return undefined
+  const token = app.installationToken(id, scopeOf(name)) catch () => undefined
+  return token === undefined ? undefined : id
+}
+
+export effect function repositoryRead(repository: string, nowMillis: number) {
+  const [owner = "", name = ""] = repository.split("/")
+  const installed = try installation(owner, name)
+  if (installed === undefined) return { kind: "failed", failure: "app-not-installed" } satisfies Read
+  provide (try GitHubApp).asInstallation(installed, scopeOf(name)) {
+    return pullsOf(repository, owner, name, nowMillis) catch (error) => ({ kind: "failed", failure: error.failure }) satisfies Read
+  }
+}

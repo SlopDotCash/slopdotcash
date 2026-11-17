@@ -66,7 +66,7 @@ export effect function withPublicGitObjects<A, E, R>(repository: PublicMergeRepo
     if (version !== MERGE_GIT_VERSION) throw refused("Required merge reconstruction Git version unavailable")
     try publicBytes(directory, ["init", "--bare", "--template="], 1024 * 1024)
     try publicBytes(directory, ["fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", `https://github.com/${repository.full_name ?? ""}.git`, ...new Set(objects)], 1024 * 1024, 1800)
-    try publicBytes(directory, ["fsck", "--full", "--strict", "--no-reflogs"], 1024 * 1024)
+    try publicBytes(directory, ["fsck", "--full", "--strict", "--no-reflogs"], 1024 * 1024, 1800)
     return try read(directory)
   })
 }

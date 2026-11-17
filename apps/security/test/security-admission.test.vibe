@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest"
-import { type World, commit, pending, project, read, rows, signed, started, strangerKey, template } from "./support/admission/harness.ts"
+import { type FlagProject, type World, commit, flagWorld, pending, project, read, rows, signed, signingKeySha256, started, strangerKey, template } from "./support/admission/harness.ts"
 
 service Admission { readonly world: World }
 
@@ -177,6 +177,65 @@ layer(StartedUnkeyed, { excludeTestServices: true, timeout: "180 seconds" })((it
     }, {
       refused: [[503, "vetting_unavailable", "The vetting service is not configured"], [503, "vetting_unavailable", "The vetting service is not configured"]],
       service: { state: "unavailable", queueRegistrationAvailable: false, reason: "The vetting service key is unavailable. New scans cannot be queued, acquired or recorded. Existing decisions still require current retained evidence." },
+    }))
+  })
+})
+
+const single: FlagProject = { id: "flag-single", repositories: [{ path: "slop-test/single", githubId: 5101 }], scans: [{ repository: "slop-test/single", state: "clean" }] }
+const pair: FlagProject = {
+  id: "flag-pair",
+  repositories: [{ path: "slop-test/pair-one", githubId: 5201 }, { path: "slop-test/pair-two", githubId: 5202 }],
+  scans: [{ repository: "slop-test/pair-one", state: "clean" }, { repository: "slop-test/pair-two", state: "clean" }],
+}
+const studied: FlagProject = {
+  id: "flag-studied",
+  repositories: [{ path: "slop-test/studied-one", githubId: 5301 }, { path: "slop-test/studied-two", githubId: 5302 }],
+  scans: [{ repository: "slop-test/studied-one", state: "clean" }, { repository: "slop-test/studied-two", state: "clean" }, { repository: "slop-test/studied-one", state: "incomplete" }],
+}
+const moved: FlagProject = {
+  id: "flag-moved",
+  repositories: [{ path: "slop-test/moved-one", githubId: 5401 }, { path: "slop-test/moved-two", githubId: 5402 }],
+  scans: [{ repository: "slop-test/moved-one", state: "clean" }, { repository: "slop-test/moved-two", state: "clean" }, { repository: "slop-test/moved-two", state: "clean", commit: "e".repeat(40) }],
+}
+
+service Flagged { readonly world: World; readonly scans: ReadonlyMap<string, ReadonlyArray<string>> }
+
+const StartedFlagged = Layer.effect(Flagged, effect {
+  return try acquireRelease(promise(() => flagWorld([single, pair, studied, moved])), (running) => promise(() => running.world.mf.dispose()))
+})
+
+const scanReinstatement = "a scan reinstatement needs the latest completed assessment to be clean"
+
+layer(StartedFlagged, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A flag pause lifts only when storage finds the deciding clean scan of every repository named in the reinstatement (spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision")', () => effect {
+    const { world, scans } = try Flagged
+    const [singleClean = ""] = scans.get(single.id) ?? []
+    const [pairOne = "", pairTwo = ""] = scans.get(pair.id) ?? []
+    const [studiedOne = "", studiedTwo = ""] = scans.get(studied.id) ?? []
+    const issuer = (assessmentId: string, assessmentIds?: ReadonlyArray<string>) => ({ kind: "vetting-service", keySha256: signingKeySha256, assessmentId, ...(assessmentIds === undefined ? {} : { assessmentIds }), policyVersion: "slop-scan-policy-v2", rule: "clean-fresh-scan-after-flags" })
+    const olderApp = try promise(() => world.db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+      VALUES('enf_older_app_pair',?,2,'reinstate','clear','none','A clean fresh security scan lifted a pause that contributor flags alone placed',?,'5201','["slop-test/pair-one","slop-test/pair-two"]',NULL,NULL,?,'vetting-service','standing-rule',1,?,NULL,NULL,'no_revision_needed',?)`)
+      .bind(pair.id, pairTwo, JSON.stringify(issuer(pairTwo)), "a".repeat(64), new Date().toISOString()).run().then(() => "inserted", (error: unknown) => error instanceof Error && error.message.includes(scanReinstatement) ? "refused" : String(error)))
+    const studiedBefore = try promise(() => rows(world, "SELECT id, state, result_sha256, completed_at FROM vetting_assessments WHERE id IN (?, ?) ORDER BY rowid", studiedOne, studiedTwo))
+    const refreshed = try promise(() => signed(world, "POST", "/api/v1/vetting/refresh", "{}"))
+    const reinstated = [...((refreshed.body as { readonly reinstated?: ReadonlyArray<string> }).reinstated ?? [])].sort()
+    const records = try promise(() => rows(world, "SELECT project_id, sequence, state_after, appeal_after, system_issuer FROM project_enforcements WHERE action = 'reinstate' ORDER BY project_id"))
+    const studiedAfter = try promise(() => rows(world, "SELECT id, state, result_sha256, completed_at FROM vetting_assessments WHERE id IN (?, ?) ORDER BY rowid", studiedOne, studiedTwo))
+    try Effect.try(() => assert.deepStrictEqual({
+      olderApp,
+      status: refreshed.status,
+      reinstated,
+      records: records.map((record) => ({ ...record, system_issuer: JSON.parse(String(record.system_issuer)) as unknown })),
+      studiedUnchanged: studiedAfter,
+    }, {
+      olderApp: "refused",
+      status: 200,
+      reinstated: [pairTwo, singleClean].sort(),
+      records: [
+        { project_id: pair.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(pairTwo, [pairTwo, pairOne]) },
+        { project_id: single.id, sequence: 2, state_after: "clear", appeal_after: "none", system_issuer: issuer(singleClean, [singleClean]) },
+      ],
+      studiedUnchanged: studiedBefore,
     }))
   })
 })

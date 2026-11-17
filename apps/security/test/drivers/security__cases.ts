@@ -49,11 +49,11 @@ const ids = (actors: ReadonlyArray<number>) => actors.map(githubId);
 
 const fixture: ProjectView = {
   projectId: project, revision: 1, manifestSha256: "a".repeat(64), rowStatus: "Active", manifestStatus: "Active", listingTier: "Community",
-  retirement: "NotRetired", stewardGithubId: "1", repositories: [{ id: "2001", nodeId: "R_cases", fullName: repository, integrationBranch: "main", aliases: [] }], closureConsent: false,
+  retirement: "NotRetired", stewardGithubId: "1", stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [{ id: "2001", nodeId: "R_cases", fullName: repository, integrationBranch: "main", aliases: [] }], closureConsent: false,
 };
 
 const ports = Layer.mergeAll(
-  Layer.succeed(Registry, { project: () => Effect.succeed(fixture), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
+  Layer.succeed(Registry, { project: (projectId) => Effect.succeed({ ...fixture, projectId }), byRepository: () => Effect.succeed(undefined), byPath: () => Effect.succeed(undefined), active: () => Effect.succeed([fixture]), fence: () => Effect.succeed(sql`1`) }),
   Layer.succeed(RepositoryAuthority, { repository: (read) => Effect.succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }) }),
   Layer.succeed(Restrictions, {
     account: (id) => Effect.succeed({ banned: ids(snapshot.banned).includes(id) }),
@@ -72,7 +72,7 @@ const ports = Layer.mergeAll(
       approvers: { technical: ids(snapshot.technical), financial: ids(snapshot.financial), dispute: ids(snapshot.relatedParties.filter((id) => !snapshot.technical.includes(id) && !snapshot.financial.includes(id))), sponsor: [] },
       status: "open", closesAt: undefined, acknowledgeHours: 0,
     }),
-    atReceipt: () => Effect.succeed(terms === undefined ? undefined : { revision: terms.revision, publishedAt: new Date(base() + terms.publishedAt).toISOString(), terms: frozenOf(terms) }),
+    atReceipt: () => Effect.succeed(terms === undefined ? undefined : { revision: terms.revision, publishedAt: new Date(base() + terms.publishedAt).toISOString(), terms: frozenOf(terms), excludedFindings: terms.excludedFindings }),
     unbanned: (id) => Effect.succeed(ids(snapshot.banned).includes(id) ? sql`0` : sql`1`),
   }),
   Layer.succeed(AwardClearances, {
@@ -85,10 +85,28 @@ const ports = Layer.mergeAll(
   }),
 );
 
-await db.batch([
-  db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,'Cases conformance',?)").bind(project, JSON.stringify({ id: project }), "a".repeat(64), new Date(epoch).toISOString()),
-  db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(project, JSON.stringify({ id: project }), "a".repeat(64), new Date(epoch).toISOString(), new Date(epoch).toISOString()),
-]);
+const pointerRevision = 1000;
+const projectOf = () => `${project}-g${generation}`;
+
+function manifestOf(projectId: string, lines: ReadonlyArray<string>) {
+  const scope = { includedAssets: [repository], severityRubric: "Conformance severity rubric.", lossDefinition: "Conformance loss definition.", excludedFindings: lines };
+  return JSON.stringify({ id: projectId, status: "active", ...(lines.length === 0 ? {} : { securityBounty: { scope } }) });
+}
+
+async function seeded(receipt?: Receive["terms"]): Promise<string> {
+  const projectId = projectOf();
+  const at = new Date(epoch).toISOString();
+  const pointer = manifestOf(projectId, []);
+  const lines = receipt?.paidTerms ? receipt.excludedFindings.map((length, index) => String(index).padEnd(length, "x")) : [];
+  await db.batch([
+    db.prepare("INSERT OR IGNORE INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Cases conformance',?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at),
+    db.prepare("INSERT OR IGNORE INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',?,?,?,?,?)").bind(projectId, pointerRevision, pointer, "a".repeat(64), at, at),
+    ...(receipt === undefined || receipt.revision <= 0 || receipt.revision >= pointerRevision ? [] : [
+      db.prepare("INSERT OR IGNORE INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,'Cases conformance terms',?)").bind(projectId, receipt.revision, manifestOf(projectId, lines), "b".repeat(64), new Date(base() + receipt.publishedAt).toISOString()),
+    ]),
+  ]);
+  return projectId;
+}
 
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, reportBucket(await storage(mf, "PRIVATE_TRACES")), clock.layer, receiptNotices, ports, Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto))));
 type Services = ManagedRuntime.ManagedRuntime.Services<typeof runtime>;
@@ -161,16 +179,16 @@ function historicalAllowed(event: Receive) {
     && (event.history === "ImportedCapacityWait" || allowedAmount(event.terms, minor(event.gross))));
 }
 
-async function existing(caseId: string, event: Receive, receivedAt: string): Promise<Outcome> {
+async function existing(caseId: string, projectId: string, event: Receive, receivedAt: string): Promise<Outcome> {
   if (!historicalAllowed(event)) return "refused";
   const terms = frozenOf(event.terms);
   const award = existingAward(event);
   const reporter = { githubId: githubId(1), login: `member-${githubId(1)}` };
   const statements = [
-    caseInsert({ id: caseId, projectId: project, repository, advisory: null, reporter, ownerGithubId: null, at: receivedAt,
+    caseInsert({ id: caseId, projectId, repository, advisory: null, reporter, ownerGithubId: null, at: receivedAt,
       verified: { receivedAt, verifiedBy: event.source === "GithubVerified" ? "github" : "migration", policyRevision: event.terms.revision, terms, award, source: "github-verified" } }),
     ...(award === "Reserved"
-      ? [sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) VALUES (${caseId}, ${project}, ${`legacy-${caseId.replaceAll("_", "-")}`}, ${event.terms.revision}, ${minor(event.gross)}, ${event.terms.asset}, ${receivedAt})`]
+      ? [sql`INSERT INTO security_award_reservations (case_id, project_id, root_cause_key, policy_revision, gross_minor, currency, reserved_at) VALUES (${caseId}, ${projectId}, ${`legacy-${caseId.replaceAll("_", "-")}`}, ${event.terms.revision}, ${minor(event.gross)}, ${event.terms.asset}, ${receivedAt})`]
       : []),
   ];
   await runtime.runPromise(batched(statements));
@@ -182,15 +200,16 @@ async function receive(caseKey: string, event: Receive): Promise<Outcome> {
   const submissionId = `ss_cases_g${generation}_${caseKey}`;
   const receivedAt = new Date(base() + Math.max(event.terms.receivedAt, 1)).toISOString();
   const digest = "b".repeat(64);
+  const projectId = await seeded(event.terms);
   const prepared = slopReceipt({
-    caseId, submissionId, projectId: project, repository, reporter: { githubId: githubId(1), login: `member-${githubId(1)}` }, idempotencyKey: key(), marker: "d".repeat(32), receivedAt,
+    caseId, submissionId, projectId, repository, reporter: { githubId: githubId(1), login: `member-${githubId(1)}` }, idempotencyKey: key(), marker: "d".repeat(32), receivedAt,
     policyRevision: event.terms.revision, terms: frozenOf(event.terms), receiptTerms: event.terms,
     report: { key: `security-reports/${submissionId}/1-${digest}.json`, digest, bytes: 64 }, ownerGithubId: null, unbanned: sql`1`,
   });
   const fresh = event.source === "SlopReceived" && event.history === "NewReceipt";
   const result = fresh
     ? await outcome(Effect.flatMap(prepared, batched))
-    : await outcome(prepared).then((valid) => valid === "accepted" ? existing(caseId, event, receivedAt) : valid);
+    : await outcome(prepared).then((valid) => valid === "accepted" ? existing(caseId, projectId, event, receivedAt) : valid);
   if (result === "accepted") cases.set(caseKey, caseId);
   return result;
 }
@@ -198,8 +217,9 @@ async function receive(caseKey: string, event: Receive): Promise<Outcome> {
 async function claim(caseKey: string, by: unknown): Promise<Outcome> {
   if (Number(by ?? 0) !== 1) return "refused";
   const advisory = `GHSA-${"2345"}-${String(generation % 10).replace(/[01]/u, "2").repeat(4)}-${caseKey === "first" ? "cfgh" : "jmpq"}`;
-  const result = await outcome(claimed(actorOf(by), { mode: "claim", projectId: project, advisory, idempotencyKey: key() }));
-  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(project, advisory, githubId(1)).all()).results;
+  const projectId = await seeded();
+  const result = await outcome(claimed(actorOf(by), { mode: "claim", projectId, advisory, idempotencyKey: key() }));
+  const [found] = (await db.prepare("SELECT id FROM security_cases WHERE project_id=? AND advisory_ghsa=? AND reporter_github_id=?").bind(projectId, advisory, githubId(1)).all()).results;
   if (result === "accepted" && typeof found?.id === "string") cases.set(caseKey, found.id);
   return result;
 }
@@ -218,6 +238,7 @@ async function send(caseKey: string, event: Event, by: unknown): Promise<Outcome
   switch (event.type) {
     case "verifyLink": {
       terms = event.terms;
+      await seeded(event.terms);
       clock.set(Math.max(clock.now(), base() + event.terms.receivedAt));
       return act(caseKey, caseId, by, "verify-link", { receivedAt: new Date(base() + event.terms.receivedAt).toISOString(), confirmation: true });
     }

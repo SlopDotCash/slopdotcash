@@ -34,7 +34,7 @@ import { type ApprovalRequest, type OwnerReleaseRequest, ReleaseApprover, checkR
 import { registryDeployments } from "../src/vault/deployments.vibe"
 import type { SolanaDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
-import { type Deployment, escrowDeployment } from "./support/solana/escrow.ts"
+import { type Deployment, escrowDeployment, pledgeCurrentMonth } from "./support/solana/escrow.ts"
 import { type Keypair, submit, submitWire } from "./support/solana/program.ts"
 
 service Escrow {
@@ -150,9 +150,10 @@ effect function onChain<A, E, R>(run: A!E!R) {
 }
 
 const mismatch = "WalletActionRefused: This transaction does not match the pending wallet action. Check its signature in your wallet."
+const lockedFunds = "WalletActionRefused: These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months."
 
 layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality, and a withdrawal of a pledged month\'s funds is refused before the wallet step (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/contracts/solanaEscrow.md, "The owner withdraws free funds to its own account less the 2% fee"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
     const { verified, owner } = try opened("owner-funding-journey")
     const deposit = intentOf("deposit", owner, try amount(1_000_000n))
     const depositPlan = try reviewFunding(verified, deposit, capture, depositFacts)
@@ -168,18 +169,25 @@ layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true,
     const strangerCheck = try refusalOf(checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, { ...ownerFacts, steward: false }))
     const withdrawn = try checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, ownerFacts)
     const funds = try finalizedFunds(verified)
+    const { deployment } = try Escrow
+    const pledged = try amount(300_000n)
+    try promise(() => pledgeCurrentMonth(deployment, owner, verified.project, pledged))
+    const lockedReview = try refusalOf(reviewFunding(verified, intentOf("withdraw", owner, try amount(300_000n)), capture, ownerFacts))
+    const unlockedPlan = try reviewFunding(verified, intentOf("withdraw", owner, try amount(200_000n)), capture, ownerFacts)
     try same({
       deposit: { gross: depositPlan.gross, fee: depositPlan.fee, net: depositPlan.net, freeBefore: depositPlan.freeBalance, tokenProgram: depositPlan.tokenProgram, decimals: depositPlan.decimals },
       checks: [deposited, recheck, withdrawn],
       withdrawal: { gross: withdrawalPlan.gross, fee: withdrawalPlan.fee, net: withdrawalPlan.net, freeBefore: withdrawalPlan.freeBalance },
       refused: { stranger: strangerReview, restricted: restrictedReview, tooMuch, strangerCheck },
       free: funds.free,
+      locked: { review: lockedReview, unlocked: { gross: unlockedPlan.gross, freeBefore: unlockedPlan.freeBalance } },
     }, {
       deposit: { gross: "1000000", fee: "0", net: "1000000", freeBefore: "0", tokenProgram: TOKEN_PROGRAM, decimals: 6 },
       checks: ["finalized", "finalized", "finalized"],
       withdrawal: { gross: "500000", fee: "10000", net: "490000", freeBefore: "1000000" },
       refused: { stranger: "Rejected", restricted: "Rejected", tooMuch: "WalletActionRefused: The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.", strangerCheck: "Rejected" },
       free: 500_000n,
+      locked: { review: lockedFunds, unlocked: { gross: "200000", freeBefore: "500000" } },
     })
   }))
 
@@ -212,7 +220,7 @@ const steward = "77"
 const repository = { id: "501", nodeId: "R_501", fullName: "owner/release", integrationBranch: "main", aliases: [] }
 
 function viewOf(projectId: string, manifestSha256: string): ProjectView {
-  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [repository], closureConsent: false }
+  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, stewardAccount: "UserSteward", listing: { fromApplication: false }, repositories: [repository], closureConsent: false }
 }
 
 function ports(views: ReadonlyArray<ProjectView>) {

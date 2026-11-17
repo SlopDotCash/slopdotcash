@@ -1,0 +1,68 @@
+name: Qualify scanner recovery on staging
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Disposable evidence recovery, or the plan of the two-flag pause fixtures.
+        type: choice
+        options: [recovery, flags]
+        default: recovery
+      mode:
+        description: Plan only by default. Execute creates and removes disposable harmless recovery fixtures.
+        type: choice
+        options: [plan, execute]
+        default: plan
+permissions:
+  contents: read
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+jobs:
+  qualification:
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: slop-staging
+    concurrency:
+      group: slop-vetting-recovery-qualification
+      cancel-in-progress: false
+    steps:
+      - name: Refuse hosted execution of the flag fixtures
+        if: inputs.scope == 'flags' && inputs.mode == 'execute'
+        run: |
+          echo "::error::The two-flag pause fixtures are planned only; hosted execution is not qualified."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: vetting-recovery-qualification
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/operations --filter=@repo/security
+      - name: Show isolated plan
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.scope }}" = flags ]; then
+            node apps/security/dist/programs/main.js vetting-controls --scope flags --mode plan
+          else
+            node apps/operations/dist/programs/main.js qualify recovery --mode plan
+          fi
+      - name: Run the harmless hosted recovery qualification
+        if: inputs.scope == 'recovery' && inputs.mode == 'execute'
+        env:
+          SLOP_ENVIRONMENT: staging
+          VETTING_QUALIFICATION_MODE: execute
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node apps/operations/dist/programs/main.js qualify recovery --mode execute
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && inputs.mode == 'execute'
+        with:
+          name: harmless-vetting-${{ inputs.scope }}-${{ github.sha }}
+          path: ${{ runner.temp }}/vetting-recovery-report/result.json
+          if-no-files-found: warn
+          retention-days: 30

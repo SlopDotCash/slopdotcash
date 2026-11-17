@@ -1,0 +1,25 @@
+// spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"
+import { type Statement, sql } from "@repo/platform/d1"
+import { type AttemptLedger, BindingAttempts } from "@repo/ports/settlement"
+import { privateStatement } from "../securityScope/engine.vibe"
+
+function onLedger(ledger: AttemptLedger, statement: Statement): Statement {
+  return ledger === "Private" ? privateStatement(statement) : statement
+}
+
+export const BindingAttemptsLive = Layer.succeed(BindingAttempts, {
+  readiness: (input) => effect {
+    return onLedger(input.ledger, sql`SELECT state FROM payment_outbox WHERE obligation_id = ${input.obligationId}`)
+  },
+  admit: (input) => effect {
+    return onLedger(input.ledger, sql`INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, state)
+      SELECT ${input.attemptId}, o.id, w.id, ${input.at}, 'prepared'
+      FROM payment_obligations o
+      JOIN effective_payment_wallet_claims w ON w.github_user_id = o.github_user_id AND w.chain = o.chain
+      JOIN payment_wallet_authorizations a ON a.claim_id = w.id
+      JOIN payment_outbox b ON b.obligation_id = o.id
+      WHERE o.id = ${input.obligationId} AND o.github_user_id = ${input.githubUserId} AND w.id = ${input.claimId}
+        AND o.chain = 'solana' AND o.state = 'reserved' AND w.source = 'd1_registry' AND b.state = 'ready'
+        AND NOT EXISTS (SELECT 1 FROM payment_attempts t WHERE t.obligation_id = o.id AND t.state IN ('prepared', 'unknown', 'submitted'))`)
+  },
+} satisfies BindingAttempts.Shape)

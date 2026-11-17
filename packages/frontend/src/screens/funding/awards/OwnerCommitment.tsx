@@ -90,7 +90,7 @@ export function OwnerCommitment({ runtime, account, network, family, githubUserI
         family={family}
         address={wallet?.address}
         disabled={busy || slotUnreadable}
-        wallets={offers.filter((offer) => offer.family === family).map((offer) => ({ id: String(offer.id), name: offer.name }))}
+        wallets={offers.filter((offer) => offer.family === family).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
         onConnect={(offer) =>
           act(connectOwner(Number(offer.id)), (connection) => {
             setWallet(connection);

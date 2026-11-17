@@ -1,0 +1,723 @@
+name: slop.cash
+
+on:
+  push:
+    branches: [development, main]
+  workflow_dispatch:
+    inputs:
+      bootstrap_staging_profiles:
+        description: "First staging publication only: use the reviewed profile seed after verifying no staging Pages deployment exists"
+        type: boolean
+        default: false
+      use_published_data:
+        description: "Manual main release only: retain the last leaderboard and profiles published by production, with their original timestamps"
+        type: boolean
+        default: false
+      rotate_robinhood_rpc_from:
+        description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
+        type: string
+        default: ""
+      rotate_solana_rpc_from:
+        description: "Manual main only: bind the qualified public Solana RPC pair from this active Worker version UUID"
+        type: string
+        default: ""
+      skip_proofs:
+        description: "Manual main or development release only: do not repeat the state-model and proof runs; every other check and all deployment verification still run"
+        type: boolean
+        default: false
+      skip_browser_tests:
+        description: "Manual main or development release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
+        type: boolean
+        default: false
+
+concurrency:
+  group: slop-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/development' && 'development-push') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+
+jobs:
+  prepare:
+    name: Prepare checked release bundle
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 360
+    outputs:
+      environment: ${{ steps.target.outputs.environment }}
+      manifest_sha256: ${{ steps.manifest.outputs.manifest_sha256 }}
+      eligible: ${{ steps.coverage.outputs.eligible }}
+      state_models: ${{ steps.coverage.outputs.state_models }}
+      static_proofs: ${{ steps.coverage.outputs.static_proofs }}
+      browser_smoke: ${{ steps.coverage.outputs.browser_smoke }}
+      browser_complete: ${{ steps.coverage.outputs.browser_complete }}
+      common: ${{ steps.coverage.outputs.common }}
+    env:
+      VITE_SLOP_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'staging' || 'production' }}
+      SLOP_GITHUB_ENVIRONMENT: ${{ github.ref == 'refs/heads/development' && 'slop-staging' || 'slop-production' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Verify quality checkout
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Quality checkout $checked_out_sha does not match the event SHA $GITHUB_SHA."
+            exit 1
+          fi
+
+      - name: Require manual main for a Robinhood RPC rotation
+        if: (inputs.rotate_robinhood_rpc_from || '') != ''
+        env:
+          EXPECTED_VERSION: ${{ inputs.rotate_robinhood_rpc_from }}
+          SOLANA_ROTATION: ${{ inputs.rotate_solana_rpc_from }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test -z "$SOLANA_ROTATION"
+          if ! [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
+            echo "::error::The Robinhood RPC rotation requires the active Worker version UUID."
+            exit 1
+          fi
+
+      - name: Require manual main for a Solana RPC rotation
+        if: (inputs.rotate_solana_rpc_from || '') != ''
+        env:
+          EXPECTED_VERSION: ${{ inputs.rotate_solana_rpc_from }}
+          ROBINHOOD_ROTATION: ${{ inputs.rotate_robinhood_rpc_from }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test -z "$ROBINHOOD_ROTATION"
+          [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
+
+      - name: Require manual main release for published data
+        if: inputs.use_published_data == true
+        env:
+          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles || false }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Published data is limited to a manual main release."
+            exit 1
+          fi
+          test "$BOOTSTRAP_STAGING_PROFILES" = "false"
+
+      - name: Install locked release tooling
+        uses: ./.github/actions/setup
+        with:
+          job: prepare
+          verification: "false"
+          publication: "true"
+
+      - name: Build every application
+        run: pnpm all build --filter="./apps/*"
+
+      - name: Name the target environment
+        id: target
+        run: |
+          set -euo pipefail
+          environment=production
+          if [ "$GITHUB_REF" = refs/heads/development ]; then environment=staging; fi
+          {
+            echo "environment=$environment"
+            echo "BUNDLE=$RUNNER_TEMP/slop-release"
+            echo "SLOP_RELEASE_ENVIRONMENT=$environment"
+          } | tee -a "$GITHUB_OUTPUT" >> "$GITHUB_ENV"
+          if [ "$environment" = production ]; then echo "SLOP_DATA_ORIGIN=https://slop.cash" >> "$GITHUB_ENV"; else echo "SLOP_DATA_ORIGIN=https://staging.slop.cash" >> "$GITHUB_ENV"; fi
+          mkdir -p "$RUNNER_TEMP/slop-release/github" "$RUNNER_TEMP/slop-release/site/data"
+
+      - name: Select release coverage
+        id: coverage
+        run: node apps/operations/dist/programs/main.js release coverage "$SLOP_RELEASE_ENVIRONMENT"
+
+      - name: Install the pinned merge collector
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          node apps/points/dist/programs/main.js git install "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
+      - name: Collect live GitHub contribution data
+        if: inputs.use_published_data != true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node apps/points/dist/programs/main.js collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE/github"
+
+      - name: Load validated published data for a manual release
+        if: inputs.use_published_data == true
+        run: |
+          set -euo pipefail
+          node apps/points/dist/programs/main.js snapshot restore "$SLOP_DATA_ORIGIN/data/leaderboard.json" "$BUNDLE/github/leaderboard.json"
+          curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+            --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+            "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$RUNNER_TEMP/published-profiles.json"
+          node apps/points/dist/programs/main.js profiles extend "$RUNNER_TEMP/published-profiles.json"
+
+      - name: Bind the registry and GitHub collections
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.use_published_data == true }}" = true ]; then
+            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE" --retained
+          else
+            node apps/operations/dist/programs/main.js release collect "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
+          fi
+
+      - name: Validate reward lifecycle and disclosures
+        run: |
+          set -euo pipefail
+          node apps/settlement/dist/programs/main.js disclosures --check
+          node apps/settlement/dist/programs/main.js cycle-index --out "$BUNDLE/site/data/cycles"
+
+      - name: Build the public Points and profile data
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOOTSTRAP_STAGING_PROFILES: ${{ inputs.bootstrap_staging_profiles == true }}
+        run: |
+          set -euo pipefail
+          registry="$RUNNER_TEMP/repository-registry.json"
+          node apps/points/dist/programs/main.js registry "$BUNDLE/registry/snapshot.json" "$registry"
+          node apps/points/dist/programs/main.js evaluations check "$registry" --external slopdotcash
+          cp "$BUNDLE/github/leaderboard.json" "$BUNDLE/site/data/leaderboard.json"
+          node apps/points/dist/programs/main.js journal build "$registry" "$BUNDLE/site/data" "$BUNDLE/registry/snapshot.json" \
+            --online --bootstrap --environment "$SLOP_RELEASE_ENVIRONMENT"
+          if [ "${{ inputs.use_published_data == true }}" = true ]; then
+            node apps/points/dist/programs/main.js profiles publish "$RUNNER_TEMP/published-profiles.json" "$BUNDLE/site/data/profiles.json" --current
+          elif [ "$BOOTSTRAP_STAGING_PROFILES" = true ]; then
+            node apps/points/dist/programs/main.js profiles collect data/profiles/seed.json "$BUNDLE/site/data/profiles.json"
+          else
+            curl --fail --silent --show-error --compressed --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 180 --max-filesize 8388608 \
+              --retry 2 --retry-all-errors --retry-delay 2 --retry-max-time 600 \
+              "$SLOP_DATA_ORIGIN/data/profiles.json" --output "$RUNNER_TEMP/previous-profiles.json"
+            node apps/points/dist/programs/main.js profiles collect "$RUNNER_TEMP/previous-profiles.json" "$BUNDLE/site/data/profiles.json"
+          fi
+
+      - name: Assemble the release bundle
+        run: |
+          set -euo pipefail
+          test -f apps/app/dist/_worker.js
+          cp -R apps/app/dist/. "$BUNDLE/site/"
+          rm "$BUNDLE/site/_worker.js"
+          for dist in apps/*/dist; do
+            app="$(basename "$(dirname "$dist")")"
+            mkdir -p "$BUNDLE/apps/$app"
+            if [ "$app" = app ]; then
+              mkdir -p "$BUNDLE/apps/app/dist"
+              cp apps/app/dist/_worker.js "$BUNDLE/apps/app/dist/_worker.js"
+            else
+              cp -R "$dist" "$BUNDLE/apps/$app/dist"
+            fi
+          done
+
+      - name: Bind the release manifest
+        id: manifest
+        run: |
+          set -euo pipefail
+          node apps/operations/dist/programs/main.js release manifest "$SLOP_RELEASE_ENVIRONMENT" "$BUNDLE"
+          node apps/operations/dist/programs/main.js release verify-bundle "$BUNDLE"
+          digest="$(sha256sum "$BUNDLE/release-manifest.json" | cut -d ' ' -f 1)"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the checked release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-release-${{ github.sha }}
+          path: ${{ runner.temp }}/slop-release
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  code:
+    name: Types, journeys, isolation, identity and inventories
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.eligible == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: release-code
+      - run: pnpm all typecheck test
+      - run: pnpm formal:check
+      - name: Write the source-bound receipt
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p receipts
+          jq -n --arg source "$GITHUB_SHA" --arg manifest "$MANIFEST_SHA256" \
+            '{schemaVersion: 1, sourceSha: $source, manifestSha256: $manifest, gates: $ARGS.positional}' \
+            --args Types Unit Isolation Identity ModelInventory ProofInventory > receipts/code.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-receipt-code-${{ github.sha }}
+          path: receipts/code.json
+          if-no-files-found: error
+          retention-days: 7
+
+  models:
+    name: State models and static proofs
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.state_models == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: release-models
+      - run: pnpm all check
+      - name: Write the source-bound receipt
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p receipts
+          jq -n --arg source "$GITHUB_SHA" --arg manifest "$MANIFEST_SHA256" \
+            '{schemaVersion: 1, sourceSha: $source, manifestSha256: $manifest, gates: $ARGS.positional}' \
+            --args Models Proofs > receipts/models.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-receipt-models-${{ github.sha }}
+          path: receipts/models.json
+          if-no-files-found: error
+          retention-days: 7
+
+  browsers:
+    name: Browser journeys
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.eligible == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: release-browsers
+      - name: Run every browser journey
+        if: needs.prepare.outputs.browser_complete == 'true'
+        run: pnpm all test:browser
+      - name: Run the browser smoke lane
+        if: needs.prepare.outputs.browser_smoke == 'true'
+        run: pnpm all test:browser --filter=@repo/app
+      - name: Write the source-bound receipt
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+          GATE: ${{ needs.prepare.outputs.browser_complete == 'true' && 'Browser' || 'BrowserSmoke' }}
+        run: |
+          set -euo pipefail
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p receipts
+          jq -n --arg source "$GITHUB_SHA" --arg manifest "$MANIFEST_SHA256" \
+            '{schemaVersion: 1, sourceSha: $source, manifestSha256: $manifest, gates: $ARGS.positional}' \
+            --args "$GATE" > receipts/browsers.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-receipt-browsers-${{ github.sha }}
+          path: receipts/browsers.json
+          if-no-files-found: error
+          retention-days: 7
+
+  staging:
+    name: Deploy verified development to staging
+    if: >-
+      always() && !cancelled() &&
+      needs.prepare.result == 'success' && needs.code.result == 'success' && needs.browsers.result == 'success' &&
+      (needs.models.result == 'success' || needs.models.result == 'skipped') &&
+      github.ref == 'refs/heads/development' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [prepare, code, models, browsers]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: read
+    concurrency:
+      group: slop-staging
+      cancel-in-progress: false
+    environment:
+      name: slop-staging
+      url: https://staging.slop.cash
+    steps:
+      - name: Set staging order retry deadline
+        run: echo "STAGING_ORDER_RETRY_UNTIL=$(($(date +%s) + 300))" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify staging checkout
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/development
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: ./.github/actions/setup
+        with:
+          job: staging
+          verification: "false"
+          publication: "true"
+      - name: Download the checked release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-release-${{ github.sha }}
+          path: ${{ runner.temp }}/slop-release
+      - name: Download the gate receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: slop-receipt-*-${{ github.sha }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/slop-receipts
+      - name: Verify the downloaded release bundle
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          echo "BUNDLE=$RUNNER_TEMP/slop-release" >> "$GITHUB_ENV"
+          echo "$MANIFEST_SHA256  $RUNNER_TEMP/slop-release/release-manifest.json" | sha256sum --check --strict
+          node "$RUNNER_TEMP/slop-release/apps/operations/dist/programs/main.js" release verify-bundle "$RUNNER_TEMP/slop-release"
+      - name: Require staging credentials
+        env:
+          HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+          HAS_CLIENT: ${{ secrets.SLOP_GITHUB_CLIENT_ID != '' && secrets.SLOP_GITHUB_CLIENT_SECRET != '' }}
+          HAS_KEYS: ${{ secrets.IDENTITY_STATE_KEY != '' && secrets.IDENTITY_ASSERTION_KEY != '' && secrets.TRACE_AUTH_SECRET != '' && secrets.SLOP_VETTING_SIGNING_JWK != '' }}
+          HAS_APP: ${{ secrets.SLOPBOT_APP_ID != '' && secrets.SLOPBOT_APP_PRIVATE_KEY != '' }}
+        run: |
+          test "$HAS_CLOUDFLARE" = true
+          test "$HAS_CLIENT" = true
+          test "$HAS_KEYS" = true
+          test "$HAS_APP" = true
+      - name: Publish and verify isolated staging
+        id: publish
+        env:
+          SLOP_GITHUB_ENVIRONMENT: ${{ vars.SLOP_GITHUB_ENVIRONMENT }}
+          SLOP_VETTING_BACKUP_RELEASE: ${{ vars.SLOP_VETTING_BACKUP_STAGING_RELEASE }}
+          SLOP_VETTING_RETENTION_RELEASE: ${{ vars.SLOP_VETTING_RETENTION_STAGING_RELEASE }}
+          SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_STAGING_RELEASE }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_APP_CLIENT_ID: ${{ secrets.SLOP_GITHUB_CLIENT_ID }}
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.SLOP_GITHUB_CLIENT_SECRET }}
+          IDENTITY_STATE_KEY: ${{ secrets.IDENTITY_STATE_KEY }}
+          IDENTITY_ASSERTION_KEY: ${{ secrets.IDENTITY_ASSERTION_KEY }}
+          TRACE_AUTH_SECRET: ${{ secrets.TRACE_AUTH_SECRET }}
+          SLOPBOT_APP_ID: ${{ secrets.SLOPBOT_APP_ID }}
+          SLOPBOT_APP_PRIVATE_KEY: ${{ secrets.SLOPBOT_APP_PRIVATE_KEY }}
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/slop-staging-publish.log"
+          node "$BUNDLE/apps/operations/dist/programs/main.js" release publish staging "$BUNDLE" "$RUNNER_TEMP/slop-receipts" . 2>&1 | tee "$log"
+          deployment="$(sed -n 's/^\[Slop\] published and verified [0-9a-f]\{40\} as deployment \(.*\)$/\1/p' "$log" | tail -n 1)"
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+      - name: Accept the staging deployment
+        if: steps.publish.outputs.deployment != ''
+        env:
+          DEPLOYMENT_ID: ${{ steps.publish.outputs.deployment }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_APP_CLIENT_ID: ${{ secrets.SLOP_GITHUB_CLIENT_ID }}
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" staging accept "$DEPLOYMENT_ID" .
+      - name: Renew optional intake health
+        if: steps.publish.outputs.deployment != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew staging release
+
+  production:
+    name: Deploy trusted production bundle
+    if: >-
+      always() && !cancelled() &&
+      needs.prepare.result == 'success' && needs.code.result == 'success' && needs.browsers.result == 'success' &&
+      (needs.models.result == 'success' || needs.models.result == 'skipped') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    needs: [prepare, code, models, browsers]
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ (inputs.rotate_solana_rpc_from || '') != '' && 90 || 30 }}
+    concurrency:
+      group: slop-production
+      cancel-in-progress: false
+    environment:
+      name: slop-production
+      url: https://slop.cash
+    steps:
+      - name: Checkout exact deployment tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+
+      - name: Verify deployment checkout
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [ "$checked_out_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::Deployment checkout $checked_out_sha does not match the verified workflow SHA $GITHUB_SHA."
+            exit 1
+          fi
+
+      - name: Verify trusted release authority
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            push|workflow_dispatch) ;;
+            *)
+              echo "::error::$GITHUB_EVENT_NAME is not authorized to deploy slop.cash."
+              exit 1
+              ;;
+          esac
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::$GITHUB_EVENT_NAME production releases are restricted to refs/heads/main."
+            exit 1
+          fi
+
+      - name: Install locked release tooling
+        uses: ./.github/actions/setup
+        with:
+          job: production
+          verification: "false"
+          publication: "true"
+
+      - name: Download verified release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: slop-release-${{ github.sha }}
+          path: ${{ runner.temp }}/slop-release
+
+      - name: Download the gate receipts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: slop-receipt-*-${{ github.sha }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/slop-receipts
+
+      - name: Verify downloaded release bundle
+        env:
+          MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          echo "BUNDLE=$RUNNER_TEMP/slop-release" >> "$GITHUB_ENV"
+          echo "$MANIFEST_SHA256  $RUNNER_TEMP/slop-release/release-manifest.json" | sha256sum --check --strict
+          node "$RUNNER_TEMP/slop-release/apps/operations/dist/programs/main.js" release verify-bundle "$RUNNER_TEMP/slop-release"
+
+      - name: Require live release-input equivalence
+        id: release-input
+        run: |
+          set -euo pipefail
+          live_main="$(
+            git -C "$GITHUB_WORKSPACE" ls-remote --exit-code --refs \
+              https://github.com/SlopDotCash/slopdotcash.git refs/heads/main |
+              awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a valid live main SHA."
+            exit 1
+          fi
+          git -C "$GITHUB_WORKSPACE" fetch --force --no-tags origin \
+            "$live_main:refs/remotes/origin/slop-live-main"
+          if ! git -C "$GITHUB_WORKSPACE" diff --quiet "$GITHUB_SHA" "$live_main" -- .; then
+            if ! git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "$GITHUB_SHA" "$live_main"; then
+              echo "::error::Live main $live_main is not a fast-forward of tested $GITHUB_SHA."
+              exit 1
+            fi
+            echo "::notice::Live main advanced to $live_main after testing; superseded $GITHUB_SHA is not published by this run."
+            printf 'Superseded: main advanced to %s after testing; this run did not publish %s.\n' "$live_main" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            printf 'superseded=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Refuse older retained production data
+        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        run: node "$BUNDLE/apps/points/dist/programs/main.js" retained-fresh "$BUNDLE/site"
+
+      - name: Require scoped Cloudflare credentials
+        if: steps.release-input.outputs.superseded != 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAS_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_TOKEN" != "true" ] || [ "$HAS_ACCOUNT" != "true" ]; then
+            echo "::error::The selected release environment requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID."
+            exit 1
+          fi
+
+      - name: Check fee-converter RPC inheritance before publication
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" rpc inherit .
+
+      - name: Rotate the production fee-converter Robinhood RPC
+        if: (inputs.rotate_robinhood_rpc_from || '') != ''
+        timeout-minutes: 4
+        env:
+          RELEASE_SUPERSEDED: ${{ steps.release-input.outputs.superseded }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_FEE_CONVERTER_RELEASE: ${{ vars.SLOP_FEE_CONVERTER_RELEASE }}
+          SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: ${{ inputs.rotate_robinhood_rpc_from }}
+          SLOP_ROBINHOOD_RPC_REPLACEMENT: ${{ secrets.SLOP_ROBINHOOD_RPC_REPLACEMENT }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_SUPERSEDED" = "true" ]; then
+            echo "::error::Main advanced. No Robinhood RPC rotation was attempted."
+            exit 1
+          fi
+          node "$BUNDLE/apps/fees/dist/programs/main.js" rotate-robinhood-rpc .
+
+      - name: Bind the production fee-converter public Solana RPC pair
+        if: (inputs.rotate_solana_rpc_from || '') != ''
+        timeout-minutes: 75
+        env:
+          RELEASE_SUPERSEDED: ${{ steps.release-input.outputs.superseded }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_FEE_CONVERTER_RELEASE: ${{ vars.SLOP_FEE_CONVERTER_RELEASE }}
+          SLOP_SOLANA_RPC_EXPECTED_VERSION: ${{ inputs.rotate_solana_rpc_from }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_SUPERSEDED" != true
+          node "$BUNDLE/apps/fees/dist/programs/main.js" rotate-solana-rpc "$RUNNER_TEMP" .
+
+      - name: Retain Solana RPC qualification
+        if: always() && (inputs.rotate_solana_rpc_from || '') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: solana-rpc-qualification-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/solana-rpc-public-pair-proof.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Qualify Slopbot review and value models with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 11
+        env:
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        run: node "$BUNDLE/apps/slopbot/dist/programs/main.js" qualify-value-models
+
+      - name: Qualify private report screening with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 4
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        run: node "$BUNDLE/apps/security/dist/programs/main.js" security-screening --mode execute
+
+      - name: Require agent-client records for changed agent workflows
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        env:
+          AGENT_CLIENT_RECORDS: ${{ secrets.SLOP_AGENT_CLIENT_RECORDS }}
+        run: |
+          set -euo pipefail
+          records="$RUNNER_TEMP/agent-client-records.json"
+          if [ -n "$AGENT_CLIENT_RECORDS" ]; then
+            (umask 077 && printf '%s' "$AGENT_CLIENT_RECORDS" > "$records")
+          fi
+          node "$BUNDLE/apps/operations/dist/programs/main.js" evidence agent-clients "$records" .
+
+      - name: Publish and verify the production release
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        id: publish
+        env:
+          SLOP_GITHUB_ENVIRONMENT: ${{ vars.SLOP_GITHUB_ENVIRONMENT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+          SLOPBOT_RELEASE: ${{ vars.SLOPBOT_RELEASE }}
+          SLOP_NOTIFY_RELEASE: ${{ vars.SLOP_NOTIFY_RELEASE }}
+          SLOP_FEE_CONVERTER_RELEASE: ${{ vars.SLOP_FEE_CONVERTER_RELEASE }}
+          SLOP_VETTING_BACKUP_RELEASE: ${{ vars.SLOP_VETTING_BACKUP_RELEASE }}
+          SLOP_VETTING_RETENTION_RELEASE: ${{ vars.SLOP_VETTING_RETENTION_RELEASE }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/slop-production-publish.log"
+          node "$BUNDLE/apps/operations/dist/programs/main.js" release publish production "$BUNDLE" "$RUNNER_TEMP/slop-receipts" . 2>&1 | tee "$log"
+          deployment="$(sed -n 's/^\[Slop\] published and verified [0-9a-f]\{40\} as deployment \(.*\)$/\1/p' "$log" | tail -n 1)"
+          echo "deployment=$deployment" >> "$GITHUB_OUTPUT"
+          echo "log=$log" >> "$GITHUB_OUTPUT"
+
+      - name: Capture and validate production evidence
+        if: steps.publish.outputs.deployment != ''
+        env:
+          DEPLOYMENT_ID: ${{ steps.publish.outputs.deployment }}
+          PUBLISH_LOG: ${{ steps.publish.outputs.log }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node "$BUNDLE/apps/operations/dist/programs/main.js" evidence capture "$BUNDLE" "$DEPLOYMENT_ID" "$PUBLISH_LOG" "$RUNNER_TEMP/slop-evidence" .
+          node "$BUNDLE/apps/operations/dist/programs/main.js" evidence validate "$RUNNER_TEMP/slop-evidence"
+
+      - name: Retain production evidence
+        if: always() && steps.publish.outputs.deployment != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: slop-production-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/slop-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Import the published Points journal
+        if: steps.publish.outputs.deployment != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          registry="$RUNNER_TEMP/repository-registry.json"
+          node "$BUNDLE/apps/points/dist/programs/main.js" registry "$BUNDLE/registry/snapshot.json" "$registry"
+          node "$BUNDLE/apps/points/dist/programs/main.js" journal import "$BUNDLE/site/data" "$registry" --current-origin https://slop.cash
+
+      - name: Report optional intake health
+        if: steps.publish.outputs.deployment != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node "$BUNDLE/apps/operations/dist/programs/main.js" health renew production release

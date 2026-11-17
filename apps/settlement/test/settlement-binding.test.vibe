@@ -1,0 +1,395 @@
+import { assert, layer } from "@effect/vitest"
+import { address, base64Encode, encodeMessage, encodeTransaction, isBlockhash } from "@repo/platform/chain/solana"
+import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import type { Statement } from "@repo/platform/d1"
+import type { Handler } from "@repo/platform/testing"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { internet } from "@repo/platform/testing/internet"
+import { type AttemptLedger, BindingAttempts } from "@repo/ports/settlement"
+import { Response } from "miniflare"
+import { BindingAttemptsLive } from "../src/payments/bindingAttempts.vibe"
+
+const vault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
+const privateVault = "3QZBA7XCw8pfJ1ECnynswkroXVejyTmBUvJFSoR3i2Wp"
+const mint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+const programId = "BPFLoaderUpgradeab1e11111111111111111111111"
+const projectPda = "SysvarRent111111111111111111111111111111111"
+const networkDomain = "d".repeat(64)
+const at = "2026-11-17T03:00:00.000Z"
+const attesterAddress = "586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5"
+const firstWallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+  address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+}
+const successorWallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "iPUmP6_Pgxc2QBq8JA9ZGaDeugZz_SSwSFBYt-pGDyA", x: "Rj5_Q_Iie8KaG6Hjxo3wCIUwY2_6ARGmA_hZ70I5Uxs" }),
+  address: "5jCp5JFzFvpedgiAP4SdoihmDLJaif75CVQE4y6WVPUN",
+}
+const outboxStates = ["ready", "held", "processing", "submitted", "paid"] as const
+
+interface Attested {
+  readonly path: string
+  readonly key: string | null
+  readonly body: unknown
+}
+
+const attested: Attested[] = []
+const attesterPlan = { reject: false, transaction: "" }
+
+function jsonAnswer(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+}
+
+const attester: Handler = async (request) => {
+  const path = new URL(request.url).pathname
+  attested.push({ path, key: request.headers.get("idempotency-key"), body: await request.json() })
+  if (attesterPlan.reject) return jsonAnswer({ error: "unavailable" }, 503)
+  if (path.endsWith("/complete-bind")) return jsonAnswer({ transactionId: "binding-transaction-1" })
+  return jsonAnswer({ transactionId: "binding-transaction-1", transaction: attesterPlan.transaction })
+}
+
+const Site = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  config: "test/support/binding/vite.config.ts",
+  d1: { SLOP_DB: "slop-private" },
+  vars: {
+    ADMIN_GITHUB_IDS: "7",
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    PAYMENT_NETWORKS: JSON.stringify(["solana-devnet"]),
+    PAYMENT_RPC_URLS: JSON.stringify({}),
+  },
+  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester },
+  internet: internet({}),
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(answer: Answer, name: string): unknown {
+  const body = answer.body
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>)[name] : undefined
+}
+
+function text(answer: Answer, name: string): string {
+  const value = field(answer, name)
+  return typeof value === "string" ? value : ""
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer, "error") ?? null]
+}
+
+function obligationId(seed: string) {
+  return seed.repeat(64)
+}
+
+effect function signIn(githubId: string) {
+  const area = try Area
+  const token = `binding-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, at)
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+effect function pay(member: Session, action: string, json: unknown, headers?: Readonly<Record<string, string>>) {
+  return try (try Area).request(`/api/v1/payments/wallets/${action}`, { json, as: member, ...headers === undefined ? {} : { headers } })
+}
+
+effect function seedRegistry() {
+  const area = try Area
+  const manifest = JSON.stringify({
+    id: "binding-journey",
+    status: "active",
+    escrow: { deployments: [{ network: "solana-devnet", vault, programId, projectPda, networkDomain }] },
+    securityBounty: { settlement: { deployments: [{ network: "solana-devnet", vault: privateVault, programId, projectPda, networkDomain }] } },
+  })
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('binding-journey', 1, ?, ?, 'Listed', ?)", manifest, "c".repeat(64), at)
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('binding-journey', 'active', 1, ?, ?, ?, ?)", manifest, "c".repeat(64), at, at)
+}
+
+effect function registered(member: Session, wallet: string) {
+  return text(try pay(member, "register", { chain: "solana", address: wallet }), "claimId")
+}
+
+effect function authorizedClaim(member: Session, wallet: { readonly jwk: string; readonly address: string }) {
+  const claimId = try registered(member, wallet.address)
+  const challenged = try pay(member, "challenge", { claimId })
+  const signature = base64Encode(try ed25519Sign(Redacted.make(wallet.jwk), utf8(text(challenged, "message"))))
+  const authorized = try pay(member, "authorize", { claimId, challengeId: text(challenged, "challengeId"), signature })
+  return { claimId, authorized: outcome(authorized) }
+}
+
+effect function obligation(input: { readonly id: string; readonly owner: string; readonly state?: "reserved" | "paid"; readonly outbox?: string; readonly ledger?: AttemptLedger }) {
+  const area = try Area
+  const prefix = input.ledger === "Private" ? "security_" : ""
+  const placed = input.ledger === "Private" ? privateVault : vault
+  const state = input.state ?? "reserved"
+  try area.sql(`INSERT INTO ${prefix}payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, 'binding-journey', ?, 'solana-devnet', 'solana', ?, ?, 6, '1000000', '20000', ?, ?, ?, ?)`, input.id, input.owner, placed, mint, try sha256Hex(`source:${input.id}`), state, at, state === "paid" ? "paid-transaction" : null)
+  if (input.outbox !== undefined) try area.sql(`INSERT INTO ${prefix}payment_outbox (obligation_id, state, updated_at) VALUES (?, ?, ?)`, input.id, input.outbox, at)
+}
+
+effect function openAttempt(ledger: AttemptLedger, id: string, obligationOf: string, claimId: string) {
+  const prefix = ledger === "Private" ? "security_" : ""
+  try (try Area).sql(`INSERT INTO ${prefix}payment_attempts (id, obligation_id, claim_id, created_at, transaction_id, state) VALUES (?, ?, ?, ?, NULL, 'unknown')`, id, obligationOf, claimId, at)
+}
+
+effect function attemptsOf(ledger: AttemptLedger, obligationOf: string) {
+  const prefix = ledger === "Private" ? "security_" : ""
+  return try (try Area).sql(`SELECT id, claim_id, state FROM ${prefix}payment_attempts WHERE obligation_id = ? ORDER BY rowid`, obligationOf)
+}
+
+effect function bindingTransaction(walletSigned: boolean) {
+  const attesterKey = address(attesterAddress)
+  const walletKey = address(firstWallet.address)
+  const system = address("11111111111111111111111111111111")
+  const blockhash = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+  if (attesterKey === undefined || walletKey === undefined || system === undefined || !isBlockhash(blockhash)) return try die(new Error("the binding fixture keys are not addresses"))
+  const message = {
+    version: "legacy",
+    header: { requiredSignatures: 2, readonlySigned: 0, readonlyUnsigned: 1 },
+    accountKeys: [attesterKey, walletKey, system],
+    recentBlockhash: blockhash,
+    instructions: [{ programIndex: 2, accounts: [0, 1], data: new Uint8Array([7]) }],
+  } as const
+  const messageBytes = encodeMessage(message)
+  if (messageBytes === undefined) return try die(new Error("the binding fixture message does not encode"))
+  const walletSignature = walletSigned ? try ed25519Sign(Redacted.make(firstWallet.jwk), messageBytes) : new Uint8Array(64)
+  const wire = encodeTransaction({ signatures: [new Uint8Array(64).fill(9), walletSignature], message })
+  if (wire === undefined) return try die(new Error("the binding fixture transaction does not encode"))
+  return base64Encode(wire)
+}
+
+effect function seededClaim(githubId: string, source: "d1_registry" | "profile_readme" = "d1_registry") {
+  const area = try Area
+  const claimId = `claim-${githubId}`
+  try area.sql("INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, created_at, chain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'solana')", claimId, githubId, `member-${githubId}`, firstWallet.address, source, try sha256Hex(`body:${githubId}`), at, try sha256Hex(`record:${githubId}`), at)
+  try area.sql("INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at) VALUES (?, ?, ?, 'message', '2099-01-01T00:00:00.000Z')", `challenge-${githubId}`, claimId, githubId)
+  try area.sql("INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (?, ?, ?, ?, 'signature')", claimId, githubId, at, `challenge-${githubId}`)
+  return claimId
+}
+
+effect function run(statement: Statement) {
+  return try (try Area).sql(statement.text, ...statement.params)
+}
+
+layer(Layer.mergeAll(Site, webCrypto, BindingAttemptsLive), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Prepare a Solana binding without a hosted dispatcher (spec/backend/bindingConsent.md, "A Solana prepare opens the obligation\'s first attempt for the current claim under a ready outbox"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes")', () => effect {
+    const area = try Area
+    try seedRegistry()
+    const member = try signIn("401")
+    const wallet = try authorizedClaim(member, firstWallet)
+    const claimDigest = (try area.sql("SELECT record_sha256 FROM wallet_claims WHERE id = ?", wallet.claimId))[0]?.record_sha256
+    attesterPlan.transaction = try bindingTransaction(false)
+    const signed = try bindingTransaction(true)
+    const payment = (id: string, key: string) => ({ obligationId: id, network: "solana-devnet", vault, githubUserId: "401", claimId: wallet.claimId, claimDigest, destination: firstWallet.address, idempotencyKey: key })
+    const prepareOf = (id: string) => pay(member, "solana-bind/prepare", { obligationId: id })
+
+    const first = obligationId("1")
+    try obligation({ id: first, owner: "401", outbox: "ready" })
+    const created = try prepareOf(first)
+    const createdAttempts = try attemptsOf("Ordinary", first)
+    const reused = try prepareOf(first)
+    const completed = try pay(member, "solana-bind/complete", { obligationId: first, transaction: signed })
+    const key = String(createdAttempts[0]?.id ?? "")
+    try same({
+      wallet: wallet.authorized,
+      created: [created.status, created.body],
+      reused: [reused.status, reused.body],
+      completed: [completed.status, completed.body],
+      attempts: [createdAttempts, try attemptsOf("Ordinary", first)],
+      attested: attested.map((call) => [call.path, call.key, call.body]),
+    }, {
+      wallet: [200, null],
+      created: [200, { transactionId: "binding-transaction-1", transaction: attesterPlan.transaction, bindingContext: { vault, programId, projectPda, networkDomain, githubUserId: "401", destination: firstWallet.address, claimDigest } }],
+      reused: [200, { transactionId: "binding-transaction-1", transaction: attesterPlan.transaction, bindingContext: { vault, programId, projectPda, networkDomain, githubUserId: "401", destination: firstWallet.address, claimDigest } }],
+      completed: [200, { transactionId: "binding-transaction-1" }],
+      attempts: [[{ id: key, claim_id: wallet.claimId, state: "prepared" }], [{ id: key, claim_id: wallet.claimId, state: "prepared" }]],
+      attested: [["/v1/pay", key, payment(first, key)], ["/v1/pay", key, payment(first, key)], ["/v1/complete-bind", key, { ...payment(first, key), transaction: signed }]],
+    })
+
+    const retried = obligationId("2")
+    try obligation({ id: retried, owner: "401", outbox: "ready" })
+    const before = attested.length
+    const completeAlone = try pay(member, "solana-bind/complete", { obligationId: retried, transaction: signed })
+    const afterCompleteAlone = try attemptsOf("Ordinary", retried)
+    attesterPlan.reject = true
+    const refusedOnce = try prepareOf(retried)
+    const kept = try attemptsOf("Ordinary", retried)
+    const refusedAgain = try prepareOf(retried)
+    attesterPlan.reject = false
+    const keptId = String(kept[0]?.id ?? "")
+    try same({
+      completeAlone: [outcome(completeAlone), afterCompleteAlone],
+      refused: [outcome(refusedOnce), outcome(refusedAgain)],
+      attempts: [kept.length, try attemptsOf("Ordinary", retried)],
+      keys: attested.slice(before).map((call) => [call.path, call.key]),
+    }, {
+      completeAlone: [[409, "binding_not_ready"], []],
+      refused: [[409, "binding_pending_or_rejected"], [409, "binding_pending_or_rejected"]],
+      attempts: [1, [{ id: keptId, claim_id: wallet.claimId, state: "prepared" }]],
+      keys: [["/v1/pay", keptId], ["/v1/pay", keptId]],
+    })
+
+    const uncertain = obligationId("3")
+    try obligation({ id: uncertain, owner: "401", outbox: "ready" })
+    try openAttempt("Ordinary", "existing-unknown", uncertain, wallet.claimId)
+    const reusedUnknown = try prepareOf(uncertain)
+    try same({ reused: [reusedUnknown.status, attested.at(-1)?.key], attempts: try attemptsOf("Ordinary", uncertain) }, {
+      reused: [200, "existing-unknown"],
+      attempts: [{ id: "existing-unknown", claim_id: wallet.claimId, state: "unknown" }],
+    })
+
+    const fenced: Array<readonly [string, unknown, unknown]> = []
+    const beforeFenced = attested.length
+    for (const [index, state] of outboxStates.slice(1).entries()) {
+      const id = obligationId(String.fromCharCode(97 + index))
+      try obligation({ id, owner: "401", outbox: state })
+      fenced.push([state, outcome(try prepareOf(id)), try attemptsOf("Ordinary", id)])
+    }
+    const foreign = obligationId("5")
+    try obligation({ id: foreign, owner: "402", outbox: "ready" })
+    const foreignAnswer = try prepareOf(foreign)
+    const wrongActor = try pay(member, "solana-bind/prepare", { obligationId: first }, { "x-slop-expected-github-id": "456" })
+    const unconsented = try signIn("403")
+    const unconsentedClaim = try registered(unconsented, attesterAddress)
+    const unauthorized = obligationId("6")
+    try obligation({ id: unauthorized, owner: "403", outbox: "ready" })
+    const unauthorizedAnswer = try pay(unconsented, "solana-bind/prepare", { obligationId: unauthorized })
+    const settled = obligationId("7")
+    try obligation({ id: settled, owner: "401", state: "paid", outbox: "ready" })
+    const settledAnswer = try prepareOf(settled)
+    try same({
+      fenced,
+      refused: [
+        [outcome(foreignAnswer), try attemptsOf("Ordinary", foreign)],
+        [wrongActor.status, try attemptsOf("Ordinary", first)],
+        [unconsentedClaim === "", outcome(unauthorizedAnswer), try attemptsOf("Ordinary", unauthorized)],
+        [outcome(settledAnswer), try attemptsOf("Ordinary", settled)],
+      ],
+      attesterCalls: attested.length - beforeFenced,
+    }, {
+      fenced: outboxStates.slice(1).map((state) => [state, [409, "binding_not_ready"], []]),
+      refused: [
+        [[409, "binding_not_ready"], []],
+        [403, [{ id: key, claim_id: wallet.claimId, state: "prepared" }]],
+        [false, [409, "binding_not_ready"], []],
+        [[409, "binding_not_ready"], []],
+      ],
+      attesterCalls: 0,
+    })
+
+    const raced = obligationId("8")
+    try obligation({ id: raced, owner: "401", outbox: "ready" })
+    const beforeRace = attested.length
+    const racing = try Effect.all([prepareOf(raced), prepareOf(raced)], { concurrency: "unbounded" })
+    const racedAttempts = try attemptsOf("Ordinary", raced)
+    try same({
+      statuses: racing.map((answer) => answer.status),
+      attempts: racedAttempts.length,
+      keys: [...new Set(attested.slice(beforeRace).map((call) => call.key))],
+    }, { statuses: [200, 200], attempts: 1, keys: [String(racedAttempts[0]?.id ?? "")] })
+
+    const privateId = obligationId("9")
+    const caseId = "sc_binding_attempt_1"
+    try area.sql(`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state,
+        receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
+      VALUES (?, 'binding-journey', 'example/bindings', 'GHSA-aaaa-bbbb-dddd', '401', 'member-401', 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ?, ?)`, caseId, at, at)
+    try area.sql(`INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment)
+      VALUES (?, ?, ?, 'solana-devnet', ?, ?, 6, '1000000', '250000', '401', '7', ?, 1, '{}')`, caseId, privateId, "a".repeat(64), privateVault, mint, at)
+    try obligation({ id: privateId, owner: "401", outbox: "ready", ledger: "Private" })
+    const beforePrivate = attested.length
+    const privatePrepare = try prepareOf(privateId)
+    const privateAttempts = try attemptsOf("Private", privateId)
+    const privateKey = String(privateAttempts[0]?.id ?? "")
+    try same({
+      prepare: privatePrepare.status,
+      ordinary: try attemptsOf("Ordinary", privateId),
+      private: privateAttempts,
+      attested: attested.slice(beforePrivate).map((call) => [call.path, call.key]),
+      logged: try area.sql("SELECT case_id, actor_github_id, actor_role, action FROM security_case_access_log WHERE case_id = ? ORDER BY id", caseId),
+    }, {
+      prepare: 200,
+      ordinary: [],
+      private: [{ id: privateKey, claim_id: wallet.claimId, state: "prepared" }],
+      attested: [["/v1/security/pay", privateKey]],
+      logged: [{ case_id: caseId, actor_github_id: "401", actor_role: "reporter", action: "write" }],
+    })
+
+    const replaced = obligationId("0")
+    try obligation({ id: replaced, owner: "401", outbox: "ready" })
+    try openAttempt("Ordinary", "earlier-claim-unknown", replaced, wallet.claimId)
+    const successor = try authorizedClaim(member, successorWallet)
+    const beforeReplaced = attested.length
+    const replacedAnswer = try prepareOf(replaced)
+    try same({
+      successor: [successor.authorized, successor.claimId !== wallet.claimId],
+      refused: outcome(replacedAnswer),
+      attempts: try attemptsOf("Ordinary", replaced),
+      attesterCalls: attested.length - beforeReplaced,
+    }, {
+      successor: [[200, null], true],
+      refused: [409, "binding_not_ready"],
+      attempts: [{ id: "earlier-claim-unknown", claim_id: wallet.claimId, state: "unknown" }],
+      attesterCalls: 0,
+    })
+  })
+
+  it.effect('The binding attempt statements open the first attempt for the current claim only under a ready outbox, on the ordinary and the private ledger (spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready")', () => effect {
+    const attempts = try BindingAttempts
+    const registry = try seededClaim("501")
+    const elsewhere = try seededClaim("502", "profile_readme")
+    const admit = (ledger: AttemptLedger, id: string, owner: string, claimId: string, attemptId: string) => effect {
+      try run(try attempts.admit({ ledger, obligationId: id, githubUserId: owner, claimId, attemptId, at }))
+      return (try attemptsOf(ledger, id)).map((row) => row.id)
+    }
+    const admitted: Record<string, unknown> = {}
+    for (const ledger of ["Ordinary", "Private"] as const) {
+      const seed = ledger === "Ordinary" ? "b" : "c"
+      const ready = `${seed}1`.padEnd(64, "0")
+      const held = `${seed}2`.padEnd(64, "0")
+      const paid = `${seed}3`.padEnd(64, "0")
+      const unregistered = `${seed}4`.padEnd(64, "0")
+      const open = `${seed}5`.padEnd(64, "0")
+      const other = `${seed}6`.padEnd(64, "0")
+      try obligation({ id: ready, owner: "501", outbox: "ready", ledger })
+      try obligation({ id: other, owner: "501", outbox: "ready", ledger })
+      try obligation({ id: held, owner: "501", outbox: "held", ledger })
+      try obligation({ id: paid, owner: "501", state: "paid", outbox: "ready", ledger })
+      try obligation({ id: unregistered, owner: "502", outbox: "ready", ledger })
+      try obligation({ id: open, owner: "501", outbox: "ready", ledger })
+      try openAttempt(ledger, `${ledger}-open`, open, registry)
+      admitted[ledger] = {
+        first: try admit(ledger, ready, "501", registry, `${ledger}-first`),
+        again: try admit(ledger, ready, "501", registry, `${ledger}-second`),
+        otherClaim: try admit(ledger, other, "501", elsewhere, `${ledger}-other`),
+        held: try admit(ledger, held, "501", registry, `${ledger}-held`),
+        paid: try admit(ledger, paid, "501", registry, `${ledger}-paid`),
+        unregistered: try admit(ledger, unregistered, "502", elsewhere, `${ledger}-unregistered`),
+        open: try admit(ledger, open, "501", registry, `${ledger}-open-second`),
+      }
+    }
+    const readiness: Array<readonly [AttemptLedger, string, unknown]> = []
+    for (const ledger of ["Ordinary", "Private"] as const) {
+      for (const [index, state] of outboxStates.entries()) {
+        const id = `${ledger === "Ordinary" ? "d" : "e"}${index}`.padEnd(64, "0")
+        try obligation({ id, owner: "501", outbox: state, ledger })
+        readiness.push([ledger, state, try run(try attempts.readiness({ ledger, obligationId: id }))])
+      }
+      readiness.push([ledger, "none", try run(try attempts.readiness({ ledger, obligationId: "f".repeat(64) }))])
+    }
+    const ledgerOf = (ledger: AttemptLedger) => ({
+      first: [`${ledger}-first`],
+      again: [`${ledger}-first`],
+      otherClaim: [],
+      held: [],
+      paid: [],
+      unregistered: [],
+      open: [`${ledger}-open`],
+    })
+    try same({ admitted, readiness }, {
+      admitted: { Ordinary: ledgerOf("Ordinary"), Private: ledgerOf("Private") },
+      readiness: (["Ordinary", "Private"] as const).flatMap((ledger) => [...outboxStates.map((state) => [ledger, state, [{ state }]] as const), [ledger, "none", []] as const]),
+    })
+  })
+})

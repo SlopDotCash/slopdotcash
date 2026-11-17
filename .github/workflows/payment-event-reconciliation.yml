@@ -1,0 +1,54 @@
+name: Reconcile reviewed payment events
+on:
+  workflow_dispatch:
+    inputs:
+      packet_sha256:
+        description: Exact SHA-256 of the private reviewed receipt packet
+        type: string
+        required: true
+      apply:
+        description: Index the verified receipts through the canonical payment ledger
+        type: boolean
+        default: false
+permissions:
+  contents: read
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    environment: slop-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: slop-reviewed-payment-reconciliation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: payment-event-reconciliation
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/settlement
+      - name: Verify and reconcile the reviewed receipt packet
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAYMENT_RPC_URLS: ${{ secrets.SLOP_PAYMENT_RECONCILIATION_RPC_URLS }}
+          SLOP_PAYMENT_RECONCILIATION_PACKET: ${{ secrets.SLOP_PAYMENT_RECONCILIATION_PACKET }}
+          SLOP_PAYMENT_RECONCILIATION_SHA256: ${{ inputs.packet_sha256 }}
+          SLOP_PAYMENT_RECONCILIATION_APPLY: ${{ inputs.apply }}
+        run: node apps/settlement/dist/programs/main.js reconcile-events
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: payment-event-reconciliation-${{ github.run_id }}
+          path: ${{ runner.temp }}/payment-event-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

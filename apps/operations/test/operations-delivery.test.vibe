@@ -8,7 +8,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { mailCapture } from "@repo/platform/testing/mail"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@repo/ports/backend"
+import { EmailConsent, EmailEnrollment, ProjectAudience, type ProjectView, Registry } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
 import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
 import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
@@ -28,6 +28,9 @@ const first = "9200000001"
 const second = "9200000002"
 const member = "9200000003"
 const owner = "9200000004"
+const userSteward = "9200000005"
+const organization = "9200000006"
+const lister = "9200000007"
 const caseId = "sc_delivery_journey"
 const projectId = "delivery-journey"
 const memberVersion = "3".repeat(64)
@@ -68,6 +71,7 @@ function providerSend(message: EmailMessage): Promise<void> {
 const caseAccess = new Map<string, number>([[first, 0], [second, 1]])
 const askedCase: string[] = []
 const owners = new Set<string>([owner])
+const payoutProjects = new Map<string, ProjectView>()
 const askedAudience: string[] = []
 
 const Database = Layer.unwrap(effect {
@@ -177,7 +181,7 @@ const AudiencePorts = Layer.mergeAll(
     },
   }),
   Layer.succeed(Registry, {
-    project: () => effect { askedAudience.push("project"); return undefined },
+    project: (id) => effect { askedAudience.push("project"); return payoutProjects.get(id) },
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
@@ -211,6 +215,27 @@ const World = Layer.mergeAll(
   mailVia({ send: providerSend }, (mail) => mail),
   rolesFrom({ ADMIN_GITHUB_IDS: "9200000099", PROJECT_MODERATOR_GITHUB_IDS: "" }),
 )
+
+function payoutView(projectId: string, stewardGithubId: string, stewardAccount: ProjectView["stewardAccount"], listing: ProjectView["listing"]): ProjectView {
+  return {
+    projectId,
+    revision: 1,
+    manifestSha256: "a".repeat(64),
+    rowStatus: "Active",
+    manifestStatus: "Active",
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId,
+    stewardAccount,
+    listing,
+    repositories: [],
+    closureConsent: false,
+  }
+}
+
+function payoutException(project: string, recipientGithubId: string): Notice {
+  return { eventKey: `payout-exception:obligation-${project}:${seededAt}`, recipientGithubId, kind: "PayoutException", subject: project, actionPath: `/projects/${project}`, sourceAt: seededAt }
+}
 
 function caseNotice(eventKey: string, recipientGithubId: string): Notice {
   return { eventKey, recipientGithubId, kind: "SecurityCase", subject: caseId, actionPath: `/security?case=${caseId}`, sourceAt: seededAt }
@@ -406,7 +431,7 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Activity mail carries the one-click unsubscribe headers, a former owner gets nothing, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
+  it.effect('Activity mail carries the one-click unsubscribe headers, a former owner gets nothing, a payout exception reaches a user steward or the lister of an Organization steward, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/payoutAudience.md, "Story: A payout exception reaches an account that can sign in"; spec/operations/payoutAudience.md, "The account that listed a project is its source application\'s applicant, else the actor of its first revision"; spec/operations/payoutAudience.md, "A payout exception reaches a user steward, or the lister of an Organization steward when one is recorded"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
     const db = try D1
     const { pilot, release } = try activityPilot()
     try save([
@@ -447,6 +472,34 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       verification: [true, true, false, { state: "sent" }, [["member-new@slop.test", "Verify your Slop email"]], true],
       admins: [{ kind: "sent", sent: 2, recipients: 2 }, ["ops@slop.test", "lead@slop.test"]],
     })
+
+    payoutProjects.set("payout-user", payoutView("payout-user", userSteward, "UserSteward", { fromApplication: false, firstActorGithubId: lister }))
+    payoutProjects.set("payout-organization", payoutView("payout-organization", organization, "OrganizationSteward", { fromApplication: true, applicantGithubId: lister, firstActorGithubId: organization }))
+    payoutProjects.set("payout-unlisted", payoutView("payout-unlisted", organization, "OrganizationSteward", { fromApplication: true, firstActorGithubId: lister }))
+    try db.batch([userSteward, organization, lister].flatMap((githubId, index) => {
+      const version = String(index + 5).repeat(64)
+      return [
+        sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${githubId}, ${`payout-${githubId}@slop.test`}, ${version}, ${seededAt})`,
+        sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${githubId}, 1, 1, ${version}, ${seededAt})`,
+      ]
+    }))
+    const exceptions = [
+      ["payout-user", userSteward],
+      ["payout-organization", lister],
+      ["payout-organization", organization],
+      ["payout-unlisted", organization],
+    ] as const
+    try save(exceptions.map(([project, recipientGithubId]) => payoutException(project, recipientGithubId)))
+    try dispatch("activity", pilot, from, release)
+    try dispatch("activity", pilot, from, release)
+    const payoutRows: OutboxState[] = []
+    for (const [project, recipient] of exceptions) payoutRows.push(try outbox(`payout-exception:obligation-${project}:${seededAt}`, recipient))
+    try same(payoutRows.map((row) => [row.state, sentTo(row.id).map(([to]) => to)]), [
+      ["provider-accepted", [`payout-${userSteward}@slop.test`]],
+      ["provider-accepted", [`payout-${lister}@slop.test`]],
+      ["suppressed", []],
+      ["provider-accepted", [`payout-${organization}@slop.test`]],
+    ])
   })
 
   it.effect('A routed security report reaches each recipient as one generic mail per report version (spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one")', () => effect {

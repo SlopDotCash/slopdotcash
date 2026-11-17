@@ -3,9 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { gitBytes, systemGit } from "@repo/platform/git"
 import type { Handler } from "@repo/platform/testing"
-import { cloudflareApi } from "@repo/platform/testing/cloudflare"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { type CloudflareApi, cloudflareApi } from "@repo/platform/testing/cloudflare"
+import { repoRoot } from "@repo/platform/testing/paths"
 import { asFetch, parsedJson } from "@repo/platform/testing/quotes"
-import { Response } from "miniflare"
+import { FormData, Request as ApiRequest, Response } from "miniflare"
+import { InspectRefused, InspectUsage, inspect } from "../src/programs/inspect.vibe"
 import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/release/evidence/agentClients.vibe"
 import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
 import { captureEvidence, committedBuild, servedArtifacts } from "../src/release/evidence/capture.vibe"
@@ -42,7 +45,7 @@ const takeOrders: ContractProbe = {
 }
 
 function described(error: unknown) {
-  if (error instanceof EvidenceRefused || error instanceof AgentClientsRefused || error instanceof RotationRefused) return error.message
+  if (error instanceof EvidenceRefused || error instanceof AgentClientsRefused || error instanceof RotationRefused || error instanceof InspectRefused || error instanceof InspectUsage) return error.message
   return error instanceof Error ? error.name : String(error)
 }
 
@@ -145,6 +148,120 @@ function agentRecords(sha: string, records: ReadonlyArray<unknown>) {
 
 function everyRecord(sha: string) {
   return ["slop-skill", "contributor-skill"].flatMap((workflow) => requiredClients.map((client) => agentRecord(workflow, client, sha)))
+}
+
+interface ApiCall {
+  readonly by: "wrangler" | "release"
+  readonly method: string
+  readonly path: string
+}
+
+interface ConverterHost {
+  api: CloudflareApi
+  refuseDeploy: boolean
+  staleAfterDeploy: boolean
+  deployed: boolean
+  pinned: string
+  pinnedDeployment: string
+  readonly calls: ApiCall[]
+}
+
+function envelope(result: unknown, status = 200) {
+  return Response.json({ success: status === 200, errors: [], messages: [], result }, { status })
+}
+
+function converterHost(host: ConverterHost, by: ApiCall["by"], release: string): Handler {
+  const deployments = `/accounts/${accountId}/workers/scripts/slop-fee-converter/deployments`
+  return (request) => {
+    const path = new URL(request.url).pathname.replace(/^\/client\/v4/u, "")
+    host.calls.push({ by, method: request.method, path })
+    if (request.method === "POST" && /^\/accounts\/[0-9a-f]{32}\/d1\/database\/[^/]+\/query$/u.test(path)) {
+      return envelope([{ success: true, results: [{ openSends: 0, openBridgeOrders: 0, openRobinhoodGas: 0 }] }])
+    }
+    if (request.method === "POST" && path === deployments) {
+      if (host.refuseDeploy) return envelope(null, 400)
+      host.deployed = true
+    }
+    if (by === "release" && host.staleAfterDeploy && host.deployed && request.method === "GET" && path === deployments) {
+      return envelope({ deployments: [{ id: host.pinnedDeployment, annotations: { "workers/message": release }, versions: [{ version_id: host.pinned, percentage: 100 }] }] })
+    }
+    return host.api.handler(request)
+  }
+}
+
+effect function seedConverter(host: ConverterHost, sha: string, database: string) {
+  const api = cloudflareApi({ accountId })
+  const base = `https://cloudflare.test/client/v4/accounts/${accountId}/workers/scripts/slop-fee-converter`
+  const metadata = JSON.stringify({
+    annotations: { "workers/tag": sha, "workers/message": `slop.cash release ${sha}` },
+    bindings: [
+      { name: "RPC_URL_ROBINHOOD", type: "secret_text", text: "https://retired-rpc.test/v1" },
+      { name: "FEE_WALLET_KEY_ROBINHOOD", type: "secret_text", text: "never-export" },
+      { name: "FEE_DB", type: "d1", id: database },
+      { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
+      { name: "BUYBACK_MODE", type: "plain_text", text: "live" },
+    ],
+  })
+  const authorized = { authorization: "Bearer journey" }
+  try promise(async () => {
+    const form = new FormData()
+    form.append("metadata", metadata)
+    return api.handler(new ApiRequest(`${base}/versions`, { method: "POST", headers: authorized, body: form }))
+  })
+  const pinned = api.state.versions["slop-fee-converter"]?.[0]?.id ?? ""
+  const deployment = JSON.stringify({ versions: [{ version_id: pinned, percentage: 100 }], annotations: { "workers/message": `slop.cash release ${sha}` } })
+  try promise(() => Promise.resolve(api.handler(new ApiRequest(`${base}/deployments`, { method: "POST", headers: { ...authorized, "content-type": "application/json" }, body: deployment }))))
+  host.api = api
+  host.refuseDeploy = false
+  host.staleAfterDeploy = false
+  host.deployed = false
+  host.pinned = pinned
+  host.pinnedDeployment = api.state.deployments["slop-fee-converter"]?.[0]?.id ?? ""
+  host.calls.length = 0
+  return pinned
+}
+
+interface ReadbackScenario {
+  readonly before?: unknown
+  readonly after?: unknown
+  readonly version?: unknown
+  readonly failureAt?: number
+  readonly status?: number
+  readonly raw?: string
+}
+
+const slopbotSource = "a".repeat(40)
+const slopbotDeployment = "11111111-1111-1111-1111-111111111111"
+const slopbotVersion = "22222222-2222-2222-2222-222222222222"
+const slopbotOther = "33333333-3333-3333-3333-333333333333"
+
+function slopbotDeployments(versions: ReadonlyArray<{ readonly version_id: string; readonly percentage: number }> = [{ version_id: slopbotVersion, percentage: 100 }], id = slopbotDeployment) {
+  return { deployments: [{ id, versions, requestId: "never-export" }] }
+}
+
+function slopbotVersionView(runtime: unknown = { limits: { cpu_ms: 300_000, private: "never-export" }, usage_model: "standard" }, changes: Readonly<Record<string, unknown>> = {}) {
+  return {
+    id: slopbotVersion,
+    annotations: { "workers/tag": slopbotSource, private: "never-export" },
+    resources: { bindings: [{ name: "PRIVATE", text: "never-export" }], script_runtime: runtime },
+    metadata: { author_email: "never-export" },
+    ...changes,
+  }
+}
+
+function slopbotHost(scenario: ReadbackScenario, calls: string[]): Handler {
+  return (request) => {
+    const path = new URL(request.url).pathname.replace(/^\/client\/v4/u, "")
+    calls.push(`${request.method} ${path}`)
+    if (calls.length === scenario.failureAt) return new Response("never-export", { status: scenario.status ?? 500 })
+    if (path.endsWith("/deployments")) return Response.json({ success: true, result: calls.length === 1 ? scenario.before ?? slopbotDeployments() : scenario.after ?? slopbotDeployments() })
+    if (scenario.raw !== undefined) return new Response(scenario.raw, { status: 200 })
+    return Response.json({ success: true, result: scenario.version ?? slopbotVersionView() })
+  }
+}
+
+function withoutTime(value: unknown) {
+  return typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "checkedAt")) : value
 }
 
 layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, systemGit), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -278,25 +395,54 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     }))
   }))
 
-  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/operations/rpcRotationRun.md, "Story: A rotation run changes one endpoint and never counts as a release"; spec/operations/rpcRotationRun.md, "A rotation run prepares only on main from a manual dispatch"; spec/operations/rpcRotationRun.md, "A rotation run writes only its own candidate version, and a normal run never writes one"; spec/operations/rpcRotationRun.md, "A confirmed rotation ends as a confirmed rotation, and an uncertain activation is never a verified release"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
     const fs = try FileSystem.FileSystem
     const files = try Path.Path
     const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-rpc-rotation-" })
-    const api = cloudflareApi({ accountId })
+    const feeDatabase = "5d1c4b3a-2f1e-4d0c-9b8a-7f6e5d4c3b2a"
+    const evmWallet = `0x${"e".repeat(40)}`
+    const checkout = files.join(directory, "checkout")
+    try fs.makeDirectory(checkout, { recursive: true })
+    try git(checkout, ["init", "-q", "-b", "main"])
+    try written(files.join(checkout, "apps/fees/wrangler/feeConverter.production.jsonc"), `${JSON.stringify({
+      name: "slop-fee-converter",
+      main: "../dist/feeConverter.js",
+      d1_databases: [{ binding: "FEE_DB", database_name: "slop-fees", database_id: feeDatabase }],
+      vars: {
+        SLOP_ENVIRONMENT: "production",
+        FEE_CONVERTER_MODE: "live",
+        BUYBACK_MODE: "live",
+        FEE_CONVERTER_NETWORKS: "robinhood",
+        FEE_CONVERTER_NATIVE_BUDGETS: JSON.stringify({ robinhood: "1000000000000000" }),
+        FEE_WALLET_BASE: evmWallet,
+        FEE_WALLET_ETHEREUM: evmWallet,
+        FEE_WALLET_ROBINHOOD: evmWallet,
+        FEE_WALLET_SOLANA: "So11111111111111111111111111111111111111112",
+      },
+    }, null, 2)}\n`)
+    const head = try committed(checkout, "README.md", "slop.cash\n", "Reviewed fee converter")
+    try git(checkout, ["config", `url.${checkout}.insteadOf`, "https://github.com/SlopDotCash/slopdotcash.git"])
+    try fs.makeDirectory(files.join(checkout, "apps/operations"), { recursive: true })
+    try fs.symlink(files.join(repoRoot, "apps/operations/node_modules"), files.join(checkout, "apps/operations/node_modules"))
+    const release = `slop.cash release ${head}`
+    const host: ConverterHost = { api: cloudflareApi({ accountId }), refuseDeploy: false, staleAfterDeploy: false, deployed: false, pinned: "", pinnedDeployment: "", calls: [] }
+    const served: Served = try acquireRelease(promise(() => serve(converterHost(host, "wrangler", release))), (server) => promise(() => server.close()))
+    const inProcess = converterHost(host, "release", release)
     const calls: string[] = []
     const searchPath = try Config.withDefault(Config.String("PATH"), "")
+    const summaryPath = files.join(directory, "summary.md")
     const environment = {
-      GITHUB_SHA: sourceSha,
+      GITHUB_SHA: head,
       GITHUB_REF: "refs/heads/main",
       GITHUB_EVENT_NAME: "workflow_dispatch",
       SLOP_FEE_CONVERTER_RELEASE: "enabled",
       SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: expectedVersion,
       SLOP_ROBINHOOD_RPC_REPLACEMENT: candidateRpc,
-      GITHUB_STEP_SUMMARY: files.join(directory, "summary.md"),
+      GITHUB_STEP_SUMMARY: summaryPath,
       RUNNER_TEMP: directory,
       CLOUDFLARE_ACCOUNT_ID: accountId,
       CLOUDFLARE_API_TOKEN: "journey-token",
-      CLOUDFLARE_API_BASE_URL: "https://cloudflare.test/client/v4",
+      CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
       HOME: directory,
       TMPDIR: directory,
       PATH: searchPath,
@@ -306,7 +452,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
       const referenceHost = chainHost(reference, calls)
       return (request) => {
         const url = new URL(request.url)
-        if (url.host === "cloudflare.test") return api.handler(request)
+        if (url.origin === served.url) return inProcess(request)
         if (url.href === candidateRpc) return candidateHost(request)
         if (url.origin === referenceRpc) return referenceHost(request)
         return new Response(`no fake answers ${url.host}`, { status: 599 })
@@ -318,39 +464,216 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, syste
     const forked: Chain = { chainId: "0x1237", finalized: { number: "0x12", hash: forkedHash }, blocks: { "0x10": forkedHash }, contract: null }
     const rotate = (values: Readonly<Record<string, string>>, candidate: Chain, reference: Chain) => {
       calls.length = 0
-      const before = api.calls.length
+      host.calls.length = 0
       return effect {
-        const outcome = try settled(routed(configured(rotateRobinhoodRpc(directory, takeOrders), values), asFetch(network(candidate, reference))))
-        return { outcome, rpc: [...calls], cloudflare: api.calls.slice(before).map((call) => `${call.method} ${call.path}`).sort() }
+        const outcome = try settled(routed(configured(rotateRobinhoodRpc(checkout, takeOrders), values), asFetch(network(candidate, reference))))
+        return { outcome, rpc: [...calls], cloudflare: host.calls.map((call) => `${call.method} ${call.path}`).sort() }
       }
     }
+    const summary = effect {
+      return fs.readFileString(summaryPath) catch () => ""
+    }
+    const worker = `/accounts/${accountId}/workers/scripts/slop-fee-converter`
+    const latest = `/accounts/${accountId}/workers/workers/slop-fee-converter/versions/latest`
+    const strayed = (call: ApiCall) => call.path.includes("/pages/") || /\/workers\/(?:scripts|workers|services)\/(?!slop-fee-converter(?:\/|$))/u.test(call.path)
+    const isWrite = (call: ApiCall) => call.method !== "GET" && !call.path.endsWith("/query")
+    const effects = () => ({
+      writes: host.calls.filter(isWrite).map((call) => `${call.by} ${call.method} ${call.path}`),
+      journalReads: host.calls.filter((call) => call.path.endsWith("/query")).length,
+      strayed: host.calls.filter(strayed).map((call) => `${call.method} ${call.path}`),
+    })
+    const qualifiedRpc = ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"]
 
     const wrongChain = try rotate(environment, base, robinhood)
     const headersOnly = try rotate(environment, stateless, robinhood)
     const insecure = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: "http://candidate-rpc.test/v1/journey" }, robinhood, robinhood)
     const reference = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: `${referenceRpc}/` }, robinhood, robinhood)
     const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/development" }, robinhood, robinhood)
+    const pushed = try rotate({ ...environment, GITHUB_EVENT_NAME: "push" }, robinhood, robinhood)
     const disabled = try rotate({ ...environment, SLOP_FEE_CONVERTER_RELEASE: "" }, robinhood, robinhood)
     const contradicted = try rotate(environment, robinhood, forked)
     const qualified = try rotate(environment, robinhood, robinhood)
-    const worker = `/accounts/${accountId}/workers/scripts/slop-fee-converter`
 
-    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, disabled, contradicted, qualified }, {
+    const refusedPin = try seedConverter(host, head, feeDatabase)
+    host.refuseDeploy = true
+    const deployRefused = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: refusedPin }, robinhood, robinhood)
+    const deployRefusedEffects = effects()
+    const deployRefusedSummary = try summary
+
+    const stalePin = try seedConverter(host, head, feeDatabase)
+    host.staleAfterDeploy = true
+    const staleRead = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: stalePin }, robinhood, robinhood)
+    const staleEffects = effects()
+    const staleSummary = try summary
+
+    const confirmedPin = try seedConverter(host, head, feeDatabase)
+    const confirmed = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: confirmedPin }, robinhood, robinhood)
+    const confirmedEffects = effects()
+    const confirmedSummary = try summary
+    const serving = host.api.state.deployments["slop-fee-converter"]?.at(-1)
+    const candidate = host.api.state.versions["slop-fee-converter"]?.at(-1)
+
+    try Effect.try(() => assert.deepStrictEqual({ wrongChain, headersOnly, insecure, reference, untrusted, pushed, disabled, contradicted, qualified }, {
       wrongChain: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: [] },
       headersOnly: { outcome: "The candidate failed the finalized Robinhood contract read.", rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber"], cloudflare: [] },
       insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
       untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [] },
+      pushed: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
       disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
-      contradicted: {
-        outcome: "The independent Robinhood RPC did not verify the candidate block.",
-        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
-        cloudflare: [],
+      contradicted: { outcome: "The independent Robinhood RPC did not verify the candidate block.", rpc: qualifiedRpc, cloudflare: [] },
+      qualified: { outcome: "Fee-converter deployment or upload history is unavailable.", rpc: qualifiedRpc, cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`] },
+    }))
+    try Effect.try(() => assert.deepStrictEqual({
+      deployRefused: deployRefused.outcome, deployRefusedEffects, deployRefusedSummary,
+      staleRead: staleRead.outcome, staleEffects, staleSummary,
+      confirmed: confirmed.outcome, confirmedEffects, confirmedSummary,
+      serving: serving?.versions, servingMessage: serving?.annotations["workers/message"],
+      candidate: { number: candidate?.number, tag: candidate?.tag, message: candidate?.annotations["workers/message"] },
+    }, {
+      deployRefused: "Fee-converter RPC release check failed.",
+      deployRefusedEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
+      deployRefusedSummary: "",
+      staleRead: "The pinned fee-converter deployment or latest upload changed.",
+      staleEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
+      staleSummary: "",
+      confirmed: "ok",
+      confirmedEffects: { writes: [`wrangler PATCH ${latest}`, `wrangler POST ${worker}/deployments`], journalReads: 2, strayed: [] },
+      confirmedSummary: `Fee converter Robinhood RPC rotation from ${confirmedPin} to ${candidate?.id ?? ""} at 100% on ${head}.\n`,
+      serving: [{ versionId: candidate?.id ?? "", percentage: 100 }],
+      servingMessage: release,
+      candidate: { number: 2, tag: head, message: `${release}; Robinhood RPC rotation from ${confirmedPin}` },
+    }))
+  }))
+
+  it.effect('Observe the Slopbot runtime only from three agreeing reads of the expected source (spec/operations/slopbotRuntime.md, "Story: Observe the Slopbot runtime only from three agreeing reads of the expected source"; spec/operations/slopbotRuntime.md, "A readback is selected alone, for an exact source, before any credential is used"; spec/operations/slopbotRuntime.md, "An observation needs one 100% version of the expected source, a valid runtime and an unchanged deployment")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-slopbot-runtime-" })
+    const reportPath = files.join(runnerTemp, "slopbot-runtime.json")
+    const token = "synthetic-private-token"
+    const selection = {
+      GITHUB_REF: "refs/heads/main",
+      SLOP_SLOPBOT_EXPECTED_SOURCE: slopbotSource,
+      SLOP_SLOPBOT_PROBE_SOLANA_RPC: "false",
+      SLOP_SLOPBOT_ROTATE_SOLANA_FROM: "",
+      SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE: "",
+      SLOP_SLOPBOT_PRIOR_PROOF_RUN: "",
+      RUNNER_TEMP: runnerTemp,
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: token,
+      CLOUDFLARE_API_BASE_URL: "https://cloudflare.test/client/v4",
+    }
+    const readback = (values: Readonly<Record<string, string>>, scenario: ReadbackScenario = {}, args: ReadonlyArray<string> = ["slopbot-runtime"]) => effect {
+      try fs.remove(reportPath, { force: true })
+      const calls: string[] = []
+      const outcome = try settled(routed(configured(inspect(args), values), asFetch(slopbotHost(scenario, calls))))
+      const text = fs.readFileString(reportPath) catch () => ""
+      const report = parsedJson(text)
+      const failure = typeof report === "object" && report !== null && "failure" in report ? report.failure : undefined
+      return { outcome, calls: calls.length, failure, text }
+    }
+    const failed = (values: Readonly<Record<string, string>>, scenario: ReadbackScenario = {}) => effect {
+      const found = try readback(values, scenario)
+      return { outcome: found.outcome, calls: found.calls, failure: found.failure, leaked: found.text.includes("never-export") || found.text.includes(token) }
+    }
+    const mixed = [
+      { SLOP_SLOPBOT_PROBE_SOLANA_RPC: "true" },
+      { SLOP_SLOPBOT_ROTATE_SOLANA_FROM: "never-export" },
+      { SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE: "never-export" },
+      { SLOP_SLOPBOT_PRIOR_PROOF_RUN: "never-export" },
+      { SLOP_SLOPBOT_EXPECTED_SOURCE: "a" },
+      { SLOP_SLOPBOT_EXPECTED_SOURCE: "A".repeat(40) },
+      { GITHUB_REF: "refs/heads/development" },
+    ]
+    const selections: Array<{ readonly outcome: string; readonly calls: number; readonly report: boolean }> = []
+    for (const changed of mixed) {
+      for (const args of [["slopbot-runtime"], ["slopbot-runtime", "--validate-selection"]]) {
+        const found = try readback({ ...selection, ...changed }, {}, args)
+        selections.push({ outcome: found.outcome, calls: found.calls, report: found.text !== "" })
+      }
+    }
+    const accepted = try readback(selection, {}, ["slopbot-runtime", "--validate-selection"])
+    const noRunner = try readback({ ...selection, RUNNER_TEMP: "" })
+    const extraArgument = try readback(selection, {}, ["slopbot-runtime", "--verbose"])
+
+    const unavailable = {
+      account: try failed({ ...selection, CLOUDFLARE_ACCOUNT_ID: "invalid" }),
+      token: try failed({ ...selection, CLOUDFLARE_API_TOKEN: "" }),
+      tls: try failed({ ...selection, NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
+      emptyDeployments: try failed(selection, { before: { deployments: [] } }),
+      twoVersions: try failed(selection, { before: slopbotDeployments([{ version_id: slopbotVersion, percentage: 100 }, { version_id: slopbotOther, percentage: 0 }]) }),
+      half: try failed(selection, { before: slopbotDeployments([{ version_id: slopbotVersion, percentage: 50 }]) }),
+      incoherent: try failed(selection, { version: slopbotVersionView(undefined, { id: slopbotOther }) }),
+      wrongSource: try failed(selection, { version: slopbotVersionView(undefined, { annotations: { "workers/tag": "b".repeat(40) } }) }),
+      noCpu: try failed(selection, { version: slopbotVersionView({ limits: { cpu_ms: 0 }, usage_model: "standard" }) }),
+      tooMuchCpu: try failed(selection, { version: slopbotVersionView({ limits: { cpu_ms: 300_001 }, usage_model: "standard" }) }),
+      fractionalCpu: try failed(selection, { version: slopbotVersionView({ limits: { cpu_ms: 1.5 }, usage_model: "standard" }) }),
+      otherUsage: try failed(selection, { version: slopbotVersionView({ limits: { cpu_ms: 30_000 }, usage_model: "other" }) }),
+      redeployed: try failed(selection, { after: slopbotDeployments(undefined, slopbotOther) }),
+      forbidden: try failed(selection, { failureAt: 2, status: 403 }),
+      rateLimited: try failed(selection, { failureAt: 3, status: 429 }),
+      unsuccessful: try failed(selection, { raw: JSON.stringify({ success: false, errors: [{ message: "never-export" }] }) }),
+      oversized: try failed(selection, { raw: "x".repeat(1_048_577) }),
+    }
+    const metadataUnavailable = "Slopbot runtime metadata unavailable"
+    const refusedAt = (calls: number, stage: string, httpStatus?: number) => ({ outcome: metadataUnavailable, calls, failure: httpStatus === undefined ? { stage } : { stage, httpStatus }, leaked: false })
+
+    const observed = try readback(selection)
+    const mode = (try fs.stat(reportPath)).mode & 0o777
+    const bundled = try readback(selection, { version: slopbotVersionView({ limits: { cpu_ms: 30_000 }, usage_model: "bundled" }) })
+
+    try Effect.try(() => assert.deepStrictEqual({
+      selections, accepted: { outcome: accepted.outcome, calls: accepted.calls, report: accepted.text !== "" },
+      noRunner: { outcome: noRunner.outcome, calls: noRunner.calls }, extraArgument: { outcome: extraArgument.outcome, calls: extraArgument.calls },
+      unavailable,
+      observed: { outcome: observed.outcome, calls: observed.calls, report: withoutTime(parsedJson(observed.text)), endsWithNewline: observed.text.endsWith("}\n"), mode },
+      private: [token, accountId, slopbotDeployment, "never-export", "bindings", "entitlement"].filter((secret) => observed.text.includes(secret)),
+      bundled: withoutTime(parsedJson(bundled.text)),
+    }, {
+      selections: mixed.flatMap(() => [0, 1].map(() => ({ outcome: "Slopbot-only protected main selection required.", calls: 0, report: false }))),
+      accepted: { outcome: "ok", calls: 0, report: false },
+      noRunner: { outcome: "Protected main runner required.", calls: 0 },
+      extraArgument: { outcome: "Protected main runner required.", calls: 0 },
+      unavailable: {
+        account: refusedAt(0, "authority"),
+        token: refusedAt(0, "authority"),
+        tls: refusedAt(0, "tls"),
+        emptyDeployments: refusedAt(1, "deployment-read"),
+        twoVersions: refusedAt(1, "deployment-read"),
+        half: refusedAt(1, "deployment-read"),
+        incoherent: refusedAt(2, "version-identity"),
+        wrongSource: refusedAt(2, "version-source"),
+        noCpu: refusedAt(2, "runtime-shape"),
+        tooMuchCpu: refusedAt(2, "runtime-shape"),
+        fractionalCpu: refusedAt(2, "runtime-shape"),
+        otherUsage: refusedAt(2, "runtime-shape"),
+        redeployed: refusedAt(3, "deployment-recheck"),
+        forbidden: refusedAt(2, "version-read", 403),
+        rateLimited: refusedAt(3, "deployment-recheck", 429),
+        unsuccessful: refusedAt(2, "version-read", 200),
+        oversized: refusedAt(2, "version-read", 200),
       },
-      qualified: {
-        outcome: "Fee-converter deployment or upload history is unavailable.",
-        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "candidate-rpc.test eth_call", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
-        cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`],
+      observed: {
+        outcome: "ok",
+        calls: 3,
+        report: {
+          schemaVersion: 1,
+          worker: "slop-slopbot",
+          expectedSource: slopbotSource,
+          status: "observed",
+          observation: { sourceCommit: slopbotSource, versionId: slopbotVersion, cpuMs: 300_000, usageModel: "standard", deploymentStable: true },
+        },
+        endsWithNewline: true,
+        mode: 0o600,
+      },
+      private: [],
+      bundled: {
+        schemaVersion: 1,
+        worker: "slop-slopbot",
+        expectedSource: slopbotSource,
+        status: "observed",
+        observation: { sourceCommit: slopbotSource, versionId: slopbotVersion, cpuMs: 30_000, usageModel: "bundled", deploymentStable: true },
       },
     }))
   }))

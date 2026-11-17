@@ -1,0 +1,109 @@
+name: Escrow contracts
+
+on:
+  pull_request:
+    branches: [vibestack, development, main]
+    paths:
+      - "packages/contracts/**"
+      - "packages/platform/src/testing/chains/**"
+      - ".github/workflows/contracts.yml"
+      - ".github/actions/setup/action.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches: [vibestack, development, main]
+    paths:
+      - "packages/contracts/**"
+      - "packages/platform/src/testing/chains/**"
+      - ".github/workflows/contracts.yml"
+      - ".github/actions/setup/action.yml"
+      - "pnpm-lock.yaml"
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+  SLOP_SOLANA_BUILD_IMAGE: solanafoundation/anchor@sha256:facc4ebd0738ba7ebc1eb4ef000deab6b37e7747960d3f400c73c40c5421b5de
+
+concurrency:
+  group: contracts-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contracts:
+    name: EVM and Solana escrow checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: contracts
+      - run: forge fmt --root packages/contracts/evm --check
+      - run: pnpm all test --filter=@repo/contracts
+
+  solana-verifiable:
+    name: Verifiable Solana program build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Build the deployable Solana program in the pinned image
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE"
+          mkdir -p "$RUNNER_TEMP/solana-verifiable"
+          docker run --rm --platform linux/amd64 "$SLOP_SOLANA_BUILD_IMAGE" \
+            sh -c 'anchor --version; solana --version; cargo --version; rustc --version' \
+            > "$RUNNER_TEMP/solana-verifiable/toolchain.txt"
+          docker run --rm --platform linux/amd64 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/packages/contracts/solana,target=/workdir" \
+            --workdir /workdir \
+            --env CARGO_TARGET_DIR=/workdir/docker-target \
+            "$SLOP_SOLANA_BUILD_IMAGE" \
+            cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml \
+              --tools-version v1.52 -- --locked
+          cp packages/contracts/solana/docker-target/deploy/slop_escrow.so \
+            "$RUNNER_TEMP/solana-verifiable/slop_escrow.so"
+      - name: Bind the program artifact to its source and build
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/solana-verifiable"
+          head -c 4 "$output/slop_escrow.so" | od -An -tx1 | tr -d ' \n' | grep -qx '7f454c46' \
+            || { echo "::error::The program build did not produce an ELF artifact"; exit 1; }
+          digest="$(sha256sum "$output/slop_escrow.so" | cut -d ' ' -f 1)"
+          size="$(stat -c %s "$output/slop_escrow.so")"
+          jq -n \
+            --arg sourceCommit "$(git rev-parse HEAD)" \
+            --arg solanaSourceTree "$(git rev-parse HEAD:packages/contracts/solana)" \
+            --arg buildImage "$SLOP_SOLANA_BUILD_IMAGE" \
+            --arg sha256 "$digest" \
+            --argjson sizeBytes "$size" \
+            --arg workflowRun "$GITHUB_RUN_ID" \
+            --arg workflowAttempt "$GITHUB_RUN_ATTEMPT" \
+            --rawfile toolchain "$output/toolchain.txt" \
+            '{schemaVersion: 1, sourceCommit: $sourceCommit, solanaSourceTree: $solanaSourceTree, buildImage: $buildImage,
+              platform: "linux/amd64", platformTools: "v1.52",
+              command: "cargo build-sbf --manifest-path programs/slop-escrow/Cargo.toml --tools-version v1.52 -- --locked",
+              toolchain: ($toolchain | split("\n") | map(select(. != ""))), file: "slop_escrow.so", sha256: $sha256,
+              sizeBytes: $sizeBytes, workflowRun: $workflowRun, workflowAttempt: $workflowAttempt}' \
+            > "$output/manifest.json"
+          printf '%s  slop_escrow.so\n' "$digest" > "$output/SHA256SUMS"
+          cat "$output/manifest.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: solana-verifiable-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/solana-verifiable/
+          if-no-files-found: error
+          retention-days: 30

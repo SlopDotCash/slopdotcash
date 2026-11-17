@@ -92,6 +92,7 @@ export const vaultAbi = parseAbi([
   "function monthlyRoots(uint32 period) view returns (bytes32)",
   "function monthlyReserves(uint32 period) view returns (bytes32 allocationDigest, uint128 total, uint128 remaining, uint32 count, uint64 admittedAt)",
   "function monthlyReleased(uint32 period) view returns (uint128)",
+  "function currentPeriod() view returns (uint32)",
   "function monthPledges(uint32 period) view returns (uint128 amount, bool open)",
   "function openPledgedGross() view returns (uint128)",
   "event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest)",

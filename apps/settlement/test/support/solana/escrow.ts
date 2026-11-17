@@ -1,13 +1,13 @@
-// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"
+// spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/contracts/solanaEscrow.md, "The pre-pledge build's 332-byte project grows to the current layout with no open pledges"; spec/contracts/solanaEscrow.md, "The owner pledges free funds to one period from the current one to eleven months ahead, raising and never lowering"
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Account, type Address, type Blockhash, type FetchedTransaction, type Signature, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, decodeTokenAccount } from "@repo/platform/chain/solana";
-import { decodeAward, decodeBinding, decodeMarker, decodeMonth, decodeOrigin, decodeProject, decodeVault, isInitialized } from "../../../src/chain/solana/accounts.ts";
+import { PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE, type ProjectAccount, decodeAward, decodeBinding, decodeMarker, decodeMonth, decodeMonthPledgePresence, decodeOrigin, decodeProject, decodeVault, isInitialized } from "../../../src/chain/solana/accounts.ts";
 import { type MonthlyEntry, solanaAllocationRoot } from "../../../src/chain/solana/allocationRoot.ts";
-import { type Digest, type I64, type U64, digestBytes, digestOf, i64le, u64le, utf8 } from "../../../src/chain/solana/bytes.ts";
+import { type Digest, type I64, type U64, digestBytes, digestOf, i64le, u32le, u64le, utf8 } from "../../../src/chain/solana/bytes.ts";
 import { type EscrowCall, type LeafArguments, type PayAsset, type WalletBindingTerms, anchorData, bindWallet, commitAward, commitMonthlyAward, decodeEscrowCall, escrowInvocations, meta, payAward, releaseMonthlyAward, sameInstruction, setMonthlyCommitment } from "../../../src/chain/solana/instructions.ts";
 import { type MonthlyAttestation, admitMonth, bindingMessage, solanaMonthlyMessage } from "../../../src/chain/solana/messages.ts";
-import { type Purpose, type TokenProgram, PURPOSE_BYTE, awardAddress, awardId, bindingAddress, configAddress, keyBytes, monthAddress, monthlySourceAddress, originAddress, programDataAddress, projectAddress, settledAddress, tokenAccountAddress, vaultAddress } from "../../../src/chain/solana/pda.ts";
+import { type Purpose, type TokenProgram, PURPOSE_BYTE, awardAddress, awardId, bindingAddress, configAddress, keyBytes, monthAddress, monthPledgeAddress, monthlySourceAddress, originAddress, programDataAddress, projectAddress, settledAddress, tokenAccountAddress, vaultAddress } from "../../../src/chain/solana/pda.ts";
 import { type Instruction, completesPrepared, missingSigners, resolveInstruction, unsignedTransaction, withSignature } from "../../../src/chain/solana/transactions.ts";
 import { type Period, cutoffAt, periodContaining, shiftPeriod } from "../../../src/kernels/calendar.ts";
 import { type EscrowChain, type Keypair, escrowChain, finalizedTime, keypair, signedTransaction, simulated, submit, submitWire } from "./program.ts";
@@ -102,6 +102,37 @@ export async function escrowDeployment(): Promise<Deployment> {
     await chain.close();
     throw error;
   }
+}
+
+/** @throws {never} */
+export function pledgeMonth(program: Address, project: Address, owner: Address, period: Period, value: U64): Instruction {
+  return {
+    program,
+    accounts: [meta(owner, true, true), meta(project, true), meta(monthPledgeAddress(program, project, period), true), meta(SYSTEM_PROGRAM, false)],
+    data: anchorData("pledge_month", u32le(period), u64le(value)),
+  };
+}
+
+export async function pledgeCurrentMonth(deployment: Deployment, owner: Keypair, project: Address, value: U64): Promise<Period> {
+  const period = periodContaining((await finalizedTime(deployment.chain)).time);
+  await submit(deployment.chain, owner, [pledgeMonth(deployment.chain.program, project, owner.address, period, value)]);
+  return period;
+}
+
+function sameFields(left: ProjectAccount, right: ProjectAccount): boolean {
+  return (Object.keys(left) as ReadonlyArray<keyof ProjectAccount>).every((key) => left[key] === right[key]);
+}
+
+function projectLayouts(account: Account | undefined, program: Address) {
+  if (account === undefined) return "missing";
+  const truncated = (size: number) => decodeProject({ ...account, data: account.data.slice(0, size) }, program);
+  const current = decodeProject(account, program);
+  const prePledge = truncated(PRE_PLEDGE_PROJECT_SIZE);
+  return {
+    size: account.data.length,
+    sameFields: current.kind === "decoded" && prePledge.kind === "decoded" && sameFields(current.value, prePledge.value),
+    refused: [300, 320].map((size) => read(truncated(size))),
+  };
 }
 
 async function funded(deployment: Deployment): Promise<Keypair> {
@@ -221,6 +252,8 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
   };
   const halfSigned = await journal.bind(terms, contributor);
   await journal.send("pay", chain.payer, payAward({ program, project, payer: chain.payer.address, asset: { kind: "Native" }, actor, award: awardId(project, committed.source), destination: contributor.address, version: amount(1n) }));
+  const pledgePeriod = periodContaining((await finalizedTime(chain)).time);
+  await journal.send("pledge", sponsor, [pledgeMonth(program, project, sponsor.address, pledgePeriod, amount(LAMPORTS))]);
   const month = monthAddress(program, project, period);
   const net = committed.gross - fee(committed.gross);
   const reads: ReadonlyArray<Address> = [
@@ -233,6 +266,8 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
     ...entries.map((entry) => monthlySourceAddress(program, project, entry.source)),
     bindingAddress(program, project, actor),
     contributor.address,
+    monthPledgeAddress(program, project, pledgePeriod),
+    monthPledgeAddress(program, project, period),
   ];
   const awardState = (entry: MonthlyEntry, paid: boolean) => ({
     gross: entry.gross, source: entry.source, project, awardId: awardId(project, entry.source), actor: entry.actor,
@@ -258,6 +293,8 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
       monthlySources: [true, false, true],
       binding: { claimDigest: terms.claimDigest, authority: identity.address, actor, network, destination: contributor.address, version: 1n, paidVersion: 1n, vetoCount: 0, boundAfterFreeze: true },
       contributorLamports: net,
+      projectLayouts: { size: PROJECT_SIZE, sameFields: true, refused: ["malformed: wrongSize", "malformed: wrongSize"] },
+      pledges: { pledgedMonth: true, admittedMonth: false, stable: true, perMonth: true },
     },
     observe(accounts) {
       const at = (index: number) => accounts[index];
@@ -281,6 +318,13 @@ export async function nativeMonth(deployment: Deployment): Promise<Scenario> {
         monthlySources: [12, 13, 14].map((index) => isInitialized(at(index), program) && decodeMarker(at(index), program).kind === "decoded"),
         binding: binding.kind === "decoded" ? (({ boundAt, ...rest }) => ({ ...rest, boundAfterFreeze: boundAt >= frozenAt }))(binding.value) : `malformed: ${binding.issue}`,
         contributorLamports: at(16)?.lamports,
+        projectLayouts: projectLayouts(at(0), program),
+        pledges: {
+          pledgedMonth: read(decodeMonthPledgePresence(at(17), program)),
+          admittedMonth: read(decodeMonthPledgePresence(at(18), program)),
+          stable: monthPledgeAddress(program, project, pledgePeriod) === reads[17],
+          perMonth: reads[17] !== reads[18],
+        },
       };
     },
   };

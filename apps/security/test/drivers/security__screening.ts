@@ -153,9 +153,15 @@ async function send(key: string, event: Event, by: unknown): Promise<"accepted" 
   }
 }
 
-function shape(entry: Entry, state: Screening): Screening {
+type Stored = Omit<Screening, "exclusions" | "matchedLine">;
+
+function stored({ exclusions: _context, matchedLine: _line, ...kept }: Screening): Stored {
+  return kept;
+}
+
+function shape(entry: Entry, state: Screening): Stored {
   return {
-    ...state,
+    ...stored(state),
     reporter: state.reporter === Number(entry.reporterGithubId) ? 1 : state.reporter,
     digest: nameOf(state.digest),
     startedAt: untime(state.startedAt),
@@ -163,13 +169,13 @@ function shape(entry: Entry, state: Screening): Screening {
   };
 }
 
-async function observed(key: string): Promise<Screening> {
+async function observed(key: string): Promise<Stored> {
   const entry = await entryOf(key);
   const current = await runtime.runPromise(screeningAt(entry.submissionId));
   return shape(entry, current.screening);
 }
 
-export const driver: Driver & AsyncDisposable = {
+export const driver: Driver<Stored> & AsyncDisposable = {
   reset: () => {
     generation += 1;
     sent = 0;
@@ -184,4 +190,4 @@ export const driver: Driver & AsyncDisposable = {
   },
 };
 
-export const options: Options = { keys: ["first", "second"], walks: 4, steps: 10 };
+export const options: Options<Stored> = { view: stored, keys: ["first", "second"], walks: 4, steps: 10 };

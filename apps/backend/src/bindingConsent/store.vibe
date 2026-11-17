@@ -1,8 +1,9 @@
-// spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "The wallet registries move underneath through their own guarded events"
+// spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "The wallet registries move underneath through their own guarded events"; spec/backend/bindingConsent.md, "A Solana prepare opens the obligation's first attempt for the current claim under a ready outbox"; spec/settlement/paymentDispatch.md, "A Solana binding prepare creates the first attempt for the current claim only while the outbox is ready"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { type D1, type D1Error, type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Binding, type CaseAccess, type Consent, type Deployment, type Event, type EvmConsentSignature, type PaymentEvidence, type SolanaGeneration, NotAState, apply, decodeState } from "../../gen/backend__bindingConsent.effect.vibe"
+import { BindingAttempts } from "@repo/ports/settlement"
+import { type Binding, type CaseAccess, type Consent, type Deployment, type Event, type EvmConsentSignature, type PaymentEvidence, type SolanaGeneration, NotAState, apply, decodeState, solanaClaim } from "../../gen/backend__bindingConsent.effect.vibe"
 import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
 import { type Context, type Loaded as Partition, claimAt, loadPartition, positionOf } from "../wallets/store.vibe"
 
@@ -59,6 +60,7 @@ export type Facts =
   | { readonly kind: "none" }
   | { readonly kind: "consent"; readonly signature: string }
   | { readonly kind: "access"; readonly caseId: string }
+  | { readonly kind: "admit"; readonly obligationId: string; readonly attemptId: string; readonly privateCaseId: string | undefined }
 
 export interface Step {
   readonly event: Event
@@ -135,6 +137,10 @@ function aggregate<X, E, R>(scope: Scope<X, E, R>): Aggregate<Loaded<X>, NotASta
   }
 }
 
+export effect function bindingAttempts() {
+  return try Effect.serviceOption(BindingAttempts)
+}
+
 effect function missing(what: string) {
   return try die(new Error(`a binding step arrived without ${what}`))
 }
@@ -143,6 +149,21 @@ effect function consentWrite<X>(loaded: Loaded<X>, signed: EvmConsentSignature, 
   const claim = claimAt(loaded.evm, signed.claim)
   if (step.facts.kind !== "consent" || claim === undefined) return try missing("the stored claim and its signature")
   return [sql`INSERT INTO payment_binding_authorizations (claim_id, github_user_id, network, vault, chain_id, expected_version, expires_at, signature, created_at) VALUES (${claim.id}, ${step.by}, ${signed.network}, ${signed.vault}, ${String(signed.chainId)}, ${String(signed.version)}, ${String(signed.expiresAt)}, ${step.facts.signature}, ${at}) ON CONFLICT (claim_id, network, vault, chain_id, expected_version, expires_at) DO NOTHING`]
+}
+
+effect function admissionWrite<X>(loaded: Loaded<X>, before: Binding, step: Step, at: string) {
+  const claim = claimAt(loaded.solana, solanaClaim(before))
+  const attempts = try bindingAttempts()
+  if (step.facts.kind !== "admit" || claim === undefined || Option.isNone(attempts)) return try missing("the authorized Solana claim, its admission facts and the binding attempts port")
+  const facts = step.facts
+  return [try attempts.value.admit({
+    ledger: facts.privateCaseId === undefined ? "Ordinary" : "Private",
+    obligationId: facts.obligationId,
+    githubUserId: before.solanaWallet.actor,
+    claimId: claim.id,
+    attemptId: facts.attemptId,
+    at,
+  })]
 }
 
 function accessWrite(step: Step, at: string): ReadonlyArray<Statement> {
@@ -158,10 +179,10 @@ effect function writesOf<X>(loaded: Loaded<X>, before: Binding, step: Step) {
     case "solanaComplete":
     case "solanaRefused":
       return accessWrite(step, at)
+    case "solanaAdmitAttempt": return try admissionWrite(loaded, before, step, at)
     case "observePayment":
     case "observeHeight":
     case "solanaExpire":
-    case "solanaAdmitAttempt":
       return []
     case "observeTime":
     case "register":

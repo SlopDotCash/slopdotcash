@@ -87,11 +87,12 @@ export const decisionStateName: Readonly<Record<DecisionState, "quoted" | "pendi
 const decisionStates: ReadonlyArray<readonly [string, DecisionState]> = [["quoted", "Quoted"], ["pending", "Pending"], ["skipped", "Skipped"], ["no_route", "NoRoute"]]
 const decimal = /^(0|[1-9][0-9]*)$/u
 const orderIdPattern = /^0x[0-9a-f]{64}$/u
+const maximumModelBalance = 9_007_199_254_740_991n
 
 schema SendRow {
   id: string; kind: string; run_id: string; mode: string; token: string; amount_in: string; quote: string | null
   tx_id: string | null; raw_tx: string | null; evm_nonce: number | null; state: string; reason: string | null
-  created_at: string; finalized_at: string | null; amount_out: string | null
+  created_at: string; finalized_at: string | null; amount_out: string | null; token_balance_before: string | null
 }
 schema GasRow { id: string; conversion_id: string; nonce: number; tx_id: string | null; state: string; maximum_wei: string; actual_wei: string | null; solana_account_proof: string | null }
 schema ReplacementRow { conversion_id: string; attempt: number; tx_id: string; raw_tx: string }
@@ -104,6 +105,10 @@ export function amountOf(value: bigint): Amount {
   return amountOfBig(value)
 }
 
+export function modelBalance(balance: bigint): number {
+  return Number(balance < maximumModelBalance ? balance : maximumModelBalance)
+}
+
 export function legRows(network: NetworkName, scope: string): Statement {
   return sql`${inScope(network, scope)} AND (kind = 'bridge' OR (kind = 'approval' AND route = 'debridge'))`
 }
@@ -111,7 +116,7 @@ export function legRows(network: NetworkName, scope: string): Statement {
 export function legReads(leg: Leg): ReadonlyArray<Statement> {
   const scope = legRows(networkNames[leg.network], leg.scope)
   return [
-    sql`SELECT id, kind, run_id, mode, token, amount_in, quote, tx_id, raw_tx, evm_nonce, state, reason, created_at, finalized_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
+    sql`SELECT id, kind, run_id, mode, token, amount_in, quote, tx_id, raw_tx, evm_nonce, state, reason, created_at, finalized_at, amount_out, token_balance_before FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
     sql`SELECT id, conversion_id, nonce, tx_id, state, maximum_wei, actual_wei, solana_account_proof FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
     sql`SELECT bridge_id, order_id, outcome, amount, evidence_block FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
     sql`SELECT conversion_id, attempt, tx_id, raw_tx FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY conversion_id, attempt`,
@@ -151,8 +156,20 @@ effect function recordedDecision(row: Send, offset: number) {
   return { state, reason, amount: try whole(row.amount_in, label), live: row.mode === "live", at: millisOf(row.created_at) - offset } satisfies BridgeDecision
 }
 
-function request(orderId: number, tx: number, amount: number, takeAmount: number, solana: boolean, nativeFee: number): BridgeOrder {
-  return { orderId, tx, amount, takeAmount, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee, balance: 0 }
+export effect function balanceOf(text: string | null | undefined) {
+  if (text === null || text === undefined || !decimal.test(text)) return undefined
+  return modelBalance(try orDie(Effect.try(() => BigInt(text))))
+}
+
+effect function recordedBalance(row: Send, amount: number, label: string) {
+  const balance = try balanceOf(row.token_balance_before)
+  if (balance === undefined) throw new RowMismatch({ text: label, issue: "the bridge row lacks its recorded balance" })
+  if (balance < amount) throw new RowMismatch({ text: label, issue: "the recorded balance does not cover the bridge row's amount" })
+  return balance
+}
+
+function request(orderId: number, tx: number, amount: number, takeAmount: number, solana: boolean, nativeFee: number, balance: number): BridgeOrder {
+  return { orderId, tx, amount, takeAmount, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee, balance }
 }
 
 export function incomeKey(leg: Leg, entry: IncomeEntry): IncomeKey {
@@ -193,6 +210,7 @@ export effect function decodeLedger(leg: Leg, [sent, reserved, proven, replaced]
     if (row.raw_tx === null) throw new RowMismatch({ text: label, issue: "a signed send lacks its journaled bytes" })
     const tx = names.number("tx", row.tx_id)
     const amount = try whole(row.amount_in, label)
+    const balance = try recordedBalance(row, amount, label)
     const later = replacements.filter((entry) => entry.conversion_id === row.id)
     const record: SendRecord = {
       id: row.id,
@@ -212,7 +230,7 @@ export effect function decodeLedger(leg: Leg, [sent, reserved, proven, replaced]
     sends.push(record)
     const receipt = { tx, succeeded: row.state === "finalized", finalized: true }
     if (record.terms === undefined) {
-      state = approveOrder(at(row.created_at), request(0, tx, amount, 0, solana, 0), "Worker")
+      state = approveOrder(at(row.created_at), request(0, tx, amount, 0, solana, 0, balance), "Worker")
       if (row.state === "unknown") state = loseSend(state, tx, "Worker")
       if (row.state === "finalized" || row.state === "failed") state = settleApproval(state, receipt, "Worker")
       continue
@@ -221,7 +239,7 @@ export effect function decodeLedger(leg: Leg, [sent, reserved, proven, replaced]
     const orderId = names.number("hash", terms.orderId)
     orders.set(orderId, record)
     const nativeFee = solana ? try whole(terms.nativeFee, label) : 0
-    state = order(at(row.created_at), request(orderId, tx, amount, try whole(terms.takeAmount, label), solana, nativeFee), "Worker")
+    state = order(at(row.created_at), request(orderId, tx, amount, try whole(terms.takeAmount, label), solana, nativeFee, balance), "Worker")
     if (row.state === "unknown") state = loseSend(state, tx, "Worker")
     if (row.state === "failed") state = settleOrder(state, receipt, "Worker")
     if (row.state !== "finalized") continue

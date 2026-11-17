@@ -1,9 +1,10 @@
 import { assert, layer } from "@effect/vitest"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import type { ScoreEvent } from "../src/client/snapshot/schema.vibe"
 import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
 import { journalText } from "../src/kernels/records/canonical.ts"
 import { repositoriesOf } from "../src/journal/build.vibe"
-import { finish, journalOf, openStore } from "../src/journal/ledger.vibe"
+import { type Repositories, finish, journalOf, openStore } from "../src/journal/ledger.vibe"
 import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
 import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
 import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
@@ -22,8 +23,42 @@ const holdReasons = [
   "the journal refused",
 ]
 
+const valueDecision = `value:${"b".repeat(64)}`
+
+function valueReview(review: ScoreEvent, scoreThirds: number, decided: boolean) {
+  return {
+    ...review,
+    id: `${review.id}:value`,
+    source: { ...review.source, id: "PRR_reviewed_value", url: `${review.source.url}1` },
+    workUnitId: "wu_eliza_prr_reviewed_value",
+    scoreThirds,
+    ...(decided ? { scoreDecisionSourceId: valueDecision, scoreDecisionAt: "2026-11-16T00:00:00.000Z" } : {}),
+  }
+}
+
+effect function retainedOmission(history: string, repositories: Repositories, reviewed: ReadonlyArray<unknown>, review: ScoreEvent) {
+  const store = try openStore(history, null, [])
+  try applyRetainedReviews(store, repositories, [valueReview(review, 3, false)], recordedAt)
+  try applyRetainedReviews(store, repositories, [valueReview(review, 3, true)], recordedAt)
+  const key = [...store.latest.values()].find((row) => row.award.sourceId === "PRR_reviewed_value")?.award.key ?? ""
+  const revisionsOf = () => store.revisions.filter((row) => row.award.key === key).length
+  const decided = store.latest.get(key)
+  const decidedRevisions = revisionsOf()
+  const owned = batchOwnedKeys(store).has(key)
+  try applyRetainedReviews(store, repositories, reviewed, recordedAt)
+  const omitted = store.latest.get(key)
+  const omittedRevisions = revisionsOf()
+  try applyRetainedReviews(store, repositories, [valueReview(review, 2, true)], recordedAt)
+  const explicit = store.latest.get(key)
+  return {
+    decided: { amount: decided?.award.amount, decision: decided?.decision?.sourceId, rule: decided?.sourceRule, covered: store.coverage.some((entry) => entry.digest === decided?.sourceDigest), owned, revisions: decidedRevisions },
+    omitted: { unchanged: omitted !== undefined && omitted.id === decided?.id, appended: omittedRevisions - decidedRevisions },
+    explicit: { amount: explicit?.award.amount, follows: explicit !== undefined && explicit.previous === decided?.id, appended: revisionsOf() - omittedRevisions },
+  }
+}
+
 layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
-  it.effect('Journal build from history.json plus snapshots appends only, chains per key, and the checked-in history stays an ancestor (spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month")', () => effect {
+  it.effect('Journal build from history.json plus snapshots appends only, chains per key, and the checked-in history stays an ancestor (spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month")', () => effect {
     const history = try promise(() => historyText())
     const file = try promise(() => snapshotFile())
     const reviewed = try promise(() => reviewHistory())
@@ -52,6 +87,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
     const reopened = try openStore(history, built.text, [])
     const withoutFirst = `${journalText({ ...journalOf(original), revisions: checkedIn.slice(1) })}\n`
     const forked = Effect.as(openStore(history, withoutFirst, []), "opened") catch (error) => error._tag === "HistoryDiverges" ? `${error._tag} ${error.id}` : error._tag
+    const valueDecided = review === undefined ? undefined : try retainedOmission(history, repositories, reviewed, review)
     try Effect.try(() => assert.deepStrictEqual({
       ancestor: checkedIn.every((row, position) => built.journal.revisions[position]?.id === row.id),
       applied,
@@ -66,6 +102,7 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       unexplainedHolds: built.held.filter((held) => !holdReasons.some((reason) => held.reason.startsWith(reason))),
       reopened: reopened.revisions.length,
       forked,
+      valueDecided,
     }, {
       ancestor: true,
       applied: 1,
@@ -80,6 +117,11 @@ layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => 
       unexplainedHolds: [],
       reopened: built.journal.revisions.length,
       forked: `HistoryDiverges ${checkedIn[0]?.id ?? ""}`,
+      valueDecided: {
+        decided: { amount: 30, decision: valueDecision, rule: "slop-score-v2", covered: false, owned: false, revisions: 2 },
+        omitted: { unchanged: true, appended: 0 },
+        explicit: { amount: 20, follows: true, appended: 1 },
+      },
     }))
   })
 })

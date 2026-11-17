@@ -187,7 +187,7 @@ export function VaultActions({ project, deployment, period, account, loginHref, 
         family={solana ? "solana" : "evm"}
         address={wallet?.address}
         disabled={busy}
-        wallets={offers.filter((offer) => (solana ? offer.family === "solana" && offer.solanaFunding : offer.family === "evm")).map((offer) => ({ id: String(offer.id), name: offer.name }))}
+        wallets={offers.filter((offer) => (solana ? offer.family === "solana" && offer.solanaFunding : offer.family === "evm")).map((offer) => ({ id: String(offer.id), name: offer.name, icon: offer.icon }))}
         onConnect={(offer) => connect(Number(offer.id))}
       />
       {pending ??

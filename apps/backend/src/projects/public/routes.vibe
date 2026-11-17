@@ -1,4 +1,4 @@
-// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"; spec/backend/mergeActivity.md, "A success replaces the values; a failure keeps them with their date"
 import { sha256Hex } from "@repo/platform/crypto"
 import { handleRaw, json } from "@repo/platform/http"
 import { type Cache, cacheControl } from "@repo/platform/route"
@@ -6,6 +6,7 @@ import { publicProject, publicProjects, publicRevisions, revisionReceipt } from 
 import { getProjectRevisionsByIdByRevision, getProjects, getProjectsById } from "../../client/refusals.vibe"
 import { PublicSecurity } from "@repo/ports/security"
 import { publicReadOf, publicRestrictions, restrictedMessage, restrictionOf, skillsPublished, sourceOf, standing } from "../../listing/view.vibe"
+import { MergeActivityRoutes } from "../mergeActivity/routes.vibe"
 import { cachedPublic } from "./cache.vibe"
 import { listedProjects, listedRevisions, manifestJson, projectRead, storedRevision } from "./reads.vibe"
 
@@ -83,4 +84,5 @@ export const RegistryReadRoutes = Layer.mergeAll(
   handleRaw(publicRevisions, () => cachedPublic(listRevisions())),
   handleRaw(publicProject, (input) => readProject(input.params.id ?? "")),
   handleRaw(revisionReceipt, (input) => readReceipt(input.params.id ?? "", input.params.revision ?? "")),
+  MergeActivityRoutes,
 )

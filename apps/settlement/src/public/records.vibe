@@ -1,8 +1,9 @@
-// spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+// spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
 import { DeploymentTier } from "@repo/platform/config"
 import { D1, type NonEmpty, RowMismatch, type Statement, decoded, first, list, rows, sql } from "@repo/platform/d1"
 import { type DirectRecord, type VaultPaymentRecord, pageMicro, pageWindow, publicPageSize, receivedBy, receivedRecordBound, recordShown, recordValid, testnetsShownOn, validCursor } from "../../gen/settlement__publicRecords.effect.vibe"
 import type { DirectTransfer, DirectTransferList, DirectTransferPage, PublicVaultPayment, PublicVaultPaymentPage, ReceivedContributor, ReceivedTotals } from "../client/public.vibe"
+import { ordinaryFeeEvidenceMatches } from "../../gen/settlement__money.effect.vibe"
 import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { type Chain, NETWORKS, type NetworkKey, isChain, isNetworkKey } from "../kernels/networks.ts"
 
@@ -58,12 +59,12 @@ function scopeFilter(scope: Scope): Statement {
 const finalizedRecords = sql`FROM payment_events e
  JOIN payment_obligations o ON o.id = e.obligation_id AND o.network = e.network AND o.paid_transaction = e.transaction_id
  LEFT JOIN monthly_payment_obligations m ON m.project_id = o.project_id AND m.network = o.network AND m.vault = o.vault
-   AND m.source_digest = o.source_digest AND m.github_user_id = o.github_user_id AND m.gross_base = o.gross_base AND m.fee_base = o.fee_base
+   AND m.source_digest = o.source_digest AND m.github_user_id = o.github_user_id AND m.gross_base = o.gross_base
  WHERE e.kind = 'paid' AND o.state = 'paid'
    AND NOT EXISTS (SELECT 1 FROM points_members p WHERE p.github_id = o.github_user_id AND (p.public != 1 OR p.closed_at IS NOT NULL))`
 
 const recordColumns = sql`e.rowid AS sequence, o.project_id, o.network, o.chain, o.vault, o.github_user_id, o.source_digest, o.gross_base, o.fee_base,
- o.asset_address, o.asset_decimals, e.transaction_id, e.event_index, o.id AS obligation_id, e.evidence_json AS evidence, m.period AS contribution_month, e.observed_at AS indexed_at`
+ o.asset_address, o.asset_decimals, e.transaction_id, e.event_index, o.id AS obligation_id, e.evidence_json AS evidence, m.period AS contribution_month, m.fee_base AS monthly_fee, e.observed_at AS indexed_at`
 
 schema PaidRow {
   readonly sequence: number
@@ -82,6 +83,7 @@ schema PaidRow {
   readonly obligation_id: string
   readonly evidence: string
   readonly contribution_month: string | null
+  readonly monthly_fee: string | null
   readonly indexed_at: string
 }
 
@@ -102,6 +104,7 @@ schema ReceivedRow {
   readonly obligation_id: string
   readonly evidence: string
   readonly contribution_month: string | null
+  readonly monthly_fee: string | null
   readonly indexed_at: string
   readonly member_login: string | null
 }
@@ -217,13 +220,28 @@ export effect function checkedPayment(row: PaidRow) {
   return { record, gross: gross ?? 0n, fee: fee ?? 0n }
 }
 
-function publicPayment(row: PaidRow, chain: Chain, net: bigint): PublicVaultPayment {
+function feeEvidence(gross: bigint, fee: bigint | undefined) {
+  if (fee === undefined) return false
+  try {
+    return ordinaryFeeEvidenceMatches(toAmount(gross), toAmount(fee), true)
+  } catch {
+    return false
+  }
+}
+
+function linkedMonth(row: PaidRow, gross: bigint): string | null {
+  if (row.contribution_month === null || row.monthly_fee === null || !decimalCursor.test(row.monthly_fee)) return null
+  if (row.monthly_fee === row.fee_base) return row.contribution_month
+  return feeEvidence(gross, parseBaseUnits(row.fee_base)) && feeEvidence(gross, parseBaseUnits(row.monthly_fee)) ? row.contribution_month : null
+}
+
+function publicPayment(row: PaidRow, chain: Chain, gross: bigint, net: bigint): PublicVaultPayment {
   return {
     id: `${row.network}:${row.transaction_id}:${row.event_index}`,
     projectId: row.project_id,
     network: row.network,
     chain,
-    contributionMonth: row.contribution_month,
+    contributionMonth: linkedMonth(row, gross),
     assetAddress: row.asset_address,
     assetDecimals: row.asset_decimals,
     netBase: net.toString(),
@@ -232,12 +250,12 @@ function publicPayment(row: PaidRow, chain: Chain, net: bigint): PublicVaultPaym
   }
 }
 
-effect function pageOf(checked: ReadonlyArray<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly net: bigint }>, sequences: ReadonlyArray<number>) {
+effect function pageOf(checked: ReadonlyArray<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly gross: bigint; readonly net: bigint }>, sequences: ReadonlyArray<number>) {
   const payments: PublicVaultPayment[] = []
-  for (const { row, record, net } of checked) {
+  for (const { row, record, gross, net } of checked) {
     if (!sequences.includes(record.sequence)) continue
     if (!recordValid(record) || !isChain(row.chain)) throw new InvalidPaymentRecord({ reason: "Finalized payment evidence does not match obligation" })
-    payments.push(publicPayment(row, row.chain, net))
+    payments.push(publicPayment(row, row.chain, gross, net))
   }
   return payments
 }
@@ -252,10 +270,10 @@ export effect function vaultPaymentPage(scope: Scope, cursor: Cursor) {
   ])
   const [total] = try decoded(Value, counted?.rows ?? [], "vault payment count")
   if (total === undefined) throw new RowMismatch({ text: "vault payment count", issue: "no count row" })
-  const checked: Array<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly net: bigint }> = []
+  const checked: Array<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly gross: bigint; readonly net: bigint }> = []
   for (const row of try decoded(PaidRow, paged?.rows ?? [], "vault payment page")) {
     const { record, gross, fee } = try checkedPayment(row)
-    checked.push({ row, record, net: gross - fee })
+    checked.push({ row, record, gross, net: gross - fee })
   }
   const window = pageWindow(checked.filter((entry) => recordShown(entry.record, shown)).map((entry) => entry.record.sequence), after, through, highest)
   if (!window.valid) throw new CursorRefused()

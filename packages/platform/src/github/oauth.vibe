@@ -1,14 +1,30 @@
 // spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"
 import { base64url, utf8 } from "../crypto.vibe"
-import { type Exchange, decoded, defaultLimitBytes, defaultTimeoutMs, exchanged, githubApi, githubJson, manualRedirects, parsed } from "./client.vibe"
-import { GitHubMalformed, GitHubRefused } from "./errors.vibe"
+import { type Answer, type Call, type Exchange, defaultTimeoutMs, exchanged, githubApi, githubJson, manualRedirects, parsed } from "./client.vibe"
+import type { GitHubFailure } from "./errors.vibe"
 
 export const githubWeb = "https://github.com"
 
-const tokenLimitBytes = 64 * 1024
+const answerLimitBytes = 64 * 1024
 const tokenPath = "/login/oauth/access_token"
 const login = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
 const nodeId = /^[A-Za-z0-9_=-]{4,256}$/u
+const oauthErrors: ReadonlySet<string> = new Set([
+  "incorrect_client_credentials",
+  "redirect_uri_mismatch",
+  "bad_verification_code",
+  "unverified_user_email",
+  "access_denied",
+  "unsupported_grant_type",
+  "server_error",
+  "temporarily_unavailable",
+])
+
+export type OAuthStage = "token" | "user"
+
+export type OAuthFailure = "http-rejected" | "invalid-response" | "request-or-response-failed"
+
+export error OAuthFailed { stage: OAuthStage; reason: OAuthFailure; httpStatus?: number; oauthError?: string }
 
 export interface Pkce {
   readonly verifier: string
@@ -45,13 +61,11 @@ export interface UserLookup {
 
 export interface GitHubUser {
   readonly id: string
-  readonly nodeId: string
   readonly login: string
-  readonly createdAt: string
+  readonly nodeId?: string
 }
 
-schema TokenAnswer { access_token?: string; token_type?: string; error?: string; error_description?: string }
-schema UserAnswer { id: number; node_id: string; login: string; created_at: string }
+const answerFields = Schema.Record(Schema.String, Schema.Unknown)
 
 export effect function pkce(bytes = 32) {
   const crypto = try Experimental.Crypto.Crypto
@@ -83,28 +97,60 @@ effect function exchangeOf(authority: string, userAgent: string | undefined, tim
   } satisfies Exchange
 }
 
+function statusOf(failure: GitHubFailure): number | undefined {
+  switch (failure._tag) {
+    case "NotFound": return 404
+    case "GitHubRefused": return failure.status
+    case "RateLimited": return failure.status
+    case "GitHubUnavailable": return failure.status
+    case "GitHubMalformed": return undefined
+  }
+}
+
+function unreached(stage: OAuthStage, failure: GitHubFailure) {
+  const status = statusOf(failure)
+  if (status === undefined || (status >= 200 && status < 300)) return new OAuthFailed({ stage, reason: "request-or-response-failed" })
+  return new OAuthFailed({ stage, reason: "http-rejected", httpStatus: status })
+}
+
+function invalid(stage: OAuthStage, httpStatus: number, oauthError?: unknown) {
+  const named = stage === "token" && typeof oauthError === "string" && oauthErrors.has(oauthError)
+  return new OAuthFailed({ stage, reason: "invalid-response", httpStatus, ...(named ? { oauthError } : {}) })
+}
+
+effect function fieldsOf(stage: OAuthStage, exchange: Exchange, call: Call, limitBytes: number, path: string) {
+  const answer: Answer = exchanged(exchange, call, limitBytes) catch effect (failure) => {
+    throw unreached(stage, failure)
+  }
+  const value = parsed(answer.bytes, path) catch effect () => {
+    throw new OAuthFailed({ stage, reason: "request-or-response-failed" })
+  }
+  const fields = Schema.decodeUnknownEffect(answerFields)(value) catch effect () => {
+    throw invalid(stage, answer.status)
+  }
+  return { status: answer.status, fields }
+}
+
 export effect function exchangeCode(request: CodeExchange) {
   const authority = (request.authority ?? githubWeb).replace(/\/+$/u, "")
   const exchange = try exchangeOf(authority, request.userAgent, request.timeoutMs)
-  const answer = try exchanged(exchange, {
+  const body = try fieldsOf("token", exchange, {
     method: "POST",
     url: `${authority}${tokenPath}`,
     accept: "application/json",
     bearer: undefined,
     form: { client_id: request.clientId, client_secret: Redacted.value(request.clientSecret), code: request.code, code_verifier: request.verifier, redirect_uri: request.redirectUri },
-  }, tokenLimitBytes)
-  const body = try decoded(TokenAnswer, try parsed(answer.bytes, tokenPath), tokenPath)
-  if (body.error !== undefined) throw new GitHubRefused({ status: 401, path: tokenPath, message: (body.error_description ?? body.error).slice(0, 300) })
-  const token = body.access_token ?? ""
-  if (token.length < 16 || token.length > 512 || (body.token_type !== "bearer" && body.token_type !== "Bearer")) throw new GitHubMalformed({ path: tokenPath, issue: "GitHub answered no bearer token" })
+  }, answerLimitBytes, tokenPath)
+  const { access_token: token, token_type: tokenType, error } = body.fields
+  if (typeof token !== "string" || token.length < 16 || token.length > 512 || (tokenType !== "bearer" && tokenType !== "Bearer")) throw invalid("token", body.status, error)
   return Redacted.make(token)
 }
 
 export effect function currentUser(token: Redacted.Redacted<string>, lookup: UserLookup = {}) {
   const authority = (lookup.authority ?? githubApi).replace(/\/+$/u, "")
   const exchange = try exchangeOf(authority, lookup.userAgent, lookup.timeoutMs)
-  const answer = try exchanged(exchange, { method: "GET", url: `${authority}/user`, accept: githubJson, bearer: token }, defaultLimitBytes)
-  const user = try decoded(UserAnswer, try parsed(answer.bytes, "/user"), "/user")
-  if (!Number.isSafeInteger(user.id) || user.id <= 0 || !login.test(user.login) || !nodeId.test(user.node_id) || user.created_at === "") throw new GitHubMalformed({ path: "/user", issue: "GitHub answered incomplete account facts" })
-  return { id: String(user.id), nodeId: user.node_id, login: user.login, createdAt: user.created_at } satisfies GitHubUser
+  const body = try fieldsOf("user", exchange, { method: "GET", url: `${authority}/user`, accept: githubJson, bearer: token }, answerLimitBytes, "/user")
+  const { id, login: name, node_id: node, type } = body.fields
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 || typeof name !== "string" || !login.test(name)) throw invalid("user", body.status)
+  return { id: String(id), login: name, ...(type === "User" && typeof node === "string" && nodeId.test(node) ? { nodeId: node } : {}) } satisfies GitHubUser
 }

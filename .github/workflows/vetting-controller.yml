@@ -1,0 +1,138 @@
+name: Scheduled scanner controller
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+  workflow_run:
+    workflows: [slop.cash]
+    types: [completed]
+    branches: [main, development]
+permissions:
+  contents: read
+env:
+  CI: "true"
+  TURBO_TELEMETRY_DISABLED: "1"
+  TURBO_CACHE: "local:rw"
+jobs:
+  dispatch:
+    if: >-
+      vars.VETTING_CONTROLLER_SCHEDULE == 'enabled' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.id == github.event.repository.id &&
+        (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Mint scan dispatch token
+        id: dispatch-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: write
+      - name: Dispatch protected scanner branches
+        env:
+          GH_TOKEN: ${{ steps.dispatch-token.outputs.token || github.token }}
+          TRIGGER_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          wait_budget="${SCAN_DISPATCH_WAIT_BUDGET:-3900}"
+          min_wait="${SCAN_DISPATCH_MIN_WAIT:-30}"
+          gh_retry() {
+            local attempt=1 status out err wait reset now
+            out="$(mktemp)"
+            err="$(mktemp)"
+            while :; do
+              if "$@" >"$out" 2>"$err"; then cat "$out"; rm -f "$out" "$err"; return 0; else status=$?; fi
+              if [ "$attempt" -ge 6 ]; then cat "$err" >&2; rm -f "$out" "$err"; return "$status"; fi
+              if grep -qiE 'rate limit|HTTP 429' "$err"; then
+                reset="$(gh api rate_limit --jq .resources.core.reset 2>/dev/null || echo 0)"
+                now="$(date +%s)"
+                wait=$((reset - now + 5))
+                [ "$wait" -lt "$min_wait" ] && wait="$min_wait"
+              elif grep -qE 'HTTP 50[0-9]' "$err"; then
+                wait=$((attempt * min_wait))
+              else
+                cat "$err" >&2; rm -f "$out" "$err"; return "$status"
+              fi
+              if [ "$wait" -gt "$wait_budget" ]; then cat "$err" >&2; rm -f "$out" "$err"; return "$status"; fi
+              wait_budget=$((wait_budget - wait))
+              echo "GitHub refused a request ($(head -c 200 "$err" | tr '\n' ' ')); retrying in ${wait}s." >&2
+              sleep "$wait"
+              attempt=$((attempt + 1))
+            done
+          }
+          refs="main development"
+          if [ "$TRIGGER_EVENT" = workflow_run ]; then
+            case "$RELEASE_REF" in main|development) refs="$RELEASE_REF" ;; *) exit 1 ;; esac
+          fi
+          for ref in $refs; do
+            head="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/commits/heads/$ref" --jq .sha)"
+            if [ "$TRIGGER_EVENT" = workflow_run ]; then
+              if [ "$head" != "$RELEASE_SHA" ]; then
+                echo "::notice title=Scanner waits for release::$ref advanced after this release; its new head must deploy before scanning."
+                continue
+              fi
+              released="$RELEASE_RUN_ID"
+            else
+              released="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?branch=$ref&head_sha=$head&status=success&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].id // empty')"
+            fi
+            if [ -z "$released" ]; then
+              echo "::notice title=Scanner waits for release::$ref head $head has no successful release yet. Its isolated runner is not deployed, so no scan is dispatched."
+              continue
+            fi
+            case "$ref" in
+              main) release_job="Deploy trusted production bundle" ;;
+              development) release_job="Deploy verified development to staging" ;;
+            esac
+            deployed="$(gh_retry gh api "repos/$GITHUB_REPOSITORY/actions/runs/$released/jobs?per_page=100" --paginate --slurp | jq "[.[].jobs[] | select(.name == \"$release_job\" and .conclusion == \"success\")] | length")"
+            if [ "$deployed" -eq 0 ]; then
+              echo "::notice title=Scanner waits for release::$ref did not complete its deployment job."
+              continue
+            fi
+            active="$(gh_retry gh run list --repo "$GITHUB_REPOSITORY" --workflow vetting-controller.yml --branch "$ref" --event workflow_dispatch --json status --jq '[.[] | select(.status != "completed")] | length')"
+            if [ "$active" -eq 0 ]; then
+              gh_retry gh workflow run vetting-controller.yml --repo "$GITHUB_REPOSITORY" --ref "$ref"
+            fi
+          done
+  scan:
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: ${{ github.ref == 'refs/heads/main' && 'slop-production' || 'slop-staging' }}
+    concurrency:
+      group: slop-vetting-controller-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Require scanner activation
+        env:
+          ENABLED: ${{ vars.VETTING_CONTROLLER_RELEASE }}
+        run: test "$ENABLED" = enabled
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          job: scan
+          verification: "false"
+          publication: "true"
+      - run: pnpm all build --filter=@repo/security
+      - name: Run bounded scanner and retain publication state
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+          SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
+          VETTING_RATE_CARDS: ${{ vars.VETTING_RATE_CARDS }}
+        run: node apps/security/dist/programs/main.js scan

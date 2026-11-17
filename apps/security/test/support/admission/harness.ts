@@ -1,10 +1,10 @@
-// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
 import { Effect, Redacted } from "effect";
 import { Response } from "miniflare";
-import type { D1Database } from "@repo/platform/bindings";
+import type { D1Database, R2Bucket } from "@repo/platform/bindings";
 import { base64url, ed25519Sign, sha256Hex, webCrypto } from "@repo/platform/crypto";
 import { signatureHeaders, signedMessage } from "@repo/platform/signed";
-import { type StartedWorker, bundle, database, migrate, startWorker } from "@repo/platform/testing";
+import { type StartedWorker, bundle, database, migrate, startWorker, storage } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
 
 export const origin = "https://slop.test";
@@ -31,8 +31,10 @@ export interface Answer {
 
 export interface World {
   readonly db: D1Database;
+  readonly evidence: R2Bucket;
   readonly mf: StartedWorker;
   readonly sandbox: ReadonlyArray<string>;
+  readonly heads: Map<string, string>;
 }
 
 /** @throws {never} */
@@ -55,9 +57,14 @@ const manifest = JSON.stringify({
 
 export const configuredKeys = Buffer.from(bytesOf(serviceKey.publicKey)).toString("base64");
 
-export async function started(keys: string = configuredKeys): Promise<World> {
+function answer(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+}
+
+async function boot(keys: string): Promise<World> {
   const script = await bundle(root, { config: "test/support/admission/vite.config.ts", entry: "admission" });
   const sandbox: string[] = [];
+  const heads = new Map<string, string>();
   const mf = startWorker({
     script,
     d1: { SLOP_DB: "slop-private" },
@@ -70,13 +77,24 @@ export async function started(keys: string = configuredKeys): Promise<World> {
     services: {
       SANDBOX: async (request) => {
         sandbox.push(`${request.method} ${new URL(request.url).pathname} ${request.method === "POST" ? await request.text() : ""}`.trim());
-        return new Response(JSON.stringify({ outcome: "exited" }), { status: 200, headers: { "content-type": "application/json" } });
+        return answer({ outcome: "exited" });
       },
+      GITHUB: (request) => {
+        const branch = /^\/repos\/([^/]+\/[^/]+)\/branches\/main$/u.exec(new URL(request.url).pathname);
+        const head = branch?.[1] === undefined ? undefined : heads.get(branch[1]);
+        return head === undefined ? answer({ message: "Not Found" }, 404) : answer({ commit: { sha: head } });
+      },
+      ASSETS: (request) => new URL(request.url).pathname === "/skill-templates/index.json" ? answer({ templateSha256: template }) : answer({ error: "not_found" }, 404),
     },
   });
   const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined);
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
-  const db = await database(mf, "SLOP_DB");
+  return { db: await database(mf, "SLOP_DB"), evidence: await storage(mf, "VETTING_EVIDENCE"), mf, sandbox, heads };
+}
+
+export async function started(keys: string = configuredKeys): Promise<World> {
+  const world = await boot(keys);
+  const { db } = world;
   const at = new Date(Date.now() - 3_600_000).toISOString();
   await db.batch([
     db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(project, manifest, "a".repeat(64), "Admission fixture", at),
@@ -84,7 +102,140 @@ export async function started(keys: string = configuredKeys): Promise<World> {
     db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids)
       VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic scan of new project content','pending','slop-test/admission','[]')`).bind(pending, project, "a".repeat(64), "b".repeat(64), commit, template, at),
   ]);
-  return { db, mf, sandbox };
+  return world;
+}
+
+export interface Listed {
+  readonly path: string;
+  readonly githubId: number;
+}
+
+export interface Scan {
+  readonly repository: string;
+  readonly state: "clean" | "incomplete";
+  readonly commit?: string;
+}
+
+export interface FlagProject {
+  readonly id: string;
+  readonly repositories: readonly [Listed, ...ReadonlyArray<Listed>];
+  readonly scans: ReadonlyArray<Scan>;
+}
+
+export const signingKeySha256 = "5".repeat(64);
+const contentSha256 = "b".repeat(64);
+const policyVersion = "slop-scan-policy-v2";
+const surfaces = ["source", "manifests", "dependencies", "installScripts", "downloads", "agentInstructions"];
+const threats = ["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection"];
+const minute = 60_000;
+let assessments = 0x100;
+
+/** @throws {never} */
+function flagManifest(fixture: FlagProject): string {
+  const [first] = fixture.repositories;
+  return JSON.stringify({
+    id: fixture.id,
+    name: "Flag fixture",
+    status: "active",
+    listingTier: "community",
+    steward: { github: { type: "User", actorId: "900", login: "steward", nodeId: "U_steward" } },
+    authority: { repositoryId: first.githubId, repositoryNodeId: `R_${first.githubId}` },
+    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.test/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
+    repositories: fixture.repositories.map((listed, index) => index === 0
+      ? { id: listed.path, integrationBranch: "main" }
+      : { id: listed.path, githubId: String(listed.githubId), nodeId: `R_${listed.githubId}`, integrationBranch: "main" }),
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "none" },
+    funding: {},
+  });
+}
+
+/** @throws {never} */
+function scanResult(input: { readonly id: string; readonly projectId: string; readonly scan: Scan; readonly at: number; readonly report: string; readonly inputs: string }): string {
+  const startedAt = new Date(input.at).toISOString();
+  const completedAt = new Date(input.at + minute).toISOString();
+  return JSON.stringify({
+    schemaVersion: "slop-vetting-result-v2",
+    assessmentId: input.id,
+    projectId: input.projectId,
+    revision: 1,
+    manifestSha256: "a".repeat(64),
+    disposition: input.scan.state,
+    policyVersion,
+    assessed: { repository: input.scan.repository, commitSha: input.scan.commit ?? commit, templateSha256: template, inputManifestSha256: input.inputs, dependencyLocks: [] },
+    scan: { runId: "run-1", startedAt, completedAt, reportSha256: input.report },
+    coverage: Object.fromEntries(surfaces.map((surface) => [surface, { state: input.scan.state === "clean" ? "complete" : "partial", items: 1 }])),
+    checks: Object.fromEntries(threats.map((threat) => [threat, input.scan.state === "clean" ? "passed" : "not-run"])),
+    visibilityGaps: input.scan.state === "clean" ? [] : ["The dependency install did not finish"],
+    execution: null,
+    reusedAssessmentId: null,
+    primaryReview: { provider: "fixture", model: "fixture-reviewer", promptPolicyRevision: "fixture-1", inputManifestSha256: input.inputs, runId: "review-1", status: "completed", verdict: "no-findings", risk: "low", findingCount: 0 },
+    specialistReview: null,
+    artifacts: [],
+    findings: [],
+    confirmation: null,
+  });
+}
+
+async function retained(world: World, id: string, kind: string, text: string): Promise<{ readonly sha: string; readonly statement: D1PreparedStatement }> {
+  const bytes = new TextEncoder().encode(text);
+  const sha = await digest(bytes);
+  const key = `vetting/${id}/run-1/${sha}`;
+  await world.evidence.put(key, bytes, { customMetadata: { sha256: sha }, httpMetadata: { contentType: "application/json" } });
+  return { sha, statement: world.db.prepare(`INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation) VALUES(?,'run-1',?,?,?,?,'application/json',?,NULL,'run',NULL)`).bind(id, sha, bytes.length, kind, kind, key) };
+}
+
+async function digest(bytes: Uint8Array): Promise<string> {
+  return Effect.runPromise(Effect.provide(sha256Hex(bytes), webCrypto));
+}
+
+type D1PreparedStatement = ReturnType<D1Database["prepare"]>;
+
+export async function flagged(world: World, fixture: FlagProject): Promise<ReadonlyArray<string>> {
+  const { db } = world;
+  const text = flagManifest(fixture);
+  const base = Date.now() - 4 * 60 * minute;
+  const at = (offset: number) => new Date(base + offset).toISOString();
+  const flagIds = [`flg_${fixture.id}_1`, `flg_${fixture.id}_2`];
+  const evidence = "Install script posts the wallet seed phrase to a remote host";
+  for (const listed of fixture.repositories) world.heads.set(listed.path, commit);
+  await db.batch([
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)").bind(fixture.id, text, "a".repeat(64), "Flag fixture", at(0)),
+    db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,'active',1,?,?,?,?)").bind(fixture.id, text, "a".repeat(64), at(0), at(0)),
+    ...flagIds.map((id, index) => db.prepare("INSERT INTO project_flags(id,project_id,reporter_github_id,reporter_github_login,revision,manifest_sha256,category,evidence,evidence_url,created_at) VALUES(?,?,?,?,1,?,'wallet-drainer',?,NULL,?)")
+      .bind(id, fixture.id, String(501 + index), `flagger-${501 + index}`, "a".repeat(64), evidence, at((index + 1) * 10 * minute))),
+    db.prepare(`INSERT INTO project_enforcements(id,project_id,sequence,action,state_after,appeal_after,reason,evidence_reference,repository_github_id,repository_keys,actor_github_id,actor_github_login,system_issuer,actor_role,decision_source,before_revision,before_manifest_sha256,after_revision,after_manifest_sha256,result,created_at)
+      VALUES(?,?,1,'quarantine','quarantined','none',?,?,?,?,NULL,NULL,?,'contributor-flags','standing-rule',1,?,NULL,NULL,'no_revision_needed',?)`)
+      .bind(`enf_flags_${fixture.id}`, fixture.id, "Two distinct contributor flags paused the project. A clean fresh security scan reinstates it.", `flag:${flagIds[1]}`, String(fixture.repositories[0].githubId), JSON.stringify(fixture.repositories.map((listed) => listed.path.toLowerCase())), JSON.stringify({ kind: "contributor-flags", threshold: 2, flagIds }), "a".repeat(64), at(20 * minute)),
+  ]);
+  const ids: string[] = [];
+  for (const [index, scan] of fixture.scans.entries()) {
+    assessments += 1;
+    const id = `vet_${assessments.toString(16).padStart(32, "0")}`;
+    const requested = base + (60 + index * 10) * minute;
+    const report = await retained(world, id, "trace", `{"report":"${id}"}`);
+    const inputs = await retained(world, id, "manifest", `{"inputs":"${id}"}`);
+    const result = scanResult({ id, projectId: fixture.id, scan, at: requested, report: report.sha, inputs: inputs.sha });
+    const run = JSON.stringify({ traceSha256: report.sha, objects: [{ sha256: report.sha, kind: "trace" }, { sha256: inputs.sha, kind: "manifest" }] });
+    await db.batch([
+      db.prepare(`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state,repository_id,flag_ids)
+        VALUES(?,?,1,?,?,?,?,'900','steward',?,'Automatic fresh scan after two contributor flags paused the project','pending',?,?)`).bind(id, fixture.id, "a".repeat(64), contentSha256, scan.commit ?? commit, template, new Date(requested).toISOString(), scan.repository, JSON.stringify(flagIds)),
+      db.prepare("UPDATE vetting_assessments SET state=?,policy_version=?,result=?,result_sha256=?,signing_key_sha256=?,completed_at=? WHERE id=?")
+        .bind(scan.state, policyVersion, result, await digest(new TextEncoder().encode(result)), signingKeySha256, new Date(requested + minute).toISOString(), id),
+      db.prepare("INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(?,'run-1',?,?,?,'{}',?,?)")
+        .bind(id, report.sha, await digest(new TextEncoder().encode(run)), run, new Date(requested + minute).toISOString(), new Date(Date.now() + 86_400_000).toISOString()),
+      report.statement,
+      inputs.statement,
+    ]);
+    ids.push(id);
+  }
+  return ids;
+}
+
+export async function flagWorld(fixtures: ReadonlyArray<FlagProject>): Promise<{ readonly world: World; readonly scans: ReadonlyMap<string, ReadonlyArray<string>> }> {
+  const world = await boot(configuredKeys);
+  const scans = new Map<string, ReadonlyArray<string>>();
+  for (const fixture of fixtures) scans.set(fixture.id, await flagged(world, fixture));
+  return { world, scans };
 }
 
 export interface Signing {

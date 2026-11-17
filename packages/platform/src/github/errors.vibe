@@ -1,7 +1,7 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
 export error NotFound { path: string }
 export error GitHubRefused { status: RefusalStatus; path: string; message: string }
-export error RateLimited { status: number; primaryDelay: number; retryAfter: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error RateLimited { status: number; primaryDelay: number; retryAfter: number; wait?: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
 export error GitHubUnavailable { status?: number; path: string }
 export error GitHubMalformed { path: string; issue: string }
 
@@ -20,6 +20,12 @@ export interface RateLimitHints {
 
 const digits = /^\d{1,15}$/u
 const maxReportedSeconds = 60 * 60
+const unhintedWait = 60_000
+const secondaryLimit = /secondary rate limit|abuse detection/iu
+
+export function secondaryLimitMessage(message: unknown): boolean {
+  return typeof message === "string" && secondaryLimit.test(message)
+}
 
 export function isRefusal(status: number): status is RefusalStatus {
   return status === 401 || status === 403 || status === 410 || status === 422
@@ -48,14 +54,16 @@ export function rateLimitHints(headers: ResponseHeaders, nowMillis: number): Rat
   return { primaryDelay: reset === undefined ? 0 : Math.max(0, reset - nowMillis + 1_000), retryAfter: usableRetryAfter(headers) ?? 0 }
 }
 
-export function rateLimited(status: number, headers: ResponseHeaders, nowMillis: number): RateLimited {
+export function rateLimited(status: number, headers: ResponseHeaders, nowMillis: number, secondaryMessage = false): RateLimited {
   const hints = rateLimitHints(headers, nowMillis)
   const hinted = usableReset(headers) !== undefined || usableRetryAfter(headers) !== undefined
   const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
+  const delay = Math.max(hints.primaryDelay, hints.retryAfter)
   return new RateLimited({
     status,
     ...hints,
-    ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(Math.max(hints.primaryDelay, hints.retryAfter) / 1_000)) } : {}),
+    ...(delay > 0 ? { wait: delay } : status === 429 || secondaryMessage ? { wait: unhintedWait } : {}),
+    ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(delay / 1_000)) } : {}),
     ...(digits.test(reset) ? { resetAt: Number(reset) * 1_000 } : {}),
     secondary: headers["x-ratelimit-remaining"] !== "0",
   })

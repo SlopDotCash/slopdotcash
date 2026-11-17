@@ -34,8 +34,10 @@ const loader = "BPFLoaderUpgradeab1e11111111111111111111111"
 const lookupProgram = "AddressLookupTab1e1111111111111111111111111"
 const jupiterApi = "https://api.jup.ag/swap/v1"
 const routeV2 = [187, 100, 250, 204, 49, 196, 175, 20]
-const rent = 2_039_280
+const rentReserve = 2_039_280n
+const rent = Number(rentReserve)
 const nativeWalletAfter = 1_000_000_000 - 10_000_000 - 5000 - rent
+const nativeWalletSpent = 1_000_000_000 - 10_000_000 - 5000
 
 function derived(mint: string, owner: string, program: string) {
   return associatedTokenAddress(owner as Address, mint as Address, program as Address) ?? ""
@@ -62,7 +64,11 @@ interface Scenario {
   readonly signatureMissing: boolean
   readonly nativeSource: boolean
   readonly walletAfter: number
+  readonly wrapped: WrappedHolding | undefined
+  readonly simulatedWrapped: bigint
 }
+
+interface WrappedHolding { readonly held: bigint; readonly unsynced: number; readonly tag: number }
 
 interface RpcAccount { readonly owner: string; readonly lamports: number; readonly data: readonly [string, string]; readonly executable: boolean }
 
@@ -109,6 +115,23 @@ function holding(mint: string, program: string, amount: bigint, owner = walletKe
   return account(program, data)
 }
 
+function wrappedHolding(amount: bigint, lamports: number, tag: number) {
+  const data = new Uint8Array(165)
+  data.set(key(wrappedSol))
+  data.set(walletKey, 32)
+  data.set(u64(amount), 64)
+  data[108] = 1
+  data[109] = tag
+  data.set(u64(rentReserve), 113)
+  return account(TOKEN_PROGRAM, data, false, lamports)
+}
+
+function simulatedSource(scenario: Scenario) {
+  if (!scenario.nativeSource) return holding(input, TOKEN_2022_PROGRAM, 20_000_000n - scenario.debit)
+  if (scenario.wrapped === undefined) return holding(wrappedSol, TOKEN_PROGRAM, 0n)
+  return wrappedHolding(scenario.simulatedWrapped, rent + Number(scenario.simulatedWrapped), scenario.wrapped.tag)
+}
+
 function transaction(scenario: Scenario) {
   const keys = [wallet, jupiter.program, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, scenario.nativeSource ? wrappedSol : input, usdc, event, ...scenario.extra ? [SYSTEM_PROGRAM] : []]
   const loaded = keys.length
@@ -133,7 +156,7 @@ function table(scenario: Scenario) {
   return account(scenario.tableOwner, data)
 }
 
-const plain: Scenario = { tableOwner: lookupProgram, redirect: false, debit: 10_000_000n, inputMint: mintData(), extra: false, trailing: false, receipt: null, signatureMissing: false, nativeSource: false, walletAfter: 999_995_000 }
+const plain: Scenario = { tableOwner: lookupProgram, redirect: false, debit: 10_000_000n, inputMint: mintData(), extra: false, trailing: false, receipt: null, signatureMissing: false, nativeSource: false, walletAfter: 999_995_000, wrapped: undefined, simulatedWrapped: 0n }
 
 function states(scenario: Scenario): ReadonlyMap<string, RpcAccount | null> {
   return new Map<string, RpcAccount | null>([
@@ -145,6 +168,7 @@ function states(scenario: Scenario): ReadonlyMap<string, RpcAccount | null> {
     [destination, holding(usdc, TOKEN_PROGRAM, 0n)],
     [event, null],
     [tableKey, table(scenario)],
+    ...scenario.wrapped === undefined ? [] : [[wrappedSource, wrappedHolding(scenario.wrapped.held, rent + Number(scenario.wrapped.held) + scenario.wrapped.unsynced, scenario.wrapped.tag)] as const],
     ...[jupiter.program, TOKEN_PROGRAM, TOKEN_2022_PROGRAM, SYSTEM_PROGRAM, ASSOCIATED_TOKEN_PROGRAM].map((program) => [program, account(loader, new Uint8Array(), true)] as const),
   ])
 }
@@ -170,7 +194,7 @@ function solanaRpc(current: () => Scenario, sent: () => void): Handler {
       case "simulateTransaction": return answered({ context: { slot: 101 }, value: {
         err: null,
         accounts: params[1].accounts.addresses.length === 2
-          ? [scenario.nativeSource ? holding(wrappedSol, TOKEN_PROGRAM, 0n) : holding(input, TOKEN_2022_PROGRAM, 20_000_000n - scenario.debit), holding(usdc, TOKEN_PROGRAM, 2_000_000n)]
+          ? [simulatedSource(scenario), holding(usdc, TOKEN_PROGRAM, 2_000_000n)]
           : [account(SYSTEM_PROGRAM, new Uint8Array(), false, scenario.walletAfter)],
       } })
       case "getFeeForMessage": return answered({ context, value: 5000 })
@@ -235,6 +259,10 @@ effect function signed(reserved: Prepared[], intent: FeeIntent = swap) {
   return result
 }
 
+function retainedOf(prepared: Prepared | undefined) {
+  return prepared?.family === "solana" ? prepared.accountProof : undefined
+}
+
 function issueOf(error: unknown) {
   return typeof error === "object" && error !== null && "issue" in error ? String((error as { issue: unknown }).issue) : String(error)
 }
@@ -262,7 +290,9 @@ function receiptOf(rawTx: string, signature: string, change: (body: ReceiptBody)
   return { signature, body: change(body) }
 }
 
-function nativeReceiptOf(rawTx: string, signature: string, walletPost: number) {
+interface WrappedReceipt { readonly held: bigint; readonly unsynced: number; readonly after: bigint }
+
+function nativeReceiptOf(rawTx: string, signature: string, walletPost: number, wrapped?: WrappedReceipt) {
   const others = Array.from({ length: 8 }, () => 1_000_000)
   const body: ReceiptBody = {
     slot: 110,
@@ -271,10 +301,10 @@ function nativeReceiptOf(rawTx: string, signature: string, walletPost: number) {
     meta: {
       err: null,
       fee: 5000,
-      preBalances: [1_000_000_000, ...others, 0, 1_000_000],
-      postBalances: [walletPost, ...others, rent, 1_000_000],
-      preTokenBalances: [balance(10, usdc, TOKEN_PROGRAM, "0")],
-      postTokenBalances: [balance(9, wrappedSol, TOKEN_PROGRAM, "0"), balance(10, usdc, TOKEN_PROGRAM, "2000000")],
+      preBalances: [1_000_000_000, ...others, wrapped === undefined ? 0 : rent + Number(wrapped.held) + wrapped.unsynced, 1_000_000],
+      postBalances: [walletPost, ...others, rent + Number(wrapped?.after ?? 0n), 1_000_000],
+      preTokenBalances: [...wrapped === undefined ? [] : [balance(9, wrappedSol, TOKEN_PROGRAM, String(wrapped.held))], balance(10, usdc, TOKEN_PROGRAM, "0")],
+      postTokenBalances: [balance(9, wrappedSol, TOKEN_PROGRAM, String(wrapped?.after ?? 0n)), balance(10, usdc, TOKEN_PROGRAM, "2000000")],
       loadedAddresses: { writable: [wrappedSource, destination], readonly: [] },
     },
   }
@@ -399,7 +429,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     })
   })
 
-  it.effect('A native SOL route gains exactly one wrapped-SOL creation, one exact System transfer and one SyncNative before the route; the fee wallet signs it only within its principal, fee and rent, and the finalized receipt must spend exactly that principal (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+  it.effect('A native SOL route gains exactly one wrapped-SOL creation, one exact System transfer and one SyncNative before the route; the fee wallet signs it only within its principal, fee and rent, and the finalized receipt must spend exactly that principal; lamports donated to the fee wallet\'s existing wrapped-SOL account before simulation or before inclusion still reconcile to the exact input, a later conversion through that account with no donation reconciles, and an input account that is not native wrapped SOL is refused before any reservation (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
     const fixture = try Fixture
     try fixture.set({ nativeSource: true })
     const raw = transaction({ ...plain, nativeSource: true })
@@ -433,6 +463,28 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const landed = try onSolana(routeStatus(send))
     try fixture.set({ nativeSource: true, receipt: nativeReceiptOf(sent.rawTx, sent.txId, nativeWalletAfter - 1) })
     const extraSpend = onSolana(routeStatus(send)) catch (error) => issueOf(error)
+    const firstReservations = reserved.length
+    const existing = { nativeSource: true, walletAfter: nativeWalletAfter + rent }
+    const donated = { held: 5n, unsynced: 1, tag: 1 }
+    try fixture.set({ ...existing, wrapped: donated, simulatedWrapped: 5n })
+    const donationSpentInSimulation = onSolana(signed(reserved, nativeSwap)) catch (error) => issueOf(error)
+    try fixture.set({ ...existing, wrapped: donated, simulatedWrapped: 6n })
+    const donatedSent = try onSolana(signed(reserved, nativeSwap))
+    const donatedSend: RouteSend = { ...send, txId: donatedSent.txId, rawTx: donatedSent.rawTx, accountProof: retainedOf(reserved.at(-1)) }
+    try fixture.set({ ...existing, wrapped: donated, receipt: nativeReceiptOf(donatedSent.rawTx, donatedSent.txId, nativeWalletSpent, { held: 5n, unsynced: 1, after: 6n }) })
+    const donatedLanded = try onSolana(routeStatus(donatedSend))
+    try fixture.set({ ...existing, wrapped: donated, receipt: nativeReceiptOf(donatedSent.rawTx, donatedSent.txId, nativeWalletSpent, { held: 5n, unsynced: 1, after: 5n }) })
+    const donationSpentOnChain = onSolana(routeStatus(donatedSend)) catch (error) => issueOf(error)
+    const settledWrapped = { held: 5n, unsynced: 0, tag: 1 }
+    try fixture.set({ ...existing, wrapped: settledWrapped, simulatedWrapped: 5n })
+    const laterSent = try onSolana(signed(reserved, nativeSwap))
+    const laterSend: RouteSend = { ...send, txId: laterSent.txId, rawTx: laterSent.rawTx, accountProof: retainedOf(reserved.at(-1)) }
+    try fixture.set({ ...existing, wrapped: settledWrapped, receipt: nativeReceiptOf(laterSent.rawTx, laterSent.txId, nativeWalletSpent, { held: 5n, unsynced: 0, after: 5n }) })
+    const laterLanded = try onSolana(routeStatus(laterSend))
+    const existingReservations = reserved.length
+    try fixture.set({ ...existing, wrapped: { held: 5n, unsynced: 0, tag: 0 }, simulatedWrapped: 5n })
+    const notNative = onSolana(signed(reserved, nativeSwap)) catch (error) => issueOf(error)
+    const landedOf = (txId: string) => ({ kind: "landed", txId, succeeded: true, output: 2_000_000n, actualWei: "5000", blockHash: blockhash, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false })
     try same({
       programs: wrappedParsed.programs,
       transfer: [...(wrappedParsed.instructions[1]?.data ?? [])],
@@ -440,13 +492,20 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       exact,
       changed,
       overspent,
-      reservations: reserved.length,
+      reservations: firstReservations,
       retainedNative,
       signedPrograms: signedParsed.programs,
       signedWrap: signedParsed.instructions.slice(1, 3).map((instruction) => [...instruction.data]),
       recordedSwap,
       landed,
       extraSpend,
+      donationSpentInSimulation,
+      donatedLanded,
+      donationSpentOnChain,
+      laterLanded,
+      existingReservations,
+      notNative,
+      afterRefusal: reserved.length,
       broadcasts: fixture.broadcasts(),
     }, {
       programs: [ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM, jupiter.program],
@@ -462,6 +521,13 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       recordedSwap: undefined,
       landed: { kind: "landed", txId: sent.txId, succeeded: true, output: 2_000_000n, actualWei: String(5000 + rent), blockHash: blockhash, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false },
       extraSpend: "Finalized native swap did not spend exactly its earned fee input",
+      donationSpentInSimulation: "Route simulation does not match the exact input and minimum output",
+      donatedLanded: landedOf(donatedSent.txId),
+      donationSpentOnChain: "Finalized swap did not debit its exact input and credit its minimum output",
+      laterLanded: landedOf(laterSent.txId),
+      existingReservations: 3,
+      notNative: "Route native input is not a wrapped SOL account",
+      afterRefusal: 3,
       broadcasts: 0,
     })
   })
