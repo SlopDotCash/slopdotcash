@@ -4803,9 +4803,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "993bba18296241979f75ae6169c1f18062c27746d2c90a11fb59a3fb55e990f8",
+      "sha256": "9a0795eb0d9c483e411fd0c0386aae49a84f891fe86f7104c618f1d6b0ca4b36",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 493, 685, 900, 901, 902, 905, 1224],
+      "candidateLines": [55, 56, 493, 685, 920, 921, 922, 925, 1248],
       "review": "mapped-abstraction"
     },
     {
@@ -14519,7 +14519,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "060ba5c48d3c19786640dcd5427f72f141503b1a629666c36ac54b6f689998c3",
+      "sha256": "3cf51d70543fe34d611378740b53653a01f33f6c61be022dead9769ee63e895b",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -14536,7 +14536,15 @@
       "scenarios": [
         "conflictingImportTest",
         "disclosedNotVerifiedTest",
-        "partialRefusedTest"
+        "mixedAcceptedOutputMustAgreeTest",
+        "mixedEarlierContextRequiredTest",
+        "mixedImportPreservesAcceptedRoleTest",
+        "mixedOutputCannotBeSubmittedTest",
+        "mixedPathCannotUseAnotherCommitTest",
+        "mixedPathsRoutedByCommitTest",
+        "mixedSourcesMustAgreeTest",
+        "partialRefusedTest",
+        "validatedMixedEvidenceCannotChangeTest"
       ]
     },
     {

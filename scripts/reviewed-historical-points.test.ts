@@ -1733,6 +1733,264 @@ function earlierAcceptanceFixture() {
   return f;
 }
 
+function mixedSubmittedAndSquashFixture() {
+  const f = earlierAcceptanceFixture();
+  const retirement = f.retirement;
+  const proof = retirement.earlierAcceptanceProof;
+  const prior = retirement.earlierSources[0];
+  if (!proof) throw Error("fixture proof");
+  const oid = (raw: string) =>
+    createHash("sha1")
+      .update(`commit ${Buffer.byteLength(raw)}\0`)
+      .update(raw)
+      .digest("hex");
+  const rawSquash = `tree ${"f".repeat(40)}\nparent ${proof.sourceBaseSha}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\nsquash work\n`;
+  const squashSha = oid(rawSquash);
+  const nativeHead = retirement.source.headSha;
+  const rawHead = `tree ${"f".repeat(40)}\nparent ${nativeHead}\nparent ${squashSha}\nauthor Human <human@example.test> 3 +0000\ncommitter Human <human@example.test> 3 +0000\n\npromotion head\n`;
+  const headSha = oid(rawHead);
+  const rawMerge = `tree ${"f".repeat(40)}\nparent ${proof.sourceBaseSha}\nparent ${headSha}\nauthor Human <human@example.test> 4 +0000\ncommitter Human <human@example.test> 4 +0000\n\naccepted promotion\n`;
+  const squashCommit = {
+    sha: squashSha,
+    parentCount: 1,
+    parentShas: [proof.sourceBaseSha],
+    author: prior.author,
+    additions: 1,
+    deletions: 0,
+    firstAcceptedSourceId: retirement.sourceId,
+    files: [{ path: "squashed.ts", additions: 1, deletions: 0 }],
+  };
+  retirement.acceptedSquashes = [
+    {
+      repositoryNodeId: prior.repositoryNodeId,
+      sourceId: prior.sourceId,
+      sourceUrl: prior.sourceUrl,
+      headSha: prior.headSha,
+      occurredAt: prior.occurredAt ?? "",
+      author: prior.author,
+      headCommit: proof.objects[0].raw,
+      acceptedCommit: rawSquash,
+      commit: { ...squashCommit, firstAcceptedSourceId: prior.sourceId },
+    },
+  ];
+  retirement.source.headSha = headSha;
+  retirement.source.commits.push(squashCommit, {
+    sha: headSha,
+    parentCount: 2,
+    parentShas: [nativeHead, squashSha],
+    author: actor,
+    additions: null,
+    deletions: null,
+    firstAcceptedSourceId: retirement.sourceId,
+    files: [],
+    mergeResolution: {
+      commitSha: headSha,
+      parents: [nativeHead, squashSha],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "f".repeat(40),
+      resolvedTree: "f".repeat(40),
+      hadConflicts: false,
+      patch: "",
+      patchSha256: sha256Hex(""),
+      paths: [],
+    },
+  });
+  retirement.source.commitCount = 3;
+  f.packet.sourceAudit.sources[0].headSha = headSha;
+  proof.contextSources[0].mergeSha = squashSha;
+  proof.objects.push(
+    { sha: squashSha, raw: rawSquash },
+    { sha: headSha, raw: rawHead },
+  );
+  retirement.coverage = [
+    { commitSha: squashSha, path: "squashed.ts", sourceId: prior.sourceId },
+  ];
+  retirement.acceptedPromotion = {
+    headCommit: rawHead,
+    mergeCommit: rawMerge,
+    mergeSha: oid(rawMerge),
+  };
+  const bind = () => {
+    const dossier = JSON.parse(retirement.evidence);
+    Object.assign(dossier, {
+      sourceSha256: hash(retirement.source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      earlierAcceptanceProofSha256: hash(proof),
+      acceptedSquashesSha256: hash(retirement.acceptedSquashes),
+      acceptedPromotionSha256: hash(retirement.acceptedPromotion),
+    });
+    retirement.evidence = JSON.stringify(dossier);
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const award = f.baseline.revisions[0].award;
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...award, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  return Object.assign(f, { bind, prior, proof, squashSha });
+}
+
+test("one prior PR can cover its exact submitted commit and different squash output", () => {
+  const f = mixedSubmittedAndSquashFixture();
+  f.bind();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
+
+for (const change of [
+  "merge",
+  "author",
+  "kind",
+  "head",
+  "repo",
+  "date",
+  "url",
+  "submitted-output",
+  "output-path",
+  "wrong-commit-path",
+  "absent-context",
+] as const) {
+  test(`mixed submitted/squash proof refuses ${change}`, () => {
+    const f = mixedSubmittedAndSquashFixture();
+    const squash = f.retirement.acceptedSquashes?.[0];
+    if (!squash?.author) throw Error("fixture squash");
+    if (change === "merge")
+      f.proof.contextSources[0].mergeSha = f.prior.headSha;
+    if (change === "author")
+      squash.author = { ...squash.author, id: "U_other" };
+    if (change === "kind") squash.author = { ...squash.author, kind: "Bot" };
+    if (change === "head") squash.headSha = "1".repeat(40);
+    if (change === "repo") squash.repositoryNodeId = "R_other";
+    if (change === "date") squash.occurredAt = "2026-10-11T01:00:00.000Z";
+    if (change === "url")
+      squash.sourceUrl = "https://github.com/feedforagents/feed/pull/3";
+    if (change === "submitted-output") {
+      f.prior.commits.push(squash.commit);
+      f.prior.commitCount++;
+    }
+    if (change === "output-path") f.retirement.coverage = [];
+    if (change === "wrong-commit-path")
+      f.retirement.coverage[0].commitSha = f.prior.headSha;
+    if (change === "absent-context") f.proof.contextSources = [];
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+}
+
+for (const fault of ["none", "rest-merge", "graphql-squash"] as const) {
+  test(`mixed source fresh authority check ${fault}`, async () => {
+    const f = mixedSubmittedAndSquashFixture();
+    const target = f.retirement.source;
+    const context = f.proof.contextSources[0];
+    const squash = f.retirement.acceptedSquashes?.[0];
+    const promotion = f.retirement.acceptedPromotion;
+    if (!squash?.author || !squash.commit.author || !promotion)
+      throw Error("fixture mixed source");
+    const repository = {
+      id: f.prior.repositoryNodeId,
+      nameWithOwner: f.prior.repository,
+    };
+    const graph = async <T>(query: string): Promise<T> =>
+      (query.includes("HistoricalPromotionMerge")
+        ? {
+            node: {
+              id: target.sourceId,
+              headRefOid: target.headSha,
+              mergedAt: target.occurredAt,
+              repository,
+              mergeCommit: { oid: promotion.mergeSha },
+            },
+          }
+        : {
+            nodes: [
+              {
+                id: squash.sourceId,
+                url: squash.sourceUrl,
+                merged: true,
+                mergedAt: squash.occurredAt,
+                headRefOid: squash.headSha,
+                repository,
+                author: { ...squash.author, __typename: squash.author?.kind },
+                mergeCommit: {
+                  oid:
+                    fault === "graphql-squash"
+                      ? f.prior.headSha
+                      : squash.commit.sha,
+                  author: {
+                    user: {
+                      ...squash.commit.author,
+                      __typename: squash.commit.author?.kind,
+                    },
+                  },
+                  parents: {
+                    nodes: squash.commit.parentShas?.map((oid) => ({ oid })),
+                    pageInfo: { hasNextPage: false },
+                  },
+                },
+              },
+            ],
+          }) as T;
+    const get = async <T>(path: string): Promise<T> => {
+      if (!path.includes("/pulls/") && !path.includes("/compare/"))
+        return { node_id: repository.id } as T;
+      const earlier =
+        path.includes("/pulls/2") || path.includes(f.prior.headSha);
+      const source = earlier ? f.prior : target;
+      const commits = source.commits.map((commit) => ({
+        sha: commit.sha,
+        parents: commit.parentShas?.map((sha) => ({ sha })),
+        author: { node_id: commit.author?.id, type: commit.author?.kind },
+      }));
+      if (path.includes("/compare/"))
+        return { total_commits: commits.length, commits } as T;
+      if (path.includes("/commits?")) return commits as T;
+      return {
+        node_id: source.sourceId,
+        head: { sha: source.headSha },
+        base: { sha: earlier ? context.baseSha : f.proof.sourceBaseSha },
+        commits: commits.length,
+        merge_commit_sha: earlier
+          ? fault === "rest-merge"
+            ? f.prior.headSha
+            : context.mergeSha
+          : promotion.mergeSha,
+        merged_at: source.occurredAt,
+        user: { node_id: source.author?.id, type: source.author?.kind },
+      } as T;
+    };
+    const read = verifyHistoricalAcceptedSquashes(f.packet, {
+      graphql: graph,
+      get,
+    });
+    if (fault === "none") await expect(read).resolves.toBeUndefined();
+    else
+      await expect(read).rejects.toThrow(
+        fault === "rest-merge"
+          ? "Earlier acceptance source changed"
+          : "Accepted squash source changed",
+      );
+  });
+}
+
 test("earlier accepted native commit retires only its repeated promotion", () => {
   const f = earlierAcceptanceFixture();
   expect(
