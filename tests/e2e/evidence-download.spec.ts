@@ -150,7 +150,9 @@ for (const mode of ["streamed", "buffered"] as const) {
       })
       .click();
     await page
-      .getByLabel(`Reason to inspect ${label}`)
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: label, exact: true }) })
+      .getByLabel("Reason", { exact: true })
       .fill("Inspect exact fixture bytes without execution");
     await holdFinalEvidenceSession(page, mode === "streamed" ? 2 : 3);
     await page.evaluate((path) => {
@@ -356,17 +358,14 @@ test("large private evidence downloads with a single-use browser grant @registry
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },
   );
-  const retention = page.getByText("Run details and retention", {
-    exact: true,
-  });
+  const retention = page.getByText("Details", { exact: true });
   await retention.focus();
   await page.keyboard.press("Enter");
-  await expect(
-    page.getByText(
-      "Case open. Evidence is retained until 90 days after closure.",
-      { exact: false },
-    ),
-  ).toBeVisible();
+  const retained = page.getByTitle("Retained until 90 days after closure", {
+    exact: true,
+  });
+  await expect(retained).toBeVisible();
+  await expect(retained).toHaveText("Open · +90d after close");
   await retention.focus();
   await page.keyboard.press("Enter");
   await page

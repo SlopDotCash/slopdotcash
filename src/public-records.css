@@ -29,6 +29,12 @@
   font-size: 0.8125rem;
 }
 
+.payment-record small .chain-icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+}
+
 .payment-record-amount {
   justify-items: end;
 }
@@ -42,6 +48,13 @@
 .profile-payments-summary {
   color: var(--muted);
   margin: 0;
+}
+
+.profile-payments-summary strong {
+  display: block;
+  color: var(--brand-color-ink);
+  font-family: var(--brand-font-data);
+  font-size: 24px;
 }
 
 .profile-payment-notices {

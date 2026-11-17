@@ -1,3 +1,4 @@
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatBaseUnits } from "./lib/base-units.mjs";
 import { errorMessage } from "./lib/errors";
@@ -9,7 +10,13 @@ import {
 } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { formatAssetSymbol, NETWORK_NAMES } from "./lib/reward-asset.mjs";
-import { formatDateTime, NetworkName } from "./Presentation";
+import {
+  formatDateTime,
+  MetricGrid,
+  MetricTile,
+  NetworkName,
+  StatusBadge,
+} from "./Presentation";
 import { VaultActions } from "./VaultActions";
 
 type PrivateFunds = {
@@ -195,47 +202,41 @@ function ExistingBountyVault({
     <section className="owner-section" aria-label="Bounty funds">
       {compact ? null : <h2>Bounty funds</h2>}
       <div className="owner-form">
-        {compact ? null : <p>Separate from contribution rewards.</p>}
         {state.status === "loading" ? (
-          <p role="status">Loading bounty funds…</p>
+          <p role="status" aria-label="Loading bounty funds">
+            <LoaderCircle className="wallet-spin" aria-hidden="true" />
+          </p>
         ) : null}
         {state.status === "error" ? <p role="alert">{state.message}</p> : null}
         {state.status === "ready" ? (
           <>
             {state.refreshError ? (
               <p role="alert">
-                {state.refreshError}{" "}
-                {state.funds
-                  ? "Last verified balance is stale."
-                  : "Last verified vault information is shown."}{" "}
-                Setup and deposits resume after a successful refresh.
+                <StatusBadge tone="warning" title={state.refreshError}>
+                  Stale
+                </StatusBadge>
+                <span className="visually-hidden">{state.refreshError}</span>
               </p>
             ) : null}
             {!state.canSetup && !state.refreshError ? (
               <p>
-                This project is restricted. New setup and deposits are disabled.
-                {deployments.length > 0
-                  ? " You can still withdraw free funds."
-                  : " Setup resumes after reinstatement."}
+                <StatusBadge tone="danger">Restricted</StatusBadge>
               </p>
             ) : null}
             {state.funds ? (
-              <>
-                <p>
-                  Available for new awards:{" "}
-                  {formatBaseUnits(
+              <MetricGrid>
+                <MetricTile
+                  label="Available"
+                  value={`${formatBaseUnits(
                     state.funds.availableMinor,
                     state.funds.decimals,
-                  )}{" "}
-                  {formatAssetSymbol(state.funds.currency)}.
-                </p>
-                <p>
-                  Finalized balance checked at{" "}
-                  {formatDateTime(state.funds.snapshotAt)}.
-                </p>
-              </>
+                  )} ${formatAssetSymbol(state.funds.currency)}`}
+                  detail={`as of ${formatDateTime(state.funds.snapshotAt)}`}
+                  tone={state.refreshError ? "warning" : "neutral"}
+                />
+              </MetricGrid>
             ) : (
-              <p>No finalized balance yet. After a deposit, refresh later.</p>
+              <p>No balance yet</p>
             )}
             {deployments.map((deployment) => (
               <VaultActions
@@ -251,11 +252,13 @@ function ExistingBountyVault({
         ) : null}
         <button
           type="button"
-          className="button secondary-button"
+          className="button secondary-button icon-button"
+          aria-label="Refresh bounty funds"
+          title="Refresh bounty funds"
           disabled={state.status === "loading"}
           onClick={() => setReload((value) => value + 1)}
         >
-          Refresh bounty funds
+          <RefreshCw aria-hidden="true" size={16} />
         </button>
       </div>
     </section>

@@ -58,12 +58,11 @@ export function PenaltyPointTable() {
       tabIndex={0}
     >
       <table className="plain-table score-tier-table">
-        <caption>Published penalty table</caption>
         <thead>
           <tr>
-            <th scope="col">Slopbot category</th>
+            <th scope="col">Category</th>
             <th scope="col">Action</th>
-            <th scope="col">Debit (points)</th>
+            <th scope="col">Points</th>
           </tr>
         </thead>
         <tbody>
