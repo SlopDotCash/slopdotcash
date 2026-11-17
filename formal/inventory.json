@@ -5154,7 +5154,7 @@
     },
     {
       "path": "scripts/verify-dependency-audit.mjs",
-      "sha256": "6d9b66ec498fc85b68294b0c8ed2584b63cb39e8f94f2eaaad99e31fcc113e73",
+      "sha256": "900b11714cb60f87dbf01df51d75dd86bc9a2d2f6b15311b8ea36db75ef8b5ad",
       "models": ["formal/models/release/dependency_backport_audit.qnt"],
       "candidateLines": [24, 45, 47, 53],
       "review": "mapped-abstraction"
