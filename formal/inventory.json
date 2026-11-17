@@ -5563,7 +5563,7 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "3d39a0a6412c320fa2b312a3485f9ba03772ed56443540089266440164ae0012",
+      "sha256": "21d21818ba9a2ffb22464ebae29080d5fdff6007c4d9ad88dd04816b61726668",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
@@ -5572,12 +5572,12 @@
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        1, 15, 37, 60, 62, 68, 71, 110, 148, 152, 154, 159, 166, 167, 169, 173,
-        174, 175, 176, 177, 178, 181, 182, 183, 184, 186, 188, 190, 200, 201,
-        203, 205, 274, 276, 286, 296, 392, 446, 478, 479, 488, 496, 500, 502,
-        524, 536, 550, 554, 562, 572, 594, 598, 604, 608, 617, 621, 622, 628,
-        630, 679, 700, 703, 913, 924, 947, 952, 967, 980, 983, 1006, 1007, 1008,
-        1011, 1018
+        1, 15, 38, 61, 63, 69, 72, 111, 149, 153, 155, 160, 167, 168, 170, 174,
+        175, 176, 177, 178, 179, 182, 183, 184, 185, 187, 189, 191, 201, 202,
+        204, 206, 275, 277, 287, 297, 393, 447, 479, 480, 489, 497, 501, 503,
+        525, 537, 551, 555, 563, 573, 595, 598, 600, 606, 610, 620, 624, 625,
+        633, 635, 704, 725, 728, 938, 949, 972, 977, 992, 1005, 1008, 1031,
+        1032, 1033, 1037, 1044
       ],
       "review": "mapped-abstraction"
     },
@@ -6010,7 +6010,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "28017fe0852a5aa0dc1556a60800d4c1aab6f44fa776e0407eb3bc6157b4ed3e",
+      "sha256": "ed2e21136348e5c8371b0e3c104c35ee83f04b35d513131969d38fa9383dd351",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -6023,12 +6023,12 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 36, 45, 52, 79, 81, 144, 153, 162, 168, 178, 181, 182, 184, 185, 186,
-        187, 209, 212, 220, 222, 232, 292, 314, 376, 424, 425, 428, 437, 439,
-        441, 447, 448, 449, 454, 455, 460, 464, 465, 475, 481, 492, 493, 494,
-        501, 502, 504, 509, 513, 515, 516, 517, 526, 533, 534, 567, 575, 585,
-        590, 598, 612, 618, 619, 620, 621, 625, 627, 665, 679, 706, 722, 727,
-        730, 737, 740, 747, 748, 754, 898
+        2, 36, 46, 53, 80, 82, 145, 154, 163, 169, 179, 182, 183, 185, 186, 187,
+        188, 210, 213, 221, 223, 233, 293, 315, 377, 425, 426, 429, 438, 440,
+        442, 448, 449, 450, 455, 456, 461, 465, 466, 476, 482, 493, 494, 495,
+        502, 503, 505, 510, 515, 521, 522, 523, 532, 539, 540, 573, 581, 591,
+        596, 604, 618, 624, 625, 626, 627, 631, 633, 671, 685, 712, 728, 733,
+        736, 743, 746, 753, 754, 760, 904
       ],
       "review": "mapped-abstraction"
     },
@@ -6764,7 +6764,7 @@
     },
     {
       "path": "src/lib/project-api.ts",
-      "sha256": "f525e1a63ff999496b6b196d9d3a0867ecf9fece2dbb1b0e06a572f58107d77c",
+      "sha256": "bd8c143a7056afe8ae5d43a8e1f866b20f9701513f979235ada3d2b0435c5ef3",
       "models": [
         "formal/models/ui/ui_admin_editor_lifetime.qnt",
         "formal/models/ui/ui_admin_mutation_identity.qnt",
@@ -6791,8 +6791,9 @@
       ],
       "candidateLines": [
         6, 25, 111, 121, 125, 149, 163, 168, 233, 255, 271, 307, 308, 309, 310,
-        326, 335, 338, 342, 344, 351, 363, 365, 366, 379, 380, 410, 414, 415,
-        420, 422, 423, 429, 431, 433, 454, 467, 476, 482, 494, 500
+        326, 332, 340, 342, 343, 344, 347, 352, 359, 362, 366, 368, 390, 391,
+        394, 396, 403, 436, 440, 441, 446, 450, 451, 457, 459, 461, 482, 495,
+        504, 510, 522, 528
       ],
       "review": "mapped-abstraction"
     },
@@ -7351,6 +7352,13 @@
       "candidateLines": [
         26, 49, 59, 133, 144, 168, 173, 179, 184, 240, 263, 265
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/vault-auto-register.ts",
+      "sha256": "8b2c62e859525820974d1c528fbd623a2d86e636ef6191e5a28f33c5c2b21111",
+      "models": ["formal/models/ui/ui_vault_auto_register.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -18434,7 +18442,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_authority.qnt",
-      "sha256": "7463ffa0eb313a7536800789f68995cead43fc36d4ce1f66acc3e9f85379e7c4",
+      "sha256": "f966223de5d83a76c12cab7310c6c02195920ed1dba06654fc4965cd87c530f9",
       "sources": [
         "backend/http.ts",
         "backend/projects/handler.ts",
@@ -18448,11 +18456,14 @@
         "cookieSwapBeforeDispatchRefusesTest",
         "departedReplyCannotGrantTest",
         "failedRequestStillChecksIdentityTest",
-        "focusInvalidatesOldAuthorityTest",
         "matchingActorGrantsTest",
         "newerActorOwnsGrantTest",
         "oldProjectReplyCannotGrantTest",
         "refusedSameActorIsNotGrantedTest",
+        "tabReturnDropsChangedActorTest",
+        "tabReturnDropsEndedSessionTest",
+        "tabReturnDuringCheckStillGrantsTest",
+        "tabReturnKeepsSameActorTest",
         "unknownFinalIdentityCannotGrantTest",
         "wrongViewerCannotGrantTest"
       ]
@@ -19292,10 +19303,12 @@
     },
     {
       "path": "formal/models/ui/ui_vault_auto_register.qnt",
-      "sha256": "0e544eb98b07b0aa5a1ce3a2cab377cb9fe2f9b05b697bf003ab3e0ee83cc350",
-      "sources": ["src/OwnerVaultSetup.tsx"],
+      "sha256": "6ea16490f594d404eff53af042524d8a5fef5a792ba23f8a6bb6218e2ae50107",
+      "sources": ["src/OwnerVaultSetup.tsx", "src/lib/vault-auto-register.ts"],
       "scenarios": [
         "attemptLimitTest",
+        "backgroundLimitWaitsForTabTest",
+        "backgroundTabRegistersTest",
         "editingRetiresAutomaticAnswerTest",
         "failedCreationStopsTest",
         "ownerRefusalStopsTimerTest",

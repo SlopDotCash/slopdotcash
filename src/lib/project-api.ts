@@ -327,10 +327,34 @@ export function subscribeProjectSessionChange(
   };
 }
 
-/** Revalidate on mount, caller revision, explicit signout and tab return. */
+/**
+ * What a recheck on tab return leaves on screen. The same account keeps the
+ * state it already has, so the page below it is not rebuilt; a failed recheck
+ * is not evidence of a change. Every request still names its expected actor.
+ */
+export function sessionAfterReturn(
+  shown: ProjectSessionState,
+  answer: { session: ProjectSession | null } | { error: string },
+): ProjectSessionState {
+  if ("error" in answer)
+    return shown.status === "signed-in"
+      ? shown
+      : { status: "error", message: answer.error };
+  if (answer.session === null) return { status: "signed-out" };
+  return shown.status === "signed-in" &&
+    shown.session.githubId === answer.session.githubId
+    ? shown
+    : { status: "signed-in", session: answer.session };
+}
+
+/**
+ * Revalidate on mount, caller revision, explicit signout and tab return.
+ * With `keepOnReturn`, a tab return rechecks behind the current state.
+ */
 export function useProjectSession(
   revision: number | string = 0,
   enabled = true,
+  keepOnReturn = false,
 ): ProjectSessionState {
   const [snapshot, setSnapshot] = useState<{
     revision: number | string;
@@ -345,68 +369,70 @@ export function useProjectSession(
     if (!enabled) return;
     let active = true;
     let generation = 0;
-    const refresh = () => {
+    const refresh = (returned = false) => {
       const current = ++generation;
       const sessionRevision = sessionChangeRevision;
-      setSnapshot({ revision, sessionRevision, state: { status: "checking" } });
+      const behind = returned && keepOnReturn;
+      const settle = (
+        answer: { session: ProjectSession | null } | { error: string },
+      ) => {
+        if (
+          !active ||
+          current !== generation ||
+          sessionRevision !== sessionChangeRevision
+        )
+          return;
+        setSnapshot((shown) => {
+          const kept =
+            behind &&
+            shown.revision === revision &&
+            shown.sessionRevision === sessionRevision;
+          const state = sessionAfterReturn(
+            kept ? shown.state : { status: "checking" },
+            answer,
+          );
+          return kept && state === shown.state
+            ? shown
+            : { revision, sessionRevision, state };
+        });
+      };
+      if (!behind)
+        setSnapshot({
+          revision,
+          sessionRevision,
+          state: { status: "checking" },
+        });
       currentProjectSession().then(
-        (session) => {
-          if (
-            !active ||
-            current !== generation ||
-            sessionRevision !== sessionChangeRevision
-          )
-            return;
-          setSnapshot({
-            revision,
-            sessionRevision,
-            state:
-              session === null
-                ? { status: "signed-out" }
-                : { status: "signed-in", session },
-          });
-        },
-        (error: unknown) => {
-          if (
-            !active ||
-            current !== generation ||
-            sessionRevision !== sessionChangeRevision
-          )
-            return;
-          setSnapshot({
-            revision,
-            sessionRevision,
-            state: {
-              status: "error",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "Something went wrong.",
-            },
-          });
-        },
+        (session) => settle({ session }),
+        (error: unknown) =>
+          settle({
+            error:
+              error instanceof Error ? error.message : "Something went wrong.",
+          }),
       );
     };
+    const explicit = () => refresh();
+    const focused = () => refresh(true);
     const visible = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") refresh(true);
     };
     const restored = (event: PageTransitionEvent) => {
-      if (event.persisted) refresh();
+      if (event.persisted) refresh(true);
     };
-    const unsubscribe = subscribeProjectSessionChange(refresh);
+    const unsubscribe = subscribeProjectSessionChange(explicit);
     refresh();
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", focused);
     document.addEventListener("visibilitychange", visible);
     window.addEventListener("pageshow", restored);
     return () => {
       active = false;
       generation += 1;
       unsubscribe();
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", focused);
       document.removeEventListener("visibilitychange", visible);
       window.removeEventListener("pageshow", restored);
     };
-  }, [revision, enabled]);
+  }, [revision, enabled, keepOnReturn]);
   // Never show the old actor while a requested identity check is pending.
   return enabled &&
     snapshot.revision === revision &&
@@ -418,7 +444,9 @@ export function useProjectSession(
 /** Show owner controls only after the API verifies current repository authority. */
 export function useProjectMaintainer(projectId: string) {
   const [attempt, setAttempt] = useState(0);
-  const session = useProjectSession(attempt);
+  // An owner page keeps its form, saved wallet request and running checks
+  // while the same account is rechecked on tab return.
+  const session = useProjectSession(attempt, true, true);
   const [verified, setVerified] = useState<string | null>(null);
   const [failure, setFailure] = useState<{
     identity: string;

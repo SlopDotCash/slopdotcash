@@ -27,6 +27,7 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
+import { autoRegisterTurn } from "./lib/vault-auto-register";
 import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";
@@ -594,6 +595,7 @@ export function OwnerVaultSetup({
           setAutoRegister((state) => ({
             hash: checked,
             attempts: AUTO_REGISTER_ATTEMPTS,
+            hiddenAsks: state.hiddenAsks,
             errors: 0,
             ticks: state.ticks + 1,
           }));
@@ -608,6 +610,7 @@ export function OwnerVaultSetup({
   const [autoRegister, setAutoRegister] = useState({
     hash: "",
     attempts: 0,
+    hiddenAsks: 0,
     errors: 0,
     ticks: 0,
   });
@@ -624,22 +627,34 @@ export function OwnerVaultSetup({
   const autoAttempts =
     autoRegister.hash === autoHash ? autoRegister.attempts : 0;
   const autoErrors = autoRegister.hash === autoHash ? autoRegister.errors : 0;
+  const autoHidden =
+    autoRegister.hash === autoHash ? autoRegister.hiddenAsks : 0;
   const autoTicks = autoRegister.ticks;
   useEffect(() => {
     if (autoHash === null || autoAttempts >= AUTO_REGISTER_ATTEMPTS) return;
     const timer = window.setTimeout(
       () => {
-        const done = (attempts: number, errors: number) => {
+        const done = (
+          attempts: number,
+          errors: number,
+          hiddenAsks = autoHidden,
+        ) => {
           if (mounted.current)
             setAutoRegister({
               hash: autoHash,
               attempts,
+              hiddenAsks,
               errors,
               ticks: autoTicks + 1,
             });
         };
-        // A hidden tab asks nothing and uses no attempt; the next tick retries.
-        if (document.visibilityState === "hidden") {
+        // A background tab keeps asking within its own limit, so switching
+        // tabs does not leave the vault unrecorded; past it the tick waits.
+        const turn = autoRegisterTurn(
+          { attempts: autoAttempts, hiddenAsks: autoHidden },
+          document.visibilityState === "hidden",
+        );
+        if (!turn.ask) {
           done(autoAttempts, autoErrors);
           return;
         }
@@ -648,9 +663,10 @@ export function OwnerVaultSetup({
         const current = () => mounted.current && action.current === token;
         void latestRegister
           .current(current, true)
-          .then(() => done(autoAttempts + 1, 0))
+          .then(() => done(turn.next.attempts, 0, turn.next.hiddenAsks))
           .catch((caught) => {
-            if (!current()) return done(autoAttempts + 1, autoErrors);
+            if (!current())
+              return done(turn.next.attempts, autoErrors, turn.next.hiddenAsks);
             // Show why the check fails. A failed creation is final, and so are
             // repeated failures; one failure is asked again and a later
             // success withdraws the message.
@@ -663,19 +679,28 @@ export function OwnerVaultSetup({
             done(
               failed || errors >= AUTO_REGISTER_ERRORS
                 ? AUTO_REGISTER_ATTEMPTS
-                : autoAttempts + 1,
+                : turn.next.attempts,
               errors,
+              turn.next.hiddenAsks,
             );
           });
       },
-      autoAttempts === 0 && askSoon === autoHash
+      autoAttempts === 0 && autoHidden === 0 && askSoon === autoHash
         ? AUTO_REGISTER_SOON_MS
-        : autoAttempts < AUTO_REGISTER_FAST_ATTEMPTS
+        : autoAttempts + autoHidden < AUTO_REGISTER_FAST_ATTEMPTS
           ? AUTO_REGISTER_FAST_MS
           : AUTO_REGISTER_SLOW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [autoHash, autoAttempts, autoErrors, autoTicks, askSoon, setError]);
+  }, [
+    autoHash,
+    autoAttempts,
+    autoErrors,
+    autoHidden,
+    autoTicks,
+    askSoon,
+    setError,
+  ]);
   const active = pending ?? review;
   return (
     <section
@@ -1007,6 +1032,7 @@ export function OwnerVaultSetup({
                 setAutoRegister((state) => ({
                   ...state,
                   attempts: 0,
+                  hiddenAsks: 0,
                   errors: 0,
                   ticks: state.ticks + 1,
                 }));
