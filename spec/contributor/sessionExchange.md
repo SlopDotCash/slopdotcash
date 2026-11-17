@@ -91,7 +91,15 @@ pure def receiveStart(e: Exchange, attempt: int, valid: bool): Exchange =
 ### The provider callback is claimed once and either completes or fails terminally
 
 The identity Worker claims the callback, reads the numeric actor from GitHub
-`/user` and completes the flow, or marks it failed.
+`/user` and completes the flow, or marks it failed
+(`workers/identity/failed-callback.test.ts`). A failed flow is never
+consumed and never issues an assertion; its row stays until it expires. The
+hourly maintenance deletes flow and assertion rows only once their own expiry
+has passed (`expires_at <= now`, `expiry-boundary.test.ts`), independently of
+the other scheduled tasks. An assertion is issued only from a completed,
+unexpired, undeleted flow, and expires 90 seconds after the poll time
+captured when it was issued. A rate-limited start or poll changes no flow,
+assertion or row.
 
 ```quint
 pure def canBeginCallback(e: Exchange, by: int): bool = by == identityWorker and e.displayed and e.flow == FlowPending and e.now < e.flowExpires
@@ -103,6 +111,20 @@ pure def failCallback(e: Exchange, by: int): Exchange = { ...e, flow: CallbackFa
 pure def canPurgeExpired(e: Exchange, by: int): bool = by == identityWorker and e.flow != FlowNone and e.flow != FlowPurged
   and e.now >= e.flowExpires and not(e.flow == AssertionIssued and e.now < e.assertionExpires)
 pure def purgeExpired(e: Exchange, by: int): Exchange = { ...e, flow: FlowPurged }
+pure def alwaysFailedFlowUnissued(e: Exchange): bool =
+  (e.flow == FlowPending or e.flow == CallbackProcessing or e.flow == CallbackComplete or e.flow == CallbackFailed)
+    implies e.assertionIssuedAt == 0 and not(e.assertionConsumed) and not(e.minted)
+pure def stepAssertionOnlyFromLiveFlow(before: Exchange, after: Exchange): bool =
+  (before.flow != AssertionIssued and after.flow == AssertionIssued) implies
+    before.flow == CallbackComplete and before.now < before.flowExpires
+    and after.assertionIssuedAt == before.now and after.assertionExpires == before.now + assertionLifetime
+pure def stepLimitChangesNoFlow(before: Exchange, via: str, after: Exchange): bool =
+  (via == "limitStart" or via == "limitPoll") implies after.flow == before.flow and after.flowExpires == before.flowExpires
+    and after.assertionIssuedAt == before.assertionIssuedAt and after.assertionConsumed == before.assertionConsumed
+    and after.snapshot == before.snapshot
+pure def sometimesFailedFlowPurgedUnissued(e: Exchange): bool = e.flow == FlowPurged and e.assertionIssuedAt == 0
+  and e.result == FlowRefused
+pure def sometimesPollLimited(e: Exchange): bool = e.result == PollError and e.poll == PollLimited
 pure def canWaitPoll(e: Exchange): bool = e.phase == Waiting and e.now <= 9007199254740000
 pure def waitPoll(e: Exchange): Exchange = if (e.now >= e.flowExpires) complete(FlowTimeout, e)
   else { ...e, phase: Polling, now: e.now + e.retryDelay }

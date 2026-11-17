@@ -37,16 +37,19 @@ bodies, unverified blob identities and file or digest mismatch. Credential
 handling and hashing need shell conformance.
 
 ```quint
+import skillRendering as SR from "./skillRendering"
 type Authority = CanonicalApi | Registry | RawFiles | Archive | InjectedFixture | OtherOrigin
 type Role = StaticSkill | ContributorSkill | ReviewerSkill
 type Transport = NewObject | Reading | Retry | Downloaded | Refused | Admitted
 type Issue = Timeout | ConnectionReset | AbruptTlsEnd | ServerError | InvalidAuthority | InvalidBytes | SizeExceeded | RateLimited
 type Provenance = Committed | WorkingTree | MissingProvenance
 type Selection = { role: Role, project: int, commit: str, registryRevision: int, registryDigest: str }
-type ByteCheck = { commit: str, provenance: Provenance, completeFiles: bool, matchingBlobs: bool, renderedDigest: str }
+type ByteCheck = { commit: str, provenance: Provenance, completeFiles: bool, matchingBlobs: bool,
+  template: SR::Template, revision: SR::Revision, downloaded: SR::Rendered }
 type SkillRead = { selection: Selection, transport: Transport, attempts: int, source: Authority,
   checked: ByteCheck, projectOpen: bool, projectFresh: bool, refusal: Issue }
-pure val unchecked: ByteCheck = { commit: "", provenance: MissingProvenance, completeFiles: false, matchingBlobs: false, renderedDigest: "" }
+pure val unchecked: ByteCheck = { commit: "", provenance: MissingProvenance, completeFiles: false, matchingBlobs: false,
+  template: SR::noTemplate, revision: SR::noRevision, downloaded: SR::render(SR::noTemplate, SR::noRevision) }
 pure val noSelection: Selection = { role: ContributorSkill, project: 0, commit: "", registryRevision: 0, registryDigest: "" }
 pure val initial: SkillRead = { selection: noSelection, transport: NewObject,
   attempts: 0, source: OtherOrigin, checked: unchecked, projectOpen: false, projectFresh: false,
@@ -99,8 +102,10 @@ pure def downloadComplete(s: SkillRead): SkillRead = { ...s, transport: Download
 
 A static committed skill has no registry binding and still requires the exact
 complete canonical tree and bytes. Generated contributor and reviewer roles
-both require that the rendering of the commit and the approved D1 revision
-equal the approved registry digest. Working-tree provenance and missing
+both require that the downloaded skill equal the
+[rendering](./skillRendering.md) `render` of the canonical template at the
+requested commit and the approved D1 revision whose digest the registry
+publishes. Working-tree provenance and missing
 provenance are refused. A contributor additionally requires an observation,
 made after the download completed, that the exact project is installable:
 listed, not paused, flagged or quarantined, cleared, and with published skill
@@ -116,10 +121,12 @@ pure def compare(s: SkillRead, facts: ByteCheck): SkillRead = { ...s, checked: f
 pure def canObserveProject(s: SkillRead): bool = s.transport == Downloaded
 pure def observeProject(s: SkillRead, view: F::ProjectView, project: int): SkillRead =
   { ...s, projectOpen: F::installable(view) and project == s.selection.project and project > 0, projectFresh: true }
+pure def rendersApproved(c: ByteCheck, selection: Selection): bool = c.template.commit == selection.commit
+  and c.revision.digest == selection.registryDigest and c.downloaded == SR::render(c.template, c.revision)
 pure def bytesAdmitted(s: SkillRead): bool = validSelection(s.selection) and s.checked.commit == s.selection.commit
   and s.checked.provenance == Committed and s.checked.completeFiles and s.checked.matchingBlobs
   and productionAuthority(s.source)
-  and (s.selection.role == StaticSkill or s.checked.renderedDigest == s.selection.registryDigest)
+  and (s.selection.role == StaticSkill or rendersApproved(s.checked, s.selection))
   and (s.selection.role != ContributorSkill or (s.projectOpen and s.projectFresh))
 pure def canAdmit(s: SkillRead): bool = s.transport == Downloaded and bytesAdmitted(s)
 pure def admit(s: SkillRead): SkillRead = { ...s, transport: Admitted }
@@ -144,16 +151,23 @@ pure def sometimesUninstallableRefused(s: SkillRead): bool = s.transport == Refu
   and s.projectFresh and not(s.projectOpen)
 ```
 
-### Simulation samples
+### Simulation samples cover every role, refused byte checks and closed project views
 
 ```quint
 pure val sha = "0123456789abcdef0123456789abcdef01234567"
 pure val contributorSelection: Selection = { role: ContributorSkill, project: 1, commit: sha, registryRevision: 1, registryDigest: "m1" }
 pure val selectionValues = Set(contributorSelection, { ...contributorSelection, role: ReviewerSkill },
   { role: StaticSkill, project: 0, commit: sha, registryRevision: 0, registryDigest: "" }, { ...contributorSelection, commit: "" })
-pure val exactBytes: ByteCheck = { commit: sha, provenance: Committed, completeFiles: true, matchingBlobs: true, renderedDigest: "m1" }
+pure def templateAt(commit: str): SR::Template = { commit: commit, rules: List("run the required tests") }
+pure def revisionWith(digest: str): SR::Revision = { digest: digest, notes: SR::noRevision.notes }
+pure def exactCheck(commit: str, digest: str): ByteCheck =
+  { commit: commit, provenance: Committed, completeFiles: true, matchingBlobs: true, template: templateAt(commit),
+    revision: revisionWith(digest), downloaded: SR::render(templateAt(commit), revisionWith(digest)) }
+pure val templateA: SR::Template = templateAt(sha)
+pure val exactBytes: ByteCheck = exactCheck(sha, "m1")
 pure val factsValues = Set(exactBytes, { ...exactBytes, completeFiles: false }, { ...exactBytes, provenance: WorkingTree },
-  { ...exactBytes, renderedDigest: "m2" })
+  { ...exactBytes, downloaded: SR::render(templateA, { ...revisionWith("m1"), notes: List({ text: "edited", crosses: "" }) }) },
+  { ...exactBytes, revision: revisionWith("m2"), downloaded: SR::render(templateA, revisionWith("m2")) })
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
   quarantined: false, cleared: true, skillFields: true }
 pure val viewValues = Set(openView, { ...openView, flagged: true }, { ...openView, paused: true })
