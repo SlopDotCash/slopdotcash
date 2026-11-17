@@ -1,11 +1,68 @@
 /** Private owner-reviewed packet transport through a fixed operational R2 bucket. */
 import { execFileSync } from "node:child_process";
-import { createGunzip } from "node:zlib";
+import { createBrotliDecompress, createGunzip } from "node:zlib";
 import { sha256Hex } from "../src/lib/sha256";
 
 const BUCKET = "slop-reviewed-payouts";
+type StorageOperation =
+  | "bucket-read"
+  | "bucket-create"
+  | "managed-domain-read"
+  | "custom-domain-read"
+  | "object-read"
+  | "object-write";
+type StagingPhase =
+  | "trusted-context"
+  | "source-check"
+  | "credentials"
+  | "manifest"
+  | "chunk-stage"
+  | "completion-read";
+class PrivatePacketRequestError extends Error {
+  constructor(
+    readonly operation: StorageOperation,
+    readonly httpStatus: number | null,
+    readonly cloudflareCode: number | null,
+  ) {
+    super("Private packet storage request refused");
+  }
+}
+export class PacketPreviewError extends Error {
+  constructor(
+    readonly operation: "binding" | "session" | "upload" | "object",
+    readonly status: number | null = null,
+  ) {
+    super("Private packet preview refused");
+  }
+}
+export function safePacketPreviewFailure(error: unknown) {
+  return error instanceof PacketPreviewError
+    ? { operation: error.operation, httpStatus: error.status }
+    : null;
+}
+/** Emit fixed stage names and numeric status codes without external error text. */
+export function privatePacketFailure(phase: StagingPhase, error: unknown) {
+  return {
+    error: "private_packet_staging_refused",
+    phase,
+    ...(error instanceof PrivatePacketRequestError
+      ? {
+          storage: {
+            operation: error.operation,
+            httpStatus: error.httpStatus,
+            cloudflareCode: error.cloudflareCode,
+          },
+        }
+      : {}),
+    ...(safePacketPreviewFailure(error)
+      ? { preview: safePacketPreviewFailure(error) }
+      : {}),
+  };
+}
 export interface PrivatePacketManifest {
   schemaVersion: "1";
+  /** Omitted on retained gzip manifests. */
+  compression?: "br";
   rawSha256: string;
   rawBytes: number;
   compressedSha256: string;
@@ -25,7 +82,9 @@ export function parsePrivatePacketManifest(
   requireThat(
     value &&
       Object.keys(value).sort().join(",") ===
-        "chunks,compressedBytes,compressedSha256,rawBytes,rawSha256,schemaVersion" &&
+        (value.compression === "br"
+          ? "chunks,compressedBytes,compressedSha256,compression,rawBytes,rawSha256,schemaVersion"
+          : "chunks,compressedBytes,compressedSha256,rawBytes,rawSha256,schemaVersion") &&
       value.schemaVersion === "1" &&
       digest(value.rawSha256) &&
       digest(value.compressedSha256) &&
@@ -59,50 +118,86 @@ export function privatePayoutStorage(
   const root = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets`;
   async function call(
     path: string,
+    operation: StorageOperation,
     method = "GET",
     body?: Uint8Array | string,
   ) {
-    const response = await request(root + path, {
-      method,
-      redirect: "error",
-      signal: AbortSignal.timeout(30000),
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type":
-          typeof body === "string"
-            ? "application/json"
-            : "application/octet-stream",
-      },
-      ...(body === undefined ? {} : { body: body as BodyInit }),
-    });
+    let response: Response;
+    try {
+      response = await request(root + path, {
+        method,
+        redirect: "error",
+        signal: AbortSignal.timeout(30000),
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type":
+            typeof body === "string"
+              ? "application/json"
+              : "application/octet-stream",
+        },
+        ...(body === undefined ? {} : { body: body as BodyInit }),
+      });
+    } catch {
+      throw new PrivatePacketRequestError(operation, null, null);
+    }
     if (response.status === 404) return null;
-    requireThat(response.ok, "Private packet storage request refused");
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        errors?: { code?: unknown }[];
+      } | null;
+      const code = body?.errors?.[0]?.code;
+      throw new PrivatePacketRequestError(
+        operation,
+        response.status,
+        Number.isSafeInteger(code) ? Number(code) : null,
+      );
+    }
     return response;
   }
-  async function json(path: string, method = "GET", body?: string) {
-    const response = await call(path, method, body);
+  async function json(
+    path: string,
+    operation: StorageOperation,
+    method = "GET",
+    body?: string,
+  ) {
+    const response = await call(path, operation, method, body);
     if (!response) return null;
     const value = (await response.json()) as {
       success?: boolean;
       result?: unknown;
+      errors?: { code?: unknown }[];
     };
-    requireThat(
-      value.success === true,
-      "Private packet control request failed",
-    );
+    if (value.success !== true) {
+      const code = value.errors?.[0]?.code;
+      throw new PrivatePacketRequestError(
+        operation,
+        response.status,
+        Number.isSafeInteger(code) ? Number(code) : null,
+      );
+    }
     return value.result;
   }
   async function privateBucket(create = false) {
-    let bucket = (await json(`/${BUCKET}`)) as { name?: string } | null;
+    let bucket = (await json(`/${BUCKET}`, "bucket-read")) as {
+      name?: string;
+    } | null;
     if (!bucket && create) {
-      await json("", "POST", JSON.stringify({ name: BUCKET }));
-      bucket = (await json(`/${BUCKET}`)) as { name?: string } | null;
+      await json("", "bucket-create", "POST", JSON.stringify({ name: BUCKET }));
+      bucket = (await json(`/${BUCKET}`, "bucket-read")) as {
+        name?: string;
+      } | null;
     }
     requireThat(bucket?.name === BUCKET, "Private packet bucket unavailable");
-    const managed = (await json(`/${BUCKET}/domains/managed`)) as {
+    const managed = (await json(
+      `/${BUCKET}/domains/managed`,
+      "managed-domain-read",
+    )) as {
       enabled?: boolean;
     } | null;
-    const custom = (await json(`/${BUCKET}/domains/custom`)) as {
+    const custom = (await json(
+      `/${BUCKET}/domains/custom`,
+      "custom-domain-read",
+    )) as {
       domains?: unknown[];
     } | null;
     requireThat(
@@ -115,7 +210,7 @@ export function privatePayoutStorage(
   const key = (manifest: PrivatePacketManifest, suffix: string) =>
     `/${BUCKET}/objects/${manifest.rawSha256}/${manifest.compressedSha256}/${suffix}`;
   async function get(manifest: PrivatePacketManifest, suffix: string) {
-    const response = await call(key(manifest, suffix));
+    const response = await call(key(manifest, suffix), "object-read");
     return response ? new Uint8Array(await response.arrayBuffer()) : null;
   }
   async function putExact(
@@ -129,7 +224,7 @@ export function privatePayoutStorage(
         sha256Hex(before) === sha256Hex(bytes),
         "Stored private packet bytes differ",
       );
-    else await call(key(manifest, suffix), "PUT", bytes);
+    else await call(key(manifest, suffix), "object-write", "PUT", bytes);
     const after = await get(manifest, suffix);
     requireThat(
       after &&
@@ -138,6 +233,22 @@ export function privatePayoutStorage(
       "Private packet upload did not reconcile",
     );
   }
+  return privatePacketStore({ check: privateBucket, get, putExact });
+}
+
+/** The reviewed packet codec is shared by the two explicit private transports. */
+export function privatePacketStore(storage: {
+  check: (create?: boolean) => Promise<void>;
+  get: (
+    manifest: PrivatePacketManifest,
+    suffix: string,
+  ) => Promise<Uint8Array | null>;
+  putExact: (
+    manifest: PrivatePacketManifest,
+    suffix: string,
+    bytes: Uint8Array,
+  ) => Promise<void>;
+}) {
   return {
     async stage(text: string, index: number, encoded: string) {
       const manifest = parsePrivatePacketManifest(text);
@@ -159,23 +270,27 @@ export function privatePayoutStorage(
         bytes.length === expected.bytes && sha256Hex(bytes) === expected.sha256,
         "Private chunk differs from manifest",
       );
-      await privateBucket(true);
-      await putExact(manifest, "manifest.json", new TextEncoder().encode(text));
-      await putExact(manifest, `${index}.gzpart`, bytes);
-      await privateBucket();
+      await storage.check(true);
+      await storage.putExact(
+        manifest,
+        "manifest.json",
+        new TextEncoder().encode(text),
+      );
+      await storage.putExact(manifest, `${index}.gzpart`, bytes);
+      await storage.check();
       return { rawSha256: manifest.rawSha256, chunk: index, verified: true };
     },
     async read(text: string) {
       const manifest = parsePrivatePacketManifest(text);
-      await privateBucket();
-      const stored = await get(manifest, "manifest.json");
+      await storage.check();
+      const stored = await storage.get(manifest, "manifest.json");
       requireThat(
         stored && new TextDecoder().decode(stored) === text,
         "Stored private manifest differs",
       );
       const chunks: Uint8Array[] = [];
       for (const [index, expected] of manifest.chunks.entries()) {
-        const bytes = await get(manifest, `${index}.gzpart`);
+        const bytes = await storage.get(manifest, `${index}.gzpart`);
         requireThat(
           bytes &&
             bytes.length === expected.bytes &&
@@ -190,7 +305,10 @@ export function privatePayoutStorage(
           sha256Hex(compressed) === manifest.compressedSha256,
         "Private packet compression binding differs",
       );
-      const decoder = createGunzip();
+      const decoder =
+        manifest.compression === "br"
+          ? createBrotliDecompress()
+          : createGunzip();
       const raw: Buffer[] = [];
       let length = 0;
       const result = (async () => {
@@ -210,12 +328,28 @@ export function privatePayoutStorage(
         length === manifest.rawBytes && sha256Hex(bytes) === manifest.rawSha256,
         "Private packet raw binding differs",
       );
-      await privateBucket();
+      await storage.check();
       return bytes;
     },
   };
 }
+/** Select only the transport explicitly named by the protected workflow. */
+export async function reviewedPacketStorage(account: string, token: string) {
+  const transport = process.env.PRIVATE_PACKET_TRANSPORT;
+  if (!transport || transport === "r2-api")
+    return privatePayoutStorage(account, token);
+  requireThat(
+    transport === "bound-preview",
+    "Unknown private packet transport",
+  );
+  const { privatePacketPreviewStorage } = await import(
+    "./private-packet-preview"
+  );
+  return privatePacketPreviewStorage(account, token);
+}
+
 if (import.meta.main) {
+  let phase: StagingPhase = "trusted-context";
   try {
     requireThat(
       process.env.GITHUB_ACTIONS === "true" &&
@@ -223,6 +357,7 @@ if (import.meta.main) {
         process.env.GITHUB_REF === "refs/heads/main",
       "Require trusted main packet staging",
     );
+    phase = "source-check";
     const current = execFileSync(
       "git",
       ["ls-remote", "origin", "refs/heads/main"],
@@ -239,19 +374,25 @@ if (import.meta.main) {
       { length: 16 },
       (_, n) => process.env[`PRIVATE_PACKET_CHUNK_${n + 1}`] ?? "",
     ).join("");
-    const storage = privatePayoutStorage(
+    phase = "credentials";
+    const storage = await reviewedPacketStorage(
       process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
       process.env.CLOUDFLARE_API_TOKEN ?? "",
     );
+    phase = "manifest";
     const manifestText = process.env.PRIVATE_PACKET_MANIFEST ?? "";
     const manifest = parsePrivatePacketManifest(manifestText);
     const index = Number(process.env.PRIVATE_PACKET_CHUNK_INDEX);
+    phase = "chunk-stage";
     const result = await storage.stage(manifestText, index, encoded);
     const complete = index === manifest.chunks.length - 1;
-    if (complete) await storage.read(manifestText);
+    if (complete) {
+      phase = "completion-read";
+      await storage.read(manifestText);
+    }
     console.log(JSON.stringify({ ...result, complete }));
-  } catch {
-    console.error("Private reviewed packet staging refused");
+  } catch (error) {
+    console.error(JSON.stringify(privatePacketFailure(phase, error)));
     process.exitCode = 1;
   }
 }

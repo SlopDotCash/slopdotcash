@@ -135,6 +135,8 @@ export async function reviewVaultAction(
   amount: string,
   payoutPolicy: PayoutPolicy = "ordinary",
   evidence: VaultEvidence = "finalized",
+  /** Another call follows the deposit, so batch even without an approval. */
+  withExtraCall = false,
 ) {
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
   await assertVaultWalletAccount(wallet, config);
@@ -223,7 +225,8 @@ export async function reviewVaultAction(
     resetAllowance: approvalNeeded && allowance > 0n,
     /** One wallet request can carry the approval and the deposit. */
     batch:
-      approvalNeeded && (await atomicBatchSupported(wallet, config.chainId)),
+      (approvalNeeded || (withExtraCall && operation === "deposit")) &&
+      (await atomicBatchSupported(wallet, config.chainId)),
   };
 }
 export type VaultActionReview = Awaited<ReturnType<typeof reviewVaultAction>>;
@@ -304,6 +307,8 @@ export async function sendVaultBatch(
   beforeSend: () => void,
   payoutPolicy: PayoutPolicy = "ordinary",
   evidence: VaultEvidence = "finalized",
+  /** Calls sent after the deposit in the same request, such as a month lock. */
+  extraCalls: readonly { to: string; data: string; value: "0x0" }[] = [],
 ) {
   const review = await reviewVaultAction(
     deployment,
@@ -312,6 +317,7 @@ export async function sendVaultBatch(
     amount,
     payoutPolicy,
     evidence,
+    extraCalls.length > 0,
   );
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -322,12 +328,15 @@ export async function sendVaultBatch(
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
   const calls = [
     ...(review.resetAllowance ? [approveCall(deployment, 0n)] : []),
-    approveCall(deployment, BigInt(review.gross)),
+    ...(review.approvalNeeded
+      ? [approveCall(deployment, BigInt(review.gross))]
+      : []),
     {
       to: deployment.vault,
       data: buildDepositCalldata(review.gross),
       value: "0x0",
     },
+    ...extraCalls,
   ];
   // The deposit cannot be estimated before its approval exists; the wallet
   // simulates the batch. The first call must at least be executable.

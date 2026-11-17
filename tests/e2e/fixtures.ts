@@ -110,6 +110,24 @@ export async function servePublicProjectReads(page: Page): Promise<void> {
 }
 
 /**
+ * Fails the vault funding read, so every project is listed as before the
+ * 16 November 2026 rule that leaves unfunded monthly pools out of the home
+ * page and /sponsors. For specs that follow a project card, not funding.
+ */
+export async function failPoolFundingRead(
+  page: Page,
+  diagnostics: Diagnostics,
+): Promise<void> {
+  diagnostics.allow(
+    /^503 GET [^ ]+\/api\/v1\/pool-funding$/u,
+    /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at [^ ]+\/api\/v1\/pool-funding$/u,
+  );
+  await page.route("**/api/v1/pool-funding", (route) =>
+    route.fulfill({ status: 503, json: { error: "unavailable" } }),
+  );
+}
+
+/**
  * Serves reporter 42's Inbox reads (session, empty registry, notifications,
  * cases and the listed private report) and passes every other API path to
  * `onRequest`.

@@ -10,6 +10,7 @@ import { GitHubClient } from "./github";
 import { type D1Database, installationActive } from "./persistence";
 import { requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
+import type { publicationCommitPages } from "./value-commit-pages";
 import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
 import { collectValueEvidence, findRepository } from "./value-evidence";
@@ -152,6 +153,7 @@ export async function publishValueAssessment(
   supersedes: string | null,
   revisionReason: string | null = null,
   claim?: ValueClaim,
+  commitPages?: ReturnType<typeof publicationCommitPages>,
 ) {
   if (
     !claim &&
@@ -161,8 +163,6 @@ export async function publishValueAssessment(
   if (
     job.itemKind !== "pull_request" ||
     job.repositoryId !== evidence.repositoryDatabaseId ||
-    `${job.owner}/${job.repo}`.toLowerCase() !==
-      evidence.repository.toLowerCase() ||
     job.number !== evidence.pull.number
   )
     throw new Error("Value publication job does not match its source");
@@ -171,6 +171,13 @@ export async function publishValueAssessment(
     throw new Error("Repository is not active in the Slop project registry");
   const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
+  const sourceRepository = findRepository(repositories, evidence.repository);
+  if (
+    !sourceRepository ||
+    `${sourceRepository.owner}/${sourceRepository.name}`.toLowerCase() !==
+      `${job.owner}/${job.repo}`.toLowerCase()
+  )
+    throw new Error("Value publication job does not match its source");
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   // A public repository read alone does not prove installation membership.
   // Verify the token-scoped repository list before reading public source.
@@ -181,7 +188,7 @@ export async function publishValueAssessment(
   );
   await assertValueInstallationRepositories(github, [evidence]);
   const current = await verifyCurrentValueSource(
-    github,
+    commitPages ? commitPages(github) : github,
     evidence,
     result,
     repositories,

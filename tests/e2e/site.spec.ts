@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { communityProjects } from "../../src/lib/home-projects";
+import { homeProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   assignLeaderboardRanks,
@@ -25,7 +25,12 @@ import {
 } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
@@ -496,22 +501,13 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  const community = page.locator("section.community-projects");
-  const listedCommunity = communityProjects();
-  if (listedCommunity.length === 0) {
-    await expect(community).toHaveCount(0);
-  } else {
-    // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(listedCommunity.length / 10);
-    for (let index = 0; index < pages; index += 1) {
-      for (const project of listedCommunity.slice(index * 10, (index + 1) * 10))
-        await expect(
-          community.locator(`a.project-row[href="/projects/${project.id}"]`),
-        ).toBeVisible();
-      if (index < pages - 1)
-        await community.getByRole("button", { name: "Next page" }).click();
-    }
-  }
+  // Every open project is one card in the single projects grid.
+  const projects = page.locator("#projects");
+  for (const project of homeProjects())
+    await expect(
+      projects.locator(`a.project-card[href="/projects/${project.id}"]`),
+    ).toBeVisible();
+  await expect(page.locator("section.community-projects")).toHaveCount(0);
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {
@@ -525,10 +521,12 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     elizaCard.getByText("Points only", { exact: true }),
   ).toBeVisible();
   await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
-  // The external prize is a community listing that also earns points.
-  await expect(
-    community.locator('a.project-row[href="/projects/delta-star"]'),
-  ).toContainText("$1,000,000");
+  // An external prize leads with points; the card never headlines its amount.
+  const deltaStar = projects.locator(
+    'a.project-card[href="/projects/delta-star"]',
+  );
+  await expect(deltaStar).toContainText("Points + external prize");
+  await expect(deltaStar).not.toContainText("$1m");
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
   ).toContainText(`${new URL(page.url()).origin}/SKILL.md`);
@@ -1870,6 +1868,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
   diagnostics,
 }, testInfo) => {
+  await servePublicProjectReads(page);
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -1923,7 +1922,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Finish the remounted Sponsors page's funding read before leaving for Home.
+  const [fundingResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+        response.request().method() === "GET",
+    ),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
+  expect(fundingResponse.ok()).toBe(true);
+  expect(await fundingResponse.finished()).toBeNull();
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();

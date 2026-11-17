@@ -39,6 +39,16 @@ wallets and off-curve Solana destinations need a separately reviewed recovery
 path; they cannot skip signature verification. Legacy claim semantics remain
 unchanged.
 
+An authenticated Solana recipient uses `POST /wallets/solana-bind/prepare`
+with a reserved `obligationId` to obtain the attester's half-signed binding.
+When no attempt exists, this request creates one for the current authorized
+claim only while its outbox is ready. Concurrent preparation reuses that
+attempt. An active attempt for an earlier claim stays with that claim until
+reconciled. The destination wallet co-signs the exact returned transaction and
+submits it to `POST /wallets/solana-bind/complete`. The completion route cannot
+create an attempt. This flow also serves authorized private bounty recipients
+through their separate payment ledger and case-access audit.
+
 The repository owner approved this replacement and recovery policy directly
 in the 27 October 2026 review. Registration alone never displaces an authorized
 wallet. The derived
@@ -363,6 +373,19 @@ Points history. Replaying an identical batch remains valid.
    allocations cannot change after the cutoff. Either path writes the single
    `monthly_payment_runs` row of that month; a frozen month accepts no
    further change.
+   A month the owner pledged on chain in the vault that pays it
+   (`vault_month_pledges`, migration 0128; operator decision, 15 November
+   2026) freezes at the cutoff whatever the automatic default says, and
+   while the project is paused or restricted, but not once it is retired.
+   A pledge in another vault of the project gives no consent. The attester,
+   publication and dispatcher accept it the same way
+   (`backend/payments/month-pledges.ts`). The contract checks the pledge
+   again. The Solana executor passes the month's `month_pledge` account to
+   `commit_monthly` when it exists. Every stored open pledge is read again
+   on each refresh, so a lapsed one stays listed until a release
+   (`expirePledge` / `expire_pledge`) closes it; the manage page offers that
+   release, and `POST /projects/:id/solana-month-lock` plans Solana locks and
+   releases for the browser to check and the wallet to sign.
    A banned account cannot change allocations or automatic-payment settings,
    or finalize a month. Each write checks the account ban again to refuse a
    concurrent ban. Reading awards and preparing an existing funded obligation
@@ -370,9 +393,11 @@ Points history. Replaying an identical batch remains valid.
 4. **Obligations.** The coordinator creates one `monthly_payment_obligations`
    row per positive award once, only when the vault's finalized free balance
    (a `vault_snapshots` row newer than 30 minutes) covers the month together
-   with every earlier obligation of the same vault that is still unreserved.
+   with every earlier obligation of the same vault that is still unreserved,
+   less every other month's open pledge, which the contract keeps apart.
    An underfunded month waits for a deposit and creates nothing. The steward
-   gets one Inbox payout exception for that month (key
+   (or, for an Organization steward, the project's lister) gets one Inbox
+   payout exception for that month (key
    `monthly-underfunded:PROJECT:YYYY-MM`), however often the coordinator
    retries. Before it creates new obligations, the coordinator excludes accounts
    with an active moderator ban. It records the exact ban in
@@ -527,3 +552,33 @@ Only aggregate counts and the reviewed packet digest leave the trusted runner.
 The private packet, registry capture and SQL remain in its temporary directory.
 Set the private secret and run preview only after the final packet is reviewed.
 Import only that verified packet by dispatching the same digest with `apply`.
+
+## Reviewed finalized-event reconciliation
+
+`payment-event-reconciliation.yml` can reconcile reviewed mainnet EVM receipts
+while the ordinary scanner catches up. It neither sends transactions nor moves
+the scanner cursor. A manual main-branch run pins the SHA-256 of the private
+`SLOP_PAYMENT_RECONCILIATION_PACKET` secret; `apply` defaults to false. The
+production credentials stay in the protected workflow. Configure the dedicated
+`SLOP_PAYMENT_RECONCILIATION_RPC_URLS` environment secret as a JSON map from
+registered EVM network IDs to HTTPS endpoints used only for read-only chain
+verification. Keep the shared release `PAYMENT_RPC_URLS` secret unchanged; its
+Solana-only observation-recovery scope is separate. Public artifacts contain
+only the packet digest, source commit and aggregate verification counts.
+
+The runner reads the current immutable project revision and frozen funded monthly
+allocation, verifies the deployed factory and finalized canonical receipt, and
+checks the retained signed transaction against its exact award call. Reservation
+calls must be signed by the vault owner. A paid-event packet instead binds its
+permissionless payer, active binding version, destination and authorized wallet
+claim, and requires the matching reservation to have already been indexed.
+Historical authorized claims remain valid for payments finalized before a wallet
+replacement. A missing event kind retains the original reservation-packet format.
+
+Apply invokes the ordinary `ingestPaymentEvent` verifier and ledger. Each event's
+canonical statements and notices use one documented D1 REST batch transaction;
+only the ledger's reservation inserts and exact paid-state updates are permitted.
+The runner checks stored evidence and paid state after ingestion and exact replay.
+An uncertain request is reconciled by rerunning the same packet, never by editing
+payment rows or advancing a cursor. This implements the finalized evidence and
+replay requirements in PRD section 6 without a second settlement path.

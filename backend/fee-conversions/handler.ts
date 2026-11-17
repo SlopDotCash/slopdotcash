@@ -116,6 +116,65 @@ interface FeeConversionRoute {
   status: "usdc" | "not_converted";
 }
 
+interface ClaimRow {
+  id: string;
+  network: string;
+  mode: string;
+  fee_wallet: string;
+  token: string;
+  amount_in: string;
+  amount_out: string | null;
+  tx_id: string | null;
+  landed_tx_id: string | null;
+  state: string;
+  reason: string | null;
+  created_at: string;
+  submitted_at: string | null;
+  finalized_at: string | null;
+  project_id: string | null;
+  vault: string | null;
+}
+
+interface SettledClaimRow extends ClaimRow {
+  amount_out: string;
+}
+
+/** Finalized receipt amounts can differ from the earlier claim estimate. */
+function claimTotals(rows: SettledClaimRow[]) {
+  const totals = new Map<
+    string,
+    {
+      network: string;
+      feeWallet: string;
+      token: string;
+      claims: number;
+      amount: bigint;
+    }
+  >();
+  for (const row of rows) {
+    const key = JSON.stringify([row.network, row.fee_wallet, row.token]);
+    const total = totals.get(key) ?? {
+      network: row.network,
+      feeWallet: row.fee_wallet,
+      token: row.token,
+      claims: 0,
+      amount: 0n,
+    };
+    total.claims += 1;
+    total.amount += BigInt(row.amount_out);
+    totals.set(key, total);
+  }
+  return [...totals.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, total]) => ({
+      network: total.network,
+      feeWallet: total.feeWallet,
+      token: total.token,
+      claims: total.claims,
+      amountClaimed: total.amount.toString(),
+    }));
+}
+
 /** The conversion target of every network, including explicit unconverted retention. */
 function conversionRoutes(): FeeConversionRoute[] {
   return NETWORKS.map((network) => {
@@ -232,6 +291,12 @@ const BUYBACK_SELECT = `SELECT c.id, c.kind, c.network, c.mode, c.token, c.targe
     FROM fee_conversions c LEFT JOIN fee_bridge_outcomes o ON o.bridge_id = c.id
    WHERE c.kind IN ('bridge', 'buyback', 'burn')`;
 
+const CLAIM_SELECT = `SELECT id, network, mode, fee_wallet, token, amount_in, amount_out,
+         tx_id, landed_tx_id, state, reason, created_at, submitted_at, finalized_at,
+         json_extract(quote, '$.projectId') AS project_id,
+         json_extract(quote, '$.vault') AS vault
+    FROM fee_conversions WHERE kind = 'claim'`;
+
 /** Returns null when the request is not for this route. */
 export async function handleFeeConversionsApi(
   request: Request,
@@ -244,50 +309,74 @@ export async function handleFeeConversionsApi(
     const actor = await requireActor(request, deps);
     if (!deps.adminGithubIds.has(actor.githubId))
       fail(403, "forbidden", "Admin access is required");
-    const [recent, settled, states, buybackRecent, buybackSettled] =
-      await Promise.all([
-        deps.db
-          .prepare(
-            `SELECT id, network, mode, token, target_token, amount_in, route, quote_amount_out,
+    const [
+      recent,
+      settled,
+      states,
+      buybackRecent,
+      buybackSettled,
+      claims,
+      settledClaims,
+      claimStates,
+    ] = await Promise.all([
+      deps.db
+        .prepare(
+          `SELECT id, network, mode, token, target_token, amount_in, route, quote_amount_out,
                   min_amount_out, price_impact_bps, approval_tx_id, tx_id, landed_tx_id, amount_out,
                   token_balance_before, target_balance_before, target_balance_after, state,
                   reason, created_at, submitted_at, finalized_at
              FROM fee_conversions WHERE kind = 'conversion'
              ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-          )
-          .bind(RECENT_LIMIT)
-          .all<RecentRow>(),
-        deps.db
-          .prepare(
-            `SELECT network, token, target_token, amount_in, amount_out FROM fee_conversions
+        )
+        .bind(RECENT_LIMIT)
+        .all<RecentRow>(),
+      deps.db
+        .prepare(
+          `SELECT network, token, target_token, amount_in, amount_out FROM fee_conversions
             WHERE mode = ? AND state = 'finalized' AND kind = 'conversion'`,
-          )
-          .bind("live")
-          .all<SettledRow>(),
-        deps.db
-          .prepare(
-            `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
+        )
+        .bind("live")
+        .all<SettledRow>(),
+      deps.db
+        .prepare(
+          `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
             WHERE created_at >= ? AND kind = 'conversion'
             GROUP BY network, mode, state ORDER BY network, mode, state`,
-          )
-          .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-          .all<{
-            network: string;
-            mode: string;
-            state: string;
-            count: number;
-          }>(),
-        deps.db
-          .prepare(
-            `${BUYBACK_SELECT} ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?`,
-          )
-          .bind(RECENT_LIMIT)
-          .all<BuybackRow>(),
-        deps.db
-          .prepare(`${BUYBACK_SELECT} AND c.mode = ? AND c.state = 'finalized'`)
-          .bind("live")
-          .all<BuybackRow>(),
-      ]);
+        )
+        .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .all<{
+          network: string;
+          mode: string;
+          state: string;
+          count: number;
+        }>(),
+      deps.db
+        .prepare(
+          `${BUYBACK_SELECT} ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?`,
+        )
+        .bind(RECENT_LIMIT)
+        .all<BuybackRow>(),
+      deps.db
+        .prepare(`${BUYBACK_SELECT} AND c.mode = ? AND c.state = 'finalized'`)
+        .bind("live")
+        .all<BuybackRow>(),
+      deps.db
+        .prepare(`${CLAIM_SELECT} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+        .bind(RECENT_LIMIT)
+        .all<ClaimRow>(),
+      deps.db
+        .prepare(`${CLAIM_SELECT} AND mode = ? AND state = 'finalized'`)
+        .bind("live")
+        .all<SettledClaimRow>(),
+      deps.db
+        .prepare(
+          `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
+             WHERE kind = 'claim' AND created_at >= ?
+             GROUP BY network, mode, state ORDER BY network, mode, state`,
+        )
+        .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .all<{ network: string; mode: string; state: string; count: number }>(),
+    ]);
     return json(200, {
       schemaVersion: "1",
       recent: recent.results.map((row) => ({
@@ -319,6 +408,28 @@ export async function handleFeeConversionsApi(
       totals: totalsPerToken(settled.results),
       last24Hours: states.results,
       buyback: buybackReport(buybackRecent.results, buybackSettled.results),
+      claims: {
+        recent: claims.results.map((row) => ({
+          id: row.id,
+          network: row.network,
+          mode: row.mode,
+          feeWallet: row.fee_wallet,
+          token: row.token,
+          estimatedAmount: row.amount_in,
+          amountClaimed: row.amount_out,
+          txId: row.tx_id,
+          landedTxId: row.landed_tx_id,
+          state: row.state,
+          reason: row.reason,
+          createdAt: row.created_at,
+          submittedAt: row.submitted_at,
+          finalizedAt: row.finalized_at,
+          projectId: row.project_id,
+          vault: row.vault,
+        })),
+        totals: claimTotals(settledClaims.results),
+        last24Hours: claimStates.results,
+      },
     });
   } catch (caught) {
     return apiErrorResponse(caught, { label: "fee conversions API failure" });

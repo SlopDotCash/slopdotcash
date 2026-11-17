@@ -11,16 +11,19 @@ import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { GitHubClient } from "../workers/slopbot/github";
 import { mergedTimeRangeQualifier } from "../workers/slopbot/value-accepted-commit-census";
+import { pullCommits } from "../workers/slopbot/value-evidence";
+import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
 import { resolveGitHubToken } from "./github-token";
 import {
   correctionBatchRecorded,
   recordCorrection,
 } from "./prepare-implementation-corrections";
-import { privatePayoutStorage } from "./private-payout-packet";
+import { reviewedPacketStorage } from "./private-payout-packet";
 import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
+  type HistoricalAcceptedSquash,
   type HistoricalPointsPacket,
   historicalProtectionQuery,
   reconstructHistoricalPoints,
@@ -28,6 +31,11 @@ import {
 import { currentOwnerVerifier, octoberQueryRows } from "./run-october-rewards";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import { loadParticipationBans } from "./value-ingestion";
+import {
+  type PublicMergeRepository,
+  publicGitProcess,
+  withPublicGitObjects,
+} from "./value-merge-ingestion";
 
 const execute = promisify(execFile);
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
@@ -130,6 +138,286 @@ export async function verifyHistoricalCensus(
     JSON.stringify(ordered(packet.sourceAudit.sources))
   )
     throw Error("Reviewed historical census changed");
+}
+
+/** Recheck GitHub's exact accepted squash relation before using retained bytes. */
+export async function verifyHistoricalAcceptedSquashes(
+  packet: HistoricalPointsPacket,
+  github: Pick<GitHubClient, "graphql" | "get">,
+): Promise<void> {
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    const proof = retirement.earlierAcceptanceProof;
+    if (!proof) continue;
+    const root = `/repos/${packet.sourceAudit.repository}`;
+    const repository = await github.get<PublicMergeRepository>(root);
+    if (repository?.node_id !== retirement.source.repositoryNodeId)
+      throw Error("Earlier acceptance repository changed");
+    const automatic = proof.contextSources.filter(
+      (source) => source.automaticMerge,
+    );
+    if (automatic.length)
+      await withPublicGitObjects(
+        repository,
+        automatic.flatMap((source) => [source.headSha, source.mergeSha]),
+        async (directory) => {
+          for (const source of automatic) {
+            const expected = source.automaticMerge;
+            if (!expected)
+              throw Error("Earlier automatic merge proof is missing");
+            const command = publicGitProcess(directory, [
+              "merge-tree",
+              "--write-tree",
+              "--no-messages",
+              expected.baseParentSha,
+              source.headSha,
+            ]);
+            const merged = await execute(
+              command.file,
+              command.args,
+              command.options,
+            );
+            if (merged.stdout.trim() !== expected.automaticTree)
+              throw Error("Earlier automatic merge tree changed");
+            const treeCommand = publicGitProcess(directory, [
+              "rev-parse",
+              `${source.mergeSha}^{tree}`,
+            ]);
+            const accepted = await execute(
+              treeCommand.file,
+              treeCommand.args,
+              treeCommand.options,
+            );
+            if (accepted.stdout.trim() !== expected.automaticTree)
+              throw Error("Earlier accepted merge tree changed");
+          }
+        },
+      );
+    for (const source of retirement.earlierSources) {
+      const audit = packet.sourceAudit.sources.find(
+        (row) => row.id === source.sourceId,
+      );
+      const context = proof.contextSources.find(
+        (row) => row.id === source.sourceId,
+      );
+      const number = audit?.number ?? context?.number;
+      if (!number) throw Error("Earlier acceptance source is unavailable");
+      const path = `${root}/pulls/${number}`;
+      const pull = await github.get<Pull>(path);
+      const baseSha = context?.baseSha;
+      if (
+        !pull ||
+        pull.node_id !== source.sourceId ||
+        pull.head.sha !== source.headSha ||
+        pull.base.sha !== baseSha ||
+        pull.commits !== source.commitCount ||
+        !pull.merged_at ||
+        new Date(pull.merged_at).toISOString() !== source.occurredAt ||
+        (context && pull.merge_commit_sha !== context.mergeSha) ||
+        pull.user.node_id !== source.author?.id ||
+        pull.user.type !== source.author?.kind
+      )
+        throw Error("Earlier acceptance source changed");
+      const commits = await pullCommits(github, root, path, pull, {
+        requireImmutableRange: true,
+      });
+      const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
+      if (
+        bySha.size !== source.commits.length ||
+        source.commits.some((commit) => {
+          const current = bySha.get(commit.sha);
+          return (
+            !current ||
+            JSON.stringify(current.parents.map((parent) => parent.sha)) !==
+              JSON.stringify(commit.parentShas) ||
+            current.author?.node_id !== commit.author?.id ||
+            current.author?.type !== commit.author?.kind
+          );
+        })
+      )
+        throw Error("Earlier acceptance source omits or substitutes a commit");
+      const current = await github.get<Pull>(path);
+      if (
+        !current ||
+        current.node_id !== pull.node_id ||
+        current.user.node_id !== pull.user.node_id ||
+        current.user.type !== pull.user.type ||
+        current.head.sha !== pull.head.sha ||
+        current.base.sha !== pull.base.sha ||
+        current.commits !== pull.commits ||
+        current.merged_at !== pull.merged_at ||
+        current.merge_commit_sha !== pull.merge_commit_sha
+      )
+        throw Error("Earlier acceptance changed during collection");
+    }
+  }
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    if (
+      !retirement.acceptedSquashes?.length &&
+      !retirement.earlierAcceptanceProof
+    )
+      continue;
+    const promotion = retirement.acceptedPromotion;
+    const data = await github.graphql<{
+      node: {
+        id: string;
+        headRefOid: string;
+        mergedAt: string;
+        repository: { id: string };
+        mergeCommit: { oid: string };
+      } | null;
+    }>(
+      "query HistoricalPromotionMerge($id:ID!){node(id:$id){...on PullRequest{id headRefOid mergedAt repository{id} mergeCommit{oid}}}}",
+      { id: retirement.sourceId },
+    );
+    if (
+      !promotion ||
+      data.node?.id !== retirement.sourceId ||
+      data.node.headRefOid !== retirement.source.headSha ||
+      data.node.repository.id !== retirement.source.repositoryNodeId ||
+      new Date(data.node.mergedAt).toISOString() !==
+        retirement.source.occurredAt ||
+      data.node.mergeCommit?.oid !== promotion.mergeSha
+    )
+      throw Error("Accepted promotion source changed");
+  }
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    if (
+      !retirement.acceptedSquashes?.length &&
+      !retirement.earlierAcceptanceProof
+    )
+      continue;
+    const root = `/repos/${packet.sourceAudit.repository}`;
+    const audited = packet.sourceAudit.sources.find(
+      (source) => source.id === retirement.sourceId,
+    );
+    if (!audited) throw Error("Promotion source is outside the audit");
+    const path = `${root}/pulls/${audited.number}`;
+    const repository = await github.get<{ node_id: string }>(root);
+    const pull = await github.get<Pull>(path);
+    if (
+      repository?.node_id !== retirement.source.repositoryNodeId ||
+      !pull ||
+      pull.node_id !== retirement.sourceId ||
+      pull.head.sha !== retirement.source.headSha ||
+      pull.merge_commit_sha !== retirement.acceptedPromotion?.mergeSha ||
+      !pull.merged_at ||
+      new Date(pull.merged_at).toISOString() !== retirement.source.occurredAt ||
+      pull.commits !== retirement.source.commitCount ||
+      (retirement.earlierAcceptanceProof &&
+        (pull.base.sha !== retirement.earlierAcceptanceProof.sourceBaseSha ||
+          pull.user.node_id !== retirement.source.author?.id ||
+          pull.user.type !== retirement.source.author?.kind))
+    )
+      throw Error("Accepted promotion membership changed");
+    const observed = await pullCommits(github, root, path, pull, {
+      requireImmutableRange: true,
+    });
+    const commits = new Map(observed.map((commit) => [commit.sha, commit]));
+    const head = commits.get(retirement.source.headSha);
+    const headParents = /^tree [a-f0-9]{40}\n((?:parent [a-f0-9]{40}\n)*)/u
+      .exec(retirement.acceptedPromotion.headCommit)?.[1]
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.slice(7));
+    if (
+      commits.size !== retirement.source.commits.length ||
+      !head ||
+      JSON.stringify(head.parents.map((parent) => parent.sha)) !==
+        JSON.stringify(headParents) ||
+      retirement.source.commits.some(
+        (commit) =>
+          JSON.stringify(
+            commits.get(commit.sha)?.parents.map((parent) => parent.sha),
+          ) !== JSON.stringify(commit.parentShas) ||
+          (retirement.earlierAcceptanceProof !== undefined &&
+            (commits.get(commit.sha)?.author?.node_id !== commit.author?.id ||
+              commits.get(commit.sha)?.author?.type !== commit.author?.kind)),
+      )
+    )
+      throw Error("Accepted promotion source omits or substitutes a commit");
+    const current = await github.get<Pull>(path);
+    if (
+      !current ||
+      current.node_id !== pull.node_id ||
+      current.head.sha !== pull.head.sha ||
+      current.base.sha !== pull.base.sha ||
+      current.commits !== pull.commits ||
+      current.merge_commit_sha !== pull.merge_commit_sha ||
+      current.merged_at !== pull.merged_at ||
+      (retirement.earlierAcceptanceProof !== undefined &&
+        (current.user.node_id !== pull.user.node_id ||
+          current.user.type !== pull.user.type))
+    )
+      throw Error("Accepted promotion changed during collection");
+  }
+  const sources = new Map<string, HistoricalAcceptedSquash>();
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    for (const source of retirement.acceptedSquashes ?? []) {
+      const prior = sources.get(source.sourceId);
+      if (prior && JSON.stringify(prior) !== JSON.stringify(source))
+        throw Error("Conflicting accepted squash identity");
+      sources.set(source.sourceId, source);
+    }
+  }
+  const rows = [...sources.values()];
+  for (let offset = 0; offset < rows.length; offset += 50) {
+    const batch = rows.slice(offset, offset + 50);
+    const data = await github.graphql<{
+      nodes: ({
+        id: string;
+        number: number;
+        url: string;
+        merged: boolean;
+        mergedAt: string;
+        headRefOid: string;
+        repository: { id: string; nameWithOwner: string };
+        author: { id: string; login: string; __typename: string } | null;
+        mergeCommit: {
+          oid: string;
+          author: {
+            user: { id: string; login: string; __typename: string } | null;
+          };
+          parents: {
+            nodes: { oid: string }[];
+            pageInfo: { hasNextPage: boolean };
+          };
+        } | null;
+      } | null)[];
+    }>(
+      "query HistoricalAcceptedSquashes($ids:[ID!]!){nodes(ids:$ids){...on PullRequest{id number url merged mergedAt headRefOid repository{id nameWithOwner} author{__typename login ...on User{id} ...on Bot{id}} mergeCommit{oid author{user{__typename id login}} parents(first:10){nodes{oid} pageInfo{hasNextPage}}}}}}",
+      { ids: batch.map((source) => source.sourceId) },
+    );
+    if (!Array.isArray(data.nodes) || data.nodes.length !== batch.length)
+      throw Error("Accepted squash source unavailable");
+    for (const [index, source] of batch.entries()) {
+      const current = data.nodes[index];
+      if (
+        !current ||
+        current.id !== source.sourceId ||
+        !current.merged ||
+        current.headRefOid !== source.headSha ||
+        new Date(current.mergedAt).toISOString() !== source.occurredAt ||
+        current.url !== source.sourceUrl ||
+        current.repository.id !== source.repositoryNodeId ||
+        current.repository.nameWithOwner.toLowerCase() !==
+          packet.sourceAudit.repository.toLowerCase() ||
+        current.author?.id !== source.author?.id ||
+        current.author?.__typename !== source.author?.kind ||
+        current.mergeCommit?.oid !== source.commit.sha ||
+        current.mergeCommit.author.user?.id !== source.commit.author?.id ||
+        (current.mergeCommit.author.user?.login.endsWith("[bot]")
+          ? "Bot"
+          : current.mergeCommit.author.user?.__typename) !==
+          source.commit.author?.kind ||
+        current.mergeCommit.parents.pageInfo.hasNextPage ||
+        JSON.stringify(
+          current.mergeCommit.parents.nodes.map((parent) => parent.oid),
+        ) !== JSON.stringify(source.commit.parentShas)
+      )
+        throw Error("Accepted squash source changed");
+    }
+  }
 }
 
 /** D1 protection is rechecked by the canonical batch SQL at commit time. */
@@ -305,9 +593,11 @@ async function main() {
   const manifest = process.env.HISTORICAL_POINTS_OBJECT_MANIFEST;
   const packet = manifest
     ? decodeHistoricalPacketBytes(
-        await privatePayoutStorage(
-          process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-          process.env.CLOUDFLARE_API_TOKEN ?? "",
+        await (
+          await reviewedPacketStorage(
+            process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+            process.env.CLOUDFLARE_API_TOKEN ?? "",
+          )
         ).read(manifest),
         digest,
       )
@@ -379,6 +669,7 @@ async function main() {
   await currentOwnerVerifier()(policy, packet.reviewerGithubId);
   const github = GitHubClient.forToken(await resolveGitHubToken());
   await verifyHistoricalCensus(packet, github);
+  await verifyHistoricalAcceptedSquashes(packet, github);
   await verifyHistoricalProtection(packet, query);
   await verifyHistoricalValueRecords(packet, query);
   const baseline = await loadPublishedPoints();

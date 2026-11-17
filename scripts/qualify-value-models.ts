@@ -9,6 +9,7 @@ import {
 } from "../tests/value-binary-fixture";
 import { priceUsage } from "../workers/slopbot/contracts";
 import {
+  budgetResetAt,
   type CallRecord,
   type ModelEnv,
   runRoute,
@@ -36,12 +37,15 @@ function requireThat(value: unknown): asserts value {
 
 /** Only this process's synthetic qualification traffic passes this boundary.
  * The ordinary model prompt/schema remain intact; output is capped for the
- * synthetic cases. A missing cost receipt stops further calls. */
+ * synthetic cases. Missing receipts stop calls except an exact Orbio quota
+ * refusal or a structured Surplus spending denial, whose entire preflight cost
+ * bound remains reserved. Surplus serves first; a Surplus spending denial
+ * moves the route to Orbio within the same two-request ceiling. */
 export function qualificationTransport(
   fetcher: typeof fetch,
   purpose: "value" | "general-review" = "value",
 ) {
-  const maximumRequests = purpose === "general-review" ? 1 : 2;
+  const maximumRequests = 2;
   let requests = 0;
   let spent = 0;
   let uncertain = false;
@@ -90,8 +94,25 @@ export function qualificationTransport(
         signal: request.signal,
       });
       const receipt = await qualificationResponse(response, provider);
-      requireThat(receipt.cost !== null);
-      spent += receipt.cost;
+      const rejection = receipt.value as {
+        error?: { type?: unknown; code?: unknown };
+      } | null;
+      const quotaRejected =
+        provider === "orbio" &&
+        response.status === 402 &&
+        rejection?.error?.type === "insufficient_quota" &&
+        (rejection.error.code === undefined ||
+          rejection.error.code === "insufficient_quota");
+      // A structured Surplus spending denial served nothing; the route then
+      // skips the other Surplus model and asks Orbio.
+      const budgetDenied =
+        provider === "surplus" &&
+        budgetResetAt({ status: response.status, error: receipt.value }) !==
+          null;
+      // A rejected request without a receipt still has an unknown actual
+      // charge. Reserve its complete preflight bound before any fallback.
+      requireThat(receipt.cost !== null || quotaRejected || budgetDenied);
+      spent += receipt.cost ?? bound.costMicroUsd;
       requireThat(spent <= PATH_BUDGET);
       uncertain = false;
       return receipt.response;
@@ -135,7 +156,7 @@ index 0000000..e69de29`,
         (step) =>
           dryRun ||
           (step.provider === "orbio" ? env.ORBIO_API_KEY : env.SURPLUS_API_KEY),
-      ).slice(0, 1),
+      ),
       buildPrompt(context, "pull_request"),
       "medium",
       dryRun ? async () => false : transport.mayCall,
@@ -144,7 +165,11 @@ index 0000000..e69de29`,
       requireThat(result.calls.length === 0 && result.servedBy === null);
     else {
       requireThat(!result.blocked && result.verdict && result.servedBy);
-      requireThat(result.calls.length === 1 && transport.requestCount() === 1);
+      requireThat(
+        result.calls.length > 0 &&
+          result.calls.length === transport.requestCount() &&
+          result.calls.length <= 2,
+      );
       requireThat(
         result.verdict.limitations.some((limitation) =>
           /\b(?:loader|loading|marker|path|existence|presence)\b|\.plugin-root/iu.test(
@@ -190,13 +215,15 @@ export async function qualifyValueModels(env: ModelEnv, dryRun = false) {
     requireThat(!projected.item.includes('"contentBase64":'));
     requireThat(projected.item.includes('"contentOmittedFromModel":true'));
   }
-  const { db, sqlite } = sqliteD1();
+  // Each synthetic path has its own one-dollar allowance. Keep its unknown
+  // receipts reserved without charging them again against the other path.
+  const ledgers = [sqliteD1(), sqliteD1()];
   const budget = (index: number) => ({
-    db,
+    db: ledgers[index - 1].db,
     installationId: 1,
     attemptId: `value:14740000-0000-4000-8000-${String(index).padStart(12, "0")}`,
     maximumMicroUsd: PATH_BUDGET,
-    approvedMonthlyMicroUsd: 2 * PATH_BUDGET,
+    approvedMonthlyMicroUsd: PATH_BUDGET,
   });
   const original = globalThis.fetch;
   const summaries: {
@@ -271,7 +298,7 @@ export async function qualifyValueModels(env: ModelEnv, dryRun = false) {
     return summaries;
   } finally {
     globalThis.fetch = original;
-    sqlite.close();
+    for (const ledger of ledgers) ledger.sqlite.close();
   }
 }
 
@@ -280,7 +307,12 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const { dryRun, authorized } = protectedMainRelease();
-  if (!dryRun && (!authorized || !process.env.ORBIO_API_KEY?.trim())) {
+  if (
+    !dryRun &&
+    (!authorized ||
+      !process.env.SURPLUS_API_KEY?.trim() ||
+      !process.env.ORBIO_API_KEY?.trim())
+  ) {
     process.stderr.write(
       "Slopbot model qualification requires the protected main release and both provider keys.\n",
     );
