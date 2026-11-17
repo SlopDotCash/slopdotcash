@@ -4944,9 +4944,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "8710713ef53476494445f148f0defa5859850345abd1653f58c2b013347babff",
+      "sha256": "e56a362b6ebbbb62df6d7e84f59c5269c606c35687a343704aaa1d35ab78848c",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 545, 565, 643, 733],
+      "candidateLines": [3, 545, 565, 668, 769],
       "review": "mapped-abstraction"
     },
     {
@@ -14784,7 +14784,7 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "3cf51d70543fe34d611378740b53653a01f33f6c61be022dead9769ee63e895b",
+      "sha256": "a6acc1592fa73aa16b68f36a8a063cc0087324a309827432c4ffb2161ba3aa2e",
       "sources": [
         ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
@@ -14809,6 +14809,8 @@
         "mixedPathsRoutedByCommitTest",
         "mixedSourcesMustAgreeTest",
         "partialRefusedTest",
+        "privateErrorIsNotAPhaseTest",
+        "refusalReportsFixedPhaseWithoutGrantingPublicationTest",
         "validatedMixedEvidenceCannotChangeTest"
       ]
     },
