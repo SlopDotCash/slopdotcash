@@ -838,6 +838,8 @@ function parseMarker(
       if (!project)
         throw new TypeError("run receipt project is not registered");
       assertRunReceiptPolicyJoin(run, project);
+      if (!isPublishableIdentity(run.provider, run.model))
+        throw new TypeError("run model must be an exact model identifier");
       return {
         provider: run.provider,
         model: run.model,
@@ -868,6 +870,11 @@ function parseMarker(
     };
   }
   const model = declaredModel(parsed.model);
+  if (!isPublishableIdentity(provider, model)) {
+    return {
+      error: `model must be an exact model identifier or ${UNAVAILABLE_MODEL_IDENTIFIER}`,
+    };
+  }
   const client = parsed.client;
   if (!isExactClientIdentifier(client)) {
     return { error: "client must name the exact client used" };
@@ -893,6 +900,17 @@ function parseMarker(
     skillRevision: skillRevision.trim(),
     run: null,
   };
+}
+
+/**
+ * exactIdentifier drops a provider repeated at the start of the model, so the
+ * rest must still be an exact model: `openai / openai/unknown` names none.
+ */
+function isPublishableIdentity(provider: string, model: string): boolean {
+  return (
+    isUnavailableModelIdentifier(model) ||
+    isExactProviderModelIdentifier(exactIdentifier(provider, model))
+  );
 }
 
 /** Spells the unavailable declaration one way, whatever case it arrived in. */
@@ -1271,6 +1289,7 @@ function assessModelAttribution(
           continue;
         }
         const model = declaredModel(declaration.model);
+        if (!isPublishableIdentity(declaration.provider, model)) continue;
         const identifier = exactIdentifier(declaration.provider, model);
         validSourceIds.add(source.id);
         if (markerIdentifiers.has(identifier.toLowerCase())) {
