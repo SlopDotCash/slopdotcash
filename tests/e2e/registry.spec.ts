@@ -623,6 +623,13 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   });
   await expect(consent).not.toBeChecked();
   await consent.check();
+  await openSettings(returningOwner, "Monthly rewards");
+  const honorSystem = returningOwner.getByRole("checkbox", {
+    name: "Promise this amount on the honor system",
+    exact: true,
+  });
+  await expect(honorSystem).not.toBeChecked();
+  await honorSystem.check();
   await returningOwner
     .getByRole("textbox", { name: "Short description", exact: true })
     .fill("Useful accepted outcomes with a clearer project scope");
@@ -635,6 +642,10 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
       .revision,
   ).toBe(2);
+  expect(
+    (await (await admin.request.get(`/api/v1/projects/${project.id}`)).json())
+      .project.reward.honorSystem,
+  ).toBe(true);
   await admin.reload();
   await expect(card).toContainText("2 · updated");
   expect(
@@ -646,6 +657,16 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await openSettings(returningOwner, "Contribution rules");
   await expect(consent).toBeChecked();
   await consent.uncheck();
+  await openSettings(returningOwner, "Monthly rewards");
+  await expect(honorSystem).toBeChecked();
+  const monthlyAmount = returningOwner.getByLabel("Amount / month");
+  const promisedAmount = await monthlyAmount.inputValue();
+  await monthlyAmount.fill("");
+  await expect(honorSystem).toBeChecked();
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.uncheck();
+  await expect(honorSystem).toBeDisabled();
+  await monthlyAmount.fill(promisedAmount);
 
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(
@@ -655,6 +676,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
     await returningOwner.request.get(`/api/v1/projects/${project.id}`)
   ).json();
   expect(revoked.project.slopbot).toEqual({ automaticClosure: false });
+  expect(revoked.project.reward).not.toHaveProperty("honorSystem");
   const consentHistory = await (
     await returningOwner.request.get(
       `/api/v1/project-revisions/${project.id}/2`,
@@ -663,6 +685,7 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   expect(JSON.parse(consentHistory.manifestText).slopbot).toEqual({
     automaticClosure: true,
   });
+  expect(JSON.parse(consentHistory.manifestText).reward.honorSystem).toBe(true);
   await returningOwner.reload({ waitUntil: "networkidle" });
   await openSettings(returningOwner, "Contribution rules");
   await expect(consent).not.toBeChecked();

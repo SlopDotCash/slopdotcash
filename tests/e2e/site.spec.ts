@@ -504,13 +504,30 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  // Every open project is one card in the single projects grid.
+  // Both registry tiers have named sections and keep every eligible card.
   const projects = page.locator("#projects");
-  for (const project of homeProjects())
+  for (const [tier, name] of [
+    ["featured", "Featured"],
+    ["community", "Community"],
+  ] as const) {
+    const section = projects.getByRole("region", { name, exact: true });
+    const expected = homeProjects().filter(
+      (project) => project.listingTier === tier,
+    );
     await expect(
-      projects.locator(`a.project-card[href="/projects/${project.id}"]`),
+      section.getByRole("heading", { name, exact: true }),
     ).toBeVisible();
-  await expect(page.locator("section.community-projects")).toHaveCount(0);
+    await expect(section.locator(".project-grid")).toHaveCount(1);
+    await expect(section.locator(".project-card")).toHaveCount(expected.length);
+    for (const project of expected)
+      await expect(
+        section.locator(`a.project-card[href="/projects/${project.slug}"]`),
+      ).toBeVisible();
+  }
+  await expect(page.locator("main")).not.toContainText("Pledged");
+  await expect(projects).not.toContainText("Last merge");
+  await expect(projects).not.toContainText("outside PRs waiting");
+  await expect(projects).not.toContainText("median merge");
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {

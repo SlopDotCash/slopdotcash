@@ -46,6 +46,22 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
     await expect(page.locator("#projects .project-card")).toHaveCount(
       expected.length,
     );
+    for (const [tier, name] of [
+      ["featured", "Featured"],
+      ["community", "Community"],
+    ] as const) {
+      const section = page.getByRole("region", { name, exact: true });
+      const members = expected.filter(
+        (project) => project.listingTier === tier,
+      );
+      await expect(section.locator(".project-card")).toHaveCount(
+        members.length,
+      );
+      for (const project of members)
+        await expect(
+          section.locator(`a[href="/projects/${project.slug}"]`),
+        ).toBeVisible();
+    }
     for (const project of expected) {
       await expect(
         page.getByRole("heading", { name: project.name, exact: true }),
@@ -160,6 +176,18 @@ test("a failed registry read keeps the last good projects with a stale label", a
   await expect(page.locator("#projects .project-card")).toHaveCount(
     expected.length,
   );
+  for (const [tier, name] of [
+    ["featured", "Featured"],
+    ["community", "Community"],
+  ] as const) {
+    const section = page.getByRole("region", { name, exact: true });
+    const members = expected.filter((project) => project.listingTier === tier);
+    await expect(section.locator(".project-card")).toHaveCount(members.length);
+    for (const project of members)
+      await expect(
+        section.locator(`a[href="/projects/${project.slug}"]`),
+      ).toBeVisible();
+  }
   await expect(
     page.getByRole("heading", { name: "Projects are unavailable" }),
   ).toHaveCount(0);

@@ -721,7 +721,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "33c1451abf6f335aef22755f01f0ef92e8f4d15f4ad5459831a8649b111a9405",
+      "sha256": "160306a155927e6efaf8d00b89415ba04846131a4b509c7ca9596a2e18cd7080",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -751,16 +751,16 @@
       ],
       "candidateLines": [
         168, 173, 183, 187, 245, 270, 275, 302, 303, 305, 307, 356, 440, 447,
-        453, 457, 458, 466, 532, 536, 867, 904, 920, 1016, 1030, 1035, 1042,
-        1043, 1046, 1049, 1067, 1069, 1071, 1082, 1100, 1107, 1118, 1150, 1151,
-        1167, 1173, 1182, 1184, 1189, 1190, 1191, 1192, 1204, 1205, 1206, 1209,
-        1214, 1253, 1312, 1362, 1398, 1416, 1490, 1572, 1583, 1610, 1611, 1624,
-        1634, 1668, 1726, 1727, 1780, 1822, 1828, 1832, 1850, 1856, 1892, 1900,
-        1903, 1904, 1954, 1955, 1956, 1976, 2021, 2022, 2034, 2055, 2057, 2061,
-        2072, 2082, 2097, 2103, 2113, 2150, 2169, 2173, 2224, 2372, 2376, 2403,
-        2424, 2425, 2439, 2442, 2447, 2448, 2494, 2508, 2526, 2543, 2575, 2579,
-        2589, 2598, 2742, 2768, 2919, 2939, 2985, 3025, 3036, 3037, 3150, 3158,
-        3176, 3375
+        453, 457, 458, 466, 532, 536, 869, 906, 922, 1018, 1032, 1037, 1044,
+        1045, 1048, 1051, 1069, 1071, 1073, 1084, 1102, 1109, 1120, 1152, 1153,
+        1169, 1175, 1184, 1186, 1191, 1192, 1193, 1194, 1206, 1207, 1208, 1211,
+        1216, 1255, 1314, 1364, 1400, 1418, 1492, 1574, 1585, 1612, 1613, 1626,
+        1636, 1670, 1728, 1729, 1782, 1824, 1830, 1834, 1852, 1858, 1894, 1902,
+        1905, 1906, 1956, 1957, 1958, 1978, 2023, 2024, 2036, 2057, 2059, 2063,
+        2074, 2084, 2099, 2105, 2115, 2152, 2171, 2175, 2226, 2374, 2378, 2405,
+        2426, 2427, 2441, 2444, 2449, 2450, 2496, 2510, 2528, 2545, 2577, 2581,
+        2591, 2600, 2744, 2770, 2921, 2941, 2987, 3027, 3038, 3039, 3152, 3160,
+        3178, 3377
       ],
       "review": "mapped-abstraction"
     },
@@ -5270,7 +5270,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "81f818ccc1a840ef3af4f51fd03864a4a9b6238720f8f261a21ac3cda351cee0",
+      "sha256": "a2a796e42f13a891744bb912c87ae6ca297ce087594a47be71ef65fca751b75d",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -5291,13 +5291,13 @@
       ],
       "candidateLines": [
         19, 21, 319, 329, 339, 350, 359, 360, 361, 362, 363, 365, 366, 427, 483,
-        484, 485, 488, 511, 577, 608, 645, 686, 709, 787, 788, 798, 1004, 1019,
-        1037, 1083, 1085, 1088, 1153, 1156, 1158, 1162, 1163, 1168, 1185, 1189,
-        1197, 1198, 1201, 1203, 1211, 1242, 1288, 1291, 1306, 1307, 1357, 1360,
-        1363, 1364, 1365, 1366, 1370, 1373, 1393, 1395, 1471, 1472, 1477, 1478,
-        1483, 1521, 1522, 1525, 1526, 1529, 1530, 1551, 1552, 1558, 1563, 1565,
-        1569, 1570, 1609, 1632, 1642, 1673, 1675, 1700, 1701, 1717, 1718, 1729,
-        1731, 1744, 1747
+        484, 485, 488, 511, 577, 608, 645, 715, 793, 794, 804, 1035, 1050, 1068,
+        1114, 1116, 1119, 1184, 1187, 1189, 1193, 1194, 1199, 1216, 1220, 1228,
+        1229, 1232, 1234, 1242, 1273, 1319, 1322, 1337, 1338, 1388, 1391, 1394,
+        1395, 1396, 1397, 1403, 1406, 1426, 1428, 1445, 1509, 1510, 1515, 1516,
+        1521, 1559, 1560, 1563, 1564, 1567, 1568, 1589, 1590, 1596, 1601, 1603,
+        1607, 1608, 1647, 1670, 1680, 1711, 1713, 1738, 1739, 1755, 1756, 1767,
+        1769, 1782, 1785
       ],
       "review": "mapped-abstraction"
     },
@@ -5818,7 +5818,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "7aa189d91c3f72f895a1e154d5354cfdd4d609e259f0520b4f7e112265e5cfe3",
+      "sha256": "00a89101cf085b2e0b1059f7896c6c0619c4363639f3962ad2c26d0f7b28b333",
       "models": [
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
@@ -5835,20 +5835,20 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        23, 155, 477, 480, 481, 482, 483, 484, 485, 486, 488, 491, 495, 500,
-        516, 527, 535, 536, 553, 569, 573, 591, 599, 607, 614, 617, 637, 652,
-        653, 974, 985, 986, 996, 1007, 1010, 1015, 1018, 1027, 1030, 1031, 1033,
-        1034, 1039, 1067, 1071, 1074, 1084, 1085, 1144, 1146, 1150, 1155, 1164,
-        1174, 1179, 1233, 1246, 1254, 1257, 1264, 1337, 1362, 1370, 1371, 1373,
-        1378, 1382, 1391, 1406, 1413, 1507, 1508, 1509, 1511, 1517, 1527, 1534,
-        1550, 1563, 1595, 1605, 1612, 1617, 1620, 1631, 1653, 1654, 1656, 1657,
-        1753, 1756, 1783, 2199, 2201, 2238, 2273, 2322, 2325, 2331, 2332, 2334,
-        2344, 2346, 2350, 2361, 2375, 2387, 2404, 2414, 2418, 2419, 2422, 2425,
-        2426, 2427, 2428, 2429, 2430, 2431, 2432, 2433, 2434, 2437, 2438, 2439,
-        2440, 2442, 2448, 2522, 2532, 2546, 2577, 2582, 2901, 2925, 2930, 2959,
-        2984, 2991, 3004, 3025, 3029, 3043, 3051, 3061, 3074, 3079, 3084, 3085,
-        3088, 3115, 3162, 3163, 3167, 3172, 3290, 3322, 3330, 3331, 3339, 3341,
-        3414, 3422, 3423, 3460, 3465, 3471, 3477, 3491, 3504, 3505, 3520
+        23, 155, 478, 481, 482, 483, 484, 485, 486, 487, 489, 492, 496, 501,
+        517, 528, 536, 537, 554, 570, 574, 592, 600, 608, 615, 618, 638, 653,
+        654, 1004, 1015, 1016, 1026, 1037, 1040, 1045, 1048, 1057, 1060, 1061,
+        1063, 1064, 1069, 1097, 1101, 1104, 1114, 1115, 1174, 1176, 1180, 1185,
+        1194, 1204, 1209, 1266, 1279, 1287, 1290, 1297, 1372, 1397, 1405, 1406,
+        1408, 1413, 1417, 1426, 1441, 1448, 1542, 1543, 1544, 1546, 1552, 1562,
+        1569, 1585, 1598, 1630, 1640, 1647, 1652, 1655, 1666, 1688, 1689, 1691,
+        1692, 1788, 1791, 1818, 2239, 2241, 2279, 2315, 2364, 2367, 2373, 2374,
+        2376, 2386, 2388, 2392, 2403, 2417, 2429, 2446, 2456, 2460, 2461, 2464,
+        2467, 2468, 2469, 2470, 2471, 2472, 2473, 2474, 2475, 2476, 2479, 2480,
+        2481, 2482, 2484, 2490, 2565, 2575, 2589, 2620, 2631, 2966, 2990, 2995,
+        3024, 3049, 3056, 3069, 3090, 3094, 3108, 3116, 3126, 3139, 3144, 3149,
+        3150, 3153, 3180, 3227, 3228, 3232, 3237, 3355, 3387, 3395, 3396, 3404,
+        3406, 3480, 3488, 3489, 3526, 3531, 3537, 3543, 3557, 3570, 3571, 3586
       ],
       "review": "mapped-abstraction"
     },
@@ -6419,7 +6419,7 @@
     },
     {
       "path": "src/lib/home-projects.ts",
-      "sha256": "421bc3013d2cdc664c9ab99f7b10946b31d0b1827d254c2727fd606a1f053f75",
+      "sha256": "51c905a9b4c3f1462cb05f6bc54bb7c9c96d288e79b1e6ba3b20e560f29f394a",
       "models": ["formal/models/ui/ui_project_listing.qnt"],
       "candidateLines": [1, 7, 8],
       "review": "mapped-abstraction",
@@ -6767,13 +6767,13 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "78bd748d0bac824dc24c7a11364d9467f53dc14b58eec3e682f4f1f78637821f",
+      "sha256": "b7e09385706ac03218be732b7b1ae57437f2f53cacb229cacfab9ec4c3953d93",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
       "candidateLines": [
-        13, 18, 191, 193, 195, 207, 235, 250, 271, 272, 281, 331, 333
+        14, 20, 201, 203, 205, 217, 241, 256, 277, 278, 287, 340, 370, 372
       ],
       "review": "mapped-abstraction"
     },
@@ -6904,13 +6904,13 @@
     },
     {
       "path": "src/lib/project-proposal.ts",
-      "sha256": "37376516879b71c3f17aaae32cdcd1efb5929f41c62f69021c510c9e182f45c9",
+      "sha256": "6cc08ce23b3e79ed28e64e50a9f57012194eddbf194d389a827a297e8c368426",
       "models": [
         "formal/models/api/api_project_lookup_routes.qnt",
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_repository_lookup.qnt"
       ],
-      "candidateLines": [261],
+      "candidateLines": [263],
       "review": "mapped-abstraction"
     },
     {
@@ -6952,24 +6952,24 @@
     },
     {
       "path": "src/lib/project-reward-summary.ts",
-      "sha256": "e1f21a12767d45c47a1f217c406dbc6ab758ee2bc112e93f59e1717f0181b1da",
+      "sha256": "633801c5cf39723712c0ee5a2c3d10fdd350df3aa6eac792074a37b95066d5f8",
       "models": [],
-      "candidateLines": [20, 49, 56, 106],
+      "candidateLines": [20, 49, 56, 107],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure presentation projection of supplied registry reward/bounty fields; no storage or asynchronous work. Project lifecycle and payment state are not established by this display helper."
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "da713e508d4acf46b813efc32c8e8b6991d3eac4671c08fb6960d52122307113",
+      "sha256": "e319a62edf36cf85dd83023ce9560e7e4dec315bc36ed61aa292a189453b1ae2",
       "models": [
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
         127, 332, 343, 348, 352, 353, 412, 418, 424, 427, 431, 435, 536, 539,
-        546, 549, 567, 593, 694, 695, 697, 702, 712, 1292, 1293, 1296, 1304,
-        1307, 1317, 1318, 1320, 1322, 1435, 1436, 1437, 1441, 1444, 1446, 1456,
-        1457, 1459, 1569
+        546, 549, 567, 593, 694, 695, 697, 702, 712, 1303, 1304, 1307, 1315,
+        1318, 1328, 1329, 1331, 1333, 1446, 1447, 1448, 1452, 1455, 1457, 1467,
+        1468, 1470, 1580
       ],
       "review": "mapped-abstraction"
     },
@@ -18434,7 +18434,7 @@
     },
     {
       "path": "formal/models/ui/ui_pool_funding.qnt",
-      "sha256": "74c9a73fb5dbd74a8be3bf03a2d26952762256c8255d378d203e04857699fa31",
+      "sha256": "b4c0849966ea20ad1ec2b1c6d47c61b64bccb23575009c0f3c8ae40b899f6465",
       "sources": [
         "backend/projects/pool-funding.ts",
         "migrations/0127_vault_month_starts.sql",
@@ -18445,10 +18445,14 @@
         "decemberFundedOnTheFirstTest",
         "decemberNeedsTheFirstTest",
         "freeFundsWithoutPledgeShowNoMoneyTest",
+        "fundedReadReplacesPromiseWarningTest",
         "loadingShowsNoMoneyTest",
         "novemberLiveRuleTest",
+        "optOutRemovesPromiseTest",
+        "ownerPromiseIsNotVerifiedMoneyTest",
         "pledgedMonthIsLockedTest",
         "shortPledgeShowsNoMoneyTest",
+        "shortReadShowsPromiseWarningTest",
         "shortVaultShowsNoMoneyTest",
         "withdrawalIsShownTest"
       ]
@@ -18657,7 +18661,7 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "5dcb29be1a5d081aeb31197ff2db55a83c6ff0a839e12cee1cae7cb1be55ac6b",
+      "sha256": "49f0c73fed4308533a6f67c246942687eba1d2588c52d44dc63d7b6698497293",
       "sources": [
         "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
@@ -18674,6 +18678,7 @@
         "fundedPoolIsListedTest",
         "fundingLossKeepsHomeCardTest",
         "fundingTheMonthListsItTest",
+        "honorSystemDoesNotQualifyForDiscoveryTest",
         "loadingListsAsBeforeTest",
         "pausedProjectKeepsItsListingTest",
         "registryEligibilityStillGatesHomeTest",

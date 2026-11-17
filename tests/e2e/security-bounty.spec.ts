@@ -3246,6 +3246,12 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   // The bounty is listed once, in its own section, never again as a project.
   const projects = page.locator("#projects");
   await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+  await expect(
+    projects.getByRole("region", { name: "Featured", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    projects.getByRole("region", { name: "Community", exact: true }),
+  ).toHaveCount(0);
   await expect(section).toContainText("$10k");
   await expect(section).not.toContainText("Pledged");
   await expect(section).not.toContainText("7,500 USDC");

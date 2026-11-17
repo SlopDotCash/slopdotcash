@@ -673,6 +673,12 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(page.getByLabel("Points only")).toBeChecked();
   await expect(page.getByRole("group", { name: "Network" })).toHaveCount(0);
   await page.getByLabel("Monthly rewards").check();
+  const honorSystem = page.getByRole("checkbox", {
+    name: "Promise this amount on the honor system",
+    exact: true,
+  });
+  await expect(honorSystem).not.toBeChecked();
+  await expect(honorSystem).toBeDisabled();
   await page
     .getByRole("group", { name: "Network", exact: true })
     .getByRole("radio", { name: "Solana", exact: true })
@@ -689,6 +695,24 @@ test("drafts a project through the setup steps and creates it without an admin",
     fullPage: true,
   });
   await page.getByLabel("Amount / month").fill("2500");
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.check();
+  expect((await readProposalDraft(page)).honorSystem).toBe("true");
+  // A transient invalid amount must not prevent withdrawing the promise.
+  await page.getByLabel("Amount / month").fill("0");
+  await expect(honorSystem).toBeChecked();
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.uncheck();
+  await expect(honorSystem).toBeDisabled();
+  await page.getByLabel("Amount / month").fill("2500");
+  await honorSystem.check();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(honorSystem).toBeChecked();
+  await page.getByLabel("Points only", { exact: true }).check();
+  await expect(honorSystem).toHaveCount(0);
+  await page.getByLabel("Monthly rewards", { exact: true }).check();
+  await expect(honorSystem).not.toBeChecked();
+  await honorSystem.check();
   // A different account may have signed in in another tab during setup.
   // Review must identify the current actor before enabling creation.
   currentSession = {
@@ -715,7 +739,9 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(preview.getByTitle("Branch", { exact: true })).toHaveText(
     "development",
   );
-  await expect(preview).toContainText("2,500 USDC/mo Solana Pledge");
+  await expect(preview).toContainText(
+    "2,500 USDC/mo Solana Honor system (not vaulted or guaranteed)",
+  );
   await expect(
     preview
       .locator("dl > div")
@@ -824,6 +850,7 @@ test("drafts a project through the setup steps and creates it without an admin",
       committedMinor: "0",
       paymentMode: "disabled",
       fundingState: "pledged",
+      honorSystem: true,
     },
     terms: {
       repositoryLicense: {
