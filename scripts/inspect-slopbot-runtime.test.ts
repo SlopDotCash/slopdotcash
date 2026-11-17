@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
-import { inspectSlopbotRuntime } from "./inspect-slopbot-runtime";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import {
+  inspectSlopbotRuntime,
+  slopbotReadbackSelection,
+} from "./inspect-slopbot-runtime";
 
 const deploymentId = "11111111-1111-1111-1111-111111111111";
 const versionId = "22222222-2222-2222-2222-222222222222";
@@ -10,6 +22,163 @@ const input = {
   token: "synthetic-private-token",
   expectedSource: source,
 };
+const selection = {
+  expectedSource: source,
+  probeSolanaRpc: "false",
+  rotateSolanaFrom: "",
+  rotateSolanaSource: "",
+  priorProofRun: "",
+};
+const mixedSelections = [
+  { probeSolanaRpc: "true" },
+  { rotateSolanaFrom: "never-export" },
+  { rotateSolanaSource: "never-export" },
+  { priorProofRun: "never-export" },
+];
+
+test("pureReadbackSelectionTest: only an exact source with all fee inputs off selects metadata", () => {
+  expect(slopbotReadbackSelection(selection)).toBe(true);
+  expect(slopbotReadbackSelection({ ...selection, expectedSource: "" })).toBe(
+    false,
+  );
+  expect(slopbotReadbackSelection({ ...selection, expectedSource: "a" })).toBe(
+    false,
+  );
+});
+
+for (const mixed of mixedSelections)
+  test("mixedSelectionRefusedTest: each fee operation refuses the Slopbot selector", () => {
+    expect(slopbotReadbackSelection({ ...selection, ...mixed })).toBe(false);
+  });
+
+for (const mixed of [null, ...mixedSelections])
+  for (const args of mixed
+    ? [[], ["--validate-selection"]]
+    : [["--validate-selection"]])
+    test("CLI selection rejects mixed inputs before even reading credentials or calling fetch", () => {
+      const directory = mkdtempSync(join(tmpdir(), "slopbot-selection-"));
+      try {
+        const trap = join(directory, "guard.mjs");
+        writeFileSync(
+          trap,
+          `process.env = new Proxy(process.env, { get(target, key) {
+            if (key === "CLOUDFLARE_API_TOKEN" || key === "CLOUDFLARE_ACCOUNT_ID")
+              throw new Error("never-export-credential-read");
+            return Reflect.get(target, key);
+          }});
+          globalThis.fetch = () => { throw new Error("never-export-network-read"); };`,
+          { mode: 0o600 },
+        );
+        const selected = { ...selection, ...mixed };
+        const result = Bun.spawnSync(
+          [
+            process.execPath,
+            "--no-env-file",
+            "--preload",
+            trap,
+            resolve(import.meta.dirname, "inspect-slopbot-runtime.ts"),
+            ...args,
+          ],
+          {
+            env: {
+              GITHUB_REF: "refs/heads/main",
+              RUNNER_TEMP: directory,
+              SLOP_SLOPBOT_EXPECTED_SOURCE: selected.expectedSource,
+              SLOP_SLOPBOT_PROBE_SOLANA_RPC: selected.probeSolanaRpc,
+              SLOP_SLOPBOT_ROTATE_SOLANA_FROM: selected.rotateSolanaFrom,
+              SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE: selected.rotateSolanaSource,
+              SLOP_SLOPBOT_PRIOR_PROOF_RUN: selected.priorProofRun,
+              CLOUDFLARE_ACCOUNT_ID: input.account,
+              CLOUDFLARE_API_TOKEN: input.token,
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        expect(result.exitCode).toBe(mixed ? 1 : 0);
+        expect(result.stdout.toString()).toBe(
+          mixed ? "" : "Slopbot-only metadata selection accepted.\n",
+        );
+        expect(result.stderr.toString()).toBe(
+          mixed ? "Slopbot-only protected main selection required.\n" : "",
+        );
+        expect(existsSync(join(directory, "slopbot-runtime.json"))).toBe(false);
+        expect(`${result.stdout}${result.stderr}`).not.toContain(
+          "never-export",
+        );
+        expect(`${result.stdout}${result.stderr}`).not.toContain(input.token);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+test("workflow selector keeps Slopbot dispatch outside the production queue and validates before secret-bearing steps", () => {
+  type Step = {
+    name?: string;
+    run?: string;
+    if?: string;
+    "continue-on-error"?: boolean;
+    env?: Record<string, string>;
+  };
+  type Job = {
+    if: string;
+    concurrency?: unknown;
+    env?: Record<string, string>;
+    steps: Step[];
+  };
+  const workflow = Bun.YAML.parse(
+    readFileSync(
+      resolve(
+        import.meta.dirname,
+        "../.github/workflows/fee-worker-bindings.yml",
+      ),
+      "utf8",
+    ),
+  ) as {
+    env?: Record<string, string>;
+    concurrency?: unknown;
+    jobs: { inspect: Job; "inspect-slopbot": Job };
+  };
+  const fee = workflow.jobs.inspect;
+  const readback = workflow.jobs["inspect-slopbot"];
+  expect(workflow.concurrency).toBeUndefined();
+  expect(fee.if).toBe(
+    "github.ref == 'refs/heads/main' && inputs.slopbot_source == ''",
+  );
+  expect(fee.concurrency).toEqual({
+    group: "slop-production",
+    "cancel-in-progress": false,
+  });
+  expect(readback.if).toBe(
+    "github.ref == 'refs/heads/main' && inputs.slopbot_source != ''",
+  );
+  expect(readback.concurrency).toBeUndefined();
+  const validate = readback.steps.findIndex((step) =>
+    step.run?.endsWith(" --validate-selection"),
+  );
+  const read = readback.steps.findIndex(
+    (step) =>
+      step.run === "bun --no-env-file scripts/inspect-slopbot-runtime.ts",
+  );
+  expect(validate).toBeGreaterThanOrEqual(0);
+  expect(read).toBeGreaterThan(validate);
+  expect(readback.steps[validate]["continue-on-error"]).toBeUndefined();
+  expect(readback.steps[read].if).toBeUndefined();
+  expect(
+    JSON.stringify([workflow.env, readback.env, readback.steps.slice(0, read)]),
+  ).not.toContain("secrets.");
+  expect(readback.steps[read].env).toEqual({
+    CLOUDFLARE_API_TOKEN: `\${{ secrets.CLOUDFLARE_API_TOKEN }}`,
+    CLOUDFLARE_ACCOUNT_ID: `\${{ secrets.CLOUDFLARE_ACCOUNT_ID }}`,
+  });
+  expect(readback.env).toEqual({
+    SLOP_SLOPBOT_EXPECTED_SOURCE: `\${{ inputs.slopbot_source }}`,
+    SLOP_SLOPBOT_PROBE_SOLANA_RPC: `\${{ inputs.probe_solana_rpc }}`,
+    SLOP_SLOPBOT_ROTATE_SOLANA_FROM: `\${{ inputs.rotate_solana_from }}`,
+    SLOP_SLOPBOT_ROTATE_SOLANA_SOURCE: `\${{ inputs.rotate_solana_source }}`,
+    SLOP_SLOPBOT_PRIOR_PROOF_RUN: `\${{ inputs.prior_proof_run }}`,
+  });
+});
 const deployment = () => ({
   deployments: [
     {
