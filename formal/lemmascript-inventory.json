@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 806,
-    "functions": 12544,
+    "functions": 12545,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12356,
+    "unprovedFunctions": 12357,
     "nonTypeScriptFiles": 59
   },
   "limits": [
@@ -12452,10 +12452,11 @@
 {"path":"workers/slopbot/entrypoint.ts","sha256":"5418be16635f1ec40d44ddf4e574084cb754152b22c6f340ca668a8ed7562905","language":"typescript","disposition":"no-function-body","functions":[
 
 ]},
-{"path":"workers/slopbot/failure-alerts.ts","sha256":"283d8eb97585ccfbd44c602114b72a4ad7f7c9dd6f3537205d8841dd5fb1133d","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"dispatchFailureAlert","kind":"FunctionDeclaration","line":13,"sha256":"3e139bf325045995db4c49ce4baa5ea5cdb18d9649d82a31db62981055ff77f9","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@40>","kind":"ArrowFunction","line":40,"sha256":"c7067976f3de497bea92f961b8a6b567fdca667abb8723e4e960e7d172ec8e36","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"deliverNotice","kind":"FunctionDeclaration","line":55,"sha256":"a3a51781b64512433ea5e6e8e339dc420dfe6b0e66bd27c7a0c25e33614b5db6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+{"path":"workers/slopbot/failure-alerts.ts","sha256":"cc2ca6ef66f74e5c3e69d7edefad5fa909878e1058e1413799b745020237cc1c","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"dispatchFailureAlert","kind":"FunctionDeclaration","line":27,"sha256":"02b28cadd9857df9fa406ab4262e1db170603bae288d2663d64bc24ab17dc6e3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@30>","kind":"ArrowFunction","line":30,"sha256":"4e7026b476d5d1f0bdcbadcf6af8573f7b2ca35d1ada6d40d2713203f5aa0d62","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@84>","kind":"ArrowFunction","line":84,"sha256":"ed0b024ed44730b436f4510f9932e8096ad5b4fee9c71fbcc64ab3c76867b70f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"deliverNotice","kind":"FunctionDeclaration","line":101,"sha256":"a3a51781b64512433ea5e6e8e339dc420dfe6b0e66bd27c7a0c25e33614b5db6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"workers/slopbot/git-object.ts","sha256":"5e9490f1bc833799f3b80b9ee43e41b03d6d93f6f22b3f27ebae9820fac8332f","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"gitObjectSha1","kind":"FunctionDeclaration","line":4,"sha256":"016fb1a33c8c0a7cea4a53388b7ca46deae2de2d0e7adee5b9a51829fb5b2d14","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]}
@@ -12494,15 +12495,15 @@
 {"name":"openHold","kind":"FunctionDeclaration","line":123,"sha256":"d4a73df895531a3c674871b5a27504a6d6277af74e3b09d2529aa6ffa9b3dcdb","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"resolveHold","kind":"FunctionDeclaration","line":135,"sha256":"4927039d94164cf070812d822eabd0f2395a59ef8f8f25ae71d87757f4b12878","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
-{"path":"workers/slopbot/models.ts","sha256":"e443be718189710f6996f086b03d9f472ab1fbf34fefc1f9dff19cb03b2247fa","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"runRoute","kind":"FunctionDeclaration","line":59,"sha256":"c97fb25f35cb4de96bb20b973010164256c843129b7a29b5206ed70c0c053061","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"budgetResetAt","kind":"FunctionDeclaration","line":89,"sha256":"8640538e8587a012cf0d10811c4416f72f36137decb6b2341523a149a37367af","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"runStructuredRoute","kind":"FunctionDeclaration","line":116,"sha256":"7bd035bec7eea1475acbf0a177c3d44af77fab69714bd1001cb8e142c028be2a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"parseJson","kind":"FunctionDeclaration","line":237,"sha256":"73c9fb750b8556aa26c3eb7bc74804ad2027f8d5176264a7625ed72fa36b4731","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"providerCost","kind":"FunctionDeclaration","line":246,"sha256":"4d2015488a06619c83901e6da29894d501ebfc36c31d92173e805607d33a5a17","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"providerRequestId","kind":"FunctionDeclaration","line":284,"sha256":"2d2d08a19b74f6ae8a5f9b2ae2818c1cdf70dd55fa59b40a1986446d14bd2111","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"callModel","kind":"FunctionDeclaration","line":291,"sha256":"9ecb3b1479beb8ec8609b32220f76ee5d6274545ebbadead44db2eb3cc32c689","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
-{"name":"<ArrowFunction@399>","kind":"ArrowFunction","line":399,"sha256":"4dc74a8e8165203625bb410dd230f149be1f5ae1fcbee4189de2bb25515cadca","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"workers/slopbot/models.ts","sha256":"87497c5ccca6eaf79743564461656940eb56624e7791b07a5b422ff7982f1d5d","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"runRoute","kind":"FunctionDeclaration","line":58,"sha256":"c97fb25f35cb4de96bb20b973010164256c843129b7a29b5206ed70c0c053061","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"budgetResetAt","kind":"FunctionDeclaration","line":88,"sha256":"8640538e8587a012cf0d10811c4416f72f36137decb6b2341523a149a37367af","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"runStructuredRoute","kind":"FunctionDeclaration","line":115,"sha256":"7bd035bec7eea1475acbf0a177c3d44af77fab69714bd1001cb8e142c028be2a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"parseJson","kind":"FunctionDeclaration","line":236,"sha256":"73c9fb750b8556aa26c3eb7bc74804ad2027f8d5176264a7625ed72fa36b4731","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"providerCost","kind":"FunctionDeclaration","line":245,"sha256":"4d2015488a06619c83901e6da29894d501ebfc36c31d92173e805607d33a5a17","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"providerRequestId","kind":"FunctionDeclaration","line":283,"sha256":"2d2d08a19b74f6ae8a5f9b2ae2818c1cdf70dd55fa59b40a1986446d14bd2111","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"callModel","kind":"FunctionDeclaration","line":290,"sha256":"9ecb3b1479beb8ec8609b32220f76ee5d6274545ebbadead44db2eb3cc32c689","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@398>","kind":"ArrowFunction","line":398,"sha256":"4dc74a8e8165203625bb410dd230f149be1f5ae1fcbee4189de2bb25515cadca","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"workers/slopbot/penalties.ts","sha256":"0ca11c771f1424bc8d559cc11480bbf8253ad495c3672d9c9d2d9bddf8794622","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"penaltyFor","kind":"FunctionDeclaration","line":59,"sha256":"6ce36085d4d4729996eb7631d223338af0614a85bd81decd1b2d1dc24754a521","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

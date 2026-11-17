@@ -1,5 +1,6 @@
 // @source migrations/0085_slopbot_provider_failure_notices.sql
 // @source migrations/0122_orbio_provider_failure_notices.sql
+// @source migrations/0133_slopbot_failure_notice_suppressions.sql
 // @source workers/notify/contracts.ts
 // @source workers/slopbot/failure-alerts.ts
 // @source workers/slopbot/spend-alerts.ts
@@ -7,7 +8,9 @@
 // At most one notify-service request per durable notice claim, including
 // ambiguous transport failure. The service may send to several administrators;
 // its provider fan-out and partial results are notification_admin_fanout.
-// Three scaled new notices retain all past claims. A newly inserted failed
+// A suppressed claim (served by a fallback, or a repeat within six hours;
+// operator decision, 17 November 2026) makes zero requests, which this
+// at-most-one bound already admits. Three scaled new notices retain all past claims. A newly inserted failed
 // Orbio or Surplus call earns one notice; successes and other providers do not.
 // Existing cost rows are not reinserted by trigger replacement and earn no
 // new notice. Provider-call IDs and database uniqueness are abstracted by one
