@@ -3566,7 +3566,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
+      "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
       "candidateLines": [78, 82, 84, 85],
       "review": "mapped-abstraction"
@@ -5127,6 +5127,13 @@
       "candidateLines": [
         52, 57, 61, 77, 81, 138, 163, 266, 291, 314, 317, 320, 327
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/verify-dependency-audit.mjs",
+      "sha256": "6d9b66ec498fc85b68294b0c8ed2584b63cb39e8f94f2eaaad99e31fcc113e73",
+      "models": ["formal/models/release/dependency_backport_audit.qnt"],
+      "candidateLines": [24, 45, 47, 53],
       "review": "mapped-abstraction"
     },
     {
@@ -14876,6 +14883,18 @@
         "modelSourceSelectsAffectedModelsTest",
         "pushCannotSkipTest",
         "releaseCoverageTest"
+      ]
+    },
+    {
+      "path": "formal/models/release/dependency_backport_audit.qnt",
+      "sha256": "137f442249878f56fe5087b2957dae4ef0087fed08e7969e3007bbb47ea3e46c",
+      "sources": ["scripts/verify-dependency-audit.mjs"],
+      "scenarios": [
+        "cleanReportStillChecksV4Test",
+        "invalidReportRefusedTest",
+        "knownFindingNeedsBothCopiesTest",
+        "missingV2RefusedTest",
+        "newFindingRefusedTest"
       ]
     },
     {
