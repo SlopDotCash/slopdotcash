@@ -10,10 +10,8 @@ function isOpenProject(project: ProjectDefinition): boolean {
 }
 
 /**
- * Every open project for the home page's one projects grid (operator
- * decision, 16 November 2026). A project whose card would only advertise a
- * security bounty is left out: the Security bounties section already lists
- * it. Featured and community placement only break ties in `homeProjectOrder`.
+ * Every open project for the homepage's Featured and Community sections.
+ * A bounty-only card belongs in the Security bounties section instead.
  */
 export function homeProjects() {
   return PROJECTS.filter(
@@ -26,14 +24,14 @@ export function homeProjects() {
 }
 
 /**
- * The home grid's order, given each project as shown this month: stablecoin
+ * Homepage order, given each project as shown this month: stablecoin
  * pools by monthly amount, largest first, then token pools, then external
  * prizes, then points-only projects. Equal entries keep featured placement
  * first, then registry order.
  */
-export function homeProjectOrder(
-  projects: readonly ProjectDefinition[],
-): ProjectDefinition[] {
+export function homeProjectOrder<Project extends ProjectDefinition>(
+  projects: readonly Project[],
+): Project[] {
   const group = (project: ProjectDefinition) => {
     const reward = project.reward;
     if (reward.kind === "external-prize-share") return 2;

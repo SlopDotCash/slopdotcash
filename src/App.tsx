@@ -36,12 +36,12 @@ import {
 } from "./lib/intake-cap.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
-  asShown,
   listedThisMonth,
   loadPoolFunding,
   monthName,
   NOT_LISTED_NOTICE,
   poolFundingStatus,
+  publicPoolReward,
 } from "./lib/pool-funding";
 import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
@@ -621,18 +621,29 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({ project }: { project: ProjectDefinition }) {
+function ProjectCard({
+  project,
+  promise,
+}: {
+  project: ProjectDefinition;
+  promise: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
+  const pointsOnly = monthlyPoolPointsOnly(project.reward);
   const amount = bounty
     ? securityBountyAmountLabel(bounty)
-    : project.reward.kind === "monthly-pool"
-      ? monthlyPoolCapLabel(project)
-      : // An external prize is someone else's money: the card leads with
-        // points, and the project page names the prize (operator decision,
-        // 16 November 2026).
-        "Points";
+    : pointsOnly
+      ? "Points only"
+      : project.reward.kind === "monthly-pool"
+        ? promise
+          ? formatRewardCapDisplay(
+              project.reward.monthlyCapDisplay,
+              project.rewardAsset,
+            )
+          : monthlyPoolCapLabel(project)
+        : "Points";
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -652,15 +663,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             </span>
           ) : project.reward.kind === "external-prize-share" ? (
             <span> + external prize</span>
-          ) : monthlyPoolPointsOnly(project.reward) ? (
-            <span> + points</span>
-          ) : (
-            <span>/mo</span>
-          )}
+          ) : !pointsOnly ? (
+            <span>{promise ? `/mo · ${promise}` : "/mo"}</span>
+          ) : null}
         </p>
-        {!bounty && monthlyPoolPointsOnly(project.reward) ? (
-          <small className="project-money-state">Points only</small>
-        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -770,7 +776,10 @@ function HomePage() {
       .filter(
         (project) => !intakePaused(project, mergeIndex?.get(project.id), now),
       )
-      .map((project) => asShown(project, fundingIndex, now)),
+      .map((project) => {
+        const shown = publicPoolReward(project, fundingIndex, now);
+        return { ...shown.project, promise: shown.promise };
+      }),
   );
   return (
     <main>
@@ -790,11 +799,33 @@ function HomePage() {
         {listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
         ) : (
-          <div className="project-grid">
-            {listedProjects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
-          </div>
+          (["featured", "community"] as const).map((tier) => {
+            const projects = listedProjects.filter(
+              (project) => project.listingTier === tier,
+            );
+            if (projects.length === 0) return null;
+            const heading = `${tier}-projects`;
+            return (
+              <section
+                aria-labelledby={heading}
+                className="project-tier"
+                key={tier}
+              >
+                <h3 id={heading}>
+                  {tier === "featured" ? "Featured" : "Community"}
+                </h3>
+                <div className="project-grid">
+                  {projects.map((project) => (
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      promise={project.promise}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })
         )}
       </section>
       <section
@@ -1325,7 +1356,7 @@ function ProjectRewardSummary({
   );
   const index = funding.status === "ready" ? funding.index : null;
   const now = new Date();
-  const project = asShown(registered, index, now);
+  const { project, promise } = publicPoolReward(registered, index, now);
   const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
@@ -1335,10 +1366,10 @@ function ProjectRewardSummary({
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
         ) : null}
-        {index !== null && !listedThisMonth(registered, index, now) ? (
+        {!promise && index !== null && !listedThisMonth(registered, index, now) ? (
           <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
         ) : null}
-        {projectRewardSummaries(project).map((summary) => (
+        {projectRewardSummaries(project, promise !== null).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
               <>
@@ -1351,7 +1382,9 @@ function ProjectRewardSummary({
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
-                {" monthly, split between contributors"}
+                {promise
+                  ? ` monthly · ${promise}`
+                  : " monthly, split between contributors"}
               </>
             ) : summary.kind === "security-bounty" ? (
               <>
@@ -1378,6 +1411,11 @@ function ProjectRewardSummary({
             )}
           </p>
         ))}
+        {promise ? (
+          <p className="project-reward-status">
+            Promised by the project owner; Slop does not guarantee payment.
+          </p>
+        ) : null}
       </div>
     </div>
   );
