@@ -1,3 +1,4 @@
+import { Eye } from "lucide-react";
 import { Link } from "./Link";
 import type { PayoutExclusionRelationship } from "./lib/payout-exclusions.mjs";
 import {
@@ -12,15 +13,16 @@ import {
 import {
   Avatar,
   EmptyState,
+  FundedMeter,
   formatCycleMonth,
   formatDate,
   formatMicroUsdc,
   formatPercent,
   formatPointsFromThirds,
   formatRewardMinor,
-  monthlyPoolLabel,
   monthlyPoolUnfunded,
-  reviewBudgetLabel,
+  ReviewBudget,
+  StatusBadge,
   UNFUNDED_POOL_HEADLINE,
 } from "./Presentation";
 
@@ -52,19 +54,31 @@ export function CycleAllocation({
       <div className="section-heading">
         <h2>{formatCycleMonth(view.cycle.id)}</h2>
         <p className="data-freshness">Updated {formatDate(updatedAt)}</p>
-        {view.project.reward.reviewBudget ? (
-          <p>{reviewBudgetLabel(view.project.reward.reviewBudget)}</p>
+        {view.project.reward.reviewBudget?.fundingState === "committed" ? (
+          <p>
+            <ReviewBudget reviewBudget={view.project.reward.reviewBudget} />
+          </p>
         ) : null}
         {view.reward.kind === "monthly-pool" ? (
           <p>
-            {monthlyPoolUnfunded(view.project.reward)
-              ? `${UNFUNDED_POOL_HEADLINE}.`
-              : `Projected from accepted work · ${monthlyPoolLabel(view.project.reward, view.project.rewardAsset)}.`}
+            {monthlyPoolUnfunded(view.project.reward) ? (
+              <StatusBadge>{UNFUNDED_POOL_HEADLINE}</StatusBadge>
+            ) : (
+              <FundedMeter
+                fundedMinor={view.project.reward.committedMinor}
+                capMinor={view.project.reward.monthlyCapMinor}
+                funded={formatRewardMinor(
+                  view.project.reward.committedMinor,
+                  view.project.rewardAsset,
+                )}
+                cap={view.project.reward.monthlyCapDisplay}
+              />
+            )}
           </p>
         ) : null}
       </div>
       {view.leaders.length === 0 ? (
-        <EmptyState text="No accepted work this month yet." />
+        <EmptyState text="No accepted work" />
       ) : (
         <div className="leader-table">
           <table className="leader-grid">
@@ -99,12 +113,7 @@ export function CycleAllocation({
                       <Avatar actor={leader.actor} />
                       <span>
                         <strong>{leader.actor.login}</strong>
-                        <small>
-                          {leader.acceptedOutcomeCount} accepted{" "}
-                          {leader.acceptedOutcomeCount === 1
-                            ? "event"
-                            : "events"}
-                        </small>
+                        <small>{leader.acceptedOutcomeCount} accepted</small>
                       </span>
                     </Link>
                   </td>
@@ -116,10 +125,13 @@ export function CycleAllocation({
                       reviewer={reviewers.get(leader.actor.id)}
                     />
                     {leader.penaltyThirds > 0 ? (
-                      <small>
-                        After a {formatPointsFromThirds(leader.penaltyThirds)}{" "}
-                        point Slopbot penalty
-                      </small>
+                      <StatusBadge tone="danger" title="Slopbot penalty">
+                        −{formatPointsFromThirds(leader.penaltyThirds)}
+                        <span className="visually-hidden">
+                          {" "}
+                          point Slopbot penalty
+                        </span>
+                      </StatusBadge>
                     ) : null}
                   </td>
                   <td>
@@ -146,9 +158,15 @@ function RewardValue({
 }) {
   if (leader.payoutExclusion)
     return (
-      <>
-        Excluded from payout ({PAYOUT_EXCLUSION_LABELS[leader.payoutExclusion]})
-      </>
+      <StatusBadge
+        title={`Excluded from payout: ${PAYOUT_EXCLUSION_LABELS[leader.payoutExclusion]}`}
+      >
+        Excluded
+        <span className="visually-hidden">
+          {" "}
+          from payout ({PAYOUT_EXCLUSION_LABELS[leader.payoutExclusion]})
+        </span>
+      </StatusBadge>
     );
   if (view.reward.kind === "external-prize-share")
     return (
@@ -178,15 +196,10 @@ function RewardValue({
     (total, entry) => total + entry.adjustedWeight,
     0,
   );
-  return (
-    <>
-      {formatPercent(
-        totalWeight > 0
-          ? Math.round((leader.adjustedWeight * 1_000_000) / totalWeight)
-          : 0,
-      )}{" "}
-      of payment weight
-    </>
+  return formatPercent(
+    totalWeight > 0
+      ? Math.round((leader.adjustedWeight * 1_000_000) / totalWeight)
+      : 0,
   );
 }
 
@@ -194,7 +207,10 @@ function ReviewContribution({ reviewer }: { reviewer?: ReviewerLeader }) {
   if (!reviewer) return null;
   return (
     <small className="review-score-detail">
-      Includes {formatPointsFromThirds(reviewer.reviewThirds)} review points
+      <StatusBadge icon={<Eye />} title="Review points">
+        {formatPointsFromThirds(reviewer.reviewThirds)}
+        <span className="visually-hidden"> review points</span>
+      </StatusBadge>
     </small>
   );
 }

@@ -18,3 +18,8 @@ export function networkLabel(network: string): string {
     ? NETWORK_LABELS[network]
     : network;
 }
+
+/** Whether the display name marks a test network. */
+export function isTestNetwork(network: string): boolean {
+  return /test/iu.test(networkLabel(network));
+}

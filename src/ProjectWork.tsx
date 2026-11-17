@@ -77,7 +77,7 @@ export function ProjectWork({
               })}
             </ul>
           ) : (
-            <p className="muted">No suggested work right now.</p>
+            <p className="muted">Nothing open</p>
           )}
           {!expanded && items.length > SHOWN ? (
             <button

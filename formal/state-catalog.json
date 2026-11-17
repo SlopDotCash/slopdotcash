@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "bd3e2c11f2744a76fb604cd6c1863eded0f64e7f0e2051dd5d35740ae74c1a0b",
+  "inventorySha256": "621029fe8921b0b499d4cdf0565cfdd4aa4b61cb28251c2566e7e124c8146178",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2096,12 +2096,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 236,
+      "line": 242,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2115,7 +2116,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 474,
+      "line": 484,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2129,6 +2130,7 @@
       ],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2150,12 +2152,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3649,
+      "line": 3787,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2169,12 +2172,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4253,
+      "line": 4391,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2369,13 +2373,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 437,
+      "line": 440,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2390,13 +2396,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 446,
+      "line": 449,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2405,7 +2413,7 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1257,
+      "line": 1275,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
@@ -2422,7 +2430,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 137,
+      "line": 146,
       "name": "useState",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2436,7 +2444,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 174,
+      "line": 183,
       "name": "mode",
       "kind": "string-union",
       "values": ["enforcement", "enforcement-preview"],
@@ -2450,7 +2458,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 472,
+      "line": 485,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2477,7 +2485,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1103,
+      "line": 1117,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2504,7 +2512,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 24,
+      "line": 27,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
@@ -2526,7 +2534,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 37,
+      "line": 40,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
@@ -2542,7 +2550,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 40,
+      "line": 43,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
@@ -2573,7 +2581,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 220,
+      "line": 227,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2592,7 +2600,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 544,
+      "line": 558,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2611,7 +2619,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1492,
+      "line": 1487,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2707,7 +2715,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1062,
+      "line": 1061,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2731,7 +2739,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1544,
+      "line": 1543,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2755,7 +2763,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2411,
+      "line": 2469,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2779,7 +2787,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2416,
+      "line": 2474,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2803,7 +2811,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2423,
+      "line": 2481,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -2827,7 +2835,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 265,
+      "line": 367,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2855,7 +2863,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 980,
+      "line": 1058,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2883,7 +2891,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 995,
+      "line": 1073,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2911,7 +2919,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 997,
+      "line": 1075,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2939,7 +2947,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1013,
+      "line": 1091,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2967,7 +2975,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1052,
+      "line": 1130,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3023,7 +3031,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1375,
+      "line": 1492,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3051,7 +3059,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1650,
+      "line": 1734,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -3103,6 +3111,25 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["finalized"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/VettingEvidence.tsx",
+      "line": 383,
+      "name": "useState",
+      "kind": "string-union",
+      "values": ["", "downloading", "verified-download", "verified-text"],
+      "models": [
+        "formal/models/ui/ui_artifacts.qnt",
+        "formal/models/ui/ui_vetting_inventory.qnt",
+        "formal/models/ui/ui_vetting_reader.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "",
+        "downloading",
+        "verified-download",
+        "verified-text"
+      ],
       "review": "candidate-only"
     },
     {

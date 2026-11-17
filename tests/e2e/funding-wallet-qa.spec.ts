@@ -329,7 +329,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   await page.goto("/projects/eliza/funding");
   const section = page.getByRole("region", { name: "Project escrow" });
   // Loading shows placeholder tiles and a status chip, never zero.
-  await expect(section.getByRole("status")).toHaveText("Loading vault totals…");
+  await expect(section.getByRole("status")).toHaveText("Loading vault totals");
   await expect(section.getByText("USDC")).toHaveCount(0);
   release();
   const heading = section.getByRole("heading", {
@@ -412,7 +412,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   // A vault without a finalized read and a failed first read stay distinct.
   read = { status: 200, snapshots: [] };
   await page.reload();
-  await expect(section.getByRole("status")).toHaveText("Totals not read yet");
+  await expect(section.getByRole("status")).toHaveText("Pending");
   await expect(section.getByText("USDC")).toHaveCount(0);
   // An empty successful read must not hide a later refresh failure.
   read = { status: 503, snapshots: [] };
@@ -427,7 +427,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   read = { status: 200, snapshots: [] };
   await section.getByRole("button", { name: "Retry" }).click();
   await expect(section.getByRole("alert")).toHaveCount(0);
-  await expect(section.getByRole("status")).toHaveText("Totals not read yet");
+  await expect(section.getByRole("status")).toHaveText("Pending");
   read = { status: 503, snapshots: [] };
   await page.reload();
   await expect(section.getByRole("alert")).toContainText(
@@ -473,9 +473,7 @@ test("vault totals stay current without a refresh button and keep each state dis
   await expect(
     page.getByRole("region", { name: "Project escrow", exact: true }),
   ).toHaveCount(0);
-  await expect(page.getByText("The project vault is not set up.")).toHaveCount(
-    0,
-  );
+  await expect(page.getByText("No vault yet.")).toHaveCount(0);
   await audit(page, info, "unconfigured-public-vault-hidden");
   await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
   await expect(

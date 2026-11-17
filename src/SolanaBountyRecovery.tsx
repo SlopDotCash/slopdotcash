@@ -159,10 +159,7 @@ export function SolanaBountyRecovery({
     });
   return (
     <div className="direct-bounty-payment">
-      <p>
-        Sign expired request messages to check chain history. This does not send
-        a transaction.
-      </p>
+      <p>Message signature only. Nothing is sent.</p>
       <WalletConnection
         address={wallet?.address ?? null}
         wallets={wallets}

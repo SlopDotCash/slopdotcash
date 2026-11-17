@@ -1,4 +1,16 @@
+import {
+  ArrowDown,
+  Check,
+  Clock,
+  Coins,
+  ExternalLink,
+  Lock,
+  RefreshCw,
+  Vault,
+  Wallet,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChainIcon } from "./ChainIcon";
 import { readBoundedJson } from "./lib/browser-json";
 import { errorMessage } from "./lib/errors";
 import { networkLabel } from "./lib/network-names";
@@ -18,7 +30,17 @@ import {
   sendReferralClaim,
 } from "./lib/referral-claims";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
-import { formatDateTime } from "./Presentation";
+import { shortAddress } from "./lib/wallets";
+import {
+  formatDateTime,
+  MetricGrid,
+  MetricTile,
+  StatusBadge,
+} from "./Presentation";
+
+/** Outcomes shown as a badge instead of a sentence. */
+const CLAIMED = "Claimed";
+const SUBMITTED = "Submitted";
 
 type Connection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 interface Pending extends PendingAttempt {
@@ -58,18 +80,12 @@ async function withPendingLock<T>(
   data: ReferralAccount,
   work: () => T | Promise<T>,
 ) {
-  if (!navigator.locks)
-    throw new Error(
-      "This browser can't handle claims safely. Update it or use a different browser.",
-    );
+  if (!navigator.locks) throw new Error("Unsupported browser.");
   return navigator.locks.request(
     `${pendingKey(data)}:mutation`,
     { ifAvailable: true },
     async (lock) => {
-      if (!lock)
-        throw new Error(
-          "A claim request is active in another view. Wait for it to finish, then refresh.",
-        );
+      if (!lock) throw new Error("Claim open in another tab.");
       return work();
     },
   );
@@ -187,16 +203,11 @@ export function ReferralClaims() {
                   "The saved claim request changed. Refresh its record before clearing it.",
                 );
               }
-              if (cleared) setMessage("Your claim is verified.");
+              if (cleared) setMessage(CLAIMED);
             } catch (cause) {
               if (controller.signal.aborted) return;
-              setMessage("Your claim is verified.");
-              setError(
-                errorMessage(
-                  cause,
-                  "Your browser could not clear the saved claim status. Refresh before another attempt.",
-                ),
-              );
+              setMessage(CLAIMED);
+              setError(errorMessage(cause, "Could not clear status. Refresh."));
             }
           }
         } else setPending(null);
@@ -227,6 +238,17 @@ export function ReferralClaims() {
     value === null || !data.program
       ? "Unknown"
       : `${formatBaseUnits(value, data.program.decimals)} program tokens`;
+  const claimable =
+    data.claimableBase === null || !data.program ? (
+      "Unknown"
+    ) : (
+      <>
+        {formatBaseUnits(data.claimableBase, data.program.decimals)}{" "}
+        <span role="img" aria-label="program tokens" title="Program tokens">
+          <Coins aria-hidden="true" size={18} />
+        </span>
+      </>
+    );
   const canReview =
     !loadFailed &&
     data.status === "ready" &&
@@ -295,14 +317,10 @@ export function ReferralClaims() {
             try {
               created = createPendingAttempt(key, p, localStorage);
             } catch {
-              throw new Error(
-                "Your browser could not save the claim status. Enable site storage, then retry. No wallet request was sent.",
-              );
+              throw new Error("Enable site storage. Nothing sent.");
             }
             if (!created)
-              throw new Error(
-                "A saved claim request already exists. Refresh and check wallet activity before another attempt.",
-              );
+              throw new Error("Claim already pending. Check wallet.");
             recorded.value = p;
             rememberPending(account, p, { value: p, raw: JSON.stringify(p) });
             requested = true;
@@ -319,9 +337,7 @@ export function ReferralClaims() {
                 value: captured,
                 raw: JSON.stringify(captured),
               });
-              setError(
-                "Your browser could not save the claim status. Keep this page open and check wallet activity.",
-              );
+              setError("Status not saved. Check wallet.");
             }
             return;
           }
@@ -331,9 +347,7 @@ export function ReferralClaims() {
                 value: result,
                 raw: JSON.stringify(result),
               });
-              setMessage(
-                "Claim submitted. Wait for the verified record to refresh.",
-              );
+              setMessage(SUBMITTED);
             } else {
               setError(
                 "The saved claim request changed. Refresh before another attempt.",
@@ -358,9 +372,7 @@ export function ReferralClaims() {
       if ((e as { code?: unknown })?.code === 4001) {
         setMessage("The wallet request was cancelled.");
       } else if (declined) {
-        setError(
-          `The wallet request was cancelled. ${errorMessage(e, "The saved status could not be cleared. Refresh before another attempt.")}`,
-        );
+        setError(`Cancelled. ${errorMessage(e, "Refresh before retrying.")}`);
       } else
         setError(
           requested
@@ -394,9 +406,7 @@ export function ReferralClaims() {
           captured.key !== key ||
           captured.snapshot.raw === undefined
         )
-          throw new Error(
-            "Your browser could not read the saved claim status. Enable site storage and refresh before clearing it.",
-          );
+          throw new Error("Enable site storage, then refresh.");
         if (captured.snapshot.value) {
           if (!clearPendingAttempt(key, captured.snapshot.value, localStorage))
             throw new Error(
@@ -415,12 +425,7 @@ export function ReferralClaims() {
       });
     } catch (cause) {
       if (current())
-        setError(
-          errorMessage(
-            cause,
-            "Your browser could not clear the claim status. Enable site storage, then retry.",
-          ),
-        );
+        setError(errorMessage(cause, "Enable site storage, then retry."));
     } finally {
       if (current()) setBusy(false);
     }
@@ -436,47 +441,64 @@ export function ReferralClaims() {
     >
       <h2 id="referral-rewards-heading">Referral rewards</h2>
       {error && <p role="alert">{error}</p>}
-      {data.status === "unknown" && (
-        <p role="status">The claim record is not available yet.</p>
-      )}
-      {data.status === "stale" && (
+      {data.status !== "ready" || data.paused || data.ended ? (
         <p role="status">
-          This claim record is stale. Showing the last verified amounts.
+          {data.status === "unknown" && <StatusBadge>Unavailable</StatusBadge>}
+          {data.status === "stale" && (
+            <StatusBadge tone="warning">Stale</StatusBadge>
+          )}{" "}
+          {data.paused && <StatusBadge tone="warning">Paused</StatusBadge>}{" "}
+          {data.ended && <StatusBadge>Closed</StatusBadge>}
         </p>
-      )}
-      <p>
-        <strong>{amount(data.claimableBase)}</strong> claimable
-      </p>
-      {data.paused && <p role="status">Claims are paused.</p>}
-      {data.ended && <p role="status">Claims are closed.</p>}
-      {data.latestVoided && (
-        <p role="status">
-          The latest monthly update was voided. Only earlier rewards can be
-          claimed.
-        </p>
-      )}
+      ) : null}
+      <MetricGrid>
+        <MetricTile label="Claimable" value={claimable} />
+      </MetricGrid>
+      {data.latestVoided && <p role="status">Latest update voided</p>}
       {data.pendingUntil && (
         <p>
-          New rewards can be claimed after {formatDateTime(data.pendingUntil)},
-          once verified.
+          <Clock aria-hidden="true" size={14} /> Next{" "}
+          {formatDateTime(data.pendingUntil)}
         </p>
       )}
       {!data.wallet ? (
         <p>
-          <a href="/account#wallets">Confirm a Robinhood wallet in Account</a>.
-          The first wallet included stays fixed.
+          <a href="/account#wallets">Add Robinhood wallet (permanent)</a>
         </p>
       ) : null}
-      {message && <p role="status">{message}</p>}
+      {message && (
+        <p role="status">
+          {message === CLAIMED ? (
+            <StatusBadge
+              tone="success"
+              icon={<Check aria-hidden="true" size={14} />}
+            >
+              {message}
+            </StatusBadge>
+          ) : message === SUBMITTED ? (
+            <StatusBadge icon={<Clock aria-hidden="true" size={14} />}>
+              {message}
+            </StatusBadge>
+          ) : (
+            message
+          )}
+        </p>
+      )}
       {pending !== null && (
         <div role="status">
           <p>
             {pending?.hash
-              ? "A claim was submitted. It is not yet verified in this record."
-              : "A wallet request may have been sent. Check wallet activity."}{" "}
+              ? "Submitted · unverified"
+              : "Possibly sent · check wallet"}{" "}
             {link && (
-              <a href={link} target="_blank" rel="noreferrer">
-                View transaction
+              <a
+                href={link}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="View transaction"
+                title="View transaction"
+              >
+                <ExternalLink aria-hidden="true" size={16} />
               </a>
             )}
           </p>
@@ -485,18 +507,20 @@ export function ReferralClaims() {
             disabled={busy}
             onClick={() => void resetPending()}
           >
-            I checked wallet activity. Review again
+            Review again
           </button>
         </div>
       )}
       <div className="handoff-actions">
         <button
-          className="button secondary-button"
+          className="button secondary-button icon-button"
           type="button"
           disabled={busy}
           onClick={reload}
+          aria-label="Refresh record"
+          title="Refresh record"
         >
-          Refresh record
+          <RefreshCw aria-hidden="true" size={18} />
         </button>
         {canReview &&
           !review &&
@@ -507,37 +531,58 @@ export function ReferralClaims() {
               type="button"
               disabled={busy}
               onClick={() => void connect(wallet)}
+              aria-label={`Claim with ${wallet.name}`}
+              title={`Claim with ${wallet.name}`}
             >
-              Review with {wallet.name}
+              {wallet.icon ? (
+                <img src={wallet.icon} width={20} height={20} alt="" />
+              ) : (
+                <Wallet aria-hidden="true" size={18} />
+              )}{" "}
+              Claim
             </button>
           ))}
       </div>
-      {canReview && !wallets.length && (
-        <p>Open this page in a browser with your EVM wallet to claim.</p>
-      )}
+      {canReview && !wallets.length && <p>No EVM wallet found</p>}
       {review && (
         <section
           className="referral-claim-review"
           aria-label="Review referral claim"
         >
-          <h3>Review your claim</h3>
           <p>
-            Receive {amount(review.data.claimableBase)} on{" "}
-            {networkLabel(review.data.program?.network ?? "")}.
+            <span
+              role="img"
+              aria-label={networkLabel(review.data.program?.network ?? "")}
+              title={networkLabel(review.data.program?.network ?? "")}
+            >
+              <ChainIcon chain="robinhood" decorative />
+            </span>{" "}
+            <strong>{amount(review.data.claimableBase)}</strong>
           </p>
-          <p>
-            Destination:{" "}
-            <code className="referral-address">{review.data.wallet}</code>
-          </p>
-          <p>
-            Contract:
-            <code className="referral-address">
-              {review.data.program?.distributor}
-            </code>
-          </p>
-          <p>
-            Your wallet pays the network fee. No token approval is required.
-          </p>
+          <div className="consent-route">
+            <dl className="consent-party">
+              <dt>
+                <Vault aria-hidden="true" size={16} />
+                Contract
+              </dt>
+              <dd>
+                <code className="referral-address">
+                  {review.data.program?.distributor}
+                </code>
+              </dd>
+            </dl>
+            <ArrowDown className="consent-arrow" aria-hidden="true" size={18} />
+            <dl className="consent-party">
+              <dt>
+                <Wallet aria-hidden="true" size={16} />
+                Your wallet
+              </dt>
+              <dd>
+                <code className="referral-address">{review.data.wallet}</code>
+              </dd>
+            </dl>
+          </div>
+          <p>You pay gas · no approval</p>
           <div className="handoff-actions">
             <button
               className="button primary-button"
@@ -545,7 +590,7 @@ export function ReferralClaims() {
               disabled={busy}
               onClick={() => void send()}
             >
-              Confirm claim in wallet
+              Claim
             </button>
             <button
               type="button"
@@ -567,12 +612,35 @@ export function ReferralClaims() {
           <dt>Claimed</dt>
           <dd>{amount(data.claimedBase)}</dd>
         </dl>
-        {data.program && <p>Network: {networkLabel(data.program.network)}.</p>}
-        {data.observedAt && <p>Updated {formatDateTime(data.observedAt)}.</p>}
+        {data.program && (
+          <p>
+            <span
+              role="img"
+              aria-label={networkLabel(data.program.network)}
+              title={networkLabel(data.program.network)}
+            >
+              <ChainIcon chain="robinhood" decorative />
+            </span>
+          </p>
+        )}
+        {data.observedAt && (
+          <p>
+            <span role="img" aria-label="Updated" title="Updated">
+              <Clock aria-hidden="true" size={14} />
+            </span>{" "}
+            {formatDateTime(data.observedAt)}
+          </p>
+        )}
         {data.wallet ? (
           <p>
-            Referral wallet (fixed for this program):
-            <code className="referral-address">{data.wallet}</code>
+            <span
+              role="img"
+              aria-label="Referral wallet, fixed"
+              title="Referral wallet, fixed"
+            >
+              <Lock aria-hidden="true" size={14} />
+            </span>{" "}
+            <code title={data.wallet}>{shortAddress(data.wallet)}</code>
           </p>
         ) : null}
       </details>

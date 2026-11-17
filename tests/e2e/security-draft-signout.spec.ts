@@ -171,9 +171,7 @@ test("a confirmed account replacement cannot restore the prior reporter's draft"
   actor = "43";
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByText("Draft kept in this tab for @reporter-43.", {
-      exact: false,
-    }),
+    page.getByText("Draft · @reporter-43", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: "Summary", exact: true }),
@@ -182,9 +180,7 @@ test("a confirmed account replacement cannot restore the prior reporter's draft"
   actor = "42";
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByText("Draft kept in this tab for @reporter-42.", {
-      exact: false,
-    }),
+    page.getByText("Draft · @reporter-42", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("textbox", { name: /^Description\b/u }),

@@ -5,6 +5,7 @@
  * reinstates it. The member sees only their own flag.
  */
 
+import { Flag, Info, LoaderCircle } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import type { FlagCategory } from "../backend/vetting/flags";
 import { loginHref } from "./lib/browser-deployment";
@@ -16,16 +17,16 @@ import {
 } from "./lib/project-api";
 import type { RestrictionState } from "./lib/project-contracts";
 import { useAction } from "./lib/use-action";
-import { formatDateTime } from "./Presentation";
+import { formatDateTime, StatusBadge } from "./Presentation";
 
 /** A label for every category the flag API accepts, in picker order. */
 const CATEGORY_LABELS: Record<FlagCategory, string> = {
-  "wallet-drainer": "Wallet drainer or key theft",
-  "credential-theft": "Credential or password theft",
-  "secret-exfiltration": "Sends secrets or data elsewhere",
-  "unsafe-execution": "Unsafe install or build-time execution",
-  "prompt-injection": "Instructions that try to redirect an agent",
-  other: "Other malicious behavior",
+  "wallet-drainer": "Wallet drainer",
+  "credential-theft": "Credential theft",
+  "secret-exfiltration": "Data exfiltration",
+  "unsafe-execution": "Unsafe install or build",
+  "prompt-injection": "Prompt injection",
+  other: "Other",
 };
 
 type OwnFlag = {
@@ -135,22 +136,26 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
   const withdraw = () =>
     act(
       projectApiRequest<FlagStatus>("POST", `${path}/withdraw`, {}),
-      () => "Flag withdrawn. An existing pause stays until a clean scan.",
+      () => "Flag withdrawn.",
     );
 
   return (
     <details className="project-risk-flag">
-      <summary>Report malicious code in this project</summary>
-      <p>
-        Flagging needs a GitHub account at least 30 days old and one accepted
-        Slop contribution. Two flags pause the project.
-      </p>
+      <summary>
+        <Flag size={16} aria-hidden="true" /> Report
+      </summary>
       {state.status === "loading" ? (
-        <p role="status">Loading your flag status…</p>
+        <p role="status" aria-label="Loading your flag status">
+          <LoaderCircle className="wallet-spin" aria-hidden="true" />
+        </p>
       ) : state.status === "signed-out" ? (
         <p>
-          <a href={loginHref(window.location.pathname)}>Sign in with GitHub</a>{" "}
-          to flag this project.
+          <a
+            className="button secondary-button"
+            href={loginHref(window.location.pathname)}
+          >
+            Sign in with GitHub
+          </a>
         </p>
       ) : state.status === "error" ? (
         <p className="form-error" role="alert">
@@ -162,15 +167,21 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
       ) : state.value.flag ? (
         <div className="security-form">
           <p>
-            You flagged this project on{" "}
-            {formatDateTime(state.value.flag.createdAt)} for{" "}
-            <strong>{categoryLabel(state.value.flag.category)}</strong>. It
-            counts until {formatDateTime(state.value.flag.expiresAt)}.
-            {state.value.restriction === "clear"
-              ? " The project is not paused."
-              : state.value.pausedByFlags
-                ? " The project is paused until a clean fresh scan."
-                : ` The project is ${state.value.restriction}; a moderator decides.`}
+            <StatusBadge icon={<Flag size={14} />}>
+              {categoryLabel(state.value.flag.category)}
+            </StatusBadge>{" "}
+            until {formatDateTime(state.value.flag.expiresAt)}{" "}
+            {state.value.restriction === "clear" ? (
+              <StatusBadge tone="success">Active</StatusBadge>
+            ) : state.value.pausedByFlags ? (
+              <StatusBadge tone="warning">Paused</StatusBadge>
+            ) : (
+              <StatusBadge tone="danger">
+                {state.value.restriction === "banned"
+                  ? "Banned"
+                  : "Quarantined"}
+              </StatusBadge>
+            )}
           </p>
           <button
             className="button"
@@ -178,7 +189,7 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
             onClick={withdraw}
             type="button"
           >
-            {busy ? "Withdrawing…" : "Withdraw my flag"}
+            {busy ? "Withdrawing…" : "Withdraw"}
           </button>
         </div>
       ) : (
@@ -204,13 +215,11 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
               maxLength={4000}
               minLength={20}
               onChange={(event) => setEvidence(event.target.value)}
+              placeholder="File, line or command. No secrets."
               required
               rows={4}
               value={evidence}
             />
-            <small className="field-hint">
-              Name the file, line or command. Do not paste secrets.
-            </small>
           </label>
           <label>
             GitHub link (optional)
@@ -223,13 +232,22 @@ export function ProjectRiskFlag({ projectId }: { projectId: string }) {
               value={evidenceUrl}
             />
           </label>
-          <button
-            className="button primary-button"
-            disabled={busy}
-            type="submit"
-          >
-            {busy ? "Flagging…" : "Flag this project"}
-          </button>
+          <p>
+            <button
+              className="button primary-button"
+              disabled={busy}
+              type="submit"
+            >
+              {busy ? "Flagging…" : "Flag"}
+            </button>{" "}
+            <span
+              aria-label="Needs 30-day account and one accepted contribution"
+              role="img"
+              title="Needs 30-day account and one accepted contribution"
+            >
+              <Info size={16} aria-hidden="true" />
+            </span>
+          </p>
         </form>
       )}
       {error ? (
