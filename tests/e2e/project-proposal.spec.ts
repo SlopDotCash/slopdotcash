@@ -698,6 +698,14 @@ test("drafts a project through the setup steps and creates it without an admin",
   await expect(honorSystem).toBeEnabled();
   await honorSystem.check();
   expect((await readProposalDraft(page)).honorSystem).toBe("true");
+  // A transient invalid amount must not prevent withdrawing the promise.
+  await page.getByLabel("Amount / month").fill("0");
+  await expect(honorSystem).toBeChecked();
+  await expect(honorSystem).toBeEnabled();
+  await honorSystem.uncheck();
+  await expect(honorSystem).toBeDisabled();
+  await page.getByLabel("Amount / month").fill("2500");
+  await honorSystem.check();
   await page.reload({ waitUntil: "networkidle" });
   await expect(honorSystem).toBeChecked();
   await page.getByLabel("Points only", { exact: true }).check();

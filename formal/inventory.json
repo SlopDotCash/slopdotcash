@@ -5818,7 +5818,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "7f530dcb53c4597d21c8108f425d3265268df4b56f905d69ff7456b079de81f9",
+      "sha256": "00a89101cf085b2e0b1059f7896c6c0619c4363639f3962ad2c26d0f7b28b333",
       "models": [
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",

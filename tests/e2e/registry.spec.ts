@@ -659,7 +659,14 @@ test("an owner creates and updates directly; an admin can delist by exception @r
   await consent.uncheck();
   await openSettings(returningOwner, "Monthly rewards");
   await expect(honorSystem).toBeChecked();
+  const monthlyAmount = returningOwner.getByLabel("Amount / month");
+  const promisedAmount = await monthlyAmount.inputValue();
+  await monthlyAmount.fill("");
+  await expect(honorSystem).toBeChecked();
+  await expect(honorSystem).toBeEnabled();
   await honorSystem.uncheck();
+  await expect(honorSystem).toBeDisabled();
+  await monthlyAmount.fill(promisedAmount);
 
   await returningOwner.getByRole("button", { name: "Publish changes" }).click();
   await expect(

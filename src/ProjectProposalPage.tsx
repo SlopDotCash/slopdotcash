@@ -969,7 +969,7 @@ function FundingFields({
                 <input
                   aria-describedby="field-honorSystem-hint"
                   checked={choice.honorSystem === true}
-                  disabled={!positiveAmount}
+                  disabled={!positiveAmount && choice.honorSystem !== true}
                   id="field-honorSystem"
                   onChange={(event) =>
                     set("honorSystem", String(event.target.checked))
