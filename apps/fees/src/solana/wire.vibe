@@ -1,0 +1,119 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { SYSTEM_PROGRAM, address, associatedTokenAddress, base58Encode, publicKey } from "@repo/platform/chain/solana"
+import { digest58 } from "./bytes.ts"
+
+export { ASSOCIATED_TOKEN_PROGRAM, MAX_TRANSACTION_BYTES, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM } from "@repo/platform/chain/solana"
+
+module verified {
+  import { type WireParse, parseSolanaWire as parse } from "../kernels/solanaWire.ts"
+  /** @throws {never} */
+  export function parseSolanaWire(bytes: Uint8Array): WireParse { return parse(bytes) }
+}
+import { parseSolanaWire } from verified
+
+export error SolanaRefused { issue: string }
+
+export const computeBudgetProgram = "ComputeBudget111111111111111111111111111111"
+export const lookupTableProgram = "AddressLookupTab1e1111111111111111111111111"
+export const rentSysvar = "SysvarRent111111111111111111111111111111111"
+export const wrappedSol = "So11111111111111111111111111111111111111112"
+export const solanaNativeAsset: string = SYSTEM_PROGRAM
+
+export interface WireInstruction {
+  readonly program: string
+  readonly accounts: ReadonlyArray<number>
+  readonly data: Uint8Array
+}
+
+export interface WireLookup {
+  readonly address: string
+  readonly writable: ReadonlyArray<number>
+  readonly readonly: ReadonlyArray<number>
+}
+
+export interface ParsedTransaction {
+  readonly signatureCount: number
+  readonly messageOffset: number
+  readonly requiredSignatures: number
+  readonly readonlySigned: number
+  readonly readonlyUnsigned: number
+  readonly staticKeys: ReadonlyArray<string>
+  readonly blockhashOffset: number
+  readonly programs: ReadonlyArray<string>
+  readonly legacy: boolean
+  readonly lookups: ReadonlyArray<WireLookup>
+  readonly instructions: ReadonlyArray<WireInstruction>
+}
+
+const wireIssues = [
+  "",
+  "truncated transaction",
+  "invalid compact length",
+  "invalid transaction size",
+  "unsupported message version",
+  "invalid transaction signer header",
+  "program id outside the static keys",
+  "invalid transaction account indexes or trailing bytes",
+]
+
+export effect function refuse(issue: string) {
+  throw new SolanaRefused({ issue })
+}
+
+export effect function parsedTransaction(raw: Uint8Array) {
+  const result = parseSolanaWire(raw)
+  if (result.kind === "failure") return try refuse(wireIssues[result.error] ?? "invalid transaction")
+  const wire = result.value
+  const staticKeys = Array.from({ length: wire.keyCount }, (_, index) => base58Encode(raw.slice(wire.staticStart + index * 32, wire.staticStart + (index + 1) * 32)))
+  const instructions = wire.instructions.map((instruction) => ({
+    program: staticKeys[instruction.program] ?? "",
+    accounts: [...raw.slice(instruction.accounts.start, instruction.accounts.end)],
+    data: raw.slice(instruction.data.start, instruction.data.end),
+  }) satisfies WireInstruction)
+  return {
+    signatureCount: wire.signatureCount,
+    messageOffset: wire.messageOffset,
+    requiredSignatures: wire.requiredSignatures,
+    readonlySigned: wire.readonlySigned,
+    readonlyUnsigned: wire.readonlyUnsigned,
+    staticKeys,
+    blockhashOffset: wire.blockhashOffset,
+    programs: instructions.map((instruction) => instruction.program),
+    legacy: wire.legacy,
+    lookups: wire.lookups.map((lookup) => ({
+      address: base58Encode(raw.slice(lookup.address.start, lookup.address.end)),
+      writable: [...raw.slice(lookup.writable.start, lookup.writable.end)],
+      readonly: [...raw.slice(lookup.readonly.start, lookup.readonly.end)],
+    }) satisfies WireLookup),
+    instructions,
+  } satisfies ParsedTransaction
+}
+
+export function messageOf(raw: Uint8Array, parsed: ParsedTransaction) {
+  return raw.slice(parsed.messageOffset)
+}
+
+export function firstSignature(raw: Uint8Array, parsed: ParsedTransaction) {
+  return raw.slice(parsed.messageOffset - 64, parsed.messageOffset)
+}
+
+export function blockhashOf(raw: Uint8Array, parsed: ParsedTransaction) {
+  return base58Encode(raw.slice(parsed.blockhashOffset, parsed.blockhashOffset + 32))
+}
+
+export function intentHashOf(raw: Uint8Array, parsed: ParsedTransaction) {
+  return digest58(messageOf(raw, parsed))
+}
+
+export effect function keyBytes(text: string) {
+  const bytes = publicKey(text)
+  if (bytes === undefined) return try refuse("Invalid resolved Solana public key")
+  return bytes
+}
+
+export effect function ata(mint: string, owner: string, program: string) {
+  const [ownerKey, mintKey, programKey] = [address(owner), address(mint), address(program)]
+  const derived = ownerKey === undefined || mintKey === undefined || programKey === undefined ? undefined : associatedTokenAddress(ownerKey, mintKey, programKey)
+  if (derived === undefined) return try refuse("associated token account cannot be derived")
+  return derived as string
+}

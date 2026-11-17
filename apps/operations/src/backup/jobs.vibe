@@ -1,0 +1,29 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year"
+import { Job } from "./codec.vibe"
+import { pruneAccessAudit } from "./expiry.vibe"
+import { backupPage, startDaily } from "./pages.vibe"
+import { restoreCheck } from "./restore.vibe"
+import { cleanupEvidence } from "./retention.vibe"
+import { BackupRefused, EvidenceBackups } from "./store.vibe"
+
+export effect function daily(scheduledTime: number) {
+  try startDaily(scheduledTime)
+  try pruneAccessAudit()
+}
+
+effect function handled(job: Job) {
+  if (job.kind === "cleanup") return try cleanupEvidence(job.day)
+  if (job.kind === "restore") {
+    const restored = try restoreCheck({ day: job.day, sourceKey: job.key, checkId: job.checkId }, (try EvidenceBackups).binding)
+    return try Effect.logInfo("scanner evidence restore check passed", { day: job.day, checkId: job.checkId, sha256: restored.sha256 })
+  }
+  try backupPage(job)
+}
+
+export effect function backupJob(body: unknown) {
+  const job = Schema.decodeUnknownEffect(Job)(body) catch effect () => { throw new BackupRefused({ issue: "Invalid backup job" }) }
+  handled(job) catch effect (error) => {
+    try Effect.logError("Scanner evidence backup page failed", { kind: job.kind ?? "backup", day: job.day, failure: error._tag })
+    throw error
+  }
+}

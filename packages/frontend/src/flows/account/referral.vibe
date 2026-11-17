@@ -1,0 +1,120 @@
+// spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"
+import { chooseCode } from "@repo/backend/client"
+import { type Answer, type Event, type Settings, Machine, machine } from "../../../gen/frontend__referralSettings.effect.vibe"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { Deployment } from "../../platform/config.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+
+export const referralLimitBytes = 4096
+export const referralCodePattern = /^[A-Za-z0-9][A-Za-z0-9_-]{1,30}[A-Za-z0-9]$/u
+export const referralLinkPrefix = "/referral/"
+
+export const referralMessages = {
+  rule: "Use 3 to 32 letters, digits, hyphens or underscores, starting and ending with a letter or digit.",
+  unsaved: "Your referral link could not be saved. Retry.",
+  unreadable: "Your referral code could not be read. Retry.",
+} as const
+
+export interface ReferralView {
+  readonly settings: Settings
+  readonly link: string | undefined
+  readonly problem: string | undefined
+}
+
+export function validReferralCode(value: string): boolean {
+  return referralCodePattern.test(value)
+}
+
+export function referralLink(origin: string, code: string): string {
+  return `${origin}${referralLinkPrefix}${code}`
+}
+
+function failureMessage(failure: CallFailure): string {
+  switch (failure._tag) {
+    case "Refused": return failure.status < 500 && failure.message !== "" ? failure.message : referralMessages.unsaved
+    case "ActorChanged": return failure.message !== "" ? failure.message : referralMessages.unsaved
+    case "NetworkError": return failure.message
+    case "InvalidResponse": return referralMessages.unsaved
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+export service ReferralName {
+  readonly changes: Stream.Stream<ReferralView>
+  view(): ReferralView!!
+  mount(githubId: string, code: string | null): ReferralView!!
+  close(): ReferralView!!
+  edit(text: string): ReferralView!!
+  save(): ReferralView!!HttpClient.HttpClient
+}
+
+export const referralMachine = machine()
+
+export effect function sendReferral(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function receiveReferral(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function referralState() {
+  return try (try Machine).get()
+}
+
+const referralName = Layer.effect(ReferralName, effect {
+  const settings = try Machine
+  const origin = (try Deployment).pageOrigin
+  const browser = try BrowserSession
+  const viewOf = (state: Settings, problem: string | undefined): ReferralView => ({
+    settings: state,
+    link: state.savedCode === "" ? undefined : referralLink(origin, state.savedCode),
+    problem,
+  })
+  const shown = try SubscriptionRef.make(viewOf(try settings.get(), undefined))
+
+  effect function publish(state: Settings, problem: string | undefined) {
+    const next = viewOf(state, problem)
+    try SubscriptionRef.set(shown, next)
+    return next
+  }
+
+  effect function step(event: Event, problem: string | undefined) {
+    const next = settings.send(event) catch () => undefined
+    if (next === undefined) return try SubscriptionRef.get(shown)
+    return try publish(next, problem)
+  }
+
+  effect function save() {
+    const before = try settings.get()
+    const normalized = before.draft.trim()
+    const syntaxValid = validReferralCode(normalized)
+    const submitted = settings.send({ type: "submit", text: before.draft, normalized, syntaxValid }) catch () => undefined
+    if (submitted === undefined) return try SubscriptionRef.get(shown)
+    if (!syntaxValid) return try publish(submitted, referralMessages.rule)
+    try publish(submitted, undefined)
+    const answered = call(chooseCode, { body: { code: normalized } }, { limitBytes: referralLimitBytes, expectedActor: submitted.actor }) catch (failure) => ({ failure })
+    const stored = !("failure" in answered) && validReferralCode(answered.code)
+    const answer: Answer = stored ? { tag: "Stored", code: answered.code } : { tag: "FailedAnswer" }
+    const problem = "failure" in answered ? failureMessage(answered.failure) : stored ? undefined : referralMessages.unreadable
+    return try step({ type: "resolve", actor: submitted.actor, lifetime: submitted.lifetime, request: submitted.pending, answer }, problem)
+  }
+
+  try browser.onAccountChange(() => effect {
+    try step({ type: "signOut" }, undefined)
+  })
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    view: () => SubscriptionRef.get(shown),
+    mount: (githubId: string, code: string | null) => step({ type: "mount", actor: githubId, code: code ?? "" }, undefined),
+    close: () => step({ type: "signOut" }, undefined),
+    edit: effect (text: string) => try step({ type: "edit", text }, (try SubscriptionRef.get(shown)).problem),
+    save,
+  }
+})
+
+export const referralLayer = Layer.provideMerge(referralName, referralMachine)

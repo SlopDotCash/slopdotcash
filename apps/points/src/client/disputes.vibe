@@ -1,0 +1,42 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { Award, PointRevision } from "../kernels/records/records.schema.ts"
+
+export const disputeKeyPattern = /^points-dispute:[a-f0-9]{64}$/u
+export const disputeListSize = 25
+
+export schema DisputeView {
+  readonly id: string
+  readonly openedAt: string
+  readonly dueAt: string
+  readonly draft: "uphold" | "deny" | null
+  readonly escalatedAt: string | null
+  readonly resolution: "upheld" | "denied" | null
+  readonly resolvedAt: string | null
+  readonly state: "triage" | "review" | "resolved"
+}
+
+export const DisputedAward = Schema.Struct({ revisionId: Schema.String, disputeId: Schema.NullOr(Schema.String), award: Award })
+
+export const DisputedAwards = Schema.Struct({ awards: Schema.Array(DisputedAward), next: Schema.NullOr(Schema.String) })
+
+export const DisputeDetail = Schema.Struct({
+  ...DisputeView.fields,
+  revision: PointRevision,
+  reason: Schema.String,
+  resolutionReason: Schema.NullOr(Schema.String),
+  mayDecide: Schema.Boolean,
+})
+
+export schema DisputeFiling { readonly revisionId: string; readonly reason: string }
+
+export schema DisputeAnswer { readonly action: "uphold" | "deny" | "retry"; readonly reason?: string }
+
+const points = { access: "public", rejected: "points_unavailable", cache: "private" } as const
+
+export const pointsDisputes = route({ ...points, method: "GET", path: "/api/v1/points/disputes", limitKib: 1, request: undefined, answer: DisputedAwards })
+export const fileDispute = route({ ...points, method: "POST", path: "/api/v1/points/disputes", limitKib: 20, request: DisputeFiling, answer: DisputeView, status: 201 })
+export const pointsDispute = route({ ...points, method: "GET", path: "/api/v1/points/disputes/:key", limitKib: 1, request: undefined, answer: DisputeDetail })
+export const answerDispute = route({ ...points, method: "POST", path: "/api/v1/points/disputes/:key", limitKib: 20, request: DisputeAnswer, answer: DisputeView })
+
+export const api: ReadonlyArray<AnyRoute> = [pointsDisputes, fileDispute, pointsDispute, answerDispute]

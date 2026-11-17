@@ -1,0 +1,39 @@
+// spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"
+import { isoNow } from "@repo/platform/clock"
+import { checkedDisclosures, importRows, refuseReadmeObservations } from "../directTransfers/disclosures.vibe"
+import { importTransfers } from "../directTransfers/store.vibe"
+
+export error DisclosureArguments { message: string }
+
+const usage = "usage: disclosures [--check] [--root DIRECTORY]"
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  let check = false
+  let root = "."
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (arg === "--check") check = true
+    else if (arg === "--root" && args[index + 1] !== undefined) {
+      root = args[index + 1] ?? root
+      index++
+    } else throw new DisclosureArguments({ message: usage })
+  }
+  return { check, root }
+}
+
+export effect function disclosures(args: ReadonlyArray<string>) {
+  const { check, root } = try optionsOf(args)
+  const files = try checkedDisclosures(root)
+  if (check) {
+    try Console.log("[Slop] direct-payment disclosures reproduce")
+    return
+  }
+  const rows = try importRows(files)
+  try refuseReadmeObservations(root)
+  if (rows.length === 0) {
+    try Console.log("[Slop] no direct-payment disclosures to import")
+    return
+  }
+  const outcome = try importTransfers(rows, try isoNow())
+  try Console.log(`[Slop] imported ${outcome.imported} direct transfers; ${outcome.unchanged} already recorded`)
+}

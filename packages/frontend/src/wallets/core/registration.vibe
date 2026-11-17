@@ -1,0 +1,123 @@
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { authorizeWallet, registerWallet, walletChallenge } from "@repo/backend/client"
+import { base64Encode } from "@repo/platform/chain/solana"
+import { CHAINS, type Chain, chainFamily } from "@repo/settlement/kernels/networks"
+import { type CallFailure, type CallOptions, call } from "../../platform/api.vibe"
+import { Session } from "../../session/session.vibe"
+import type { Family, WalletChoice, WalletError } from "./discovery.vibe"
+import { type EvmConnection, personalSign } from "./evm.vibe"
+import { type SolanaConnection, solanaSignMessage } from "./solana.vibe"
+
+export const paymentsLimitBytes = 1_048_576
+export const paymentsDeadlineMs = 30_000
+
+export const networkNames: Readonly<Record<Chain, string>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood Chain", solana: "Solana" }
+export const familyLabels: Readonly<Record<Family, string>> = { evm: "EVM", solana: "Solana" }
+
+export interface SavedWallet {
+  readonly chain: Chain
+  readonly claimId: string
+  readonly address: string
+  readonly authorized: boolean
+}
+
+export interface WalletSigner {
+  readonly family: Family
+  readonly address: string
+  sign(message: string): string!WalletError!WalletChoice
+}
+
+export error SignedOut
+export error AccountChanged { message: string }
+export error RegistrationFailed { message: string }
+
+export type RegistrationError = SignedOut | AccountChanged | RegistrationFailed | WalletError
+
+export const accountChangedMessage = "Your account changed. Reload your payouts before continuing."
+
+export function familyChains(family: Family): ReadonlyArray<Chain> {
+  return CHAINS.filter((chain) => chainFamily(chain) === family)
+}
+
+export function evmSigner(connection: EvmConnection): WalletSigner {
+  return { family: "evm", address: connection.address, sign: (message: string) => personalSign(connection, message) }
+}
+
+export function solanaSigner(connection: SolanaConnection): WalletSigner {
+  return {
+    family: "solana",
+    address: connection.address,
+    sign: effect (message: string) => base64Encode(try solanaSignMessage(connection, new TextEncoder().encode(message))),
+  }
+}
+
+const options = (actorId: string): CallOptions => ({ limitBytes: paymentsLimitBytes, deadlineMs: paymentsDeadlineMs, expectedActor: actorId })
+
+function refusedBy(failure: CallFailure): SignedOut | AccountChanged | RegistrationFailed {
+  if (failure._tag === "ActorChanged") return new AccountChanged({ message: accountChangedMessage })
+  if (failure._tag === "Refused" && failure.status === 401) return new SignedOut()
+  if (failure._tag === "Refused" && failure.status === 409) return new RegistrationFailed({ message: "Your wallet changed. Refresh and confirm the current address." })
+  return new RegistrationFailed({ message: "Payments could not load. Retry." })
+}
+
+export effect function checkActor(actorId: string) {
+  const session = (try Session).current() catch effect (failure) => { throw new RegistrationFailed({ message: failure.message }) }
+  if (session === null) throw new SignedOut()
+  if (session.githubId !== actorId) throw new AccountChanged({ message: accountChangedMessage })
+}
+
+function messageOf(error: RegistrationError, fallback: string): string {
+  return error._tag === "SignedOut" || error.message === "" ? fallback : error.message
+}
+
+export effect function registerChain(chain: Chain, signer: WalletSigner, actorId: string, saved: ReadonlyArray<SavedWallet>) {
+  try checkActor(actorId)
+  const claim = call(registerWallet, { body: { chain, address: signer.address } }, options(actorId)) catch effect (failure) => { throw refusedBy(failure) }
+  try checkActor(actorId)
+  const previous = saved.find((wallet) => wallet.chain === chain)
+  let attempted = false
+  const confirmed = effect {
+    const challenge = call(walletChallenge, { body: { claimId: claim.claimId } }, options(actorId)) catch effect (failure) => { throw refusedBy(failure) }
+    try checkActor(actorId)
+    if (challenge.address !== signer.address || challenge.chain !== chain) throw new RegistrationFailed({ message: "Wallet confirmation does not match your selected address." })
+    const signature = try signer.sign(challenge.message)
+    try checkActor(actorId)
+    attempted = true
+    call(authorizeWallet, { body: { claimId: claim.claimId, challengeId: challenge.challengeId, signature } }, options(actorId)) catch effect (failure) => { throw refusedBy(failure) }
+    try checkActor(actorId)
+    return claim.claimId
+  }
+  return confirmed catch effect (error) => {
+    if (error._tag === "SignedOut" || error._tag === "AccountChanged" || claim.claimId === previous?.claimId) throw error
+    const network = networkNames[chain]
+    const reason = messageOf(error, "Wallet confirmation failed.")
+    if (attempted) throw new RegistrationFailed({ message: `${reason} Your new ${network} address ${signer.address} was saved, but confirmation could not be verified. Check the current wallet status below before trying again.` })
+    throw new RegistrationFailed({
+      message: previous?.authorized === true
+        ? `${reason} Your new ${network} address ${signer.address} is saved but not confirmed. Your verified address ${previous.address} remains active for payouts. Connect your new wallet again to confirm the replacement.`
+        : `${reason} Your ${network} address ${signer.address} is saved but not confirmed. Connect your wallet again to confirm it for automatic payments.`,
+    })
+  }
+}
+
+export effect function registerFamily(signer: WalletSigner, actorId: string, saved: ReadonlyArray<SavedWallet>) {
+  const claims: Partial<Record<Chain, string>> = {}
+  for (const chain of familyChains(signer.family)) {
+    const current = saved.find((wallet) => wallet.chain === chain)
+    if (current?.authorized === true && current.address === signer.address) {
+      claims[chain] = current.claimId
+      continue
+    }
+    claims[chain] = try registerChain(chain, signer, actorId, saved)
+  }
+  return { claims, message: `${familyLabels[signer.family]} wallet confirmed. Eligible unpaid awards are sent automatically.` }
+}
+
+export function replacedWallet(family: Family, address: string, saved: ReadonlyArray<SavedWallet>): SavedWallet | undefined {
+  const chains = familyChains(family)
+  return saved.find((wallet) => chains.includes(wallet.chain) && wallet.address !== address)
+}
+
+export function keptMessage(family: Family): string {
+  return `Kept your saved ${familyLabels[family]} address. Nothing was registered.`
+}

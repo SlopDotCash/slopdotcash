@@ -1,0 +1,161 @@
+// spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"; spec/operations/localValidator.md, "The awaited stop and its exact receipt settle cleanup"; spec/operations/localCommand.md, "Only a current local stage can start the command"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { type Validator, rpc, solanaValidator } from "@repo/platform/testing/chains"
+import { type ValidatorMode, type ValidatorRun, stageCount } from "../../../gen/operations__localValidator.effect.vibe"
+import { childEnvironment } from "../command/environment.vibe"
+import { supervise } from "../command/supervisor.vibe"
+import { type ValidatorMachine, publicReadOnlyMounts, startStage, validatorMachine } from "./steps.vibe"
+
+export interface ProgramFixture {
+  readonly id: string
+  readonly soPath: string
+}
+
+export interface AccountFixture {
+  readonly address: string
+  readonly jsonPath: string
+}
+
+export interface TestCommand {
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+  readonly cwd: string
+}
+
+export interface StageRequest {
+  readonly accounts: ReadonlyArray<AccountFixture>
+  readonly test: TestCommand
+}
+
+export interface StagesRequest {
+  readonly mode: ValidatorMode
+  readonly programs: ReadonlyArray<ProgramFixture>
+  readonly stages: readonly [StageRequest, ...StageRequest[]]
+}
+
+export interface StageReceipt {
+  readonly receipt: number
+  readonly owner: string
+  readonly runner: "path" | "docker"
+  readonly genesis: string
+  readonly ports: ReadonlyArray<number>
+}
+
+export interface StagesOutcome {
+  readonly state: ValidatorRun
+  readonly receipts: ReadonlyArray<StageReceipt>
+}
+
+export error ValidatorUnavailable { stage: number; reason: string }
+export error MountsRefused { stage: number }
+export error StagesMismatch { expected: number; given: number }
+
+export const interruptedCode = 130
+const notReadyCode = 1
+const airdropSol = "100"
+
+type Guarded<A> = { readonly kind: "done"; readonly value: A } | { readonly kind: "interrupted" }
+
+function reasonOf(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+effect function guarded<A, E, R>(restore: <X, Y, Z>(effect: X!Y!Z) => X!Y!Z, work: A!E!R) {
+  const outcome = try exit(restore(work))
+  if (Exit.isSuccess(outcome)) return { kind: "done", value: outcome.value } satisfies Guarded<A>
+  if (Exit.hasInterrupts(outcome)) return { kind: "interrupted" } satisfies Guarded<A>
+  return try Effect.failCause(outcome.cause)
+}
+
+effect function started(stage: number, programs: ReadonlyArray<ProgramFixture>, accounts: ReadonlyArray<AccountFixture>) {
+  return try tryPromise({
+    try: () => solanaValidator({ programs, accounts }),
+    catch: (cause) => new ValidatorUnavailable({ stage, reason: reasonOf(cause) }),
+  })
+}
+
+effect function ownedReady(validator: Validator) {
+  const genesis = tryPromise(() => rpc(validator.url, "getGenesisHash")) catch () => undefined
+  return genesis === validator.genesis
+}
+
+effect function closed(validator: Validator) {
+  const outcome = tryPromise(() => validator.close()) catch () => "failed" as const
+  return outcome !== "failed"
+}
+
+effect function keptPayer(file: string, validator: Validator) {
+  try (try FileSystem.FileSystem).writeFileString(file, JSON.stringify([...validator.payer.secretKey]), { flag: "wx", mode: 0o600 })
+}
+
+effect function funded(machine: ValidatorMachine, receipt: number, workspace: string, keypair: string, validator: Validator) {
+  const path = try Path.Path
+  const supervised = try supervise({
+    receipt,
+    endpoint: validator.url,
+    keypair,
+    command: "solana",
+    args: ["--url", validator.url, "airdrop", airdropSol, "--keypair", keypair],
+    cwd: workspace,
+    env: try childEnvironment(),
+    log: path.join(workspace, `airdrop-${receipt}.log`),
+  })
+  return try machine.send({ type: "recordFunding", funding: supervised.result })
+}
+
+effect function tested(test: TestCommand, validator: Validator, keypair: string) {
+  const env = try childEnvironment({ ANCHOR_PROVIDER_URL: validator.url, ANCHOR_WALLET: keypair, SLOP_LOCAL_SOLANA_GENESIS: validator.genesis })
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make(test.command, [...test.args], { cwd: test.cwd, env, extendEnv: false, stdin: "ignore", stdout: "inherit", stderr: "inherit" }))
+    const code = handle.exitCode catch () => undefined
+    return code === undefined ? 1 : Number(code)
+  })
+}
+
+effect function stage(machine: ValidatorMachine, request: StagesRequest, fixtures: StageRequest, workspace: string, receipts: StageReceipt[]) {
+  return try Effect.uninterruptibleMask((restore) => scoped(effect {
+    const number = (try machine.get()).stage + 1
+    const receipt = (try machine.get()).receipt + 1
+    const keypair = (try Path.Path).join(workspace, `payer-${number}.json`)
+    const mounts = [...request.programs.map((fixture) => fixture.soPath), ...fixtures.accounts.map((fixture) => fixture.jsonPath)]
+    if (!(try publicReadOnlyMounts(mounts, keypair))) throw new MountsRefused({ stage: number })
+    const booted = try guarded(restore, started(number, request.programs, fixtures.accounts))
+    if (booted.kind === "interrupted") return try interrupt
+    const validator = try acquireRelease(succeed(booted.value), (running) => closed(running))
+    try keptPayer(keypair, validator)
+    receipts.push({ receipt, owner: validator.receipt.owner, runner: validator.receipt.runner, genesis: validator.genesis, ports: validator.receipt.ports })
+    try startStage(machine, { mode: request.mode, receipt, mounts, keypair, endpoint: validator.url })
+    const ready = try guarded(restore, ownedReady(validator))
+    if (ready.kind === "interrupted") try machine.send({ type: "cancelStart", cancellationCode: interruptedCode })
+    else if (!ready.value) try machine.send({ type: "cancelStart", cancellationCode: notReadyCode })
+    else try machine.send({ type: "recognizeReady", receipt, ownedReady: true })
+    if ((try machine.get()).phase === "FundingValidator") {
+      const funding = try guarded(restore, funded(machine, receipt, workspace, keypair, validator))
+      if (funding.kind === "interrupted") try machine.send({ type: "cancelStart", cancellationCode: interruptedCode })
+    }
+    if ((try machine.get()).phase === "TestingValidator") {
+      const ran = try guarded(restore, tested(fixtures.test, validator, keypair))
+      try machine.send({ type: "recordTests", testCode: ran.kind === "done" ? ran.value : interruptedCode })
+    }
+    const stopped = try closed(validator)
+    try machine.send({ type: "recordStop", receipt, closeReturned: true, closeOk: stopped, ownStopped: stopped })
+    const state = try machine.get()
+    if (state.ledger && state.stopped && !state.cleanupFailed) try machine.send({ type: "recordLedgerCleanup", removed: stopped })
+    return try machine.send({ type: "finishStage" })
+  }))
+}
+
+export effect function runStages(request: StagesRequest, given?: ValidatorMachine) {
+  if (request.stages.length !== stageCount(request.mode)) throw new StagesMismatch({ expected: stageCount(request.mode), given: request.stages.length })
+  const machine = given ?? try validatorMachine()
+  const receipts: StageReceipt[] = []
+  try scoped(effect {
+    const workspace = try (try FileSystem.FileSystem).makeTempDirectoryScoped({ prefix: "slop-local-validator-" })
+    for (const fixtures of request.stages) {
+      const state = try stage(machine, request, fixtures, workspace, receipts)
+      if (state.phase !== "AwaitingStage") break
+    }
+  })
+  return { state: try machine.get(), receipts } satisfies StagesOutcome
+}

@@ -1,0 +1,66 @@
+// spec/slopbot/valueRequests.md, "Story: Claim each due request alone for its pull request"; spec/slopbot/assessmentInbox.md, "Story: Keep a private assessment read bound to the current authority"
+import { CallerLive } from "@repo/backend/caller"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "@repo/backend/ports"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { Caller, Unauthenticated, outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { area, pages, worker } from "@repo/platform/worker"
+import { Enforcement, EnforcementRows } from "@repo/ports/security"
+import { repositoryAccessRoutes } from "../../src/access/route.vibe"
+import { assessmentApi } from "../../src/client/inbox.vibe"
+import { repositoryAccessReader } from "../../src/value/inbox/access.vibe"
+import { assessmentRoutes } from "../../src/value/inbox/routes.vibe"
+
+export interface SiteEnv {
+  readonly SLOPBOT_DB: D1Database
+  readonly ASSETS: Fetcher
+  readonly SLOPBOT: Fetcher
+  readonly ADMIN_GITHUB_IDS: string
+}
+
+export const idle: ExecutionContext = { waitUntil: () => undefined }
+
+const unrestricted = Layer.mergeAll(
+  Layer.succeed(Enforcement, {
+    project: () => effect { return { restriction: "Clear" as const, enforcementGeneration: 0, clearanceGeneration: "0" } },
+    fence: () => effect { return sql`1` },
+  }),
+  Layer.succeed(EnforcementRows, {
+    scope: () => effect { return { version: sql`'0'`, reads: [] } },
+    decode: () => effect { return undefined },
+    writes: () => effect { return [] },
+    generation: () => effect { return sql`0` },
+    restrictions: () => effect { return [] },
+    recordedAt: () => effect { return undefined },
+  }),
+)
+
+export function registryOver(db: D1Database) {
+  return Layer.provideMerge(Layer.provideMerge(Layer.mergeAll(RegistryLive, RegistryManifestsLive, RestrictionsLive), unrestricted), d1(db))
+}
+
+const anonymous = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
+
+export function slopbotAccess(github: Fetcher, app: { readonly id: string; readonly privateKeyPem: string }): Fetcher {
+  const internet = outboundVia(github)
+  const served = worker({
+    services: () => Layer.mergeAll(webCrypto, internet, anonymous, Layer.provide(githubApp({ appId: app.id, privateKey: Redacted.make(app.privateKeyPem), userAgent: "slopbot" }), internet)),
+    routes: repositoryAccessRoutes,
+  })
+  const env = {}
+  return { fetch: (request: globalThis.Request) => served.fetch(request, env, idle) }
+}
+
+export const inboxSite = pages({
+  areas: [area({ name: "slopbot", api: assessmentApi, routes: assessmentRoutes, provides: Layer.empty })],
+  services: (env: SiteEnv) => Layer.provideMerge(CallerLive, Layer.mergeAll(
+    registryOver(env.SLOPBOT_DB),
+    webCrypto,
+    rolesFrom({ ADMIN_GITHUB_IDS: env.ADMIN_GITHUB_IDS, PROJECT_MODERATOR_GITHUB_IDS: "" }),
+    repositoryAccessReader(env.SLOPBOT),
+  )),
+  assets: "ASSETS",
+})

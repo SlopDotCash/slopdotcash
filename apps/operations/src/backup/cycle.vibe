@@ -1,0 +1,109 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"; spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year"; spec/operations/backup.md, "A generation retires only with a verified marker and a D1 record for every reserved target"
+import { type Backup, type Event, Machine, type Prefix, decodeState, initial, machine } from "../../gen/operations__backup.effect.vibe"
+
+const releaseWorkflow = "releaseWorkflow"
+
+export function heldCycle(start: Backup = initial) {
+  return machine(start)
+}
+
+export effect function sent(event: Event, by = "") {
+  return try (try Machine).send(event, by)
+}
+
+export effect function observed() {
+  return try (try Machine).get()
+}
+
+export effect function dayQueued() {
+  return try sent({ type: "queueDay" })
+}
+
+export effect function cycleStarted(pages: number, digest: number) {
+  return try sent({ type: "start", pages, digest })
+}
+
+export effect function pageCopied(digest: number) {
+  return try sent({ type: "copyPage", digest })
+}
+
+export effect function pageVerified(observedDigest: number) {
+  return try sent({ type: "verifyPage", observedDigest })
+}
+
+export effect function cycleFinished(digest: number) {
+  return try sent({ type: "finish", digest })
+}
+
+effect function releasedBy(event: Event, issue: string) {
+  const next = sent(event, releaseWorkflow) catch effect (error) => {
+    try Effect.logWarning(issue, { cycleDay: error.state.cycleDay })
+    return error.state
+  }
+  return next
+}
+
+export effect function retentionReleased(retention: boolean) {
+  const now = try observed()
+  if (now.retentionEnabled === retention) return now
+  return try releasedBy({ type: "setRetention", retention }, "evidence retention stays off until a completed cycle has a proven restoration")
+}
+
+export effect function retirementReleased(released: boolean) {
+  const now = try observed()
+  if (now.retirementReleased === released) return now
+  return try releasedBy({ type: "setRetirementRelease", released }, "generation retirement stays off until a completed cycle has a proven restoration")
+}
+
+export effect function admitted(state: Backup, event: Event) {
+  provide heldCycle(try decodeState(state)) {
+    const next = sent(event) catch effect () => {
+      return undefined
+    }
+    return next
+  }
+}
+
+export effect function cleanupBegun() {
+  return try sent({ type: "beginCleanup" })
+}
+
+export effect function objectClassified(id: number) {
+  return try sent({ type: "classify", id })
+}
+
+export effect function objectRetained(id: number) {
+  return try sent({ type: "retain", id })
+}
+
+export effect function cleanupFinished() {
+  return try sent({ type: "finishCleanup" })
+}
+
+export effect function restoreBegun(sourceDigest: number) {
+  return try sent({ type: "beginRestore", sourceDigest })
+}
+
+export effect function chainChecked(completeDigest: number, observedPages: ReadonlyArray<number>) {
+  return try sent({ type: "checkChain", completeDigest, observedPages: [...observedPages] })
+}
+
+export effect function destinationWritten(prefix: Prefix, existingDigest: number) {
+  return try sent({ type: "writeDestination", prefix, existingDigest })
+}
+
+export effect function destinationRead(digest: number) {
+  return try sent({ type: "readDestination", digest })
+}
+
+export effect function restoreRefused() {
+  return try sent({ type: "refuseRestore" })
+}
+
+export effect function accessLogCleaned() {
+  return try sent({ type: "cleanAccessLog" })
+}
+
+export function prefixOf(key: string): Prefix {
+  return key.startsWith("restore-checks/") ? "RestoreCheckPrefix" : "LiveEvidencePrefix"
+}

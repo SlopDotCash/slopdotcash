@@ -1,0 +1,44 @@
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { type Actor, type Environment, type Event, type Release, initial, machineOver } from "../../../gen/operations__release.effect.vibe"
+import type { Actor as LockActor } from "../../../gen/operations__publicationLock.effect.vibe"
+import { type LockRecord, lockRecord } from "../../publicationLock/lock.vibe"
+
+export error ReleaseRefused { step: string; phase: string }
+
+export interface Run {
+  readonly environment: Environment
+  readonly by: Actor
+  readonly lockBy: LockActor
+  readonly lock: LockRecord
+  state(): Release!!
+  send(event: Event): Release!ReleaseRefused
+  sendAs(event: Event, by: Actor): Release!ReleaseRefused
+  idOf(kind: string, text: string): number!!
+}
+
+export effect function startRun(environment: Environment, by: Actor) {
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  const ids = try Ref.make(new Map<string, number>())
+  effect function sendAs(event: Event, sender: Actor) {
+    return machine.send(event, sender) catch effect (error) => {
+      throw new ReleaseRefused({ step: event.type, phase: error.state.phase })
+    }
+  }
+  return {
+    environment,
+    by,
+    lockBy: by === "TrustedWorkflow" ? "TrustedWorkflow" : "Contributor",
+    lock: try lockRecord(),
+    state: () => machine.get(),
+    send: (event: Event) => sendAs(event, by),
+    sendAs,
+    idOf: (kind: string, text: string) => Ref.modify(ids, (known) => {
+      const key = `${kind}\n${text}`
+      const found = known.get(key)
+      if (found !== undefined) return [found, known] as const
+      const next = [...known.keys()].filter((name) => name.startsWith(`${kind}\n`)).length + 1
+      return [next, new Map(known).set(key, next)] as const
+    }),
+  } satisfies Run
+}

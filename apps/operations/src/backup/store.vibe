@@ -1,0 +1,179 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"
+import type { Queue, R2Bucket } from "@repo/platform/bindings"
+import { sha256Hex } from "@repo/platform/crypto"
+import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type RetentionR2Bucket, StorageFailure, bucket, partBytes, retentionBucket } from "@repo/platform/r2"
+import type { Aggregate } from "@repo/platform/stored"
+import { CycleRow, type Job, type Recorded, RestoreReceipt, encoded, parsed, sha256Pattern } from "./codec.vibe"
+import { dayNumber, dayOfMillis } from "./days.ts"
+
+export service EvidenceSource { readonly binding: RetentionR2Bucket }
+export service EvidenceBackups { readonly binding: RetentionR2Bucket }
+export service BackupSettings { readonly backup: boolean; readonly retention: boolean; readonly retirement: boolean }
+export service BackupQueue { send(job: Job): void!EnqueueFailed }
+
+export error EnqueueFailed { message: string }
+export error BackupRefused { issue: string }
+
+export const markerMetadataKey = "evidenceRetirement"
+export const markerMetadataValue = "v1"
+
+export function isMarker(metadata: Readonly<Record<string, string>> | undefined) {
+  return metadata?.[markerMetadataKey] === markerMetadataValue
+}
+
+export function backupSettings(env: { readonly EVIDENCE_BACKUP_MODE?: string; readonly EVIDENCE_RETENTION_MODE?: string; readonly EVIDENCE_RETIREMENT_MODE?: string }) {
+  return Layer.succeed(BackupSettings, {
+    backup: env.EVIDENCE_BACKUP_MODE === "enabled",
+    retention: env.EVIDENCE_RETENTION_MODE === "enabled",
+    retirement: env.EVIDENCE_RETIREMENT_MODE === "enabled",
+  })
+}
+
+export function backupQueue(binding: Queue<Job>) {
+  return Layer.succeed(BackupQueue, {
+    send: (job) => tryPromise({ try: () => binding.send(job), catch: (cause) => new EnqueueFailed({ message: String(cause) }) }),
+  })
+}
+
+export function evidenceBuckets(source: RetentionR2Bucket, backups: RetentionR2Bucket) {
+  return Layer.merge(Layer.succeed(EvidenceSource, { binding: source }), Layer.succeed(EvidenceBackups, { binding: backups }))
+}
+
+export effect function enqueue(job: Job) {
+  try (try BackupQueue).send(job)
+}
+
+export function failed(operation: string, key: string) {
+  return (cause: unknown) => new StorageFailure({ operation, key, message: cause instanceof Error ? cause.message : String(cause) })
+}
+
+export effect function root(day: string) {
+  if (dayNumber(day) === undefined) throw new BackupRefused({ issue: "Invalid backup day" })
+  return `daily/${day}`
+}
+
+export effect function startKey(day: string) {
+  return `${try root(day)}/start.json`
+}
+
+export effect function completeKey(day: string) {
+  return `${try root(day)}/complete.json`
+}
+
+export effect function pageKey(day: string, page: number) {
+  return `${try root(day)}/pages/${page}.json`
+}
+
+export effect function copyKey(day: string, key: string) {
+  return `${try root(day)}/objects/${key}`
+}
+
+export effect function supplementalKey(day: string, key: string) {
+  return `${try root(day)}/retirement/objects/${key}`
+}
+
+export effect function retirementKey(day: string, key: string) {
+  return `${try root(day)}/retirement/${try sha256Hex(key)}.json`
+}
+
+export function queuedKey(day: string) {
+  return `queued/${day}.json`
+}
+
+export function restoredKey(day: string, checkId: string) {
+  return `restored/${day}/${checkId}.json`
+}
+
+export effect function headOf(binding: R2Bucket, key: string) {
+  const found = try tryPromise({ try: () => binding.head(key), catch: failed("head", key) })
+  return found ?? undefined
+}
+
+export effect function verifiedBytes(binding: R2Bucket, key: string, sha256: string, size: number) {
+  const bytes = try bucket(binding).getVerified(key, sha256, size)
+  if (bytes === undefined) throw new BackupRefused({ issue: `Backup object ${key} is missing` })
+  return bytes
+}
+
+export effect function recorded<S extends Schema.Constraint>(schema: S, binding: R2Bucket, key: string) {
+  const head = try headOf(binding, key)
+  if (head === undefined) return undefined
+  const sha256 = head.customMetadata?.sha256
+  if (sha256 === undefined || !sha256Pattern.test(sha256)) throw new BackupRefused({ issue: "Invalid backup receipt" })
+  const value = try parsed(schema, key, try verifiedBytes(binding, key, sha256, head.size))
+  return { value, sha256 } satisfies Recorded<S["Type"]>
+}
+
+export effect function immutable(binding: R2Bucket, key: string, bytes: Uint8Array, contentType: string) {
+  if (bytes.length > partBytes) throw new BackupRefused({ issue: "Backup object exceeds the bounded part size" })
+  const sha256 = try sha256Hex(bytes)
+  try bucket(binding).putParts(key, bytes, { sha256, contentType })
+  try verifiedBytes(binding, key, sha256, bytes.length)
+  return sha256
+}
+
+export effect function immutableJson(binding: R2Bucket, key: string, value: unknown) {
+  return try immutable(binding, key, try encoded(value), "application/json")
+}
+
+export effect function listedKeys(binding: RetentionR2Bucket, prefix: string) {
+  const keys: string[] = []
+  let cursor: string | undefined = undefined
+  for (;;) {
+    const listing = try retentionBucket(binding).list(prefix, cursor)
+    keys.push(...listing.objects.map((object) => object.key))
+    if (listing.cursor === undefined) return keys
+    cursor = listing.cursor
+  }
+}
+
+export effect function queuedDays() {
+  const { binding } = try EvidenceBackups
+  return (try listedKeys(binding, "queued/")).flatMap((key) => {
+    const day = /^queued\/(\d{4}-\d{2}-\d{2})\.json$/u.exec(key)?.[1]
+    return day === undefined ? [] : [day]
+  })
+}
+
+export effect function provenRestorations() {
+  const { binding } = try EvidenceBackups
+  const days: string[] = []
+  for (const key of try listedKeys(binding, "restored/")) {
+    const found = try recorded(RestoreReceipt, binding, key)
+    if (found !== undefined && key === restoredKey(found.value.day, found.value.checkId)) days.push(found.value.day)
+  }
+  return days
+}
+
+export effect function knownFacts(clock: number) {
+  const settings = try BackupSettings
+  return { waiting: try queuedDays(), restored: settings.retention ? try provenRestorations() : [], clock }
+}
+
+export effect function today() {
+  return dayOfMillis(try Clock.currentTimeMillis)
+}
+
+export const cycles: Aggregate<ReadonlyArray<CycleRow>, RowMismatch, never> = {
+  name: "storage cycles",
+  version: sql`SELECT coalesce((SELECT group_concat(day || ':' || phase || ':' || started_at || ':' || coalesce(finished_at, '-') || ':' || coalesce(cleanup_after, '-'), ',') FROM (SELECT * FROM vetting_storage_cycles ORDER BY day)), '') AS version`,
+  reads: [sql`SELECT day, started_at, phase, finished_at, cleanup_after FROM vetting_storage_cycles ORDER BY day`],
+  decode: ([found = []]) => decoded(CycleRow, found, "storage cycles"),
+}
+
+export function cycleInserted(day: string, startedAt: string) {
+  return sql`INSERT INTO vetting_storage_cycles(day, started_at, phase) VALUES(${day}, ${startedAt}, 'backup')`
+}
+
+export function cleanupEntered(day: string) {
+  return sql`UPDATE vetting_storage_cycles SET phase = 'cleanup' WHERE day = ${day} AND phase = 'backup'`
+}
+
+export function cycleCompleted(day: string) {
+  return sql`UPDATE vetting_storage_cycles SET phase = 'complete', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE day = ${day} AND phase <> 'complete'`
+}
+
+export function cleanupAdvanced(day: string, objectKey: string) {
+  return sql`UPDATE vetting_storage_cycles SET cleanup_after = ${objectKey} WHERE day = ${day} AND phase = 'cleanup'`
+}

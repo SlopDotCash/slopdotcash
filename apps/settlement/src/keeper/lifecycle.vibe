@@ -1,0 +1,208 @@
+// spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"
+import type { SqlTx } from "@repo/platform/journal"
+import { type Caller, type Configuration, type Event, type Journal, type Lifecycle, NotAnEvent, Rejected, type RunResult, type SendAttempt, apply, decodeEvent, decodeState, initial, machineOver, noAttempt, requestRow, runResult } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { RecordInvalid, inTransaction, keep, record } from "./store.vibe"
+
+export interface SendJournal {
+  readonly journal: Journal
+  readonly gasLimit: number
+  readonly hashes: ReadonlyArray<string>
+}
+
+interface Staging {
+  readonly runId: number
+  readonly stagedBytes: number
+  readonly staged: SendAttempt
+  readonly attempted: boolean
+}
+
+export interface GroupStep {
+  readonly group: string
+  readonly before: Lifecycle
+  readonly next: Lifecycle
+}
+
+const StoredSend = Schema.Struct({
+  schema: Schema.Literal("keeper-send-v1"),
+  journal: Schema.Unknown,
+  gasLimit: Schema.Number,
+  hashes: Schema.Array(Schema.String),
+})
+
+const DAY_SECONDS = 86_400
+
+export function sendKey(group: string) {
+  return `send:${group}`
+}
+
+export function dayOf(seconds: number) {
+  return Math.floor(seconds / DAY_SECONDS)
+}
+
+export function bytesOf(hashes: ReadonlyArray<string>, transactionId: string) {
+  const index = hashes.findIndex((hash) => hash.toLowerCase() === transactionId.toLowerCase())
+  return index < 0 ? 0 : index + 1
+}
+
+export effect function loadSend(tx: SqlTx, group: string) {
+  const found = try record(tx, sendKey(group))
+  if (found === undefined) return undefined
+  const invalid = () => new RecordInvalid({ key: sendKey(group) })
+  const stored = Schema.decodeUnknownEffect(StoredSend)(found) catch effect () => { throw invalid() }
+  const state = decodeState({ ...initial, journal: stored.journal }) catch effect () => { throw invalid() }
+  return { journal: state.journal, gasLimit: stored.gasLimit, hashes: stored.hashes } satisfies SendJournal
+}
+
+function composed(core: Lifecycle, staging: Staging | undefined, send: SendJournal | undefined, gasLimit: number): Lifecycle {
+  const current = staging !== undefined && staging.runId === core.liveRun.identity
+  const journal = send?.journal ?? core.journal
+  return {
+    ...core,
+    config: { ...core.config, gasLimit: send?.gasLimit ?? gasLimit },
+    liveRun: { ...core.liveRun, stagedBytes: current ? staging.stagedBytes : 0, staged: current ? staging.staged : noAttempt, attempted: current && staging.attempted },
+    journal: { ...journal, registry: core.journal.registry, indexed: core.journal.indexed },
+  }
+}
+
+function changed(before: unknown, after: unknown) {
+  return JSON.stringify(before) !== JSON.stringify(after)
+}
+
+function pick<T>(current: T, before: T, next: T): T {
+  return changed(before, next) ? next : current
+}
+
+function merged(current: Lifecycle, before: Lifecycle, next: Lifecycle): Lifecycle {
+  return {
+    instance: pick(current.instance, before.instance, next.instance),
+    config: changed(before.config, next.config) ? { ...next.config, gasLimit: current.config.gasLimit } : current.config,
+    liveRun: {
+      ...current.liveRun,
+      identity: pick(current.liveRun.identity, before.liveRun.identity, next.liveRun.identity),
+      phase: pick(current.liveRun.phase, before.liveRun.phase, next.liveRun.phase),
+      partial: pick(current.liveRun.partial, before.liveRun.partial, next.liveRun.partial),
+    },
+    latestRun: pick(current.latestRun, before.latestRun, next.latestRun),
+    requests: pick(current.requests, before.requests, next.requests),
+    results: pick(current.results, before.results, next.results),
+    journal: {
+      ...current.journal,
+      registry: pick(current.journal.registry, before.journal.registry, next.journal.registry),
+      indexed: pick(current.journal.indexed, before.journal.indexed, next.journal.indexed),
+    },
+  }
+}
+
+export interface Started {
+  readonly runId: number
+  readonly fresh: boolean
+  readonly working: boolean
+}
+
+export interface KeeperCore {
+  admit(requestId: number, caller: Caller): Lifecycle!(Rejected | NotAnEvent)
+  begin(requestId: number): Started!(Rejected | NotAnEvent)
+  checked(runId: number, storageWorks: boolean): Lifecycle!(Rejected | NotAnEvent)
+  settle(runId: number, outcome: "Ran" | "RanPartly" | "Failed"): Lifecycle!(Rejected | NotAnEvent)
+  delivered(requestId: number, received: boolean): Lifecycle!(Rejected | NotAnEvent)
+  send(input: unknown): Lifecycle!(Rejected | NotAnEvent)
+  current(): Lifecycle!!
+  inGroup(group: string, send: SendJournal | undefined, gasLimit: number | undefined): Lifecycle!!
+  absorb(step: GroupStep): void!!
+}
+
+export effect function configuredStart(config: Configuration, registry: number) {
+  const configured = try apply(initial, { type: "configure", config })
+  return { ...configured, journal: { ...configured.journal, registry } } satisfies Lifecycle
+}
+
+export effect function keeperCore(start: Lifecycle = initial) {
+  const held = try Ref.make(start)
+  const staging = try Ref.make(new Map<string, Staging>())
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  effect function send(input: unknown) {
+    return try machine.send(try decodeEvent(input))
+  }
+  return {
+    admit: (requestId, caller) => send({ type: "request", requestId, caller }),
+    begin: (requestId) => effect {
+      const before = try machine.get()
+      if (requestRow(before, requestId).phase !== "CanDispatch") return { runId: 0, fresh: false, working: false } satisfies Started
+      const fresh = before.liveRun.phase === "NoRun"
+      const runId = requestRow(try send({ type: "dispatch", requestId }), requestId).binding
+      const after = fresh ? try send({ type: "selectMode", runId }) : try machine.get()
+      return { runId, fresh, working: after.liveRun.identity === runId && after.liveRun.phase === "CheckingIdentity" } satisfies Started
+    },
+    checked: (runId, storageWorks) => send({ type: "checkIdentity", runId, storageWorks }),
+    settle: (runId, outcome) => effect {
+      const state = try machine.get()
+      if (state.liveRun.identity !== runId || state.liveRun.phase !== "Working") return state
+      if (outcome === "Failed") return try send({ type: "fatal", runId })
+      if (outcome === "RanPartly" && !state.liveRun.partial) try send({ type: "itemFailure", runId })
+      return try send({ type: "finish", runId })
+    },
+    delivered: (requestId, received) => effect {
+      const state = try machine.get()
+      return requestRow(state, requestId).phase === "Waiting" && runResult(state, requestRow(state, requestId).binding).identity > 0
+        ? try send({ type: "deliver", requestId, received })
+        : state
+    },
+    send,
+    current: () => machine.get(),
+    inGroup: (group, found, gasLimit) => effect {
+      const core = try Ref.get(held)
+      return composed(core, (try Ref.get(staging)).get(group), found, gasLimit ?? core.config.gasLimit)
+    },
+    absorb: (step) => effect {
+      try Ref.update(held, (current) => merged(current, step.before, step.next))
+      try Ref.update(staging, (known) => {
+        const kept = new Map([...known].filter(([, entry]) => entry.runId === step.next.liveRun.identity))
+        const live = step.next.liveRun
+        return kept.set(step.group, { runId: live.identity, stagedBytes: live.stagedBytes, staged: live.staged, attempted: live.attempted })
+      })
+    },
+  } satisfies KeeperCore
+}
+
+export interface GroupWork<A> {
+  readonly state: Lifecycle | undefined
+  readonly hashes: ReadonlyArray<string>
+  readonly value: A
+}
+
+export effect function withGroup<A, E, R>(core: KeeperCore, group: string, nowSeconds: number, gasLimit: number | undefined, work: (state: Lifecycle, found: SendJournal | undefined, tx: SqlTx) => GroupWork<A>!E!R) {
+  const done = try inTransaction((tx) => effect {
+    const found = try loadSend(tx, group)
+    let before = try core.inGroup(group, found, gasLimit)
+    const day = dayOf(nowSeconds)
+    if (day > before.journal.day) before = try apply(before, { type: "observeDay", day })
+    const worked = try work(before, found, tx)
+    if (worked.state !== undefined)
+      try keep(tx, sendKey(group), { schema: "keeper-send-v1", journal: worked.state.journal, gasLimit: worked.state.config.gasLimit, hashes: worked.hashes })
+    return { worked, before }
+  })
+  if (done.worked.state !== undefined) try core.absorb({ group, before: done.before, next: done.worked.state })
+  return done.worked.value
+}
+
+export function conclusionOf(state: Lifecycle, requestId: number): RunResult | undefined {
+  const row = requestRow(state, requestId)
+  const found = runResult(state, row.binding)
+  return found.identity > 0 ? found.outcome : undefined
+}
+
+export effect function sendInGroup(core: KeeperCore, group: string, event: Event) {
+  return try withGroup(core, group, 0, undefined, (state, found) => effect {
+    const next = try apply(state, event)
+    return { state: next, hashes: found?.hashes ?? [], value: next } satisfies GroupWork<Lifecycle>
+  })
+}
+
+export effect function receiveInGroup(core: KeeperCore, group: string, input: unknown) {
+  return try sendInGroup(core, group, try decodeEvent(input))
+}
+
+export effect function observeGroup(core: KeeperCore, group: string) {
+  const found = try inTransaction((tx) => loadSend(tx, group))
+  return try core.inGroup(group, found, undefined)
+}

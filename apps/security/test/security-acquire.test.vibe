@@ -1,0 +1,246 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { Git, systemGit } from "@repo/platform/git"
+import { type AcquisitionRequest, InvalidTestRemote, acquireRepository, fetchedAs } from "../src/scanner/acquire/git.vibe"
+import { readAcquiredSource } from "../src/scanner/acquire/source.vibe"
+import { inspectRepository } from "../src/scanner/inspect/inspection.ts"
+import { RULE_POLICY_SHA256 } from "../src/scanner/inspect/rules.ts"
+import { type GitHttp, serveGit } from "./support/git/httpBackend.ts"
+import { ALIAS_RULES, type Workspace, changedAliasTopology, corruptFixture, delayedGit, entriesOf, exists, fileSha256, inspectionSummary, inventoryAt, inventoryItem, largeFixture, nameOf, oddPathFixture, overwrite, parsedObject, permissionsOf, readText, removeTree, ruleFixture, safeAliases, servedFixture, sha256Of, unsafeAliases, workspace } from "./support/git/fixtures.ts"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function opened() {
+  return try acquireRelease(orDie(Effect.try(() => workspace())), (made: Workspace) => sync(() => made.close()))
+}
+
+effect function served(root: string) {
+  return try acquireRelease(promise(() => serveGit(root)), (server: GitHttp) => promise(() => server.close()))
+}
+
+effect function refusal(request: AcquisitionRequest) {
+  const error = try Effect.flip(acquireRepository(request))
+  return error instanceof InvalidTestRemote ? { tag: "InvalidTestRemote" } : { tag: error._tag, reason: error.reason, fetched: fetchedAs(error) }
+}
+
+layer(Layer.mergeAll(NodeServices.layer, systemGit), { excludeTestServices: true, timeout: "10 minutes" })((it) => {
+  it.effect('Acquire the exact commit from a local store and a loopback git http-backend; a redirect, a missing commit, a tampered object, trailing Git bytes and an invalid tree path leave no residue (spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending")', () => scoped(effect {
+    const space = try opened()
+    const fixture = try orDie(Effect.try(() => servedFixture(space.root, space.marker)))
+    const local = `file://${fixture.repository.path}`
+    const acquired = try acquireRepository({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: local })
+    const inventory = try orDie(Effect.try(() => inventoryAt(acquired.directory)))
+    const record = (path: string) => inventory.records.find((row) => row.path === path)
+    const payload = record("nested/payload.sh")?.sha256 ?? ""
+    try same(
+      {
+        fetched: fetchedAs(acquired),
+        commitSha: inventory.commitSha,
+        treeSha: inventory.treeSha,
+        entries: acquired.entries,
+        paths: inventory.records.map((row) => row.path),
+        states: [...new Set(inventory.records.map((row) => row.state))],
+        gaps: inventory.visibilityGaps,
+        payload: try orDie(Effect.try(() => readText(`${acquired.directory}/objects/${payload}`))),
+        payloadMode: try orDie(Effect.try(() => permissionsOf(`${acquired.directory}/objects/${payload}`))),
+        link: try orDie(Effect.try(() => readText(`${acquired.directory}/objects/${record("link")?.sha256 ?? ""}`))),
+        submodule: record("vendor/submodule"),
+        layout: try orDie(Effect.try(() => entriesOf(acquired.directory))),
+        leftovers: try orDie(Effect.try(() => entriesOf(space.output))),
+        executed: exists(space.marker),
+      },
+      {
+        fetched: "Fetched",
+        commitSha: fixture.commit,
+        treeSha: try orDie(Effect.try(() => fixture.repository.git(["rev-parse", "HEAD^{tree}"]))),
+        entries: 5,
+        paths: ["link", "model.bin", "nested/payload.sh", "package.json", "vendor/submodule"],
+        states: ["quarantined"],
+        gaps: [
+          "execution-dependencies-and-release-assets-not-acquired",
+          "lfs-object-not-acquired",
+          "runtime-and-model-review-not-performed",
+          "skill-template-inputs-not-acquired",
+          "submodule-source-not-acquired",
+          "symbolic-link-not-followed",
+        ],
+        payload: `#!/bin/sh\ntouch ${space.marker}\n`,
+        payloadMode: 0o400,
+        link: "../../private",
+        submodule: { path: "vendor/submodule", gitSha: "1".repeat(40), type: "commit", mode: "160000", sha256: null, bytes: null, state: "quarantined" },
+        layout: ["inventory.json", "objects"],
+        leftovers: [nameOf(acquired.directory)],
+        executed: false,
+      },
+    )
+    try orDie(Effect.try(() => removeTree(acquired.directory)))
+    const server = try served(space.root)
+    const overHttp = try acquireRepository({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: `${server.origin}/repo/.git` })
+    const httpCommit = (try orDie(Effect.try(() => inventoryAt(overHttp.directory)))).commitSha
+    try orDie(Effect.try(() => removeTree(overHttp.directory)))
+    const before = try orDie(Effect.try(() => entriesOf(space.output)))
+    const redirected = try refusal({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: `${server.origin}/moved/repo/.git` })
+    const afterRedirect = try orDie(Effect.try(() => entriesOf(space.output)))
+    const missing = try refusal({ repository: "fixture/repo", commitSha: "2".repeat(40), directory: space.output, testRemote: local })
+    const afterMissing = try orDie(Effect.try(() => entriesOf(space.output)))
+    const corrupt = try orDie(Effect.try(() => corruptFixture(space.root)))
+    const tamperedObject = try refusal({ repository: "fixture/corrupt", commitSha: corrupt, directory: space.output, testRemote: `file://${space.root}/corrupt` })
+    const afterTampered = try orDie(Effect.try(() => entriesOf(space.output)))
+    const trailing = try orDie(Effect.try(() => delayedGit(space.root, "unexpected trailing bytes")))
+    const searchPath = try Config.String("PATH")
+    const extra = try Effect.provideService(refusal({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: local }), Git, { binary: trailing, searchPath })
+    const afterTrailing = try orDie(Effect.try(() => entriesOf(space.output)))
+    const closesLate = try orDie(Effect.try(() => delayedGit(space.root, "")))
+    const late = try Effect.provideService(acquireRepository({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: local }), Git, { binary: closesLate, searchPath })
+    const lateRecords = (try orDie(Effect.try(() => inventoryAt(late.directory)))).records.length
+    try orDie(Effect.try(() => removeTree(late.directory)))
+    const odd = try orDie(Effect.try(() => oddPathFixture(space.root)))
+    const oddPath = try refusal({ repository: "fixture/odd", commitSha: odd.commit, directory: space.output, testRemote: `file://${odd.path}` })
+    const invalidRemotes = [
+      try refusal({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: "https://example.com/fixture/repo.git" }),
+      try refusal({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: "http://localhost:1/repo.git" }),
+      try refusal({ repository: "fixture/repo", commitSha: fixture.commit, directory: space.output, testRemote: "ssh://127.0.0.1/repo.git" }),
+    ]
+    const escaping = try refusal({ repository: "../repo", commitSha: fixture.commit, directory: space.output })
+    try same(
+      { httpCommit, redirected, missing, tampered: { tag: tamperedObject.tag, fetched: "fetched" in tamperedObject ? tamperedObject.fetched : undefined }, extra, lateRecords, oddPath, invalidRemotes, escaping, residue: [afterRedirect, afterMissing, afterTampered, afterTrailing, try orDie(Effect.try(() => entriesOf(space.output)))], executed: exists(space.marker) },
+      {
+        httpCommit: fixture.commit,
+        redirected: { tag: "AcquisitionFailed", reason: "Git fetch failed", fetched: "FetchUnavailable" },
+        missing: { tag: "AcquisitionFailed", reason: "Git fetch failed", fetched: "FetchUnavailable" },
+        tampered: { tag: "AcquisitionFailed", fetched: "FetchUnavailable" },
+        extra: { tag: "AcquisitionFailed", reason: "Unexpected Git object data", fetched: "FetchUnavailable" },
+        lateRecords: 5,
+        oddPath: { tag: "AcquisitionRefused", reason: "Invalid source tree path or digest", fetched: "FetchPathRefused" },
+        invalidRemotes: [{ tag: "InvalidTestRemote" }, { tag: "InvalidTestRemote" }, { tag: "InvalidTestRemote" }],
+        escaping: { tag: "AcquisitionRefused", reason: "An exact repository and commit SHA are required", fetched: "FetchPathRefused" },
+        residue: [before, before, before, before, before],
+        executed: false,
+      },
+    )
+  }))
+
+  it.effect('Same-commit file links keep alias coverage and provenance in the reviewed inventory, unsafe targets stay visibility gaps, and a changed stored object is refused (spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries")', () => scoped(effect {
+    const space = try opened()
+    const links = try orDie(Effect.try(() => safeAliases(space.root)))
+    const remote = `file://${links.repository.path}`
+    const first = try acquireRepository({ repository: "fixture/links", commitSha: links.commit, directory: space.output, testRemote: remote })
+    const original = try readAcquiredSource(first.directory)
+    const inspected = inspectRepository(original)
+    const item = try orDie(Effect.try(() => inventoryItem(inspected.inventory, "/slop-scan/symlink/CLAUDE.md")))
+    const aliases = ["CLAUDE.md", "docs/CLAUDE.md", "README.md", "chain.md"].map((path) => {
+      const alias = original.files.find((file) => file.path === path)
+      return [path, new TextDecoder().decode(alias?.bytes), alias?.symlink?.resolvedPath]
+    })
+    const topology = try orDie(Effect.try(() => changedAliasTopology(links.repository)))
+    const second = try acquireRepository({ repository: "fixture/links", commitSha: topology, directory: space.output, testRemote: remote })
+    const changed = try readAcquiredSource(second.directory)
+    const unsafeCommit = try orDie(Effect.try(() => unsafeAliases(links.repository, space.root)))
+    const third = try acquireRepository({ repository: "fixture/links", commitSha: unsafeCommit, directory: space.output, testRemote: remote })
+    const unsafe = try readAcquiredSource(third.directory)
+    const alias = changed.files.find((file) => file.path === "CLAUDE.md")
+    try orDie(Effect.try(() => overwrite(`${second.directory}/objects/${alias?.symlink?.sha256 ?? ""}`, "changed-link")))
+    const tamperedLink = try Effect.flip(readAcquiredSource(second.directory))
+    try same(
+      {
+        firstGaps: original.acquisitionGaps.includes("symbolic-link-not-followed"),
+        aliases,
+        injection: inspected.findings.some((finding) => finding.category === "prompt-injection" && finding.path === "README.md"),
+        linkItem: item === undefined ? undefined : { text: try orDie(Effect.try(() => parsedObject(item.text))), sha256: item.sha256 === sha256Of(item.text) },
+        sameBytes: changed.files.map((file) => [file.path, sha256Of(file.bytes)]),
+        topologyChangesDigest: inspectRepository(changed).inventorySha256 !== inspected.inventorySha256,
+        unsafeGap: unsafe.acquisitionGaps.includes("symbolic-link-not-followed"),
+        followed: unsafe.files.filter((file) => file.symlink !== undefined).map((file) => file.path),
+        layout: try orDie(Effect.try(() => entriesOf(third.directory))),
+        tamperedLink: tamperedLink.reason,
+        policy: RULE_POLICY_SHA256,
+      },
+      {
+        firstGaps: false,
+        aliases: [
+          ["CLAUDE.md", ALIAS_RULES, "AGENTS.md"],
+          ["docs/CLAUDE.md", ALIAS_RULES, "AGENTS.md"],
+          ["README.md", ALIAS_RULES, "docs/rules.txt"],
+          ["chain.md", ALIAS_RULES, "AGENTS.md"],
+        ],
+        injection: true,
+        linkItem: {
+          text: { path: "CLAUDE.md", gitSha: original.files.find((file) => file.path === "CLAUDE.md")?.symlink?.gitSha, sha256: sha256Of("AGENTS.md"), target: "AGENTS.md", resolvedPath: "AGENTS.md", targetSha256: sha256Of(ALIAS_RULES) },
+          sha256: true,
+        },
+        sameBytes: original.files.map((file) => [file.path, sha256Of(file.bytes)]),
+        topologyChangesDigest: true,
+        unsafeGap: true,
+        followed: ["CLAUDE.md", "README.md", "chain.md", "docs/CLAUDE.md"],
+        layout: ["inventory.json", "objects"],
+        tamperedLink: "Acquired object bytes changed",
+        policy: "5413c99a77de62a48c7c3d37b713b1b6ca307dbf6c0138a58071ddce85d03377",
+      },
+    )
+  }))
+
+  it.effect('A repository of more than 1,100 files with a 72 MiB blob is acquired completely, with no entry, file or size refusal (spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit")', () => scoped(effect {
+    const space = try opened()
+    const large = try orDie(Effect.try(() => largeFixture(space.root)))
+    const started = try Clock.currentTimeMillis
+    const acquired = try acquireRepository({ repository: "fixture/large", commitSha: large.commit, directory: space.output, testRemote: `file://${large.path}` })
+    const elapsed = (try Clock.currentTimeMillis) - started
+    const inventory = try orDie(Effect.try(() => inventoryAt(acquired.directory)))
+    const big = inventory.records.find((row) => row.path === "big.txt")
+    const stored = try orDie(Effect.try(() => fileSha256(`${acquired.directory}/objects/${big?.sha256 ?? ""}`)))
+    try same(
+      {
+        records: inventory.records.length,
+        entries: acquired.entries,
+        big: { bytes: big?.bytes, sha256: big?.sha256, stored },
+        total: inventory.records.reduce((sum, row) => sum + (row.bytes ?? 0), 0) > 64 * 1024 * 1024,
+        withinAMinute: elapsed < 60_000,
+      },
+      { records: 1101, entries: 1101, big: { bytes: large.bigBytes, sha256: large.bigSha256, stored: large.bigSha256 }, total: true, withinAMinute: true },
+    )
+  }))
+  it.effect('Every acquired byte of a rule fixture, within one review and past it, gives the inventory digest, coverage, checks and findings of the previous scanner (spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"; spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit")', () => scoped(effect {
+    const space = try opened()
+    const fixture = try orDie(Effect.try(() => ruleFixture(space.root)))
+    const remote = `file://${fixture.path}`
+    const withinOne = try acquireRepository({ repository: "fixture/rules", commitSha: fixture.commit, directory: space.output, testRemote: remote })
+    const pastOne = try acquireRepository({ repository: "fixture/rules", commitSha: fixture.bulkCommit, directory: space.output, testRemote: remote })
+    const scanned = [inspectRepository(try readAcquiredSource(withinOne.directory)), inspectRepository(try readAcquiredSource(pastOne.directory))]
+    const coverage = (sourceItems: number) => ({
+      source: { state: "partial", items: sourceItems },
+      manifests: { state: "complete", items: 2 },
+      dependencies: { state: "complete", items: 1 },
+      installScripts: { state: "partial", items: 14 },
+      downloads: { state: "partial", items: 20 },
+      agentInstructions: { state: "complete", items: 7 },
+    })
+    const checks = { "wallet-drainer": "flagged", "credential-theft": "flagged", "secret-exfiltration": "flagged", "unsafe-execution": "flagged", "prompt-injection": "flagged" }
+    try same(
+      scanned.map(inspectionSummary),
+      [
+        {
+          inventorySha256: "8041eb9ec05a29b6745c29f3612a6b08164b2663b1e189692a5c45c69894f881",
+          coverage: coverage(27),
+          checks,
+          findings: 23,
+          findingsSha256: "8176b111d4a8126f1ed17e1b7865713837a82f6e42c870f44bd127816a76dcfb",
+          deterministic: 0,
+          signals: [],
+          restSha256: "6f1189f2151b299dfab4fde5a9d25c2f54c226d4ab04cd72f42983ea19c361d3",
+        },
+        {
+          inventorySha256: "7d8a1f195406d821dc8b8e004b2549b2c76b6168105fa9ef5c95a8105c0af829",
+          coverage: coverage(1127),
+          checks,
+          findings: 23,
+          findingsSha256: "8176b111d4a8126f1ed17e1b7865713837a82f6e42c870f44bd127816a76dcfb",
+          deterministic: 1103,
+          signals: ["/slop-scan/gzip/dd1c7d01558541a187711c38ebce762b7e62cb406cc0755aa112af0e610b0e82/nested.json", "dist/app.min.js"],
+          restSha256: "98121aaf9c48a6943ba1ea7b1f0f969403349c21c6027c9f54b6f705c1a0e2c9",
+        },
+      ],
+    )
+  }))
+})

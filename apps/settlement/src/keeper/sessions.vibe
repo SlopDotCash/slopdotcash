@@ -1,0 +1,14 @@
+// spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint"; spec/settlement/keeperRpc.md, "Exact chain preflight on the selected endpoint precedes any keeper work"; spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"
+import { type Chain, type KeeperRpc, defaultKeeperIdentity, decodeState as decodeRpc, initial as rpcInitial, machineOver as rpcOver } from "../../gen/settlement__keeperRpc.effect.vibe"
+import { type KeeperScan, decodeState as decodeScan, initial as scanInitial, machineOver as scanOver } from "../../gen/settlement__keeperScan.effect.vibe"
+
+export effect function rpcSession(network: Chain, start?: KeeperRpc) {
+  const first = start ?? try decodeRpc({ ...rpcInitial, identity: { ...defaultKeeperIdentity, network } })
+  const held = try Ref.make(first)
+  return try rpcOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export effect function scanSession(start?: KeeperScan) {
+  const held = try Ref.make(start ?? try decodeScan(scanInitial))
+  return try scanOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}

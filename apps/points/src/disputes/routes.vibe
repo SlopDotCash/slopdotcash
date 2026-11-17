@@ -1,0 +1,232 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/points/journal.md, "Undecided policy is refused: an upheld dispute appends no correction"
+import { pointsAnswer } from "@repo/backend/points"
+import { rows, sql } from "@repo/platform/d1"
+import { type Actor, Caller, bytesBody, handleRaw, json } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { later } from "@repo/platform/worker"
+import { type DecisionResult, type Dispute, type FileResult, decisionResult, fileResult, mayRead } from "../../gen/points__disputes.effect.vibe"
+import { Award } from "../kernels/records/records.schema.ts"
+import { answerDispute, disputeKeyPattern, disputeListSize, fileDispute, pointsDispute, pointsDisputes } from "../client/disputes.vibe"
+import { getPointsDisputes, getPointsDisputesByKey, postPointsDisputes, postPointsDisputesByKey } from "../client/refusals.vibe"
+import { DisputeTriage } from "./port.vibe"
+import { awardRecipientGithubId } from "./records.vibe"
+import { type DisputeRow, RecordMissing, disputeKey, heldDispute, retainedRevision, send, storedRow } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+type Body = Readonly<Record<string, unknown>>
+
+schema ListedRow { cursor: number; id: string; payload: string; dispute_id: string | null }
+
+const privateNoStore = { "cache-control": "private, no-store" }
+const bodyBytes = 20_000
+const revisionIdPattern = /^[a-f0-9]{64}$/u
+const cursorPattern = /^(0|[1-9][0-9]*)$/u
+const decodeAward = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ award: Award })))
+
+function refused(row: Row) {
+  const cache = row.headers["cache-control"] ?? "no-store"
+  return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": cache })
+}
+
+function answer(body: unknown, status = 200) {
+  return json(body, status, privateNoStore)
+}
+
+function view(row: DisputeRow) {
+  return {
+    id: row.appeal_key,
+    openedAt: row.opened_at,
+    dueAt: row.due_at,
+    draft: row.draft,
+    escalatedAt: row.escalated_at,
+    resolution: row.resolution,
+    resolvedAt: row.resolved_at,
+    state: row.resolved_at !== null ? "resolved" : row.escalated_at !== null ? "review" : "triage",
+  }
+}
+
+function isBody(value: unknown): value is Body {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function keysOf(body: Body) {
+  return Object.keys(body).sort().join()
+}
+
+effect function boundedObject() {
+  const bytes = bytesBody(bodyBytes, ["application/json"]) catch () => undefined
+  if (bytes === undefined || bytes.length === 0) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+  return isBody(value) ? value : undefined
+}
+
+effect function signedIn() {
+  return (try Caller).current() catch effect (error) => {
+    if (error._tag === "Unauthenticated" || error._tag === "SessionExpired") return "signedOut" as const
+    if (error._tag === "ActorChanged" || error._tag === "Refused") return "changed" as const
+    throw error
+  }
+}
+
+effect function asMember<E, R>(refusals: { readonly notSignedIn: Row; readonly accountChanged: Row; readonly internalError: Row }, handler: (actor: Actor) => HttpServerResponse.HttpServerResponse!E!R) {
+  const actor = try signedIn()
+  if (actor === "signedOut") return refused(refusals.notSignedIn)
+  if (actor === "changed") return refused(refusals.accountChanged)
+  return handler(actor) catch effect () => {
+    try Effect.logError("Points dispute unavailable")
+    return refused(refusals.internalError)
+  }
+}
+
+effect function requestTriage(appealKey: string) {
+  const triage = try DisputeTriage
+  try later(triage.request(appealKey))
+}
+
+effect function listed(actor: Actor, query: URLSearchParams) {
+  const cursor = query.get("before") ?? "0"
+  if (!cursorPattern.test(cursor) || !Number.isSafeInteger(Number(cursor))) return refused(getPointsDisputes.invalidCursor)
+  const before = Number(cursor)
+  const found = try rows(ListedRow, sql`SELECT r.rowid AS cursor, r.id, r.payload, d.appeal_key AS dispute_id
+    FROM points_revisions r JOIN points_members m ON m.github_id = ${awardRecipientGithubId}
+    LEFT JOIN points_disputes d ON d.revision_id = r.id AND d.appellant_github_id = m.github_id
+    WHERE m.github_id = ${actor.githubId} AND (${before} = 0 OR r.rowid < ${before})
+      AND NOT EXISTS (SELECT 1 FROM points_revisions newer WHERE newer.source_key = r.source_key AND newer.rowid > r.rowid)
+    ORDER BY r.rowid DESC LIMIT ${disputeListSize + 1}`)
+  const shown = found.slice(0, disputeListSize)
+  const awards: Array<{ revisionId: string; disputeId: string | null; award: typeof Award.Type }> = []
+  for (const row of shown) awards.push({ revisionId: row.id, disputeId: row.dispute_id, award: (try decodeAward(row.payload)).award })
+  const last = shown[shown.length - 1]
+  return answer({ awards, next: found.length > disputeListSize && last !== undefined ? String(last.cursor) : null })
+}
+
+function fileRefusal(result: FileResult) {
+  switch (result) {
+    case "AlreadySubmitted": return postPointsDisputes.alreadySubmitted
+    case "SupersededRecord": return postPointsDisputes.superseded
+    case "NotRecipient": return postPointsDisputes.notAuthorized
+    case "InvalidStatement": return postPointsDisputes.invalidRequest
+    case "Created": return postPointsDisputes.internalError
+    case "ReturnedExisting": return postPointsDisputes.internalError
+  }
+}
+
+effect function created(appealKey: string) {
+  const row = try storedRow(appealKey)
+  if (row === undefined) return refused(postPointsDisputes.internalError)
+  try requestTriage(appealKey)
+  return answer(view(row), 201)
+}
+
+effect function filed(actor: Actor) {
+  const body = try boundedObject()
+  const reason = body?.reason
+  const revisionId = body?.revisionId
+  const statement = typeof reason === "string" ? reason.trim() : ""
+  if (body === undefined || keysOf(body) !== "reason,revisionId" || typeof revisionId !== "string" || !revisionIdPattern.test(revisionId) || statement === "" || statement.length > 4000) return refused(postPointsDisputes.invalidRequest)
+  const appealKey = try disputeKey(revisionId, actor.githubId)
+  const by = Number(actor.githubId)
+  const outcome = send(appealKey, { kind: "file", revisionId, statement }, by) catch effect (error) => {
+    if (error._tag === "RecordMissing") return "missing" as const
+    if (error._tag !== "Rejected" || error.event.type !== "file") throw error
+    return fileResult(error.state, error.by, error.event.record, error.event.statementLength, error.event.statementDigest)
+  }
+  if (outcome === "missing") return refused(postPointsDisputes.notFound)
+  if (outcome === "ReturnedExisting" || typeof outcome === "object") return try created(appealKey)
+  return refused(fileRefusal(outcome))
+}
+
+effect function moderates(actor: Actor) {
+  return try (try Roles).has(actor.githubId, "moderator")
+}
+
+effect function readable(appealKey: string, actor: Actor) {
+  if (!disputeKeyPattern.test(appealKey)) return undefined
+  const row = try storedRow(appealKey)
+  if (row === undefined) return undefined
+  const held = try heldDispute(appealKey)
+  const viewer = Number(actor.githubId)
+  const moderator = viewer !== held.dispute.recipient && (try moderates(actor))
+  if (!mayRead(held.dispute, viewer) || (viewer !== held.dispute.recipient && !moderator)) return undefined
+  return { row, dispute: held.dispute, moderator }
+}
+
+function keyOf(params: Readonly<Record<string, string>>) {
+  const raw = params.key ?? ""
+  return Effect.try(() => decodeURIComponent(raw))
+}
+
+effect function shown(appealKey: string, actor: Actor) {
+  const found = try readable(appealKey, actor)
+  if (found === undefined) return refused(getPointsDisputesByKey.notFoundPointsDisputeNotFound)
+  const record = try retainedRevision(found.row.revision_id)
+  if (record?.revision === undefined) throw new RecordMissing({ revisionId: found.row.revision_id })
+  return answer({
+    ...view(found.row),
+    revision: record.revision,
+    reason: found.row.statement,
+    resolutionReason: found.row.resolution_reason,
+    mayDecide: found.moderator && decisionResult(found.dispute, Number(actor.githubId), 1) === "DecisionRecorded",
+  })
+}
+
+function decisionRefusal(result: DecisionResult) {
+  switch (result) {
+    case "NotAuthorized": return postPointsDisputesByKey.notAuthorizedAnIndependentModeratorMust
+    case "AlreadyResolved": return postPointsDisputesByKey.alreadyResolvedADecisionHasAlready
+    case "InvalidDecision": return postPointsDisputesByKey.invalidRequestEnterADecisionAnd
+    case "DecisionRecorded": return postPointsDisputesByKey.internalError
+  }
+}
+
+effect function retried(appealKey: string, dispute: Dispute, row: DisputeRow) {
+  if (dispute.resolution !== "Unresolved") return refused(postPointsDisputesByKey.alreadyResolved)
+  try requestTriage(appealKey)
+  return answer(view(row), 202)
+}
+
+effect function decided(appealKey: string, actor: Actor, body: Body | undefined, found: { readonly dispute: Dispute; readonly moderator: boolean }) {
+  if (!found.moderator) return refused(postPointsDisputesByKey.notAuthorizedAnIndependentModeratorMust)
+  const action = body?.action
+  const reason = body?.reason
+  if (body === undefined || keysOf(body) !== "action,reason" || (action !== "uphold" && action !== "deny") || typeof reason !== "string") return refused(postPointsDisputesByKey.invalidRequestEnterADecisionAnd)
+  const text = reason.trim()
+  const by = Number(actor.githubId)
+  const result = decisionResult(found.dispute, by, text.length)
+  if (result !== "DecisionRecorded") return refused(decisionRefusal(result))
+  const sent = send(appealKey, { kind: "decide", uphold: action === "uphold", reason: text }, by) catch effect (error) => {
+    if (error._tag !== "Rejected" || error.event.type !== "decide") throw error
+    return decisionResult(error.state, error.by, error.event.reasonLength)
+  }
+  if (typeof sent === "string") return refused(decisionRefusal(sent))
+  const row = try storedRow(appealKey)
+  if (row === undefined) return refused(postPointsDisputesByKey.internalError)
+  return answer(view(row))
+}
+
+effect function answered(appealKey: string, actor: Actor) {
+  const found = try readable(appealKey, actor)
+  if (found === undefined) return refused(postPointsDisputesByKey.notFoundPointsDisputeNotFound)
+  const body = try boundedObject()
+  if (body !== undefined && body.action === "retry" && keysOf(body) === "action") return try retried(appealKey, found.dispute, found.row)
+  return try decided(appealKey, actor, body, found)
+}
+
+export const disputeRoutes = Layer.mergeAll(
+  handleRaw(pointsDisputes, (input) => pointsAnswer(asMember(getPointsDisputes, (actor) => listed(actor, input.query)))),
+  handleRaw(fileDispute, () => pointsAnswer(asMember(postPointsDisputes, (actor) => filed(actor)))),
+  handleRaw(pointsDispute, (input) => pointsAnswer(asMember(getPointsDisputesByKey, (actor) => effect {
+    const appealKey = keyOf(input.params) catch () => ""
+    return try shown(appealKey, actor)
+  }))),
+  handleRaw(answerDispute, (input) => pointsAnswer(asMember(postPointsDisputesByKey, (actor) => effect {
+    const appealKey = keyOf(input.params) catch () => ""
+    return try answered(appealKey, actor)
+  }))),
+)

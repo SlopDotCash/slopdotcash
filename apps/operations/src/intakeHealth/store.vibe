@@ -1,0 +1,40 @@
+// spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { IntakeHealth } from "@repo/ports/operations"
+import type { Observation } from "../../gen/operations__intakeHealth.effect.vibe"
+
+schema IntakeRow { readonly enabled: number; readonly verified_at: string }
+
+const intakeRead = sql`SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1`
+
+const intakeVersion = sql`coalesce((SELECT enabled || ':' || verified_at FROM private_intake_status WHERE singleton = 1), '-')`
+
+function observationOf(row: IntakeRow | undefined): Observation {
+  if (row === undefined || (row.enabled !== 0 && row.enabled !== 1)) return { tag: "NoObservation" }
+  const verifiedAt = millisOf(row.verified_at)
+  if (!Number.isSafeInteger(verifiedAt) || verifiedAt < 0) return { tag: "NoObservation" }
+  return { tag: "Observed", enabled: row.enabled === 1, verifiedAt }
+}
+
+export effect function storedObservation() {
+  return observationOf(try first(IntakeRow, intakeRead))
+}
+
+export effect function recordObservation(enabled: boolean, verifiedAt: number) {
+  const at = try isoAt(verifiedAt)
+  return try (try D1).run(sql`INSERT INTO private_intake_status(singleton, enabled, verified_at) VALUES (1, ${enabled ? 1 : 0}, ${at}) ON CONFLICT(singleton) DO UPDATE SET enabled = excluded.enabled, verified_at = excluded.verified_at WHERE excluded.verified_at > private_intake_status.verified_at`)
+}
+
+export const IntakeHealthLive = Layer.effect(IntakeHealth, effect {
+  const db = try D1
+  return {
+    status: () => provideService(effect {
+      const row = try first(IntakeRow, intakeRead)
+      return row === undefined ? undefined : { enabled: row.enabled === 1, verifiedAt: row.verified_at }
+    }, D1, db),
+    version: () => effect {
+      return intakeVersion
+    },
+  } satisfies IntakeHealth.Shape
+})

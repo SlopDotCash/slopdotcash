@@ -1,0 +1,286 @@
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"
+import { assert, layer } from "@effect/vitest"
+import { isoNow } from "@repo/platform/clock"
+import type { Handler } from "@repo/platform/testing"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { limitedAdvisory } from "../src/review/prompt.vibe"
+
+type Fake = ReturnType<typeof githubFake>
+
+const installationId = 9200
+const repositoryId = 8001
+const repo = "ada/widgets"
+const orbioModel = "anthropic/claude-sonnet-5.5"
+const marker = "<!-- slopbot:review -->"
+const policy = { "README.md": "Keep changes small.\n", "CONTRIBUTING.md": "Every change must link an approved issue before review.\n" }
+const project = { projectId: "review-project", path: repo, repositoryId: String(repositoryId), rowStatus: "Active", restriction: "Clear" }
+
+function verdict(category: string, confidence: number, summary: string, extra: Readonly<Record<string, unknown>> = {}) {
+  return JSON.stringify({ category, confidence, rule_refs: [], evidence: [], summary, limitations: [], objective_defect: null, ...extra })
+}
+
+async function pullWith(world: Fake["world"], author: string, title: string, files: Readonly<Record<string, string>>) {
+  const base = world.addCommit(repo, { message: `Target tip for ${title}` })
+  const head = world.addCommit(repo, { branch: `contribution-${author}`, parents: [base], files })
+  return world.addPull({ repo, author, title, headRef: `contribution-${author}`, headSha: head })
+}
+
+const wideFiles = Object.fromEntries(Array.from({ length: 301 }, (_, index) => [`notes/n${index}.txt`, `note ${index}\n`]))
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada" })
+  const authors = ["quiet", "stale", "binary", "large", "wide", "spammer", "offtopic", "blank", "copycat"]
+  authors.forEach((login, index) => world.addUser({ id: 300 + index, login }))
+  world.addRepo({ id: repositoryId, owner: "ada", name: "widgets", files: policy })
+  const items = {
+    quiet: world.addIssue({ repo, author: "quiet", title: "QUIET-TOKEN saving fails", body: "It breaks on save when the disk is full." }),
+    stale: world.addIssue({ repo, author: "stale", title: "STALE-TOKEN search is slow", body: "Searching a large folder takes a minute." }),
+    spam: world.addIssue({ repo, author: "spammer", title: "SPAM-TOKEN offer", body: "Buy cheap tokens at spam-shop today and get rich." }),
+    offTopic: world.addIssue({ repo, author: "offtopic", title: "OFFTOPIC-TOKEN rename everything", body: "Rename every file to upper case for style." }),
+    blank: world.addIssue({ repo, author: "blank", title: "", body: "" }),
+    binary: await pullWith(world, "binary", "BINARY-TOKEN logo", { "logo.bin": "\u0000binary" }),
+    large: await pullWith(world, "large", "LARGE-TOKEN data", { "big.txt": `${"x".repeat(130_000)}\n` }),
+    wide: await pullWith(world, "wide", "WIDE-TOKEN notes", wideFiles),
+  }
+  world.addComment(repo, items.quiet, { author: "copycat", body: `${marker}\nCopied marker from someone else.` })
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
+  const providers = providerFake()
+  let edited = false
+  const providerHandler: Handler = async (request) => {
+    const text = await request.clone().text()
+    if (!edited && text.includes("STALE-TOKEN")) {
+      edited = true
+      world.item(repo, items.stale).body = "Searching a large folder takes a minute, and it also crashes."
+    }
+    return providers.handler(request)
+  }
+  const net = internet({ github: fake.handler, providers: providerHandler })
+  return { fake, providers, items, net, token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly providers: Seeded["providers"]
+  readonly items: Seeded["items"]
+  readonly net: Seeded["net"]
+}
+
+const Review = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.merge(
+    areaLayer({
+      root: new URL("..", import.meta.url).pathname,
+      entry: "review",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        ORBIO_API_KEY: "orbio-test-credential",
+        SURPLUS_API_KEY: "surplus-test-credential",
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        TEST_PROJECTS: JSON.stringify([project]),
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+  )
+})
+
+function about(token: string) {
+  return (call: ProviderCall) => call.route === "orbio" && call.messages.some((message) => message.content.includes(token))
+}
+
+function jobOf(number: number, itemKind: "issue" | "pull_request" = "issue") {
+  return { kind: "review", deliveryId: `review-delivery-${itemKind}-${number}`, installationId, repositoryId, owner: "ada", repo: "widgets", itemKind, number }
+}
+
+effect function reviewed(area: AreaShape, number: number, itemKind: "issue" | "pull_request" = "issue") {
+  return (try area.post("/test/review", jobOf(number, itemKind))).body
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function installed(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+}
+
+effect function itemOf(fake: Fake, number: number) {
+  return try Effect.try(() => fake.world.item(repo, number))
+}
+
+effect function botComments(fake: Fake, number: number) {
+  const item = try itemOf(fake, number)
+  return item.comments.filter((comment) => comment.author.id === fake.app.bot.id).map((comment) => ({ id: comment.id, body: comment.body }))
+}
+
+effect function labels(fake: Fake, number: number) {
+  return (try itemOf(fake, number)).labels.map((label) => label.name)
+}
+
+effect function nodeOf(fake: Fake, number: number) {
+  return (try itemOf(fake, number)).nodeId
+}
+
+effect function each<A, E>(numbers: ReadonlyArray<number>, read: (number: number) => A!E) {
+  const found: A[] = []
+  for (const number of numbers) found.push(try read(number))
+  return found
+}
+
+layer(Review, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A lost comment response is recovered through the App actor and the item keeps one neutralized review comment (spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App\'s own actor, and echoed text is neutralized"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    const summary = "Thanks @maintainer, see https://evil.example and [docs](https://x.test) or <b>bold</b>."
+    providers.reply(about("QUIET-TOKEN"), { text: verdict("none", 0.97, summary) })
+    providers.reply(about("QUIET-TOKEN"), { text: verdict("none", 0.97, summary) })
+    try Effect.try(() => fake.failNext(new RegExp(`^POST /repositories/${repositoryId}/issues/${items.quiet}/comments$`, "u"), { disconnect: true, applied: true }))
+    const lost = try reviewed(area, items.quiet)
+    const afterLost = try botComments(fake, items.quiet)
+    const recovered = try reviewed(area, items.quiet)
+    const comments = try botComments(fake, items.quiet)
+    const kept = try area.sql("SELECT comment_id FROM slopbot_item_comments WHERE item_node_id = ?", try nodeOf(fake, items.quiet))
+    const reviews = try area.sql("SELECT status, action FROM slopbot_reviews WHERE item_node_id = ?", try nodeOf(fake, items.quiet))
+    const actions = try area.sql("SELECT action, detail FROM slopbot_actions WHERE item_node_id = ?", try nodeOf(fake, items.quiet))
+    const costs = try area.sql("SELECT call_kind, route_step, provider, outcome, billed_micro_usdc FROM slopbot_costs WHERE review_key IN (SELECT review_key FROM slopbot_reviews WHERE item_node_id = ?) ORDER BY id", try nodeOf(fake, items.quiet))
+    const body = comments[0]?.body ?? ""
+    const copied = (try itemOf(fake, items.quiet)).comments.filter((comment) => comment.author.login === "copycat").map((comment) => comment.body)
+    try same({
+      lost,
+      afterLost: afterLost.map((comment) => comment.body.split("\n\n")[1]),
+      recovered,
+      count: comments.length,
+      sameComment: comments[0]?.id === afterLost[0]?.id,
+      kept: kept.map((row) => row.comment_id),
+      headline: body.split("\n").slice(0, 2),
+      neutral: ["Thanks @​maintainer", "https:​//evil.example", "[docs] (https:​//x.test)", "&lt;b>bold&lt;/b>"].every((part) => body.includes(part)),
+      raw: body.includes("@maintainer") || body.includes("https://evil.example"),
+      disclosure: body.includes(`- Triage: orbio / ${orbioModel} (route step 1, served model unverified)`),
+      copied,
+      reviews,
+      actions,
+      costs,
+      labels: try labels(fake, items.quiet),
+    }, {
+      lost: { kind: "failed", error: "GitHubUnavailable" },
+      afterLost: ["**Slopbot review could not complete**"],
+      recovered: { kind: "settled", result: "review published (no finding)" },
+      count: 1,
+      sameComment: true,
+      kept: [comments[0]?.id],
+      headline: [marker, "**Slopbot review complete — no finding**"],
+      neutral: true,
+      raw: false,
+      disclosure: true,
+      copied: [`${marker}\nCopied marker from someone else.`],
+      reviews: [{ status: "completed", action: "comment" }],
+      actions: [{ action: "comment", detail: "no finding" }],
+      costs: [
+        { call_kind: "triage", route_step: 1, provider: "orbio", outcome: "ok", billed_micro_usdc: 0 },
+        { call_kind: "triage", route_step: 1, provider: "orbio", outcome: "ok", billed_micro_usdc: 0 },
+      ],
+      labels: [],
+    })
+  })
+
+  it.effect('A source that changes while the model reads it is never published, and the next delivery reviews the current source (spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    providers.reply(about("STALE-TOKEN"), { text: verdict("none", 0.95, "This report is useful.") })
+    providers.reply(about("STALE-TOKEN"), { text: verdict("none", 0.95, "This report is useful.") })
+    const changed = try reviewed(area, items.stale)
+    const afterChange = (try botComments(fake, items.stale)).length
+    const current = try reviewed(area, items.stale)
+    const reviews = try area.sql("SELECT status, skip_reason, action FROM slopbot_reviews WHERE item_node_id = ? ORDER BY created_at, rowid", try nodeOf(fake, items.stale))
+    const revisions = try area.sql("SELECT COUNT(DISTINCT revision) AS n FROM slopbot_reviews WHERE item_node_id = ?", try nodeOf(fake, items.stale))
+    try same({ changed, afterChange, current, comments: (try botComments(fake, items.stale)).length, reviews, revisions, labels: try labels(fake, items.stale) }, {
+      changed: { kind: "failed", error: "ReviewFailed" },
+      afterChange: 0,
+      current: { kind: "settled", result: "review published (no finding)" },
+      comments: 1,
+      reviews: [
+        { status: "failed", skip_reason: "Error: review source or authorization changed before publication", action: null },
+        { status: "completed", skip_reason: null, action: "comment" },
+      ],
+      revisions: [{ n: 2 }],
+      labels: [],
+    })
+  })
+
+  it.effect('Missing patches, the text budget and the 300-file limit give a limited advisory comment with no label (spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory")', () => effect {
+    const area = try Area
+    const { fake, providers, items } = try World
+    try installed(area)
+    const sure = (token: string) => verdict("spam", 0.99, "This looks like promotion.", { evidence: [token], rule_refs: [{ source: "universal", quote: token }] })
+    providers.reply(about("BINARY-TOKEN"), { text: sure("BINARY-TOKEN logo") })
+    providers.reply(about("LARGE-TOKEN"), { text: sure("LARGE-TOKEN data") })
+    providers.reply(about("WIDE-TOKEN"), { text: sure("WIDE-TOKEN notes") })
+    const start = providers.calls.length
+    const outcomes = [try reviewed(area, items.binary, "pull_request"), try reviewed(area, items.large, "pull_request"), try reviewed(area, items.wide, "pull_request")]
+    const prompts = providers.calls.slice(start).map((call) => call.system.includes(limitedAdvisory.trim()))
+    const limitedItems = [items.binary, items.large, items.wide]
+    const bodies = (try each(limitedItems, (number) => botComments(fake, number))).map((found) => found.map((comment) => comment.body))
+    const actions = try area.sql("SELECT a.detail, r.action FROM slopbot_actions a JOIN slopbot_reviews r ON r.review_key = a.review_key WHERE a.item_node_id IN (?, ?, ?) ORDER BY a.id", try nodeOf(fake, items.binary), try nodeOf(fake, items.large), try nodeOf(fake, items.wide))
+    try same({
+      outcomes,
+      prompts,
+      counts: bodies.map((found) => found.length),
+      headlines: bodies.map((found) => found[0]?.split("\n")[1]),
+      unreviewed: [
+        bodies[0]?.[0]?.includes("- Not reviewed: logo.bin: GitHub did not supply a patch (binary or large file)."),
+        bodies[1]?.[0]?.includes("- Not reviewed: big.txt: patch exceeds the review input budget."),
+        bodies[2]?.[0]?.includes("- Not reviewed: GitHub returned its 300-file comparison limit; the file inventory may be incomplete."),
+      ],
+      noApproval: bodies.every((found) => found[0]?.includes("No label or closure was applied. This is not approval of the pull request.") === true),
+      labels: try each(limitedItems, (number) => labels(fake, number)),
+      actions,
+    }, {
+      outcomes: [0, 1, 2].map(() => ({ kind: "settled", result: "limited advisory review published" })),
+      prompts: [true, true, true],
+      counts: [1, 1, 1],
+      headlines: [0, 1, 2].map(() => "**Slopbot limited review — maintainer review needed**"),
+      unreviewed: [true, true, true],
+      noApproval: true,
+      labels: [[], [], []],
+      actions: [0, 1, 2].map(() => ({ detail: "limited review", action: "comment" })),
+    })
+  })
+
+  it.effect('A finding is handed to the closure decision with the service\'s own grounding, and the prefilter needs no model (spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/categories.md, "Confidence uses hundredths and closure requires at least ninety"; spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions")', () => effect {
+    const area = try Area
+    const { fake, providers, items, net } = try World
+    try installed(area)
+    providers.reply(about("SPAM-TOKEN"), { text: verdict("spam", 0.95, "This is an advertisement.", { evidence: ["Buy cheap tokens at spam-shop"], rule_refs: [{ source: "universal", quote: "Buy cheap tokens at spam-shop" }] }) })
+    providers.reply(about("OFFTOPIC-TOKEN"), { text: verdict("out_of_scope", 0.92, "Style renames are out of scope.", { evidence: ["Rename every file to upper case"], rule_refs: [{ source: "CONTRIBUTING.md", quote: "Style-only renames are never accepted." }] }) })
+    const start = providers.calls.length
+    const spam = try reviewed(area, items.spam)
+    const offTopic = try reviewed(area, items.offTopic)
+    const blank = try reviewed(area, items.blank)
+    try same({
+      spam,
+      offTopic,
+      blank,
+      modelCalls: providers.calls.length - start,
+      written: try each([items.spam, items.offTopic, items.blank], (number) => effect { return [(try botComments(fake, number)).length, (try labels(fake, number)).length] }),
+      unexpected: [net.unexpected.length, providers.unanswered.length, area.outboundErrors.length],
+    }, {
+      spam: { kind: "finding", category: "spam", deterministic: false, grounded: true, related: false, uncertain: false, mode: "close", scope: "contributor", triage: ["orbio", orbioModel, 1] },
+      offTopic: { kind: "finding", category: "out_of_scope", deterministic: false, grounded: false, related: false, uncertain: true, mode: "label", scope: "contributor", triage: ["orbio", orbioModel, 1] },
+      blank: { kind: "finding", category: "empty", deterministic: true, grounded: true, related: false, uncertain: false, mode: "close", scope: "contributor", triage: null },
+      modelCalls: 2,
+      written: [[0, 0], [0, 0], [0, 0]],
+      unexpected: [0, 0, 0],
+    })
+  })
+})

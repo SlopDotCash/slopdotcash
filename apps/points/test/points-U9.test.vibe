@@ -1,0 +1,85 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { decodeSnapshot } from "../src/client/snapshot/validate.vibe"
+import { journalText } from "../src/kernels/records/canonical.ts"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { finish, journalOf, openStore } from "../src/journal/ledger.vibe"
+import { applyRetainedReviews, retainedDigest, retainedEvents } from "../src/journal/retained.vibe"
+import { applySnapshots, batchOwnedKeys } from "../src/journal/snapshot.vibe"
+import { historyText, registry, reviewHistory, snapshotFile } from "./support/u9/fixtures.ts"
+
+const recordedAt = "2026-11-17T06:00:00.000Z"
+const holdReasons = [
+  "one actor holds several rows of one work unit",
+  "the recorded history of this work unit is outside the journal model",
+  "the recorded work unit is outside the journal model",
+  "a unit value changes only through a scored assessment or ratification",
+  "a recorded unit's shares change only through complete changed-line evidence",
+  "a first unit credit carries the value of its size band",
+  "a shared unit credit needs complete changed-line evidence",
+  "an unchanged debit request appends no revision for new reversal evidence",
+  "the recorded history of this award is outside the journal model",
+  "the journal refused",
+]
+
+layer(webCrypto, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Journal build from history.json plus snapshots appends only, chains per key, and the checked-in history stays an ancestor (spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month")', () => effect {
+    const history = try promise(() => historyText())
+    const file = try promise(() => snapshotFile())
+    const reviewed = try promise(() => reviewHistory())
+    const snapshot = try decodeSnapshot(file.value)
+    const digest = try sha256Hex(file.text)
+    const repositories = repositoriesOf(registry, {})
+    const original = try openStore(history, null, [])
+    const checkedIn = original.revisions
+    const store = try openStore(history, null, [])
+    const applied = try applySnapshots(store, repositories, [{ snapshot, digest }, { snapshot, digest }], recordedAt)
+    const afterSnapshot = store.revisions.length
+    const replayed = try applySnapshots(store, repositories, [{ snapshot, digest }], recordedAt)
+    const review = (try retainedEvents(reviewed)).find((event) => event.repository === "elizaOS/eliza")
+    const carrying = { ...snapshot, generatedAt: "2026-10-02T00:00:00.000Z", ledger: review === undefined ? [] : [review], reviewExclusions: [] }
+    const carryingDigest = try sha256Hex(JSON.stringify(carrying))
+    const carried = try applySnapshots(store, repositories, [{ snapshot: carrying, digest: carryingDigest }], recordedAt)
+    const reviewKey = [...store.latest.values()].find((row) => row.award.sourceId === review?.source.id)?.award.key ?? ""
+    const snapshotSourced = store.latest.get(reviewKey)?.sourceDigest
+    try applyRetainedReviews(store, repositories, reviewed, recordedAt)
+    const afterReviews = store.revisions.length
+    try applyRetainedReviews(store, repositories, reviewed, recordedAt)
+    const batch = try retainedDigest(reviewed)
+    const confirmation = store.latest.get(reviewKey)
+    const built = try finish(store, recordedAt)
+    const appended = built.journal.revisions.slice(checkedIn.length)
+    const reopened = try openStore(history, built.text, [])
+    const withoutFirst = `${journalText({ ...journalOf(original), revisions: checkedIn.slice(1) })}\n`
+    const forked = Effect.as(openStore(history, withoutFirst, []), "opened") catch (error) => error._tag === "HistoryDiverges" ? `${error._tag} ${error.id}` : error._tag
+    try Effect.try(() => assert.deepStrictEqual({
+      ancestor: checkedIn.every((row, position) => built.journal.revisions[position]?.id === row.id),
+      applied,
+      replayed,
+      carried,
+      snapshotSourced: snapshotSourced === carryingDigest,
+      confirmed: { digest: confirmation?.sourceDigest === batch, rule: confirmation?.sourceRule, decided: confirmation?.decision !== undefined, owned: batchOwnedKeys(store).has(reviewKey) },
+      grew: afterSnapshot > checkedIn.length,
+      reviewsSettled: built.journal.revisions.length === afterReviews,
+      recordedNow: appended.every((row) => row.recordedAt === recordedAt),
+      coverage: built.journal.coverage.filter((entry) => entry.digest === digest).map((entry) => entry.repository),
+      unexplainedHolds: built.held.filter((held) => !holdReasons.some((reason) => held.reason.startsWith(reason))),
+      reopened: reopened.revisions.length,
+      forked,
+    }, {
+      ancestor: true,
+      applied: 1,
+      replayed: 0,
+      carried: 1,
+      snapshotSourced: true,
+      confirmed: { digest: true, rule: "slop-score-v2", decided: false, owned: true },
+      grew: true,
+      reviewsSettled: true,
+      recordedNow: true,
+      coverage: snapshot.repositories.map((repository) => repository.id),
+      unexplainedHolds: [],
+      reopened: built.journal.revisions.length,
+      forked: `HistoryDiverges ${checkedIn[0]?.id ?? ""}`,
+    }))
+  })
+})

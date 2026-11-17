@@ -1,0 +1,371 @@
+// spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { isoNow } from "@repo/platform/clock"
+import { type JsonRpc } from "@repo/platform/chain/rpc"
+import { base58Decode, base58Encode, base64Decode, base64Encode, publicKey } from "@repo/platform/chain/solana"
+import { signedBy } from "../chain/solana/transactions.ts"
+import { type IssuedPlan, type SolanaDirectRail, SolanaDirectInvalid, loopbackRpc, rawSolana } from "./solana.vibe"
+
+module limbs {
+  import { sha256 } from "@noble/hashes/sha2.js"
+  import { base58Encode } from "@repo/platform/chain/solana"
+  /** @throws {never} */
+  export function messageIdOf(message: Uint8Array): string {
+    return base58Encode(sha256(message))
+  }
+  /** @throws {never} */
+  export function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+    return left.length === right.length && left.every((byte, index) => byte === right[index])
+  }
+}
+import { messageIdOf, sameBytes } from limbs
+
+const MAINNET = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+const blocksPerRun = 32
+
+export schema RecoverySignature {
+  readonly messageId: string
+  readonly signature: string
+}
+
+export schema CoverageBlock {
+  readonly slot: number
+  readonly blockhash: string
+  readonly previousBlockhash: string
+  readonly parentSlot: number
+  readonly signatureCount: number
+  readonly signaturesSha256: string
+}
+
+export schema ExpiryCoverage {
+  readonly txId: string
+  readonly operator: string
+  readonly blockhash: string
+  readonly blockhashSlot: number
+  readonly tipSlot: number
+  readonly tipHash: string
+  readonly nextSlot: number
+  readonly expectedHash: string
+  readonly blocks: number
+  readonly digest: string
+  readonly complete: boolean
+  readonly revision: number
+}
+
+export interface ProviderObservation {
+  readonly operator: string
+  readonly firstAvailableSlot: number
+  readonly finalizedContextSlot: number
+  readonly signatureContextSlot: number
+  readonly coverage: ExpiryCoverage
+}
+
+export interface ExpiryProof {
+  readonly messageId: string
+  readonly txId: string
+  readonly blockhash: string
+  readonly blockhashSlot: number
+  readonly providers: ReadonlyArray<ProviderObservation>
+}
+
+export interface FailedProof {
+  readonly messageId: string
+  readonly txId: string
+  readonly failed: ReadonlyArray<{ readonly operator: string; readonly slot: number; readonly blockhash: string; readonly error: string }>
+}
+
+export type MessageProof = ExpiryProof | FailedProof
+
+export type Retirement =
+  | { readonly state: "expiry-required" | "history-check" }
+  | { readonly state: "signature-required"; readonly challenges: ReadonlyArray<{ readonly messageId: string; readonly message: string }> }
+  | { readonly state: "payment-found"; readonly transactionIds: ReadonlyArray<string> }
+  | { readonly state: "retired"; readonly proof: { readonly genesisHash: string; readonly messages: ReadonlyArray<MessageProof> }; readonly height: number; readonly observation: string }
+
+export error RecoverySignatureInvalid
+error HistoryUnproven
+
+export interface ScanOwner {
+  readonly caseId: string
+  readonly generation: number
+}
+
+export interface RetirementInput {
+  readonly rail: SolanaDirectRail
+  readonly payer: string
+  readonly plans: ReadonlyArray<IssuedPlan>
+  readonly signatures: ReadonlyArray<RecoverySignature>
+  readonly owner: ScanOwner
+}
+
+interface Provider {
+  readonly operator: string
+  readonly rpc: JsonRpc
+}
+
+function slot(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+}
+
+export function recoveryOperator(endpoint: string): string | undefined {
+  const url = URL.parse(endpoint)
+  if (url === null || url.protocol !== "https:") return undefined
+  const host = url.hostname.toLowerCase()
+  if (host === "api.mainnet-beta.solana.com") return "solana-public"
+  if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode"
+  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station"
+  if (host.endsWith(".alchemy.com")) return "alchemy"
+  if (host.endsWith(".helius-rpc.com")) return "helius"
+  return undefined
+}
+
+function operatorOf(endpoint: string, genesis: string) {
+  const known = recoveryOperator(endpoint)
+  if (known !== undefined || genesis === MAINNET || !loopbackRpc(endpoint)) return known
+  return `local-validator:${new URL(endpoint).host}`
+}
+
+effect function providerOf(endpoint: string | undefined, genesis: string) {
+  if (endpoint === undefined) return undefined
+  const operator = operatorOf(endpoint, genesis)
+  if (operator === undefined) return undefined
+  return { operator, rpc: try rawSolana(Redacted.make([endpoint]), genesis) } satisfies Provider
+}
+
+effect function unproven(): never!HistoryUnproven {
+  throw new HistoryUnproven()
+}
+
+effect function invalid(reason: string): never!SolanaDirectInvalid {
+  throw new SolanaDirectInvalid({ reason })
+}
+
+const BlockAnchor = Schema.NullOr(Schema.Struct({ blockhash: Schema.String }))
+const Validity = Schema.Struct({ context: Schema.Struct({ slot: Schema.Number }), value: Schema.Boolean })
+const Statuses = Schema.Struct({
+  context: Schema.Struct({ slot: Schema.Number }),
+  value: Schema.Array(Schema.NullOr(Schema.Struct({ slot: Schema.Number, err: Schema.optionalKey(Schema.Unknown), confirmationStatus: Schema.optionalKey(Schema.NullOr(Schema.String)) }))),
+})
+const RawTransaction = Schema.NullOr(Schema.Struct({ slot: Schema.Number, meta: Schema.NullOr(Schema.Struct({ err: Schema.optionalKey(Schema.Unknown) })), transaction: Schema.Array(Schema.String) }))
+const HistoryBlock = Schema.NullOr(Schema.Struct({ blockhash: Schema.String, previousBlockhash: Schema.String, parentSlot: Schema.Number, signatures: Schema.Array(Schema.String) }))
+
+const blockNone = { commitment: "finalized", transactionDetails: "none", rewards: false, maxSupportedTransactionVersion: 0 }
+const blockSignatures = { commitment: "finalized", transactionDetails: "signatures", rewards: false, maxSupportedTransactionVersion: 0 }
+
+effect function retainedMessage(plan: IssuedPlan, payer: string) {
+  const wire = base64Decode(plan.transaction)
+  if (wire === undefined || wire.length > 1232 || wire.length < 134 || wire[0] !== 1 || wire.slice(1, 65).some((value) => value !== 0)) return try invalid("Invalid retained Solana payment")
+  const bytes = wire.slice(65)
+  const keys = bytes[3] ?? 0
+  if (bytes[0] !== 1 || bytes[1] !== 0 || keys < 1 || keys >= 128) return try invalid("Invalid retained Solana payment")
+  const at = 4 + keys * 32
+  if (bytes.length <= at + 32 || base58Encode(bytes.slice(4, 36)) !== payer || base58Encode(bytes.slice(at, at + 32)) !== plan.blockhash
+    || messageIdOf(bytes) !== plan.messageId || !slot(plan.blockhashSlot) || !slot(plan.lastValidBlockHeight)) return try invalid("Invalid retained Solana payment")
+  return bytes
+}
+
+effect function expiry(providers: ReadonlyArray<Provider>, genesis: string, plans: ReadonlyArray<IssuedPlan>) {
+  for (const provider of providers) {
+    if ((try provider.rpc.call("getGenesisHash", [], Schema.String)) !== genesis) return "history-check" as const
+    for (const plan of plans) {
+      const anchor = try provider.rpc.call("getBlock", [plan.blockhashSlot, blockNone], BlockAnchor)
+      if (anchor?.blockhash !== plan.blockhash) return "history-check" as const
+      const valid = try provider.rpc.call("isBlockhashValid", [plan.blockhash, { commitment: "finalized", minContextSlot: plan.blockhashSlot }], Validity)
+      const height = try provider.rpc.call("getBlockHeight", [{ commitment: "finalized" }], Schema.Number)
+      if (!slot(valid.context.slot) || valid.context.slot < (plan.blockhashSlot ?? 0) || !slot(height)) return "history-check" as const
+      if (valid.value || height <= plan.lastValidBlockHeight) return "expiry-required" as const
+    }
+  }
+  return "expired" as const
+}
+
+effect function digestOf(value: unknown) {
+  return try sha256Hex(JSON.stringify(value))
+}
+
+schema ScanRow { scan_json: string }
+
+effect function storedCoverage(owner: ScanOwner, txId: string, operator: string) {
+  const [row] = try rows(ScanRow, sql`SELECT scan_json FROM security_direct_recovery_scans WHERE case_id = ${owner.caseId} AND generation = ${owner.generation} AND transaction_id = ${txId} AND operator = ${operator} ORDER BY revision DESC LIMIT 1`)
+  if (row === undefined) return undefined
+  return try Schema.decodeUnknownEffect(Schema.fromJsonString(ExpiryCoverage))(row.scan_json)
+}
+
+effect function saveCoverage(owner: ScanOwner, previous: ExpiryCoverage | undefined, next: ExpiryCoverage, page: ReadonlyArray<CoverageBlock>) {
+  const prior = previous?.revision ?? 0
+  if (next.revision !== prior + 1) return try unproven()
+  const now = try isoNow()
+  const changes = try (try D1).run(sql`INSERT INTO security_direct_recovery_scans (case_id, generation, transaction_id, operator, revision, scan_json, page_json, created_at) SELECT ${owner.caseId}, ${owner.generation}, ${next.txId}, ${next.operator}, ${next.revision}, ${JSON.stringify(next)}, ${JSON.stringify(page)}, ${now} WHERE coalesce((SELECT max(revision) FROM security_direct_recovery_scans WHERE case_id = ${owner.caseId} AND generation = ${owner.generation} AND transaction_id = ${next.txId} AND operator = ${next.operator}), 0) = ${prior}`)
+  if (changes !== 1) return try unproven()
+}
+
+type TraversalStep = { readonly kind: "refused" | "complete" | "advance"; readonly nextSlot: number; readonly expectedHash: string }
+type TraversalBlock = { readonly blockhash: string; readonly previousBlockhash: string; readonly parentSlot: number; readonly signatures: string[] }
+type RetainedExpiryCoverage = { readonly kind: "missing" } | { readonly kind: "present"; readonly history: ExpiryCoverage }
+
+function expiryTraversalStep(txId: string, anchorHash: string, anchorSlot: number, current: number, expectedHash: string, block: TraversalBlock): TraversalStep {
+  if (block.blockhash !== expectedHash || current < anchorSlot || block.signatures.includes(txId)) return { kind: "refused", nextSlot: current, expectedHash }
+  if (current === anchorSlot) return block.blockhash === anchorHash ? { kind: "complete", nextSlot: current, expectedHash } : { kind: "refused", nextSlot: current, expectedHash }
+  if (block.parentSlot >= current || block.parentSlot < anchorSlot) return { kind: "refused", nextSlot: current, expectedHash }
+  return { kind: "advance", nextSlot: block.parentSlot, expectedHash: block.previousBlockhash }
+}
+
+function matchingExpiryCoverage(a: RetainedExpiryCoverage, b: RetainedExpiryCoverage) {
+  return a.kind === "present" && b.kind === "present" && a.history.complete && b.history.complete && a.history.blocks > 0 && a.history.txId === b.history.txId && a.history.blockhash === b.history.blockhash
+    && a.history.blockhashSlot === b.history.blockhashSlot && a.history.tipSlot === b.history.tipSlot && a.history.tipHash === b.history.tipHash && a.history.blocks === b.history.blocks && a.history.digest === b.history.digest
+}
+
+function retained(coverage: ExpiryCoverage | undefined): RetainedExpiryCoverage {
+  return coverage === undefined ? { kind: "missing" } : { kind: "present", history: coverage }
+}
+
+effect function proveExpiry(txId: string, plan: IssuedPlan, providers: ReadonlyArray<Provider>, owner: ScanOwner, genesis: string) {
+  const anchorSlot = plan.blockhashSlot ?? -1
+  if (!slot(anchorSlot) || providers.length !== 2 || providers[0]?.operator === providers[1]?.operator) return try unproven()
+  const observations: ProviderObservation[] = []
+  let horizonSlot: number | undefined = undefined
+  let horizonHash: string | undefined = undefined
+  for (const provider of providers) {
+    const { rpc, operator } = provider
+    if ((try rpc.call("getGenesisHash", [], Schema.String)) !== genesis) return try unproven()
+    const first = try rpc.call("getFirstAvailableBlock", [], Schema.Number)
+    if (!slot(first) || first > anchorSlot) return try unproven()
+    const anchor = try rpc.call("getBlock", [anchorSlot, blockNone], BlockAnchor)
+    if (anchor?.blockhash !== plan.blockhash) return try unproven()
+    const expired = try rpc.call("isBlockhashValid", [plan.blockhash, { commitment: "finalized", minContextSlot: anchorSlot }], Validity)
+    if (expired.value || !slot(expired.context.slot) || expired.context.slot < anchorSlot) return try unproven()
+    const status = try rpc.call("getSignatureStatuses", [[txId], { searchTransactionHistory: true }], Statuses)
+    if (!slot(status.context.slot) || status.context.slot < expired.context.slot || status.value.length !== 1 || status.value[0] !== null) return try unproven()
+    if ((try rpc.call("getTransaction", [txId, { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }], RawTransaction)) !== null) return try unproven()
+    const previous = try storedCoverage(owner, txId, operator)
+    if (previous !== undefined && (previous.txId !== txId || previous.operator !== operator || previous.blockhash !== plan.blockhash || previous.blockhashSlot !== anchorSlot)) return try unproven()
+    const horizon: number = horizonSlot ?? previous?.tipSlot ?? expired.context.slot
+    horizonSlot = horizon
+    if (expired.context.slot < horizon || (previous !== undefined && previous.tipSlot !== horizon)) return try unproven()
+    const tip = try rpc.call("getBlock", [horizon, blockSignatures], HistoryBlock)
+    if (tip === null || tip.blockhash === "" || tip.previousBlockhash === "" || !slot(tip.parentSlot)) return try unproven()
+    const hash: string = horizonHash ?? previous?.tipHash ?? tip.blockhash
+    horizonHash = hash
+    if (tip.blockhash !== hash || (previous !== undefined && previous.tipHash !== hash)) return try unproven()
+    let scan: ExpiryCoverage = previous ?? {
+      txId,
+      operator,
+      blockhash: plan.blockhash,
+      blockhashSlot: anchorSlot,
+      tipSlot: horizon,
+      tipHash: hash,
+      nextSlot: horizon,
+      expectedHash: hash,
+      blocks: 0,
+      digest: try digestOf({ txId, blockhash: plan.blockhash, blockhashSlot: anchorSlot, horizonSlot: horizon, horizonHash: hash }),
+      complete: false,
+      revision: 0,
+    }
+    const page: CoverageBlock[] = []
+    for (let count = 0; !scan.complete && count < blocksPerRun; count++) {
+      const current = scan.nextSlot
+      const block = try rpc.call("getBlock", [current, blockSignatures], HistoryBlock)
+      if (block === null || block.blockhash === "" || block.previousBlockhash === "" || !slot(block.parentSlot)) return try unproven()
+      const step = expiryTraversalStep(txId, plan.blockhash, anchorSlot, current, scan.expectedHash, { ...block, signatures: [...block.signatures] })
+      if (step.kind === "refused") return try unproven()
+      const evidence = { slot: current, blockhash: block.blockhash, previousBlockhash: block.previousBlockhash, parentSlot: block.parentSlot, signatureCount: block.signatures.length, signaturesSha256: try digestOf(block.signatures) } satisfies CoverageBlock
+      page.push(evidence)
+      const complete = step.kind === "complete"
+      scan = { ...scan, complete, digest: try digestOf({ prior: scan.digest, block: evidence }), blocks: scan.blocks + 1, ...(complete ? {} : { nextSlot: step.nextSlot, expectedHash: step.expectedHash }) }
+    }
+    if (page.length > 0) {
+      scan = { ...scan, revision: scan.revision + 1 }
+      try saveCoverage(owner, previous, scan, page)
+    }
+    observations.push({ operator, firstAvailableSlot: first, finalizedContextSlot: expired.context.slot, signatureContextSlot: status.context.slot, coverage: scan })
+  }
+  if (!observations.every((observation) => observation.coverage.complete) || !matchingExpiryCoverage(retained(observations[0]?.coverage), retained(observations[1]?.coverage))) return try unproven()
+  return { messageId: plan.messageId ?? "", txId, blockhash: plan.blockhash, blockhashSlot: anchorSlot, providers: observations } satisfies ExpiryProof
+}
+
+effect function finalizedFailure(provider: Provider, signature: string, expected: Uint8Array, anchorSlot: number) {
+  const status = try provider.rpc.call("getSignatureStatuses", [[signature], { searchTransactionHistory: true }], Statuses)
+  if (!slot(status.context.slot) || status.context.slot < anchorSlot || status.value.length !== 1) return try unproven()
+  const seen = status.value[0] ?? null
+  const receipt = try provider.rpc.call("getTransaction", [signature, { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }], RawTransaction)
+  if (seen === null && receipt === null) return { kind: "absent" as const }
+  const statusError = seen?.err ?? null
+  const receiptError = receipt?.meta?.err ?? null
+  if (seen === null || receipt === null || seen.confirmationStatus !== "finalized" || statusError === null || receiptError === null || !slot(seen.slot)
+    || receipt.slot !== seen.slot || JSON.stringify(receiptError) !== JSON.stringify(statusError) || receipt.transaction[1] !== "base64") return { kind: "found" as const }
+  const wire = base64Decode(receipt.transaction[0] ?? "") ?? new Uint8Array()
+  const block = try provider.rpc.call("getBlock", [seen.slot, blockSignatures], HistoryBlock)
+  if (wire[0] !== 1 || base58Encode(wire.slice(1, 65)) !== signature || !sameBytes(wire.slice(65), expected) || block === null || !block.signatures.includes(signature)) return try unproven()
+  return { kind: "failed" as const, operator: provider.operator, slot: seen.slot, blockhash: block.blockhash, error: JSON.stringify(statusError) }
+}
+
+effect function verifiedSignatures(input: RetirementInput, messages: ReadonlyMap<string, Uint8Array>) {
+  const payer = input.payer as Parameters<typeof signedBy>[2]
+  const signed = new Map<string, string>()
+  for (const entry of input.signatures) {
+    const bytes = messages.get(entry.messageId)
+    const signature = entry.signature.length > 88 ? undefined : base58Decode(entry.signature)
+    if (bytes === undefined || signed.has(entry.messageId) || signature === undefined || signature.length !== 64 || base58Encode(signature) !== entry.signature || !signedBy(bytes, signature, payer)) throw new RecoverySignatureInvalid()
+    signed.set(entry.messageId, entry.signature)
+  }
+  return signed
+}
+
+effect function retiredHistory(input: RetirementInput, providers: ReadonlyArray<Provider>, messages: ReadonlyMap<string, Uint8Array>, signed: ReadonlyMap<string, string>) {
+  const found = new Set<string>()
+  const proofs: MessageProof[] = []
+  let incomplete = false
+  let height = 0
+  for (const plan of input.plans) {
+    const signature = signed.get(plan.messageId ?? "") ?? ""
+    const expected = messages.get(plan.messageId ?? "") ?? new Uint8Array()
+    const failures: Array<FailedProof["failed"][number]> = []
+    for (const provider of providers) {
+      const outcome = try finalizedFailure(provider, signature, expected, plan.blockhashSlot ?? 0)
+      if (outcome.kind === "found") found.add(signature)
+      else if (outcome.kind === "failed") failures.push({ operator: outcome.operator, slot: outcome.slot, blockhash: outcome.blockhash, error: outcome.error })
+    }
+    if (found.size > 0) continue
+    if (failures.length > 0) {
+      const [left, right] = failures
+      if (failures.length !== 2 || left === undefined || right === undefined || left.slot !== right.slot || left.blockhash !== right.blockhash || left.error !== right.error) incomplete = true
+      else {
+        proofs.push({ messageId: plan.messageId ?? "", txId: signature, failed: failures })
+        height = Math.max(height, left.slot)
+      }
+      continue
+    }
+    const proof = proveExpiry(signature, plan, providers, input.owner, input.rail.genesis) catch () => undefined
+    if (proof === undefined) incomplete = true
+    else {
+      proofs.push(proof)
+      height = Math.max(height, ...proof.providers.map((observation) => observation.coverage.tipSlot))
+    }
+  }
+  if (found.size > 0) return { state: "payment-found", transactionIds: [...found] } satisfies Retirement
+  if (incomplete) return { state: "history-check" } satisfies Retirement
+  return { state: "retired", proof: { genesisHash: input.rail.genesis, messages: proofs }, height, observation: proofs[0]?.txId ?? "" } satisfies Retirement
+}
+
+export effect function retireSolanaPlans(input: RetirementInput) {
+  if (input.plans.length < 1 || input.plans.length > 64 || input.signatures.length > 64) return try invalid("Invalid Solana recovery request")
+  const key = publicKey(input.payer)
+  if (key === undefined || base58Encode(key) !== input.payer) return try invalid("Invalid Solana recovery payer")
+  const messages = new Map<string, Uint8Array>()
+  for (const plan of input.plans) {
+    if (messages.has(plan.messageId ?? "")) return try invalid("Duplicate retained Solana payment")
+    messages.set(plan.messageId ?? "", try retainedMessage(plan, input.payer))
+  }
+  const [endpoint] = Redacted.value(input.rail.urls)
+  const first = try providerOf(endpoint, input.rail.genesis)
+  const second = try providerOf(input.rail.recoveryUrl === undefined ? undefined : Redacted.value(input.rail.recoveryUrl), input.rail.genesis)
+  if (first === undefined || second === undefined || first.operator === second.operator) return { state: "history-check" } satisfies Retirement
+  const providers = [first, second]
+  const window = expiry(providers, input.rail.genesis, input.plans) catch () => "history-check" as const
+  if (window !== "expired") return { state: window } satisfies Retirement
+  const signed = try verifiedSignatures(input, messages)
+  const missing = input.plans.filter((plan) => !signed.has(plan.messageId ?? ""))
+  if (missing.length > 0) return { state: "signature-required", challenges: missing.map((plan) => ({ messageId: plan.messageId ?? "", message: base64Encode(messages.get(plan.messageId ?? "") ?? new Uint8Array()) })) } satisfies Retirement
+  return retiredHistory(input, providers, messages, signed) catch () => ({ state: "history-check" }) satisfies Retirement
+}

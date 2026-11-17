@@ -1,0 +1,256 @@
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"
+import { boundedBytes } from "@repo/platform/browser"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import type { Journal } from "../../kernels/records/canonical.ts"
+import { journalFile } from "../../kernels/records/ids.vibe"
+import { encoded } from "./inventory.vibe"
+
+export const publishedOrigin = "https://slop.cash"
+export const pointsRule = "slop-points-v1"
+
+const pageBytes = 8 * 1024 * 1024
+const indexBytes = 1024 * 1024
+const registryBytes = 4 * 1024 * 1024
+const readTimeoutMs = 30_000
+const unavailableWaitMs = 15_000
+const unavailableAttempts = 3
+const maximumRevisions = 250_000
+const shardCount = 16
+const contractHeader = "x-slop-project-api-contract"
+const indexKeys: ReadonlyArray<string> = ["schemaVersion", "ruleVersion", "generatedAt", "coverage", "revisionCount", "shards"]
+const shardKeys: ReadonlyArray<string> = ["path", "sha256", "count"]
+const rowKeys: ReadonlyArray<string> = ["sequence", "revision"]
+const registryKeys: ReadonlyArray<string> = ["schemaVersion", "projects", "restrictions"]
+const restrictionStates: ReadonlyArray<string> = ["quarantined", "banned"]
+const checksumMismatch = "Points shard checksum mismatch"
+
+type JsonObject = Readonly<Record<string, unknown>>
+
+export error PublishedInputUnavailable { message: string }
+
+export interface PublishedRegistry {
+  readonly projects: ReadonlyArray<unknown>
+  readonly revisions: ReadonlyArray<unknown>
+  readonly withheld: ReadonlyArray<string>
+}
+
+interface Fetched {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string | undefined>>
+  readonly bytes: Uint8Array
+}
+
+function unavailable(message: string) {
+  return new PublishedInputUnavailable({ message })
+}
+
+function objectOf(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
+}
+
+function exactKeys(value: JsonObject, keys: ReadonlyArray<string>) {
+  const actual = Object.keys(value)
+  return actual.length === keys.length && actual.every((key) => keys.includes(key))
+}
+
+function ok(answer: Fetched) {
+  return answer.status >= 200 && answer.status < 300
+}
+
+effect function fetched(url: string, limitBytes: number, label: string) {
+  const client = try HttpClient.HttpClient
+  const read = effect {
+    const response = try client.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } }))
+    const bytes = boundedBytes(response, limitBytes, label) catch effect (error) => {
+      throw unavailable(error._tag === "BodyTooLarge" ? `${label} exceeds the size limit` : `${label} returned no readable body`)
+    }
+    return { status: response.status, headers: response.headers, bytes } satisfies Fetched
+  }
+  return timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error" }), Duration.millis(readTimeoutMs)) catch effect (error) => match (error._tag) {
+    when "TimeoutError": throw unavailable(`${label} timed out after ${readTimeoutMs}ms`);
+    when "HttpClientError": throw unavailable(`${label} could not be read`);
+    default: throw error;
+  }
+}
+
+effect function textOf(bytes: Uint8Array, label: string) {
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => {
+    throw unavailable(`${label} is not UTF-8`)
+  }
+  return text
+}
+
+effect function jsonOf(bytes: Uint8Array, label: string) {
+  const text = try textOf(bytes, label)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw unavailable(`${label} returned malformed JSON`)
+  }
+  return value
+}
+
+effect function journalPage(url: string) {
+  let attempt = 1
+  while (true) {
+    const answer = try fetched(url, pageBytes, "published points")
+    const value = objectOf(try jsonOf(answer.bytes, "published points"))
+    if (answer.status !== 503 || value?.error !== "points_unavailable" || attempt === unavailableAttempts) return { status: answer.status, value }
+    try sleep(Duration.millis(unavailableWaitMs))
+    attempt += 1
+  }
+}
+
+effect function checkedJournal(value: unknown, message: string) {
+  const journal = journalFile(`${encoded(value)}\n`) catch effect () => {
+    throw unavailable(message)
+  }
+  return journal
+}
+
+effect function pagedJournal(origin: string) {
+  let cursor = 0
+  let batch: string | undefined = undefined
+  let head: { readonly generatedAt: unknown; readonly coverage: unknown } | undefined = undefined
+  const revisions: unknown[] = []
+  while (true) {
+    const url = new URL(`${origin}/api/v1/points/journal`)
+    url.searchParams.set("after", String(cursor))
+    if (batch !== undefined) url.searchParams.set("batch", batch)
+    const page = try journalPage(url.href)
+    if (page.status < 200 || page.status >= 300) throw unavailable(`Points history returned ${page.status}; refusing to discard history`)
+    const value = page.value
+    if (value === undefined || typeof value.batch !== "string" || !Array.isArray(value.revisions) || typeof value.total !== "number" || !Number.isSafeInteger(value.total) || value.total > maximumRevisions) {
+      throw unavailable("Invalid points history page")
+    }
+    if (batch !== undefined && batch !== value.batch) throw unavailable("Points batch changed during pagination")
+    batch = value.batch
+    head = head ?? { generatedAt: value.generatedAt, coverage: value.coverage }
+    const rows: ReadonlyArray<unknown> = value.revisions
+    revisions.push(...rows)
+    const next = value.next
+    if (next !== null && (typeof next !== "number" || !Number.isSafeInteger(next) || next <= cursor)) throw unavailable("Invalid points history cursor")
+    if (next === null) {
+      if (revisions.length !== value.total) throw unavailable("Incomplete points history")
+      break
+    }
+    cursor = next
+  }
+  if (head === undefined || batch === undefined) throw unavailable("Missing points history")
+  const candidate = { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: head.generatedAt, coverage: head.coverage, revisions }
+  const journal = try checkedJournal(candidate, "Invalid points history")
+  if ((try sha256Hex(encoded(candidate))) !== batch) throw unavailable("Points batch digest mismatch")
+  return journal
+}
+
+effect function assembledProjection(index: unknown, parts: ReadonlyArray<string>) {
+  const record = objectOf(index)
+  if (record === undefined || !exactKeys(record, indexKeys)) throw unavailable("Unexpected points fields")
+  const shards = record.shards
+  const count = record.revisionCount
+  if (record.schemaVersion !== "1" || record.ruleVersion !== pointsRule || typeof record.generatedAt !== "string" || !Array.isArray(shards) || shards.length !== shardCount
+    || parts.length !== shardCount || typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > maximumRevisions) {
+    throw unavailable("Invalid points index")
+  }
+  const records: { readonly sequence: number; readonly revision: unknown }[] = []
+  for (const [position, entry] of shards.entries()) {
+    const shard = objectOf(entry)
+    const part = parts[position] ?? ""
+    if (shard === undefined || !exactKeys(shard, shardKeys)) throw unavailable("Unexpected points fields")
+    if (shard.path !== `/data/points/${position.toString(16)}.json` || (try sha256Hex(part)) !== shard.sha256) throw unavailable(checksumMismatch)
+    const rows: unknown = Effect.try(() => JSON.parse(part) as unknown) catch effect () => {
+      throw unavailable("Incomplete points shard")
+    }
+    if (!Array.isArray(rows) || rows.length !== shard.count) throw unavailable("Incomplete points shard")
+    for (const value of rows) {
+      const row = objectOf(value)
+      if (row === undefined || !exactKeys(row, rowKeys)) throw unavailable("Unexpected points fields")
+      if (typeof row.sequence !== "number" || !Number.isSafeInteger(row.sequence) || row.sequence < 0) throw unavailable("Invalid points sequence")
+      records.push({ sequence: row.sequence, revision: row.revision })
+    }
+  }
+  records.sort((left, right) => left.sequence - right.sequence)
+  if (records.length !== count || records.some((entry, position) => entry.sequence !== position)) throw unavailable("Incomplete points sequence")
+  return try checkedJournal({ schemaVersion: "1", ruleVersion: pointsRule, generatedAt: record.generatedAt, coverage: record.coverage, revisions: records.map((entry) => entry.revision) }, "Invalid published points projection")
+}
+
+effect function publishedProjection(origin: string) {
+  let previous: string | undefined = undefined
+  while (true) {
+    const suffix = previous === undefined ? "" : `?snapshot=${try randomId()}`
+    const answer = try fetched(`${origin}/data/points.json${suffix}`, indexBytes, "points index")
+    if (!ok(answer)) throw unavailable("Published points projection unavailable")
+    const index = try jsonOf(answer.bytes, "points index")
+    const identity = encoded(index)
+    if (identity === previous) throw unavailable(checksumMismatch)
+    const shards = objectOf(index)?.shards
+    if (!Array.isArray(shards) || shards.length !== shardCount) throw unavailable("Invalid published points index")
+    const parts: string[] = []
+    for (const [position, entry] of shards.entries()) {
+      const path = objectOf(entry)?.path
+      if (path !== `/data/points/${position.toString(16)}.json`) throw unavailable("Invalid published points shard path")
+      const shard = try fetched(`${origin}${path}`, pageBytes, "points shard")
+      if (!ok(shard)) throw unavailable("Published points history unavailable")
+      parts.push(try textOf(shard.bytes, "points shard"))
+    }
+    const assembled = assembledProjection(index, parts) catch effect (error) => {
+      if (previous !== undefined || error.message !== checksumMismatch) throw error
+      return undefined
+    }
+    if (assembled !== undefined) return assembled
+    previous = identity
+  }
+}
+
+export effect function retainedHistory(checkpoint: Journal, published: Journal) {
+  const [earlier, later] = checkpoint.revisions.length > published.revisions.length ? [published, checkpoint] : [checkpoint, published]
+  if (earlier.revisions.some((revision, position) => later.revisions[position]?.id !== revision.id)) throw unavailable("Published points history diverged from its checkpoint")
+  const covered = new Set(later.coverage.map((entry) => encoded(entry)))
+  return {
+    ...later,
+    generatedAt: checkpoint.generatedAt > published.generatedAt ? checkpoint.generatedAt : published.generatedAt,
+    coverage: [...later.coverage, ...earlier.coverage.filter((entry) => !covered.has(encoded(entry)))],
+  } satisfies Journal
+}
+
+export effect function publishedJournal(origin: string = publishedOrigin) {
+  return try retainedHistory(try pagedJournal(origin), try publishedProjection(origin))
+}
+
+effect function registryRead(origin: string, path: string) {
+  const url = new URL(path, origin)
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "127.0.0.1")) throw unavailable("Project registry URL must use HTTPS")
+  const answer = try fetched(url.href, registryBytes, url.pathname)
+  if (answer.status === 404 && answer.headers[contractHeader] === undefined) throw unavailable(`Project registry API is not deployed at ${url.origin}`)
+  if (!ok(answer)) throw unavailable(`${url.pathname} returned HTTP ${answer.status}`)
+  return objectOf(try jsonOf(answer.bytes, url.pathname))
+}
+
+export effect function publishedRegistry(origin: string = publishedOrigin) {
+  const registry = try registryRead(origin, "/api/v1/projects")
+  const history = try registryRead(origin, "/api/v1/project-revisions")
+  const restrictions = registry?.restrictions ?? []
+  const listed = registry?.projects
+  if (registry === undefined || registry.schemaVersion !== "1" || !Array.isArray(listed) || !Array.isArray(restrictions) || Object.keys(registry).some((key) => !registryKeys.includes(key))
+    || history === undefined || history.schemaVersion !== "1" || !Array.isArray(history.revisions) || Object.keys(history).length !== 2) {
+    throw unavailable("Project registry response has an unexpected shape")
+  }
+  const projects: ReadonlyArray<unknown> = listed
+  const pending: ReadonlyArray<unknown> = restrictions
+  const withheld: string[] = []
+  for (const value of pending) {
+    const restriction = objectOf(value)
+    const project = projects.map(objectOf).find((entry) => entry?.id === restriction?.projectId)
+    if (restriction === undefined || project === undefined || typeof project.id !== "string" || typeof restriction.state !== "string" || !restrictionStates.includes(restriction.state)) {
+      throw unavailable("Project restriction has an unexpected shape")
+    }
+    if (project.status !== "paused" || project.listingTier !== "retired") withheld.push(project.id)
+  }
+  const revisions: ReadonlyArray<unknown> = history.revisions
+  return {
+    projects: projects.map((value) => {
+      const project = objectOf(value)
+      return project !== undefined && typeof project.id === "string" && withheld.includes(project.id) ? { ...project, status: "paused", listingTier: "retired" } : value
+    }),
+    revisions,
+    withheld,
+  } satisfies PublishedRegistry
+}

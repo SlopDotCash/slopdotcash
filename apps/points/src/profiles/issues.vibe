@@ -1,0 +1,157 @@
+// spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+import { isoNow } from "@repo/platform/clock"
+import { type Machine, canRecordIssue, collectedName, retainedIssues } from "../../gen/points__profiles.effect.vibe"
+import type { CollectedTarget } from "../census/projects.vibe"
+import { type GraphqlEvent, type IssueNode, type PersonTally, ProfileCensusFailed, issuePage, personOf, timelinePage, userAuthorId } from "./github.vibe"
+import type { Numbering } from "./identity.vibe"
+import { type ProfileIndex, type ProfileIssue, type ProfileIssueEvent, type ProfileIssueHistory, issueHistoryReconciles } from "./shape.vibe"
+
+const kinds: Readonly<Record<string, ProfileIssueEvent["kind"]>> = {
+  ClosedEvent: "closed",
+  ReopenedEvent: "reopened",
+  MarkedAsDuplicateEvent: "duplicate",
+  UnmarkedAsDuplicateEvent: "unmarked-duplicate",
+  TransferredEvent: "transferred",
+}
+
+export interface IssueCensus {
+  readonly run: Machine.Shape
+  readonly targets: ReadonlyArray<CollectedTarget>
+  readonly previous: ProfileIndex
+  readonly people: Map<string, PersonTally>
+  readonly startedAt: string
+  readonly repositories: Numbering
+  readonly issueIds: Numbering
+}
+
+function failure(message: string) {
+  return new ProfileCensusFailed({ message })
+}
+
+effect function issueHistory(source: IssueNode) {
+  let timeline = source.timelineItems
+  const history = [...timeline.nodes]
+  let cursor = timeline.pageInfo.endCursor
+  while (timeline.pageInfo.hasNextPage) {
+    if (cursor === null || cursor === "") throw failure("Missing issue history cursor")
+    const continuation = try timelinePage(source.id, cursor)
+    if (continuation === null) throw failure("Issue became inaccessible during census")
+    timeline = continuation.timelineItems
+    history.push(...timeline.nodes)
+    if (timeline.pageInfo.hasNextPage && timeline.pageInfo.endCursor === cursor) throw failure("Issue history pagination did not advance")
+    cursor = timeline.pageInfo.endCursor
+  }
+  if (history.length !== timeline.totalCount || new Set(history.map((event) => event.id)).size !== history.length) throw failure("Issue event count reconciliation failed")
+  return history
+}
+
+effect function normalized(event: GraphqlEvent) {
+  const kind = Object.hasOwn(kinds, event.__typename) ? kinds[event.__typename] : undefined
+  if (kind === undefined || event.id === undefined || event.createdAt === undefined) throw failure("Unknown issue event kind")
+  return {
+    id: event.id,
+    kind,
+    occurredAt: event.createdAt,
+    reason: event.stateReason ?? null,
+    relatedIssueId: event.canonical?.id ?? event.duplicateOf?.id ?? null,
+  } satisfies ProfileIssueEvent
+}
+
+effect function observedIssue(census: IssueCensus, target: CollectedTarget, source: IssueNode, before: ProfileIssue | undefined) {
+  const events: ProfileIssueEvent[] = []
+  for (const event of try issueHistory(source)) events.push(try normalized(event))
+  const observedAt = try isoNow()
+  const changed = before?.events.some((old) => JSON.stringify(events.find((event) => event.id === old.id)) !== JSON.stringify(old)) === true
+  const authorId = userAuthorId(source.author)
+  if (authorId !== null && source.author !== null) personOf(census.people, authorId, source.author)
+  const current = { state: source.state, reason: source.stateReason, events }
+  return {
+    id: source.id,
+    repository: target.id,
+    number: source.number,
+    authorId,
+    createdAt: source.createdAt,
+    observedAt,
+    state: source.state,
+    reason: source.stateReason,
+    unavailableSince: null,
+    correctedAt: changed ? observedAt : before?.correctedAt ?? null,
+    historyIncompleteSince: issueHistoryReconciles(current) ? null : before?.historyIncompleteSince ?? observedAt,
+    events,
+  } satisfies ProfileIssue
+}
+
+effect function repositoryIssues(census: IssueCensus, target: CollectedTarget, prior: ReadonlyMap<string, ProfileIssue>, items: ProfileIssue[]) {
+  const repository = census.repositories.of(target.id)
+  let after: string | null = null
+  let repositoryId = target.expectedNodeId
+  let reported = 0
+  let count = 0
+  let incomplete = 0
+  do {
+    const page = try issuePage(target, after)
+    if (page === null || (repositoryId !== null && page.id !== repositoryId)) throw failure("Issue repository identity changed")
+    repositoryId = page.id
+    const issues = page.issues
+    if (issues.totalCount < reported) throw failure("Issue inventory shrank during census")
+    reported = issues.totalCount
+    for (const source of issues.nodes) {
+      const probe = { id: census.issueIds.of(source.id), repository, eventsReproduceState: true }
+      if (source.id === "" || !canRecordIssue(try census.run.get(), probe)) throw failure("Duplicate issue in census; retry after any transfer completes")
+      count += 1
+      const item = try observedIssue(census, target, source, prior.get(source.id))
+      const eventsReproduceState = item.historyIncompleteSince === null
+      if (!eventsReproduceState) incomplete += 1
+      census.run.send({ type: "recordIssue", issue: { ...probe, eventsReproduceState } }) catch effect () => {
+        throw failure("Duplicate issue in census; retry after any transfer completes")
+      }
+      items.push(item)
+    }
+    const next = issues.pageInfo.hasNextPage ? issues.pageInfo.endCursor : null
+    if (issues.pageInfo.hasNextPage && (next === null || next === "" || next === after)) throw failure("Issue pagination did not advance")
+    after = next
+  } while (after !== null)
+  census.run.send({ type: "reconcileIssues", issueTally: { repository, crawled: count, reported } }) catch effect () => {
+    throw failure("Issue count reconciliation failed")
+  }
+  try logInfo(`${target.id}: ${count} issues and their event histories reconciled${incomplete > 0 ? `; ${incomplete} recorded as incomplete because their visible events do not reproduce the current state` : ""}`)
+  return { repository: target.id, count }
+}
+
+effect function retainedAuthor(census: IssueCensus, old: ProfileIssue) {
+  if (old.authorId === null || census.people.has(old.authorId)) return
+  const identity = census.previous.people.find((person) => person.id === old.authorId)
+  if (identity === undefined) throw failure("Retained issue author is missing from prior census")
+  census.people.set(identity.id, { id: identity.id, login: identity.login, avatarUrl: identity.avatarUrl, repositories: [] })
+}
+
+function byId(left: ProfileIssue, right: ProfileIssue) {
+  return left.id.localeCompare(right.id)
+}
+
+export effect function collectIssues(census: IssueCensus) {
+  const previous = census.previous.issues
+  const priorRecords = [...(previous?.items ?? []), ...(previous?.archived ?? [])]
+  const prior = new Map(priorRecords.map((issue) => [issue.id, issue]))
+  const items: ProfileIssue[] = []
+  const repositories: Array<{ readonly repository: string; readonly count: number }> = []
+  for (const target of census.targets) {
+    repositories.push(try repositoryIssues(census, target, prior, items))
+  }
+  const state = try census.run.get()
+  const retained = new Set(retainedIssues(state).map((issue) => issue.id))
+  const now = try isoNow()
+  const archived: ProfileIssue[] = []
+  for (const old of prior.values()) {
+    if (!retained.has(census.issueIds.of(old.id))) continue
+    if (collectedName(state.targets, census.repositories.of(old.repository))) items.push({ ...old, unavailableSince: old.unavailableSince ?? now })
+    else archived.push(old)
+    try retainedAuthor(census, old)
+  }
+  return {
+    firstObservedAt: previous?.firstObservedAt ?? census.startedAt,
+    repositories,
+    items: items.sort(byId),
+    ...(archived.length > 0 ? { archived: archived.sort(byId) } : {}),
+  } satisfies ProfileIssueHistory
+}

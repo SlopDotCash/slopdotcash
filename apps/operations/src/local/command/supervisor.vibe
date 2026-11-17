@@ -1,0 +1,144 @@
+// spec/operations/localCommand.md, "Only a current local stage can start the command"; spec/operations/localCommand.md, "Cancellation or expiry requests graceful interruption before escalation"; spec/operations/localCommand.md, "Success requires the command exit, owned group shutdown, and drained output"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { type FundingResult, type LocalCommand, canLaunch, fundingResult } from "../../../gen/operations__localCommand.effect.vibe"
+import { type Captured, type ProcessRow, capturedGroup, owns, processTable } from "./ownership.vibe"
+import { type CommandMachine, commandMachine, launch, launchFacts } from "./steps.vibe"
+
+export const deadlineMs = 60_000
+export const graceMs = 5_000
+export const cleanupMs = 5_000
+const pollMs = 25
+
+export interface CommandRequest {
+  readonly receipt: number
+  readonly endpoint: string
+  readonly keypair: string
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+  readonly cwd: string
+  readonly env: Readonly<Record<string, string>>
+  readonly log: string
+  readonly canceled?: void!!
+}
+
+export interface Supervised {
+  readonly result: FundingResult
+  readonly state: LocalCommand
+  readonly log: string
+}
+
+export error LaunchRefused { receipt: number; loopbackHttp: boolean; localPayer: boolean }
+
+type Waited = { readonly kind: "exited"; readonly code: number } | { readonly kind: "deadline" } | { readonly kind: "canceled" }
+
+export effect function monotonicMillis() {
+  return Number((try Clock.monotonicTimeNanos) / 1_000_000n)
+}
+
+effect function tableNow() {
+  return processTable() catch () => [] as ReadonlyArray<ProcessRow>
+}
+
+effect function exitStatus(handle: ChildProcessSpawner.ChildProcessHandle) {
+  const code = handle.exitCode catch () => undefined
+  return code === undefined ? 1 : Number(code)
+}
+
+effect function waitFor(ended: Deferred.Deferred<number>, canceled: void!!) {
+  return try.race [
+    effect { return { kind: "exited", code: try Deferred.await(ended) } satisfies Waited },
+    effect {
+      try sleep(Duration.millis(deadlineMs))
+      return { kind: "deadline" } satisfies Waited
+    },
+    effect {
+      try canceled
+      return { kind: "canceled" } satisfies Waited
+    },
+  ]
+}
+
+effect function within(ended: Deferred.Deferred<number>, millis: number) {
+  return timeout(Deferred.await(ended), Duration.millis(millis)) catch () => undefined
+}
+
+effect function signal(group: number, killSignal: "SIGTERM" | "SIGKILL") {
+  const process = try Experimental.Process.Process
+  process.kill(group, { group: true, killSignal }) catch () => undefined
+}
+
+effect function exitAt(machine: CommandMachine, code: number) {
+  try machine.send({ type: "exitCommand", exitCode: code, now: try monotonicMillis() })
+}
+
+effect function stop(machine: CommandMachine, group: number, captured: Captured, ended: Deferred.Deferred<number>, canceled: boolean) {
+  const owned = capturedGroup(try tableNow(), group, captured.members)
+  try machine.send({ type: "interrupt", now: try monotonicMillis(), canceled })
+  try signal(group, "SIGTERM")
+  const graceful = try within(ended, graceMs)
+  if (graceful !== undefined) return try exitAt(machine, graceful)
+  if (!(try owns(owned))) return
+  try machine.send({ type: "escalate", now: try monotonicMillis(), group, currentOwnership: true })
+  try signal(group, "SIGKILL")
+  const forced = try within(ended, cleanupMs)
+  if (forced !== undefined) try exitAt(machine, forced)
+}
+
+effect function remainder(group: number, captured: Captured) {
+  const process = try Experimental.Process.Process
+  const running = process.isRunning(group, { group: true }) catch () => false
+  if (!running) return
+  if (try owns(capturedGroup(try tableNow(), group, captured.members))) try signal(group, "SIGTERM")
+}
+
+effect function cleaned(machine: CommandMachine, group: number, ended: Deferred.Deferred<number>, drained: Deferred.Deferred<void>) {
+  const process = try Experimental.Process.Process
+  const until = (try monotonicMillis()) + cleanupMs
+  while ((try monotonicMillis()) < until) {
+    if (!(try machine.get()).exited && (try Deferred.isDone(ended))) try exitAt(machine, try Deferred.await(ended))
+    if ((try machine.get()).exited) {
+      const running = process.isRunning(group, { group: true }) catch () => true
+      if (!running && (try Deferred.isDone(drained))) {
+        try machine.send({ type: "confirmDrained", group, ownGroupGone: true, streamsDrained: true })
+        return true
+      }
+    }
+    try sleep(Duration.millis(pollMs))
+  }
+  return false
+}
+
+export effect function supervise(request: CommandRequest) {
+  const machine = try commandMachine()
+  const facts = try launchFacts(request.endpoint, request.keypair)
+  if (!canLaunch(try machine.get(), request.receipt, 1, try monotonicMillis(), facts.loopbackHttp, facts.localPayer)) {
+    throw new LaunchRefused({ receipt: request.receipt, loopbackHttp: facts.loopbackHttp, localPayer: facts.localPayer })
+  }
+  const fs = try FileSystem.FileSystem
+  const spawner = try ChildProcessSpawner.ChildProcessSpawner
+  try fs.writeFile(request.log, new Uint8Array(), { flag: "wx", mode: 0o600 })
+  return try Effect.uninterruptibleMask((restore) => scoped(effect {
+    const handle = try spawner.spawn(ChildProcess.make(request.command, [...request.args], { cwd: request.cwd, env: { ...request.env }, extendEnv: false, stdin: "ignore", detached: true }))
+    const group = Number(handle.pid)
+    const captured = capturedGroup(try tableNow(), group)
+    try launch(machine, request.receipt, group, try monotonicMillis(), facts)
+    const ended = try Deferred.make<number>()
+    const drained = try Deferred.make<void>()
+    fork.scoped effect { try Deferred.succeed(ended, try exitStatus(handle)) }
+    fork.scoped effect {
+      const failure = Stream.run(handle.all, fs.sink(request.log, { flag: "a", mode: 0o600 })) catch (error) => String(error)
+      if (failure === undefined) try Deferred.succeed(drained, undefined)
+      else try Console.error(`Local command output was not drained into ${request.log}: ${failure}`)
+    }
+    const waited = try exit(restore(waitFor(ended, request.canceled ?? Effect.never)))
+    const reason: Waited = Exit.isSuccess(waited) ? waited.value : { kind: "canceled" }
+    if (reason.kind === "exited") {
+      try exitAt(machine, reason.code)
+      try remainder(group, captured)
+    } else try stop(machine, group, captured, ended, reason.kind === "canceled")
+    const confirmed = try cleaned(machine, group, ended, drained)
+    const settled = try machine.send({ type: "settleCommand", cleanupConfirmed: confirmed, cleanupDeadline: !confirmed })
+    if (!settled.exited) try handle.unref
+    return { result: fundingResult(settled), state: settled, log: request.log } satisfies Supervised
+  }))
+}

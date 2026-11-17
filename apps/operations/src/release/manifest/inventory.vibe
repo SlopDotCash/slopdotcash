@@ -1,0 +1,131 @@
+// spec/operations/release.md, "Every required check binds the same source and built artifact"
+import { sha256Hex } from "@repo/platform/crypto"
+
+export error BundleRefused { message: string }
+
+export schema FileRecord {
+  readonly path: string
+  readonly bytes: number
+  readonly sha256: string
+}
+
+export interface Bounds {
+  readonly directories: number
+  readonly files: number
+  readonly fileBytes: number
+  readonly totalBytes: number
+}
+
+export const pathBytesLimit = 1_024
+export const digestPattern = /^[0-9a-f]{64}$/u
+
+const encoder = new TextEncoder()
+
+export function byteOrder(left: string, right: string) {
+  const a = encoder.encode(left)
+  const b = encoder.encode(right)
+  const shared = Math.min(a.length, b.length)
+  for (let index = 0; index < shared; index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  return a.length - b.length
+}
+
+function hasControl(value: string) {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code <= 31 || code === 127
+  })
+}
+
+export function canonicalPath(path: string) {
+  return path.length > 0 && !path.startsWith("/") && !path.endsWith("/") && !path.includes("\\") && !hasControl(path)
+    && path.normalize("NFC") === path && encoder.encode(path).length <= pathBytesLimit
+    && path.split("/").every((part) => part.length > 0 && part !== "." && part !== "..")
+}
+
+export function collisionKey(path: string) {
+  return path.normalize("NFC").toLowerCase()
+}
+
+function quoted(path: string) {
+  return JSON.stringify(path)
+}
+
+export effect function inventory(root: string, bounds: Bounds, reserved: ReadonlySet<string>) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const linked = effect (path: string) => fs.readLink(path) catch () => undefined
+  if ((try linked(root)) !== undefined) throw new BundleRefused({ message: "bundle root must be a real directory" })
+  const rootInfo = fs.stat(root) catch effect () => {
+    throw new BundleRefused({ message: "bundle root must be a real directory" })
+  }
+  if (rootInfo.type !== "Directory") throw new BundleRefused({ message: "bundle root must be a real directory" })
+  const records: FileRecord[] = []
+  const seen = new Set<string>()
+  let directories = 0
+  let totalBytes = 0
+  effect function visit(directory: string, prefix: string) {
+    directories += 1
+    if (directories > bounds.directories) throw new BundleRefused({ message: `bundle exceeds the ${bounds.directories}-directory bound` })
+    const names = fs.readDirectory(directory) catch effect () => {
+      throw new BundleRefused({ message: `bundle directory is unreadable: ${quoted(prefix)}` })
+    }
+    for (const name of [...names].sort(byteOrder)) {
+      const path = prefix === "" ? name : `${prefix}/${name}`
+      if (!canonicalPath(path)) throw new BundleRefused({ message: `bundle path is not canonical: ${quoted(path)}` })
+      const absolute = files.join(directory, name)
+      if ((try linked(absolute)) !== undefined) throw new BundleRefused({ message: `bundle entries must not be symbolic links: ${quoted(path)}` })
+      const info = fs.stat(absolute) catch effect () => {
+        throw new BundleRefused({ message: `bundle entry is unreadable: ${quoted(path)}` })
+      }
+      if (info.type === "Directory") {
+        try visit(absolute, path)
+        continue
+      }
+      if (info.type !== "File") throw new BundleRefused({ message: `bundle entries must be regular files: ${quoted(path)}` })
+      if (reserved.has(path)) continue
+      if (records.length >= bounds.files) throw new BundleRefused({ message: `bundle exceeds the ${bounds.files}-file bound` })
+      const size = Number(info.size)
+      if (size > bounds.fileBytes) throw new BundleRefused({ message: `bundle file exceeds the ${bounds.fileBytes}-byte bound: ${quoted(path)}` })
+      totalBytes += size
+      if (totalBytes > bounds.totalBytes) throw new BundleRefused({ message: `bundle exceeds the ${bounds.totalBytes}-byte aggregate bound` })
+      const key = collisionKey(path)
+      if (seen.has(key)) throw new BundleRefused({ message: `bundle contains a case-insensitive path collision: ${quoted(path)}` })
+      seen.add(key)
+      const contents = fs.readFile(absolute) catch effect () => {
+        throw new BundleRefused({ message: `bundle file is unreadable: ${quoted(path)}` })
+      }
+      if (contents.length !== size) throw new BundleRefused({ message: `bundle file changed while it was inventoried: ${quoted(path)}` })
+      records.push({ path, bytes: contents.length, sha256: try sha256Hex(contents) })
+    }
+  }
+  try visit(root, "")
+  return records.sort((left, right) => byteOrder(left.path, right.path))
+}
+
+export function checkedRecords(records: ReadonlyArray<FileRecord>, bounds: Bounds, reserved: ReadonlySet<string>, label: string) {
+  if (records.length === 0 || records.length > bounds.files) return `${label} file count is outside its bounds`
+  const keys = new Set<string>()
+  let previous: string | undefined
+  let total = 0
+  for (const record of records) {
+    if (!canonicalPath(record.path)) return `${label} path is not canonical: ${quoted(record.path)}`
+    if (reserved.has(record.path)) return `${label} contains a reserved path: ${record.path}`
+    if (previous !== undefined && byteOrder(previous, record.path) >= 0) return `${label} paths must be uniquely byte-sorted`
+    previous = record.path
+    const key = collisionKey(record.path)
+    if (keys.has(key)) return `${label} contains a path collision: ${record.path}`
+    keys.add(key)
+    if (!Number.isSafeInteger(record.bytes) || record.bytes < 0 || record.bytes > bounds.fileBytes) return `${label} has an invalid byte count: ${record.path}`
+    if (!digestPattern.test(record.sha256)) return `${label} has an invalid digest: ${record.path}`
+    total += record.bytes
+    if (total > bounds.totalBytes) return `${label} aggregate bytes exceed the bound`
+  }
+  return undefined
+}
+
+export function canonicalJson(value: unknown) {
+  return `${JSON.stringify(value, null, 2)}\n`
+}

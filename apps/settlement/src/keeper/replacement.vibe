@@ -1,0 +1,87 @@
+// spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"; spec/settlement/keeperLifecycle.md, "A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee"; spec/settlement/keeperLifecycle.md, "On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
+import { EvmRpc } from "@repo/platform/chain/evm"
+import { isoAt } from "@repo/platform/clock"
+import { apply, canReplace, replacementDue, replacementFees } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type Type2Request, unsignedType2 } from "../chain/evm/transactions.ts"
+import { additionalFee, nonceGroup, reserveGas } from "./budget.vibe"
+import { type Attempt, AttemptRefused, KeeperWaiting, reasonOf, type SendContext, type SignedAttempt, broadcastSigned, feeReplacementKey, groupOfAttempt, readAttempt, readReplacements, signedAttempts, withinNativeCost } from "./attempts.vibe"
+import { type GroupWork, loadSend, withGroup } from "./lifecycle.vibe"
+import { type Signed, signWithOperatorKey } from "./signer.vibe"
+import { inTransaction, keep } from "./store.vibe"
+import { exact, widen } from "./units.ts"
+
+export type Sent = { readonly transactionId: string }
+
+effect function waiting(context: SendContext, latest: SignedAttempt, reason: string) {
+  try broadcastSigned(context, latest, true)
+  throw new KeeperWaiting({ reason })
+}
+
+function sameContent(left: Type2Request, right: Type2Request) {
+  return left.chainId === right.chainId && left.nonce === right.nonce && left.gas === right.gas && left.to === right.to && left.value === right.value && left.data === right.data
+}
+
+export effect function replaceOrRebroadcast(context: SendContext, key: string, attempt: Attempt) {
+  const attempts = try signedAttempts(attempt, context.config.signer)
+  const [original] = attempts
+  const latest = attempts[attempts.length - 1]
+  if (original === undefined || latest === undefined || !attempts.every((signed) => sameContent(signed.request, original.request)))
+    throw new AttemptRefused({ reason: "Stored fee replacement differs from its original" })
+  const group = groupOfAttempt(context, original)
+  if (!context.config.replacementActivated) {
+    try broadcastSigned(context, latest, false)
+    return { transactionId: latest.id } satisfies Sent
+  }
+  const block = (try EvmRpc).head("latest") catch () => undefined
+  const baseFee = block?.baseFeePerGas
+  if (baseFee === undefined)
+    return try waiting(context, latest, "Network fee unavailable; the latest journaled attempt was rebroadcast without a fee replacement")
+  const millis = try Clock.currentTimeMillis
+  const now = Math.floor(millis / 1000)
+  const found = try inTransaction((tx) => loadSend(tx, group))
+  if (found === undefined) throw new AttemptRefused({ reason: "Journaled attempt has no send journal" })
+  const state = try context.core.inGroup(group, found, undefined)
+  const base = exact(baseFee) ?? Number.MAX_SAFE_INTEGER
+  if (!replacementDue(state, now, base)) {
+    try broadcastSigned(context, latest, false)
+    return { transactionId: latest.id } satisfies Sent
+  }
+  const proposed = replacementFees(state)
+  if (!proposed.ok) return try waiting(context, latest, "Fee replacement cap reached; journaled attempts wait for a lower network fee")
+  const request = { ...original.request, maxFeePerGas: widen(proposed.maxFee), maxPriorityFeePerGas: widen(proposed.priorityFee) } satisfies Type2Request
+  if (context.deployment.maxNativeCostWei !== undefined && request.maxFeePerGas < baseFee)
+    return try waiting(context, latest, "Current base fee exceeds the permitted replacement fee")
+  if (!(try withinNativeCost(context.deployment, attempt, request))) return try waiting(context, latest, "Fee replacement exceeds the operation's native cost limit")
+  if (request.gas > context.deployment.gasCeiling) return try waiting(context, latest, "Registry gas ceiling is now below the journaled gas limit; no fee replacement is signed")
+  const mined = try (try EvmRpc).nonce(context.config.signer, "latest")
+  if (mined > widen(original.request.nonce)) throw new AttemptRefused({ reason: "Signer nonce is already used; waiting for the journaled receipt" })
+  const unsigned = try Effect.try({ try: () => unsignedType2(request), catch: () => new AttemptRefused({ reason: "Unsignable transaction" }) })
+  const extra = additionalFee(context.config, request.gas, (unsigned.length - 2) / 2) catch effect (error) => {
+    return try waiting(context, latest, `Fee replacement waits: ${reasonOf(error)}`)
+  }
+  const signedAt = try isoAt(millis)
+  const replaced = withGroup(context.core, group, now, undefined, (state, journal, tx) => effect {
+    const current = try readAttempt(tx, key)
+    const record = try readReplacements(tx, attempt)
+    if (current === undefined || current === null || current.transactionId !== attempt.transactionId || (record?.replacements.length ?? 0) !== attempts.length - 1)
+      throw new AttemptRefused({ reason: "Journaled attempt changed before fee replacement" })
+    const hashes = journal?.hashes ?? []
+    const bytes = hashes.length + 1
+    if (!canReplace(state, context.runId, bytes, now, base, Number(extra)))
+      throw new AttemptRefused({ reason: "Fee replacement is outside the keeper budget" })
+    const signed = try signWithOperatorKey(context.config.signer, request)
+    try reserveGas(tx, context.config, `${nonceGroup(group)}:r${attempts.length}`, request.gas * request.maxFeePerGas + context.config.gas.additionalFeeReserve, signed.id, millis)
+    try keep(tx, feeReplacementKey(attempt), {
+      original: attempt.transactionId,
+      observedAt: record?.observedAt ?? signedAt,
+      replacements: [...record?.replacements ?? [], { rawTransaction: signed.raw, transactionId: signed.id, signedAt }],
+    })
+    const stepped = try apply(state, { type: "replace", runId: context.runId, bytes, now, baseFee: base, extraFee: Number(extra) })
+    return { state: stepped, hashes: [...hashes, signed.id], value: signed } satisfies GroupWork<Signed>
+  }) catch effect (error) => {
+    return try waiting(context, latest, `Fee replacement waits: ${reasonOf(error)}`)
+  }
+  const sent = { raw: replaced.raw, id: replaced.id, request } satisfies SignedAttempt
+  try broadcastSigned(context, sent, false)
+  return { transactionId: replaced.id } satisfies Sent
+}

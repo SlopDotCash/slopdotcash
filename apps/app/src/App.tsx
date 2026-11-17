@@ -1,7 +1,7 @@
 // spec/app/index.md, "Story: Open a page by its address"
 import { Alert, Button, cn, ExternalLink, focusRing, Logo, NavTab, NavTabs, NotFound, PageHeader, SiteFooter, SiteHeader } from "@repo/ui";
 import type { ManagedRuntime } from "effect";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import type { Machine } from "../gen/app.effect.vibe";
 import { useMachine } from "../gen/app.react.ts";
 import type { Route, RouteKind } from "../gen/app.ts";
@@ -17,6 +17,8 @@ export interface AppProps {
   search: string;
   hash: string;
   hostname: string;
+  content?: (route: Route, frame: (children?: ReactNode, title?: string) => ReactNode) => ReactNode;
+  account?: ReactNode;
 }
 
 /** Each page's heading, as development's pages name it; a page that shows one thing is named by it. */
@@ -42,13 +44,15 @@ const headings: Record<Exclude<RouteKind, "Unknown">, (route: Route) => string> 
 };
 
 const page = "mx-auto w-full max-w-(--breakpoint-lg) flex-1 px-4 py-8";
+const framing = (heading: string) => (children?: ReactNode, title = heading) => <main className={page}><PageHeader title={title} />{children}</main>;
+const headingOnly: NonNullable<AppProps["content"]> = (_route, frame) => frame();
 
 /**
  * The route shell: the header, the page the address opened and the footer. Until the address has been opened, in the
  * effects of the first render, it shows an empty busy page rather than the home page it starts on.
  * @model spec/app/index.md
  */
-export function App({ runtime, path, search, hash, hostname }: AppProps) {
+export function App({ runtime, path, search, hash, hostname, content, account }: AppProps) {
   const { state, cause } = useMachine(runtime);
   const route = state && state.opened > 0 ? state.route : undefined;
 
@@ -67,9 +71,9 @@ export function App({ runtime, path, search, hash, hostname }: AppProps) {
       <SiteHeader
         brand={<a href="/" aria-label="Slop home" className={cn(focusRing, "rounded-sm")}><Logo wordmark label={domainOf(hostname)} /></a>}
         nav={<NavTabs label="Main"><NavTab href="/how-it-works" current={route.kind === "HowItWorks"}>How It Works</NavTab></NavTabs>}
-        account={<Button asChild variant="outline" size="sm"><a href="/login">Log in</a></Button>}
+        account={account ?? <Button asChild variant="outline" size="sm"><a href="/login">Log in</a></Button>}
       />
-      {route.kind === "Unknown" ? <NotFound className={page} /> : <main className={page}><PageHeader title={headings[route.kind](route)} /></main>}
+      {route.kind === "Unknown" ? <NotFound className={page} /> : (content ?? headingOnly)(route, framing(headings[route.kind](route)))}
       <SiteFooter compact={route.kind !== "Home"} brand={<Logo variant="inverse" size={route.kind === "Home" ? "xl" : "lg"} />}>
         <ExternalLink href="https://github.com/SlopDotCash/slopdotcash">GitHub</ExternalLink>
         <ExternalLink href="https://x.com/SlopCash">X</ExternalLink>

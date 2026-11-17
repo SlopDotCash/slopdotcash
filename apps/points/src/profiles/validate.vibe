@@ -1,0 +1,117 @@
+// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+import { millisOf } from "@repo/platform/clock"
+import type { RepositoryIdentity } from "./identity.vibe"
+import { type ProfileIndex, type ProfileIssue, ProfilesInvalid, issueEventKinds, issueHistoryReconciles } from "./shape.vibe"
+
+const personId = /^[A-Za-z0-9_=-]{4,256}$/u
+const githubLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const stateReason = /^[A-Z_]{1,64}$/u
+const issueEventKindNames: ReadonlyArray<string> = issueEventKinds
+
+function validCount(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function isTime(value: string) {
+  return Number.isFinite(millisOf(value))
+}
+
+function isReason(value: string | null) {
+  return value === null || stateReason.test(value)
+}
+
+function avatarAllowed(text: string) {
+  const url = URL.parse(text)
+  return url !== null && url.protocol === "https:" && url.hostname === "avatars.githubusercontent.com" && url.username === "" && url.password === "" && url.port === ""
+}
+
+function issueRecordValid(index: ProfileIndex, issue: ProfileIssue, archived: boolean, targets: ReadonlyArray<string>, people: ReadonlySet<string>, identity: RepositoryIdentity) {
+  const observed = millisOf(issue.observedAt)
+  const incompleteSince = issue.historyIncompleteSince ?? null
+  return issue.id !== "" &&
+    (archived ? !targets.includes(issue.repository) && identity.historical(issue.repository) : targets.includes(issue.repository)) &&
+    Number.isSafeInteger(issue.number) && issue.number > 0 &&
+    (issue.authorId === null || people.has(issue.authorId)) &&
+    isTime(issue.createdAt) && isTime(issue.observedAt) &&
+    millisOf(issue.createdAt) <= observed && observed <= millisOf(index.generatedAt) &&
+    isReason(issue.reason) &&
+    (issue.unavailableSince === null || (isTime(issue.unavailableSince) && millisOf(issue.unavailableSince) >= observed)) &&
+    (issue.correctedAt === null || (isTime(issue.correctedAt) && millisOf(issue.correctedAt) <= observed)) &&
+    (incompleteSince === null || (isTime(incompleteSince) && millisOf(incompleteSince) >= millisOf(issue.createdAt) && millisOf(incompleteSince) <= observed))
+}
+
+function eventsValid(issue: ProfileIssue) {
+  const seen = new Set<string>()
+  let previous = millisOf(issue.createdAt)
+  for (const event of issue.events) {
+    const at = millisOf(event.occurredAt)
+    if (event.id === "" || seen.has(event.id) || !issueEventKindNames.includes(event.kind) || !Number.isFinite(at) || at < previous || at > millisOf(issue.observedAt) || !isReason(event.reason) || event.relatedIssueId === "") return false
+    seen.add(event.id)
+    previous = at
+  }
+  return true
+}
+
+effect function assertProfileIssues(index: ProfileIndex, targets: ReadonlyArray<string>, identity: RepositoryIdentity) {
+  const history = index.issues
+  if (history === undefined || !isTime(history.firstObservedAt) || millisOf(history.firstObservedAt) > millisOf(index.generatedAt)) throw new ProfilesInvalid({ message: "Invalid issue history coverage" })
+  if (JSON.stringify(history.repositories.map((row) => row.repository).sort()) !== JSON.stringify([...targets].sort())) throw new ProfilesInvalid({ message: "Issue repository inventory mismatch" })
+  const people = new Set(index.people.map((person) => person.id))
+  const ids = new Set<string>()
+  const counts = new Map<string, number>()
+  const records = [...history.items, ...(history.archived ?? [])]
+  for (const [position, issue] of records.entries()) {
+    const archived = position >= history.items.length
+    if (ids.has(issue.id) || !issueRecordValid(index, issue, archived, targets, people, identity)) throw new ProfilesInvalid({ message: "Invalid issue history record" })
+    ids.add(issue.id)
+    if (!archived && issue.unavailableSince === null) counts.set(issue.repository, (counts.get(issue.repository) ?? 0) + 1)
+    if (!eventsValid(issue)) throw new ProfilesInvalid({ message: "Invalid or incomplete issue event history" })
+    const incomplete = (issue.historyIncompleteSince ?? null) !== null
+    if (issueHistoryReconciles(issue) === incomplete) {
+      throw new ProfilesInvalid({ message: incomplete ? "Issue history is flagged incomplete but reconciles" : "Issue history does not reconcile with its current state" })
+    }
+  }
+  for (const row of history.repositories) {
+    if (!validCount(row.count) || (counts.get(row.repository) ?? 0) !== row.count) throw new ProfilesInvalid({ message: "Incomplete issue census" })
+  }
+}
+
+export effect function assertProfiles(index: ProfileIndex, targets: ReadonlyArray<string>, identity: RepositoryIdentity) {
+  if (!isTime(index.startedAt) || !isTime(index.generatedAt) || millisOf(index.startedAt) > millisOf(index.generatedAt)) throw new ProfilesInvalid({ message: "Invalid profile census" })
+  const inventory = new Set(index.repositories.map((row) => row.repository))
+  if (inventory.size !== index.repositories.length || !targets.every((id) => inventory.has(id)) || ![...inventory].every((id) => targets.includes(id) || identity.historical(id))) {
+    throw new ProfilesInvalid({ message: "Profile repository inventory mismatch" })
+  }
+  const ids = new Set<string>()
+  const totals = new Map<string, number>()
+  for (const person of index.people) {
+    if (!personId.test(person.id) || ids.has(person.id) || !githubLogin.test(person.login)) throw new ProfilesInvalid({ message: "Invalid profile identity" })
+    ids.add(person.id)
+    if (!avatarAllowed(person.avatarUrl)) throw new ProfilesInvalid({ message: "Invalid profile image" })
+    const repositories = new Set<string>()
+    for (const row of person.repositories) {
+      if (!inventory.has(row.repository) || repositories.has(row.repository) || ![row.merged, row.open, row.closed].every(validCount)) throw new ProfilesInvalid({ message: "Invalid profile counts" })
+      repositories.add(row.repository)
+      totals.set(row.repository, (totals.get(row.repository) ?? 0) + row.merged + row.open + row.closed)
+    }
+  }
+  for (const row of index.repositories) {
+    if (![row.count, row.excluded].every(validCount) || (totals.get(row.repository) ?? 0) + row.excluded !== row.count) throw new ProfilesInvalid({ message: "Incomplete profile census" })
+  }
+  if (index.schemaVersion === "2") {
+    try assertProfileIssues(index, targets, identity)
+  } else if (index.issues !== undefined) {
+    throw new ProfilesInvalid({ message: "Unexpected legacy issue census" })
+  }
+}
+
+export effect function assertRetainedProfiles(index: ProfileIndex, identity: RepositoryIdentity) {
+  const inventory = index.repositories.map((row) => row.repository)
+  if (!inventory.every((id) => identity.historical(id))) throw new ProfilesInvalid({ message: "Retained census names an unregistered repository" })
+  try assertProfiles(index, index.issues?.repositories.map((row) => row.repository) ?? inventory, identity)
+}
+
+export effect function assertPublishedProfiles(index: ProfileIndex, current: boolean, targets: ReadonlyArray<string>, identity: RepositoryIdentity) {
+  try assertRetainedProfiles(index, identity)
+  if (current) try assertProfiles(index, targets, identity)
+}

@@ -1,0 +1,218 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { concatBytes, parsedJson, textBytes } from "@repo/platform/git/bytes"
+import { MERGE_PROFILE, type MergeInput } from "@repo/platform/git/evidence"
+import { outboundVia } from "@repo/platform/http"
+import { MergeVerifier } from "@repo/ports/security"
+import { type Box, Containers, type Isolation } from "../src/sandbox/container.vibe"
+import { mergeVerifierLive } from "../src/sandbox/merge.vibe"
+import { type ReleaseVars, sandboxWorker } from "../src/sandbox/run.vibe"
+
+interface Scenario {
+  readonly isolation?: Isolation
+  readonly supervisor?: string
+  readonly cleanup?: boolean
+  readonly result?: string
+}
+
+interface Log {
+  readonly calls: string[]
+  readonly ids: string[]
+  readonly writes: Record<string, string>
+}
+
+const offline: Isolation = { enableInternet: false, envVars: {} }
+const release = { SLOP_RELEASE_SHA: "a".repeat(40), RUNNER_IMAGE_SHA256: "b".repeat(64) }
+const unavailableText = "Isolated execution unavailable"
+
+effect function collected(content: ReadableStream<Uint8Array>) {
+  const chunks: Uint8Array[] = []
+  for try (const chunk of Stream.fromReadableStream({ evaluate: () => content, onError: (cause) => cause })) chunks.push(chunk)
+  return concatBytes(chunks)
+}
+
+function readable(text: string) {
+  return Stream.toReadableStreamEffect(Stream.make(textBytes(text)))
+}
+
+function fakeBox(scenario: Scenario, log: Log): Box {
+  return {
+    writeFile: (path, content, options) => Effect.runPromise(effect {
+      const text = typeof content === "string" ? content : new TextDecoder().decode(try collected(content))
+      log.calls.push(`write ${path}${options?.encoding === undefined ? "" : ` ${options.encoding}`}`)
+      log.writes[path] = text
+      return { success: true }
+    }),
+    exec: (command, options) => {
+      log.calls.push(`exec ${command} ${options.timeout}`)
+      if (command.startsWith("chmod ")) return Promise.resolve({ success: true, stdout: "" })
+      return Promise.resolve(scenario.supervisor === undefined ? { success: false, stdout: "" } : { success: true, stdout: scenario.supervisor })
+    },
+    readFile: (path) => {
+      log.calls.push(`read ${path}`)
+      return Effect.runPromise(Effect.map(readable(scenario.result ?? ""), (content) => ({ content })))
+    },
+    destroy: () => {
+      log.calls.push("destroy")
+      return scenario.cleanup === false ? Promise.reject(new Error("cleanup refused")) : Promise.resolve()
+    },
+  }
+}
+
+function containersFor(scenario: Scenario, log: Log) {
+  return Layer.succeed(Containers, {
+    isolation: scenario.isolation ?? offline,
+    open: (id, transport) => sync(() => {
+      log.calls.push(`open ${transport}`)
+      log.ids.push(id)
+      return fakeBox(scenario, log)
+    }),
+  })
+}
+
+function freshLog(): Log {
+  return { calls: [], ids: [], writes: {} }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function call(scenario: Scenario, method: "GET" | "POST" | "DELETE", path: string, body?: string) {
+  const log = freshLog()
+  const app = sandboxWorker((env: ReleaseVars) => containersFor(scenario, log))
+  const fetcher = { fetch: (request: globalThis.Request) => app.fetch(request, release, { waitUntil: () => undefined }) }
+  const base = HttpClientRequest.make(method)(`https://vetting-sandbox.internal${path}`)
+  const request = body === undefined ? base : HttpClientRequest.bodyText(base, body, "application/json")
+  provide outboundVia(fetcher) {
+    const response = try HttpClient.execute(request)
+    return { status: response.status, type: response.headers["content-type"], cache: response.headers["cache-control"], text: try response.text, calls: log.calls, ids: log.ids }
+  }
+}
+
+effect function artifact(source: string, interpreter = "python") {
+  const bytes = textBytes(source)
+  return { artifactBase64: btoa(source), artifactSha256: try sha256Hex(bytes), interpreter }
+}
+
+function supervisor(status: string, exitCode: number, stdout: string, outputComplete: boolean) {
+  return JSON.stringify({ status, exitCode, stdoutBase64: btoa(stdout), stderrBase64: "", outputComplete })
+}
+
+function evidenceOf(text: string) {
+  const { runId, startedAt, completedAt, ...rest } = (parsedJson(text)?.value ?? {}) as Record<string, unknown>
+  return { stamped: typeof runId === "string" && typeof startedAt === "string" && typeof completedAt === "string", rest }
+}
+
+const input: MergeInput = {
+  repository: "slop/fixture",
+  repositoryNodeId: "R_fixture",
+  repositoryDatabaseId: 1,
+  pull: { head: { sha: "1".repeat(40) } },
+  files: [{ filename: "a.txt" }],
+  commits: [{ sha: "1".repeat(40), parents: [{ sha: "2".repeat(40) }] }],
+  commitAttribution: [{ sha: "1".repeat(40), changedPaths: ["a.txt"], limitations: [] }],
+}
+const fileRequest = { repository: "slop/fixture", repositoryNodeId: "R_fixture", ref: "1".repeat(40), path: "a.txt" }
+const bundleText = "bundle-bytes"
+const mergeExited = supervisor("exited", 0, "", true)
+
+effect function merged(scenario: Scenario, inputs: ReadonlyArray<MergeInput>, fileRequests?: ReadonlyArray<typeof fileRequest>) {
+  const log = freshLog()
+  const bundle = try readable(bundleText)
+  provide Layer.provide(mergeVerifierLive, Layer.merge(containersFor(scenario, log), webCrypto)) {
+    const verifier = try MergeVerifier
+    const outcome = fileRequests === undefined
+      ? Effect.map(verifier.reconstruct({ inputs, bundle }), (result): unknown => ({ result })) catch (error) => ({ stage: error.stage })
+      : Effect.map(verifier.recover({ inputs, fileRequests, bundle }), (result): unknown => ({ result })) catch (error) => ({ stage: error.stage })
+    const written = log.writes["/analysis/merge-input.json"]
+    return { outcome, calls: log.calls, input: written === undefined ? undefined : parsedJson(written)?.value, bundle: log.writes["/analysis/merge.bundle"] }
+  }
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "60 seconds" })((it) => {
+  it.effect('Risky artifact executes once in a disposable offline sandbox, and a run reporting network or secrets is refused (spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"; spec/security/sandbox.md, "The digest check and the isolation profile precede execution"; spec/security/sandbox.md, "An execution ends executed, not executable or at a limit"; spec/security/sandbox.md, "Every request destroys its sandbox, and a cleanup failure never completes"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets")', () => effect {
+    const python = try artifact("print('untrusted')")
+    const clean = { supervisor: supervisor("exited", 0, "untrusted\n", true) }
+    const health = try call(clean, "GET", "/health")
+    const other = try call(clean, "DELETE", "/run")
+    const extra = try call(clean, "POST", "/run", JSON.stringify({ ...python, network: true }))
+    const mismatch = try call(clean, "POST", "/run", JSON.stringify({ ...python, artifactSha256: "0".repeat(64) }))
+    const empty = try call(clean, "POST", "/run", JSON.stringify({ ...python, artifactBase64: "" }))
+    const ran = try call(clean, "POST", "/run", JSON.stringify(python))
+    const again = try call(clean, "POST", "/run", JSON.stringify(python))
+    const online = try call({ ...clean, isolation: { enableInternet: true, envVars: {} } }, "POST", "/run", JSON.stringify(python))
+    const secret = try call({ ...clean, isolation: { enableInternet: false, envVars: { SURPLUS_API_KEY: "present" } } }, "POST", "/run", JSON.stringify(python))
+    const unsupported = try call({ supervisor: JSON.stringify({ status: "not-executable", exitCode: 126, stdoutBase64: "", stderrBase64: btoa("Artifact cannot execute in this image"), outputComplete: false }) }, "POST", "/run", JSON.stringify(try artifact("not an executable format", "binary")))
+    const limited = try call({ supervisor: supervisor("output-limit", -9, "x", false) }, "POST", "/run", JSON.stringify(python))
+    const timedOut = try call({ supervisor: supervisor("timeout", -9, "", false) }, "POST", "/run", JSON.stringify(python))
+    const filterFailed = try call({}, "POST", "/run", JSON.stringify(python))
+    const garbled = try call({ supervisor: supervisor("crashed", 1, "", false) }, "POST", "/run", JSON.stringify(python))
+    const leaked = try call({ ...clean, cleanup: false }, "POST", "/run", JSON.stringify(python))
+    const pythonRun = ["open http", "write /analysis/artifact base64", "exec chmod 0555 /analysis/artifact 10000", "exec python3 /opt/slop/supervise.py python 40000", "destroy"]
+    const refusedRun = { status: 503, type: "text/plain;charset=UTF-8", cache: "no-store", text: unavailableText }
+    const shown = (answer: { readonly status: number; readonly type?: string; readonly cache?: string; readonly text: string }) => ({ status: answer.status, type: answer.type, cache: answer.cache, text: answer.text })
+    const expectedEvidence = (status: string, exitCode: number, stdout: string, outputComplete: boolean, interpreter = "python", artifactSha256 = python.artifactSha256, stderr = "") => ({
+      stamped: true,
+      rest: { schema: "slop-isolated-artifact-v1", imageSha256: release.RUNNER_IMAGE_SHA256, sourceSha: release.SLOP_RELEASE_SHA, artifactSha256, interpreter, internetEnabled: false, status, exitCode, stdoutBase64: btoa(stdout), stderrBase64: btoa(stderr), outputComplete },
+    })
+    try same({
+      health: { status: health.status, type: health.type, body: parsedJson(health.text)?.value },
+      other: { ...shown(other), calls: other.calls },
+      extra: { ...shown(extra), calls: extra.calls },
+      mismatch: { ...shown(mismatch), calls: mismatch.calls },
+      empty: { ...shown(empty), calls: empty.calls },
+      ran: { status: ran.status, type: ran.type, cache: ran.cache, evidence: evidenceOf(ran.text), calls: ran.calls },
+      fresh: ran.ids.length === 1 && again.ids.length === 1 && ran.ids[0] !== again.ids[0],
+      online: { ...shown(online), calls: online.calls },
+      secret: { ...shown(secret), calls: secret.calls },
+      unsupported: { status: unsupported.status, evidence: evidenceOf(unsupported.text), command: unsupported.calls[3] },
+      limited: { status: limited.status, evidence: evidenceOf(limited.text) },
+      timedOut: { status: timedOut.status, evidence: evidenceOf(timedOut.text) },
+      filterFailed: { ...shown(filterFailed), calls: filterFailed.calls },
+      garbled: { ...shown(garbled), calls: garbled.calls },
+      leaked: { ...shown(leaked), calls: leaked.calls },
+    }, {
+      health: { status: 200, type: "application/json", body: { service: "vetting-sandbox", ok: true, revision: release.SLOP_RELEASE_SHA, imageSha256: release.RUNNER_IMAGE_SHA256 } },
+      other: { status: 405, type: "text/plain;charset=UTF-8", cache: undefined, text: "Method not allowed", calls: [] },
+      extra: { status: 400, type: "text/plain;charset=UTF-8", cache: undefined, text: "Invalid artifact request", calls: [] },
+      mismatch: { status: 400, type: "text/plain;charset=UTF-8", cache: undefined, text: "Invalid artifact request", calls: [] },
+      empty: { status: 400, type: "text/plain;charset=UTF-8", cache: undefined, text: "Invalid artifact request", calls: [] },
+      ran: { status: 200, type: "application/json", cache: "no-store", evidence: expectedEvidence("exited", 0, "untrusted\n", true), calls: pythonRun },
+      fresh: true,
+      online: { ...refusedRun, calls: ["open http", "destroy"] },
+      secret: { ...refusedRun, calls: ["open http", "destroy"] },
+      unsupported: {
+        status: 200,
+        evidence: expectedEvidence("not-executable", 126, "", false, "binary", (try artifact("not an executable format", "binary")).artifactSha256, "Artifact cannot execute in this image"),
+        command: "exec python3 /opt/slop/supervise.py binary 40000",
+      },
+      limited: { status: 200, evidence: expectedEvidence("output-limit", -9, "x", false) },
+      timedOut: { status: 200, evidence: expectedEvidence("timeout", -9, "", false) },
+      filterFailed: { ...refusedRun, calls: pythonRun },
+      garbled: { ...refusedRun, calls: pythonRun },
+      leaked: { ...refusedRun, calls: pythonRun },
+    })
+  })
+
+  it.effect('Slopbot merge reconstruction and file recovery run once in a disposable sandbox and return only the bounded result (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/security/sandbox.md, "Every request destroys its sandbox, and a cleanup failure never completes")', () => effect {
+    const inputSha256 = "c".repeat(64)
+    const recovered = { inputSha256, entries: [{ repository: "slop/fixture", repositoryNodeId: "R_fixture", ref: "1".repeat(40), path: "a.txt", treeSha: "3".repeat(40), mode: "100644", blobSha: "4".repeat(40) }], blobs: [{ sha: "4".repeat(40), sha256: "d".repeat(64), size: 1, gzipBase64: "H4sIAAAAAAAAA0sEAJnI0BoBAAAA" }] }
+    const reconstructed = try merged({ supervisor: mergeExited, result: JSON.stringify([{ inputSha256, mergeResolutions: [] }]) }, [input])
+    const recovery = try merged({ supervisor: mergeExited, result: JSON.stringify(recovered) }, [input], [fileRequest])
+    const refusedChild = try merged({ supervisor: supervisor("exited", 1, "", true), result: "[]" }, [input])
+    const noInputs = try merged({ supervisor: mergeExited, result: "[]" }, [])
+    const shortResult = try merged({ supervisor: mergeExited, result: "[]" }, [input])
+    const noCleanup = try merged({ supervisor: mergeExited, cleanup: false, result: JSON.stringify([{ inputSha256, mergeResolutions: [] }]) }, [input])
+    const bundleSha256 = try sha256Hex(textBytes(bundleText))
+    const mergeRun = ["open rpc", "write /analysis/merge.bundle", "write /analysis/merge-input.json", "exec chmod 0444 /analysis/merge.bundle /analysis/merge-input.json 10000", "exec python3 /opt/slop/supervise.py merge 40000", "read /analysis/work/merge-result.json", "destroy"]
+    try same({ reconstructed, recovery, refusedChild, noInputs, shortResult: shortResult.outcome, noCleanup: noCleanup.outcome }, {
+      reconstructed: { outcome: { result: [{ inputSha256, mergeResolutions: [] }] }, calls: mergeRun, input: { profile: MERGE_PROFILE, inputs: [input], bundleBytes: bundleText.length, bundleSha256 }, bundle: bundleText },
+      recovery: { outcome: { result: recovered }, calls: mergeRun, input: { profile: MERGE_PROFILE, inputs: [input], fileRequests: [fileRequest], bundleBytes: bundleText.length, bundleSha256 }, bundle: bundleText },
+      refusedChild: { outcome: { stage: "supervisor-exited-1" }, calls: [...mergeRun.slice(0, 5), "destroy"], input: { profile: MERGE_PROFILE, inputs: [input], bundleBytes: bundleText.length, bundleSha256 }, bundle: bundleText },
+      noInputs: { outcome: { stage: "request" }, calls: [], input: undefined, bundle: undefined },
+      shortResult: { stage: "output-shape" },
+      noCleanup: { stage: "destroy" },
+    })
+  })
+})

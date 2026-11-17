@@ -1,0 +1,36 @@
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"
+import { sha256Hex } from "@repo/platform/crypto"
+
+export error PrivateStorageRefused { reason: string }
+
+export effect function dataDirectory(root: string, override: string | undefined) {
+  const path = try Path.Path
+  const repo = path.resolve(root)
+  if (override !== undefined && override !== "") {
+    const chosen = path.resolve(root, override)
+    const legacy = path.resolve(root, ".slop-dev")
+    const inside = chosen.startsWith(`${repo}${path.sep}`) && chosen !== legacy && !chosen.startsWith(`${legacy}${path.sep}`)
+    if (chosen === repo || repo.startsWith(`${chosen}${path.sep}`) || inside) {
+      throw new PrivateStorageRefused({ reason: "SLOP_DEV_DATA_DIR must be a dedicated private directory outside the repository or under .slop-dev" })
+    }
+    return chosen
+  }
+  const home = try (try Experimental.Process.Process).homeDirectory
+  return path.join(home, ".local", "share", "slop-dev", (try sha256Hex(repo)).slice(0, 16))
+}
+
+effect function restricted(path: string) {
+  const fs = try FileSystem.FileSystem
+  const paths = try Path.Path
+  const info = try fs.lstat(path)
+  if (info.type === "SymbolicLink") throw new PrivateStorageRefused({ reason: "Private local storage must not contain symbolic links" })
+  if (info.type !== "Directory") return try fs.chmod(path, 0o600)
+  try fs.chmod(path, 0o700)
+  for (const entry of try fs.readDirectory(path)) try restricted(paths.join(path, entry))
+}
+
+export effect function privateDirectory(directory: string) {
+  try (try FileSystem.FileSystem).makeDirectory(directory, { recursive: true, mode: 0o700 })
+  try restricted(directory)
+  return directory
+}

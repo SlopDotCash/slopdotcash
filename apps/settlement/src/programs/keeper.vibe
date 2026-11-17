@@ -1,0 +1,52 @@
+// spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperDiagnostics.md, "Failed results aggregate into positive counts with no output for healthy work"
+import { fileJournal } from "@repo/platform/journal"
+import { commandModeLabel, journalRegistry, keeperConfig, modelConfiguration } from "../keeper/config.vibe"
+import { hasFailures } from "../keeper/diagnostics.vibe"
+import { processVariable } from "../keeper/environment.ts"
+import { configuredStart, keeperCore } from "../keeper/lifecycle.vibe"
+import { keeperTick } from "../keeper/run.vibe"
+import { operatorKey } from "../keeper/signer.vibe"
+import { IDENTITY_KEY, openKeeperStore, recordOf } from "../keeper/store.vibe"
+
+export error KeeperArguments { message: string }
+export error KeeperUnavailable { message: string }
+
+const USAGE = "Use --config <operator.json> --journal <persistent.sqlite>; omit --execute for read-only chain checks"
+
+interface Arguments {
+  readonly config: string
+  readonly journal: string
+  readonly execute: boolean
+}
+
+effect function parsed(args: ReadonlyArray<string>) {
+  let config: string | undefined = undefined
+  let journal: string | undefined = undefined
+  let execute = false
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index]
+    if (flag === "--execute" && !execute) execute = true
+    else if (flag === "--config" && config === undefined) config = args[++index]
+    else if (flag === "--journal" && journal === undefined) journal = args[++index]
+    else throw new KeeperArguments({ message: USAGE })
+  }
+  if (config === undefined || journal === undefined) throw new KeeperArguments({ message: USAGE })
+  return { config, journal, execute } satisfies Arguments
+}
+
+export effect function keeperCommand(args: ReadonlyArray<string>) {
+  const options = try parsed(args)
+  const text = (try FileSystem.FileSystem).readFileString(options.config) catch effect () => { throw new KeeperArguments({ message: USAGE }) }
+  const config = try keeperConfig(text, undefined)
+  const mode = options.execute ? "Execute" as const : "DryRun" as const
+  provide Layer.mergeAll(fileJournal(options.journal), operatorKey(() => options.execute ? processVariable("KEEPER_EVM_PRIVATE_KEY") : undefined)) {
+    try openKeeperStore()
+    const stored = try recordOf(IDENTITY_KEY)
+    const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(stored, config)))
+    try core.admit(1, "InternalTick")
+    const started = try core.begin(1)
+    const run = try keeperTick(core, started.runId, config, mode)
+    try Console.log(JSON.stringify({ mode: commandModeLabel(mode), network: config.network, results: run.results }, null, 2))
+    if (hasFailures(run.results)) throw new KeeperUnavailable({ message: "Operator keeper has unavailable work; durable attempts are retained" })
+  }
+}

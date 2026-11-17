@@ -1,0 +1,227 @@
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"
+import { ExperimentalNodeHttpServer } from "vibelang-runtime/experimental/platform-node"
+import { CallerLive } from "@repo/backend/caller"
+import { localDevelopmentOrigin } from "@repo/platform/config"
+import { base64url, randomBytes } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { Caller, json } from "@repo/platform/http"
+import { type MailSink, statements } from "@repo/platform/testing"
+import { type Bridge, bridged, identityBridge } from "./identity.vibe"
+import { type CapturedMail, type MailOwners, captureMail, mailOwners, mailPage, ownerOf } from "./mail.vibe"
+import { dataDirectory, privateDirectory } from "./paths.vibe"
+import { type AssertionStore, type Deployable, forward, startLocal, stopLocal } from "./workers.ts"
+
+export const deployables: readonly [Deployable, ...Deployable[]] = [
+  { name: "site", config: "apps/app/wrangler/site.staging.jsonc", script: "packages/frontend/dist/_worker.js", assets: "packages/frontend/dist/site" },
+  { name: "notify", config: "apps/operations/wrangler/notify.staging.jsonc", script: "apps/operations/dist/notify.js" },
+  { name: "identity", config: "apps/backend/wrangler/identity.staging.jsonc", script: "apps/backend/dist/identity.js" },
+]
+
+export const assertions: AssertionStore = { deployable: "identity", binding: "IDENTITY_DB" }
+
+const localSecrets: Readonly<Record<string, "hex" | "base64url">> = {
+  IDENTITY_STATE_KEY: "base64url",
+  IDENTITY_ASSERTION_KEY: "base64url",
+  GITHUB_APP_CLIENT_ID: "base64url",
+  GITHUB_APP_CLIENT_SECRET: "base64url",
+  TRACE_AUTH_SECRET: "base64url",
+  NOTIFY_UNSUBSCRIBE_KEY: "hex",
+}
+
+const varLine = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/u
+const mailPollMs = 250
+
+export interface ServeSettings {
+  readonly root: string
+  readonly origin: string
+  readonly port: number
+  readonly data: string
+}
+
+export interface MailDesk {
+  owners: MailOwners
+  readonly pending: CapturedMail[]
+}
+
+export interface Local {
+  readonly origin: string
+  readonly mail: string
+  readonly bridge: Bridge
+  readonly send: (request: globalThis.Request) => Promise<globalThis.Response>
+}
+
+export error LocalUnavailable { reason: string }
+
+const Secrets = Schema.Record(Schema.String, Schema.String)
+schema Applied { name: string }
+
+function reasonOf(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+export function parsedVars(text: string): Readonly<Record<string, string>> {
+  return Object.fromEntries(text.split("\n").flatMap((line) => {
+    const match = varLine.exec(line)
+    return match === null ? [] : [[match[1] ?? "", (match[2] ?? "").replace(/^(["'])(.*)\1$/u, "$2")]]
+  }))
+}
+
+effect function setting(name: string) {
+  const value = try Config.option(Config.String(name))
+  return Option.isSome(value) && value.value !== "" ? value.value : undefined
+}
+
+export effect function serveSettings() {
+  const path = try Path.Path
+  const root = path.resolve(".")
+  const origin = (try setting("SLOP_DEV_ORIGIN")) ?? "http://localhost:4466"
+  if (!localDevelopmentOrigin(origin)) throw new LocalUnavailable({ reason: "SLOP_DEV_ORIGIN must look like http://localhost:4466" })
+  const port = Number((try setting("SLOP_DEV_BACKEND_PORT")) ?? "4477")
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new LocalUnavailable({ reason: "SLOP_DEV_BACKEND_PORT must be a TCP port" })
+  return { root, origin, port, data: try dataDirectory(root, try setting("SLOP_DEV_DATA_DIR")) } satisfies ServeSettings
+}
+
+effect function generated(format: "hex" | "base64url") {
+  const bytes = try randomBytes(32)
+  return format === "hex" ? [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("") : base64url(bytes)
+}
+
+effect function keptSecrets(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const file = (try Path.Path).join(directory, "local-secrets.json")
+  const text = fs.readFileString(file) catch () => undefined
+  const parsed: unknown = text === undefined ? {} : Effect.try((): unknown => JSON.parse(text)) catch () => undefined
+  const kept = Schema.decodeUnknownEffect(Secrets)(parsed) catch effect () => {
+    throw new LocalUnavailable({ reason: `${file} is not the local secret store` })
+  }
+  const secrets: Record<string, string> = { ...kept }
+  for (const [name, format] of Object.entries(localSecrets)) secrets[name] ??= try generated(format)
+  try fs.writeFileString(file, JSON.stringify(secrets), { mode: 0o600 })
+  return secrets
+}
+
+export effect function localVars(root: string, directory: string, origin: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString((try Path.Path).join(root, ".dev.vars")) catch () => ""
+  const merged: Record<string, string> = { ...(try keptSecrets(directory)), ...parsedVars(text) }
+  for (const name of Object.keys(merged)) merged[name] = (try setting(name)) ?? merged[name] ?? ""
+  return { ...merged, SLOP_ENVIRONMENT: "local", PAYMENTS_ALLOWED_ORIGIN: origin }
+}
+
+effect function built(root: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  for (const deployable of deployables) {
+    for (const file of [deployable.config, deployable.script]) {
+      if (!(try fs.exists(path.join(root, file)))) throw new LocalUnavailable({ reason: `${deployable.name} is not built: ${file} is missing` })
+    }
+  }
+  const resolved = (deployable: Deployable): Deployable => ({
+    ...deployable,
+    config: path.join(root, deployable.config),
+    script: path.join(root, deployable.script),
+    ...deployable.assets === undefined ? {} : { assets: path.join(root, deployable.assets) },
+  })
+  const [site, ...others] = deployables
+  const sources: readonly [Deployable, ...Deployable[]] = [resolved(site), ...others.map(resolved)]
+  return sources
+}
+
+export function mailDesk(): MailDesk {
+  return { owners: new Map(), pending: [] }
+}
+
+export function mailSink(desk: MailDesk): MailSink {
+  return (mail) => {
+    const owner = ownerOf(desk.owners, mail.raw)
+    if (owner.kind === "refused") return owner.reason
+    desk.pending.push({ githubId: owner.githubId, from: mail.from, to: mail.to, mime: mail.raw })
+    return undefined
+  }
+}
+
+export effect function migrated(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const db = try D1
+  try db.run(sql`CREATE TABLE IF NOT EXISTS dev_migrations (name TEXT PRIMARY KEY) STRICT`)
+  const done = new Set((try rows(Applied, sql`SELECT name FROM dev_migrations`)).map((row) => row.name))
+  const files = (try fs.readDirectory(directory)).filter((name) => name.endsWith(".sql") && !done.has(name)).sort()
+  for (const file of files) {
+    const source = try fs.readFileString(path.join(directory, file))
+    const parts = try Effect.try({ try: () => statements(source), catch: (cause) => new LocalUnavailable({ reason: `${file}: ${reasonOf(cause)}` }) })
+    try db.batch([...parts.map((text) => ({ text, params: [] })), sql`INSERT INTO dev_migrations (name) VALUES (${file})`])
+  }
+  return files
+}
+
+export effect function tendMail(desk: MailDesk, directory: string) {
+  const owners = mailOwners() catch (error) => String(error)
+  if (typeof owners === "string") try Console.error(`Local mail ownership could not be read: ${owners}`)
+  else desk.owners = owners
+  for (const mail of desk.pending.splice(0)) {
+    const failure = captureMail(directory, mail) catch (error) => error._tag === "MailRefused" ? error.reason : String(error)
+    if (failure !== undefined) try Console.error(`Local mail capture failed: ${failure}`)
+  }
+}
+
+effect function deskLoop(desk: MailDesk, directory: string) {
+  while (true) {
+    try tendMail(desk, directory)
+    try sleep(Duration.millis(mailPollMs))
+  }
+}
+
+effect function signedIn() {
+  const actor = (try Caller).current() catch effect (error) => {
+    if (error._tag === "Unauthenticated" || error._tag === "SessionExpired") return undefined
+    throw error
+  }
+  return actor
+}
+
+export effect function answer(local: Local) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const url = Effect.try(() => new URL(request.url, `http://${request.headers.host ?? ""}`)) catch () => undefined
+  if (url === undefined || url.origin !== local.origin) return HttpServerResponse.text(`This backend serves ${local.origin}. Open that address.`, { status: 421 })
+  if (url.pathname === "/__dev/health") return json({ origin: local.origin, privateIntake: true, email: "local-capture" })
+  if (url.pathname === "/__dev/mail") {
+    if (request.method !== "GET") return HttpServerResponse.empty({ status: 405 })
+    const actor = try signedIn()
+    if (actor === undefined) return HttpServerResponse.text("Sign in to view local mail.", { status: 401 })
+    return try mailPage(local.mail, local.origin, actor.githubId)
+  }
+  if (url.pathname.startsWith("/v1/")) return try bridged(local.bridge, url)
+  if (url.pathname.startsWith("/api/")) {
+    const web = try orDie(HttpServerRequest.toWeb(request))
+    return HttpServerResponse.fromWeb(try orDie(tryPromise(() => local.send(web))))
+  }
+  return HttpServerResponse.text("Not found", { status: 404 })
+}
+
+export effect function serve() {
+  const settings = try serveSettings()
+  const path = try Path.Path
+  try scoped(effect {
+    const directory = try privateDirectory(settings.data)
+    const vars = try localVars(settings.root, directory, settings.origin)
+    const sources = try built(settings.root)
+    const desk = mailDesk()
+    const workers = try acquireRelease(
+      tryPromise({
+        try: () => startLocal({ deployables: sources, vars, persistence: path.join(directory, "state"), sink: mailSink(desk), assertions }),
+        catch: (cause) => new LocalUnavailable({ reason: reasonOf(cause) }),
+      }),
+      (started) => Effect.ignore(tryPromise(() => stopLocal(started.mf))),
+    )
+    try privateDirectory(directory)
+    const local: Local = { origin: settings.origin, mail: path.join(directory, "mail-capture"), bridge: try identityBridge(settings.origin), send: (web) => forward(workers.mf, web) }
+    provide Layer.provideMerge(CallerLive, d1(workers.database)) {
+      const applied = try migrated(path.join(settings.root, "migrations"))
+      fork.scoped deskLoop(desk, local.mail)
+      const handler = Effect.provide(answer(local), try Effect.context<D1 | Caller | FileSystem.FileSystem | Path.Path | HttpClient.HttpClient | Experimental.Crypto.Crypto>())
+      try Console.log(`local serve ready on http://127.0.0.1:${settings.port}\n  serves ${settings.origin}\n  sign-in: Slop production identity handoff\n  migrations applied: ${applied.length}\n  data: ${directory}`)
+      try Layer.launch(Layer.provide(HttpRouter.serve(HttpRouter.add("*", "*", handler), { disableListenLog: true, disableLogger: true }), ExperimentalNodeHttpServer.layer({ port: settings.port, host: "127.0.0.1" })))
+    }
+  })
+}

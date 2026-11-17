@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./app": "./src/app/index.ts",
     "./platform/api": "./src/platform/api.vibe",
     "./platform/bounded": "./src/platform/bounded.vibe",
     "./platform/clipboard": "./src/platform/clipboard.vibe",

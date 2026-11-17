@@ -1,0 +1,94 @@
+// spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"
+import { parsedJson, utf8Text } from "@repo/platform/git/bytes"
+import type { ScanInputFile, SymlinkProvenance } from "../inspect/model.ts"
+import { type TreeEntry, linkText, resolveSymlinkTarget, sha256Hex } from "./objects.ts"
+
+export error AcquiredSourceInvalid { reason: string }
+
+schema InventoryEntry {
+  readonly path: string
+  readonly gitSha: string
+  readonly type: "tree" | "commit" | "blob"
+  readonly mode: string
+}
+
+schema InventoryRecord {
+  readonly path: string
+  readonly gitSha: string
+  readonly type: "tree" | "commit" | "blob"
+  readonly mode: string
+  readonly sha256: string | null
+  readonly resolvedPath?: string
+}
+
+schema SourceInventory {
+  readonly schema: string
+  readonly records: ReadonlyArray<InventoryRecord>
+  readonly directories?: ReadonlyArray<InventoryEntry>
+  readonly visibilityGaps: ReadonlyArray<string>
+}
+
+export interface AcquiredSource {
+  readonly files: ReadonlyArray<ScanInputFile>
+  readonly acquisitionGaps: ReadonlyArray<string>
+}
+
+function invalid(reason: string) {
+  return new AcquiredSourceInvalid({ reason })
+}
+
+export effect function readAcquiredObject(directory: string, digest: string) {
+  if (!/^[0-9a-f]{64}$/u.test(digest)) throw invalid("Invalid acquired object digest")
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const bytes = fs.readFile(path.join(directory, "objects", digest)) catch effect () => {
+    throw invalid("Acquired object unavailable")
+  }
+  if (sha256Hex(bytes) !== digest) throw invalid("Acquired object bytes changed")
+  return bytes
+}
+
+effect function inventoryOf(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const bytes = fs.readFile(path.join(directory, "inventory.json")) catch effect () => {
+    throw invalid("Unknown source inventory")
+  }
+  const parsed = parsedJson(utf8Text(bytes) ?? "")
+  if (parsed === undefined) throw invalid("Unknown source inventory")
+  const inventory = Schema.decodeUnknownEffect(SourceInventory)(parsed.value) catch effect () => {
+    throw invalid("Unknown source inventory")
+  }
+  if (inventory.schema !== "slop-source-inventory-v1") throw invalid("Unknown source inventory")
+  return inventory
+}
+
+export effect function readAcquiredSource(directory: string) {
+  const inventory = try inventoryOf(directory)
+  const entries = new Map<string, TreeEntry>([...(inventory.directories ?? []), ...inventory.records].map((entry) => [entry.path, entry]))
+  const records = new Map(inventory.records.map((record) => [record.path, record]))
+  const links = new Map<string, string | null>()
+  for (const record of inventory.records) {
+    if (record.type !== "blob" || record.mode !== "120000") continue
+    if (record.sha256 === null) throw invalid("Invalid acquired link")
+    links.set(record.path, linkText(try readAcquiredObject(directory, record.sha256)))
+  }
+  const files: ScanInputFile[] = []
+  for (const record of inventory.records) {
+    if (record.sha256 === null) continue
+    const bytes = try readAcquiredObject(directory, record.sha256)
+    if (record.resolvedPath === undefined) {
+      files.push({ path: record.path, bytes })
+      continue
+    }
+    const resolvedPath = resolveSymlinkTarget(record, entries, (link) => links.get(link.path) ?? null)
+    const target = resolvedPath === null ? undefined : records.get(resolvedPath)
+    const target256 = target?.sha256 ?? null
+    if (resolvedPath === null || resolvedPath !== record.resolvedPath || target256 === null) throw invalid("Acquired symlink target changed")
+    const text = linkText(bytes)
+    if (text === null) throw invalid("Acquired symlink target changed")
+    const symlink: SymlinkProvenance = { gitSha: record.gitSha, sha256: record.sha256, target: text, resolvedPath, targetSha256: target256 }
+    files.push({ path: record.path, bytes: try readAcquiredObject(directory, target256), symlink })
+  }
+  return { files, acquisitionGaps: [...inventory.visibilityGaps] } satisfies AcquiredSource
+}

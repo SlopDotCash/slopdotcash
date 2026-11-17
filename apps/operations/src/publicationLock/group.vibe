@@ -1,0 +1,56 @@
+// spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/release.md, "One holder at a time: a release run or another workflow that writes the environment's data"
+import type { Environment } from "../../gen/operations__publicationLock.effect.vibe"
+
+export error LockUnobserved { message: string }
+
+export interface DeclaredGroup {
+  readonly group: string
+  readonly cancelInProgress: string
+}
+
+export function lockGroup(environment: Environment) {
+  return environment === "Production" ? "slop-production" : "slop-staging"
+}
+
+function unquoted(value: string) {
+  const trimmed = value.trim()
+  return /^(['"]).*\1$/u.test(trimmed) ? trimmed.slice(1, -1) : trimmed
+}
+
+function field(lines: ReadonlyArray<string>, name: string) {
+  const prefix = `      ${name}:`
+  const line = lines.find((candidate) => candidate.startsWith(prefix))
+  return line === undefined ? undefined : unquoted(line.slice(prefix.length))
+}
+
+export function declaredGroup(workflow: string, job: string): DeclaredGroup | undefined {
+  const lines = workflow.split(/\r?\n/u)
+  const start = lines.indexOf(`  ${job}:`)
+  if (start < 0) return undefined
+  const after = lines.slice(start + 1)
+  const end = after.findIndex((line) => /^ {0,2}\S/u.test(line))
+  const body = end < 0 ? after : after.slice(0, end)
+  const opened = body.indexOf("    concurrency:")
+  if (opened < 0) return undefined
+  const rest = body.slice(opened + 1)
+  const closed = rest.findIndex((line) => !line.startsWith("      ") && line.trim() !== "")
+  const block = closed < 0 ? rest : rest.slice(0, closed)
+  const group = field(block, "group")
+  const cancelInProgress = field(block, "cancel-in-progress")
+  return group === undefined || cancelInProgress === undefined ? undefined : { group, cancelInProgress }
+}
+
+export effect function observeLock(root: string, workflowPath: string, job: string, environment: Environment) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  if (workflowPath === "" || job === "") throw new LockUnobserved({ message: "The run names no workflow job" })
+  const text = fs.readFileString(files.join(root, workflowPath)) catch effect () => {
+    throw new LockUnobserved({ message: `${workflowPath} is unreadable at the tested source` })
+  }
+  const declared = declaredGroup(text, job)
+  const group = lockGroup(environment)
+  if (declared?.group !== group || declared.cancelInProgress !== "false") {
+    throw new LockUnobserved({ message: `Job ${job} does not run in concurrency group ${group} without cancelling` })
+  }
+  return group
+}

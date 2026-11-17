@@ -1,0 +1,98 @@
+// spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"
+import { D1, type Statement, classified, decoded, sql } from "@repo/platform/d1"
+import { Journal, JournalFailure, type SqlTx } from "@repo/platform/journal"
+
+export error RecordInvalid { key: string }
+
+const SCHEMA: ReadonlyArray<Statement> = [
+  sql`CREATE TABLE IF NOT EXISTS journal(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT`,
+  sql`CREATE TABLE IF NOT EXISTS awards(scope TEXT NOT NULL,id TEXT NOT NULL,actor TEXT NOT NULL,reserve TEXT NOT NULL,payment TEXT,checked INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,id)) STRICT`,
+  sql`CREATE TABLE IF NOT EXISTS gas(id TEXT PRIMARY KEY,day TEXT NOT NULL,maximum TEXT NOT NULL,transaction_id TEXT NOT NULL,actual TEXT,settled_day TEXT,expiry_evidence TEXT) STRICT`,
+  sql`CREATE TABLE IF NOT EXISTS payment_chain_cursors(project_id TEXT NOT NULL,network TEXT NOT NULL,position TEXT NOT NULL,synced_at TEXT NOT NULL,PRIMARY KEY(project_id,network)) STRICT`,
+  sql`CREATE TABLE IF NOT EXISTS payment_solana_scans(project_id TEXT NOT NULL,network TEXT NOT NULL,generation TEXT NOT NULL,until_signature TEXT,before_signature TEXT,next_page INTEGER NOT NULL DEFAULT 0,ready INTEGER NOT NULL DEFAULT 0 CHECK(ready IN (0,1)),revision INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(project_id,network)) STRICT`,
+  sql`CREATE TABLE IF NOT EXISTS payment_solana_scan_pages(project_id TEXT NOT NULL,network TEXT NOT NULL,generation TEXT NOT NULL,page INTEGER NOT NULL,signatures_json TEXT NOT NULL,PRIMARY KEY(project_id,network,generation,page)) STRICT`,
+]
+
+schema ColumnRow { readonly name: string }
+schema ValueRow { readonly value: string }
+
+export effect function openKeeperStore() {
+  try (try Journal).transaction((tx) => effect {
+    for (const statement of SCHEMA) try tx.run(statement)
+    const columns = try decoded(ColumnRow, try tx.all(sql`PRAGMA table_info(gas)`), "gas columns")
+    if (!columns.some((column) => column.name === "expiry_evidence")) try tx.run(sql`ALTER TABLE gas ADD COLUMN expiry_evidence TEXT`)
+  })
+}
+
+export effect function inTransaction<A, E, R>(work: (tx: SqlTx) => A!E!R) {
+  return try (try Journal).transaction(work)
+}
+
+export effect function record(tx: SqlTx, key: string) {
+  const [row] = try decoded(ValueRow, try tx.all(sql`SELECT value FROM journal WHERE key = ${key}`), "keeper journal")
+  if (row === undefined) return undefined
+  return try Effect.try({ try: () => JSON.parse(row.value) as unknown, catch: () => new RecordInvalid({ key }) })
+}
+
+export effect function keep(tx: SqlTx, key: string, value: unknown) {
+  const text = try Effect.try({ try: () => JSON.stringify(value) as string | undefined, catch: () => new RecordInvalid({ key }) })
+  if (text === undefined) throw new RecordInvalid({ key })
+  try tx.run(sql`INSERT INTO journal VALUES(${key}, ${text}) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+}
+
+export effect function recordOf(key: string) {
+  return try inTransaction((tx) => record(tx, key))
+}
+
+export type IdentityCheck = "Fresh" | "Same" | "Other"
+
+export const IDENTITY_KEY = "keeper-identity"
+
+export effect function bindIdentity(identity: string) {
+  return try inTransaction((tx) => effect {
+    const previous = try record(tx, IDENTITY_KEY)
+    if (previous !== undefined && previous !== identity) return "Other" satisfies IdentityCheck
+    if (previous === undefined) try keep(tx, IDENTITY_KEY, identity)
+    return (previous === undefined ? "Fresh" : "Same") satisfies IdentityCheck
+  })
+}
+
+schema AwardRow { readonly id: string; readonly actor: string }
+
+export effect function indexReserved(scope: string, id: string, actor: string, evidence: string) {
+  try inTransaction((tx) => tx.run(sql`INSERT INTO awards(scope,id,actor,reserve) VALUES(${scope},${id},${actor},${evidence}) ON CONFLICT(scope,id) DO NOTHING`))
+}
+
+export effect function indexPaid(scope: string, id: string, evidence: string) {
+  return try inTransaction((tx) => tx.run(sql`UPDATE awards SET payment = ${evidence} WHERE scope = ${scope} AND id = ${id}`))
+}
+
+export effect function unpaidAwards(scope: string, limit: number) {
+  return try inTransaction((tx) => effect {
+    return try decoded(AwardRow, try tx.all(sql`SELECT id, actor FROM awards WHERE scope = ${scope} AND payment IS NULL ORDER BY checked, id LIMIT ${limit}`), "keeper awards")
+  })
+}
+
+export effect function markChecked(scope: string, id: string, at: number) {
+  try inTransaction((tx) => tx.run(sql`UPDATE awards SET checked = ${at} WHERE scope = ${scope} AND id = ${id}`))
+}
+
+function d1Failure(operation: string) {
+  return (error: JournalFailure) => classified(operation, error.message)
+}
+
+export const keeperD1 = Layer.effect(D1, effect {
+  const journal = try Journal
+  return {
+    all: (statement) => Effect.mapError(journal.transaction((tx) => tx.all(statement)), d1Failure("all")),
+    run: (statement) => Effect.mapError(journal.transaction((tx) => tx.run(statement)), d1Failure("run")),
+    batch: (statements) => Effect.mapError(journal.transaction((tx) => effect {
+      const outcomes: Array<{ readonly rows: ReadonlyArray<Record<string, unknown>>; readonly changes: number }> = []
+      for (const statement of statements) {
+        if (/^\s*(SELECT|WITH|PRAGMA)\b/iu.test(statement.text)) outcomes.push({ rows: try tx.all(statement), changes: 0 })
+        else outcomes.push({ rows: [], changes: try tx.run(statement) })
+      }
+      return outcomes
+    }), d1Failure("batch")),
+  } satisfies D1.Shape
+})

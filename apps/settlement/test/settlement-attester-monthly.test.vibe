@@ -1,0 +1,461 @@
+import { assert, layer } from "@effect/vitest"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { type Hex, evmRpc, recoverDigest } from "@repo/platform/chain/evm"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { fileJournal } from "@repo/platform/journal"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { type Account, anvil, refuseMainnet } from "@repo/platform/testing/chains"
+import { settableClock } from "@repo/platform/testing/clock"
+import { frozenCopy } from "@repo/platform/testing/frozen"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { windowOpensAt } from "../gen/settlement__monthlyCommitment.effect.vibe"
+import { Authority, type ProjectView, Registry } from "@repo/ports/backend"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, awardId, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
+import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { type MonthlyReservation, type SumTree, SOURCE_SEQUENCE_CALL, commitMonthlyLeafCalldata, monthlyReleaseDigest, monthlyReserveDigest, reserveMonthlyCalldata, sumTree } from "../src/chain/evm/monthlyRoot.ts"
+import { TOTALS_CALL, decodeCounters } from "../src/chain/evm/totals.ts"
+import { parseBaseUnits } from "../src/kernels/amounts.ts"
+import { ordinaryFeeBase } from "../src/kernels/fees.ts"
+import { createJournal, journaled } from "../src/journal/journal.vibe"
+import { MonthlyFacts, awardSource, executionSnapshot } from "../src/monthly/store.vibe"
+import { ReleaseApprover, type OwnerReleaseRequest, checkRelease, prepareRelease } from "../src/reserveRelease/release.vibe"
+import { AttesterConfig, attesterConfig, reviewedDeployment } from "../src/signer/evm.vibe"
+import { publishMonthlyAuthorizations } from "../src/signer/monthlyRoot.vibe"
+import { releaseApprover } from "../src/signer/reserveRelease.vibe"
+import { SolanaAttesterConfig, solanaAttesterConfig } from "../src/signer/solana.vibe"
+import { attestSolanaMonth } from "../src/signer/solanaMonthly.vibe"
+import { attestEvmMonth } from "../src/signer/monthlyRoot.vibe"
+import { NOVEMBER_2026, type EscrowStack, FEE_RECIPIENT, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
+
+const network = "base-mainnet"
+const projectId = "monthly-root-journey"
+const period = "2026-11"
+const sourceCommit = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+const opensAt = windowOpensAt(202611)
+const recipients = [{ githubUserId: "101", login: "ada", gross: 3_000_000n }, { githubUserId: "102", login: "grace", gross: 2_000_000n }] as const
+
+service Bench {
+  readonly escrow: EscrowStack
+  readonly db: D1Database
+  readonly journalPath: string
+  readonly vault: EvmAddress
+  readonly pins: string
+  readonly manifest: string
+  readonly manifestSha256: string
+  readonly sources: ReadonlyArray<string>
+}
+
+effect function lower(account: Account) {
+  const parsed = evmAddress(account.address)
+  if (parsed === undefined) return try die(new Error(`${account.address} is not an address`))
+  return parsed
+}
+
+effect function codeDigest(escrow: EscrowStack, address: EvmAddress) {
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [address, "latest"]))
+  if (typeof code !== "string") return try die(new Error("eth_getCode answered no code"))
+  return try sha256Hex(try Effect.try(() => hexToBytes(code.slice(2))))
+}
+
+effect function finalize(escrow: EscrowStack) {
+  escrow.chain.setFinalized(try promise(() => escrow.head()))
+}
+
+effect function pinOf(escrow: EscrowStack, vault: EvmAddress, project: string) {
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
+  const slot = try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"]))
+  const factoryImplementation = typeof slot === "string" ? evmAddress(`0x${slot.slice(-40)}`) : undefined
+  if (factoryImplementation === undefined) return try die(new Error("the factory has no implementation"))
+  return {
+    network,
+    chain: "base",
+    chainId: "8453",
+    projectId: project,
+    vault,
+    asset: escrow.dollar,
+    owner: try lower(escrow.roles.owner),
+    identityAuthority: try lower(escrow.roles.authority),
+    feeRecipient: FEE_RECIPIENT,
+    deploymentTransaction: created.at.transaction,
+    sourceCommit,
+    codeSha256: try codeDigest(escrow, vault),
+    factory: escrow.factory,
+    factoryCodeSha256: try codeDigest(escrow, escrow.factory),
+    registrar: try lower(escrow.roles.registrar),
+    gasCeiling: "500000",
+    bindingDelaySeconds: "0",
+    evmUpgrade: {
+      authority: try lower(escrow.roles.upgrader),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow, escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(escrow, factoryImplementation),
+    },
+  }
+}
+
+function manifestOf(pin: { readonly vault: string; readonly asset: string; readonly owner: string; readonly identityAuthority: string; readonly feeRecipient: string }) {
+  return JSON.stringify({
+    id: projectId,
+    status: "active",
+    name: projectId,
+    authority: { state: "verified" },
+    terms: { receiptPolicy: { state: "active" } },
+    reward: { kind: "monthly-pool", monthlyCapMinor: "50000000", rewardStartAt: "2026-10-01T00:00:00.000Z" },
+    escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network, vault: pin.vault, asset: pin.asset, owner: pin.owner, identityAuthority: pin.identityAuthority, feeRecipient: pin.feeRecipient }] },
+  })
+}
+
+effect function fundedMonth(db: D1Database, vault: EvmAddress, asset: string, manifest: string, manifestSha256: string) {
+  const sourceSnapshotSha256 = try sha256Hex(`ledger:${projectId}`)
+  const sources: string[] = []
+  for (const recipient of recipients) sources.push(try awardSource(projectId, NOVEMBER_2026, Number(recipient.githubUserId)))
+  const frozenAt = "2026-12-04T00:00:00.000Z"
+  const snapshot = JSON.stringify(try executionSnapshot({
+    base: { projectId, period, manifestSha256, sourceSnapshotSha256, capBase: "50000000" },
+    rows: recipients.map((recipient, index) => ({ githubUserId: recipient.githubUserId, login: recipient.login, grossBase: recipient.gross, sourceDigest: sources[index] ?? "" })),
+    allocationSequence: 0,
+    trigger: "automatic",
+    manifestSha256,
+    network,
+    vault,
+    asset,
+    frozenAt,
+  }))
+  const total = recipients.reduce((sum, recipient) => sum + recipient.gross, 0n).toString()
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, 1, ${manifest}, ${manifestSha256}, 'Activated automatically', '2026-10-01T00:00:00.000Z')`,
+      sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${projectId}, ${period}, ${manifest}, ${manifestSha256}, ${sourceSnapshotSha256}, '50000000', 2, '2026-12-01T12:00:00.000Z')`,
+      ...recipients.map((recipient, index) => sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (${projectId}, ${period}, ${recipient.githubUserId}, ${recipient.login}, ${recipient.gross.toString()}, ${sources[index] ?? ""})`),
+      sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${projectId}, ${period}, 'automatic', NULL, 0, ${snapshot}, ${try sha256Hex(snapshot)}, ${network}, ${vault}, ${total}, ${frozenAt}, '2026-12-04T00:05:00.000Z')`,
+      ...recipients.map((recipient, index) => sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at) VALUES (${projectId}, ${period}, ${recipient.githubUserId}, ${recipient.login}, ${recipient.gross.toString()}, ${ordinaryFeeBase(recipient.gross).toString()}, ${sources[index] ?? ""}, ${network}, ${vault}, '2026-12-04T00:05:00.000Z')`),
+    ])
+  }
+  return sources
+}
+
+const Started = Layer.effect(Bench, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: opensAt + 600 })), (started) => promise(() => started.close()))
+  try promise(() => refuseMainnet({ url: chain.url, family: "evm" }))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const owner = try lower(escrow.roles.owner)
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(0x51077n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(vault, 20_000_000n, escrow.roles.donor.address))
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { PAYMENTS_DB: "attester-monthly-journey" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  const db = try promise(() => database(mf, "PAYMENTS_DB"))
+  const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
+  const pin = try pinOf(escrow, vault, projectId)
+  const manifest = manifestOf(pin)
+  const manifestSha256 = try sha256Hex(manifest)
+  const sources = try fundedMonth(db, vault, escrow.dollar, manifest, manifestSha256)
+  try finalize(escrow)
+  return { escrow, db, journalPath: `${scratch.root}/attester-monthly.sqlite`, vault, pins: try Effect.try(() => JSON.stringify([pin])), manifest, manifestSha256, sources }
+})
+
+effect function configured(stack: "test" | "production", pins: string) {
+  const { escrow } = try Bench
+  const key = escrow.roles.authority.privateKey
+  const urls = try Effect.try(() => JSON.stringify({ [network]: escrow.chain.url }))
+  return try attesterConfig({ SIGNER_STACK: stack, PAYMENT_RPC_URLS: urls, SIGNER_PRIVATE_KEY: key, TEST_SIGNER_PRIVATE_KEY: key }, pins)
+}
+
+effect function attesterLayer(stack: "test" | "production", now: number) {
+  const { db, journalPath, manifest, manifestSha256, pins } = try Bench
+  const clock = settableClock(now * 1000)
+  const facts = Layer.succeed(MonthlyFacts, {
+    of: () => effect {
+      return {
+        eligibility: { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false, retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true },
+        current: { number: 1, manifest, manifestSha256 },
+        served: new Set([network]),
+      }
+    },
+  })
+  const solana = try solanaAttesterConfig({ SIGNER_STACK: stack, PAYMENT_RPC_URLS: "{}" }, "[]")
+  return Layer.mergeAll(d1(db), fileJournal(journalPath), webCrypto, outbound, clock.layer, facts, KeyValueStore.layerMemory,
+    Layer.succeed(AttesterConfig, try configured(stack, pins)), Layer.succeed(SolanaAttesterConfig, solana))
+}
+
+effect function published(stack: "test" | "production", now: number) {
+  provide try attesterLayer(stack, now) {
+    try createJournal()
+    return try publishMonthlyAuthorizations(new Set([network]), now, { EvmV2: attestEvmMonth, SolanaV3: attestSolanaMonth })
+  }
+}
+
+schema AttemptRow { readonly source_sequence: string; readonly authorization: string }
+schema SignedAttempt {
+  readonly plan: { readonly messageHex: string; readonly allocationRoot: string; readonly evmReservation: { readonly allocationDigest: string; readonly allocationRoot: string; readonly wholeGross: string; readonly remainingGross: string; readonly count: number; readonly sourceSequence: string } }
+  readonly signatureHex: string
+}
+
+effect function attempts() {
+  const { db } = try Bench
+  provide d1(db) {
+    const found = try rows(AttemptRow, sql`SELECT source_sequence, authorization FROM monthly_payment_authorization_attempts WHERE project_id = ${projectId} AND period = ${period} AND network = ${network} ORDER BY length(source_sequence), source_sequence`)
+    const decoded: SignedAttempt[] = []
+    for (const row of found) decoded.push(try Schema.decodeUnknownEffect(SignedAttempt)(try Effect.try(() => JSON.parse(row.authorization) as unknown)))
+    return decoded
+  }
+}
+
+effect function journalSignature(sequence: string) {
+  const { vault } = try Bench
+  provide try attesterLayer("production", opensAt + 3600) {
+    const stored = try journaled((entries) => entries.get(`monthly:${network}:${vault}:${period}:v2:${sequence}`))
+    return (stored as { readonly authorization?: { readonly signatureHex: string } } | undefined)?.authorization?.signatureHex
+  }
+}
+
+function reservationOf(attempt: SignedAttempt): MonthlyReservation | undefined {
+  const reserved = attempt.plan.evmReservation
+  const allocationDigest = bytes32(reserved.allocationDigest)
+  const allocationRoot = bytes32(reserved.allocationRoot)
+  const wholeGross = parseBaseUnits(reserved.wholeGross)
+  const remainingGross = parseBaseUnits(reserved.remainingGross)
+  const sourceSequence = parseBaseUnits(reserved.sourceSequence, U256_MAX)
+  if (allocationDigest === undefined || allocationRoot === undefined || wholeGross === undefined || remainingGross === undefined || sourceSequence === undefined) return undefined
+  return { allocationDigest, allocationRoot, wholeGross, remainingGross, count: reserved.count, sourceSequence }
+}
+
+const steward = "4242"
+const releaseManifestSha256 = "c".repeat(64)
+const releaseEntries = entriesFrom(0x7e1ea5e000n, [3_000_000n, 2_000_000n])
+
+interface Reserved {
+  readonly projectId: string
+  readonly vault: EvmAddress
+  readonly tree: SumTree
+  readonly freeBefore: bigint
+  readonly pin: unknown
+}
+
+effect function freeOf(vault: EvmAddress) {
+  const { escrow } = try Bench
+  const counters = decodeCounters(try promise(() => escrow.call(vault, TOTALS_CALL)))
+  if (counters === undefined) return try die(new Error("the vault answered malformed totals"))
+  return counters.free
+}
+
+effect function rawSignature(key: Hex, digest: Bytes32) {
+  const signature = try Effect.try(() => secp256k1.sign(hexToBytes(digest.slice(2)), hexToBytes(key.slice(2)), { prehash: false, lowS: true, format: "recovered" }))
+  const body = try Effect.try(() => bytesToHex(signature.slice(1, 65)))
+  return `0x${body}${(27 + (signature[0] ?? 0)).toString(16)}` as Hex
+}
+
+effect function retained(db: D1Database, project: string, vault: EvmAddress, snapshotSha256: string, tree: SumTree) {
+  const total = tree.root.total.toString()
+  const authorization = JSON.stringify({
+    plan: {
+      family: "evm",
+      request: { projectId: project, period, network, snapshotSha256 },
+      deployment: { network, vault },
+      entries: releaseEntries.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.sourceDigest })),
+      evmReservation: { version: 2, allocationRoot: tree.root.hash },
+    },
+    signatureHex: "",
+  })
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${project}, ${period}, '{}', ${releaseManifestSha256}, ${snapshotSha256}, '50000000', 2, '2026-12-01T12:00:00.000Z')`,
+      sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${project}, ${period}, 'automatic', NULL, 0, '{}', ${snapshotSha256}, ${network}, ${vault}, ${total}, '2026-12-04T00:00:00.000Z', '2026-12-04T00:05:00.000Z')`,
+      sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) VALUES (${project}, ${period}, ${network}, ${snapshotSha256}, ${authorization}, '2026-12-04T00:06:00.000Z')`,
+    ])
+  }
+}
+
+effect function releasePin(escrow: EscrowStack, vault: EvmAddress, project: string) {
+  provide webCrypto {
+    return try pinOf(escrow, vault, project)
+  }
+}
+
+effect function reserved(project: string, salt: bigint, overstated: bigint) {
+  const { escrow, db } = try Bench
+  const owner = try lower(escrow.roles.owner)
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(salt), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(vault, 20_000_000n, escrow.roles.donor.address))
+  const freeBefore = try freeOf(vault)
+  const snapshotSha256 = word(salt + 0x5a5an).slice(2)
+  const allocationDigest = bytes32(`0x${snapshotSha256}`)
+  const sequence = decodeUint(try promise(() => escrow.call(vault, SOURCE_SEQUENCE_CALL)), U256_MAX)
+  if (allocationDigest === undefined || sequence === undefined) return try die(new Error("the reserve inputs are malformed"))
+  const tree = try Effect.try(() => sumTree(releaseEntries))
+  const total = tree.root.total + overstated
+  const reservation: MonthlyReservation = { allocationDigest, allocationRoot: tree.root.hash, wholeGross: total, remainingGross: total, count: releaseEntries.length, sourceSequence: sequence }
+  const digest = try Effect.try(() => monthlyReserveDigest({ chainId: escrow.chainId, vault }, NOVEMBER_2026, reservation))
+  const signature = try rawSignature(escrow.roles.authority.privateKey, digest)
+  const admission = try Effect.try(() => reserveMonthlyCalldata(NOVEMBER_2026, reservation, signature))
+  try promise(() => escrow.send(escrow.roles.donor.address, vault, admission))
+  try retained(db, project, vault, snapshotSha256, tree)
+  const pin = try releasePin(escrow, vault, project)
+  return { projectId: project, vault, tree, freeBefore, pin } satisfies Reserved
+}
+
+function viewOf(project: string): ProjectView {
+  return { projectId: project, revision: 1, manifestSha256: releaseManifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${project}`, integrationBranch: "main", aliases: [] }], closureConsent: false }
+}
+
+effect function releaseLayer(cases: ReadonlyArray<Reserved>) {
+  const { escrow, db, journalPath } = try Bench
+  const pins = try Effect.try(() => JSON.stringify(cases.map((reserve) => reserve.pin)))
+  const ports = Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (id) => effect { return cases.some((reserve) => reserve.projectId === id) ? viewOf(id) : undefined },
+      byRepository: () => effect { return undefined },
+      byPath: () => effect { return undefined },
+      active: () => effect { return cases.map((reserve) => viewOf(reserve.projectId)) },
+      fence: () => effect { return sql`1` },
+    }),
+    Layer.succeed(Authority, {
+      repository: (read) => effect { return { ...read, permission: read.actorGithubId === steward ? "PermissionVerified" : "PermissionDenied", installation: "Installed" } },
+    }),
+  )
+  const base = Layer.mergeAll(d1(db), fileJournal(journalPath), webCrypto, outbound, settableClock((opensAt + 3600) * 1000).layer, KeyValueStore.layerMemory, ports,
+    Layer.provide(evmRpc({ urls: Redacted.make([escrow.chain.url]), chainId: escrow.chainId }), outbound), Layer.succeed(AttesterConfig, try configured("production", pins)))
+  return Layer.provideMerge(releaseApprover, base)
+}
+
+function requestOf(reserve: Reserved): OwnerReleaseRequest {
+  return { projectId: reserve.projectId, period, network, manifestSha256: releaseManifestSha256 }
+}
+
+effect function registered(reserve: Reserved) {
+  return { ...(try reviewedDeployment(network, reserve.vault, "ApproveReserveRelease")).review, revision: 1 }
+}
+
+effect function review(reserve: Reserved) {
+  return try prepareRelease(requestOf(reserve), try registered(reserve), { githubId: steward })
+}
+
+layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The attester signs a month once, replays the same signature, appends a V2 attempt after a source change and stops at admission (spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester")', () => effect {
+    const { escrow, vault, sources } = try Bench
+    const now = opensAt + 3600
+    const refusedStack = try published("test", now)
+    const first = try published("production", now)
+    const signedOnce = try attempts()
+    try promise(() => escrow.chain.rpc("evm_mine", []))
+    try finalize(escrow)
+    const replayed = try published("production", now + 60)
+    const afterReplay = try attempts()
+    const handSource = bytes32(`0x${sources[0] ?? ""}`)
+    if (handSource === undefined) return try die(new Error("the first source is not a digest"))
+    const award = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id: awardId(escrow.chainId, vault, handSource), actor: 101n, gross: 3_000_000n, sourceDigest: handSource }))
+    try promise(() => escrow.send(escrow.roles.owner.address, vault, award))
+    try finalize(escrow)
+    const reattested = try published("production", now + 120)
+    const appended = try attempts()
+    const latest = appended[1]
+    const reservation = latest === undefined ? undefined : reservationOf(latest)
+    if (latest === undefined || reservation === undefined) return try die(new Error("no second attempt was published"))
+    const admission = try Effect.try(() => reserveMonthlyCalldata(NOVEMBER_2026, reservation, `0x${latest.signatureHex}` as Hex))
+    try promise(() => escrow.send(escrow.roles.donor.address, vault, admission))
+    try finalize(escrow)
+    const admitted = try published("production", now + 180)
+    const afterAdmission = try attempts()
+    const authority = (try lower(escrow.roles.authority)) as string
+    const signers = afterAdmission.map((attempt) => recoverDigest(`0x${attempt.plan.messageHex}`, `0x${attempt.signatureHex}`)?.toLowerCase())
+    const firstSequence = signedOnce[0]?.plan.evmReservation.sourceSequence ?? ""
+    const journalledSignature = try journalSignature(firstSequence)
+    try Effect.try(() => assert.deepStrictEqual({
+      refusedStack: refusedStack.failures.map((failure) => failure.endsWith("failed: NotActivated")),
+      first: first.published,
+      signedOnce: signedOnce.length,
+      replayed: replayed.published,
+      replaySignature: afterReplay[0]?.signatureHex === signedOnce[0]?.signatureHex,
+      journalled: journalledSignature === signedOnce[0]?.signatureHex,
+      reattested: reattested.published,
+      appended: appended.map((attempt) => [attempt.plan.evmReservation.count, attempt.plan.evmReservation.remainingGross]),
+      firstKept: appended[0]?.signatureHex === signedOnce[0]?.signatureHex,
+      admitted: [admitted.published, admitted.failures],
+      afterAdmission: afterAdmission.length,
+      signers,
+    }, {
+      refusedStack: [true],
+      first: [`${projectId}/${period}/${network}`],
+      signedOnce: 1,
+      replayed: [],
+      replaySignature: true,
+      journalled: true,
+      reattested: [`${projectId}/${period}/${network}`],
+      appended: [[2, "5000000"], [1, "2000000"]],
+      firstKept: true,
+      admitted: [[], []],
+      afterAdmission: 2,
+      signers: [authority, authority],
+    }))
+  })
+
+  it.effect('A proved wrong total is approved over the finalized reserve, the owner signs and free funds return; healthy, partial and stale reviews refuse (spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "The original balances and allocation survive every recovery step"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const { escrow } = try Bench
+    const authority = try lower(escrow.roles.authority)
+    const wrong = try reserved("release-wrong", 0x7e1ea5e1n, 1_000_000n)
+    const healthy = try reserved("release-healthy", 0x7e1ea5e2n, 0n)
+    const partial = try reserved("release-partial", 0x7e1ea5e3n, 0n)
+    const stale = try reserved("release-stale", 0x7e1ea5e4n, 1_000_000n)
+    const [leaf] = releaseEntries
+    const proof = partial.tree.proofs[0]
+    if (leaf === undefined || proof === undefined) return try die(new Error("the partial allocation has no first leaf"))
+    const settled = try Effect.try(() => commitMonthlyLeafCalldata(NOVEMBER_2026, leaf, 0, proof))
+    try promise(() => escrow.send(escrow.roles.donor.address, partial.vault, settled))
+    try finalize(escrow)
+    const reservedFree = try freeOf(wrong.vault)
+    provide try releaseLayer([wrong, healthy, partial, stale]) {
+      try createJournal()
+      const prepared = try review(wrong)
+      if (prepared.status !== "ready") return try die(new Error(`the wrong total was held: ${prepared.reason}`))
+      const forged = (try ReleaseApprover).approve({ network, vault: wrong.vault, period, digest: word(0xa11ce5n), identityAuthority: authority }) catch (error) => error.reason
+      const allocationDigest = bytes32(prepared.terms.allocationDigest)
+      const allocationRoot = bytes32(prepared.terms.allocationRoot)
+      if (allocationDigest === undefined || allocationRoot === undefined) return try die(new Error("the plan terms are not digests"))
+      const computed = try Effect.try(() => monthlyReleaseDigest({ chainId: escrow.chainId, vault: wrong.vault }, NOVEMBER_2026, { allocationDigest, allocationRoot, expectedRemaining: BigInt(prepared.terms.expectedRemaining), releasedGross: BigInt(prepared.terms.releasedGross) }))
+      const sent = try promise(() => escrow.send(escrow.roles.owner.address, wrong.vault, prepared.transaction.data as Hex))
+      try finalize(escrow)
+      const checked = try checkRelease({ ...requestOf(wrong), planId: prepared.planId, transactionId: sent.transactionHash }, try registered(wrong))
+      const firstStale = try review(stale)
+      try promise(() => escrow.chain.rpc("evm_mine", []))
+      try finalize(escrow)
+      const restale = try review(stale)
+      const healthyReview = try review(healthy)
+      const partialReview = try review(partial)
+      const releasedFree = try freeOf(wrong.vault)
+      const owner = try lower(escrow.roles.owner)
+      try Effect.try(() => assert.deepStrictEqual({
+        forged,
+        signer: recoverDigest(computed, `0x${prepared.signatureHex}` as Hex)?.toLowerCase(),
+        terms: [prepared.terms.expectedRemaining, prepared.terms.releasedGross],
+        owner: [sent.status, prepared.transaction.from],
+        checked: checked.status,
+        free: [wrong.freeBefore, reservedFree, releasedFree],
+        firstStale: firstStale.status,
+        restale,
+        healthy: healthyReview,
+        partial: partialReview,
+      }, {
+        forged: "The requested digest is not the finalized release of this reserve",
+        signer: authority,
+        terms: ["6000000", "6000000"],
+        owner: ["success", owner],
+        checked: "finalized",
+        free: [20_000_000n, 14_000_000n, 20_000_000n],
+        firstStale: "ready",
+        restale: { status: "held", reason: "evidence-stale" },
+        healthy: { status: "held", reason: "no-wrong-sum-fault" },
+        partial: { status: "held", reason: "prior-reserve-transition" },
+      }))
+    }
+  })
+})

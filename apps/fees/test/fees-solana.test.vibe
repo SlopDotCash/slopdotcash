@@ -1,0 +1,468 @@
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { Response } from "miniflare"
+import { type Address, SolanaRpc, associatedTokenAddress, base58Decode, base58Encode, base64Decode, base64Encode, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { webCrypto } from "@repo/platform/crypto"
+import type { Handler } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch, quotesFake } from "@repo/platform/testing/quotes"
+import type { Runtime } from "../gen/fees__runtime.effect.vibe"
+import { exactWrap, wrapNativeRoute } from "../src/jupiter/nativeWrap.vibe"
+import { retainedExpectation, retainedProof, resolveAccounts } from "../src/solana/accounts.vibe"
+import { digest58, u64Bytes } from "../src/solana/bytes.ts"
+import { FeeSolana, feeSolana, walletBalance } from "../src/solana/client.vibe"
+import { type RouteSend, retainedSendReview, routeStatus } from "../src/solana/receipt.vibe"
+import { ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, messageOf, parsedTransaction, solanaNativeAsset, wrappedSol } from "../src/solana/wire.vibe"
+import { FeeWallet, type Prepared } from "../src/signer/feeWallet.vibe"
+import { solanaFeeWallet, solanaReservationFacts } from "../src/signer/solana.vibe"
+import type { FeeIntent } from "../src/signer/intents.ts"
+import { circleUsdc, jupiter } from "../src/runtime/pins.ts"
+
+const keyOf = (fill: number) => base58Encode(new Uint8Array(32).fill(fill))
+const seed = new Uint8Array(32).fill(31)
+const walletKey = ed25519.getPublicKey(seed)
+const wallet = base58Encode(walletKey)
+const secret = JSON.stringify([...seed, ...walletKey])
+const genesis = keyOf(77)
+const usdc = circleUsdc.solana
+const input = keyOf(2)
+const tableKey = keyOf(10)
+const blockhash = keyOf(11)
+const event = keyOf(12)
+const loader = "BPFLoaderUpgradeab1e11111111111111111111111"
+const lookupProgram = "AddressLookupTab1e1111111111111111111111111"
+const jupiterApi = "https://api.jup.ag/swap/v1"
+const routeV2 = [187, 100, 250, 204, 49, 196, 175, 20]
+const rent = 2_039_280
+const nativeWalletAfter = 1_000_000_000 - 10_000_000 - 5000 - rent
+
+function derived(mint: string, owner: string, program: string) {
+  return associatedTokenAddress(owner as Address, mint as Address, program as Address) ?? ""
+}
+
+const source = derived(input, wallet, TOKEN_2022_PROGRAM)
+const destination = derived(usdc, wallet, TOKEN_PROGRAM)
+const wrappedSource = derived(wrappedSol, wallet, TOKEN_PROGRAM)
+
+const live: Runtime = {
+  environment: "Production", variableEnabled: true, published: true, source: 1, converterMode: "Live", buybackMode: "Off",
+  networks: ["Solana"], keys: ["Solana"], nativeLimits: ["Solana"], evmWallet: 1, solanaWallet: 2,
+  ready: { base: false, ethereum: false, robinhood: false, solana: true }, replacementActive: false, publications: 1,
+}
+
+interface Scenario {
+  readonly tableOwner: string
+  readonly redirect: boolean
+  readonly debit: bigint
+  readonly inputMint: Uint8Array
+  readonly extra: boolean
+  readonly trailing: boolean
+  readonly receipt: unknown
+  readonly signatureMissing: boolean
+  readonly nativeSource: boolean
+  readonly walletAfter: number
+}
+
+interface RpcAccount { readonly owner: string; readonly lamports: number; readonly data: readonly [string, string]; readonly executable: boolean }
+
+service Fixture {
+  readonly rpc: string
+  readonly fetch: typeof globalThis.fetch
+  readonly broadcasts: () => number
+  set(next: Partial<Scenario>): void!!
+}
+
+function key(text: string) {
+  return [...(base58Decode(text) ?? new Uint8Array(32))]
+}
+
+function u64(value: bigint) {
+  return [...(u64Bytes(value) ?? new Uint8Array(8))]
+}
+
+function mintData() {
+  const data = new Uint8Array(82)
+  data[44] = 6
+  data[45] = 1
+  return data
+}
+
+function mintWithExtension() {
+  const data = new Uint8Array(174)
+  data.set(mintData())
+  data[165] = 1
+  data.set([1, 0, 4, 0, 7, 7, 7, 7], 166)
+  return data
+}
+
+function account(owner: string, data: Uint8Array, executable = false, lamports = 10_000_000): RpcAccount {
+  return { owner, lamports, data: [base64Encode(data), "base64"], executable }
+}
+
+function holding(mint: string, program: string, amount: bigint, owner = walletKey) {
+  const data = new Uint8Array(165)
+  data.set(key(mint))
+  data.set(owner, 32)
+  data.set(u64(amount), 64)
+  data[108] = 1
+  return account(program, data)
+}
+
+function transaction(scenario: Scenario) {
+  const keys = [wallet, jupiter.program, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, scenario.nativeSource ? wrappedSol : input, usdc, event, ...scenario.extra ? [SYSTEM_PROGRAM] : []]
+  const loaded = keys.length
+  const route = [...routeV2, ...u64(10_000_000n), ...u64(2_000_001n), 50, 0, 0, 0, 0, 0, 1, 0, 0, 0, 3, 16, 39, 0, 1, ...scenario.trailing ? [0] : []]
+  const swap = [1, 10, 0, loaded, loaded + 1, 4, 5, scenario.nativeSource ? 3 : 2, 3, 1, 6, 1, route.length, ...route]
+  const transfer = [7, 2, 0, 6, 12, 2, 0, 0, 0, ...u64(1n)]
+  return Uint8Array.from([
+    1, ...new Uint8Array(64), 128, 1, 0, keys.length - 1, keys.length, ...keys.flatMap(key), ...key(blockhash),
+    scenario.extra ? 2 : 1, ...swap, ...scenario.extra ? transfer : [],
+    1, ...key(tableKey), 2, 0, 1, 0,
+  ])
+}
+
+function table(scenario: Scenario) {
+  const data = new Uint8Array(120)
+  const view = new DataView(data.buffer)
+  view.setUint32(0, 1, true)
+  view.setBigUint64(4, (1n << 64n) - 1n, true)
+  view.setBigUint64(12, 90n, true)
+  data.set(key(scenario.nativeSource ? wrappedSource : source), 56)
+  data.set(key(scenario.redirect ? derived(usdc, keyOf(9), TOKEN_PROGRAM) : destination), 88)
+  return account(scenario.tableOwner, data)
+}
+
+const plain: Scenario = { tableOwner: lookupProgram, redirect: false, debit: 10_000_000n, inputMint: mintData(), extra: false, trailing: false, receipt: null, signatureMissing: false, nativeSource: false, walletAfter: 999_995_000 }
+
+function states(scenario: Scenario): ReadonlyMap<string, RpcAccount | null> {
+  return new Map<string, RpcAccount | null>([
+    [wallet, account(SYSTEM_PROGRAM, new Uint8Array(), false, 1_000_000_000)],
+    [input, account(TOKEN_2022_PROGRAM, scenario.inputMint)],
+    [usdc, account(TOKEN_PROGRAM, mintData())],
+    [wrappedSol, account(TOKEN_PROGRAM, mintData())],
+    [source, holding(input, TOKEN_2022_PROGRAM, 20_000_000n)],
+    [destination, holding(usdc, TOKEN_PROGRAM, 0n)],
+    [event, null],
+    [tableKey, table(scenario)],
+    ...[jupiter.program, TOKEN_PROGRAM, TOKEN_2022_PROGRAM, SYSTEM_PROGRAM, ASSOCIATED_TOKEN_PROGRAM].map((program) => [program, account(loader, new Uint8Array(), true)] as const),
+  ])
+}
+
+function answered(result: unknown) {
+  return Response.json({ jsonrpc: "2.0", id: 1, result })
+}
+
+function solanaRpc(current: () => Scenario, sent: () => void): Handler {
+  return async (request) => {
+    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<any> }
+    const scenario = current()
+    const known = states(scenario)
+    const context = { slot: 100 }
+    switch (method) {
+      case "getGenesisHash": return answered(genesis)
+      case "getAccountInfo": return answered({ context, value: known.get(params[0]) ?? null })
+      case "getMultipleAccounts": return answered({ context, value: params[0].map((address: string) => known.get(address) ?? null) })
+      case "getTokenAccountsByOwner": return answered({ context, value: [
+        { pubkey: source, account: holding(input, TOKEN_2022_PROGRAM, 10_000_000n) },
+        { pubkey: keyOf(20), account: holding(input, TOKEN_2022_PROGRAM, 5_000_000n) },
+      ] })
+      case "simulateTransaction": return answered({ context: { slot: 101 }, value: {
+        err: null,
+        accounts: params[1].accounts.addresses.length === 2
+          ? [scenario.nativeSource ? holding(wrappedSol, TOKEN_PROGRAM, 0n) : holding(input, TOKEN_2022_PROGRAM, 20_000_000n - scenario.debit), holding(usdc, TOKEN_PROGRAM, 2_000_000n)]
+          : [account(SYSTEM_PROGRAM, new Uint8Array(), false, scenario.walletAfter)],
+      } })
+      case "getFeeForMessage": return answered({ context, value: 5000 })
+      case "getMinimumBalanceForRentExemption": return answered(params[0] === 165 ? rent : -1)
+      case "getBlocks": return answered([100])
+      case "getBlock": return answered({ blockhash, previousBlockhash: keyOf(13), parentSlot: 99, blockHeight: 90, blockTime: null, signatures: scenario.receipt === null ? [] : [(scenario.receipt as { signature: string }).signature] })
+      case "getLatestBlockhash": return answered({ context, value: { blockhash, lastValidBlockHeight: 1000 } })
+      case "getBlockHeight": return answered(1001)
+      case "getSignatureStatuses": return answered({ context: { slot: 120 }, value: [scenario.signatureMissing ? null : { slot: 110, confirmations: null, err: null, confirmationStatus: "finalized" }] })
+      case "getTransaction": return answered(scenario.receipt === null ? null : (scenario.receipt as { body: unknown }).body)
+      case "sendTransaction": {
+        sent()
+        return answered(base58Encode((base64Decode(params[0]) ?? new Uint8Array(65)).slice(1, 65)))
+      }
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+    }
+  }
+}
+
+const Started = Layer.effect(Fixture, effect {
+  let scenario: Scenario = plain
+  let broadcasts = 0
+  const handler = solanaRpc(() => scenario, () => { broadcasts += 1 })
+  const served: Served = try acquireRelease(promise(() => serve(handler)), (server) => promise(() => server.close()))
+  const quotes = quotesFake({ chains: { solana: served.url } })
+  quotes.jupiter.quote({ inputMint: input, outputMint: usdc, outAmount: 2_000_001n })
+  quotes.jupiter.quote({ inputMint: wrappedSol, outputMint: usdc, outAmount: 100_000n })
+  quotes.jupiter.quote({ inputMint: wrappedSol, outputMint: usdc, amount: 10_000_000n, outAmount: 2_000_001n })
+  try Effect.try(() => quotes.jupiter.swapTransaction({ userPublicKey: wallet, build: () => transaction(scenario) }))
+  const net = internet({ quotes: quotes.handler, rpc: { [served.url]: handler } })
+  return {
+    rpc: served.url,
+    fetch: asFetch(net.handler),
+    broadcasts: () => broadcasts,
+    set: (next) => sync(() => { scenario = { ...plain, ...next } }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function onSolana<A, E>(program: A!E!(FeeWallet | FeeSolana | SolanaRpc | HttpClient.HttpClient | Experimental.Crypto.Crypto)) {
+  const fixture = try Fixture
+  const chain = feeSolana({ wallet, urls: Redacted.make([fixture.rpc]), genesis, timeoutMs: 10_000 })
+  const signing = Layer.provideMerge(solanaFeeWallet({
+    key: Redacted.make(secret),
+    runtime: live,
+    limits: { perTransaction: 5_000_000n, perDay: 20_000_000n, additionalFeeReserve: 0n },
+    gasMultiple: 1n,
+    maxSlippageBps: 100,
+    jupiter: { apiUrl: jupiterApi, apiKey: undefined, usdc, feeMicro: 2_000n },
+  }), chain)
+  return try Effect.provideService(Effect.provide(Effect.provide(program, signing), FetchHttpClient.layer), FetchHttpClient.Fetch, fixture.fetch)
+}
+
+const swap: FeeIntent = { kind: "JupiterSwap", network: "Solana", inputMint: input, outputMint: usdc, amountIn: 10_000_000n, minimumOutput: 1_980_000n, slippageBps: 100, valueMicro: 2_000_000n }
+
+effect function signed(reserved: Prepared[], intent: FeeIntent = swap) {
+  const result = try (try FeeWallet).sign(intent, (prepared) => sync(() => { reserved.push(prepared) }))
+  if (result.family !== "solana") return try die(new Error("a Solana intent signed as EVM"))
+  return result
+}
+
+function issueOf(error: unknown) {
+  return typeof error === "object" && error !== null && "issue" in error ? String((error as { issue: unknown }).issue) : String(error)
+}
+
+function balance(accountIndex: number, mint: string, programId: string, amount: string) {
+  return { accountIndex, owner: wallet, mint, programId, uiTokenAmount: { amount, decimals: 6 } }
+}
+
+function receiptOf(rawTx: string, signature: string, change: (body: ReceiptBody) => ReceiptBody = (body) => body) {
+  const balances = Array.from({ length: 9 }, () => 1_000_000)
+  const body: ReceiptBody = {
+    slot: 110,
+    blockTime: null,
+    transaction: [rawTx, "base64"],
+    meta: {
+      err: null,
+      fee: 5000,
+      preBalances: [1_000_000_000, ...balances.slice(1)],
+      postBalances: [999_995_000, ...balances.slice(1)],
+      preTokenBalances: [balance(7, input, TOKEN_2022_PROGRAM, "20000000"), balance(8, usdc, TOKEN_PROGRAM, "0")],
+      postTokenBalances: [balance(7, input, TOKEN_2022_PROGRAM, "10000000"), balance(8, usdc, TOKEN_PROGRAM, "2000000")],
+      loadedAddresses: { writable: [source, destination], readonly: [] },
+    },
+  }
+  return { signature, body: change(body) }
+}
+
+function nativeReceiptOf(rawTx: string, signature: string, walletPost: number) {
+  const others = Array.from({ length: 8 }, () => 1_000_000)
+  const body: ReceiptBody = {
+    slot: 110,
+    blockTime: null,
+    transaction: [rawTx, "base64"],
+    meta: {
+      err: null,
+      fee: 5000,
+      preBalances: [1_000_000_000, ...others, 0, 1_000_000],
+      postBalances: [walletPost, ...others, rent, 1_000_000],
+      preTokenBalances: [balance(10, usdc, TOKEN_PROGRAM, "0")],
+      postTokenBalances: [balance(9, wrappedSol, TOKEN_PROGRAM, "0"), balance(10, usdc, TOKEN_PROGRAM, "2000000")],
+      loadedAddresses: { writable: [wrappedSource, destination], readonly: [] },
+    },
+  }
+  return { signature, body }
+}
+
+interface ReceiptBody {
+  readonly slot: number
+  readonly blockTime: null
+  readonly transaction: readonly [string, string]
+  readonly meta: {
+    readonly err: null
+    readonly fee: number
+    readonly preBalances: ReadonlyArray<number>
+    readonly postBalances: ReadonlyArray<number>
+    readonly preTokenBalances: ReadonlyArray<ReturnType<typeof balance>>
+    readonly postTokenBalances: ReadonlyArray<ReturnType<typeof balance>>
+    readonly loadedAddresses: { readonly writable: ReadonlyArray<string>; readonly readonly: ReadonlyArray<string> }
+  }
+}
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('The fee wallet signs a v0 Token-2022 Jupiter swap only after every account is reviewed and simulated, retains that review with its reservation, and credits exactly the finalized route output (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const fixture = try Fixture
+    try fixture.set({})
+    const balanceOfCanonical = try onSolana(walletBalance(input, 0n))
+    const reserved: Prepared[] = []
+    const sent = try onSolana(signed(reserved))
+    const raw = base64Decode(sent.rawTx) ?? new Uint8Array()
+    const parsed = try parsedTransaction(raw)
+    const signature = raw.slice(1, 65)
+    const [held] = reserved
+    const facts = held?.family === "solana" ? solanaReservationFacts(held) : undefined
+    const proof = held?.family === "solana" && held.accountProof !== undefined ? try retainedProof(held.accountProof) : undefined
+    const send: RouteSend = {
+      txId: sent.txId, rawTx: sent.rawTx, wallet, accountProof: held?.family === "solana" ? held.accountProof : undefined,
+      token: input, targetToken: usdc, amountIn: 10_000_000n, minimumOutput: 1_990_000n, expiresAt: 1000,
+    }
+    try fixture.set({ receipt: receiptOf(sent.rawTx, sent.txId) })
+    const landed = try onSolana(routeStatus(send))
+    const corruptions: ReadonlyArray<(body: ReceiptBody) => ReceiptBody> = [
+      (body) => ({ ...body, transaction: [base64Encode(raw.slice(0, raw.length - 1)), "base64"] }),
+      (body) => ({ ...body, meta: { ...body.meta, loadedAddresses: { writable: [], readonly: [] } } }),
+      (body) => ({ ...body, meta: { ...body.meta, postTokenBalances: [balance(7, input, TOKEN_2022_PROGRAM, "9999999"), balance(8, usdc, TOKEN_PROGRAM, "2000000")] } }),
+      (body) => ({ ...body, meta: { ...body.meta, postTokenBalances: [balance(7, input, TOKEN_2022_PROGRAM, "10000000"), balance(8, usdc, TOKEN_PROGRAM, "1")] } }),
+      (body) => ({ ...body, meta: { ...body.meta, postTokenBalances: [balance(7, input, TOKEN_PROGRAM, "10000000"), balance(8, usdc, TOKEN_PROGRAM, "2000000")] } }),
+      (body) => ({ ...body, meta: { ...body.meta, postTokenBalances: [...body.meta.postTokenBalances, balance(7, input, TOKEN_2022_PROGRAM, "10000000")] } }),
+      (body) => ({ ...body, meta: { ...body.meta, preTokenBalances: [...body.meta.preTokenBalances, balance(6, input, TOKEN_2022_PROGRAM, "500")], postTokenBalances: [...body.meta.postTokenBalances, balance(6, input, TOKEN_2022_PROGRAM, "499")] } }),
+      (body) => ({ ...body, meta: { ...body.meta, preTokenBalances: [...body.meta.preTokenBalances, balance(6, usdc, TOKEN_PROGRAM, "500")], postTokenBalances: [...body.meta.postTokenBalances, balance(6, usdc, TOKEN_PROGRAM, "499")] } }),
+    ]
+    const refused: boolean[] = []
+    for (const corrupt of corruptions) {
+      try fixture.set({ receipt: receiptOf(sent.rawTx, sent.txId, corrupt) })
+      const outcome = onSolana(routeStatus(send)) catch () => undefined
+      refused.push(outcome === undefined)
+    }
+    try fixture.set({})
+    const finalizedWithoutReceipt = try onSolana(routeStatus(send))
+    try fixture.set({ signatureMissing: true })
+    const missingAfterExpiry = try onSolana(routeStatus(send))
+    const recorded = { token: input, targetToken: usdc, amountIn: 10_000_000n, minimumOutput: 1_990_000n }
+    const recordedSwap = retainedSendReview(sent.rawTx, send.accountProof, wallet, recorded) catch (error) => issueOf(error)
+    const otherAmount = retainedSendReview(sent.rawTx, send.accountProof, wallet, { ...recorded, amountIn: 9_999_999n }) catch (error) => issueOf(error)
+    try same({
+      balanceOfCanonical,
+      legacy: parsed.legacy,
+      signedByWallet: try verifyMessageSignature(walletKey, messageOf(raw, parsed), signature),
+      reservations: reserved.length,
+      reservation: facts === undefined ? undefined : { blockhashSlot: facts.blockhashSlot, intentHash: facts.intentHash, maximumUnits: held?.maximumUnits },
+      reviewed: proof?.route === undefined ? undefined : { amountIn: proof.route.expectation.amountIn, minimumOut: proof.route.expectation.minimumOut, observed: proof.route.accounts.length >= proof.keys.length },
+      broadcasts: fixture.broadcasts(),
+      landed,
+      refused,
+      finalizedWithoutReceipt,
+      missingAfterExpiry,
+      recordedSwap,
+      otherAmount,
+    }, {
+      balanceOfCanonical: 10_000_000n,
+      legacy: false,
+      signedByWallet: true,
+      reservations: 1,
+      reservation: { blockhashSlot: 100, intentHash: digest58(messageOf(raw, parsed)), maximumUnits: 5_000_000 },
+      reviewed: { amountIn: "10000000", minimumOut: "1990000", observed: true },
+      broadcasts: 0,
+      landed: { kind: "landed", txId: sent.txId, succeeded: true, output: 2_000_000n, actualWei: "5000", blockHash: blockhash, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false },
+      refused: corruptions.map(() => true),
+      finalizedWithoutReceipt: { kind: "pending", mined: true },
+      missingAfterExpiry: { kind: "pending", mined: false },
+      recordedSwap: undefined,
+      otherAmount: "Jupiter account review differs from the recorded swap",
+    })
+  })
+
+  it.effect('An unresolved lookup, a redirected output, an extra debit, an unadmitted Token-2022 extension, a trailing instruction or trailing route bytes each refuse before any reservation or broadcast (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const fixture = try Fixture
+    const cases: ReadonlyArray<Partial<Scenario>> = [
+      { tableOwner: TOKEN_PROGRAM },
+      { redirect: true },
+      { debit: 10_000_001n },
+      { inputMint: mintWithExtension() },
+      { extra: true },
+      { trailing: true },
+    ]
+    const outcomes: unknown[] = []
+    const reserved: Prepared[] = []
+    for (const scenario of cases) {
+      try fixture.set(scenario)
+      outcomes.push(onSolana(signed(reserved)) catch (error) => issueOf(error))
+    }
+    try same({ outcomes, reserved: reserved.length, broadcasts: fixture.broadcasts() }, {
+      outcomes: [
+        "Finalized Solana lookup table is unavailable",
+        "Jupiter route user_destination_token_account differs from the reviewed swap",
+        "Route simulation does not match the exact input and minimum output",
+        "Unsupported Token-2022 extension 1",
+        `Jupiter transaction calls ${SYSTEM_PROGRAM}`,
+        "Trailing bytes after Jupiter route",
+      ],
+      reserved: 0,
+      broadcasts: 0,
+    })
+  })
+
+  it.effect('A native SOL route gains exactly one wrapped-SOL creation, one exact System transfer and one SyncNative before the route; the fee wallet signs it only within its principal, fee and rent, and the finalized receipt must spend exactly that principal (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const fixture = try Fixture
+    try fixture.set({ nativeSource: true })
+    const raw = transaction({ ...plain, nativeSource: true })
+    const parsed = try parsedTransaction(raw)
+    const proof = try onSolana(resolveAccounts(raw, parsed))
+    const wrapped = try wrapNativeRoute(raw, parsed, proof, wallet, 25_000_000n)
+    const wrappedParsed = try parsedTransaction(wrapped)
+    const keys = [...wrappedParsed.staticKeys, wrappedSource, destination]
+    const expected = {
+      program: jupiter.program, wallet, inputMint: wrappedSol, inputProgram: TOKEN_PROGRAM, outputMint: usdc, outputProgram: TOKEN_PROGRAM,
+      amountIn: 25_000_000n, quotedOut: 2_000_001n, minimumOut: 1_990_000n, slippageBps: 50, nativeInput: true,
+    }
+    const exact = exactWrap(wrappedParsed, keys, expected) catch (error) => issueOf(error)
+    const changed = exactWrap(wrappedParsed, keys, { ...expected, amountIn: 25_000_001n }) catch (error) => issueOf(error)
+    const nativeSwap: FeeIntent = { ...swap, inputMint: solanaNativeAsset }
+    const reserved: Prepared[] = []
+    try fixture.set({ nativeSource: true, walletAfter: nativeWalletAfter - 1 })
+    const overspent = onSolana(signed(reserved, nativeSwap)) catch (error) => issueOf(error)
+    try fixture.set({ nativeSource: true, walletAfter: nativeWalletAfter })
+    const sent = try onSolana(signed(reserved, nativeSwap))
+    const signedRaw = base64Decode(sent.rawTx) ?? new Uint8Array()
+    const signedParsed = try parsedTransaction(signedRaw)
+    const [held] = reserved
+    const accountProof = held?.family === "solana" ? held.accountProof : undefined
+    const retained = accountProof === undefined ? undefined : (try retainedProof(accountProof)).route
+    const retainedNative = retained === undefined ? undefined : (try retainedExpectation(retained)).nativeInput
+    const recorded = { token: solanaNativeAsset, targetToken: usdc, amountIn: 10_000_000n, minimumOutput: 1_990_000n }
+    const recordedSwap = retainedSendReview(sent.rawTx, accountProof, wallet, recorded) catch (error) => issueOf(error)
+    const send: RouteSend = { txId: sent.txId, rawTx: sent.rawTx, wallet, accountProof, ...recorded, expiresAt: 1000 }
+    try fixture.set({ nativeSource: true, receipt: nativeReceiptOf(sent.rawTx, sent.txId, nativeWalletAfter) })
+    const landed = try onSolana(routeStatus(send))
+    try fixture.set({ nativeSource: true, receipt: nativeReceiptOf(sent.rawTx, sent.txId, nativeWalletAfter - 1) })
+    const extraSpend = onSolana(routeStatus(send)) catch (error) => issueOf(error)
+    try same({
+      programs: wrappedParsed.programs,
+      transfer: [...(wrappedParsed.instructions[1]?.data ?? [])],
+      accounts: wrappedParsed.instructions.slice(0, 3).map((instruction) => instruction.accounts.map((index) => keys[index])),
+      exact,
+      changed,
+      overspent,
+      reservations: reserved.length,
+      retainedNative,
+      signedPrograms: signedParsed.programs,
+      signedWrap: signedParsed.instructions.slice(1, 3).map((instruction) => [...instruction.data]),
+      recordedSwap,
+      landed,
+      extraSpend,
+      broadcasts: fixture.broadcasts(),
+    }, {
+      programs: [ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM, jupiter.program],
+      transfer: [2, 0, 0, 0, ...u64(25_000_000n)],
+      accounts: [[wallet, wrappedSource, wallet, wrappedSol, SYSTEM_PROGRAM, TOKEN_PROGRAM], [wallet, wrappedSource], [wrappedSource]],
+      exact: undefined,
+      changed: "Native route transfer or sync differs from the exact reviewed input",
+      overspent: "Solana simulation has unbounded native wallet debit",
+      reservations: 1,
+      retainedNative: true,
+      signedPrograms: [ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM, jupiter.program],
+      signedWrap: [[2, 0, 0, 0, ...u64(10_000_000n)], [17]],
+      recordedSwap: undefined,
+      landed: { kind: "landed", txId: sent.txId, succeeded: true, output: 2_000_000n, actualWei: String(5000 + rent), blockHash: blockhash, allowance: 0n, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false },
+      extraSpend: "Finalized native swap did not spend exactly its earned fee input",
+      broadcasts: 0,
+    })
+  })
+})

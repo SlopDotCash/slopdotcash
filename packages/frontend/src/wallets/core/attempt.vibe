@@ -1,0 +1,177 @@
+// spec/frontend/walletAttempt.md, "A wallet prompt starts only after storage creates an empty slot"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"; spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"
+import { type Attempt, type Event, type Journal, Machine, type Notice, type Reply, canSetStorage, canSignIn, canSignOut, initial, machineOver, mayCreate, recoveryFor, slotOf } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { WalletDeclined } from "./discovery.vibe"
+import { type SlotStorage, attemptOfText, clearUnreadableText, readSlotText, sessionSlots, slotWritable, textOfAttempt, unreadableSlot, writeSlotText } from "./slots.ts"
+
+export type { Attempt, Notice, SlotStorage }
+
+export interface AttemptSlot {
+  readonly name: string
+  readonly key: (account: number) => string
+}
+
+export interface Submitted {
+  readonly hash: string
+  readonly saved: boolean
+}
+
+export const nothingSent = "You declined the wallet request. Nothing was sent."
+
+export error AttemptRefused { notice: Notice; message: string }
+export error AttemptUncertain { message: string }
+export error StorageUnwritable { message: string }
+
+export interface AttemptJournal {
+  readonly machine: Machine.Shape
+  follow(account: number): Journal!!
+  recovery(): Attempt!!
+  unreadable(): boolean!!
+  submit<A extends string, E extends { readonly _tag: string }, R>(request: string, unclear: string, prompt: (beforePrompt: void!AttemptRefused) => A!E!R): Submitted!(E | AttemptRefused | AttemptUncertain | WalletDeclined)!R
+  enterCandidate(read: Attempt, candidate: string): Notice!!
+  clearSettled(read: Attempt): Notice!!
+  clearUnreadable(): boolean!!
+}
+
+const refusals: Readonly<Record<Notice, string>> = {
+  Quiet: "Sign in before sending a wallet request.",
+  Waiting: "",
+  StorageBlocked: "Your browser could not save this request, so nothing was sent to your wallet. Allow site storage and try again.",
+  Occupied: "The saved request changed. Reload before continuing.",
+  Saved: "",
+  KeepHash: "",
+  Recover: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+}
+
+export effect function attemptJournal(slot: AttemptSlot, storage: SlotStorage | undefined) {
+  const local = try Ref.make<Journal>(initial)
+  const crypto = try Experimental.Crypto.Crypto
+  const known = new Set<number>()
+
+  function slotAt(account: number): Attempt {
+    return attemptOfText(readSlotText(storage, slot.key(account)))
+  }
+
+  effect function load() {
+    const held = try Ref.get(local)
+    const store: Record<number, Attempt> = {}
+    for (const account of held.accounts) store[account] = slotAt(account)
+    for (const account of known) {
+      const found = slotAt(account)
+      if (!held.accounts.includes(account) && !mayCreate(found)) store[account] = found
+    }
+    return { ...held, store } satisfies Journal
+  }
+
+  effect function keep(next: Journal) {
+    for (const account of next.accounts) {
+      const wanted = slotOf(next, account)
+      const found = slotAt(account)
+      if (wanted.identity === found.identity && wanted.bytesId === found.bytesId && wanted.hash === found.hash && wanted.candidate === found.candidate) continue
+      const text = wanted.identity === "" && wanted.bytesId === "" ? null : textOfAttempt(wanted)
+      try orDie(Effect.try({ try: () => writeSlotText(storage, slot.key(account), text), catch: () => new StorageUnwritable({ message: refusals.StorageBlocked }) }))
+    }
+    try Ref.set(local, { ...next, store: {} })
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function written(event: Event) {
+    const kept: boolean = try catchDefect(Effect.as(Effect.ignore(machine.send(event)), true), (defect) => defect instanceof StorageUnwritable ? Effect.succeed(false) : Effect.die(defect))
+    return kept
+  }
+
+  effect function send(event: Event) {
+    if (try written(event)) return true
+    if (canSetStorage(try machine.get(), false)) try written({ type: "setStorage", ready: false })
+    try written(event)
+    return false
+  }
+
+  effect function storageNow() {
+    const ready = slotWritable(storage)
+    const state = try machine.get()
+    if (canSetStorage(state, ready)) try send({ type: "setStorage", ready })
+    return try machine.get()
+  }
+
+  effect function resolve(identity: string, reply: Reply, hash: string) {
+    try storageNow()
+    try send({ type: "resolve", identity, reply, hash })
+    return (try machine.get()).notice
+  }
+
+  effect function submit<A extends string, E extends { readonly _tag: string }, R>(request: string, unclear: string, prompt: (beforePrompt: void!AttemptRefused) => A!E!R) {
+    const identity = try orDie(crypto.randomUUIDv4())
+    let prompted = false
+    const beforePrompt = effect {
+      try storageNow()
+      try send({ type: "begin", identity, bytesId: request })
+      const state = try machine.get()
+      if (state.notice !== "Waiting" || !state.used.includes(identity)) throw new AttemptRefused({ notice: state.notice, message: refusals[state.notice] })
+      prompted = true
+    }
+    const hash: string = prompt(beforePrompt) catch effect (error) => {
+      if (!prompted) throw error
+      if (error._tag === "WalletDeclined") {
+        try resolve(identity, "Declined", "")
+        throw new WalletDeclined({ message: nothingSent })
+      }
+      try resolve(identity, "Uncertain", "")
+      throw new AttemptUncertain({ message: unclear })
+    }
+    const notice = try resolve(identity, "Signed", hash)
+    return { hash, saved: notice === "Saved" } satisfies Submitted
+  }
+
+  return {
+    machine,
+    follow: effect (account: number) => {
+      const state = try machine.get()
+      if (account > 0) known.add(account)
+      if (account === 0 && canSignOut(state)) try send({ type: "signOut" })
+      else if (account > 0 && canSignIn(state, account)) try send({ type: "signIn", account })
+      return try machine.get()
+    },
+    recovery: effect () => recoveryFor(try machine.get()),
+    unreadable: effect () => unreadableSlot(recoveryFor(try machine.get())),
+    submit,
+    enterCandidate: effect (read: Attempt, candidate: string) => {
+      try storageNow()
+      if (!(try send({ type: "enterCandidate", read, candidate }))) return "StorageBlocked"
+      return (try machine.get()).notice
+    },
+    clearSettled: effect (read: Attempt) => {
+      try storageNow()
+      if (!(try send({ type: "clearSettled", read }))) return "StorageBlocked"
+      return (try machine.get()).notice
+    },
+    clearUnreadable: effect () => {
+      const state = try machine.get()
+      const found = recoveryFor(state)
+      if (state.account === 0 || !unreadableSlot(found)) return false
+      return clearUnreadableText(storage, slot.key(state.account), found.bytesId)
+    },
+  } satisfies AttemptJournal
+}
+
+export service WalletAttempts {
+  journal(slot: AttemptSlot): AttemptJournal!!
+}
+
+export const walletAttempts = Layer.effect(WalletAttempts, effect {
+  const journals = new Map<string, AttemptJournal>()
+  const lock = try Semaphore.make(1)
+  const storage = sessionSlots()
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    journal: (slot: AttemptSlot) => Semaphore.withPermit(lock, effect {
+      const found = journals.get(slot.name)
+      if (found !== undefined) return found
+      provide Experimental.Crypto.Crypto = crypto {
+        const made = try attemptJournal(slot, storage)
+        journals.set(slot.name, made)
+        return made
+      }
+    }),
+  }
+})

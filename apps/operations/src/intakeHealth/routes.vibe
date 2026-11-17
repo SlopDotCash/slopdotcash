@@ -1,0 +1,43 @@
+// spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"
+import { handleRaw, json } from "@repo/platform/http"
+import { route } from "@repo/platform/route"
+import { notifyPostV1SlopbotSpend } from "../client/refusals.vibe"
+import { notifyInternalHost } from "../notifications/contracts.schema.vibe"
+import { IntakeToken, type Renewal, renewIntake } from "./renewal.vibe"
+
+const intakeRenewPath = "/v1/intake/renew"
+
+const intakeRenewRoute = route({ method: "POST", path: intakeRenewPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
+
+const notFound = notifyPostV1SlopbotSpend.notFoundNoStore
+
+function statusOf(renewal: Renewal): number {
+  const result = renewal.result
+  if (result.tag === "WriteFailed") return 500
+  return renewal.failed ? 503 : 200
+}
+
+function bodyOf(renewal: Renewal) {
+  const result = renewal.result
+  const observation = renewal.observation
+  return {
+    result: result.tag,
+    ...result.tag === "Skipped" ? { reason: result.reason } : {},
+    ...renewal.httpStatus === undefined ? {} : { httpStatus: renewal.httpStatus },
+    ...observation.tag === "Observed" ? { enabled: observation.enabled } : {},
+    tokenRejected: renewal.tokenRejected,
+  }
+}
+
+effect function internalRequest() {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  return url.host === notifyInternalHost && url.search === ""
+}
+
+effect function renewed() {
+  if (!(try internalRequest())) return json({ error: notFound.error }, notFound.status)
+  const renewal = try renewIntake("IdentityCron", (try IntakeToken).token)
+  return json(bodyOf(renewal), statusOf(renewal))
+}
+
+export const intakeRoutes = handleRaw(intakeRenewRoute, () => renewed())

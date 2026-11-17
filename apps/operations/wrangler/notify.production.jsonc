@@ -1,0 +1,43 @@
+{
+  "name": "slop-notify",
+  "main": "../dist/notify.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": []
+  },
+  "d1_databases": [
+    {
+      "binding": "SLOP_DB",
+      "database_name": "slop-private",
+      "database_id": "1b453124-2709-45af-8389-151a8105c461",
+      "migrations_dir": "../../../migrations"
+    }
+  ],
+  "send_email": [
+    { "name": "ADMIN_EMAIL" }
+  ],
+  "vars": {
+    "SLOP_ENVIRONMENT": "production",
+    "NOTIFY_FROM_ADDRESS": "notifications@slop.cash",
+    "NOTIFY_INBOX_URL": "https://slop.cash/inbox",
+    "NOTIFY_GENERAL_EMAIL_ENABLED": "false",
+    "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "expectedSecrets": [
+    "ACTIVITY_MAIL_PILOT",
+    "ADMIN_EMAILS",
+    "GITHUB_INTAKE_STATUS_TOKEN",
+    "NOTIFY_UNSUBSCRIBE_KEY",
+    "SECURITY_MAIL_PILOT"
+  ]
+}

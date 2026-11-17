@@ -1,0 +1,131 @@
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "Story: Read the whole bounded input and keep one disclosed review comment"
+import type { D1Database } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { answered, body, json, outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { ProjectStatus, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Enforcement, Restriction } from "@repo/ports/security"
+import { initiallyUncertain } from "../../gen/slopbot__closure.effect.vibe"
+import { ReviewJob } from "../../src/jobs/job.vibe"
+import { type ReviewHooks, type ReviewOutcome, type ReviewSettings, reviewItem } from "../../src/review/run.vibe"
+import { routeProviders } from "../../src/route/route.vibe"
+import { Participation } from "../../src/routing/facts.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly GITHUB_API: string
+  readonly GITHUB_TOKEN: string
+  readonly ORBIO_API_KEY: string
+  readonly SURPLUS_API_KEY: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly TEST_PROJECTS: string
+}
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+  readonly rowStatus: ProjectStatus
+  readonly restriction: Restriction
+}
+
+const TestProjects = Schema.Array(TestProject)
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 1,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.rowStatus,
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: "100",
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function registryOver(text: string) {
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+    )
+  })
+}
+
+function described(outcome: ReviewOutcome) {
+  if (outcome.kind === "settled") return { kind: outcome.kind, result: outcome.result }
+  if (outcome.kind === "closeReconciliation") return { kind: outcome.kind, result: outcome.close.state }
+  const { finding } = outcome
+  const { triage } = finding
+  return {
+    kind: outcome.kind,
+    category: triage.verdict.category,
+    deterministic: triage.call === undefined,
+    grounded: triage.assessed.grounded,
+    related: triage.assessed.related,
+    uncertain: initiallyUncertain(triage.assessed),
+    mode: finding.mode,
+    scope: finding.scope,
+    triage: triage.call === undefined ? null : [triage.call.gateway, triage.call.requestedModel, triage.call.routeStep],
+  }
+}
+
+service Settings { readonly current: ReviewSettings }
+
+const noHooks: ReviewHooks<never, never> = {
+  eligibility: () => Effect.succeed(false),
+  quality: () => Effect.succeed([]),
+  closedItem: () => Effect.void,
+  onSkip: () => Effect.void,
+}
+
+effect function reviewed() {
+  return try answered(effect {
+    const job = try body(ReviewJob, 4)
+    const { current } = try Settings
+    const outcome = Effect.map(reviewItem(job, current, noHooks), described) catch (error) => ({ kind: "failed", error: error._tag })
+    return json(outcome)
+  })
+}
+
+const nobody = Layer.succeed(Participation, { member: () => effect { return false } })
+
+function services(env: Env) {
+  return Layer.mergeAll(
+    d1(env.SLOPBOT_DB),
+    webCrypto,
+    Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-review-test" }), outbound),
+    Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
+    registryOver(env.TEST_PROJECTS),
+    nobody,
+    Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, verifierKey: "" } }),
+  )
+}
+
+export default worker({ services, routes: HttpRouter.add("POST", "/test/review", reviewed()) })

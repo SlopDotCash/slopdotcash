@@ -1,0 +1,332 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { ExperimentalNodeProcess } from "vibelang-runtime/experimental/platform-node"
+import { CallerLive } from "@repo/backend/caller"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, rows, sql } from "@repo/platform/d1"
+import { Caller, outbound, outboundVia } from "@repo/platform/http"
+import { bundle } from "@repo/platform/testing"
+import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+import { supervise } from "../src/local/command/supervisor.vibe"
+import { identityBridge, productionIdentity } from "../src/local/dev/identity.vibe"
+import { captureMail } from "../src/local/dev/mail.vibe"
+import { dataDirectory, privateDirectory } from "../src/local/dev/paths.vibe"
+import { type Local, answer, assertions, localVars, mailDesk, mailSink, migrated, tendMail } from "../src/local/dev/serve.vibe"
+import { type Deployable, forward, startLocal, stopLocal } from "../src/local/dev/workers.ts"
+import { runStages } from "../src/local/validator/stages.vibe"
+import { startStage, validatorMachine } from "../src/local/validator/steps.vibe"
+
+const audience = "slop-points-web"
+const sessionCookie = /__Host-slop_points=([^;,\s]+)/u
+
+schema Handed { flowId: string; pollCapability: string; authorizationUrl: string }
+schema Issued { status: "complete"; assertion: string }
+schema Consumption { consumed_at: string | null }
+
+const Services = Layer.mergeAll(NodeServices.layer, ExperimentalNodeProcess.layer, outbound, webCrypto)
+
+module fakes {
+  import type { Fetcher } from "@repo/platform/bindings"
+  import { productionIdentity } from "../src/local/dev/identity.vibe"
+
+  export interface Handoff {
+    returnOrigin: string
+    flows: number
+    readonly asked: string[]
+  }
+
+  /** @throws {never} */
+  export function identityHost(handoff: Handoff): Fetcher {
+    return {
+      fetch: (request) => {
+        const url = new URL(request.url)
+        handoff.asked.push(`${request.method} ${url.origin}${url.pathname}`)
+        if (request.method === "POST" && url.pathname === "/v1/local/start") {
+          handoff.flows += 1
+          const flowId = `local_flow_${handoff.flows}`
+          return Promise.resolve(Response.json({
+            flowId,
+            pollCapability: `poll_capability_${handoff.flows}`,
+            authorizationUrl: `${productionIdentity}/v1/oauth/authorize?flow_id=${flowId}&state=state_${handoff.flows}`,
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+            pollAfterSeconds: 1,
+          }, { status: 201 }))
+        }
+        if (request.method === "POST" && url.pathname === "/v1/local/poll") {
+          return Promise.resolve(Response.json({ status: "complete", returnOrigin: handoff.returnOrigin, githubActorId: "7", githubLogin: "member-7", githubNodeId: "U_member7" }))
+        }
+        return Promise.resolve(new Response(null, { status: 404 }))
+      },
+    }
+  }
+}
+import { type Handoff, identityHost } from fakes
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function workspace() {
+  return try (try FileSystem.FileSystem).makeTempDirectoryScoped({ prefix: "slop-local-journey-" })
+}
+
+effect function payer(directory: string) {
+  const file = (try Path.Path).join(directory, "payer.json")
+  try (try FileSystem.FileSystem).writeFileString(file, JSON.stringify(Array.from({ length: 64 }, (_, index) => index)), { mode: 0o600 })
+  return file
+}
+
+effect function modeOf(path: string) {
+  return (try (try FileSystem.FileSystem).stat(path)).mode & 0o777
+}
+
+interface Ask {
+  readonly method?: "GET" | "POST"
+  readonly headers?: Readonly<Record<string, string>>
+  readonly json?: unknown
+}
+
+effect function parsed(text: string) {
+  return try Effect.try((): unknown => JSON.parse(text))
+}
+
+effect function asked(path: string, ask: Ask = {}) {
+  const client = try HttpClient.HttpClient
+  const plain = HttpClientRequest.make(ask.method ?? "GET")(path, { headers: ask.headers ?? {} })
+  const response = try client.execute(ask.json === undefined ? plain : HttpClientRequest.bodyJsonUnsafe(plain, ask.json))
+  const text = try response.text
+  return { status: response.status, text, cache: response.headers["cache-control"], robots: response.headers["x-robots-tag"], location: response.headers.location, cookie: response.headers["set-cookie"] }
+}
+
+effect function redirected(path: string) {
+  provide FetchHttpClient.RequestInit = { redirect: "manual", keepalive: false } {
+    return try asked(path)
+  }
+}
+
+effect function devRouteHolders() {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const holders: string[] = []
+  for (const top of ["apps", "packages"]) {
+    for (const owner of try fs.readDirectory(path.join(repoRoot, top))) {
+      for (const part of ["src", "dist"]) {
+        const directory = path.join(repoRoot, top, owner, part)
+        if (!(try fs.exists(directory))) continue
+        for (const file of try fs.readDirectory(directory, { recursive: true })) {
+          if (!/\.(?:vibe|ts|tsx|js|mjs)$/u.test(file) || (part === "dist" && file.split(path.sep)[0] === "programs")) continue
+          const text = try fs.readFileString(path.join(directory, file))
+          if (text.includes("/__dev")) holders.push(path.join(top, owner, part, file))
+        }
+      }
+    }
+  }
+  return holders.sort()
+}
+
+effect function siteConfig(file: string, database: string) {
+  try (try FileSystem.FileSystem).writeFileString(file, JSON.stringify({
+    name: "slop-site-local-journey",
+    compatibility_date: "2026-07-30",
+    d1_databases: [{ binding: "SLOP_DB", database_name: database }],
+    services: [{ binding: "SLOP_IDENTITY", service: "slop-identity-staging" }],
+    vars: { ADMIN_GITHUB_IDS: "", PROJECT_MODERATOR_GITHUB_IDS: "" },
+  }))
+  return file
+}
+
+layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Reach a bounded result while keeping ownership of local processes (spec/operations/localCommand.md, "Story: Reach a bounded result while keeping ownership of local processes"; spec/operations/localCommand.md, "Only a current local stage can start the command"; spec/operations/localCommand.md, "Cancellation or expiry requests graceful interruption before escalation"; spec/operations/localCommand.md, "Success requires the command exit, owned group shutdown, and drained output")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const path = try Path.Path
+    const process = try Experimental.Process.Process
+    const directory = try workspace()
+    const keypair = try payer(directory)
+    const local = "http://127.0.0.1:8899"
+    const request = (name: string, script: string, endpoint = local) => ({ receipt: 1, endpoint, keypair, command: "sh", args: ["-c", script], cwd: directory, env: { PATH: "/usr/bin:/bin" }, log: path.join(directory, `${name}.log`) })
+    const funded = try supervise(request("funded", "echo funded"))
+    const marker = path.join(directory, "ran")
+    const refused = supervise(request("refused", `touch ${marker}`, "https://api.mainnet-beta.solana.com")) catch (error) => error._tag
+    const stubborn = try supervise({ ...request("stubborn", "trap '' TERM; echo waiting; sleep 30"), canceled: sleep("300 millis") })
+    const lingering = try supervise(request("lingering", "sleep 30 & echo started"))
+    const escaped = try supervise({ ...request("escaped", "perl -MPOSIX -e '$| = 1; if (fork() == 0) { POSIX::setsid(); print \"$$\\n\"; sleep 30; exit 0 } exit 0'") })
+    const escapee = Number((try fs.readFileString(escaped.log)).trim())
+    process.kill(escapee, { killSignal: "SIGKILL" }) catch () => undefined
+    try same({
+      funded: [funded.result, try fs.readFileString(funded.log), try modeOf(funded.log)],
+      refused: [refused, try fs.exists(marker)],
+      stubborn: [stubborn.result, stubborn.state.forced, stubborn.state.exited],
+      lingering: [lingering.result, lingering.state.forced, try fs.readFileString(lingering.log)],
+      escaped: [escaped.result, escaped.state.exited, escaped.state.drained, Number.isSafeInteger(escapee) && escapee > 1],
+    }, {
+      funded: [{ receipt: 1, code: 0, cleanupConfirmed: true }, "funded\n", 0o600],
+      refused: ["LaunchRefused", false],
+      stubborn: [{ receipt: 1, code: 1, cleanupConfirmed: true }, true, true],
+      lingering: [{ receipt: 1, code: 0, cleanupConfirmed: true }, false, "started\n"],
+      escaped: [{ receipt: 1, code: 1, cleanupConfirmed: false }, true, false, true],
+    })
+  }))
+
+  it.effect('Run tests only against the validator owned by the current stage (spec/operations/localValidator.md, "Story: Run tests only against the validator owned by the current stage"; spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"; spec/operations/localValidator.md, "The awaited stop and its exact receipt settle cleanup")', () => scoped(effect {
+    const probe = { command: "sh", args: ["-c", "test -n \"$ANCHOR_PROVIDER_URL\" && test -f \"$ANCHOR_WALLET\" && test -n \"$SLOP_LOCAL_SOLANA_GENESIS\""], cwd: repoRoot }
+    const keypair = try payer(try workspace())
+    const once = (test = probe) => [{ accounts: [], test }] as const
+    const unbooted = try validatorMachine()
+    const privateMount = runStages({ mode: "AcceptanceCaller", programs: [], stages: [{ accounts: [{ address: "11111111111111111111111111111111", jsonPath: keypair }], test: probe }] }, unbooted) catch (error) => error._tag
+    const mismatched = runStages({ mode: "ShellCaller", programs: [], stages: once() }) catch (error) => error._tag
+    const machine = try validatorMachine()
+    const acceptance = try runStages({ mode: "AcceptanceCaller", programs: [], stages: once() }, machine)
+    const finished = try machine.get()
+    const staleStart = startStage(machine, { mode: "AcceptanceCaller", receipt: 1, mounts: [], keypair: "/nonexistent", endpoint: "http://127.0.0.1:8899" }) catch (error) => error._tag
+    const staleStop = machine.send({ type: "recordStop", receipt: 1, closeReturned: true, closeOk: true, ownStopped: true }) catch (error) => error._tag
+    const failing = try runStages({ mode: "AcceptanceCaller", programs: [], stages: once({ ...probe, args: ["-c", "exit 7"] }) })
+    const shell = try runStages({ mode: "ShellCaller", programs: [], stages: [{ accounts: [], test: probe }, { accounts: [], test: { ...probe, args: ["-c", "test -f \"$ANCHOR_WALLET\" && exit 0"] } }] })
+    const [first, second] = shell.receipts
+    try same({
+      refused: [privateMount, (try unbooted.get()).stage, mismatched],
+      acceptance: [acceptance.state.status, acceptance.receipts.length, finished.ledger, finished.stopped, finished.cleanupFailed],
+      stale: [staleStart, staleStop],
+      failing: [failing.state.status, failing.state.stopped, failing.state.ledger],
+      shell: [shell.state.status, shell.state.funded, shell.state.tests, shell.receipts.map((receipt) => receipt.receipt), first?.owner !== second?.owner],
+    }, {
+      refused: ["MountsRefused", 0, "StagesMismatch"],
+      acceptance: [0, 1, false, true, false],
+      stale: ["Rejected", "Rejected"],
+      failing: [7, true, false],
+      shell: [0, 2, 2, [1, 2], true],
+    })
+  }))
+
+  it.effect('Sign into local development without creating production authority (spec/backend/local.md, "Story: Sign into local development without creating production authority"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const path = try Path.Path
+    const home = try (try Experimental.Process.Process).homeDirectory
+    const scratch = try workspace()
+    const defaulted = try dataDirectory(repoRoot, undefined)
+    const inside = dataDirectory(repoRoot, "apps/operations") catch (error) => error._tag
+    const data = try dataDirectory(repoRoot, path.join(scratch, "data"))
+    try fs.makeDirectory(path.join(data, "mail-capture", "old"), { recursive: true, mode: 0o755 })
+    try fs.writeFileString(path.join(data, "local-secrets.json"), "{}", { mode: 0o644 })
+    try fs.writeFileString(path.join(data, "mail-capture", "old", "note.json"), "{}", { mode: 0o644 })
+    try privateDirectory(data)
+    const modes = [try modeOf(data), try modeOf(path.join(data, "local-secrets.json")), try modeOf(path.join(data, "mail-capture")), try modeOf(path.join(data, "mail-capture", "old", "note.json"))]
+    const backend = path.join(repoRoot, "apps", "backend")
+    const [siteScript, identityScript] = try promise(() => Promise.all([bundle(backend, { entry: "worker" }), bundle(backend, { entry: "identity" })]))
+    const identity: Deployable = { name: "identity", config: path.join(backend, "wrangler", "identity.staging.jsonc"), script: identityScript }
+    const site: Deployable = { name: "site", config: try siteConfig(path.join(scratch, "site.jsonc"), "slop-staging"), script: siteScript }
+    const stray: Deployable = { ...site, config: try siteConfig(path.join(scratch, "stray.jsonc"), "slop-other") }
+    const desk = mailDesk()
+    provide NodeHttpServer.layerTest {
+      const address = (try HttpServer.HttpServer).address
+      const origin = `http://127.0.0.1:${"port" in address ? address.port : 0}`
+      const vars = try localVars(scratch, data, origin)
+      const persistence = path.join(data, "state")
+      const strayStart = tryPromise({
+        try: () => startLocal({ deployables: [stray, identity], vars, persistence, sink: mailSink(mailDesk()), assertions }),
+        catch: (cause) => cause instanceof Error ? cause.message : String(cause),
+      }) catch (reason) => reason
+      const workers = try acquireRelease(promise(() => startLocal({ deployables: [site, identity], vars, persistence, sink: mailSink(desk), assertions })), (started) => promise(() => stopLocal(started.mf)))
+      provide Layer.provideMerge(CallerLive, d1(workers.database)) {
+        const db = try D1
+        const applied = try migrated(migrationsDir)
+        const reapplied = try migrated(migrationsDir)
+        const handoff: Handoff = { returnOrigin: origin, flows: 0, asked: [] }
+        const mail = path.join(data, "mail-capture")
+        const local: Local = { origin, mail, bridge: try identityBridge(origin), send: (request) => forward(workers.mf, request) }
+        const serving = try Ref.make(local)
+        const context = try Effect.context<D1 | Caller | FileSystem.FileSystem | Path.Path | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+        try HttpServer.serveEffect(Effect.provide(Effect.provide(effect { return try answer(try Ref.get(serving)) }, outboundVia(identityHost(handoff))), context))
+        const started = try asked("/v1/oauth/start", { method: "POST", headers: { origin }, json: { audience } })
+        const flow = try Schema.decodeUnknownEffect(Handed)(try parsed(started.text))
+        const link = new URL(flow.authorizationUrl)
+        const authorized = try redirected(`${link.pathname}${link.search}`)
+        const polled = try asked("/v1/oauth/poll", { method: "POST", headers: { origin }, json: { flowId: flow.flowId, pollCapability: flow.pollCapability, audience } })
+        const { assertion } = try Schema.decodeUnknownEffect(Issued)(try parsed(polled.text))
+        const tokenHash = try sha256Hex(assertion)
+        const issued = try rows(Consumption, sql`SELECT consumed_at FROM identity_assertions WHERE token_hash = ${tokenHash}`)
+        const joining = { method: "POST", headers: { origin }, json: { assertion, public: true } } satisfies Ask
+        const joined = try asked("/api/v1/points/join", joining)
+        const session = sessionCookie.exec(joined.cookie ?? "")?.[1] ?? ""
+        const consumed = try rows(Consumption, sql`SELECT consumed_at FROM identity_assertions WHERE token_hash = ${tokenHash}`)
+        const replayed = try asked("/api/v1/points/join", joining)
+        handoff.returnOrigin = "http://localhost:4466"
+        const restarted = try Schema.decodeUnknownEffect(Handed)(try parsed((try asked("/v1/oauth/start", { method: "POST", headers: { origin }, json: { audience } })).text))
+        const foreignReturn = try asked("/v1/oauth/poll", { method: "POST", headers: { origin }, json: { flowId: restarted.flowId, pollCapability: restarted.pollCapability, audience } })
+        try db.run(sql`INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, created_at, expires_at)
+          VALUES ('n1', '7', 'request-n1', 'seven@example.test', 'address-n1', ${"a".repeat(64)}, 1, 1, '2026-11-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z')`)
+        const mime = (id: string, to: string) => `From: notifications@slop.cash\r\nTo: ${to}\r\nMessage-ID: <slop-notice-${id}-1@slop.cash>\r\n\r\nOpen ${origin}/inbox or https://evil.example/inbox`
+        const sink = mailSink(desk)
+        const early = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "seven@example.test", raw: mime("n1", "seven@example.test") }))
+        try tendMail(desk, mail)
+        const unnamed = try Effect.try(() => sink({ from: "a@slop.cash", to: "b@example.test", raw: "Message-ID: <admin@slop.cash>\r\n\r\nhi" }))
+        const unowned = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "b@example.test", raw: mime("n9", "b@example.test") }))
+        const owned = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "seven@example.test", raw: mime("n1", "seven@example.test") }))
+        const queued = desk.pending.length
+        try tendMail(desk, mail)
+        try captureMail(mail, { githubId: "8", from: "notifications@slop.cash", to: "eight@example.test", mime: mime("n8", "eight@example.test") })
+        const invalid = captureMail(mail, { githubId: "07", from: "notifications@slop.cash", to: "x@example.test", mime: mime("n7", "x@example.test") }) catch (error) => error._tag
+        const captured = (try fs.readDirectory(mail)).filter((name) => name.endsWith(".json"))
+        const fileModes = new Set<number>()
+        for (const name of captured) fileModes.add(try modeOf(path.join(mail, name)))
+        const cookie = { cookie: `__Host-slop_points=${session}` }
+        const health = try asked("/__dev/health")
+        const posted = try asked("/__dev/mail", { method: "POST" })
+        const anonymous = try asked("/__dev/mail")
+        const own = try asked("/__dev/mail", { headers: cookie })
+        const foreign = try asked("/v1/oauth/start", { method: "POST", headers: { origin: "https://slop.cash" }, json: { audience } })
+        const wrongAudience = try asked("/v1/oauth/start", { method: "POST", headers: { origin }, json: { audience: "private-trace-api" } })
+        const unknownFlow = try asked("/v1/oauth/authorize?flow_id=flow_missing")
+        const missing = try asked("/elsewhere")
+        try Ref.set(serving, { ...local, origin: "http://localhost:4466" })
+        const misdirected = try asked("/__dev/health")
+        try same({
+          start: [strayStart],
+          migrations: [applied.length > 0, reapplied],
+          directories: [defaulted.startsWith(path.join(home, ".local", "share", "slop-dev")), /^[0-9a-f]{16}$/u.test(path.basename(defaulted)), inside, modes],
+          signIn: [
+            started.status,
+            link.origin,
+            [authorized.status, authorized.location],
+            polled.status,
+            issued,
+            [joined.status, session.length > 0],
+            consumed.map((row) => row.consumed_at !== null),
+            [replayed.status, try parsed(replayed.text)],
+            [foreignReturn.status, try parsed(foreignReturn.text)],
+            handoff.asked,
+          ],
+          mail: [[early, unnamed, unowned, owned, queued], invalid, captured.length, [...fileModes], try modeOf(mail)],
+          health: [health.status, try parsed(health.text), misdirected.status],
+          view: [posted.status, anonymous.status, own.status, own.cache, own.robots, own.text.includes("seven@example.test"), own.text.includes("eight@example.test"), own.text.includes(`href="${origin}/inbox"`), own.text.includes("href=\"https://evil.example")],
+          bridge: [[foreign.status, try parsed(foreign.text)], [wrongAudience.status, try parsed(wrongAudience.text)], [unknownFlow.status, try parsed(unknownFlow.text)], missing.status],
+          privacy: try devRouteHolders(),
+        }, {
+          start: ["Every local deployable must bind the slop-staging database that identity.IDENTITY_DB names; these do not: site.SLOP_DB"],
+          migrations: [true, []],
+          directories: [true, true, "PrivateStorageRefused", [0o700, 0o600, 0o700, 0o600]],
+          signIn: [
+            201,
+            origin,
+            [302, flow.authorizationUrl.replace(origin, productionIdentity)],
+            200,
+            [{ consumed_at: null }],
+            [200, true],
+            [true],
+            [401, { error: "identity_expired" }],
+            [502, { error: "invalid_identity_response" }],
+            [`POST ${productionIdentity}/v1/local/start`, `POST ${productionIdentity}/v1/local/poll`, `POST ${productionIdentity}/v1/local/start`, `POST ${productionIdentity}/v1/local/poll`],
+          ],
+          mail: [["Local capture message has ambiguous ownership", "Local capture message has no delivery identity", "Local capture message has ambiguous ownership", undefined, 1], "MailRefused", 2, [0o600], 0o700],
+          health: [200, { origin, privateIntake: true, email: "local-capture" }, 421],
+          view: [405, 401, 200, "private, no-store", "noindex", true, false, true, false],
+          bridge: [[403, { error: "origin_forbidden" }], [400, { error: "invalid_audience" }], [410, { error: "flow_expired" }], 404],
+          privacy: ["apps/operations/src/local/dev/serve.vibe"],
+        })
+      }
+    }
+    const linked = try fs.symlink(path.join(scratch, "elsewhere"), path.join(data, "link"))
+    const symlinked = privateDirectory(data) catch (error) => error._tag
+    try same([linked, symlinked], [undefined, "PrivateStorageRefused"])
+  }))
+})

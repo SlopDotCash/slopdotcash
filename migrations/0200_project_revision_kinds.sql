@@ -1,0 +1,116 @@
+CREATE TABLE project_revision_kinds (
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  kind TEXT NOT NULL CHECK (kind IN ('Created', 'Activated', 'OwnerUpdate', 'RepositoryAppended', 'Removed', 'AdminHold', 'AdminDelist', 'AdminException', 'RestrictionRetirement', 'CommunityRestored', 'Placement', 'ConsentChanged')),
+  PRIMARY KEY (project_id, revision),
+  FOREIGN KEY (project_id, revision) REFERENCES project_revisions(project_id, revision),
+  CHECK ((kind = 'Created') = (revision = 1))
+) STRICT;
+
+CREATE TRIGGER project_revision_kinds_no_update BEFORE UPDATE ON project_revision_kinds
+BEGIN SELECT RAISE(ABORT, 'project revision kind immutable'); END;
+CREATE TRIGGER project_revision_kinds_no_delete BEFORE DELETE ON project_revision_kinds
+BEGIN SELECT RAISE(ABORT, 'project revision kind permanent'); END;
+
+INSERT INTO project_revision_kinds (project_id, revision, kind)
+SELECT project_id, revision, 'Created' FROM project_revisions WHERE revision = 1;
+
+INSERT INTO project_revision_kinds (project_id, revision, kind)
+WITH reviewed (project_id, revision, manifest_sha256, kind) AS (VALUES
+  ('asi', 2, '6d659ce94a6cf06fefcc134bd22248fa64994564c4c13d1602113eb4bbe1e2e5', 'Placement'),
+  ('asi', 3, '42190207a524acb5e6d55869f081e2743061171720845a9168140c3464a9282b', 'AdminException'),
+  ('asi', 4, 'b1e99bd465fea0552405f48ea3e74a475eb021752e219a8efc7298c03d6f98a7', 'OwnerUpdate'),
+  ('asi', 5, '32ac5ac86992b6d721d523cd5bee503346688dbbfca95b2c7854b3b87d1e8d4b', 'Placement'),
+  ('asi', 6, '05fb48daf6ec54b6011ed5ddfe25a9d49394b2c0965378d41b7b8f9eaf0c2265', 'OwnerUpdate'),
+  ('asi', 7, '8beaddc5a24edfa10baca71d64a6d9a18fba9d10c02db666ac27f7810a46ea4a', 'Activated'),
+  ('beam', 2, 'e407012ffd6792d49abc11b77bdc9454b78b6b6a2aa51a19bc29f9a65b6adf31', 'ConsentChanged'),
+  ('beam', 3, 'fdf26d8eccec0d83d0c5020eab600fffa460738d82973e3600f7bc1ebb99f22a', 'OwnerUpdate'),
+  ('bountix', 2, 'c6e787af05127655f37f0ac0d1a0b6f475484076d62bf95ca07baff182752aa4', 'OwnerUpdate'),
+  ('bountix', 3, '3eb925bdd7e9743436b58849a11f84294a716bd05b90a58340a769762acbe9cd', 'Activated'),
+  ('bruhos', 2, 'ef504a3b8ccebd594e7bee91990127e044709568d3937f851111ade76e58ead4', 'OwnerUpdate'),
+  ('bruhos', 3, 'd4c136b8aeb19a22b81579b932e12dbeef253cc6fbe4b744d52cac2dc4450844', 'OwnerUpdate'),
+  ('bruhos', 4, 'a7ba4d00487130bb8e940b54950f8891f0ff4467f253b60744df18962ed10f7b', 'RestrictionRetirement'),
+  ('bruhos', 5, 'd4c136b8aeb19a22b81579b932e12dbeef253cc6fbe4b744d52cac2dc4450844', 'CommunityRestored'),
+  ('bruhos', 6, '0cb7e1ad6433178c66c82ac3f8f294bf1e36331ae86bc2d2c61cbfdd43c42532', 'Activated'),
+  ('canonry', 2, 'e9cbfd180e246029bb942b94e56e4bc13437ce0ff9a9483cf447904d744fef77', 'AdminException'),
+  ('canonry', 3, '738e67012170b9b48c8bcb16aa9d31e487c33aca752249709fcd50521e7f2423', 'OwnerUpdate'),
+  ('canonry', 4, '16efb7e6f637433d01c81fcd77270db5583a9dff1d1a5c884cbc57079d985130', 'OwnerUpdate'),
+  ('canonry', 5, '968220b6de82deceed4ca30c9d0694b39a94ab864cf1410a8eb305fbf690171b', 'Activated'),
+  ('canonry', 6, '63e707306b40b6604bdd5f1871b72f1fe202f898cc9c5e15ab3c14f6c953f5da', 'OwnerUpdate'),
+  ('darling-arm64', 2, '31bcca921d3e24d7dd016dc8f597b8b004c9744f1e04679a3e3d4b95ce134675', 'AdminException'),
+  ('delta-star', 2, '36004bd76700a7632e1fb64c22b58a3833cdc6a7db84c7ff12b3c6a414f4ee59', 'Placement'),
+  ('eliza', 2, '1c6b0805638719c208261a3524b74e7f6870b2cf5b05b8aa0932b3fa25fbe932', 'Placement'),
+  ('eliza', 3, 'f93f2fa514f7975f859ff5855043aecca96ff04091b0bc3defc783399ebb5731', 'OwnerUpdate'),
+  ('eliza', 4, '131cf52afb18239490a9fcb772bdf7e52470f1ed4d74b7907612bf5d9d27b86c', 'OwnerUpdate'),
+  ('feed', 2, '7b523f2d96f66e08b6c790fc62a08b167416278e38e43693d1dfe72b28e7e20b', 'AdminException'),
+  ('feed', 3, 'b133f446be4753948eca4a9c5e3eeac3d6602732b74ec6bd9912f606713a2d8b', 'OwnerUpdate'),
+  ('feed', 4, '5f4d5d7aa93731e04f9215110573a6d5b6c5970db5df645f2573ce1a085b9892', 'OwnerUpdate'),
+  ('feed', 5, '4e05c0806f8cc24fda418238b79e700e5270af614f113b2562970d509e0fee4e', 'Activated'),
+  ('fly-ai', 2, '31e244b2dc5c501b5256de5ab87a2171bef45d428740502e8571a64f949c2a70', 'OwnerUpdate'),
+  ('fly-ai', 3, '3f95ddea7a184e25c38ec31e52d71be7d01851e25cb0b5a0bc62ba8ada9e879f', 'OwnerUpdate'),
+  ('fly-ai', 4, 'c0b489227c12dc9dfacf4726220d80074835cd7bd5cc4e0dfd4212c01eaa4840', 'OwnerUpdate'),
+  ('fly-ai', 5, 'db7b5f9bae1166340febf122d7bca88fa02f05e71b2605f11e10dd82ec28e192', 'OwnerUpdate'),
+  ('fly-ai', 6, 'f2e66062558d290f0ea55f5e624a2c5e7e8b9cb3abf45f946dc84f548f64b2ef', 'OwnerUpdate'),
+  ('heir-elements-sdk', 2, '3814148786ccf009843bdb43c6490ef65a29186a0f800d21851f14f52216cbc6', 'AdminDelist'),
+  ('hyperliquid-source', 2, 'fa59e92fbe611836e2577297b47c754cd547615a49427e036bf1a66ce4039a40', 'ConsentChanged'),
+  ('hyperliquid-source', 3, '3545badcda433bc91e963451f9bd1638663832ec7776fe8853d243086de4d33a', 'Activated'),
+  ('hyperliquid-source', 4, '9fb1ea6f0a397f83529f1dd05ba970c279835075f6df7f7bc8ce5ef7460dc65d', 'OwnerUpdate'),
+  ('monna-agent-permission-diff', 2, '70c7ee70390e848a6aa87b01fd519b6d49b78723ef06fac80e9356bd6690d303', 'Activated'),
+  ('nurosos', 2, 'ac42beca30ba174330d20480d31a083af83f1d5f4a521ec440bdbb2888edb4e0', 'AdminException'),
+  ('ohio-project-south', 2, '3b1444b4fdc185a37a3a142378eea83ed56c5127f69703d1c628de4973f7f489', 'Activated'),
+  ('oldest', 2, 'a07b494e69ba953a58b1ebb39064d064744c6226e2e13714c6c4ac8a1703bec0', 'Activated'),
+  ('orbio-contracts', 2, 'dc01d74fe6c93de77eb7a96cc9ad1dd99283847d3fc4ea8c36546a5edfe4a5ba', 'Activated'),
+  ('payzcode-ai', 2, '04f9313544374bcfa23105a2422278c4f4c4df4cba0f01fba17aaab6509d82f4', 'AdminException'),
+  ('pumpfun-source', 2, '3b8d547244747f786325a737b59f5614423675efcaaff1fa53031981a8d872a0', 'OwnerUpdate'),
+  ('pumpfun-source', 3, 'cab3df30f3f9a0350b4ba57f9c0581791646955369e4001081fc7d1e1a7f6111', 'OwnerUpdate'),
+  ('pumpfun-source', 4, '481386b55b8e0dd77e227888324aaef7999965c79a613febf2f218ac08e21961', 'OwnerUpdate'),
+  ('pumpfun-source', 5, '5ff358519d44432b386018c6daa43c7ef9759df311e5553194d06b73abf7dad2', 'Placement'),
+  ('pumpfun-source', 6, '9f94d7705a6737088ad9a4a371515e6e83e329bb5a7c8c72bddbfe6b3c592331', 'OwnerUpdate'),
+  ('pumpfun-source', 7, '1891520d63f4d7e6f2788b2bed86ba9c214047e98d92d7c9c993f0148cd17226', 'OwnerUpdate'),
+  ('pumpfun-source', 8, '6f3ada587f440349ae9b84d265ccc8bf541f68a478b9c5b20cc298b2c8e697af', 'Activated'),
+  ('pumpfun-source', 9, '5131ac4562699956113a947e4c3fd9d978769b32394bc95efc19f8691f01d69c', 'OwnerUpdate'),
+  ('pumpfun-source', 10, 'dd0dacef3e521fd02eb2e2a83c73c23e1f84235f83564cf05c1341d55a25e6fa', 'OwnerUpdate'),
+  ('pumpfun-source', 11, '646dd04f9467906d4d81b80946660332ac2d5a4ab7e5648f579c5221fe7de9c7', 'AdminDelist'),
+  ('slopdotcash', 2, 'a41dc573d81631ddb01c3c5281bd70e758aa27d872a79d5fb6e0ed5b865abee6', 'Placement'),
+  ('slopdotcash', 3, '55a2258f37162d84f43bb673112fc861228526cd2a8bd27e1fa3d0cfaee340da', 'OwnerUpdate'),
+  ('slopdotcash', 4, '9869b2e31c8780c3566d06a6295767bdc564add808093265ff7887a587458e58', 'OwnerUpdate'),
+  ('slopdotcash', 5, 'f262cfd03a0a6ef931ff755c143ce5e22183921a517390898d093e54d2b5ab79', 'Activated'),
+  ('slopdotcash', 6, 'cb27f6b070a5526ba28ea94647e75c84c11e36f80a8d728ec3f9df774e1a0730', 'OwnerUpdate'),
+  ('thenetwork', 2, '25e1dbc9a5d12e7eb032052d27c96e1238884868d25cb54980a39260b12b7e2f', 'Placement'),
+  ('thenetwork', 3, '1ca474e7f94f0c556fb01cea7cb63b452bdbc8d82c4fb523e7dddbec7c129e4a', 'OwnerUpdate'),
+  ('thenetwork', 4, '01bffa0a06ab004081255ef157b99a7eacb57180d4fed17a19104f43f91a571b', 'OwnerUpdate'),
+  ('thenetwork', 5, '2b6b292a7e8aa8b552dd58d16fd2ef294b1c33059fe660d393de979567f9c978', 'OwnerUpdate'),
+  ('thenetwork', 6, 'cef984a350d2895cdb67d56079a51a171d0a312870bf8fde7b8d94b7616f8c72', 'OwnerUpdate'),
+  ('umia-protocol', 2, '6012fd93be3609e8502fdc207ba3a3967fce0ed83639c44a3ee23cb3891d4922', 'Activated'),
+  ('umia-protocol', 3, '0d93ebf96f0c99c5d4ee6f568c3973a24b0c9f6c4d3c20630f3adaadbcea6d47', 'OwnerUpdate'),
+  ('umia-protocol', 4, '9df8140707c52ef7bdd71256dba8c2e7634ae06e070ef3d902869c08036dc726', 'OwnerUpdate'),
+  ('visual-strategy-canvas', 2, '14272edaa4d7c7310829a4683e3d8882a7756258b31b3928bb1b156256e23158', 'Activated')
+)
+SELECT r.project_id, r.revision, reviewed.kind
+FROM project_revisions r
+JOIN reviewed ON reviewed.project_id = r.project_id AND reviewed.revision = r.revision AND reviewed.manifest_sha256 = r.manifest_sha256;
+
+INSERT INTO project_revision_kinds (project_id, revision, kind)
+WITH later AS (
+  SELECT r.project_id, r.revision, r.reason, r.actor_github_id AS actor,
+    json_extract(r.manifest, '$.status') AS status,
+    json_extract(r.manifest, '$.listingTier') AS tier,
+    json_extract(r.manifest, '$.slopbot.automaticClosure') IS json_extract(p.manifest, '$.slopbot.automaticClosure') AS consent_kept,
+    substr(r.reason, instr(r.reason, ': ') + 2) AS summary
+  FROM project_revisions r
+  JOIN project_revisions p ON p.project_id = r.project_id AND p.revision = r.revision - 1
+  LEFT JOIN project_revision_kinds k ON k.project_id = r.project_id AND k.revision = r.revision
+  WHERE r.revision > 1 AND k.kind IS NULL AND r.created_at > '2026-11-08T15:49:17.337Z'
+),
+classified AS (
+  SELECT project_id, revision, CASE
+    WHEN reason GLOB 'Activated automatically after setup checks for @*' AND actor IS NOT NULL AND status = 'active' THEN 'Activated'
+    WHEN reason = 'Removed by a current repository maintainer' AND actor IS NOT NULL AND status = 'paused' AND tier = 'retired' THEN 'Removed'
+    WHEN (reason GLOB 'Quarantined by a project moderator (*)' OR reason GLOB 'Banned by a project moderator (*)') AND status = 'paused' AND tier = 'retired' THEN 'RestrictionRetirement'
+    WHEN reason GLOB 'Reinstated after independent review (*)' AND status = 'paused' AND tier = 'community' THEN 'CommunityRestored'
+    WHEN reason GLOB 'Owner update by @*' AND actor IS NOT NULL AND NOT consent_kept AND (summary = 'presentation (slopbot) published.' OR summary GLOB 'presentation (slopbot) published. *') THEN 'ConsentChanged'
+    WHEN reason GLOB 'Owner update by @*' AND actor IS NOT NULL AND consent_kept AND summary NOT GLOB 'added *' THEN 'OwnerUpdate'
+  END AS kind
+  FROM later
+)
+SELECT project_id, revision, kind FROM classified WHERE kind IS NOT NULL;

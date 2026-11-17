@@ -1,0 +1,53 @@
+// spec/security/enforcement.md, "Retained evidence is checked when clearance relies on it"
+import { first, sql } from "@repo/platform/d1"
+import type { Enforcement } from "../../gen/security__enforcement.ts"
+import { canObserveEvidence, controlling, latestOf, observeEvidence, platform } from "../../gen/security__enforcement.effect.vibe"
+import { retained } from "../evidence/store.vibe"
+import { jsonOf } from "./rows.vibe"
+
+const scanSchema = "slop-vetting-result-v2"
+
+schema DigestRef { sha256: string }
+schema ArtifactRef { sha256: string; parentSha256?: string | null }
+schema RecordedScan {
+  schemaVersion: string
+  assessmentId: string
+  reusedAssessmentId?: string | null
+  scan: { runId: string; reportSha256: string }
+  assessed: { inputManifestSha256: string; sourceInventorySha256?: string | null; dependencyLocks: ReadonlyArray<DigestRef> }
+  artifacts: ReadonlyArray<ArtifactRef>
+}
+schema SchemaVersion { schemaVersion?: string }
+schema ResultRow { result: string | null }
+
+effect function retainedFor(row: number) {
+  const found = try first(ResultRow, sql`SELECT result FROM vetting_assessments WHERE rowid = ${row}`)
+  if (found === undefined || found.result === null) return false
+  if ((try jsonOf(SchemaVersion, found.result, "recorded result")).schemaVersion !== scanSchema) return false
+  const result = try jsonOf(RecordedScan, found.result, "recorded scan result")
+  const required = [
+    result.assessed.inputManifestSha256,
+    ...(result.assessed.sourceInventorySha256 === undefined || result.assessed.sourceInventorySha256 === null ? [] : [result.assessed.sourceInventorySha256]),
+    ...result.assessed.dependencyLocks.map((lock) => lock.sha256),
+    ...result.artifacts.flatMap((artifact) => artifact.parentSha256 === undefined || artifact.parentSha256 === null ? [artifact.sha256] : [artifact.sha256, artifact.parentSha256]),
+  ]
+  return try retained({ assessmentId: result.reusedAssessmentId ?? result.assessmentId, runId: result.scan.runId, reportSha256: result.scan.reportSha256, required })
+}
+
+effect function presentFor(row: number) {
+  return retainedFor(row) catch effect (error) => {
+    try Effect.logError("vetting evidence read failure", { assessment: row, failure: error._tag })
+    return false
+  }
+}
+
+export effect function withRetainedEvidence(state: Enforcement) {
+  let observed = state
+  for (const repository of state.repositories) {
+    const latest = latestOf(observed, repository)
+    if (latest.state !== "AClean" || !controlling(observed, repository)) continue
+    const read = { assessment: latest.id, present: try presentFor(latest.id) }
+    if (canObserveEvidence(observed, platform, repository, read)) observed = observeEvidence(observed, platform, repository, read)
+  }
+  return observed
+}

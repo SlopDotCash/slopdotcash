@@ -1,0 +1,11 @@
+// spec/operations/localCommand.md, "Only a current local stage can start the command"; spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import { ExperimentalNodeProcess } from "vibelang-runtime/experimental/platform-node"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { command, validator } from "../local/commands.vibe"
+import { serve } from "../local/dev/serve.vibe"
+
+const services = Layer.mergeAll(ExperimentalNodeProcess.layer, webCrypto, outbound)
+
+program<Layer.Success<typeof services>, never, unknown>({ services, commands: { command, serve, validator } }).runMain()

@@ -1,0 +1,325 @@
+// spec/points/journal.md, "The latest revision of a key is its current value"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/journal.md, "A frozen reward period, a removed PR and a ban never rewrite recorded Points"
+import { millisOf } from "@repo/platform/clock"
+import { type Registry, compareCodeUnits, findRepository } from "../client/snapshot/checks.vibe"
+import { type Award, type Coverage, type Revision as Row, journalText } from "../kernels/records/canonical.ts"
+import { journalFile, pointKey } from "../kernels/records/ids.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { type AwardKey, type Category, type Event, type FrozenPeriod, type Ledger, type Revision, type SourceRule, Machine, decodeState, initial, inv, machineOver, noDecision } from "../../gen/points__journal.effect.vibe"
+import type { FreezeEvidence } from "../../gen/points__periods.ts"
+import { periodOf } from "../../gen/points__periods.effect.vibe"
+import type { Unit } from "../../gen/points__workUnits.ts"
+import { sizePoints } from "../../gen/points__allocation.effect.vibe"
+
+module verified {
+  import { legacyHolder as holder } from "@repo/backend/legacy"
+  /** @throws {never} */
+  export function legacyHolder(repository: string): string | undefined { return holder(repository) }
+}
+import { legacyHolder } from verified
+
+export error HistoryDiverges { id: string }
+export error InstantRefused { at: string }
+
+export interface UnitRecord { readonly project: string; readonly sources: Set<string>; readonly keys: Set<string> }
+export interface Held { readonly subject: string; readonly reason: string; readonly digest: string }
+
+export interface Store {
+  generatedAt: string
+  now: number
+  readonly coverage: Coverage[]
+  readonly revisions: Row[]
+  readonly latest: Map<string, Row>
+  readonly keysBySource: Map<string, Set<string>>
+  readonly units: Map<string, UnitRecord>
+  readonly unitsBySource: Map<string, Set<string>>
+  readonly unitOfKey: Map<string, string>
+  readonly frozen: FrozenPeriod[]
+  readonly held: Held[]
+}
+
+export interface Repositories { readonly registry: Registry; readonly countsFrom: ReadonlyMap<string, string> }
+
+export interface Scope { readonly awards: ReadonlyArray<Award>; readonly units: ReadonlyArray<string>; readonly sources: ReadonlyArray<string> }
+
+export interface Names {
+  readonly keys: Map<string, AwardKey>
+  readonly units: Map<string, number>
+  readonly unitNames: Map<number, string>
+  readonly actorIds: Map<number, string>
+  readonly sources: Map<string, number>
+  readonly opaque: Set<string>
+}
+
+export interface Opened { readonly machine: Machine.Shape; readonly names: Names; readonly start: number }
+
+const categories: Readonly<Record<string, Category>> = {
+  "merged-pull-request": "MergedWork",
+  "resolved-issue": "ResolvedIssue",
+  "material-test-change": "MaterialTest",
+  evidence: "Evidence",
+  "substantive-review": "Review",
+  "evaluated-contribution": "Evaluated",
+  "payout-received": "PayoutReceived",
+  "slopbot-penalty": "Penalty",
+}
+const scoreRules: Readonly<Record<string, SourceRule>> = {
+  "slop-score-v1": "ScoreV1",
+  "slop-score-v2": "ScoreV2",
+  "github-merged-history-v1": "MergedHistoryV1",
+  "verified-payout-v1": "VerifiedPayoutV1",
+}
+const legacyRules: Readonly<Record<Exclude<SourceRule, "PenaltyTable">, string>> = {
+  ScoreV1: "slop-score-v1",
+  ScoreV2: "slop-score-v2",
+  ValueV1: "slop-score-v2",
+  MergedHistoryV1: "github-merged-history-v1",
+  VerifiedPayoutV1: "verified-payout-v1",
+}
+const penaltyRule = /^slopbot-penalties-v([1-9][0-9]*)$/u
+
+export function categoryOf(category: string): Category {
+  return categories[category] ?? "Evidence"
+}
+
+export function ruleOf(sourceRule: string): { readonly rule: SourceRule; readonly tableVersion: number } {
+  const table = penaltyRule.exec(sourceRule)?.[1]
+  return table === undefined ? { rule: scoreRules[sourceRule] ?? "ScoreV2", tableVersion: 0 } : { rule: "PenaltyTable", tableVersion: Number(table) }
+}
+
+export function legacyRuleOf(revision: Revision): string {
+  return revision.rule === "PenaltyTable" ? `slopbot-penalties-v${revision.tableVersion}` : legacyRules[revision.rule]
+}
+
+export function bandOf(total: number): number | undefined {
+  return [-1, 1, 2, 3, 4, 5].find((band) => sizePoints(band) === total)
+}
+
+export effect function instant(at: string) {
+  const day = instantOf(at)
+  if (day === null) throw new InstantRefused({ at })
+  return day
+}
+
+export function ownUnit(project: string, source: string) {
+  return `pr\u0000${project}\u0000${source}`
+}
+
+export function jointUnit(project: string, workUnit: string) {
+  return `wu\u0000${project}\u0000${workUnit}`
+}
+
+export function projectOf(repositories: Repositories, repository: string) {
+  return findRepository(repositories.registry, repository)?.projectId ?? legacyHolder(repository)
+}
+
+export function countsFromOf(repositories: Repositories, repository: string) {
+  const found = findRepository(repositories.registry, repository)
+  return found === undefined ? undefined : repositories.countsFrom.get(found.id)
+}
+
+export function workCounts(repositories: Repositories, repository: string, occurredAt: string) {
+  const from = countsFromOf(repositories, repository)
+  return from === undefined || millisOf(occurredAt) >= millisOf(from)
+}
+
+export function countsFromDay(repositories: Repositories, repository: string) {
+  const from = countsFromOf(repositories, repository)
+  return from === undefined ? 0 : instantOf(from) ?? 0
+}
+
+export function hold(store: Store, held: Held) {
+  store.held.push(held)
+}
+
+function add<K, V>(map: Map<K, Set<V>>, key: K, value: V) {
+  const found = map.get(key)
+  if (found === undefined) map.set(key, new Set([value]))
+  else found.add(value)
+}
+
+export effect function unitNameOf(award: Award) {
+  const own = try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId })
+  return own === award.key ? ownUnit(award.projectId, award.sourceId) : jointUnit(award.projectId, award.workUnitId)
+}
+
+export effect function index(store: Store, row: Row) {
+  const { award } = row
+  store.latest.set(award.key, row)
+  add(store.keysBySource, award.sourceId, award.key)
+  if (award.category !== "merged-pull-request") return
+  const name = store.unitOfKey.get(award.key) ?? (try unitNameOf(award))
+  store.unitOfKey.set(award.key, name)
+  const unit = store.units.get(name) ?? { project: award.projectId, sources: new Set<string>(), keys: new Set<string>() }
+  unit.sources.add(award.sourceId)
+  unit.keys.add(award.key)
+  store.units.set(name, unit)
+  add(store.unitsBySource, award.sourceId, name)
+}
+
+export effect function advanceTo(store: Store, recordedAt: string) {
+  const day = try instant(recordedAt)
+  if (day > store.now) store.now = day
+}
+
+export effect function openStore(history: string, published: string | null, freezes: ReadonlyArray<FreezeEvidence>) {
+  const checked = try journalFile(history)
+  const base = published === null ? checked : try journalFile(published)
+  const ids = new Set(base.revisions.map((revision) => revision.id))
+  const missing = checked.revisions.find((revision) => !ids.has(revision.id))
+  if (missing !== undefined) throw new HistoryDiverges({ id: missing.id })
+  const store: Store = {
+    generatedAt: base.generatedAt,
+    now: Math.max(initial.now, try instant(base.generatedAt)),
+    coverage: [...base.coverage],
+    revisions: [...base.revisions],
+    latest: new Map(),
+    keysBySource: new Map(),
+    units: new Map(),
+    unitsBySource: new Map(),
+    unitOfKey: new Map(),
+    frozen: [],
+    held: [],
+  }
+  for (const row of base.revisions) try index(store, row)
+  const opened = try command(store, { awards: [], units: [], sources: [] })
+  for (const evidence of freezes) opened.machine.send({ type: "freeze", f: evidence }) catch () => undefined
+  store.frozen.push(...(try opened.machine.get()).frozen)
+  return store
+}
+
+export effect function heldMachine(start: Ledger) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function ledgerLayer(start: Ledger = initial) {
+  return Layer.effect(Machine, heldMachine(start))
+}
+
+export effect function ledgerSend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function ledgerReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function ledgerState() {
+  return try (try Machine).get()
+}
+
+function closure(store: Store, scope: Scope) {
+  const units = new Set(scope.units)
+  const sources = new Set([...scope.sources, ...scope.awards.map((award) => award.sourceId)])
+  for (const source of [...sources]) for (const name of store.unitsBySource.get(source) ?? []) units.add(name)
+  for (const name of units) for (const source of store.units.get(name)?.sources ?? []) sources.add(source)
+  const keys = new Set(scope.awards.map((award) => award.key))
+  for (const source of sources) for (const key of store.keysBySource.get(source) ?? []) keys.add(key)
+  for (const name of units) for (const key of store.units.get(name)?.keys ?? []) keys.add(key)
+  return { units, sources, keys }
+}
+
+function interned(values: Iterable<string>) {
+  return new Map([...new Set(values)].sort(compareCodeUnits).map((value, position) => [value, position + 1] as const))
+}
+
+function revisionOf(id: number, key: AwardKey, rows: ReadonlyArray<Row>, actors: ReadonlyMap<string, number>): Revision {
+  const [first] = rows
+  const { rule, tableVersion } = ruleOf(first?.sourceRule ?? "")
+  const amount = rows.reduce((sum, row) => sum + row.award.amount, 0)
+  const merged = key.category === "MergedWork"
+  const recipients = merged
+    ? rows.map((row) => ({ actor: actors.get(row.award.actor.id) ?? 0, lines: row.award.amount })).sort((left, right) => left.actor - right.actor)
+    : []
+  return {
+    id,
+    previous: 0,
+    key,
+    amount,
+    priorAmount: 0,
+    occurredAt: instantOf(first?.award.occurredAt ?? "") ?? -1,
+    recordedAt: Math.max(...rows.map((row) => instantOf(row.recordedAt) ?? -1)),
+    rule,
+    tableVersion,
+    sourceDigest: first?.sourceDigest ?? "",
+    provisional: rows.some((row) => row.award.provisional),
+    decision: noDecision,
+    recipients,
+    completeLines: merged,
+    shares: recipients.map((recipient) => ({ actor: recipient.actor, points: recipient.lines })),
+  }
+}
+
+export effect function command(store: Store, scope: Scope) {
+  const reach = closure(store, scope)
+  const rows = [...reach.keys].flatMap((key) => {
+    const row = store.latest.get(key)
+    return row === undefined ? [] : [row]
+  })
+  const actors = interned([...rows, ...scope.awards.map((award) => ({ award }))].map((row) => row.award.actor.id))
+  const sources = interned(reach.sources)
+  const keyIds = interned(reach.keys)
+  const unitIds = interned(reach.units)
+  const names: Names = {
+    keys: new Map(),
+    units: unitIds,
+    unitNames: new Map([...unitIds].map(([name, id]) => [id, name] as const)),
+    actorIds: new Map([...actors].map(([actor, id]) => [id, actor] as const)),
+    sources,
+    opaque: new Set(),
+  }
+  for (const award of [...rows.map((row) => row.award), ...scope.awards]) {
+    const name = store.unitOfKey.get(award.key)
+    const unit = name === undefined ? undefined : unitIds.get(name)
+    names.keys.set(award.key, unit === undefined
+      ? { project: award.projectId, actor: actors.get(award.actor.id) ?? 0, category: categoryOf(award.category), source: sources.get(award.sourceId) ?? 0, workUnit: keyIds.get(award.key) ?? 0 }
+      : { project: award.projectId, actor: 0, category: "MergedWork", source: unit, workUnit: unit })
+  }
+  const base: Ledger = { ...initial, now: store.now, frozen: [...store.frozen] }
+  const revisions: Revision[] = []
+  const units: Unit[] = []
+  for (const [name, unitId] of unitIds) {
+    const record = store.units.get(name)
+    const unitRows = rows.filter((row) => record?.keys.has(row.award.key) === true)
+    if (record === undefined || unitRows.length === 0) continue
+    const candidate = revisionOf(revisions.length + 1, { project: record.project, actor: 0, category: "MergedWork", source: unitId, workUnit: unitId }, unitRows, actors)
+    const band = bandOf(candidate.amount) ?? -1
+    units.push({
+      id: unitId,
+      project: record.project,
+      sources: [...record.sources].map((source) => sources.get(source) ?? 0).sort((left, right) => left - right),
+      commits: [],
+      band,
+      value: sizePoints(band),
+      accepted: true,
+      acceptedPeriod: periodOf(Math.max(candidate.occurredAt, 0)),
+      superseded: false,
+      frozen: store.frozen.some((period) => period.project === record.project && period.period === periodOf(Math.max(candidate.occurredAt, 0))),
+      supersededBy: 0,
+    })
+    if (inv({ ...base, revisions: [candidate], nextId: candidate.id + 1 })) revisions.push(candidate)
+    else for (const row of unitRows) names.opaque.add(row.award.key)
+  }
+  for (const row of rows) {
+    if (row.award.category === "merged-pull-request") continue
+    const key = names.keys.get(row.award.key)
+    if (key === undefined) continue
+    const candidate = revisionOf(revisions.length + 1, key, [row], actors)
+    if (inv({ ...base, revisions: [candidate], nextId: candidate.id + 1 })) revisions.push(candidate)
+    else names.opaque.add(row.award.key)
+  }
+  const state = try decodeState({ ...base, revisions, nextId: revisions.length + 1, units: { units, nextId: unitIds.size + 1, promotions: [], heldPromotions: [] } })
+  return { machine: try heldMachine(state), names, start: state.nextId } satisfies Opened
+}
+
+export function journalOf(store: Store) {
+  return { schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: store.generatedAt, coverage: store.coverage, revisions: store.revisions }
+}
+
+export effect function finish(store: Store, recordedAt: string) {
+  store.generatedAt = recordedAt
+  const text = `${journalText(journalOf(store))}\n`
+  const journal = try journalFile(text)
+  const held = [...store.held]
+  return { journal, text, held, review: `${JSON.stringify({ generatedAt: recordedAt, held })}\n` }
+}

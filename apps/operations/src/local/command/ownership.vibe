@@ -1,0 +1,81 @@
+// spec/operations/localCommand.md, "Cancellation or expiry requests graceful interruption before escalation"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { childEnvironment } from "./environment.vibe"
+
+export interface ProcessRow {
+  readonly pid: number
+  readonly parent: number
+  readonly group: number
+  readonly state: string
+  readonly started: string
+}
+
+export interface Captured {
+  readonly group: number
+  readonly members: ReadonlyArray<ProcessRow>
+}
+
+export error OwnershipUnreadable { reason: string }
+
+const tableLimit = 8 * 1024 * 1024
+const rowPattern = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/u
+const finished = /^[ZX]/u
+
+export function parsedTable(text: string): ReadonlyArray<ProcessRow> | undefined {
+  const rows: ProcessRow[] = []
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue
+    const match = rowPattern.exec(line)
+    if (match === null) return undefined
+    rows.push({ pid: Number(match[1]), parent: Number(match[2]), group: Number(match[3]), state: match[4] ?? "", started: match[5] ?? "" })
+  }
+  return rows
+}
+
+effect function collected<E>(stream: Stream.Stream<Uint8Array, E>) {
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ""
+  for try (const chunk of stream) {
+    size += chunk.byteLength
+    if (size > tableLimit) throw new OwnershipUnreadable({ reason: "the process table is too large" })
+    text += decoder.decode(chunk, { stream: true })
+  }
+  return text + decoder.decode()
+}
+
+export effect function processTable() {
+  const environment = try childEnvironment()
+  const read = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { env: environment, extendEnv: false, stdin: "ignore", stderr: "ignore" }))
+    const [text, code] = try.all [collected(handle.stdout), handle.exitCode]
+    if (Number(code) !== 0) throw new OwnershipUnreadable({ reason: `ps exited ${Number(code)}` })
+    return text
+  })
+  const text = timeout(read, Duration.seconds(5)) catch effect (error) => {
+    throw error._tag === "OwnershipUnreadable" ? error : new OwnershipUnreadable({ reason: "the process table could not be read" })
+  }
+  const rows = parsedTable(text)
+  if (rows === undefined) throw new OwnershipUnreadable({ reason: "invalid process ownership record" })
+  return rows
+}
+
+export function capturedGroup(table: ReadonlyArray<ProcessRow>, group: number, before: ReadonlyArray<ProcessRow> = []): Captured {
+  const seen = new Set(before.map((row) => `${row.pid}:${row.started}`))
+  const live = table.filter((row) => row.group === group && !finished.test(row.state) && !seen.has(`${row.pid}:${row.started}`))
+  return { group, members: [...before, ...live] }
+}
+
+export function stillOwned(captured: Captured, table: ReadonlyArray<ProcessRow>): boolean {
+  const members = table.filter((row) => row.group === captured.group)
+  const leader = table.find((row) => row.pid === captured.group)
+  const capturedLeader = captured.members.find((row) => row.pid === captured.group)
+  if (leader !== undefined && leader.started !== capturedLeader?.started) return false
+  return captured.members.some((before) => members.some((after) => after.pid === before.pid && after.started === before.started))
+}
+
+export effect function owns(captured: Captured) {
+  const table = processTable() catch () => undefined
+  return table !== undefined && stillOwned(captured, table)
+}

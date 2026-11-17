@@ -1,0 +1,31 @@
+// spec/operations/localCommand.md, "Success requires the command exit, owned group shutdown, and drained output"
+const inherited = [
+  "CI",
+  "VITE_SLOP_ENVIRONMENT",
+  "COLORTERM",
+  "FORCE_COLOR",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+] as const
+
+export effect function childEnvironment(overrides: Readonly<Record<string, string>> = {}) {
+  const environment: Record<string, string> = {}
+  for (const name of inherited) {
+    const value = try Config.option(Config.String(name))
+    if (Option.isSome(value)) environment[name] = value.value
+  }
+  if (environment.NO_COLOR !== undefined) {
+    delete environment.NO_COLOR
+    environment.FORCE_COLOR = "0"
+  }
+  return { ...environment, ...overrides, WRANGLER_HIDE_BANNER: "true", WRANGLER_SEND_METRICS: "false" }
+}

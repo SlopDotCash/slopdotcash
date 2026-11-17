@@ -1,0 +1,284 @@
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type InboxNotice, type NotificationsPage, acknowledgeCaseNotice, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark } from "@repo/operations/client"
+import { ActorChanged, type CallFailure, call } from "../../platform/api.vibe"
+import { type ReadFailure, type Resource, Unreadable, resource } from "../../reads/resource.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const inboxLimitBytes = 1_048_576
+export const receiptLimitBytes = 1024
+
+export const inboxMessages = {
+  unavailable: "The inbox could not load. Retry.",
+  invalid: "The inbox returned an invalid response.",
+  accountChanged: "The inbox account changed. Retry.",
+  viewChanged: "Your account changed. Retry your inbox.",
+  privateUnavailable: "The inbox and private session could not load. Retry.",
+  markFailed: "Could not mark the notification as read. Please retry.",
+  acknowledgeFailed: "Could not acknowledge the security notice. Please retry.",
+  marked: "Marked as read.",
+  acknowledged: "Security notice acknowledged.",
+} as const
+
+export type InboxStatus = "loading" | "signedOut" | "failed" | "ready"
+
+export interface InboxView {
+  readonly status: InboxStatus
+  readonly recipient: string | null
+  readonly page: NotificationsPage | undefined
+  readonly message: string | undefined
+  readonly done: string | undefined
+  readonly actionError: string | undefined
+  readonly busy: boolean
+  readonly hasNewer: boolean
+}
+
+const recipientPattern = /^[1-9][0-9]{0,19}$/u
+
+function timestamp(value: string): boolean {
+  return Number.isFinite(Date.parse(value))
+}
+
+export function validCursor(value: string): boolean {
+  if (value.length > 500) return false
+  let parts: unknown
+  try {
+    parts = JSON.parse(value)
+  } catch {
+    return false
+  }
+  return Array.isArray(parts) && parts.length === 2 && typeof parts[0] === "string" && timestamp(parts[0]) && isNotificationEventKey(parts[1])
+}
+
+function validNotice(notice: InboxNotice): boolean {
+  return isNotificationEventKey(notice.eventKey) && notice.subject.length > 0 && notice.actionPath.startsWith("/") && !notice.actionPath.startsWith("//")
+    && timestamp(notice.sourceAt) && timestamp(notice.createdAt) && (notice.readAt === null || timestamp(notice.readAt))
+    && (notice.acknowledgedAt === undefined || notice.acknowledgedAt === null || timestamp(notice.acknowledgedAt))
+}
+
+export function validInboxPage(page: NotificationsPage): boolean {
+  return recipientPattern.test(page.recipientGithubId) && page.notifications.every(validNotice) && Number.isSafeInteger(page.unread) && page.unread >= 0
+    && (page.nextCursor === null || validCursor(page.nextCursor))
+}
+
+export function unreadKeys(page: NotificationsPage): ReadonlyArray<string> {
+  return page.notifications.filter((notice) => notice.readAt === null).map((notice) => notice.eventKey).slice(0, maxNotificationMark)
+}
+
+export function awaitsAcknowledgment(notice: InboxNotice): boolean {
+  return notice.kind === "security_case" && notice.acknowledgedAt === null
+}
+
+function keyOf(actor: string, cursor: string | null): string {
+  return `${actor}\n${cursor ?? ""}`
+}
+
+function partsOf(key: string): { readonly actor: string; readonly cursor: string | null } {
+  const split = key.indexOf("\n")
+  const cursor = key.slice(split + 1)
+  return { actor: key.slice(0, split), cursor: cursor === "" ? null : cursor }
+}
+
+function writeFailure(failure: CallFailure, refused: string): string {
+  return failure._tag === "NetworkError" ? failure.message : refused
+}
+
+function signedOutBy(failure: ReadFailure | undefined): boolean {
+  return failure?._tag === "Refused" && failure.status === 401
+}
+
+const loadingView: InboxView = { status: "loading", recipient: null, page: undefined, message: undefined, done: undefined, actionError: undefined, busy: false, hasNewer: false }
+
+export service Inbox {
+  readonly reads: Resource<NotificationsPage>
+  readonly changes: Stream.Stream<InboxView>
+  view(): InboxView!!
+  load(): InboxView!!HttpClient.HttpClient
+  older(): InboxView!!HttpClient.HttpClient
+  newer(): InboxView!!HttpClient.HttpClient
+  markRead(eventKeys: ReadonlyArray<string>): InboxView!!HttpClient.HttpClient
+  acknowledge(notice: InboxNotice): InboxView!!HttpClient.HttpClient
+}
+
+export const inboxLayer = Layer.effect(Inbox, effect {
+  const session = try Session
+  const browser = try BrowserSession
+  const services = try Effect.context<HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+  const shown = try SubscriptionRef.make(loadingView)
+  let generation = 0
+  let cursor: string | null = null
+  let previous: Array<string | null> = []
+
+  effect function readPage(key: string) {
+    const { actor, cursor: at } = partsOf(key)
+    const page = try call(listNotices, { query: at === null ? {} : { cursor: at } }, { limitBytes: inboxLimitBytes, ...actor === "" ? {} : { expectedActor: actor } })
+    if (!validInboxPage(page)) throw new Unreadable({ message: inboxMessages.invalid })
+    const current = try session.current()
+    if (current === null || page.recipientGithubId !== current.githubId || (actor !== "" && actor !== current.githubId)) throw new ActorChanged({ expected: actor, message: inboxMessages.accountChanged })
+    return page
+  }
+
+  const reads = try resource(readPage, (page: NotificationsPage) => page.notifications.length)
+
+  effect function update(change: (view: InboxView) => InboxView) {
+    return try SubscriptionRef.updateAndGet(shown, change)
+  }
+
+  effect function begin() {
+    generation += 1
+    return generation
+  }
+
+  const current = (mine: number) => generation === mine
+
+  effect function acceptRecipient(id: string | null) {
+    const held = (try SubscriptionRef.get(shown)).recipient
+    const changed = held !== null && held !== id
+    const dropped = id === null || changed
+    if (dropped) {
+      cursor = null
+      previous = []
+    }
+    try update((view) => ({ ...view, recipient: id, hasNewer: previous.length > 0, page: dropped ? undefined : view.page }))
+    return changed
+  }
+
+  effect function signedOut() {
+    try acceptRecipient(null)
+    return try update((view) => ({ ...view, status: "signedOut", page: undefined, message: undefined }))
+  }
+
+  effect function failed(message: string) {
+    return try update((view) => ({ ...view, status: "failed", page: undefined, message }))
+  }
+
+  effect function revalidated(mine: number) {
+    const found = session.current() catch () => undefined
+    if (!current(mine)) return try SubscriptionRef.get(shown)
+    if (found === undefined) {
+      try update((view) => ({ ...view, recipient: null }))
+      return try failed(inboxMessages.privateUnavailable)
+    }
+    if (found === null) return try signedOut()
+    try acceptRecipient(found.githubId)
+    return try failed(inboxMessages.unavailable)
+  }
+
+  effect function read(mine: number): InboxView!!HttpClient.HttpClient {
+    const found = session.current() catch () => undefined
+    if (!current(mine)) return try SubscriptionRef.get(shown)
+    if (found === null) return try signedOut()
+    const lifetime = try browser.lifetime()
+    try reads.select(keyOf(found?.githubId ?? "", cursor))
+    try reads.cancel()
+    const state = try reads.load()
+    if (!current(mine)) return try SubscriptionRef.get(shown)
+    const page = reads.value()
+    if ((state.status === "Current" || state.status === "Empty") && page !== undefined) {
+      if (!(try browser.acceptPrivate({ actorId: actorNumber(page.recipientGithubId), epoch: lifetime.epoch }, page.notifications.length, true))) return try failed(inboxMessages.accountChanged)
+      const asked = cursor
+      if ((try acceptRecipient(page.recipientGithubId)) && asked !== null) return try read(mine)
+      return try update((view) => ({ ...view, status: "ready", page, message: undefined }))
+    }
+    if (signedOutBy(reads.failure())) return try signedOut()
+    return try revalidated(mine)
+  }
+
+  effect function load() {
+    const mine = try begin()
+    try update((view) => ({ ...view, status: "loading" }))
+    return try read(mine)
+  }
+
+  effect function owns(mine: number, expected: string) {
+    const found = session.current() catch () => undefined
+    if (!current(mine)) return false
+    if (found === undefined) {
+      try update((view) => ({ ...view, recipient: null }))
+      try failed(inboxMessages.privateUnavailable)
+      return false
+    }
+    if (found === null) {
+      try signedOut()
+      return false
+    }
+    if (found.githubId !== expected) {
+      try acceptRecipient(found.githubId)
+      try failed(inboxMessages.viewChanged)
+      return false
+    }
+    return true
+  }
+
+  effect function act(write: (actor: string) => void!CallFailure!HttpClient.HttpClient, refused: string, done: string) {
+    const before = try SubscriptionRef.get(shown)
+    if (before.busy || before.recipient === null || before.status !== "ready") return before
+    const expected = before.recipient
+    const mine = try begin()
+    try update((view) => ({ ...view, status: "loading", busy: true, done: undefined, actionError: undefined }))
+    const work = effect {
+      if (!(try owns(mine, expected))) return
+      const wrote = write(expected) catch (failure) => ({ failure })
+      if (wrote !== undefined && "failure" in wrote) {
+        if (signedOutBy(wrote.failure)) {
+          if (current(mine)) try signedOut()
+          return
+        }
+        if (try owns(mine, expected)) try update(() => ({ ...before, busy: true, actionError: writeFailure(wrote.failure, refused) }))
+        return
+      }
+      if (!(try owns(mine, expected))) return
+      const after = try read(mine)
+      if (current(mine) && after.status === "ready" && after.recipient === expected) try update((view) => ({ ...view, done }))
+    }
+    try Effect.ensuring(work, update((view) => ({ ...view, busy: false })))
+    return try SubscriptionRef.get(shown)
+  }
+
+  effect function turn(next: string | null, back: Array<string | null>) {
+    cursor = next
+    previous = back
+    try update((view) => ({ ...view, done: undefined, hasNewer: back.length > 0 }))
+    return try load()
+  }
+
+  try browser.onAccountChange((actorId) => effect {
+    generation += 1
+    try reads.cancel()
+    try signedOut()
+    try update((view) => ({ ...view, done: undefined, actionError: undefined, busy: false }))
+    if (actorId > 0) fork.in(scope) Effect.provideContext(load(), services)
+  })
+
+  return {
+    reads,
+    changes: SubscriptionRef.changes(shown),
+    view: () => SubscriptionRef.get(shown),
+    load,
+    effect older() {
+      const shownNow = try SubscriptionRef.get(shown)
+      const next = shownNow.page?.nextCursor ?? null
+      if (shownNow.busy || shownNow.status !== "ready" || next === null) return shownNow
+      return try turn(next, [...previous, cursor])
+    },
+    effect newer() {
+      const shownNow = try SubscriptionRef.get(shown)
+      if (shownNow.busy || previous.length === 0) return shownNow
+      return try turn(previous.at(-1) ?? null, previous.slice(0, -1))
+    },
+    effect markRead(eventKeys: ReadonlyArray<string>) {
+      const keys = [...new Set(eventKeys)]
+      if (keys.length === 0 || keys.length > maxNotificationMark || !keys.every(isNotificationEventKey)) return try SubscriptionRef.get(shown)
+      return try act((actor) => effect {
+        try call(markNoticesRead, { body: { eventKeys: keys } }, { limitBytes: receiptLimitBytes, expectedActor: actor })
+      }, inboxMessages.markFailed, inboxMessages.marked)
+    },
+    effect acknowledge(notice: InboxNotice) {
+      if (!awaitsAcknowledgment(notice)) return try SubscriptionRef.get(shown)
+      return try act((actor) => effect {
+        try call(acknowledgeCaseNotice, { params: { id: notice.subject }, body: { eventKey: notice.eventKey } }, { limitBytes: receiptLimitBytes, expectedActor: actor })
+      }, inboxMessages.acknowledgeFailed, inboxMessages.acknowledged)
+    },
+  }
+})

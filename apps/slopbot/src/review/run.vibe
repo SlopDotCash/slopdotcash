@@ -1,0 +1,425 @@
+// spec/slopbot/review.md, "Story: Review registered work and preserve incomplete outcomes"; spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"; spec/slopbot/closure.md, "Grounding and the duplicate relation are checked by the service, never taken from the model"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"
+import { randomId } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { Registry } from "@repo/ports/backend"
+import { securityCategory } from "../../gen/slopbot__categories.effect.vibe"
+import { type AssessedVerdict, type GroundingCheck, type RelatedItemCheck, type ReviewIdentity, type Verdict as ClosureVerdict, assess } from "../../gen/slopbot__closure.effect.vibe"
+import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import type { CallKind, Verdict as ModelVerdict } from "../../gen/slopbot__review.effect.vibe"
+import { type Route, reviews } from "../../gen/slopbot__routing.effect.vibe"
+import { type ModeName } from "../context/policyFile.vibe"
+import { type RelatedOpenItem, type ReviewContext, type ReviewTarget, loadContext, matchingOpenItem, reviewKeyOf, reviewRowOf, sameReviewEvidence } from "../context/load.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import type { ReviewJob } from "../jobs/job.vibe"
+import { ReviewBusy } from "../jobs/retry.vibe"
+import { assertReviewClaim, leaseView } from "../lease/store.vibe"
+import type { FinishDetail } from "../lease/writes.vibe"
+import { recordAction } from "../publish/actions.vibe"
+import { type CommentTarget, type Reviewed, type VerifiedDefect, commentBody, failureBody, upsertComment } from "../publish/comment.vibe"
+import { type WriteScope, requireScope } from "../publish/scope.vibe"
+import { type CallRecord, runStructuredRoute, triageRoute } from "../route/route.vibe"
+import { type Routed, routeItem } from "../routing/route.vibe"
+import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
+import { buildPrompt, effortOf, modelItemText } from "./prompt.vibe"
+import { type Answer, type Attempt, attemptControl, bindAttempt, blockAttempt, completeAttempt, finishAttempt, keepCalls, openAttempt, startCalls } from "./store.vibe"
+import { type CategoryName, type Verdict, findingOf, hundredths, reviewedOf, validateVerdict, verdictSchema } from "./verdict.vibe"
+
+module verified {
+  import { type PolicyText, type RuleRef, evidenceFound as evidence, rulesFound as rules } from "./grounding.ts"
+  /** @throws {never} */
+  export function evidenceFound(quotes: string[], itemText: string): boolean { return evidence(quotes, itemText) }
+  /** @throws {never} */
+  export function rulesFound(refs: RuleRef[], policy: PolicyText[]): boolean { return rules(refs, policy) }
+}
+import { evidenceFound, rulesFound } from verified
+
+export error ReviewFailed { reason: string }
+
+export interface ReviewSettings {
+  readonly appUserId: string
+  readonly verifierKey: string
+}
+
+export interface Session {
+  readonly job: ReviewJob
+  readonly ref: RepositoryRef
+  readonly target: ReviewTarget
+  readonly context: ReviewContext
+  readonly quality: ReadonlyArray<VerifiedDefect>
+  readonly related: RelatedOpenItem | undefined
+  readonly reviewKey: string
+  readonly routed: Routed
+  readonly attempt: Attempt
+  readonly settings: ReviewSettings
+}
+
+export interface ReviewHooks<E, R> {
+  readonly eligibility: (target: ReviewTarget, context: ReviewContext) => boolean!E!R
+  readonly quality: (target: ReviewTarget, context: ReviewContext) => ReadonlyArray<VerifiedDefect>!E!R
+  readonly closedItem: (job: ReviewJob, context: ReviewContext) => void!E!R
+  readonly onSkip: (session: Session) => void!E!R
+}
+
+export interface Assessed {
+  readonly verdict: Verdict
+  readonly call: CallRecord | undefined
+  readonly grounding: GroundingCheck
+  readonly related: RelatedItemCheck
+  readonly assessed: AssessedVerdict
+}
+
+export interface Finding {
+  readonly session: Session
+  readonly triage: Assessed
+  readonly mode: ModeName
+  readonly scope: WriteScope
+}
+
+schema CloseRow {
+  readonly attempt_id: string
+  readonly review_key: string
+  readonly state: string
+  readonly revision: string
+  readonly author_id: number
+  readonly project_id: string
+  readonly recovery_json: string
+  readonly penalty_eligible: number
+  readonly comment_confirmed: number
+}
+
+export type UnfinishedClose = typeof CloseRow.Type
+
+export type ReviewOutcome =
+  | { readonly kind: "settled"; readonly result: string }
+  | { readonly kind: "finding"; readonly finding: Finding }
+  | { readonly kind: "closeReconciliation"; readonly job: ReviewJob; readonly target: ReviewTarget; readonly context: ReviewContext; readonly quality: ReadonlyArray<VerifiedDefect>; readonly close: UnfinishedClose }
+
+export type Modelled =
+  | { readonly kind: "answered"; readonly assessed: Assessed }
+  | { readonly kind: "settled"; readonly result: string }
+
+const skipReasons: Readonly<Record<Exclude<Route, "SecurityReviewOnly" | "AdvisoryReview" | "MayCloseReview">, string>> = {
+  SkipInstallation: "installation removed or suspended",
+  SkipPrivate: "item or repository not readable",
+  SkipUnregistered: "repository is not registered in the Slop registry",
+  SkipIssuesOff: "issue review disabled",
+  SkipPullsOff: "pull request review disabled",
+  SkipNotOpen: "item is not open",
+  SkipDraft: "draft pull request",
+  SkipBotAuthor: "bot author",
+  SkipHumanReopened: "a human reopened this revision; maintainer decision stands",
+  SkipExempt: "maintainer or member is exempt",
+  SkipAudience: "not a Slop participant submission",
+  SkipAuthorCap: "daily review cap for new author reached",
+}
+
+const incompleteSummary = "The enabled review is incomplete. A maintainer must review the omitted content."
+const pendingCloseSeconds = 60
+const reasonLimit = 300
+
+function settled(result: string): ReviewOutcome {
+  return { kind: "settled", result }
+}
+
+function skipReason(route: Route) {
+  return route === "SecurityReviewOnly" || route === "AdvisoryReview" || route === "MayCloseReview" ? undefined : skipReasons[route]
+}
+
+export function scopeOf(session: Session): WriteScope {
+  return session.target.securityOnly ? "security" : "contributor"
+}
+
+export function commentTargetOf(session: Session): CommentTarget {
+  const appUser = Number(session.settings.appUserId)
+  return {
+    ref: session.ref,
+    projectId: session.target.projectId,
+    number: session.target.number,
+    itemNodeId: session.context.issue.node_id,
+    appUser: Number.isSafeInteger(appUser) && appUser > 0 ? appUser : 0,
+  }
+}
+
+export function reviewDetails(session: Session): Reviewed {
+  const { context } = session
+  return { revision: context.revision, policyDigest: context.policyDigest, limitations: context.limitations, scope: scopeOf(session), defects: session.quality }
+}
+
+export function identityOf(session: Session): ReviewIdentity {
+  const { context, target } = session
+  return {
+    project: 1,
+    repository: target.repositoryId,
+    kind: target.itemKind === "pull_request" ? "PullRequest" : "Issue",
+    itemNode: context.issue.node_id,
+    revision: context.revision,
+    contentDigest: context.contentDigest,
+    author: context.issue.user.id,
+  }
+}
+
+function relatedCheck(session: Session): RelatedItemCheck {
+  const { related } = session
+  return {
+    itemNode: session.context.issue.node_id,
+    relatedNode: related?.nodeId ?? "",
+    author: related?.authorId ?? 0,
+    relatedOpen: related !== undefined,
+    sameContent: related !== undefined,
+  }
+}
+
+export function assessVerdict(session: Session, verdict: Verdict, callId: string, call: CallRecord | undefined, deterministic: boolean): Assessed {
+  const { context } = session
+  const grounding: GroundingCheck = {
+    callId,
+    contentDigest: context.contentDigest,
+    evidenceFound: evidenceFound([...verdict.evidence], modelItemText({ itemText: context.itemText, related: session.related })),
+    policy: context.guidance,
+    ruleFound: rulesFound(verdict.rule_refs.map((ref) => ({ source: ref.source, quote: ref.quote })), context.policy.map((file) => ({ path: file.path, text: file.text }))),
+  }
+  const reviewed: ClosureVerdict = {
+    callId,
+    category: findingOf(verdict.category),
+    confidenceHundredths: hundredths(verdict.confidence),
+    limitations: verdict.limitations.length > 0,
+    objectiveDefect: verdict.objective_defect ?? "",
+    deterministic,
+  }
+  const related = relatedCheck(session)
+  return { verdict, call, grounding, related, assessed: assess(reviewed, grounding, related, identityOf(session)) }
+}
+
+function modelVerdictOf(assessed: Assessed): ModelVerdict {
+  return {
+    category: reviewedOf(assessed.verdict.category),
+    confidence: hundredths(assessed.verdict.confidence),
+    limitations: assessed.verdict.limitations.length,
+    grounded: assessed.assessed.grounded,
+  }
+}
+
+function emptyVerdict(quote: string, summary: string): Verdict {
+  return { category: "empty", confidence: 1, rule_refs: [{ source: "universal", quote }], evidence: [], summary, limitations: [], objective_defect: null }
+}
+
+export function prefilter(context: ReviewContext): Verdict | undefined {
+  if (context.pull !== undefined && context.pull.changed_files === 0) return emptyVerdict("pull request changes no files", "This pull request does not change any files, so there is nothing to review.")
+  if (context.pull === undefined && context.issue.title.trim() === "" && (context.issue.body ?? "").trim() === "") return emptyVerdict("issue has no title or body", "This issue has no content to review.")
+  return undefined
+}
+
+schema PriorReview { readonly item_number: number; readonly item_kind: string; readonly item_node_id: string }
+
+effect function duplicateOf(target: ReviewTarget, context: ReviewContext) {
+  const prior: typeof PriorReview.Type | undefined = try first(PriorReview, sql`SELECT item_number, item_kind, item_node_id FROM slopbot_reviews WHERE repository_id = ${target.repositoryId} AND author_id = ${context.issue.user.id} AND content_digest = ${context.contentDigest}
+      AND item_node_id != ${context.issue.node_id} ORDER BY created_at DESC LIMIT 1`)
+  if (prior === undefined) return undefined
+  const related = try matchingOpenItem(context, prior.item_number, prior.item_kind)
+  if (related === undefined || related.nodeId !== prior.item_node_id) return undefined
+  const verdict: Verdict = {
+    category: "duplicate",
+    confidence: 1,
+    rule_refs: [{ source: "universal", quote: `identical content to open item #${prior.item_number}` }],
+    evidence: [],
+    summary: `This submission is identical to your open item #${prior.item_number}. Please continue there instead.`,
+    limitations: [],
+    objective_defect: null,
+  }
+  return { verdict, related }
+}
+
+effect function unfinishedClose(itemNodeId: string) {
+  const found: UnfinishedClose | undefined = try first(CloseRow, sql`SELECT c.attempt_id, c.review_key, c.state, c.revision, c.author_id, c.project_id, c.recovery_json, c.penalty_eligible, c.comment_confirmed
+    FROM slopbot_close_attempts c JOIN slopbot_reviews r ON r.review_key = c.review_key
+    WHERE c.item_node_id = ${itemNodeId} AND (c.state = 'pending' OR (c.state = 'confirmed' AND r.status != 'completed'))
+    ORDER BY c.state = 'pending' DESC, c.created_at DESC, c.rowid DESC LIMIT 1`)
+  return found
+}
+
+export effect function closedBySlopbotApp(issue: ReviewContext["issue"], appUserId: string) {
+  const closer = issue.closed_by?.id
+  if (closer === undefined || !Number.isSafeInteger(closer) || closer <= 0) throw new ReviewFailed({ reason: "Closer is unavailable; reopen recovery is pending" })
+  return String(closer) === appUserId
+}
+
+effect function currentRegistry(session: Session) {
+  const current = try observe(session.ref)
+  return current.projectId === session.target.projectId ? current.observation : unregistered
+}
+
+effect function guardedWrite(session: Session) {
+  try assertReviewClaim(session.attempt.claim)
+  try requireScope(commentTargetOf(session), scopeOf(session))
+}
+
+export effect function sameEvidence(session: Session) {
+  const fresh = try loadContext(session.target, try observe(session.ref))
+  return (try sameReviewEvidence(session.target, fresh, session.context, session.related)) && (try activeInstallation(session.target.installationId))
+}
+
+export effect function modelReview(session: Session, kind: CallKind) {
+  const { attempt, context } = session
+  try guardedWrite(session)
+  try startCalls(attempt, kind)
+  const callId = `${kind === "Triage" ? "triage" : "confirm"}:${attempt.claim.token}`
+  let answer: Answer<Verdict> | undefined
+  const output = {
+    schema: verdictSchema,
+    validate: (value: unknown) => {
+      const verdict = validateVerdict(value)
+      answer = verdict === undefined ? undefined : { verdict, reviewed: modelVerdictOf(assessVerdict(session, verdict, callId, undefined, false)) }
+      return verdict
+    },
+  }
+  const prompt = buildPrompt({ policy: context.policy, quality: session.quality, itemText: context.itemText, related: session.related, limitations: context.limitations }, session.target.itemKind)
+  const outcome = try runStructuredRoute(triageRoute, prompt, effortOf[kind], output, attemptControl(attempt, kind, () => currentRegistry(session), () => answer))
+  try keepCalls(attempt, kind, outcome.calls)
+  if (outcome.kind === "budgetBlocked") return { kind: "settled", result: `blocked: provider budget until ${try blockAttempt(attempt, outcome.denial)}` } satisfies Modelled
+  if (outcome.kind === "recheckFailed") throw outcome.failure
+  if (outcome.kind === "registryChanged") throw new ReviewFailed({ reason: "Model call blocked by the live project registry" })
+  if (outcome.kind !== "answered") throw new ReviewFailed({ reason: "every model route step failed" })
+  return { kind: "answered", assessed: assessVerdict(session, outcome.verdict, callId, outcome.servedBy, false) } satisfies Modelled
+}
+
+function reasonOf(error: unknown) {
+  if (error instanceof ReviewFailed) return `Error: ${error.reason}`
+  const tag = typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "Error"
+  return tag.slice(0, reasonLimit)
+}
+
+export effect function completeReview(session: Session, detail: FinishDetail, modelled: boolean) {
+  if (!modelled) return try finishAttempt(session.attempt, "completed", detail)
+  return try completeAttempt(session.attempt, detail, session.context.limitations.length)
+}
+
+export effect function failReview(session: Session, detail: FinishDetail) {
+  const finished = finishAttempt(session.attempt, "failed", detail) catch effect (error) => {
+    if (error._tag === "ReviewLeaseLost") return undefined
+    throw error
+  }
+  return finished
+}
+
+effect function publishFailure(session: Session) {
+  if (try sameEvidence(session)) try upsertComment(commentTargetOf(session), failureBody(session.context.revision), session.attempt.claim, scopeOf(session))
+}
+
+export effect function settleFailure(session: Session, error: unknown) {
+  if (reviews(session.routed.route) && !session.target.securityOnly) publishFailure(session) catch () => undefined
+  try failReview(session, { skipReason: reasonOf(error).slice(0, reasonLimit) })
+}
+
+effect function publishAdvisory(session: Session, verdict: Verdict, triage: CallRecord | undefined, mode: ModeName) {
+  const { context } = session
+  if (!(try sameEvidence(session))) throw new ReviewFailed({ reason: "review source or authorization changed before publication" })
+  const limited = context.limitations.length > 0
+  const published: Verdict = mode === "off" && verdict.category !== "none"
+    ? { ...verdict, category: "none", rule_refs: [], evidence: [], limitations: context.limitations, summary: incompleteSummary }
+    : verdict
+  try upsertComment(commentTargetOf(session), commentBody({ verdict: published, action: "comment", blockedClose: null, reviewed: reviewDetails(session), triage, confirm: undefined }), session.attempt.claim, scopeOf(session))
+  try recordAction({ reviewKey: session.reviewKey, repositoryId: session.target.repositoryId, itemNodeId: context.issue.node_id, action: "comment", detail: limited ? "limited review" : "no finding" })
+  try completeReview(session, { verdict, action: "comment" }, triage !== undefined)
+  return settled(limited ? "limited advisory review published" : "review published (no finding)")
+}
+
+function modeOf(context: ReviewContext, category: CategoryName): ModeName {
+  return category === "none" ? "off" : context.config.categories[category]
+}
+
+effect function decided(session: Session, assessed: Assessed) {
+  const { context } = session
+  const limited = context.limitations.length > 0
+  const verdict: Verdict = limited ? { ...assessed.verdict, objective_defect: null, limitations: [...context.limitations, ...assessed.verdict.limitations] } : assessed.verdict
+  const category = verdict.category
+  if (session.target.securityOnly && !securityCategory(findingOf(category))) {
+    try completeReview(session, { verdict, action: "none" }, assessed.call !== undefined)
+    return settled(`no action (${category}; security review only)`)
+  }
+  const mode = modeOf(context, category)
+  if ((category === "none" && !session.target.securityOnly) || limited) return try publishAdvisory(session, verdict, assessed.call, mode)
+  if (mode === "off") {
+    try completeReview(session, { verdict, action: "none" }, assessed.call !== undefined)
+    return settled(`no action (${category})`)
+  }
+  const triage = limited ? { ...assessed, verdict } : assessed
+  return { kind: "finding", finding: { session, triage, mode, scope: scopeOf(session) } } satisfies ReviewOutcome
+}
+
+effect function runReview<E, R>(session: Session, onSkip: (session: Session) => void!E!R) {
+  const { context, routed } = session
+  try guardedWrite(session)
+  const bound = try bindAttempt(session.attempt, routed.route, { requested: context.revision, fetched: context.revision, isolation: "ApprovedIsolation" })
+  const reason = skipReason(routed.route)
+  if (reason !== undefined || bound.status === "Skipped") {
+    const skipped = reason ?? "review source binding failed"
+    try onSkip(session)
+    try finishAttempt(session.attempt, "skipped", { skipReason: skipped })
+    return settled(skipped)
+  }
+  const limited = context.limitations.length > 0
+  const filtered = limited ? undefined : prefilter(context)
+  const duplicate = limited || filtered !== undefined ? undefined : try duplicateOf(session.target, context)
+  const current: Session = duplicate === undefined ? session : { ...session, related: duplicate.related }
+  const deterministic = filtered ?? duplicate?.verdict
+  if (deterministic !== undefined) return try decided(current, assessVerdict(current, deterministic, "prefilter", undefined, true))
+  const modelled = try modelReview(current, "Triage")
+  if (modelled.kind === "settled") return settled(modelled.result)
+  return try decided(current, modelled.assessed)
+}
+
+export effect function modelTriage(finding: Finding) {
+  const modelled = try modelReview(finding.session, "Triage")
+  if (modelled.kind === "settled") return settled(modelled.result)
+  return try decided(finding.session, modelled.assessed)
+}
+
+export effect function confirmFinding(finding: Finding) {
+  return try modelReview(finding.session, "Confirm")
+}
+
+export effect function reviewItem<E, R>(job: ReviewJob, settings: ReviewSettings, hooks: ReviewHooks<E, R>) {
+  const ref: RepositoryRef = { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId }
+  const observed = try observe(ref)
+  const scope = slopbotScope(observed.observation)
+  const projectId = observed.projectId
+  if (projectId === undefined || !mayReview(scope)) return settled("repository is not registered in the Slop registry")
+  if (!(try activeInstallation(job.installationId))) return settled("installation removed or suspended")
+  const project = try (try Registry).project(projectId)
+  const target: ReviewTarget = {
+    projectId,
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    itemKind: job.itemKind,
+    number: job.number,
+    securityOnly: scope === "SecurityOnly",
+    consent: project?.closureConsent === true ? "Enabled" : "Absent",
+  }
+  const context = try loadContext(target, observed)
+  if (context === undefined) return settled("item or repository not readable")
+  const quality = try hooks.quality(target, context)
+  const closed = context.issue.state === "closed"
+  if (closed) try hooks.closedItem(job, context)
+  const reviewKey = try reviewKeyOf(context, target, settings.verifierKey, quality.map((defect) => defect.id))
+  const close = try unfinishedClose(context.issue.node_id)
+  if (close !== undefined && !closed && close.state === "pending") throw new ReviewBusy({ remainingSeconds: pendingCloseSeconds })
+  if (close !== undefined && closed) {
+    if (close.revision === context.revision && close.author_id === context.issue.user.id) {
+      if (try closedBySlopbotApp(context.issue, settings.appUserId)) return { kind: "closeReconciliation", job, target, context, quality, close } satisfies ReviewOutcome
+    }
+    if (close.state === "pending") throw new ReviewFailed({ reason: "Close outcome is not bound to the current item; reconciliation is pending" })
+  }
+  if ((try leaseView(reviewKey)).lease.status === "Completed") return settled("already reviewed at this revision and policy")
+  const closureEligible = target.securityOnly ? false : try hooks.eligibility(target, context)
+  const routed = try routeItem({ target, context, reviewKey, registry: observed.observation, appUserId: settings.appUserId, closureEligible })
+  const opened = try openAttempt(reviewRowOf(target, context, reviewKey), job, { token: try randomId(), route: routed.route, history: routed.history })
+  if (opened.kind === "blocked") return settled(`blocked: provider budget until ${opened.until}`)
+  if (opened.kind === "completed") return settled("review already completed")
+  if (opened.kind === "limited") return settled("daily review cap for new author reached")
+  const session: Session = { job, ref, target, context, quality, related: undefined, reviewKey, routed, attempt: opened.attempt, settings }
+  const outcome = runReview(session, hooks.onSkip) catch effect (error) => {
+    try settleFailure(session, error)
+    throw error
+  }
+  return outcome
+}

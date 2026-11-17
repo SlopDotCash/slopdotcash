@@ -1,0 +1,341 @@
+import { assert, layer } from "@effect/vitest"
+import type { Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { Refused, outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { analysisPrompt, analysisPromptRevision, jsonValue } from "../src/analysis/prompts.ts"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { type AssessmentView, analyze, assessQualified, assessmentRead } from "../src/assessment/routes.vibe"
+import { assessmentAt, attempted, started } from "../src/assessment/store.vibe"
+import { caseAuthority } from "../src/caseAuthority/snapshot.vibe"
+import { caseStanding } from "../src/intake/rows.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { ReportingPrograms, reportingProgramsLive } from "../src/receipt/program.vibe"
+import { type Answer, type World, maintainer, other, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+service Assessed {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly clock: SettableClock
+  readonly beforeReply: Array<() => Promise<unknown>>
+}
+
+const surplusKey = "surplus-assessment-key"
+const triager = "703"
+const finance = "702"
+const project = "intake-fixture"
+
+const Started = Layer.effect(Assessed, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  return { world, fake: providerFake(), clock: settableClock(Date.now()), beforeReply: [] }
+})
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? fixture : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([fixture]),
+    fence: () => succeed(sql`1`),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+function shellOf(assessed: Assessed.Shape) {
+  const viaFake: Fetcher = {
+    fetch: (sent) => (assessed.beforeReply.shift()?.() ?? Promise.resolve()).then(() => assessed.fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]>,
+  }
+  const base = Layer.mergeAll(
+    d1(assessed.world.db),
+    webCrypto,
+    assessed.clock.layer,
+    reportBucket(assessed.world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
+    ports,
+  )
+  const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFake), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function actor(githubId: string) {
+  return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+}
+
+function caseOf(answer: Answer) {
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+}
+
+function said(call: ProviderCall | undefined) {
+  return call?.messages[0]?.content ?? ""
+}
+
+function about(text: string) {
+  return (call: ProviderCall) => said(call).includes(text)
+}
+
+function proposal(summary: string, duplicateCaseIds: ReadonlyArray<string>) {
+  return JSON.stringify({ summary, severity: "high", potentialLoss: "likely", duplicateCaseIds, rootCauseKey: "stale-oracle-price", remediation: "Reject oracle prices older than one block." })
+}
+
+function shown(view: AssessmentView | null | undefined) {
+  return view === null || view === undefined ? view : {
+    attempt: view.attempt,
+    version: view.sourceReportVersion,
+    state: view.state,
+    provider: view.provider,
+    model: view.model,
+    prompt: view.promptRevision,
+    digest: view.advisoryDigest?.length ?? 0,
+    summary: view.summary,
+    severity: view.proposedSeverity,
+    loss: view.potentialLoss,
+    duplicates: view.duplicateCaseIds,
+    rootCause: view.rootCauseKey,
+    retryable: view.retryable,
+  }
+}
+
+effect function outcome<A, E, R>(program: A!E!R) {
+  return Effect.map(program, (value) => ({ value })) catch effect (error) => {
+    if (error instanceof Refused) return { refused: [error.status, error.code, error.message] }
+    throw error
+  }
+}
+
+effect function submit(world: World, key: string, report: Readonly<Record<string, unknown>>) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return caseOf(answer)
+}
+
+effect function qualify(world: World, submissionId: string) {
+  try promise(() => rows(world, "UPDATE security_submission_intake SET screening_state='legitimate', screening_finished_at=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), submissionId))
+}
+
+effect function attempts(world: World, caseId: string) {
+  return try promise(() => rows(world, "SELECT attempt, report_version, state, provider, model, prompt_revision, length(advisory_digest) AS digest, summary, proposed_severity, potential_loss, duplicate_case_ids, root_cause_key, remediation, finished_at IS NOT NULL AS finished FROM security_case_analyses WHERE case_id=? ORDER BY attempt", caseId))
+}
+
+effect function rolesOf(caseId: string, viewer: string) {
+  const program = try (try ReportingPrograms).current(project)
+  return try caseAuthority({ caseId, projectId: project, reporterGithubId: reporter, viewerGithubId: viewer, program: program?.approvers }, 1)
+}
+
+effect function readAs(caseId: string, viewer: string) {
+  const record = try caseStanding(caseId)
+  if (record === undefined) return try die(new Error(`case ${caseId} is missing`))
+  const read = try assessmentRead({ record, roles: try rolesOf(caseId, viewer), viewerGithubId: viewer })
+  return read === undefined ? undefined : { analysis: shown(read.analysis), analyze: read.analyze }
+}
+
+const reportA = { summary: "Vault drain through stale price", description: "A stale oracle read lets any caller withdraw more than their balance.", severity: "high" }
+const reportB = { summary: "Fee bypass through rounding", description: "Rounding the fee down to zero lets small transfers skip the protocol fee.", severity: "medium" }
+const revisedB = { summary: "Fee bypass through rounding, revised", description: "Rounding the fee down to zero lets any transfer below 100 units skip the protocol fee.", severity: "high" }
+const reportC = { summary: "Reentrancy in the claim path", description: "The claim function pays out before it marks the claim as spent.", severity: "critical" }
+const reportE = { summary: "Unbounded mint through a missing cap", description: "The mint function never checks the supply cap, so any minter can inflate the supply.", severity: "high" }
+const revisedE = { summary: "Unbounded mint through a missing cap, revised", description: "The mint function never checks the supply cap, so a minter can inflate the supply past one billion units.", severity: "critical" }
+const reportD = { summary: "Signature replay across chains", description: "The permit signature has no chain id, so it can be replayed on another network.", severity: "high" }
+
+effect function onceAtATime(assessed: Assessed.Shape) {
+  const { world, fake, clock } = assessed
+  const a = try submit(world, "assessment-case-a-01", reportA)
+  const early = try assessQualified({ caseId: a.caseId, version: 1 })
+  const earlyOwner = try outcome(analyze({ caseId: a.caseId, actor: actor(maintainer) }))
+  try qualify(world, a.id)
+  fake.reply(about(reportA.summary), { text: proposal("Stale oracle price lets a caller over-withdraw.", ["sc_unknown"]) })
+  const first = try assessQualified({ caseId: a.caseId, version: 1 })
+  const sentA = fake.calls.at(-1)
+  const again = try assessQualified({ caseId: a.caseId, version: 1 })
+  const ownerAgain = try outcome(analyze({ caseId: a.caseId, actor: actor(maintainer) }))
+  const callsAfterA = fake.calls.length
+
+  const b = try submit(world, "assessment-case-b-01", reportB)
+  try qualify(world, b.id)
+  const lateRun = try started(b.caseId, { type: "startAutomatic", nowMs: clock.now() }, 0, (try rolesOf(b.caseId, maintainer)).authority, 1)
+  try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Show the affected amount.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, b.id))
+  const [intakeB] = try promise(() => rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", b.id))
+  const revised = try promise(() => request(world, `/api/v1/security-submissions/${b.id}/report`, { as: reporter, json: { expectedRevision: intakeB?.revision, report: revisedB } }))
+  const late = try attempted(lateRun, 25000)
+  const hidden = try readAs(b.caseId, maintainer)
+  const unqualifiedOwner = try outcome(analyze({ caseId: b.caseId, actor: actor(maintainer) }))
+  const callsAfterLate = fake.calls.length
+  try qualify(world, b.id)
+  fake.reply(about(revisedB.summary), { text: proposal("Rounding lets small transfers skip the fee.", [a.caseId, "sc_not_supplied"]) })
+  const current = try assessQualified({ caseId: b.caseId, version: 2 })
+  const sentB = fake.calls.at(-1)
+
+  const c = try submit(world, "assessment-case-c-01", reportC)
+  try qualify(world, c.id)
+  fake.reply(about(reportC.summary), { failure: "unavailable" })
+  const failed = try assessQualified({ caseId: c.caseId, version: 1 })
+  const lost = try started(c.caseId, { type: "startOwnerRun", checkedEpoch: 1, nowMs: clock.now() }, Number(maintainer), (try rolesOf(c.caseId, maintainer)).authority)
+  const whileRunning = try outcome(analyze({ caseId: c.caseId, actor: actor(maintainer) }))
+  clock.advance(900001)
+  fake.reply((call) => {
+    if (!about(reportC.summary)(call)) return false
+    clock.advance(130000)
+    return true
+  }, { text: proposal("Claim pays before it marks the claim spent.", []) })
+  const overBudget = try outcome(analyze({ caseId: c.caseId, actor: actor(maintainer) }))
+  fake.reply(about(reportC.summary), { text: proposal("Claim pays before it marks the claim spent.", []) })
+  const stranger = try outcome(analyze({ caseId: c.caseId, actor: actor(other) }))
+  const owned = try outcome(analyze({ caseId: c.caseId, actor: actor(maintainer) }))
+
+  const e = try submit(world, "assessment-case-e-01", reportE)
+  try qualify(world, e.id)
+  const revisedWhileCalling: Array<number> = []
+  assessed.beforeReply.push(async () => {
+    await rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Show the minted amount.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, e.id)
+    const [intakeE] = await rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", e.id)
+    const answer = await request(world, `/api/v1/security-submissions/${e.id}/report`, { as: reporter, json: { expectedRevision: intakeE?.revision, report: revisedE } })
+    revisedWhileCalling.push(answer.status)
+  })
+  fake.reply(about(reportE.summary), { text: proposal("Minting skips the supply cap.", []) })
+  const callsBeforeE = fake.calls.length
+  const answeredLate = try assessQualified({ caseId: e.caseId, version: 1 })
+
+  const complete = { provider: "surplus", model: "claude-sonnet-5.5", prompt: analysisPromptRevision, digest: 64, severity: "high", loss: "likely", rootCause: "stale-oracle-price", retryable: false }
+  try same({
+    early,
+    earlyOwner,
+    first: first.kind === "finished" ? shown(first.analysis) : first,
+    sentA: { route: sentA?.route, model: sentA?.model, key: sentA?.key, system: sentA?.system === analysisPrompt, maxTokens: sentA?.maxTokens, message: jsonValue(said(sentA)) },
+    again,
+    ownerAgain,
+    rowsA: try attempts(world, a.caseId),
+    late: { calls: callsAfterLate - callsAfterA, revised: revised.status, state: late.assessment.attempts[lateRun.attempt]?.state, shown: late.assessment.shown, hidden, unqualifiedOwner },
+    current: current.kind === "finished" ? shown(current.analysis) : current,
+    earlier: (jsonValue(said(sentB)) as { readonly earlierReports: unknown }).earlierReports,
+    rowsB: (try attempts(world, b.caseId)).map((row) => [row.attempt, row.report_version, row.state]),
+    failed: failed.kind === "finished" ? shown(failed.analysis)?.state : failed,
+    lost: lost.attempt,
+    whileRunning,
+    overBudget: "value" in overBudget ? shown(overBudget.value) : overBudget,
+    stranger,
+    owned: "value" in owned ? shown(owned.value) : owned,
+    rowsC: (try attempts(world, c.caseId)).map((row) => [row.attempt, row.state]),
+    answeredLate: {
+      calls: fake.calls.length - callsBeforeE,
+      revised: revisedWhileCalling,
+      returned: answeredLate,
+      rows: (try attempts(world, e.caseId)).map((row) => [row.attempt, row.report_version, row.state, row.summary]),
+      shown: (try assessmentAt(e.caseId)).assessment.shown,
+      read: try readAs(e.caseId, maintainer),
+    },
+  }, {
+    early: { kind: "skipped" },
+    earlyOwner: { refused: [409, "analysis_running", "Analysis is not available for this report state. Reload the case."] },
+    first: { ...complete, attempt: 1, version: 1, state: "complete", summary: "Stale oracle price lets a caller over-withdraw.", duplicates: [] },
+    sentA: {
+      route: "surplus-anthropic",
+      model: "claude-sonnet-5.5",
+      key: surplusKey,
+      system: true,
+      maxTokens: 16000,
+      message: { report: { summary: reportA.summary, description: reportA.description, reporterSeverity: "high", cvss: null, cweIds: [], packages: [] }, programScope: null, earlierReports: [] },
+    },
+    again: { kind: "skipped" },
+    ownerAgain: { refused: [409, "analysis_running", "Analysis is not available for this report state. Reload the case."] },
+    rowsA: [{ attempt: 1, report_version: 1, state: "complete", provider: "surplus", model: "claude-sonnet-5.5", prompt_revision: analysisPromptRevision, digest: 64, summary: "Stale oracle price lets a caller over-withdraw.", proposed_severity: "high", potential_loss: "likely", duplicate_case_ids: "[]", root_cause_key: "stale-oracle-price", remediation: "Reject oracle prices older than one block.", finished: 1 }],
+    late: { calls: 0, revised: 200, state: "AttemptUnavailable", shown: 0, hidden: { analysis: null, analyze: false }, unqualifiedOwner: { refused: [409, "analysis_running", "Analysis is not available for this report state. Reload the case."] } },
+    current: { ...complete, attempt: 2, version: 2, state: "complete", summary: "Rounding lets small transfers skip the fee.", duplicates: [a.caseId] },
+    earlier: [{ id: a.caseId, rootCauseKey: null, summary: "Stale oracle price lets a caller over-withdraw." }],
+    rowsB: [[1, 1, "unavailable"], [2, 2, "complete"]],
+    failed: "failed",
+    lost: 2,
+    whileRunning: { refused: [409, "analysis_running", "Analysis is not available for this report state. Reload the case."] },
+    overBudget: { ...complete, attempt: 3, version: 1, state: "unavailable", digest: 64, summary: null, severity: null, loss: null, duplicates: [], rootCause: null, retryable: true },
+    stranger: { refused: [404, "not_found", "Case not found"] },
+    owned: { ...complete, attempt: 4, version: 1, state: "complete", summary: "Claim pays before it marks the claim spent.", duplicates: [] },
+    rowsC: [[1, "failed"], [2, "running"], [3, "unavailable"], [4, "complete"]],
+    answeredLate: {
+      calls: 1,
+      revised: [200],
+      returned: { kind: "finished", analysis: null },
+      rows: [[1, 1, "complete", "Minting skips the supply cap."]],
+      shown: 0,
+      read: { analysis: null, analyze: false },
+    },
+  })
+}
+
+effect function advisedOnly(assessed: Assessed.Shape) {
+  const { world, fake } = assessed
+  const d = try submit(world, "assessment-case-d-01", reportD)
+  try qualify(world, d.id)
+  try promise(() => rows(world, "INSERT INTO security_case_members(case_id, github_id, github_login, role, added_by_github_id, added_at) VALUES(?, ?, 'triager', 'triager', ?, ?)", d.caseId, triager, maintainer, new Date().toISOString()))
+  fake.reply(about(reportD.summary), { text: proposal("Permit signatures replay across networks.", []) })
+  try assessQualified({ caseId: d.caseId, version: 1 })
+  const owner = { analysis: { attempt: 1, version: 1, state: "complete", provider: "surplus", model: "claude-sonnet-5.5", prompt: analysisPromptRevision, digest: 64, summary: "Permit signatures replay across networks.", severity: "high", loss: "likely", duplicates: [], rootCause: "stale-oracle-price", retryable: false }, analyze: false }
+  const reads = {
+    reporter: try readAs(d.caseId, reporter),
+    maintainer: try readAs(d.caseId, maintainer),
+    triager: try readAs(d.caseId, triager),
+    finance: try readAs(d.caseId, finance),
+    stranger: try readAs(d.caseId, other),
+    reporterRun: try outcome(analyze({ caseId: d.caseId, actor: actor(reporter) })),
+    triagerRun: try outcome(analyze({ caseId: d.caseId, actor: actor(triager) })),
+  }
+  try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Name the affected chains.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, d.id))
+  try same({
+    ...reads,
+    maintainerAfterInformationRequested: try readAs(d.caseId, maintainer),
+    triagerAfterInformationRequested: try readAs(d.caseId, triager),
+  }, {
+    reporter: undefined,
+    maintainer: owner,
+    triager: owner,
+    finance: undefined,
+    stranger: undefined,
+    reporterRun: { refused: [409, "action_not_allowed", "The case does not allow analyze in its current state"] },
+    triagerRun: { refused: [409, "action_not_allowed", "The case does not allow analyze in its current state"] },
+    maintainerAfterInformationRequested: { analysis: null, analyze: false },
+    triagerAfterInformationRequested: { analysis: null, analyze: false },
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Assess the current qualified report version once at a time; a late result for an older version is never shown (spec/security/assessment.md, "Story: Assess the current qualified report version once at a time"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable")', () => effect {
+    const assessed = try Assessed
+    provide shellOf(assessed) {
+      try onceAtATime(assessed)
+    }
+  })
+
+  it.effect('The reporter never sees the private assessment; technical approvers and triagers do while the current version is qualified (spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/assessment.md, "A new report version and screening qualification come from the screening record"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version")', () => effect {
+    const assessed = try Assessed
+    provide shellOf(assessed) {
+      try advisedOnly(assessed)
+    }
+  })
+})

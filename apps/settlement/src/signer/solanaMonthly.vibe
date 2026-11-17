@@ -1,0 +1,167 @@
+// spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { type Account, type Address, SolanaRpc } from "@repo/platform/chain/solana"
+import { type ChainView, canSignSolana, signSolana } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { decodeAward, decodeMonth, decodeOrigin, isInitialized } from "../chain/solana/accounts.ts"
+import { type Digest, digest } from "../chain/solana/bytes.ts"
+import { monthAddress, monthlySourceAddress, originAddress } from "../chain/solana/pda.ts"
+import type { Period } from "../kernels/calendar.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { ordinaryScope, within } from "../journal/journal.vibe"
+import { type AttestationPlan, type AttestationRequest, type PlanOptions, preparePlan } from "../monthlyCommitment/plan.vibe"
+import { type JournalContext, type JournalKey, type SignedPlan, loadJournal } from "../monthlyCommitment/store.vibe"
+import { amountOf } from "../monthly/store.vibe"
+import type { VerifiedDeployment } from "../owner/solanaDeployment.vibe"
+import { type MonthAttestation, type MonthlyIntentRecord, MonthlyRefused, decide, journalIntent, monthKey, periodOf, plannedDeployment, readIntent, retainSignature, servedNetworks, signingFacts } from "./monthlyRoot.vibe"
+import { type ReviewedSolana, type SolanaKey, SolanaAttesterConfig, finalizedAccount, finalizedProject, identitySigner, onSolana, reviewedSolana } from "./solana.vibe"
+
+const ACCOUNTS_PER_READ = 100
+
+function refusedMonth(reason: string) {
+  return new MonthlyRefused({ reason })
+}
+
+export interface Slotted {
+  readonly values: ReadonlyArray<Account | undefined>
+  readonly slot: number
+}
+
+export effect function finalizedAccounts(addresses: ReadonlyArray<Address>) {
+  const rpc = try SolanaRpc
+  const values: Array<Account | undefined> = []
+  let slot = Number.POSITIVE_INFINITY
+  for (let index = 0; index < addresses.length; index += ACCOUNTS_PER_READ) {
+    const read = try rpc.accounts(addresses.slice(index, index + ACCOUNTS_PER_READ), "finalized")
+    slot = Math.min(slot, read.slot)
+    values.push(...read.value)
+  }
+  if (!Number.isSafeInteger(slot)) throw refusedMonth("Invalid finalized account response")
+  return { values, slot } satisfies Slotted
+}
+
+export interface Frozen {
+  readonly slot: number
+  readonly frozenAt: number
+  readonly consumed: ReadonlyArray<string>
+  readonly otherMonthSources: ReadonlyArray<string>
+}
+
+interface PlannedSource {
+  readonly source: Digest
+  readonly actor: bigint
+  readonly gross: bigint
+}
+
+effect function sourcesOf(plan: AttestationPlan) {
+  const sources: PlannedSource[] = []
+  for (const entry of plan.entries) {
+    const source = digest(entry.sourceDigest.replace(/^0x/u, "").toLowerCase())
+    const actor = /^[1-9][0-9]{0,19}$/u.test(entry.githubUserId) ? try orDie(Effect.try(() => BigInt(entry.githubUserId))) : undefined
+    const gross = /^[1-9][0-9]{0,19}$/u.test(entry.grossMicro) ? try orDie(Effect.try(() => BigInt(entry.grossMicro))) : undefined
+    if (source === undefined || actor === undefined || gross === undefined) throw refusedMonth("The frozen allocation contains an invalid award")
+    sources.push({ source, actor, gross })
+  }
+  return sources
+}
+
+effect function identicalAward(verified: VerifiedDeployment, origin: Account | undefined, planned: PlannedSource) {
+  const pointer = decodeOrigin(origin, verified.program)
+  if (pointer.kind !== "decoded") return false
+  const award = decodeAward(try finalizedAccount(pointer.value.obligation), verified.program)
+  return award.kind === "decoded" && award.value.actor === planned.actor && award.value.gross === planned.gross && payoutFeeAccepted(award.value.gross, award.value.fee, false)
+}
+
+export effect function freezeMonth(verified: VerifiedDeployment, plan: AttestationPlan) {
+  const sources = try sourcesOf(plan)
+  const addresses = sources.flatMap((planned) => [originAddress(verified.program, verified.project, planned.source), monthlySourceAddress(verified.program, verified.project, planned.source)])
+  const read = try finalizedAccounts(addresses)
+  const consumed: string[] = []
+  const otherMonthSources: string[] = []
+  for (const [index, planned] of sources.entries()) {
+    const origin = read.values[index * 2]
+    const marker = read.values[index * 2 + 1]
+    if (isInitialized(marker, verified.program)) otherMonthSources.push(planned.source)
+    else if (isInitialized(origin, verified.program) && !(try identicalAward(verified, origin, planned))) consumed.push(planned.source)
+  }
+  const time = try (try SolanaRpc).blockTime(read.slot)
+  if (time === undefined || !Number.isSafeInteger(time) || time <= 0) throw refusedMonth("Invalid finalized block time")
+  return { slot: read.slot, frozenAt: time, consumed, otherMonthSources } satisfies Frozen
+}
+
+function samePinned(reviewed: ReviewedSolana, request: AttestationRequest, planned: { readonly asset: string; readonly owner: string; readonly identityAuthority: string; readonly feeRecipient: string }) {
+  const { pin } = reviewed
+  return pin.projectId === request.projectId && pin.asset === planned.asset && pin.owner === planned.owner && pin.identityAuthority === planned.identityAuthority && pin.feeRecipient === planned.feeRecipient
+}
+
+effect function monthView(verified: VerifiedDeployment, period: Period, frozen: Frozen) {
+  const project = try finalizedProject(verified)
+  const account = try finalizedAccount(monthAddress(verified.program, verified.project, period))
+  const month = account === undefined ? undefined : decodeMonth(account, verified.program)
+  if (month !== undefined && month.kind !== "decoded") throw refusedMonth("Conflicting monthly reservation")
+  const admitted = month?.value
+  return {
+    height: frozen.slot,
+    time: frozen.frozenAt,
+    sourceSequence: 0,
+    authority: project.identityAuthority,
+    monthlyEnabled: project.monthlyEnabled,
+    cap: amountOf(project.monthlyCap),
+    consumed: [...frozen.consumed],
+    otherMonthSources: [...frozen.otherMonthSources],
+    admittedRoot: admitted === undefined ? "" : admitted.allocationRoot,
+    legacyRoot: false,
+    remaining: amountOf(admitted === undefined ? 0n : admitted.total - admitted.committed),
+  } satisfies ChainView
+}
+
+effect function retainedFreeze(stored: MonthlyIntentRecord | undefined, verified: VerifiedDeployment, plan: AttestationPlan) {
+  const recorded = stored?.frozenAt
+  if (recorded === undefined) return try freezeMonth(verified, plan)
+  const frozenAt = /^[1-9][0-9]{0,15}$/u.test(recorded) ? Number(recorded) : Number.NaN
+  if (!Number.isSafeInteger(frozenAt)) throw refusedMonth("Monthly freeze time is malformed")
+  return { slot: try (try SolanaRpc).slot("finalized"), frozenAt, consumed: [], otherMonthSources: [] } satisfies Frozen
+}
+
+effect function freshSolanaSignature(request: AttestationRequest, options: PlanOptions, signer: SolanaKey, plan: SignedPlan["plan"], intentKey: string, intent: MonthlyIntentRecord) {
+  const message = try Effect.try({ try: () => hexToBytes(plan.messageHex), catch: () => refusedMonth("Invalid authorization encoding") })
+  const signature = try signer.sign(message)
+  const current = try preparePlan(request, options)
+  if (current.plan.messageHex !== plan.messageHex) throw refusedMonth("Monthly authorization changed during signing")
+  const signatureHex = try Effect.try({ try: () => bytesToHex(signature), catch: () => refusedMonth("Invalid authorization encoding") })
+  return try retainSignature(intentKey, intent, { plan, signatureHex })
+}
+
+export effect function attestSolanaMonth(request: AttestationRequest, now: number) {
+  const { pins } = try SolanaAttesterConfig
+  const served = servedNetworks(pins)
+  const period = try periodOf(request.period)
+  const unfrozen = try preparePlan(request, { served, now })
+  const planned = try plannedDeployment(unfrozen.plan)
+  const reviewed = try reviewedSolana(request.network, planned.vault, "SignMonthlyRoot")
+  if (!samePinned(reviewed, request, planned)) throw refusedMonth("Monthly deployment differs from pinned configuration")
+  return try onSolana(reviewed, (verified) => effect {
+    const signer = try identitySigner(reviewed, try finalizedProject(verified))
+    const intentKey = monthKey(request.network, planned.vault, request.period)
+    const stored = try within(ordinaryScope, (entries) => readIntent(entries, intentKey))
+    const frozen = try retainedFreeze(stored, verified, unfrozen.plan)
+    const options: PlanOptions = { served, now, frozenAt: String(frozen.frozenAt) }
+    const frozenPlan = try preparePlan(request, options)
+    const view = try monthView(verified, period, frozen)
+    const key: JournalKey = { projectId: request.projectId, period, network: request.network }
+    const context: JournalContext = { family: "SolanaV3", funded: frozenPlan.funded, authority: signer.address }
+    const by = signer.address
+    const facts = try signingFacts(request, options, view.height)
+    const decided = try decide((try loadJournal(key, context)).state, view, facts, by)
+    if (!decided.sign) return { key, context, run: { events: decided.events, by } } satisfies MonthAttestation
+    const root = frozenPlan.plan.allocationRoot
+    if (view.authority !== by || !canSignSolana(decided.state, 1, root, by)) throw refusedMonth("The identity authority in force cannot sign this monthly attempt")
+    const outcome = signSolana(decided.state, 1, root, by)
+    if (outcome.phase === "Refused") throw refusedMonth(outcome.refusal === "SourceInOtherMonth" ? "A monthly source was already consumed by a month" : "A monthly source was already consumed")
+    const expected: MonthlyIntentRecord = { snapshotSha256: request.snapshotSha256, messageHex: frozenPlan.plan.messageHex, authority: by, frozenAt: String(frozen.frozenAt) }
+    const intent = try within(ordinaryScope, (entries) => journalIntent(entries, intentKey, expected, undefined))
+    const signed: SignedPlan = intent.authorization !== undefined
+      ? intent.authorization as SignedPlan
+      : try freshSolanaSignature(request, options, signer, frozenPlan.plan, intentKey, intent)
+    return { key, context, run: { events: [...decided.events, { type: "signSolana", attemptId: 1, root }], by, signed } } satisfies MonthAttestation
+  })
+}

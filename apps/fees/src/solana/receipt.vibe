@@ -1,0 +1,198 @@
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { type FetchedTransaction, SolanaRpc, type TokenBalance, base58Encode, base64Decode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import type { RouteTokenBalance } from "../kernels/routeCredit.ts"
+import type { SendStatus } from "../conversion/chain.vibe"
+import { jupiter } from "../runtime/pins.ts"
+import { boundRoute } from "../jupiter/route.vibe"
+import { type AccountProof, associatedCreations, retainedExpectation, retainedProof, verifyAccountProof } from "./accounts.vibe"
+import { sameBytes, sameList } from "./bytes.ts"
+import { finalizedBlockSignatures, lamportDeltas, nativeCost, signatureOfText, signatureStatus } from "./client.vibe"
+import { type ParsedTransaction, ata, firstSignature, messageOf, parsedTransaction, refuse, solanaNativeAsset } from "./wire.vibe"
+
+module verified {
+  import { type RouteTokenBalance, type RouteTokenChange, firstDebitedHolding as debited, routeTokenCredit as credit } from "../kernels/routeCredit.ts"
+  /** @throws {never} */
+  export function routeTokenCredit(before: readonly RouteTokenBalance[], after: readonly RouteTokenBalance[], source: number, destination: number, wallet: number, inputMint: number, outputMint: number, inputProgram: number, outputProgram: number, nativeInput: boolean, amountIn: bigint, minimumOut: bigint): RouteTokenChange {
+    return credit(before, after, source, destination, wallet, inputMint, outputMint, inputProgram, outputProgram, nativeInput, amountIn, minimumOut)
+  }
+  /** @throws {never} */
+  export function firstDebitedHolding(before: readonly RouteTokenBalance[], after: readonly RouteTokenBalance[], wallet: number, source: number, destination: number): number {
+    return debited(before, after, wallet, source, destination)
+  }
+}
+import { firstDebitedHolding, routeTokenCredit } from verified
+
+export interface SolanaSend {
+  readonly txId: string
+  readonly rawTx: string
+  readonly wallet: string
+  readonly accountProof: string | undefined
+}
+
+export interface RouteSend extends SolanaSend {
+  readonly token: string
+  readonly targetToken: string
+  readonly amountIn: bigint
+  readonly minimumOutput: bigint
+  readonly expiresAt: number | undefined
+}
+
+export type NativeReceipt =
+  | { readonly kind: "unseen" }
+  | { readonly kind: "settled"; readonly actualWei: string; readonly blockHash: string; readonly slot: number; readonly succeeded: boolean; readonly fetched: FetchedTransaction }
+
+interface Signed {
+  readonly raw: Uint8Array
+  readonly parsed: ParsedTransaction
+  readonly proof: AccountProof | undefined
+  readonly keys: ReadonlyArray<string>
+}
+
+effect function signedSend(send: SolanaSend) {
+  const raw = base64Decode(send.rawTx)
+  if (raw === undefined) return try refuse("Solana native journal lacks its reviewed signed bytes")
+  const parsed = try parsedTransaction(raw)
+  const signature = firstSignature(raw, parsed)
+  const key = publicKey(send.wallet)
+  if (key === undefined || base58Encode(signature) !== send.txId || !(try verifyMessageSignature(key, messageOf(raw, parsed), signature))) return try refuse("Solana native journal signature mismatch")
+  if (send.accountProof === undefined && !parsed.legacy) return try refuse("Versioned Solana recovery lacks retained account evidence")
+  const proof = send.accountProof === undefined ? undefined : try retainedProof(send.accountProof)
+  const keys = proof === undefined ? parsed.staticKeys : try verifyAccountProof(raw, parsed, proof)
+  return { raw, parsed, proof, keys } satisfies Signed
+}
+
+function sameLoaded(fetched: FetchedTransaction, proof: AccountProof) {
+  return sameList(fetched.meta.loadedWritable, proof.loadedWritable) && sameList(fetched.meta.loadedReadonly, proof.loadedReadonly)
+}
+
+export effect function nativeReceipt(send: SolanaSend) {
+  const signed = try signedSend(send)
+  const creations = try associatedCreations(signed.parsed, signed.keys, send.wallet)
+  const fetched = try (try SolanaRpc).transaction(try signatureOfText(send.txId), "finalized")
+  if (fetched === undefined) return { kind: "unseen" } satisfies NativeReceipt
+  if (!sameBytes(fetched.wire, signed.raw)) return try refuse("Finalized Solana native receipt does not match signed bytes")
+  const block = try finalizedBlockSignatures(fetched.slot)
+  if (block === null || !block.signatures.includes(send.txId)) return try refuse("Solana native receipt lacks canonical finalized block evidence")
+  if (signed.proof !== undefined && !sameLoaded(fetched, signed.proof)) return try refuse("Finalized Solana account mapping differs from retained signing evidence")
+  const route = signed.proof?.route
+  const expectation = route === undefined ? undefined : try retainedExpectation(route)
+  const principal = !fetched.meta.err && expectation?.nativeInput === true ? expectation.amountIn : 0n
+  const actual = try nativeCost(fetched.meta, creations.map((creation) => creation.index), principal)
+  return { kind: "settled", actualWei: actual.toString(), blockHash: block.blockhash, slot: fetched.slot, succeeded: !fetched.meta.err, fetched } satisfies NativeReceipt
+}
+
+effect function balancesOf(values: ReadonlyArray<TokenBalance>, keys: ReadonlyArray<string>) {
+  const result = new Map<number, TokenBalance>()
+  for (const value of values) {
+    if (!Number.isInteger(value.accountIndex) || keys[value.accountIndex] === undefined || result.has(value.accountIndex))
+      return try refuse("Finalized swap token balance evidence is malformed")
+    result.set(value.accountIndex, value)
+  }
+  return [...result.values()]
+}
+
+function identities() {
+  const known = new Map<string | undefined, number>()
+  return (value: string | undefined) => {
+    const found = known.get(value)
+    if (found !== undefined) return found
+    known.set(value, known.size)
+    return known.size - 1
+  }
+}
+
+export effect function routeCredit(send: RouteSend, fetched: FetchedTransaction) {
+  const signed = try signedSend(send)
+  const route = signed.proof?.route
+  if (signed.proof === undefined || route === undefined || !Number.isSafeInteger(fetched.slot) || fetched.slot < 0 || fetched.meta.err || !sameBytes(fetched.wire, signed.raw))
+    return try refuse("Finalized swap does not match its retained signed transaction")
+  if (fetched.slot < Math.max(...route.accounts.map((account) => account.slot))) return try refuse("Finalized swap predates its signing account evidence")
+  const expected = try retainedExpectation(route)
+  if (expected.wallet !== send.wallet || (expected.nativeInput ? send.token !== solanaNativeAsset : expected.inputMint !== send.token)
+    || expected.outputMint !== send.targetToken || expected.amountIn !== send.amountIn || expected.minimumOut !== send.minimumOutput)
+    return try refuse("Finalized swap differs from its retained allocation")
+  try boundRoute(signed.raw, signed.parsed, signed.proof, expected)
+  if (!sameLoaded(fetched, signed.proof)) return try refuse("Finalized swap loaded accounts differ from signing evidence")
+  const { keys } = signed
+  const before = try balancesOf(fetched.meta.preTokenBalances, keys)
+  const after = try balancesOf(fetched.meta.postTokenBalances, keys)
+  const source = keys.indexOf(try ata(expected.inputMint, expected.wallet, expected.inputProgram))
+  const destination = keys.indexOf(try ata(expected.outputMint, expected.wallet, expected.outputProgram))
+  const identity = identities()
+  const project = (values: ReadonlyArray<TokenBalance>): RouteTokenBalance[] => values.map((value) => ({
+    accountIndex: value.accountIndex,
+    owner: identity(value.owner),
+    mint: identity(value.mint),
+    programId: identity(value.programId),
+    amount: value.amount,
+  }))
+  const wallet = identity(expected.wallet)
+  const [tokenBefore, tokenAfter] = [project(before), project(after)]
+  const credit = routeTokenCredit(tokenBefore, tokenAfter, source, destination, wallet, identity(expected.inputMint), identity(expected.outputMint),
+    identity(expected.inputProgram), identity(expected.outputProgram), expected.nativeInput, expected.amountIn, expected.minimumOut)
+  if (credit.error === 1) return try refuse("Finalized swap token identity differs from its reviewed account")
+  if (credit.error === 2) return try refuse("Finalized swap token account evidence is incomplete")
+  if (credit.error === 3) return try refuse("Finalized swap did not debit its exact input and credit its minimum output")
+  if (expected.nativeInput) {
+    const changes = try lamportDeltas(fetched.meta, keys)
+    const creations = try associatedCreations(signed.parsed, keys, expected.wallet)
+    const rent = creations.reduce((sum, creation) => {
+      const change = changes.get(keys[creation.index] ?? "") ?? 0n
+      return sum + (change > 0n ? change : 0n)
+    }, 0n)
+    if ((changes.get(expected.wallet) ?? 0n) + rent !== -expected.amountIn) return try refuse("Finalized native swap did not spend exactly its earned fee input")
+  }
+  if (firstDebitedHolding(tokenBefore, tokenAfter, wallet, source, destination) >= 0) return try refuse("Finalized swap debited an unrelated fee-wallet holding")
+  return credit.amount
+}
+
+export effect function routeStatus(send: RouteSend) {
+  const status = try signatureStatus(send.txId)
+  if (status === undefined) {
+    const height = try (try SolanaRpc).blockHeight("finalized")
+    if (send.expiresAt !== undefined && height > send.expiresAt) return { kind: "pending", mined: false } satisfies SendStatus
+    return { kind: "unseen" } satisfies SendStatus
+  }
+  if (status.confirmationStatus !== "finalized") return { kind: "pending", mined: true } satisfies SendStatus
+  const receipt = try nativeReceipt(send)
+  if (receipt.kind === "unseen") return { kind: "pending", mined: true } satisfies SendStatus
+  const output = receipt.succeeded ? try routeCredit(send, receipt.fetched) : 0n
+  return {
+    kind: "landed",
+    txId: send.txId,
+    succeeded: receipt.succeeded,
+    output,
+    actualWei: receipt.actualWei,
+    blockHash: receipt.blockHash,
+    allowance: 0n,
+    feesClaimed: 0n,
+    vaultDebit: 0n,
+    walletCredit: 0n,
+    roleFree: false,
+  } satisfies SendStatus
+}
+
+export interface RecordedSwap {
+  readonly token: string
+  readonly targetToken: string
+  readonly amountIn: bigint
+  readonly minimumOutput: bigint
+}
+
+export effect function retainedSendReview(rawTx: string, accountProof: string | undefined, wallet: string, recorded: RecordedSwap | undefined) {
+  const raw = base64Decode(rawTx)
+  if (raw === undefined) return try refuse("Native reservation lacks its signed intent")
+  const parsed = try parsedTransaction(raw)
+  const routed = parsed.programs.includes(jupiter.program)
+  if (parsed.legacy && !routed && accountProof === undefined) return
+  if (accountProof === undefined) return try refuse("Versioned Solana signing lacks retained account evidence")
+  const proof = try retainedProof(accountProof)
+  try verifyAccountProof(raw, parsed, proof)
+  if (!routed) return
+  if (proof.route === undefined || recorded === undefined) return try refuse("Jupiter send lacks its retained account review")
+  const expected = try retainedExpectation(proof.route)
+  if (expected.program !== jupiter.program || expected.wallet !== wallet || (expected.nativeInput ? recorded.token !== solanaNativeAsset : expected.inputMint !== recorded.token)
+    || expected.outputMint !== recorded.targetToken || expected.amountIn !== recorded.amountIn || expected.minimumOut !== recorded.minimumOutput)
+    return try refuse("Jupiter account review differs from the recorded swap")
+  try boundRoute(raw, parsed, proof, expected)
+}

@@ -1,0 +1,378 @@
+import { assert, layer } from "@effect/vitest"
+import type { R2Bucket } from "@repo/platform/bindings"
+import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, first, rows, sql } from "@repo/platform/d1"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { type StartedWorker, bundle, database, migrate, scheduled, startWorker, storage } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { CompleteReceipt, type Job, PageReceipt, parsed } from "../src/backup/codec.vibe"
+import { dayOfMillis, dayText } from "../src/backup/days.ts"
+import { backupJob } from "../src/backup/jobs.vibe"
+import { startDaily } from "../src/backup/pages.vibe"
+import { BackupQueue, BackupSettings, evidenceBuckets } from "../src/backup/store.vibe"
+
+const dayMillis = 86_400_000
+const started = Date.now()
+const clock = settableClock(started)
+const queueName = "slop-vetting-backup"
+const fixtures = Array.from({ length: 65 }, (_, index) => ({ key: `vetting/case-${String(index).padStart(3, "0")}/run/evidence`, text: `harmless scanner fixture ${index}` }))
+
+service World {
+  readonly mf: StartedWorker
+  readonly source: RetentionR2Bucket
+  readonly backups: RetentionR2Bucket
+  readonly jobs: Job[]
+}
+
+effect function retention(binding: R2Bucket) {
+  const listing = try Effect.try(() => typeof Reflect.get(binding, "list") === "function" && typeof Reflect.get(binding, "delete") === "function")
+  if (!listing) return try die(new Error("the Miniflare bucket cannot list or delete"))
+  return binding as RetentionR2Bucket
+}
+
+const Started = Layer.effect(World, effect {
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { config: "vite.backup.config.ts" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { EVIDENCE_DATABASE: "backup-journey" },
+    r2: ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS"],
+    vars: { EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: "off" },
+    queues: {
+      producers: { EVIDENCE_BACKUP_QUEUE: queueName },
+      consumers: { [queueName]: { maxRetries: 5, deadLetterQueue: `${queueName}-failed` } },
+    },
+  })), (worker) => promise(() => worker.dispose()))
+  const applied = try promise(() => migrate(mf, "EVIDENCE_DATABASE", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return {
+    mf,
+    source: try retention(try promise(() => storage(mf, "EVIDENCE_SOURCE"))),
+    backups: try retention(try promise(() => storage(mf, "EVIDENCE_BACKUPS"))),
+    jobs: [],
+  }
+})
+
+const InProcess = Layer.unwrap(effect {
+  const world = try World
+  return Layer.mergeAll(
+    d1(try promise(() => database(world.mf, "EVIDENCE_DATABASE"))),
+    evidenceBuckets(world.source, world.backups),
+    Layer.succeed(BackupQueue, { send: (job) => sync(() => { world.jobs.push(job) }) }),
+  )
+})
+
+const Services = Layer.mergeAll(Layer.provideMerge(InProcess, Started), webCrypto, clock.layer)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+schema PhaseRow { day: string; phase: string }
+schema IdRow { id: string }
+schema CountRow { count: number }
+
+effect function phases() {
+  return (try rows(PhaseRow, sql`SELECT day, phase FROM vetting_storage_cycles ORDER BY day`)).map((row) => `${row.day} ${row.phase}`)
+}
+
+effect function settled(day: string) {
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const found = try first(PhaseRow, sql`SELECT day, phase FROM vetting_storage_cycles WHERE day = ${day}`)
+    if (found?.phase === "complete") return true
+    try sleep("100 millis")
+  }
+  return false
+}
+
+effect function put(bucket: R2Bucket, key: string, text: string, metadata?: string) {
+  const bytes = utf8(text)
+  const sha256 = metadata ?? try sha256Hex(bytes)
+  try promise(() => bucket.put(key, bytes, { customMetadata: { sha256 }, httpMetadata: { contentType: "application/octet-stream" } }))
+}
+
+effect function digestOf(bucket: R2Bucket, key: string) {
+  const bytes = try promise(async () => {
+    const found = await bucket.get(key)
+    return found === null ? undefined : new Uint8Array(await found.arrayBuffer())
+  })
+  return bytes === undefined ? undefined : try sha256Hex(bytes)
+}
+
+effect function receipt<S extends Schema.Constraint>(schema: S, key: string) {
+  const { backups } = try World
+  const bytes = try promise(async () => {
+    const found = await backups.get(key)
+    return found === null ? undefined : new Uint8Array(await found.arrayBuffer())
+  })
+  if (bytes === undefined) return undefined
+  return try parsed(schema, key, bytes)
+}
+
+effect function metadataDigest(bucket: R2Bucket, key: string) {
+  const head = try promise(() => bucket.head(key))
+  return head?.customMetadata?.sha256
+}
+
+function named(job: Job) {
+  return job.kind === "cleanup" ? `cleanup ${job.day}` : job.kind === "restore" ? `restore ${job.checkId}` : `page ${job.day} ${job.page}`
+}
+
+effect function runOne() {
+  const job = (try World).jobs.shift()
+  if (job === undefined) return []
+  try backupJob(job)
+  return [named(job)]
+}
+
+effect function drain() {
+  const { jobs } = try World
+  const ran: string[] = []
+  for (let job = jobs.shift(); job !== undefined; job = jobs.shift()) {
+    ran.push(named(job))
+    try backupJob(job)
+  }
+  return ran
+}
+
+effect function cron(at: number) {
+  clock.set(at)
+  try startDaily(at)
+}
+
+effect function outcome<E, R>(program: unknown!E!R) {
+  const done = try exit(program)
+  return Exit.isSuccess(done) ? "passed" : "refused"
+}
+
+schema MarkerRow { state: string }
+
+effect function marker(key: string) {
+  const { source } = try World
+  const head = try promise(() => source.head(key))
+  return head === null ? undefined : { kind: head.customMetadata?.evidenceRetirement, outcome: head.customMetadata?.retirementOutcome }
+}
+
+effect function seedRetention() {
+  const { source } = try World
+  const db = try D1
+  const at = new Date(started).toISOString()
+  const manifest = JSON.stringify({ id: "backup-fixture", status: "active", repositories: [{ id: "R_backup" }] })
+  try db.batch([
+    sql`INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('backup-fixture',1,${manifest},${"a".repeat(64)},'Backup fixture',${at})`,
+    sql`INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('backup-fixture','active',1,${manifest},${"a".repeat(64)},${at},${at})`,
+  ])
+  const cases = [
+    { id: "vet_expired_legacy", closedDaysAgo: 91, permanent: false, generation: undefined, written: false },
+    { id: "vet_recent_case", closedDaysAgo: 89, permanent: false, generation: undefined, written: false },
+    { id: "vet_open_case", closedDaysAgo: undefined, permanent: false, generation: undefined, written: false },
+    { id: "vet_permanent_admission", closedDaysAgo: 91, permanent: true, generation: undefined, written: false },
+    { id: "vet_generation_backed", closedDaysAgo: 91, permanent: false, generation: "gen_backed", written: true },
+    { id: "vet_generation_missing", closedDaysAgo: 91, permanent: false, generation: "gen_missing", written: false },
+  ]
+  const keys = new Map<string, { readonly key: string; readonly target: string }>()
+  for (const [index, fixture] of cases.entries()) {
+    const text = `retained scanner fixture ${fixture.id}`
+    const bytes = utf8(text)
+    const sha = try sha256Hex(bytes)
+    const key = `vetting/${fixture.id}/run/${sha}`
+    const target = `vetting/generations/${fixture.generation ?? "none"}/whole`
+    const completedAt = new Date(started - (fixture.closedDaysAgo ?? 0) * dayMillis).toISOString()
+    const result = JSON.stringify({ schemaVersion: "slop-vetting-result-v2", assessmentId: fixture.id, disposition: fixture.permanent ? "clean" : "incomplete" })
+    const generational = fixture.generation === undefined ? [] : [
+      sql`INSERT INTO vetting_evidence_generations(id,sha256,state,created_at) VALUES(${fixture.generation},${sha},'active',${at})`,
+    ]
+    const reserved = fixture.generation === undefined ? [] : [
+      sql`INSERT INTO vetting_evidence_targets(target_key,generation_id,part_index,sha256,size_bytes,created_at) VALUES(${target},${fixture.generation},-1,${sha},${bytes.length},${at})`,
+      sql`INSERT INTO vetting_evidence_heads(generation_id,part_index,sha256,size_bytes,target_key) VALUES(${fixture.generation},-1,${sha},${bytes.length},${target})`,
+    ]
+    try db.batch([
+      sql`INSERT INTO vetting_assessments(id,project_id,revision,manifest_sha256,content_sha256,commit_sha,template_sha256,requested_by_github_id,requested_by_github_login,requested_at,request_reason,state)
+        VALUES(${fixture.id},'backup-fixture',1,${"a".repeat(64)},${"b".repeat(64)},${String(index + 1).repeat(40)},${"c".repeat(64)},'900','steward',${at},'Backup fixture','pending')`,
+      sql`UPDATE vetting_assessments SET state=${fixture.permanent ? "clean" : "incomplete"},policy_version='fixture',result=${result},result_sha256=${try sha256Hex(result)},signing_key_sha256=${"d".repeat(64)},completed_at=${completedAt} WHERE id=${fixture.id}`,
+      sql`INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at) VALUES(${fixture.id},'run',${sha},${sha},'{}','{}',${at},${at})`,
+      ...generational,
+      sql`INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation)
+        VALUES(${fixture.id},'run',${sha},${bytes.length},'trace',${fixture.generation === undefined ? "legacy" : "generational"},'text/plain',${key},NULL,${fixture.generation === undefined ? "run" : "content"},${fixture.generation ?? null})`,
+      ...reserved,
+      ...(fixture.closedDaysAgo === undefined || fixture.permanent ? [] : [sql`INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(${fixture.id},${completedAt},'900','Aged fixture closure')`]),
+    ])
+    if (fixture.generation === undefined) try put(source, key, text)
+    else if (fixture.written) try put(source, target, text)
+    keys.set(fixture.id, { key, target })
+  }
+  return keys
+}
+
+layer(Services, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Complete one verifiable backup cycle at a time across pages, a duplicate delivery and a resumed day (spec/operations/backup.md, "Story: Complete one verifiable backup cycle at a time"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Story: Expire backups and access logs on their own schedules"; spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year")', () => effect {
+    const world = try World
+    for (const fixture of fixtures) try put(world.source, fixture.key, fixture.text)
+    try put(world.source, "permanent-contributor-trace", "outside scanner scope")
+    const db = try D1
+    try db.run(sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,created_at) VALUES
+      ('old','fixture','read','fixture',strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 year','-2 days')),
+      ('recent','fixture','read','fixture',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+    const today = dayText(dayOfMillis(started))
+    const firstRun = try promise(() => scheduled(world.mf, "17 2 * * *"))
+    const completed = try settled(today)
+    const complete = try receipt(CompleteReceipt, `daily/${today}/complete.json`)
+    const completeDigest = try metadataDigest(world.backups, `daily/${today}/complete.json`)
+    const repeated = try promise(() => scheduled(world.mf, "17 2 * * *"))
+    const audit = (try rows(IdRow, sql`SELECT id FROM vetting_evidence_audit ORDER BY id`)).map((row) => row.id)
+    const fetched = try promise(() => world.mf.dispatchFetch("https://backup.invalid/"))
+    const bytes = fixtures.reduce((sum, fixture) => sum + utf8(fixture.text).length, 0)
+
+    const dayOne = started + dayMillis
+    const one = dayText(dayOfMillis(dayOne))
+    try put(world.source, "vetting/000-corrupt/run/evidence", "bad source", "0".repeat(64))
+    provide BackupSettings = { backup: true, retention: true, retirement: false } {
+      try cron(dayOne)
+      const firstPages = try runOne()
+      const page = try receipt(PageReceipt, `daily/${one}/pages/0.json`)
+      const pageDigest = try metadataDigest(world.backups, `daily/${one}/pages/0.json`)
+      try backupJob({ day: one, page: 0, previous: null, objects: 0, bytes: 0 })
+      const duplicateDigest = try metadataDigest(world.backups, `daily/${one}/pages/0.json`)
+      const duplicateJobs = world.jobs.map(named)
+      world.jobs.length = 0
+      try cron(dayOne + dayMillis)
+      const resumed = { phases: try phases(), queued: (try digestOf(world.backups, `queued/${dayText(dayOfMillis(dayOne + dayMillis))}.json`)) !== undefined }
+      const finished = try drain()
+      try cron(dayOne + 2 * dayMillis)
+      const waitingStarted = try phases()
+      try drain()
+      const rawCopy = try metadataDigest(world.backups, `daily/${one}/objects/vetting/000-corrupt/run/evidence`)
+      try same({
+        firstRun: firstRun.outcome,
+        completed,
+        complete: complete === undefined ? undefined : { pages: complete.pages, objects: complete.objects, bytes: complete.bytes },
+        outsideScope: try digestOf(world.backups, `daily/${today}/objects/permanent-contributor-trace`),
+        repeated: repeated.outcome,
+        unchangedCompletion: (try metadataDigest(world.backups, `daily/${today}/complete.json`)) === completeDigest,
+        audit,
+        fetched: fetched.status,
+        firstPages,
+        pageObjects: page?.objects.length,
+        duplicateUnchanged: duplicateDigest === pageDigest,
+        duplicateJobs,
+        resumed,
+        finished: finished.filter((name) => name.startsWith("cleanup")),
+        waitingStarted,
+        rawCopy: rawCopy === (try sha256Hex(utf8("bad source"))),
+        sourceMetadata: try metadataDigest(world.source, "vetting/000-corrupt/run/evidence"),
+      }, {
+        firstRun: "ok",
+        completed: true,
+        complete: { pages: 3, objects: 65, bytes },
+        outsideScope: undefined,
+        repeated: "ok",
+        unchangedCompletion: true,
+        audit: ["recent"],
+        fetched: 404,
+        firstPages: [`page ${one} 0`],
+        pageObjects: 32,
+        duplicateUnchanged: true,
+        duplicateJobs: [`page ${one} 1`, `page ${one} 1`],
+        resumed: { phases: [`${today} complete`, `${one} backup`], queued: true },
+        finished: [],
+        waitingStarted: [`${today} complete`, `${one} complete`, `${dayText(dayOfMillis(dayOne + dayMillis))} backup`],
+        rawCopy: true,
+        sourceMetadata: "0".repeat(64),
+      })
+    }
+  })
+
+  it.effect('Restore only from a complete chain into an isolated prefix, keep retention off until a restoration is proven, and retire a generation only once released (spec/operations/backup.md, "Story: Restore only from a complete chain into an isolated prefix"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "Story: Delete raw evidence only under the enabled retention policy"; spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"; spec/operations/backup.md, "Story: Retire a storage generation only after every reserved target is marked and recorded"; spec/operations/backup.md, "A generation retires only with a verified marker and a D1 record for every reserved target")', () => effect {
+    const world = try World
+    const one = dayText(dayOfMillis(started + dayMillis))
+    const original = fixtures[37]
+    const corrupted = fixtures[5]
+    if (original === undefined || corrupted === undefined) return try die(new Error("fixtures are missing"))
+    const keys = try seedRetention()
+    const expired = keys.get("vet_expired_legacy")?.key ?? ""
+    const backed = keys.get("vet_generation_backed") ?? { key: "", target: "" }
+    const missing = keys.get("vet_generation_missing") ?? { key: "", target: "" }
+    const held = effect { return (try rows(IdRow, sql`SELECT id FROM vetting_evidence_audit WHERE action IN ('retention-held', 'retention-missing') ORDER BY id`)).map((row) => row.id) }
+    const deleted = effect { return (try rows(IdRow, sql`SELECT assessment_id AS id FROM vetting_evidence_deletions ORDER BY assessment_id`)).map((row) => row.id) }
+    const generations = effect { return (try rows(MarkerRow, sql`SELECT state FROM vetting_evidence_generations ORDER BY id`)).map((row) => row.state) }
+    const proven = started + 4 * dayMillis
+    const released = proven + dayMillis
+    const beforeRelease = effect {
+      provide BackupSettings = { backup: true, retention: true, retirement: false } {
+        const restored = try outcome(backupJob({ kind: "restore", day: one, key: original.key, checkId: "before-activation" }))
+        try put(world.backups, `restore-checks/conflicting/${original.key}`, "a different object")
+        const conflicting = try outcome(backupJob({ kind: "restore", day: one, key: original.key, checkId: "conflicting" }))
+        const corruptKey = `daily/${one}/objects/${corrupted.key}`
+        const kept = try metadataDigest(world.backups, corruptKey)
+        try put(world.backups, corruptKey, "\u0000".repeat(utf8(corrupted.text).length), kept)
+        const corrupt = try outcome(backupJob({ kind: "restore", day: one, key: corrupted.key, checkId: "corrupt-copy" }))
+        try cron(proven)
+        const ran = try drain()
+        return {
+          restored,
+          restoredBytes: (try digestOf(world.backups, `restore-checks/before-activation/${original.key}`)) === (try sha256Hex(utf8(original.text))),
+          restoreReceipt: (try digestOf(world.backups, `restored/${one}/before-activation.json`)) !== undefined,
+          sourceKept: (try digestOf(world.source, original.key)) === (try sha256Hex(utf8(original.text))),
+          conflicting,
+          conflictPreserved: (try digestOf(world.backups, `restore-checks/conflicting/${original.key}`)) === (try sha256Hex(utf8("a different object"))),
+          conflictReceipt: try digestOf(world.backups, `restored/${one}/conflicting.json`),
+          corrupt,
+          corruptDestination: try digestOf(world.backups, `restore-checks/corrupt-copy/${corrupted.key}`),
+          cleanups: ran.filter((name) => name.startsWith("cleanup")).length > 0,
+          held: try held,
+          deleted: try deleted,
+          generations: try generations,
+          targetKept: try marker(backed.target),
+          expiredBytesKept: (try digestOf(world.source, expired)) !== undefined,
+        }
+      }
+    }
+    const afterRelease = effect {
+      provide BackupSettings = { backup: true, retention: true, retirement: true } {
+        try cron(released)
+        try drain()
+        return {
+          held: try held,
+          deleted: try deleted,
+          generations: try generations,
+          markers: [try marker(backed.target), try marker(missing.target)],
+          phases: (try phases()).every((entry) => entry.endsWith("complete")),
+        }
+      }
+    }
+    const unreleased = try beforeRelease
+    const retired = try afterRelease
+    try same({ unreleased, retired }, {
+      unreleased: {
+        restored: "passed",
+        restoredBytes: true,
+        restoreReceipt: true,
+        sourceKept: true,
+        conflicting: "refused",
+        conflictPreserved: true,
+        conflictReceipt: undefined,
+        corrupt: "refused",
+        corruptDestination: undefined,
+        cleanups: true,
+        held: [`retention-held:legacy:${expired}`, `retention-held:unreleased:${backed.key}`, `retention-held:unreleased:${missing.key}`],
+        deleted: [],
+        generations: ["active", "active"],
+        targetKept: { kind: undefined, outcome: undefined },
+        expiredBytesKept: true,
+      },
+      retired: {
+        held: [
+          `retention-held:legacy:${expired}`,
+          `retention-held:unreleased:${backed.key}`,
+          `retention-held:unreleased:${missing.key}`,
+          `retention-missing:${dayText(dayOfMillis(released))}:${missing.key}`,
+        ],
+        deleted: ["vet_generation_backed"],
+        generations: ["retired", "retired"],
+        markers: [{ kind: "v1", outcome: "backed" }, { kind: "v1", outcome: "missing" }],
+        phases: true,
+      },
+    })
+  })
+})

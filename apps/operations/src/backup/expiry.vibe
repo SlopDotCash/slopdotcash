@@ -1,0 +1,23 @@
+// spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year"
+import { D1, first, sql } from "@repo/platform/d1"
+import { decodeState, initial } from "../../gen/operations__backup.effect.vibe"
+import { accessLogCleaned, heldCycle } from "./cycle.vibe"
+import { dayNumber, dayOfIso } from "./days.ts"
+import { BackupRefused, BackupSettings } from "./store.vibe"
+
+const expired = sql`created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 year') AND julianday(date('now')) - julianday(date(created_at)) > 365`
+
+schema Oldest { oldest: string | null; today: string }
+
+export effect function pruneAccessAudit() {
+  if (!(try BackupSettings).backup) return
+  const found = try first(Oldest, sql`SELECT min(created_at) AS oldest, date('now') AS today FROM vetting_evidence_audit WHERE ${expired}`)
+  if (found === undefined || found.oldest === null) return
+  const day = dayOfIso(found.oldest)
+  const clockDay = dayNumber(found.today)
+  if (day === undefined || clockDay === undefined) throw new BackupRefused({ issue: "Invalid scanner access audit date" })
+  provide heldCycle(try decodeState({ ...initial, objects: [], generations: [], targets: [], clockDay, accessLog: [{ day, removed: false }] })) {
+    try accessLogCleaned()
+  }
+  try (try D1).run(sql`DELETE FROM vetting_evidence_audit WHERE ${expired}`)
+}

@@ -1,0 +1,23 @@
+// spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"
+import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type Observed, type RepositoryRef, observe } from "../scope/facts.vibe"
+
+export type WriteScope = "contributor" | "security"
+
+export interface ScopedItem {
+  readonly ref: RepositoryRef
+  readonly projectId: string
+  readonly number: number
+  readonly itemNodeId: string
+}
+
+export error ScopeChanged { projectId: string; scope: WriteScope }
+
+export function scopeAllows(current: Observed, projectId: string, scope: WriteScope) {
+  const found = slopbotScope(current.observation)
+  return current.projectId === projectId && (scope === "security" ? mayReview(found) : found === "Contributor")
+}
+
+export effect function requireScope(item: ScopedItem, scope: WriteScope) {
+  if (!scopeAllows(try observe(item.ref), item.projectId, scope)) throw new ScopeChanged({ projectId: item.projectId, scope })
+}

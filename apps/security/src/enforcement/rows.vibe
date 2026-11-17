@@ -1,0 +1,153 @@
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
+import { type NonEmpty, RowMismatch, type Statement, decoded, list, rows, sql } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import { JournalRow } from "@repo/ports/security"
+
+export schema FactsRow {
+  project_row: number
+  steward: string | null
+  creator: string | null
+  frozen_at: string | null
+}
+
+export schema FlagRow {
+  row: number
+  id: string
+  reporter_github_id: string
+  reporter_github_login: string
+  revision: number
+  category: string
+  evidence: string
+  evidence_url: string | null
+  created_at: string
+  state: "active" | "withdrawn" | "resolved" | "expired"
+  closed_at: string | null
+}
+
+export schema AssessmentRow {
+  row: number
+  id: string
+  revision: number
+  repository_id: string | null
+  state: "pending" | "incomplete" | "clean" | "malicious"
+  requested_at: string
+  completed_at: string | null
+  flag_ids: string
+  replaces_assessment_id: string | null
+  reused: number
+  template_sha256: string
+}
+
+export schema GrantRow {
+  sequence: number
+  id: string
+  revision: number
+  repository_id: string
+  repository_node_id: string
+  steward_id: string
+  granted_by_github_id: string
+  granted_at: string
+  revoked_at: string | null
+  revoked_by_github_id: string | null
+}
+
+export schema RevisionRow {
+  revision: number
+  manifest: string
+  created_at: string
+}
+
+export schema BanRow {
+  enforcement_id: string
+  github_id: string
+}
+
+export interface ProjectHistory {
+  readonly facts: FactsRow | undefined
+  readonly journal: ReadonlyArray<JournalRow>
+  readonly flags: ReadonlyArray<FlagRow>
+  readonly assessments: ReadonlyArray<AssessmentRow>
+  readonly grants: ReadonlyArray<GrantRow>
+  readonly revisions: ReadonlyArray<RevisionRow>
+  readonly bans: ReadonlyArray<BanRow>
+}
+
+export const journalColumns = sql`e.rowid AS row, e.id, e.project_id, e.sequence, e.action, e.state_after, e.appeal_after, e.reason, e.evidence_reference, e.repository_github_id, e.repository_keys, e.actor_github_id, e.actor_github_login, e.system_issuer, e.actor_role, e.decision_source, e.before_revision, e.before_manifest_sha256, e.after_revision, e.after_manifest_sha256, e.result, e.created_at, r.assessment_id AS review_assessment_id, r.malicious_assessment_ids AS review_malicious_assessment_ids`
+
+export const journalFrom = sql`project_enforcements e LEFT JOIN project_vetting_reinstatements r ON r.enforcement_id = e.id`
+
+const flagColumns = sql`rowid AS row, id, reporter_github_id, reporter_github_login, revision, category, evidence, evidence_url, created_at, state, closed_at`
+
+const assessmentRepository = sql`COALESCE(a.repository_id, (SELECT json_extract(v.manifest, '$.repositories[0].id') FROM project_revisions v WHERE v.project_id = a.project_id AND v.revision = a.revision))`
+
+export function scopeReads(projectId: string): ReadonlyArray<Statement> {
+  return [
+    sql`SELECT p.rowid AS project_row, CAST(json_extract(p.manifest, '$.steward.github.actorId') AS TEXT) AS steward, (SELECT r.actor_github_id FROM project_revisions r WHERE r.project_id = p.id AND r.revision = 1) AS creator, (SELECT g.granted_at FROM vetting_grandfathered_projects g WHERE g.project_id = p.id) AS frozen_at FROM projects p WHERE p.id = ${projectId}`,
+    sql`SELECT ${journalColumns} FROM ${journalFrom} WHERE e.project_id = ${projectId} ORDER BY e.sequence`,
+    sql`SELECT ${flagColumns} FROM project_flags WHERE project_id = ${projectId} ORDER BY rowid`,
+    sql`SELECT a.rowid AS row, a.id, a.revision, ${assessmentRepository} AS repository_id, a.state, a.requested_at, a.completed_at, a.flag_ids, a.replaces_assessment_id, CASE WHEN json_extract(a.result, '$.reusedAssessmentId') IS NOT NULL THEN 1 ELSE 0 END AS reused, a.template_sha256 FROM vetting_assessments a WHERE a.project_id = ${projectId} ORDER BY a.rowid`,
+    sql`SELECT g.sequence, g.id, g.revision, g.repository_id, g.repository_node_id, g.steward_id, g.granted_by_github_id, g.granted_at, v.revoked_at, v.revoked_by_github_id FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations v ON v.exemption_id = g.id WHERE g.project_id = ${projectId} ORDER BY g.sequence`,
+    sql`SELECT revision, manifest, created_at FROM project_revisions WHERE project_id = ${projectId} ORDER BY revision`,
+    sql`SELECT b.enforcement_id, b.github_id FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = ${projectId} ORDER BY b.rowid`,
+  ]
+}
+
+export function scopeVersion(projectId: string): Statement {
+  return sql`((SELECT COALESCE(MAX(sequence), 0) FROM project_enforcements WHERE project_id = ${projectId}) || ':' || COALESCE((SELECT group_concat(rowid || state, ',') FROM project_flags WHERE project_id = ${projectId}), '') || ':' || COALESCE((SELECT group_concat(rowid || state, ',') FROM vetting_assessments WHERE project_id = ${projectId}), '') || ':' || (SELECT COALESCE(MAX(sequence), 0) FROM vetting_admission_exemptions WHERE project_id = ${projectId}) || ':' || (SELECT COUNT(*) FROM vetting_admission_exemption_revocations v JOIN vetting_admission_exemptions g ON g.id = v.exemption_id WHERE g.project_id = ${projectId}) || ':' || (SELECT COUNT(*) FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = ${projectId}) || ':' || (SELECT COUNT(*) FROM project_revisions WHERE project_id = ${projectId}))`
+}
+
+export const generation = sql`((SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements) + (SELECT COALESCE(MAX(sequence), 0) FROM vetting_admission_exemptions) + (SELECT COUNT(*) FROM vetting_admission_exemption_revocations) + (SELECT COALESCE(MAX(rowid), 0) FROM vetting_assessments) + (SELECT COUNT(*) FROM vetting_assessments WHERE state <> 'pending'))`
+
+export effect function historyOf([facts, journal, flags, assessments, grants, revisions, bans]: ReadonlyArray<Rows>) {
+  return {
+    facts: (try decoded(FactsRow, facts ?? [], "enforcement facts"))[0],
+    journal: try decoded(JournalRow, journal ?? [], "project enforcements"),
+    flags: try decoded(FlagRow, flags ?? [], "project flags"),
+    assessments: try decoded(AssessmentRow, assessments ?? [], "vetting assessments"),
+    grants: try decoded(GrantRow, grants ?? [], "admission exemptions"),
+    revisions: try decoded(RevisionRow, revisions ?? [], "project revisions"),
+    bans: try decoded(BanRow, bans ?? [], "maintainer bans"),
+  } satisfies ProjectHistory
+}
+
+export schema CurrentRestriction {
+  project_id: string
+  action: "quarantine" | "ban"
+  actor_role: string
+  repository_github_id: string
+  repository_keys: string
+  appeal_after: "none" | "requested" | "granted" | "denied"
+  since: string
+}
+
+const latestRestrictionRecord = sql`e.rowid = (SELECT MAX(x.rowid) FROM project_enforcements x WHERE x.project_id = e.project_id AND x.action IN ('quarantine', 'ban', 'reinstate')) AND e.action IN ('quarantine', 'ban')`
+
+const restrictionColumns = sql`e.project_id, e.action, e.actor_role, e.repository_github_id, e.repository_keys, (SELECT y.appeal_after FROM project_enforcements y WHERE y.project_id = e.project_id ORDER BY y.sequence DESC LIMIT 1) AS appeal_after, (SELECT MIN(z.created_at) FROM project_enforcements z WHERE z.project_id = e.project_id AND z.action IN ('quarantine', 'ban') AND z.sequence > COALESCE((SELECT MAX(w.sequence) FROM project_enforcements w WHERE w.project_id = e.project_id AND w.action = 'reinstate'), 0)) AS since`
+
+export effect function currentRestrictions(projectId?: string) {
+  const scope = projectId === undefined ? sql`1 = 1` : sql`e.project_id = ${projectId}`
+  return try rows(CurrentRestriction, sql`SELECT ${restrictionColumns} FROM project_enforcements e WHERE ${latestRestrictionRecord} AND ${scope} ORDER BY e.project_id`)
+}
+
+export function restrictionOf(record: Pick<CurrentRestriction, "action" | "actor_role">) {
+  if (record.action === "quarantine") return record.actor_role === "contributor-flags" ? "FlagQuarantine" as const : "ModeratorQuarantine" as const
+  return record.actor_role === "vetting-service" ? "ServiceBan" as const : "ModeratorBan" as const
+}
+
+schema KeyList = ReadonlyArray<string>
+
+export effect function jsonOf<S extends Schema.Constraint>(schema: S, text: string, label: string) {
+  const parsed: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "not JSON" }) })
+  return Schema.decodeUnknownEffect(schema)(parsed) catch effect (error) => { throw new RowMismatch({ text: label, issue: error.message }) }
+}
+
+export effect function keysOf(record: Pick<CurrentRestriction, "repository_keys">) {
+  return try jsonOf(KeyList, record.repository_keys, "repository keys")
+}
+
+schema Recorded { created_at: string }
+
+export effect function earliestRecorded(ids: NonEmpty<string>) {
+  const found = try rows(Recorded, sql`SELECT created_at FROM project_enforcements WHERE id IN ${list(ids)} ORDER BY rowid LIMIT 1`)
+  return found[0]?.created_at
+}

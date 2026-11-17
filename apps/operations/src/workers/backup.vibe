@@ -1,0 +1,32 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Backups expire after thirty days and access-log entries after one year"
+import type { D1Database, Queue } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { worker } from "@repo/platform/worker"
+import type { Job } from "../backup/codec.vibe"
+import { backupJob, daily } from "../backup/jobs.vibe"
+import { backupQueue, backupSettings, evidenceBuckets } from "../backup/store.vibe"
+
+export interface Env {
+  readonly EVIDENCE_DATABASE: D1Database
+  readonly EVIDENCE_SOURCE: RetentionR2Bucket
+  readonly EVIDENCE_BACKUPS: RetentionR2Bucket
+  readonly EVIDENCE_BACKUP_QUEUE: Queue<Job>
+  readonly EVIDENCE_BACKUP_MODE?: string
+  readonly EVIDENCE_RETENTION_MODE?: string
+  readonly EVIDENCE_RETIREMENT_MODE?: string
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.EVIDENCE_DATABASE),
+    webCrypto,
+    evidenceBuckets(env.EVIDENCE_SOURCE, env.EVIDENCE_BACKUPS),
+    backupQueue(env.EVIDENCE_BACKUP_QUEUE),
+    backupSettings(env),
+  ),
+  routes: Layer.empty,
+  scheduled: (controller) => daily(controller.scheduledTime),
+  queue: (message) => backupJob(message.body),
+})

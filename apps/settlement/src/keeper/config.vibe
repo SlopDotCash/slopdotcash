@@ -1,0 +1,216 @@
+// spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Off and failed preflight settle without invoking a signer"; spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint"
+import { type Configuration, type KeeperMode, offConfiguration } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import type { Chain, OverrideKind } from "../../gen/settlement__keeperRpc.effect.vibe"
+import { type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { positiveBudgetFits } from "../kernels/budget.ts"
+import { FIRST_PERIOD, type Period, cutoffAt, parsePeriod, periodEndSeconds } from "../kernels/calendar.ts"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { MAX_EXACT, decimal, widen } from "./units.ts"
+
+export error KeeperConfigInvalid { message: string }
+
+export const REPLACEMENT_FEE_CEILING = 10_000_000_000n
+
+export interface GasBudget {
+  readonly perTransaction: bigint
+  readonly perDay: bigint
+  readonly additionalFeeReserve: bigint
+}
+
+export interface MonthlySchedule {
+  readonly firstPeriod: Period
+  readonly cutoffSecondsAfterPeriodEnd: number
+}
+
+export const PRD_MONTHLY_SCHEDULE: MonthlySchedule = { firstPeriod: FIRST_PERIOD, cutoffSecondsAfterPeriodEnd: cutoffAt(FIRST_PERIOD) - periodEndSeconds(FIRST_PERIOD) }
+
+export interface KeeperConfig {
+  readonly apiOrigin: string
+  readonly network: NetworkKey
+  readonly chain: Chain
+  readonly chainId: bigint
+  readonly base: boolean
+  readonly projectIds: ReadonlyArray<string>
+  readonly signer: EvmAddress
+  readonly rpcUrl: Redacted.Redacted<string>
+  readonly overridden: boolean
+  readonly gas: GasBudget
+  readonly perRun: number
+  readonly replacementActivated: boolean
+  readonly schedule: MonthlySchedule
+}
+
+schema GasBudgetText {
+  readonly perTransaction: string
+  readonly perDay: string
+  readonly additionalFeeReserve: string
+}
+
+schema ScheduleText {
+  readonly firstPeriod: string
+  readonly cutoffSecondsAfterPeriodEnd: number
+}
+
+schema OperatorConfiguration {
+  readonly apiOrigin: string
+  readonly network: string
+  readonly projectIds: ReadonlyArray<string>
+  readonly signer: string
+  readonly rpcUrl: string
+  readonly gas: GasBudgetText
+  readonly perRun: number
+  readonly replacementActivated?: boolean
+  readonly monthlySchedule?: ScheduleText
+}
+
+const LOOPBACK = ["127.0.0.1", "localhost"]
+const SCHEDULE_INVALID = 'MONTHLY_PAYMENT_SCHEDULE must be {"firstPeriod":"YYYY-MM","cutoffSecondsAfterPeriodEnd":<positive integer>}'
+
+const CHAINS: Readonly<Record<NetworkKey, Chain>> = {
+  "base-sepolia": "BaseSepolia",
+  "base-mainnet": "BaseMainnet",
+  "solana-devnet": "SolanaDevnet",
+  "solana-testnet": "SolanaTestnet",
+  "solana-mainnet": "SolanaMainnet",
+  "robinhood-testnet": "RobinhoodTestnet",
+  "robinhood-mainnet": "RobinhoodMainnet",
+  "ethereum-sepolia": "EthereumSepolia",
+  ethereum: "EthereumMainnet",
+}
+
+export function chainOfId(chainId: bigint): Chain | undefined {
+  for (const key of Object.keys(CHAINS) as NetworkKey[]) {
+    const facts = NETWORKS[key]
+    if (facts.family === "evm" && widen(facts.chainId) === chainId) return CHAINS[key]
+  }
+  return undefined
+}
+
+function invalid(message: string) {
+  return new KeeperConfigInvalid({ message })
+}
+
+effect function budgetOf(text: GasBudgetText) {
+  const values: bigint[] = []
+  for (const key of ["perTransaction", "perDay", "additionalFeeReserve"] as const) {
+    const value = text[key]
+    const parsed = decimal(value)
+    if (parsed === undefined) throw invalid(`Invalid gas budget ${key}`)
+    if (parsed > MAX_EXACT) throw invalid(`Gas budget ${key} exceeds the keeper's exact range`)
+    values.push(parsed)
+  }
+  const [perTransaction = 0n, perDay = 0n, additionalFeeReserve = 0n] = values
+  if (!positiveBudgetFits(perTransaction, perDay)) throw invalid("Daily gas budget must cover one positive transaction budget")
+  return { perTransaction, perDay, additionalFeeReserve } satisfies GasBudget
+}
+
+function scheduleOf(text: ScheduleText | undefined): MonthlySchedule | undefined {
+  if (text === undefined) return PRD_MONTHLY_SCHEDULE
+  const firstPeriod = parsePeriod(text.firstPeriod)
+  const cutoff = text.cutoffSecondsAfterPeriodEnd
+  if (firstPeriod === undefined || !Number.isSafeInteger(cutoff) || cutoff <= 0) return undefined
+  return { firstPeriod, cutoffSecondsAfterPeriodEnd: cutoff }
+}
+
+export function monthlyCutoff(schedule: MonthlySchedule, period: Period): number | undefined {
+  return period < schedule.firstPeriod ? undefined : periodEndSeconds(period) + schedule.cutoffSecondsAfterPeriodEnd
+}
+
+function isLoopback(text: string) {
+  const parsed = URL.parse(text)
+  return parsed !== null && (parsed.protocol === "http:" || parsed.protocol === "https:") && LOOPBACK.includes(parsed.hostname)
+}
+
+effect function originOf(text: string, localChain: boolean) {
+  const origin = URL.parse(text)
+  if (origin === null) throw invalid("Public registry requires HTTPS")
+  if (origin.protocol !== "https:" && !(localChain && origin.protocol === "http:" && LOOPBACK.includes(origin.hostname))) throw invalid("Public registry requires HTTPS")
+  if (origin.pathname !== "/" || origin.username !== "" || origin.password !== "" || origin.search !== "" || origin.hash !== "") throw invalid("Use an API origin, not a path or credentials")
+  return origin.origin
+}
+
+export function overrideKind(text: string | undefined): OverrideKind {
+  if (text === undefined) return "AbsentOverride"
+  if (text.trim() === "") return "EmptyOverride"
+  const parsed = URL.parse(text)
+  if (parsed === null) return "MalformedOverride"
+  return parsed.protocol === "https:" ? "HttpsOverride" : "InsecureOverride"
+}
+
+export effect function keeperConfig(text: string | undefined, override: string | undefined) {
+  if (text === undefined) throw invalid("Operator configuration unavailable")
+  const raw = Effect.try(() => JSON.parse(text) as unknown) catch effect () => { throw invalid("Operator configuration must be valid JSON") }
+  const operator = Schema.decodeUnknownEffect(OperatorConfiguration)(raw, { onExcessProperty: "error" }) catch effect () => { throw invalid("Operator configuration has invalid fields") }
+  if (!isNetworkKey(operator.network)) throw invalid("Choose a reviewed network")
+  const facts = NETWORKS[operator.network]
+  if (facts.family !== "evm") throw invalid("Solana keeper runs are not available; choose a reviewed EVM network")
+  const signer = /^0x[0-9a-fA-F]{40}$/u.test(operator.signer) ? evmAddress(operator.signer.toLowerCase()) : undefined
+  if (signer === undefined) throw invalid("Invalid operator EVM address")
+  const gas = try budgetOf(operator.gas)
+  if (!Number.isSafeInteger(operator.perRun) || operator.perRun < 1 || operator.projectIds.length === 0 || new Set(operator.projectIds).size !== operator.projectIds.length)
+    throw invalid("Select projects and a positive per-run bound")
+  const kind = overrideKind(override)
+  if (kind !== "AbsentOverride" && kind !== "HttpsOverride") throw invalid("Operator RPC override must be a valid HTTPS URL")
+  const rpcUrl = kind === "HttpsOverride" && override !== undefined ? override : operator.rpcUrl
+  const schedule = scheduleOf(operator.monthlySchedule)
+  if (schedule === undefined) throw invalid(SCHEDULE_INVALID)
+  return {
+    apiOrigin: try originOf(operator.apiOrigin, isLoopback(rpcUrl)),
+    network: operator.network,
+    chain: CHAINS[operator.network],
+    chainId: widen(facts.chainId),
+    base: facts.chain === "base",
+    projectIds: operator.projectIds,
+    signer,
+    rpcUrl: Redacted.make(rpcUrl),
+    overridden: kind === "HttpsOverride",
+    gas,
+    perRun: operator.perRun,
+    replacementActivated: operator.replacementActivated !== false,
+    schedule,
+  } satisfies KeeperConfig
+}
+
+export function keeperMode(text: string | undefined): KeeperMode {
+  const value = text ?? "off"
+  if (value === "off") return "Off"
+  if (value === "dry_run") return "DryRun"
+  if (value === "execute") return "Execute"
+  return "InvalidMode"
+}
+
+export function modeLabel(mode: KeeperMode): "off" | "dry_run" | "execute" {
+  return mode === "Execute" ? "execute" : mode === "DryRun" ? "dry_run" : "off"
+}
+
+export function commandModeLabel(mode: KeeperMode): "dry-run" | "execute" {
+  return mode === "Execute" ? "execute" : "dry-run"
+}
+
+export function identityOf(config: KeeperConfig): string {
+  return JSON.stringify([config.apiOrigin, config.network, config.signer])
+}
+
+export const CONFIGURED_REGISTRY = 1
+export const OTHER_REGISTRY = 2
+
+export function journalRegistry(stored: unknown, config: KeeperConfig | undefined): number {
+  if (stored === undefined) return 0
+  return config !== undefined && stored === identityOf(config) ? CONFIGURED_REGISTRY : OTHER_REGISTRY
+}
+
+export function modelConfiguration(mode: KeeperMode, config: KeeperConfig | undefined, gasLimit: number): Configuration {
+  if (config === undefined) return { ...offConfiguration, mode, configValid: false }
+  return {
+    mode,
+    configValid: true,
+    registry: CONFIGURED_REGISTRY,
+    projectSelection: config.projectIds.length,
+    replacementActivated: config.replacementActivated,
+    feeCeiling: Number(REPLACEMENT_FEE_CEILING),
+    gasLimit,
+    transactionCap: Number(config.gas.perTransaction),
+    dayCap: Number(config.gas.perDay),
+    additionalFeeReserve: Number(config.gas.additionalFeeReserve),
+  }
+}

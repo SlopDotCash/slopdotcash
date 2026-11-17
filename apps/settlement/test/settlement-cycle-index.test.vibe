@@ -1,0 +1,86 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { cycleIndex } from "../src/programs/cycleIndex.vibe"
+
+const repositoryCycles = new URL("../../../cycles", import.meta.url).pathname
+const firstPublication = "2026-11-17T00:00:00.000Z"
+const secondPublication = "2026-11-18T00:00:00.000Z"
+
+function indexBytes(generatedAt: string) {
+  return `{\n  "schemaVersion": "1",\n  "generatedAt": "${generatedAt}",\n  "cycles": []\n}\n`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function outcomeOf(args: ReadonlyArray<string>) {
+  const outcome = try exit(cycleIndex(args))
+  return Exit.isSuccess(outcome) ? "published" : String((Cause.squash(outcome.cause) as { readonly _tag?: string })._tag)
+}
+
+it.effect('The cycle index of the committed cycle history is byte-identical to the old indexer and a check finds stale output (spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized")', () => effect {
+  provide NodeServices.layer {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const site = try fs.makeTempDirectoryScoped()
+    const out = files.join(site, "data", "cycles")
+    const published = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--generated-at", firstPublication])
+    const text = try fs.readFileString(files.join(out, "index.json"))
+    const tree = [...(try fs.readDirectory(out))].sort()
+    const beside = [...(try fs.readDirectory(files.join(site, "data")))].sort()
+    const fresh = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--generated-at", secondPublication, "--check"])
+    try fs.remove(files.join(out, "index.json"))
+    const missing = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--check"])
+    const usage = try outcomeOf(["--cycles", repositoryCycles])
+    try same({ published, text, tree, beside, fresh, missing, usage }, {
+      published: "published",
+      text: indexBytes(firstPublication),
+      tree: ["index.json"],
+      beside: ["cycles"],
+      fresh: "published",
+      missing: "CycleIndexStale",
+      usage: "CycleIndexArguments",
+    })
+  }
+})
+
+it.effect('A cycle that cannot be validated fails the whole publication, and a retained lock refuses until it is recovered, leaving the previous output intact (spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized")', () => effect {
+  provide NodeServices.layer {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const site = try fs.makeTempDirectoryScoped()
+    const out = files.join(site, "data", "cycles")
+    const history = files.join(site, "cycles")
+    const before = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--generated-at", firstPublication])
+    try fs.makeDirectory(files.join(history, "eliza", "2026-09"), { recursive: true })
+    try fs.writeFileString(files.join(history, "README.md"), "history\n")
+    try fs.writeFileString(files.join(history, "eliza", "2026-09", "proposal.json"), "{}\n")
+    const unvalidated = try outcomeOf(["--cycles", history, "--out", out, "--generated-at", secondPublication])
+    const afterUnvalidated = try fs.readFileString(files.join(out, "index.json"))
+    try fs.remove(files.join(history, "eliza"), { recursive: true })
+    try fs.writeFileString(files.join(history, "notes.txt"), "not a project\n")
+    const stray = try outcomeOf(["--cycles", history, "--out", out, "--generated-at", secondPublication])
+    const lock = `${out}.publication-lock`
+    try fs.makeDirectory(lock)
+    const locked = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--generated-at", secondPublication])
+    const afterLocked = try fs.readFileString(files.join(out, "index.json"))
+    const lockKept = try fs.exists(lock)
+    try fs.remove(lock)
+    const recovered = try outcomeOf(["--cycles", repositoryCycles, "--out", out, "--generated-at", secondPublication])
+    const afterRecovery = try fs.readFileString(files.join(out, "index.json"))
+    const beside = [...(try fs.readDirectory(files.join(site, "data")))].sort()
+    try same({ before, unvalidated, afterUnvalidated, stray, locked, afterLocked, lockKept, recovered, afterRecovery, beside }, {
+      before: "published",
+      unvalidated: "CycleIndexRefused",
+      afterUnvalidated: indexBytes(firstPublication),
+      stray: "CycleIndexRefused",
+      locked: "PublicationLocked",
+      afterLocked: indexBytes(firstPublication),
+      lockKept: true,
+      recovered: "published",
+      afterRecovery: indexBytes(secondPublication),
+      beside: ["cycles"],
+    })
+  }
+})

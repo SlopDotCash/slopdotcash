@@ -1,0 +1,448 @@
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type Actor, Refused } from "@repo/platform/http"
+import type { Refusal } from "@repo/platform/route"
+import { Conflict } from "@repo/platform/stored"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { type AuthorityFact, type Event, type Monthly, Rejected, belowProposal, canAdjust, canCut, canFinalize, canObserveSettings, cutNoticeElapsed, cutNoticeSeconds, cutReasonMax, cutReasonMin, cutWindowOpen, cutoff, financialTermsSame, hasActor, manages, monthEnd, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { excludedIn } from "../../gen/settlement__payoutExclusions.effect.vibe"
+import type { SettingsAuthority } from "../../gen/settlement__monthlySettings.effect.vibe"
+import { type MonthlyAwardState, type MonthlyAwardView, type MonthlyCut, type MonthlyOwnerView } from "../client/monthly.vibe"
+import { getPaymentsProjectsByIdMonthlyByPeriod as viewRows, getPaymentsProjectsByIdMonthlyByPeriodCuts as cutRows, postPaymentsProjectsByIdMonthlyByPeriodAllocations as changeRows, postPaymentsProjectsByIdMonthlyByPeriodFinalize as finalizeRows, postPaymentsProjectsByIdMonthlySettings as settingRows } from "../client/refusals.vibe"
+import { formatBaseUnits, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, automaticCutoffAt, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
+import { chainAwards, holdsAward } from "../payments/chainAwards.vibe"
+import { fundMonth } from "./coordinator.vibe"
+import { type MonthFacts, type MonthKey, type MonthRows, type MonthlyManifest, CutReasonMissing, ManifestInvalid, MonthlyFacts, ProjectChanged, amountOf, manifestOf, readRows, revisionFence, sendMonth, servedDeploymentOf, stateOf } from "./store.vibe"
+import { loadSettings, setAutomatic } from "./settingsStore.vibe"
+
+export interface ParityRow {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+function refusalOf(row: ParityRow, message?: string): Refusal {
+  return { status: row.status, code: row.error, message: message ?? row.message ?? "", headers: row.headers }
+}
+
+export function refused(row: ParityRow, message?: string) {
+  return new Refused(refusalOf(row, message))
+}
+
+const privateHeaders = viewRows.projectUnavailable.headers
+
+export const authorityRefusals = {
+  maintainerUnverified: { status: 403, error: "owner_required", message: "Current GitHub maintainer authority could not be verified.", headers: privateHeaders },
+  ownerRequired: { status: 403, error: "owner_required", message: "Only the project steward or a repository admin can change monthly awards.", headers: privateHeaders },
+  githubUnavailable: { status: 503, error: "github_unavailable", message: "GitHub authority could not be checked. Retry.", headers: privateHeaders },
+  stewardRequired: { status: 403, error: "owner_required", message: "Only the current project steward can manage this project's awards.", headers: privateHeaders },
+} satisfies Readonly<Record<string, ParityRow>>
+
+export interface Authorized {
+  readonly project: ProjectView
+  readonly facts: MonthFacts
+  readonly manifest: MonthlyManifest
+  readonly fact: AuthorityFact
+  readonly owner: boolean
+}
+
+type Level = "maintainer" | "owner"
+
+export effect function periodOf(text: string) {
+  const period = /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(text) ? parsePeriod(text) : undefined
+  if (period === undefined) throw refused(viewRows.notFoundPrivateNoStore)
+  return period
+}
+
+function projectPattern(projectId: string) {
+  return /^[a-z0-9][a-z0-9-]*$/u.test(projectId)
+}
+
+effect function currentProject(projectId: string) {
+  if (!projectPattern(projectId)) throw refused(viewRows.notFoundPrivateNoStore)
+  const project = try (try Registry).project(projectId)
+  const facts = try (try MonthlyFacts).of(projectId)
+  const current = facts.current
+  if (project === undefined || current === undefined) throw refused(viewRows.projectUnavailable)
+  const manifest = try manifestOf(projectId, current.manifest)
+  if (manifest.escrow === undefined) throw refused(viewRows.projectUnavailable)
+  return { project, facts, manifest }
+}
+
+schema StewardGithub { readonly type: string }
+schema StewardIdentity { readonly github: StewardGithub }
+schema StewardFields { readonly steward: StewardIdentity }
+
+effect function stewardTypeOf(projectId: string, manifestText: string) {
+  const parsed = Effect.try(() => JSON.parse(manifestText) as unknown) catch () => undefined
+  const decoded = Schema.decodeUnknownEffect(StewardFields)(parsed) catch effect () => { throw new ManifestInvalid({ projectId, issue: "the manifest names no GitHub steward type" }) }
+  return decoded.steward.github.type
+}
+
+export effect function authorize(projectId: string, actor: Actor, level: Level) {
+  const { project, facts, manifest } = try currentProject(projectId)
+  if ((try stewardTypeOf(projectId, facts.current?.manifest ?? "")) === "User" && actor.githubId !== project.stewardGithubId) throw refused(authorityRefusals.stewardRequired)
+  const repositoryId = project.repositories[0]?.id ?? ""
+  const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused(authorityRefusals.githubUnavailable)
+  if (read.permission !== "PermissionVerified" || read.installation !== "Installed") throw refused(authorityRefusals.maintainerUnverified)
+  const owner = project.stewardGithubId === actor.githubId
+  if (level === "owner" && !owner) throw refused(authorityRefusals.ownerRequired)
+  const standing = try (try Restrictions).account(actor.githubId)
+  const fact: AuthorityFact = { actor: Number(actor.githubId), role: owner ? "Steward" : "Writer", banned: standing.banned, revision: project.revision }
+  return { project, facts, manifest, fact, owner } satisfies Authorized
+}
+
+function settingsAuthority(authorized: Authorized): SettingsAuthority {
+  const { fact } = authorized
+  return { actor: fact.actor, role: authorized.owner ? "SettingsSteward" : "SettingsWriter", banned: fact.banned, revision: fact.revision }
+}
+
+export effect function unchanged(project: ProjectView) {
+  const current = try (try Registry).project(project.projectId)
+  if (current === undefined || current.revision !== project.revision || current.manifestSha256 !== project.manifestSha256) throw refused(viewRows.projectChanged)
+}
+
+effect function participationGuards(authorized: Authorized) {
+  const current = authorized.facts.current
+  const fence = current === undefined ? sql`0` : try revisionFence(authorized.project.projectId, current)
+  const guards: Statement[] = [
+    try (try Restrictions).fence({ githubId: String(authorized.fact.actor) }),
+    sql`SELECT CASE WHEN ${fence} THEN 1 ELSE json('project changed') END AS current`,
+  ]
+  return guards
+}
+
+effect function utcMinute(seconds: number) {
+  const iso = try isoAt(seconds * 1000)
+  return `${iso.slice(0, 16).replace("T", " ")} UTC`
+}
+
+const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+function monthName(period: Period) {
+  const text = formatPeriod(period)
+  return `${monthNames[Number(text.slice(5, 7)) - 1] ?? text} ${text.slice(0, 4)}`
+}
+
+schema RewardAsset { readonly kind: "native" | "stablecoin" | "token"; readonly decimals: number; readonly symbol: string }
+schema RewardFields { readonly rewardAsset?: RewardAsset; readonly name?: string }
+
+effect function rewardFieldsOf(manifestText: string) {
+  const parsed = Effect.try(() => JSON.parse(manifestText) as unknown) catch () => undefined
+  const decoded = Schema.decodeUnknownEffect(RewardFields)(parsed) catch () => undefined
+  const empty: RewardFields = {}
+  return decoded ?? empty
+}
+
+effect function rewardText(value: bigint, asset: RewardAsset | undefined) {
+  if (asset === undefined || asset.kind === "stablecoin") {
+    if (value % 1_000_000n === 0n) return `$${try orDie(Effect.try(() => formatBaseUnits({ value: value / 1_000_000n, decimals: 0 })))}`
+    const cents = (value + 5_000n) / 10_000n
+    return `$${try orDie(Effect.try(() => formatBaseUnits({ value: cents / 100n, decimals: 0 })))}.${(cents % 100n).toString().padStart(2, "0")}`
+  }
+  const plain = asset.symbol.replace(/^\$+/u, "")
+  const amount = try orDie(Effect.try(() => formatBaseUnits({ value, decimals: asset.decimals })))
+  return `${amount} ${asset.kind === "token" ? `$${plain}` : plain}`
+}
+
+interface CutNotice {
+  readonly key: MonthKey
+  readonly manifestText: string
+  readonly proposed: bigint
+  readonly gross: bigint
+  readonly reason: string
+  readonly cutAt: number
+  readonly automatic: boolean
+}
+
+effect function cutNoticeText(notice: CutNotice) {
+  const fields = try rewardFieldsOf(notice.manifestText)
+  const asset = fields.rewardAsset
+  const earliest = try utcMinute(notice.cutAt + cutNoticeSeconds)
+  const cutoffAt = automaticCutoffAt(notice.key.period)
+  const locks = notice.automatic && cutoffAt !== undefined
+    ? `The month locks at ${try utcMinute(cutoffAt)}, or earlier if the owner finalizes it, but not before ${earliest}.`
+    : `The month locks when the owner finalizes it, not before ${earliest}.`
+  return `${fields.name ?? notice.key.projectId}, ${monthName(notice.key.period)}: the owner set your amount to ${try rewardText(notice.gross, asset)}. The proposed amount was ${try rewardText(notice.proposed, asset)}. Owner's reason: ${notice.reason} ${locks}`
+}
+
+effect function cutNoticeStatements(notice: CutNotice, actor: number, sequence: number) {
+  const period = formatPeriod(notice.key.period)
+  const projectId = notice.key.projectId
+  return try (try Notices).statements({
+    notices: [{
+      eventKey: `monthly-cut:${projectId}:${period}:${sequence}`,
+      recipientGithubId: String(actor),
+      kind: "PayoutException",
+      subject: projectId,
+      detail: try cutNoticeText(notice),
+      actionPath: `/cycles/${projectId}/${period}`,
+      sourceAt: try isoAt(notice.cutAt * 1000),
+    }],
+    onlyIf: sql`EXISTS (SELECT 1 FROM monthly_allocation_cut_reasons WHERE project_id = ${projectId} AND period = ${period} AND sequence = ${sequence})`,
+  })
+}
+
+export interface Loaded {
+  readonly key: MonthKey
+  readonly rows: MonthRows
+  readonly state: Monthly
+}
+
+export effect function loadedMonth(key: MonthKey, facts: MonthFacts) {
+  const found = try readRows(key)
+  const base = found.base
+  if (base !== undefined && found.proposed.length !== base.recipient_count) throw refused(viewRows.proposalIncomplete)
+  return { key, rows: found, state: try stateOf(key, found, facts, try nowSeconds()) } satisfies Loaded
+}
+
+schema RunSnapshot { readonly snapshot: string; readonly snapshot_sha256: string; readonly total_gross_base: string }
+schema SnapshotAward { readonly githubUserId: string; readonly login: string; readonly grossBase: string; readonly feeBase: string; readonly netBase: string; readonly sourceDigest: string }
+schema SnapshotBody { readonly asset: string; readonly awards: ReadonlyArray<SnapshotAward> }
+schema ExcludedRow { readonly source_digest: string }
+schema VaultAssetRow { readonly network: string; readonly asset_address: string; readonly asset_decimals: number }
+
+effect function runView(loaded: Loaded) {
+  const run = loaded.rows.run
+  if (run === undefined) return null
+  const { projectId, period } = loaded.key
+  const stored = try first(RunSnapshot, sql`SELECT snapshot, snapshot_sha256, total_gross_base FROM monthly_payment_runs WHERE project_id = ${projectId} AND period = ${formatPeriod(period)}`)
+  if (stored === undefined) throw refused(viewRows.paymentsUnavailable)
+  const parsed = Effect.try(() => JSON.parse(stored.snapshot) as unknown) catch () => undefined
+  const snapshot = Schema.decodeUnknownEffect(SnapshotBody)(parsed) catch effect () => { throw refused(viewRows.paymentsUnavailable) }
+  const chain = try chainAwards(run.network, run.vault)
+  const excluded = new Set((try rows(ExcludedRow, sql`SELECT source_digest FROM monthly_payment_exclusions WHERE network = ${run.network} AND vault = ${run.vault}`)).map((row) => row.source_digest))
+  const awards: MonthlyAwardView[] = []
+  let total = 0n
+  for (const award of snapshot.awards) {
+    const held = chain.get(award.sourceDigest)
+    const state: MonthlyAwardState = held !== undefined ? (holdsAward(held, award) ? held.state : "conflict") : excluded.has(award.sourceDigest) ? "excluded" : run.obligations_created_at !== null ? "awaiting-reservation" : "underfunded"
+    const out = state === "excluded"
+    if (!out) total += parseBaseUnits(award.grossBase) ?? 0n
+    awards.push({ githubUserId: award.githubUserId, login: award.login, grossBase: out ? "0" : award.grossBase, feeBase: out ? "0" : award.feeBase, netBase: out ? "0" : award.netBase, state })
+  }
+  return { trigger: run.trigger, frozenAt: run.frozen_at, snapshotSha256: stored.snapshot_sha256, totalGrossBase: total.toString(), network: run.network, vault: run.vault, funded: run.obligations_created_at !== null, awards }
+}
+
+effect function rawDeployment(manifestText: string, served: ReadonlySet<string>) {
+  const parsed = Effect.try(() => JSON.parse(manifestText) as unknown) catch () => undefined
+  const escrow = typeof parsed === "object" && parsed !== null && "escrow" in parsed ? parsed.escrow : undefined
+  const deployments = typeof escrow === "object" && escrow !== null && "deployments" in escrow && Array.isArray(escrow.deployments) ? escrow.deployments as ReadonlyArray<unknown> : []
+  const matches = deployments.filter((entry) => typeof entry === "object" && entry !== null && "network" in entry && typeof entry.network === "string" && served.has(entry.network))
+  const [only] = matches
+  return matches.length === 1 && only !== undefined ? only : null
+}
+
+export effect function monthView(authorized: Authorized, loaded: Loaded) {
+  const { project, facts, manifest } = authorized
+  const deployment = servedDeploymentOf(manifest, facts.served)
+  const vault = deployment === undefined ? undefined : try first(VaultAssetRow, sql`SELECT network, asset_address, asset_decimals FROM vault_snapshots WHERE project_id = ${project.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`)
+  const fields = try rewardFieldsOf(facts.current?.manifest ?? "")
+  const { state, rows: monthRows } = loaded
+  const base = monthRows.base
+  const shares = new Map(state.shares.map((share) => [String(share.actor), fromAmount(share.amount).toString()]))
+  const latestCut = monthRows.cuts.reduce<string | null>((latest, row) => latest === null || row.created_at > latest ? row.created_at : latest, null)
+  const cutoffAt = automaticCutoffAt(loaded.key.period)
+  return {
+    projectId: project.projectId,
+    period: formatPeriod(loaded.key.period),
+    manifestSha256: project.manifestSha256,
+    automatic: state.automatic,
+    canManage: authorized.owner,
+    cutoffAt: cutoffAt === undefined ? null : try isoAt(cutoffAt * 1000),
+    deployment: facts.current === undefined ? null : try rawDeployment(facts.current.manifest, facts.served),
+    asset: vault === undefined ? null : { network: vault.network, assetAddress: vault.asset_address, assetDecimals: vault.asset_decimals, symbol: fields.rewardAsset?.symbol ?? null },
+    proposal: base === undefined ? null : {
+      capBase: base.cap_base,
+      allocationSequence: state.sequence,
+      allocations: monthRows.proposed.map((row) => ({ githubUserId: row.github_user_id, login: row.github_login, grossBase: shares.get(row.github_user_id) ?? row.gross_base, sourceDigest: row.source_digest, proposedGrossBase: row.gross_base })),
+      latestCutAt: latestCut,
+    },
+    run: try runView(loaded),
+  } satisfies MonthlyOwnerView
+}
+
+export effect function ownerView(projectId: string, periodText: string, actor: Actor) {
+  const period = try periodOf(periodText)
+  const authorized = try authorize(projectId, actor, "maintainer")
+  const view = try monthView(authorized, try loadedMonth({ projectId, period }, authorized.facts))
+  try unchanged(authorized.project)
+  return view
+}
+
+export interface ChangeRequest {
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly expectedSequence: number
+  readonly reason?: string
+}
+
+effect function changeRefusal(state: Monthly, target: number, amount: ReturnType<typeof amountOf>, cutting: boolean, request: ChangeRequest, fact: AuthorityFact) {
+  if (fact.banned) return refused(changeRows.accountBanned)
+  if (!manages(fact, state)) return refused(fact.revision !== state.eligibility.revision ? changeRows.projectChanged : authorityRefusals.ownerRequired)
+  if (request.expectedSequence !== state.sequence) return refused(changeRows.allocationsChanged)
+  if (target === fact.actor) return new Refused({ ...refusalOf(changeRows.invalidAllocation, "You cannot change your own allocation."), status: 403 })
+  if (state.automatic && state.now >= cutoff(state)) return refused(changeRows.cutoffPassed)
+  if (cutting && !cutWindowOpen(state)) {
+    const closes = try utcMinute(cutoff(state) - cutNoticeSeconds)
+    return refused(changeRows.cutNoticeWindowPrivateNoStore, `A contributor gets 24 hours of notice before a cut takes effect. With automatic finalization on, cuts close at ${closes}, 24 hours before the cutoff.`)
+  }
+  const gross = fromAmount(amount)
+  if (gross > 0n && excludedIn(state.exclusions, target, state.period)) return refused(changeRows.invalidAllocation, "This person has a payout exclusion for this month.")
+  if (!hasActor(state.shares, target)) return refused(changeRows.invalidAllocation, "This person has no allocation this month.")
+  const total = replaceShare(state.shares, target, amount).reduce((sum, share) => sum + fromAmount(share.amount), 0n)
+  if (total > fromAmount(state.cap)) return refused(changeRows.invalidAllocation, "The month's allocations would exceed its monthly amount.")
+  return refused(changeRows.invalidAllocation, "The amount exceeds the token range of the vault network.")
+}
+
+effect function eventFor(state: Monthly, request: ChangeRequest, fact: AuthorityFact) {
+  const gross = /^(0|[1-9][0-9]{0,77})$/u.test(request.grossBase) ? parseBaseUnits(request.grossBase) : undefined
+  const target = /^[1-9][0-9]{0,19}$/u.test(request.githubUserId) ? Number(request.githubUserId) : 0
+  if (gross === undefined || !Number.isSafeInteger(target) || target === 0) throw refused(changeRows.invalidAllocation, "Enter a whole number of token base units.")
+  const amount = amountOf(gross)
+  const cutting = belowProposal(state, target, amount)
+  const reason = (request.reason ?? "").trim()
+  if (cutting && (reason.length < cutReasonMin || reason.length > cutReasonMax)) throw refused(changeRows.cutReasonRequired)
+  const event: Event = cutting
+    ? { type: "cut", actor: target, amount, reasonLength: reason.length, expectedSequence: request.expectedSequence, fact }
+    : { type: "adjust", actor: target, amount, expectedSequence: request.expectedSequence, fact }
+  const allowed = event.type === "cut" ? canCut(state, target, amount, reason.length, request.expectedSequence, fact) : canAdjust(state, target, amount, request.expectedSequence, fact)
+  if (!allowed) {
+    const refusal = try changeRefusal(state, target, amount, cutting, request, fact)
+    throw refusal
+  }
+  return { event, reason, gross, target }
+}
+
+effect function afterRace(authorized: Authorized, fallback: ParityRow) {
+  const standing = try (try Restrictions).account(String(authorized.fact.actor))
+  if (standing.banned) return refused(changeRows.accountBanned)
+  const current = try (try Registry).project(authorized.project.projectId)
+  if (current === undefined) return refused(changeRows.paymentRegistryUnavailable)
+  if (current.revision !== authorized.project.revision || current.manifestSha256 !== authorized.project.manifestSha256) return refused(changeRows.projectChanged)
+  return refused(fallback)
+}
+
+export effect function changeAllocation(projectId: string, periodText: string, actor: Actor, request: ChangeRequest) {
+  const period = try periodOf(periodText)
+  if (!Number.isSafeInteger(request.expectedSequence) || request.expectedSequence < 0) throw refused(changeRows.invalidAllocation)
+  const authorized = try authorize(projectId, actor, "owner")
+  if (authorized.fact.banned) throw refused(changeRows.accountBanned)
+  const key = { projectId, period }
+  const loaded = try loadedMonth(key, authorized.facts)
+  if (loaded.rows.run !== undefined) throw refused(changeRows.monthFrozen)
+  if (loaded.rows.base === undefined) throw refused(changeRows.proposalUnavailable)
+  const { event, reason, gross, target } = try eventFor(loaded.state, request, authorized.fact)
+  const guards = try participationGuards(authorized)
+  const proposed = loaded.rows.proposed.find((row) => row.github_user_id === String(target))
+  const notices = event.type === "cut"
+    ? try cutNoticeStatements({ key, manifestText: authorized.facts.current?.manifest ?? "", proposed: parseBaseUnits(proposed?.gross_base ?? "0") ?? 0n, gross, reason, cutAt: loaded.state.now, automatic: loaded.state.automatic }, target, loaded.state.sequence + 1)
+    : []
+  sendMonth(key, event, { reason: event.type === "cut" ? reason : undefined, alongside: [...guards, ...notices] }) catch effect (error) => match (error) {
+    when Rejected: throw refused(changeRows.allocationsChanged);
+    when Conflict: throw (try afterRace(authorized, changeRows.allocationsChanged));
+    when CutReasonMissing: throw refused(changeRows.cutReasonRequired);
+    default: throw error;
+  }
+  return try monthView(authorized, try loadedMonth(key, authorized.facts))
+}
+
+effect function finalizeRefusal(state: Monthly, expectedSequence: number, fact: AuthorityFact) {
+  if (fact.banned) return refused(finalizeRows.accountBanned)
+  if (!manages(fact, state)) return refused(fact.revision !== state.eligibility.revision ? finalizeRows.projectChanged : authorityRefusals.ownerRequired)
+  if (!financialTermsSame(state.revision, state.currentRevision)) {
+    const moved = state.revision.vault !== state.currentRevision.vault || state.revision.asset !== state.currentRevision.asset
+    return refused(moved ? finalizeRows.financialPolicyChangedTheProjectSVault : finalizeRows.financialPolicyChanged)
+  }
+  if (!cutNoticeElapsed(state)) {
+    const from = try utcMinute(state.latestCutAt + cutNoticeSeconds)
+    return refused(finalizeRows.cutNoticePending, `A contributor gets 24 hours of notice after a cut. You can finalize this month from ${from}.`)
+  }
+  if (expectedSequence !== state.sequence) return refused(finalizeRows.allocationsChangedTheAllocationsChangedReload)
+  return refused(finalizeRows.allocationsChangedTheAllocationsChangedWhile)
+}
+
+export effect function finalizeMonth(projectId: string, periodText: string, actor: Actor, expectedSequence: number) {
+  const period = try periodOf(periodText)
+  if (!Number.isSafeInteger(expectedSequence) || expectedSequence < 0) throw refused(finalizeRows.invalidFinalization)
+  const authorized = try authorize(projectId, actor, "owner")
+  const eligibility = authorized.facts.eligibility
+  if (!eligibility.active || eligibility.paused || eligibility.restricted || eligibility.retired) throw refused(finalizeRows.projectRestrictedThisProjectIsRestrictedItsAwardsCannot)
+  if (!eligibility.networkServed) throw refused(finalizeRows.vaultNotServedAwardProcessingIsNot)
+  const key = { projectId, period }
+  const loaded = try loadedMonth(key, authorized.facts)
+  if (loaded.rows.run === undefined) {
+    const state = loaded.state
+    if (state.now < monthEnd(state.period)) throw refused(finalizeRows.monthOpen)
+    if (loaded.rows.base === undefined) throw refused(finalizeRows.proposalUnavailable)
+    if (!canFinalize(state, expectedSequence, authorized.fact)) {
+      const refusal = try finalizeRefusal(state, expectedSequence, authorized.fact)
+      throw refusal
+    }
+    const raced = sendMonth(key, { type: "finalize", expectedSequence, fact: authorized.fact }) catch effect (error) => match (error) {
+      when Rejected: "raced";
+      when ProjectChanged: "raced";
+      when Conflict: "raced";
+      default: throw error;
+    }
+    if (raced === "raced" && (try readRows(key)).run === undefined) {
+      const refusal = try afterRace(authorized, finalizeRows.allocationsChangedTheAllocationsChangedWhile)
+      throw refusal
+    }
+  }
+  try fundMonth(key)
+  try unchanged(authorized.project)
+  return try monthView(authorized, try loadedMonth(key, authorized.facts))
+}
+
+schema OpenCutRow { readonly period: string }
+
+effect function noticeBlocks(projectId: string, facts: MonthFacts, nextSequence: number) {
+  const open = try rows(OpenCutRow, sql`SELECT DISTINCT x.period FROM monthly_allocation_cut_reasons x WHERE x.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = x.project_id AND r.period = x.period) ORDER BY x.period`)
+  for (const row of open) {
+    const period = parsePeriod(row.period)
+    if (period === undefined) continue
+    const { state } = try loadedMonth({ projectId, period }, facts)
+    if (!canObserveSettings(state, true, nextSequence)) return { period: row.period, noticeEnds: state.latestCutAt + cutNoticeSeconds }
+  }
+  return undefined
+}
+
+export effect function setMonthlyAutomatic(projectId: string, actor: Actor, automatic: boolean) {
+  if (!projectPattern(projectId)) throw refused(settingRows.notFoundPrivateNoStore)
+  const expectedSequence = (try loadSettings(projectId)).state.sequence
+  const authorized = try authorize(projectId, actor, "owner")
+  if (authorized.fact.banned) throw refused(settingRows.accountBanned)
+  if (automatic) {
+    const blocked = try noticeBlocks(projectId, authorized.facts, expectedSequence + 1)
+    if (blocked !== undefined) throw refused(settingRows.cutNoticeWindow, `A cut in ${blocked.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${try utcMinute(blocked.noticeEnds)}, or finalize the month yourself then.`)
+  }
+  const next = setAutomatic(projectId, { automatic, expectedSequence, authority: settingsAuthority(authorized) }) catch effect (error) => match (error) {
+    when Conflict: throw (try afterRace(authorized, settingRows.settingChanged));
+    when ProjectChanged: throw (try afterRace(authorized, settingRows.settingChanged));
+    default: throw error;
+  }
+  return { automatic: next.automatic }
+}
+
+export effect function publicCuts(projectId: string, periodText: string) {
+  if (!projectPattern(projectId)) throw refused(cutRows.notFoundPrivateNoStore)
+  const period = /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(periodText) ? parsePeriod(periodText) : undefined
+  if (period === undefined) throw refused(cutRows.notFoundPrivateNoStore)
+  const facts = try (try MonthlyFacts).of(projectId)
+  const { rows: found, state } = try loadedMonth({ projectId, period }, facts)
+  const reasons = new Map(found.cuts.map((row) => [row.sequence, row]))
+  const logins = new Map(found.proposed.map((row) => [row.github_user_id, row.github_login]))
+  const cuts: MonthlyCut[] = []
+  for (const cut of [...state.publicCuts].sort((left, right) => left.at - right.at || left.sequence - right.sequence)) {
+    const row = reasons.get(cut.sequence)
+    if (row === undefined) throw refused(cutRows.paymentsUnavailable)
+    cuts.push({ githubUserId: row.github_user_id, login: logins.get(row.github_user_id) ?? "", proposedGrossBase: row.proposed_gross_base, grossBase: row.gross_base, reason: row.reason, cutAt: row.created_at })
+  }
+  return { projectId, period: formatPeriod(period), cuts }
+}

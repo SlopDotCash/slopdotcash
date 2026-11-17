@@ -1,0 +1,221 @@
+// spec/settlement/monthlySettlement.md, "The month and the vault start independently"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"; spec/settlement/monthlySettlement.md, "An obligation is reserved, paid or conflicted only as the vault's finalized award shows"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import type { Award, Escrow, Network } from "../../gen/settlement__escrow.ts"
+import { initial as unopenedVault } from "../../gen/settlement__escrow.effect.vibe"
+import type { BanExclusion } from "../../gen/settlement__monthly.ts"
+import { type Event, type MonthlySettlement, apply, decodeState } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
+import { formatPeriod } from "../kernels/calendar.ts"
+import { type Chain, NETWORKS, SOLANA_NATIVE_ASSET, EVM_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
+import { chainAwards } from "../payments/chainAwards.vibe"
+import { type Extra, type FundingFacts, type Loaded, type MonthKey, ManifestInvalid, amountOf, manifestOf, readMonth, sendMonth, servedDeploymentOf } from "../monthly/store.vibe"
+
+export interface VaultPlace {
+  readonly network: string
+  readonly vault: string
+}
+
+export interface ChainView {
+  readonly escrow: Escrow
+  readonly headTime: number
+}
+
+export interface Settlement {
+  readonly key: MonthKey
+  readonly loaded: Loaded
+  readonly place: VaultPlace | undefined
+  readonly state: MonthlySettlement
+  readonly earlierUnreserved: bigint
+  readonly bans: ReadonlyArray<BanExclusion>
+  readonly funding: FundingFacts
+}
+
+const networksOfChain: Readonly<Record<Chain, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "RobinhoodChain", solana: "Solana" }
+
+schema SnapshotRow { readonly asset_address: string; readonly asset_decimals: number; readonly free_balance: string | null; readonly block_time: string; readonly observed_at: string }
+schema EarlierRow { readonly gross_base: string }
+schema CountRow { readonly outstanding: number; readonly reserved: number }
+schema BanRow { readonly github_id: string; readonly ban: number }
+
+function seconds(iso: string) {
+  const millis = millisOf(iso)
+  return Number.isFinite(millis) ? Math.floor(millis / 1000) : 0
+}
+
+effect function placeOf(loaded: Loaded) {
+  const run = loaded.rows.run
+  if (run !== undefined) return { network: run.network, vault: run.vault } satisfies VaultPlace
+  const current = loaded.facts.current
+  if (current === undefined) return undefined
+  const deployment = servedDeploymentOf(try manifestOf(loaded.state.project, current.manifest), loaded.facts.served)
+  return deployment === undefined ? undefined : { network: deployment.network, vault: deployment.vault } satisfies VaultPlace
+}
+
+effect function snapshotOf(key: MonthKey, place: VaultPlace) {
+  return try first(SnapshotRow, sql`SELECT asset_address, asset_decimals, free_balance, block_time, observed_at FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${place.network} AND vault = ${place.vault}`)
+}
+
+effect function earlierOf(key: MonthKey, place: VaultPlace) {
+  const found = try rows(EarlierRow, sql`SELECT o.gross_base FROM monthly_payment_obligations o WHERE o.network = ${place.network} AND o.vault = ${place.vault} AND NOT (o.project_id = ${key.projectId} AND o.period = ${formatPeriod(key.period)}) AND NOT EXISTS (SELECT 1 FROM payment_obligations p WHERE p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest)`)
+  let total = 0n
+  for (const row of found) {
+    const gross = parseBaseUnits(row.gross_base)
+    if (gross === undefined) throw new RowMismatch({ text: "monthly obligation", issue: `${row.gross_base} is not base units` })
+    total += gross
+  }
+  return total
+}
+
+effect function bansOf(month: Loaded) {
+  const actors = month.state.shares.filter((share) => fromAmount(share.amount) > 0n).map((share) => String(share.actor))
+  if (actors.length === 0) return []
+  const found = try rows(BanRow, sql`SELECT b.github_id, min(b.rowid) AS ban FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id IN (SELECT value FROM json_each(${JSON.stringify(actors)})) AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) GROUP BY b.github_id ORDER BY b.github_id`)
+  return found.map((row) => ({ actor: Number(row.github_id), ban: row.ban }) satisfies BanExclusion)
+}
+
+effect function countsOf(place: VaultPlace) {
+  const counts = try first(CountRow, sql`SELECT (SELECT count(*) FROM monthly_payment_obligations WHERE network = ${place.network} AND vault = ${place.vault}) AS outstanding, (SELECT count(*) FROM payment_obligations WHERE network = ${place.network} AND vault = ${place.vault}) AS reserved`)
+  return counts ?? { outstanding: 0, reserved: 0 }
+}
+
+interface Holdings {
+  readonly reserved: ReadonlyArray<Award>
+  readonly paidGross: bigint
+  readonly paidFees: bigint
+}
+
+effect function monthHoldings(month: Loaded, place: VaultPlace) {
+  const actors = new Map(month.rows.proposed.map((row) => [row.source_digest, Number(row.github_user_id)]))
+  const chain = try chainAwards(place.network, place.vault)
+  const reserved: Award[] = []
+  let paidGross = 0n
+  let paidFees = 0n
+  for (const [digest, held] of chain) {
+    const owner = actors.get(digest)
+    if (owner === undefined) continue
+    const gross = parseBaseUnits(held.grossBase)
+    const fee = parseBaseUnits(held.feeBase)
+    const actor = Number(held.githubUserId)
+    if (gross === undefined || gross === 0n || !Number.isSafeInteger(actor) || actor <= 0) throw new RowMismatch({ text: "payment obligation", issue: `${digest} does not hold a positive award` })
+    if (fee === undefined || fee > gross) throw new RowMismatch({ text: "payment obligation", issue: `${digest} holds the fee ${held.feeBase}, which is not base units within its gross` })
+    if (held.state === "paid") {
+      paidGross += gross
+      paidFees += fee
+      continue
+    }
+    reserved.push({
+      source: { origin: month.state.project, period: month.state.period, actor: owner },
+      actor,
+      gross: amountOf(gross),
+      fee: amountOf(fee),
+      origin: "ManualAward",
+      period: 0,
+      index: -1,
+      committedAt: 0,
+      paid: false,
+      destination: "",
+      bindingVersion: 0,
+      paidIn: "",
+    })
+  }
+  return { reserved, paidGross, paidFees } satisfies Holdings
+}
+
+function sum(values: ReadonlyArray<bigint>) {
+  return values.reduce((total, value) => total + value, 0n)
+}
+
+schema RunAssetRow { readonly asset: string | null }
+
+effect function frozenAssetOf(key: MonthKey, month: Loaded) {
+  if (month.rows.run === undefined) return undefined
+  const found = try first(RunAssetRow, sql`SELECT json_extract(snapshot, '$.asset') AS asset FROM monthly_payment_runs WHERE project_id = ${key.projectId} AND period = ${formatPeriod(key.period)}`)
+  if (found === undefined || found.asset === null) throw new RowMismatch({ text: "monthly run", issue: "the frozen snapshot names no asset" })
+  return found.asset
+}
+
+effect function vaultOf(key: MonthKey, month: Loaded, place: VaultPlace | undefined) {
+  const unopened = { escrow: unopenedVault, headTime: 0, reading: undefined }
+  if (place === undefined || !isNetworkKey(place.network)) return unopened
+  const snapshot = try snapshotOf(key, place)
+  if (snapshot === undefined) return unopened
+  const frozenAsset = try frozenAssetOf(key, month)
+  if (frozenAsset !== undefined && snapshot.asset_address.toLowerCase() !== frozenAsset.toLowerCase()) return unopened
+  const free = snapshot.free_balance === null ? 0n : parseBaseUnits(snapshot.free_balance)
+  if (free === undefined) throw new RowMismatch({ text: "vault snapshot", issue: `${snapshot.free_balance} is not base units` })
+  const network = NETWORKS[place.network]
+  const holdings = try monthHoldings(month, place)
+  const reserved = sum(holdings.reserved.map((award) => fromAmount(award.gross)))
+  const reservedFees = sum(holdings.reserved.map((award) => fromAmount(award.fee)))
+  const paid = holdings.paidGross
+  const payoutFees = holdings.paidFees
+  const native = snapshot.asset_address === EVM_NATIVE_ASSET || snapshot.asset_address === SOLANA_NATIVE_ASSET
+  const blockTime = seconds(snapshot.block_time)
+  const escrow: Escrow = {
+    ...unopenedVault,
+    deployed: true,
+    vault: place.vault,
+    asset: { network: networksOfChain[network.chain], token: snapshot.asset_address, decimals: snapshot.asset_decimals, native, kind: native ? "Native" : "Classic" },
+    at: { block: 0, index: 0, time: blockTime, transaction: "" },
+    clock: blockTime,
+    deposited: amountOf(free + reserved + paid),
+    held: amountOf(free + reserved),
+    committed: amountOf(reserved),
+    spent: amountOf(paid),
+    free: amountOf(free),
+    reserved: amountOf(reserved),
+    reservedPrincipal: amountOf(reserved - reservedFees),
+    reservedFees: amountOf(reservedFees),
+    paid: amountOf(paid),
+    paidNet: amountOf(paid - payoutFees),
+    payoutFees: amountOf(payoutFees),
+    accruedFees: amountOf(payoutFees),
+    awards: [...holdings.reserved],
+  }
+  const reading = snapshot.free_balance === null ? undefined : { asset: snapshot.asset_address, free: snapshot.free_balance, observedAt: snapshot.observed_at }
+  return { escrow, headTime: seconds(snapshot.observed_at), reading }
+}
+
+export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
+  const loaded = try readMonth(key)
+  const place = try placeOf(loaded)
+  const vault = try vaultOf(key, loaded, place)
+  const counts = place === undefined ? { outstanding: 0, reserved: 0 } : try countsOf(place)
+  const state = try decodeState({ month: loaded.state, escrow: chain?.escrow ?? vault.escrow, headTime: chain?.headTime ?? vault.headTime })
+  return {
+    key,
+    loaded,
+    place,
+    state,
+    earlierUnreserved: place === undefined ? 0n : try earlierOf(key, place),
+    bans: try bansOf(loaded),
+    funding: { outstanding: counts.outstanding, reserved: counts.reserved, vault: vault.reading },
+  } satisfies Settlement
+}
+
+export type Decided = Extract<Event, { readonly type: "createObligations" | "noteUnderfunded" | "autoFreeze" | "finalize" | "adjust" }>
+
+function monthEventOf(settlement: Settlement, event: Decided) {
+  const observation = { observedAt: settlement.state.headTime, free: settlement.state.escrow.free, earlierUnreserved: amountOf(settlement.earlierUnreserved) }
+  switch (event.type) {
+    case "createObligations": return { type: "createObligations" as const, observation: { ...observation, earlierUnreserved: event.earlierUnreserved }, bans: event.bans }
+    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: { ...observation, earlierUnreserved: event.earlierUnreserved }, bans: event.bans }
+    case "autoFreeze": return event
+    case "finalize": return event
+    case "adjust": return event
+  }
+}
+
+export effect function settle(settlement: Settlement, event: Decided, by: string, extra: Extra = {}) {
+  const next = try apply(settlement.state, event, by)
+  if (settlement.loaded.state.project !== next.month.project) throw new ManifestInvalid({ projectId: settlement.key.projectId, issue: "the month changed project" })
+  const funding = event.type === "createObligations" ? { funding: settlement.funding } : {}
+  try sendMonth(settlement.key, monthEventOf(settlement, event), { ...extra, ...funding })
+  return next
+}
+
+export effect function observeChain(key: MonthKey, event: Event, by: string, chain?: ChainView) {
+  const settlement = try loadSettlement(key, chain)
+  return try apply(settlement.state, event, by)
+}

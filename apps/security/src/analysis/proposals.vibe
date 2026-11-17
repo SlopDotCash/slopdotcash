@@ -1,0 +1,100 @@
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+import { fencedText, firstObjectText, jsonValue } from "./prompts.ts"
+
+export type Severity = "critical" | "high" | "medium" | "low" | "informational" | "unresolved"
+export type PotentialLoss = "likely" | "unlikely" | "unclear"
+export type ScreeningDecision = "legitimate" | "needs-information" | "spam"
+export type AppealOutcome = "uphold" | "return"
+
+export interface AnalysisProposal {
+  readonly summary: string
+  readonly severity: Severity
+  readonly potentialLoss: PotentialLoss
+  readonly duplicateCaseIds: ReadonlyArray<string>
+  readonly rootCauseKey: string | null
+  readonly remediation: string
+}
+
+export interface ScreeningProposal {
+  readonly decision: ScreeningDecision
+  readonly reason: string
+  readonly duplicateCaseIds: ReadonlyArray<string>
+}
+
+export interface AppealDraft {
+  readonly proposedOutcome: AppealOutcome
+  readonly rationale: string
+  readonly confidence: number
+}
+
+const severities: ReadonlyArray<unknown> = ["critical", "high", "medium", "low", "informational", "unresolved"]
+const losses: ReadonlyArray<unknown> = ["likely", "unlikely", "unclear"]
+const decisions: ReadonlyArray<unknown> = ["legitimate", "needs-information", "spam"]
+const rootCause = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u
+
+function isSeverity(value: unknown): value is Severity {
+  return severities.includes(value)
+}
+
+function isLoss(value: unknown): value is PotentialLoss {
+  return losses.includes(value)
+}
+
+function isDecision(value: unknown): value is ScreeningDecision {
+  return decisions.includes(value)
+}
+
+function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined
+}
+
+function boundedText(value: unknown, max: number) {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length < 1 ? undefined : trimmed.slice(0, max)
+}
+
+function priorMatches(value: ReadonlyArray<unknown>, prior: ReadonlySet<string>) {
+  return [...new Set(value.filter((id): id is string => typeof id === "string" && prior.has(id)))]
+}
+
+function objectIn(raw: string) {
+  const text = firstObjectText(raw)
+  return text === undefined ? undefined : recordOf(jsonValue(text))
+}
+
+export function analysisProposal(raw: string, prior: ReadonlySet<string>): AnalysisProposal | undefined {
+  const value = objectIn(raw)
+  if (value === undefined) return undefined
+  const { severity, potentialLoss, duplicateCaseIds } = value
+  if (!isSeverity(severity) || !isLoss(potentialLoss) || !Array.isArray(duplicateCaseIds)) return undefined
+  const summary = boundedText(value.summary, 4000)
+  const remediation = boundedText(value.remediation, 4000)
+  if (summary === undefined || remediation === undefined) return undefined
+  return {
+    summary,
+    severity,
+    potentialLoss,
+    duplicateCaseIds: priorMatches(duplicateCaseIds, prior),
+    rootCauseKey: typeof value.rootCauseKey === "string" && rootCause.test(value.rootCauseKey) ? value.rootCauseKey : null,
+    remediation,
+  }
+}
+
+export function screeningProposal(raw: string, prior: ReadonlySet<string>): ScreeningProposal | undefined {
+  const value = recordOf(jsonValue(fencedText(raw)))
+  if (value === undefined || !isDecision(value.decision)) return undefined
+  const reason = boundedText(value.reason, 2000)
+  if (reason === undefined) return undefined
+  const listed = value.duplicateCaseIds
+  return { decision: value.decision, reason, duplicateCaseIds: Array.isArray(listed) ? priorMatches(listed, prior) : [] }
+}
+
+export function appealDraft(raw: string): AppealDraft | undefined {
+  const value = objectIn(raw)
+  if (value === undefined) return undefined
+  const { proposedOutcome, confidence } = value
+  if ((proposedOutcome !== "uphold" && proposedOutcome !== "return") || typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return undefined
+  const rationale = boundedText(value.rationale, 4000)
+  return rationale === undefined ? undefined : { proposedOutcome, rationale, confidence }
+}

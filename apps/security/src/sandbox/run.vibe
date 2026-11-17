@@ -1,0 +1,166 @@
+// spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"; spec/security/sandbox.md, "An execution ends executed, not executable or at a limit"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"
+import { isoNow } from "@repo/platform/clock"
+import { randomId, sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { worker } from "@repo/platform/worker"
+import { type Event, type Execution, completed, initial, isolated, machineOver } from "../../gen/security__sandbox.effect.vibe"
+import { sandboxPostRun } from "../client/refusals.vibe"
+import { type Box, Containers, type Isolation, destroyed, profileOf, settled } from "./container.vibe"
+
+const requestLimit = 3 * 1024 * 1024
+const artifactLimit = 2 * 1024 * 1024
+const artifactPath = "/analysis/artifact"
+const digestPattern = /^[a-f0-9]{64}$/u
+
+export schema Interpreter = "python" | "node" | "binary"
+
+export schema RunStatus = "exited" | "timeout" | "output-limit" | "not-executable"
+
+schema ArtifactRequest {
+  readonly artifactBase64: string
+  readonly artifactSha256: string
+  readonly interpreter: Interpreter
+}
+
+schema SupervisorEvidence {
+  readonly status: RunStatus
+  readonly exitCode: number
+  readonly stdoutBase64: string
+  readonly stderrBase64: string
+  readonly outputComplete: boolean
+}
+
+export schema IsolatedArtifact {
+  readonly schema: "slop-isolated-artifact-v1"
+  readonly runId: string
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly imageSha256: string | null
+  readonly sourceSha: string | null
+  readonly artifactSha256: string
+  readonly interpreter: Interpreter
+  readonly internetEnabled: boolean
+  readonly status: RunStatus
+  readonly exitCode: number
+  readonly stdoutBase64: string
+  readonly stderrBase64: string
+  readonly outputComplete: boolean
+}
+
+export service Release {
+  readonly revision: string | null
+  readonly imageSha256: string | null
+}
+
+export interface ReleaseVars {
+  readonly SLOP_RELEASE_SHA?: string
+  readonly RUNNER_IMAGE_SHA256?: string
+}
+
+const executions: Readonly<Record<RunStatus, Execution>> = {
+  exited: "Ran",
+  "not-executable": "Unsupported",
+  "output-limit": "OutputLimit",
+  timeout: "Timeout",
+}
+
+interface Row {
+  readonly status: number
+  readonly text: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+function answer(row: Row) {
+  const { "content-type": contentType, ...headers } = row.headers
+  return HttpServerResponse.text(row.text, { status: row.status, contentType, headers })
+}
+
+function jsonText(body: unknown, headers: Readonly<Record<string, string>> = {}) {
+  return HttpServerResponse.text(JSON.stringify(body), { contentType: "application/json", headers })
+}
+
+effect function health() {
+  const release = try Release
+  return jsonText({ service: "vetting-sandbox", ok: true, revision: release.revision, imageSha256: release.imageSha256 })
+}
+
+effect function artifactRequest() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(requestLimit)) catch () => undefined
+  if (buffer === undefined) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder().decode(new Uint8Array(buffer))) as unknown) catch () => undefined
+  const shaped = Schema.decodeUnknownEffect(ArtifactRequest)(value, { onExcessProperty: "error" }) catch () => undefined
+  if (shaped === undefined || !digestPattern.test(shaped.artifactSha256)) return undefined
+  const bytes = Effect.try(() => Uint8Array.from(atob(shaped.artifactBase64), (character) => character.charCodeAt(0))) catch () => undefined
+  if (bytes === undefined || bytes.length === 0 || bytes.length > artifactLimit) return undefined
+  return { request: shaped, matches: (try sha256Hex(bytes)) === shaped.artifactSha256 }
+}
+
+effect function supervised(box: Box, request: ArtifactRequest, isolation: Isolation) {
+  if (!isolated(profileOf(isolation, true))) return undefined
+  const written = try settled(() => box.writeFile(artifactPath, request.artifactBase64, { encoding: "base64" }))
+  if (written?.success !== true) return undefined
+  const setup = try settled(() => box.exec(`chmod 0555 ${artifactPath}`, { timeout: 10000 }))
+  if (setup?.success !== true) return undefined
+  const execution = try settled(() => box.exec(`python3 /opt/slop/supervise.py ${request.interpreter}`, { timeout: 40000 }))
+  if (execution?.success !== true) return undefined
+  const reported: unknown = Effect.try(() => JSON.parse(execution.stdout) as unknown) catch () => undefined
+  const evidence = Schema.decodeUnknownEffect(SupervisorEvidence)(reported) catch () => undefined
+  return evidence
+}
+
+effect function executed() {
+  const admitted = try artifactRequest()
+  if (admitted === undefined) return answer(sandboxPostRun.invalidArtifactRequest)
+  const held = try Ref.make(initial)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  const send = (event: Event) => orDie(machine.send(event))
+  const checked = try send({ type: "verifyDigest", digest: admitted.matches ? initial.artifact : initial.artifact + 1 })
+  if (checked.phase === "DigestRefused") return answer(sandboxPostRun.invalidArtifactRequest)
+  const containers = try Containers
+  const release = try Release
+  const runId = try randomId()
+  const startedAt = try isoNow()
+  const box = try containers.open(runId, "http")
+  const evidence = try supervised(box, admitted.request, containers.isolation)
+  const isolatedRun = try send({ type: "isolate", profile: profileOf(containers.isolation, evidence !== undefined) })
+  if (evidence !== undefined && isolatedRun.phase === "Isolated") try send({ type: "execute", execution: executions[evidence.status] })
+  const finished = try send({ type: "destroy", ok: try destroyed(box) })
+  if (evidence === undefined || !completed(finished)) return answer(sandboxPostRun.isolatedExecutionUnavailable)
+  const result: IsolatedArtifact = {
+    schema: "slop-isolated-artifact-v1",
+    runId,
+    startedAt,
+    completedAt: try isoNow(),
+    imageSha256: release.imageSha256,
+    sourceSha: release.revision,
+    artifactSha256: admitted.request.artifactSha256,
+    interpreter: admitted.request.interpreter,
+    internetEnabled: containers.isolation.enableInternet,
+    status: evidence.status,
+    exitCode: evidence.exitCode,
+    stdoutBase64: evidence.stdoutBase64,
+    stderrBase64: evidence.stderrBase64,
+    outputComplete: evidence.outputComplete,
+  }
+  return jsonText(result, { "cache-control": "no-store" })
+}
+
+effect function served() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.method === "GET" && new URL(request.originalUrl).pathname === "/health") return try health()
+  if (request.method !== "POST") return answer(sandboxPostRun.otherMethods.methodNotAllowedS405)
+  return try executed()
+}
+
+export const sandboxRoutes = HttpRouter.add("*", "*", served())
+
+export function sandboxWorker<Env extends ReleaseVars>(containers: (env: Env) => Layer.Layer<Containers>) {
+  return worker({
+    services: (env: Env) => Layer.mergeAll(
+      webCrypto,
+      containers(env),
+      Layer.succeed(Release, { revision: env.SLOP_RELEASE_SHA ?? null, imageSha256: env.RUNNER_IMAGE_SHA256 ?? null }),
+    ),
+    routes: sandboxRoutes,
+  })
+}

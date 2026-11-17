@@ -1,0 +1,28 @@
+{
+  "name": "project-payment-keeper",
+  "main": "../dist/keeper.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": []
+  },
+  "vars": {
+    "KEEPER_MODE": "off"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "KEEPER", "class_name": "OperatorKeeper" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OperatorKeeper"] }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": false
+    }
+  }
+}

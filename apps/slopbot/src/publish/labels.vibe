@@ -1,0 +1,41 @@
+// spec/slopbot/closure.md, "A certain finding that cannot close is labeled once; out-of-scope and missing evidence are label-only"; spec/slopbot/closure.md, "A restricted project permits only an authorized security comment and the confirmed scam label"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"
+import { GitHub } from "@repo/platform/github"
+import type { CategoryName } from "../review/verdict.vibe"
+import { type ScopedItem, type WriteScope, requireScope } from "./scope.vibe"
+
+export const uncertainLabel = "slopbot:uncertain"
+
+export error LabelUnconfirmed { status: number; label: string }
+
+schema LabelRead { readonly name: string }
+
+const labelList = Schema.Array(LabelRead)
+
+export function categoryLabel(category: CategoryName) {
+  return `slopbot: ${category.replaceAll("_", " ")}`
+}
+
+export function labelScope(label: string): WriteScope {
+  return label === categoryLabel("scam") ? "security" : "contributor"
+}
+
+function labelsPath(item: ScopedItem) {
+  return `/repositories/${item.ref.repositoryId}/issues/${item.number}/labels`
+}
+
+export effect function addLabels(item: ScopedItem, labels: ReadonlyArray<string>) {
+  for (const label of labels) try requireScope(item, labelScope(label))
+  const sent = try (try GitHub).send("POST", labelsPath(item), { labels }, labelList)
+  const missing = labels.find((label) => !(sent.value ?? []).some((entry) => entry.name === label))
+  if (sent.status !== 200 || sent.value === undefined || missing !== undefined) throw new LabelUnconfirmed({ status: sent.status, label: missing ?? labels.join(",") })
+}
+
+export effect function removeLabel(item: ScopedItem, label: string) {
+  try requireScope(item, "security")
+  const github = try GitHub
+  const removed: number = Effect.map(github.send("DELETE", `${labelsPath(item)}/${encodeURIComponent(label)}`, undefined, labelList), (sent) => sent.status) catch effect (error) => {
+    if (error._tag === "NotFound") return 404
+    throw error
+  }
+  if (removed !== 200 && removed !== 404) throw new LabelUnconfirmed({ status: removed, label })
+}

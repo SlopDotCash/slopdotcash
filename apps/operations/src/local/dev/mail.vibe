@@ -1,0 +1,109 @@
+// spec/backend/local.md, "Captured local mail is served only by the local development program and only to the signed-in account"
+import { randomId } from "@repo/platform/crypto"
+import { rows, sql } from "@repo/platform/d1"
+
+export interface CapturedMail {
+  readonly githubId: string
+  readonly from: string
+  readonly to: string
+  readonly mime: string
+}
+
+schema StoredMail { githubId: string; from: string; to: string; mime: string }
+schema OwnerRow { id: string; github_id: string }
+
+export error MailRefused { reason: string }
+
+export type MailOwners = ReadonlyMap<string, ReadonlySet<string>>
+export type Ownership = { readonly kind: "owned"; readonly githubId: string } | { readonly kind: "refused"; readonly reason: string }
+
+const recipient = /^[1-9]\d{0,19}$/u
+const deliveryHeader = /^Message-ID: <slop-notice-(.+)-[0-9]+@slop\.cash>\r?$/mu
+const captureName = /^\d+-\d+-[a-f0-9-]+\.json$/u
+const viewLimit = 100
+
+const pageHeaders = {
+  "cache-control": "private, no-store",
+  "x-robots-tag": "noindex",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+}
+
+const style = "body{font:16px system-ui;max-width:55rem;margin:2rem auto;padding:1rem}article{border-top:1px solid #aaa;padding:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{display:inline-block;padding:.6rem}"
+
+function escapeHtml(text: string) {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;")
+}
+
+function bodyOf(mime: string) {
+  const body = mime.split(/\r?\n\r?\n/u).slice(1).join("\n\n").replace(/=\r?\n/gu, "")
+  const bytes: number[] = []
+  for (let index = 0; index < body.length; index++) {
+    const hex = body.slice(index + 1, index + 3)
+    if (body[index] === "=" && /^[a-f0-9]{2}$/iu.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16))
+      index += 2
+    } else bytes.push(body.charCodeAt(index))
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes))
+}
+
+effect function inboxLinks(body: string, origin: string) {
+  const links: string[] = []
+  for (const [text] of body.matchAll(/https?:\/\/[^\s<>]+/gu)) {
+    const url = Effect.try(() => new URL(text)) catch () => undefined
+    if (url !== undefined && url.origin === origin && url.pathname === "/inbox") links.push(`<a href="${escapeHtml(url.href)}">Open in Slop</a>`)
+  }
+  return links
+}
+
+export function deliveryOf(mime: string) {
+  return deliveryHeader.exec(mime)?.[1]
+}
+
+export effect function mailOwners() {
+  const found = try rows(OwnerRow, sql`SELECT id, github_id FROM notification_email_verifications
+    UNION SELECT id, recipient_github_id AS github_id FROM security_notification_outbox
+    UNION SELECT id, recipient_github_id AS github_id FROM activity_notification_outbox`)
+  const owners = new Map<string, ReadonlySet<string>>()
+  for (const row of found) owners.set(row.id, new Set([...owners.get(row.id) ?? [], row.github_id]))
+  const index: MailOwners = owners
+  return index
+}
+
+export function ownerOf(owners: MailOwners, mime: string): Ownership {
+  const id = deliveryOf(mime)
+  if (id === undefined) return { kind: "refused", reason: "Local capture message has no delivery identity" }
+  const [only, ...others] = owners.get(id) ?? []
+  if (only === undefined || others.length > 0) return { kind: "refused", reason: "Local capture message has ambiguous ownership" }
+  if (!recipient.test(only)) return { kind: "refused", reason: "Invalid local mail recipient" }
+  return { kind: "owned", githubId: only }
+}
+
+export effect function captureMail(directory: string, message: CapturedMail) {
+  if (!recipient.test(message.githubId)) throw new MailRefused({ reason: "Invalid local mail recipient" })
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
+  const name = `${message.githubId}-${try Clock.currentTimeMillis}-${try randomId()}.json`
+  try fs.writeFileString(path.join(directory, name), JSON.stringify(message), { flag: "wx", mode: 0o600 })
+}
+
+export effect function mailPage(directory: string, origin: string, githubId: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
+  const names = (try fs.readDirectory(directory)).filter((name) => name.startsWith(`${githubId}-`) && captureName.test(name)).sort().reverse().slice(0, viewLimit)
+  const entries: string[] = []
+  for (const name of names) {
+    const text = try fs.readFileString(path.join(directory, name))
+    const parsed = Effect.try((): unknown => JSON.parse(text)) catch () => undefined
+    const message = Schema.decodeUnknownEffect(StoredMail)(parsed) catch () => undefined
+    if (message === undefined || message.githubId !== githubId) continue
+    const body = bodyOf(message.mime)
+    entries.push(`<article><p>To: ${escapeHtml(message.to)}</p>${(try inboxLinks(body, origin)).join(" ")}<pre>${escapeHtml(body)}</pre></article>`)
+  }
+  const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Local Slop mail</title><style>${style}</style></head><body><h1>Local mail</h1><p>Captured for this signed-in account. No external email was sent.</p>${entries.join("") || "<p>No captured messages.</p>"}</body></html>`
+  return HttpServerResponse.text(page, { headers: pageHeaders, contentType: "text/html; charset=utf-8" })
+}

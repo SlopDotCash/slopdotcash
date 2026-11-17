@@ -1,0 +1,36 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import type { Environment, Service } from "../../../gen/operations__release.effect.vibe"
+import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
+
+export error PublicationFailed { stage: string; message: string }
+
+export interface Target {
+  readonly environment: Environment
+  readonly sourceSha: string
+  readonly bundle: string
+  readonly manifestSha256: string
+}
+
+export interface ListedSite {
+  readonly deploymentId: string
+  readonly artifactSha256: string
+}
+
+export interface ServedSite {
+  readonly deploymentId: string
+  readonly artifactSha256: string
+  readonly environment: Environment
+  readonly dnsTlsHeaders: boolean
+}
+
+export type FeeSettings = Omit<WorkerConfig, "source">
+
+export service Publisher {
+  readonly order: ReadonlyArray<Service>
+  prepare(target: Target): void!PublicationFailed
+  publish(service: Service, target: Target): string!PublicationFailed
+  feeSettings(target: Target): FeeSettings!PublicationFailed
+  site(target: Target): void!PublicationFailed
+  deployments(target: Target, sinceMillis: number): ReadonlyArray<ListedSite>!PublicationFailed
+  served(target: Target, deploymentId: string): ServedSite!PublicationFailed
+}

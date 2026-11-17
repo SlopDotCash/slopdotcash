@@ -1,0 +1,104 @@
+// spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
+import { type Award, type Penalty, type Revision as Row } from "../kernels/records/canonical.ts"
+import { pointRevisionId } from "../kernels/records/ids.vibe"
+import type { Event, Revision } from "../../gen/points__journal.effect.vibe"
+import { type Opened, type Store, index, legacyRuleOf } from "./ledger.vibe"
+
+export interface Provenance {
+  readonly recordedAt: string
+  readonly sourceDigest: string
+  readonly decisionSourceId: string
+  readonly effectiveAt: string
+  readonly penalty?: Penalty
+  readonly confirmation?: boolean
+}
+
+const decisionSource = /^(?:[A-Za-z0-9_=-]{4,256}|value:[a-f0-9]{64})$/u
+
+export function decisionSourceOf(candidates: ReadonlyArray<string | undefined>) {
+  return candidates.find((candidate): candidate is string => candidate !== undefined && decisionSource.test(candidate)) ?? ""
+}
+
+export function sameAward(left: Award, right: Award) {
+  return left.key === right.key && left.actor.id === right.actor.id && left.actor.login === right.actor.login &&
+    left.projectId === right.projectId && left.category === right.category && left.amount === right.amount &&
+    left.occurredAt === right.occurredAt && left.sourceId === right.sourceId && left.sourceUrl === right.sourceUrl &&
+    left.workUnitId === right.workUnitId && left.provisional === right.provisional
+}
+
+export function samePenalty(left: Penalty | undefined, right: Penalty | undefined) {
+  return left === right || (left !== undefined && right !== undefined && left.category === right.category &&
+    left.debit === right.debit && left.reversedAt === right.reversedAt && left.reversal === right.reversal)
+}
+
+export effect function sendAll(opened: Opened, events: ReadonlyArray<Event>) {
+  for (const event of events) {
+    const refused = Effect.as(opened.machine.send(event), "") catch () => event.type
+    if (refused !== "") return refused
+  }
+  return ""
+}
+
+export effect function appended(opened: Opened) {
+  return (try opened.machine.get()).revisions.filter((revision) => revision.id >= opened.start)
+}
+
+effect function rowOf(store: Store, revision: Revision, template: Award, amount: number, provenance: Provenance) {
+  const prior = store.latest.get(template.key)
+  const award: Award = { ...template, amount, occurredAt: prior?.award.occurredAt ?? template.occurredAt }
+  const sourceRule = legacyRuleOf(revision)
+  const confirmed = provenance.confirmation === true
+  if (prior === undefined && amount === 0 && revision.key.category === "MergedWork") return undefined
+  if (prior !== undefined && sameAward(prior.award, award) && samePenalty(prior.penalty, provenance.penalty) &&
+    (!confirmed || (prior.sourceDigest === provenance.sourceDigest && prior.sourceRule === sourceRule))) return undefined
+  const body = {
+    previous: prior?.id ?? null,
+    recordedAt: provenance.recordedAt,
+    sourceDigest: provenance.sourceDigest,
+    sourceRule,
+    award,
+    ...(provenance.penalty === undefined ? {} : { penalty: provenance.penalty }),
+    ...(confirmed || revision.decision.basis === "NoBasis" ? {} : {
+      decision: { sourceId: provenance.decisionSourceId, effectiveAt: provenance.effectiveAt, reason: revision.decision.reason, delta: amount - (prior?.award.amount ?? 0) },
+    }),
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Row
+}
+
+export effect function rowsOf(store: Store, opened: Opened, revision: Revision, templates: ReadonlyMap<string, Award>, provenance: Provenance) {
+  const rows: Row[] = []
+  if (revision.key.category !== "MergedWork") {
+    const template = templates.get(opened.names.actorIds.get(revision.key.actor) ?? "")
+    const row = template === undefined ? undefined : try rowOf(store, revision, template, revision.amount, provenance)
+    if (row !== undefined) rows.push(row)
+    return rows
+  }
+  const shared = new Set<string>()
+  for (const share of revision.shares) {
+    const actor = opened.names.actorIds.get(share.actor) ?? ""
+    const template = templates.get(actor)
+    if (template === undefined) continue
+    shared.add(template.key)
+    const row = try rowOf(store, revision, template, share.points, provenance)
+    if (row !== undefined) rows.push(row)
+  }
+  const name = opened.names.unitNames.get(revision.key.source) ?? ""
+  for (const key of store.units.get(name)?.keys ?? []) {
+    const prior = store.latest.get(key)
+    if (prior === undefined || shared.has(key) || prior.award.amount === 0) continue
+    const row = try rowOf(store, revision, prior.award, 0, provenance)
+    if (row !== undefined) rows.push(row)
+  }
+  return rows
+}
+
+export effect function commit(store: Store, buffer: Row[], rows: ReadonlyArray<Row>) {
+  for (const row of rows) {
+    try index(store, row)
+    buffer.push(row)
+  }
+}
+
+export function flush(store: Store, buffer: ReadonlyArray<Row>) {
+  store.revisions.push(...[...buffer].sort((left, right) => left.award.key.localeCompare(right.award.key)))
+}

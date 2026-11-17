@@ -1,0 +1,334 @@
+// spec/settlement/referralWatch.md, "Every month closed more than two hours ago has a filed accrual file, and an earlier month is only awaiting filing"; spec/settlement/referralWatch.md, "Each public file's bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralWatch.md, "Each posted root equals its file's tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks"; spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"
+import { boundedBytes } from "@repo/platform/browser"
+import { WrongChain } from "@repo/platform/chain/rpc"
+import { type Address, EvmRpc, type Hex, type Log, decodeResult, encodeCall, evmRpc, keccak } from "@repo/platform/chain/evm"
+import { isoAt } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type BlockRange, type ChainView, type FileCheck, type PostedRoot, type Replay, type VoidEvent, type WatchFailure, type WatchedFile, candidates, checkFiles, checkRoots, emptyReplay, publicDataFailure, publicDataLimitBytes, rangesCoverOnce, replayFile, watchScanPageBlocks } from "../../gen/settlement__referralWatch.effect.vibe"
+import { referralAccruals } from "../client/referrals.vibe"
+import { NETWORKS } from "../kernels/networks.ts"
+import { type ReferralVars, decodeProgram } from "./config.vibe"
+import { eligibleSymbol } from "./source.vibe"
+import {
+  type ChainLog,
+  WATCH_SCOPE,
+  addressResult,
+  amountOf,
+  bigOf,
+  blockOf,
+  canonicalEvent,
+  codeHashOf,
+  countResult,
+  coverageProbe,
+  distributorAbi,
+  epochResult,
+  evmAddressOf,
+  indexRows,
+  ordinalPeriodOf,
+  periodTextOf,
+  postedTopic,
+  projectKeys,
+  rootEventOf,
+  smallEpoch,
+  voidedTopic,
+  watchedFile,
+} from "./watchChecks.ts"
+
+export error WatchStopped { failure: WatchFailure }
+
+export interface WatchVars extends ReferralVars {
+  readonly REFERRAL_DISTRIBUTOR_ADDRESS?: string
+  readonly REFERRAL_TOKEN_ADDRESS?: string
+  readonly REFERRAL_POST_NETWORK?: string
+  readonly RPC_URL_REFERRAL?: string
+  readonly REFERRAL_DEPLOYMENT_BLOCK?: string
+  readonly REFERRAL_DISTRIBUTOR_CODE_HASH?: string
+}
+
+export type PostNetwork = "robinhood-testnet" | "robinhood-mainnet"
+
+export interface Deployment {
+  readonly network: PostNetwork
+  readonly chainId: number
+  readonly rpcUrl: string
+  readonly distributor: Address
+  readonly token: Address
+  readonly deploymentBlock: bigint
+  readonly codeHash: Hex
+}
+
+export interface WatchSetup {
+  readonly firstPeriod: number
+  readonly deployment: Deployment
+}
+
+export interface FileReport {
+  readonly check: FileCheck
+  readonly files: ReadonlyArray<WatchedFile>
+}
+
+export interface Mapping {
+  readonly epoch: number
+  readonly period: string
+  readonly transaction: string
+  readonly finalized: boolean
+  readonly voided: boolean
+}
+
+export interface WatchReport {
+  readonly status: "verified" | "pending"
+  readonly scope: string
+  readonly observedAt: string
+  readonly network: PostNetwork
+  readonly finalizedBlock: string
+  readonly files: number
+  readonly unpostedFiles: number
+  readonly mappings: ReadonlyArray<Mapping>
+}
+
+type PublicRead =
+  | { readonly kind: "read"; readonly bytes: Uint8Array; readonly digest: string | undefined }
+  | { readonly kind: "refused"; readonly available: boolean; readonly size: number }
+
+interface PostedEvent {
+  readonly log: Log
+  readonly epoch: bigint
+  readonly root: string
+  readonly total: bigint
+}
+
+const defaultRpc: Readonly<Record<PostNetwork, string>> = {
+  "robinhood-testnet": "https://rpc.testnet.chain.robinhood.com",
+  "robinhood-mainnet": "https://rpc.mainnet.chain.robinhood.com",
+}
+
+const accrualsPath = referralAccruals.path
+const publicInit: globalThis.RequestInit = { redirect: "error" }
+const publicTimeout = Duration.seconds(30)
+const openView: ChainView = { chainMatches: true, deploymentFinalized: true, codeMatches: true, tokenMatches: true, epochCount: 0, posted: [], voids: [], finalityStable: true, observationStable: true }
+
+function stopped(failure: WatchFailure) {
+  return new WatchStopped({ failure })
+}
+
+function refused(available: boolean, size: number): PublicRead {
+  return { kind: "refused", available, size }
+}
+
+function read(bytes: Uint8Array, digest: string | undefined): PublicRead {
+  return { kind: "read", bytes, digest }
+}
+
+function blank(text: string | undefined) {
+  return (text ?? "").trim() === ""
+}
+
+export effect function watchSetup(vars: WatchVars) {
+  const evidence = [vars.REFERRAL_DISTRIBUTOR_ADDRESS, vars.REFERRAL_TOKEN_ADDRESS, vars.REFERRAL_DEPLOYMENT_BLOCK, vars.REFERRAL_DISTRIBUTOR_CODE_HASH]
+  if ((vars.REFERRAL_ACCRUAL_MODE ?? "Off").trim() === "Off" && evidence.every(blank)) return undefined
+  try decodeProgram({ ...vars, REFERRAL_ACCRUAL_MODE: "DryRun" })
+  const network = (vars.REFERRAL_POST_NETWORK ?? "").trim()
+  if (network !== "robinhood-testnet" && network !== "robinhood-mainnet") throw new ConfigInvalid({ name: "REFERRAL_POST_NETWORK", issue: "must be robinhood-testnet or robinhood-mainnet" })
+  const rpcUrl = blank(vars.RPC_URL_REFERRAL) ? defaultRpc[network] : (vars.RPC_URL_REFERRAL ?? "").trim()
+  if (!/^https?:\/\//u.test(rpcUrl)) throw new ConfigInvalid({ name: "RPC_URL_REFERRAL", issue: "must be an http(s) URL" })
+  const distributor = evmAddressOf(vars.REFERRAL_DISTRIBUTOR_ADDRESS)
+  const token = evmAddressOf(vars.REFERRAL_TOKEN_ADDRESS)
+  if (distributor === undefined) throw new ConfigInvalid({ name: "REFERRAL_DISTRIBUTOR_ADDRESS", issue: "must be a lowercase EVM address" })
+  if (token === undefined) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_ADDRESS", issue: "must be a lowercase EVM address" })
+  if (distributor === token) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_ADDRESS", issue: "must differ from REFERRAL_DISTRIBUTOR_ADDRESS" })
+  const deploymentBlock = blockOf(vars.REFERRAL_DEPLOYMENT_BLOCK)
+  const codeHash = codeHashOf(vars.REFERRAL_DISTRIBUTOR_CODE_HASH)
+  if (deploymentBlock === undefined || codeHash === undefined) throw stopped("DeploymentEvidenceMissing")
+  const deployment = { network, chainId: NETWORKS[network].chainId, rpcUrl, distributor, token, deploymentBlock, codeHash } satisfies Deployment
+  return { firstPeriod: ordinalPeriodOf((vars.REFERRAL_FIRST_PERIOD ?? "").trim()), deployment } satisfies WatchSetup
+}
+
+effect function fetched(url: string) {
+  const request = HttpClientRequest.get(url, { headers: { "cache-control": "no-cache" } })
+  provide FetchHttpClient.RequestInit = publicInit {
+    const response = try HttpClient.execute(request)
+    if (response.status < 200 || response.status > 299) return refused(false, 0)
+    const bytes = boundedBytes(response, publicDataLimitBytes, "referral public data") catch (error) => error._tag
+    if (bytes === "BodyTooLarge") return refused(true, publicDataLimitBytes + 1)
+    if (bytes === "BodyUnreadable") return refused(false, 0)
+    return read(bytes, response.headers["x-slop-sha256"])
+  }
+}
+
+effect function readPublic(url: string) {
+  const answer = timeout(fetched(url), publicTimeout) catch () => refused(false, 0)
+  if (answer.kind === "refused") throw stopped(publicDataFailure(answer.available, answer.size))
+  return answer
+}
+
+effect function parsed(bytes: Uint8Array) {
+  return Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+}
+
+export effect function watchFiles(origin: string, firstPeriod: number) {
+  const nowMillis = try Clock.currentTimeMillis
+  const now = Math.floor(nowMillis / 1000)
+  const index = try parsed((try readPublic(new URL(accrualsPath, origin).href)).bytes)
+  if (index === undefined) throw stopped("WatchUnavailable")
+  const rows = indexRows(index, accrualsPath)
+  if (rows === undefined) return { check: checkFiles([], false, firstPeriod, now), files: [] } satisfies FileReport
+  const projectKey = projectKeys()
+  const eligible = (network: string, assetAddress: string) => eligibleSymbol(network, assetAddress, 6)
+  const files: WatchedFile[] = []
+  let replay: Replay = emptyReplay
+  for (const row of rows) {
+    const probe = coverageProbe(row)
+    if (replayFile(firstPeriod, now, replay, probe).failure === "PeriodCoverageInvalid") {
+      files.push(probe)
+      break
+    }
+    const answer = try readPublic(new URL(`${accrualsPath}/${row.periodText}`, origin).href)
+    const body = try parsed(answer.bytes)
+    const file = watchedFile({ row, bodyDigest: try sha256Hex(answer.bytes), headerDigest: answer.digest, body, nowMillis, eligible, projectKey })
+    if (file.digestMatches && body === undefined) throw stopped("WatchUnavailable")
+    files.push(file)
+    replay = replayFile(firstPeriod, now, replay, file)
+    if (replay.failure !== "NoFailure") break
+  }
+  return { check: checkFiles(files, true, firstPeriod, now), files } satisfies FileReport
+}
+
+effect function settle(report: FileReport, view: ChainView) {
+  const verdict = checkRoots(report.check, [...report.files], view)
+  if (verdict.status === "WatchFailed") throw stopped(verdict.failure)
+  return verdict.status
+}
+
+effect function known<A>(value: A | undefined) {
+  if (value === undefined) throw stopped("WatchUnavailable")
+  return value
+}
+
+effect function contractRead(deployment: Deployment, functionName: "token" | "nextEpoch" | "epochAt", args: ReadonlyArray<unknown>) {
+  const evm = try EvmRpc
+  const data = try evm.call({ to: deployment.distributor, data: try encodeCall(distributorAbi, functionName, args), block: "latest" })
+  return try decodeResult(distributorAbi, functionName, data)
+}
+
+effect function epochCount(deployment: Deployment) {
+  return try known(countResult(try contractRead(deployment, "nextEpoch", [])))
+}
+
+effect function scanned(deployment: Deployment, topic: Hex, lastBlock: bigint) {
+  const evm = try EvmRpc
+  const page = bigOf(watchScanPageBlocks)
+  const ranges: BlockRange[] = []
+  const logs: Log[] = []
+  for (let from = deployment.deploymentBlock; from <= lastBlock; from += page) {
+    const end = from + page - 1n
+    const to = end < lastBlock ? end : lastBlock
+    ranges.push({ fromBlock: Number(from), toBlock: Number(to) })
+    logs.push(...(try evm.logs({ address: deployment.distributor, topics: [topic], fromBlock: from, toBlock: to })))
+  }
+  if (!rangesCoverOnce(ranges, Number(deployment.deploymentBlock), Number(lastBlock), watchScanPageBlocks)) throw stopped("WatchUnavailable")
+  return logs
+}
+
+function rootEvents(logs: ReadonlyArray<Log>, eventName: "RootPosted" | "RootVoided") {
+  return logs.flatMap((log) => {
+    const event = rootEventOf(log satisfies ChainLog, eventName)
+    return event === undefined ? [] : [{ log, ...event } satisfies PostedEvent]
+  })
+}
+
+effect function eventFacts(deployment: Deployment, log: Log, finalizedBlock: bigint) {
+  const evm = try EvmRpc
+  const receipt = try evm.receipt(log.transactionHash)
+  if (receipt === undefined) return { canonical: false, finalized: false }
+  const block = try evm.blockByNumber(receipt.blockNumber)
+  return { canonical: canonicalEvent(log, receipt, block, deployment.distributor), finalized: receipt.blockNumber <= finalizedBlock }
+}
+
+effect function storedEpoch(deployment: Deployment, index: number, count: bigint) {
+  const epoch = bigOf(index)
+  if (epoch >= count) return undefined
+  return try known(epochResult(try contractRead(deployment, "epochAt", [epoch])))
+}
+
+effect function chainVerdict(setup: WatchSetup, report: FileReport) {
+  const { deployment } = setup
+  const evm = try EvmRpc
+  const finalized = try evm.head("finalized")
+  try settle(report, { ...openView, deploymentFinalized: finalized.number >= deployment.deploymentBlock })
+  const code = try evm.code(deployment.distributor, "latest")
+  try settle(report, { ...openView, codeMatches: keccak(code) === deployment.codeHash })
+  const token = try known(addressResult(try contractRead(deployment, "token", [])))
+  try settle(report, { ...openView, tokenMatches: token === deployment.token })
+  const tip = try evm.head("latest")
+  const postedEvents = rootEvents(try scanned(deployment, postedTopic, tip.number), "RootPosted")
+  const voidEvents = rootEvents(try scanned(deployment, voidedTopic, tip.number), "RootVoided")
+  const count = try epochCount(deployment)
+  const voids: VoidEvent[] = []
+  for (const event of voidEvents) {
+    const facts = try eventFacts(deployment, event.log, finalized.number)
+    voids.push({ epoch: smallEpoch(event.epoch), root: event.root, ...facts })
+  }
+  const posted: PostedRoot[] = []
+  const transactions: string[] = []
+  for (const [index, event] of postedEvents.entries()) {
+    const facts = try eventFacts(deployment, event.log, finalized.number)
+    const stored = try storedEpoch(deployment, index, count)
+    posted.push({ epoch: smallEpoch(event.epoch), root: event.root, total: amountOf(event.total), ...facts, storedRoot: stored?.root ?? "", storedTotal: amountOf(stored?.total ?? 0n), storedVoided: stored?.voided ?? false })
+    transactions.push(event.log.transactionHash)
+  }
+  const finalBlock = try evm.blockByNumber(finalized.number)
+  const tipBlock = try evm.blockByNumber(tip.number)
+  const endCount = try epochCount(deployment)
+  const status = try settle(report, {
+    ...openView,
+    epochCount: smallEpoch(count),
+    posted,
+    voids,
+    finalityStable: finalBlock?.hash === finalized.hash,
+    observationStable: tipBlock?.hash === tip.hash && endCount === count,
+  })
+  return { status, finalizedBlock: finalized.number, posted, transactions }
+}
+
+effect function checkedChain(setup: WatchSetup, report: FileReport) {
+  const { deployment } = setup
+  const rpc = evmRpc({ urls: Redacted.make([deployment.rpcUrl]), chainId: bigOf(deployment.chainId) })
+  return Effect.provide(chainVerdict(setup, report), rpc) catch effect (error) => match (error) {
+    when WatchStopped: throw error;
+    when WrongChain: throw stopped("WrongChain");
+    default: throw stopped("WatchUnavailable");
+  }
+}
+
+effect function watched(setup: WatchSetup, origin: string) {
+  const observedAt = try isoAt(try Clock.currentTimeMillis)
+  const report = try watchFiles(origin, setup.firstPeriod)
+  if (report.check.failure !== "NoFailure") throw stopped(report.check.failure)
+  const chain = try checkedChain(setup, report)
+  const posts = candidates(report.files)
+  const mappings = chain.posted.map((root, index) => ({
+    epoch: index,
+    period: periodTextOf(posts[index]?.period ?? -1),
+    transaction: chain.transactions[index] ?? "",
+    finalized: root.finalized,
+    voided: root.storedVoided,
+  }) satisfies Mapping)
+  return {
+    status: chain.status === "WatchVerified" ? "verified" : "pending",
+    scope: WATCH_SCOPE,
+    observedAt,
+    network: setup.deployment.network,
+    finalizedBlock: chain.finalizedBlock.toString(),
+    files: report.files.length,
+    unpostedFiles: posts.length - chain.posted.length,
+    mappings,
+  } satisfies WatchReport
+}
+
+export effect function watchReferralRoots(setup: WatchSetup, origin: string) {
+  return watched(setup, origin) catch effect (error) => match (error) {
+    when WatchStopped: throw error;
+    default: throw stopped("WatchUnavailable");
+  }
+}

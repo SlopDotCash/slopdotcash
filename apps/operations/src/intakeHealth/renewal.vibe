@@ -1,0 +1,98 @@
+// spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"
+import type { TokenRefusal } from "@repo/platform/github"
+import { type GitHubAnswer, type Health, Machine, type Observation, type RenewalResult, type Renewer, type Skip, canRenew, initial, machine, observedAt, renew } from "../../gen/operations__intakeHealth.effect.vibe"
+import { intakeVerdict } from "./facts.vibe"
+import { recordObservation, storedObservation } from "./store.vibe"
+
+export service IntakeToken {
+  readonly token: Redacted.Redacted<string> | undefined
+}
+
+export interface Renewal {
+  readonly result: RenewalResult
+  readonly observation: Observation
+  readonly tokenRejected: boolean
+  readonly failed: boolean
+  readonly httpStatus?: number
+}
+
+export function healthState(start: Health = initial) {
+  return machine(start)
+}
+
+export effect function observedHealth() {
+  return try (try Machine).get()
+}
+
+export effect function advanceClock(now: number, by: Renewer) {
+  return try (try Machine).send({ type: "advanceClock", now }, by)
+}
+
+export effect function startRead(withToken: boolean, by: Renewer) {
+  return try (try Machine).send({ type: "startRead", withToken }, by)
+}
+
+export effect function rejectToken(by: Renewer) {
+  return try (try Machine).send({ type: "rejectToken" }, by)
+}
+
+export effect function failWrite(by: Renewer) {
+  return try (try Machine).send({ type: "failWrite" }, by)
+}
+
+export effect function watchHealth(by: Renewer) {
+  return try (try Machine).send({ type: "watch" }, by)
+}
+
+export effect function settleRenewal(answer: GitHubAnswer, readAt: number, by: Renewer) {
+  const health = try Machine
+  const current = try health.get()
+  const event = { type: "renew", answer, readAt } as const
+  if (!canRenew(current, answer, readAt, by)) return try health.send(event, by)
+  const next = renew(current, answer, readAt, by)
+  const observation = next.observation
+  if (observation.tag === "Observed" && observedAt(next) !== observedAt(current)) {
+    const written = Effect.as(recordObservation(observation.enabled, observation.verifiedAt), true) catch () => false
+    if (!written) return try failWrite(by)
+  }
+  return try health.send(event, by)
+}
+
+effect function seeded() {
+  const observation = try storedObservation()
+  const now = try Clock.currentTimeMillis
+  const clock = Math.max(now, observation.tag === "Observed" ? observation.verifiedAt : 0, initial.clock)
+  return { now, start: { ...initial, clock, observation } satisfies Health }
+}
+
+effect function refused(refusal: TokenRefusal, by: Renewer) {
+  try orDie(rejectToken(by))
+  try Effect.logError("slop private intake token rejected", { kind: refusal.kind })
+}
+
+const skipWords: Readonly<Record<Skip, string>> = { Unreachable: "unreachable", RateLimited: "rate-limited", Unauthorized: "unauthorized", Rejected: "rejected", Malformed: "malformed" }
+
+effect function reported(renewal: Renewal) {
+  const result = renewal.result
+  if (result.tag === "Skipped") try Effect.logError(`slop private intake renewal skipped: ${skipWords[result.reason]}${renewal.httpStatus === undefined ? "" : ` ${renewal.httpStatus}`}`)
+  if (result.tag === "WriteFailed") try Effect.logError("slop private intake renewal failed")
+  return renewal
+}
+
+export effect function renewIntake(by: Renewer, token: Redacted.Redacted<string> | undefined) {
+  const { now, start } = try seeded()
+  provide healthState(start) {
+    try startRead(token !== undefined, by)
+    const health = try Machine
+    const anonymousRetry = (refusal: TokenRefusal) => provideService(refused(refusal, by), Machine, health)
+    const verdict = try intakeVerdict(token, anonymousRetry)
+    const settled = try settleRenewal(verdict.answer, now, by)
+    return try reported({
+      result: settled.last,
+      observation: settled.observation,
+      tokenRejected: settled.tokenRejected,
+      failed: settled.failedInvocations > start.failedInvocations,
+      ...verdict.httpStatus === undefined ? {} : { httpStatus: verdict.httpStatus },
+    })
+  }
+}

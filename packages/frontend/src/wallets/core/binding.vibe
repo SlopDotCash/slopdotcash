@@ -1,0 +1,388 @@
+// spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/walletConsent.md, "Replacing a saved wallet needs an explicit choice"; spec/frontend/walletConsent.md, "The prepared and signed bytes must equal the server's message before posting"; spec/frontend/walletConsent.md, "Posting names the expected account; a 401 asks to sign in again, and closing discards late replies"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"
+import { bindAuthorize, bindChallenge, solanaBindComplete, solanaBindPrepare } from "@repo/backend/client"
+import { base64Decode, base64Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { type Chain, chainFamily } from "@repo/settlement/kernels/networks"
+import { type Consent, type Event as ConsentEvent, type PostResult, Machine as ConsentMachine, adapter, canClose, canOpenReview, canSignIn, canSignOut, server } from "../../../gen/frontend__walletConsent.effect.vibe"
+import { networkLabel } from "../../kernels/assetText.ts"
+import { type CallFailure, type CallOptions, call } from "../../platform/api.vibe"
+import type { Session } from "../../session/session.vibe"
+import { type EvmBindingTerms, type SolanaBindingContext, attesterKey, evmChainIdOf, attesterSignature, canonicalJson, destinationSignature, evmBindingSigner, expectedEvmBinding, expectedSolanaMessage, preparedMessage, withoutDestinationSignature } from "./bindingPlan.ts"
+import { type WalletChoice, type WalletError } from "./discovery.vibe"
+import { type EvmConnection, connectEvm, evmAccount, evmChainId, signTypedData } from "./evm.vibe"
+import { type RegistrationError, type SavedWallet, accountChangedMessage, checkActor, evmSigner, registerFamily, solanaSigner } from "./registration.vibe"
+import { type SolanaConnection, connectSolana, solanaSignTransaction } from "./solana.vibe"
+
+module verified {
+  import { signedCompletesPrepared as completes } from "./payoutConsent.ts"
+  /** @throws {never} */
+  export function signedCompletesPrepared(prepared: Uint8Array, signed: Uint8Array, destination: Uint8Array): boolean { return completes(prepared, signed, destination) }
+}
+import { signedCompletesPrepared } from verified
+
+export const consentLimitBytes = 16_384
+export const consentDeadlineMs = 45_000
+
+export interface ReservedPayment {
+  readonly paymentId: string
+  readonly chain: Chain
+  readonly network: string
+  readonly vault: string
+  readonly claimId: string
+  readonly claimAddress: string
+}
+
+export type AccessLost = "signedOut" | "accountChanged"
+
+export type Connected =
+  | { readonly family: "evm"; readonly connection: EvmConnection }
+  | { readonly family: "solana"; readonly connection: SolanaConnection }
+
+export interface BindingView {
+  readonly consent: Consent
+  readonly problem: string
+  readonly notice: string
+  readonly accessLost: AccessLost | undefined
+}
+
+interface Review {
+  readonly payment: ReservedPayment
+  readonly actorId: string
+  readonly saved: ReadonlyArray<SavedWallet>
+  readonly claimId: string
+  readonly connected: Connected | undefined
+  readonly expected: unknown
+  readonly terms: EvmBindingTerms | undefined
+  readonly expectedVersion: string
+  readonly expiresAt: string
+  readonly prepared: Uint8Array | undefined
+  readonly signature: string
+  readonly signed: Uint8Array | undefined
+}
+
+interface Flow {
+  readonly review: Review | undefined
+  readonly problem: string
+  readonly notice: string
+  readonly accessLost: AccessLost | undefined
+}
+
+type Posted =
+  | { readonly kind: "accepted"; readonly text: string }
+  | { readonly kind: "refused"; readonly text: string }
+  | { readonly kind: "failed"; readonly failure: CallFailure }
+
+export type BindingNeeds = WalletChoice | HttpClient.HttpClient | Session | Experimental.Crypto.Crypto
+
+export service PayoutBinding {
+  readonly changes: Stream.Stream<Consent>
+  view(): BindingView!!
+  follow(actor: number, savedWallet: string): BindingView!!
+  open(payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>): BindingView!!
+  choose(offer: number): BindingView!!BindingNeeds
+  replace(decision: boolean): BindingView!!BindingNeeds
+  prepare(): BindingView!!BindingNeeds
+  sign(): BindingView!!BindingNeeds
+  post(): BindingView!!BindingNeeds
+  close(): BindingView!!
+}
+
+const walletChains: Readonly<Record<Chain, Consent["chain"]>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
+
+const unavailable = "Payout consent is unavailable. Your award stays reserved. Retry later."
+const stillPreparing = "The wallet changed or is still being prepared. Reload this page and review again."
+const mismatchedEvm = "The payout consent names a different account, address, network or vault. Refresh and review again."
+const mismatchedSolana = "The prepared binding names another vault or account. Refresh and review again."
+const alteredSolana = "Your wallet changed the binding transaction or returned an invalid signature. Nothing was submitted by this page."
+
+const options: CallOptions = { limitBytes: consentLimitBytes, deadlineMs: consentDeadlineMs }
+
+function solanaChainOf(network: string): string {
+  return `solana:${network === "solana-mainnet" ? "mainnet" : network.slice(7)}`
+}
+
+function failureText(failure: CallFailure): string {
+  return failure._tag === "Refused" && failure.status === 409 ? stillPreparing : unavailable
+}
+
+function lostBy(failure: CallFailure): AccessLost | undefined {
+  if (failure._tag === "ActorChanged") return "accountChanged"
+  return failure._tag === "Refused" && failure.status === 401 ? "signedOut" : undefined
+}
+
+function joined(head: Uint8Array, tail: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(head.length + tail.length)
+  bytes.set(head, 0)
+  bytes.set(tail, head.length)
+  return bytes
+}
+
+function sameText(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index])
+}
+
+export const payoutBinding = Layer.effect(PayoutBinding, effect {
+  const consent = try ConsentMachine
+  const flow = try Ref.make<Flow>({ review: undefined, problem: "", notice: "", accessLost: undefined })
+
+  effect function tell(event: ConsentEvent, by: number) {
+    consent.send(event, by) catch () => undefined
+    return try consent.get()
+  }
+
+  effect function view() {
+    const held = try Ref.get(flow)
+    return { consent: try consent.get(), problem: held.problem, notice: held.notice, accessLost: held.accessLost } satisfies BindingView
+  }
+
+  effect function edit(change: (review: Review) => Review) {
+    try Ref.update(flow, (held) => held.review === undefined ? held : { ...held, review: change(held.review) })
+  }
+
+  effect function stopped(problem: string, accessLost: AccessLost | undefined = undefined) {
+    const state = try consent.get()
+    if (canClose(state, state.actor)) try tell({ type: "close" }, state.actor)
+    try Ref.update(flow, (held) => ({ ...held, problem, accessLost: accessLost ?? held.accessLost }))
+    return try view()
+  }
+
+  effect function reviewing() {
+    return (try Ref.get(flow)).review
+  }
+
+  effect function actorHolds(review: Review) {
+    const outcome = checkActor(review.actorId) catch (error) => ({ failed: error })
+    if (outcome === undefined) return true
+    const failed = outcome.failed
+    if (failed._tag === "SignedOut") try stopped("Sign in again.", "signedOut")
+    else if (failed._tag === "AccountChanged") try stopped(failed.message, "accountChanged")
+    else try stopped(failed.message)
+    return false
+  }
+
+  effect function connectWith(offer: number, review: Review) {
+    const chain = review.payment.chain
+    if (chainFamily(chain) === "evm") {
+      const connection = try connectEvm(offer, false)
+      return { family: "evm", connection } satisfies Connected
+    }
+    const connection = try connectSolana(offer)
+    return { family: "solana", connection } satisfies Connected
+  }
+
+  effect function choose(offer: number) {
+    const review = try reviewing()
+    const state = try consent.get()
+    if (review === undefined) return try view()
+    try Ref.update(flow, (held) => ({ ...held, problem: "", notice: "" }))
+    try tell({ type: "connect", provider: offer }, state.actor)
+    const asked = try consent.get()
+    if (asked.phase !== "Connecting") return try view()
+    if (!(try actorHolds(review))) return try view()
+    const connected = connectWith(offer, review) catch (error) => ({ failed: error })
+    if ("failed" in connected) {
+      try tell({ type: "close" }, asked.actor)
+      try tell({ type: "openReview", chain: walletChains[review.payment.chain] }, asked.actor)
+      try Ref.update(flow, (held) => ({ ...held, problem: connected.failed.message }))
+      return try view()
+    }
+    try edit((current) => ({ ...current, connected }))
+    try tell({ type: "connectReply", request: asked.request, walletAddress: connected.connection.address }, adapter)
+    return try view()
+  }
+
+  effect function replace(decision: boolean) {
+    const review = try reviewing()
+    const state = try consent.get()
+    if (review === undefined || review.connected === undefined) return try view()
+    const decided = try tell({ type: "decideReplacement", replace: decision }, state.actor)
+    if (!decision || decided.phase !== "Connected") return try view()
+    if (!(try actorHolds(review))) return try view()
+    const signer = review.connected.family === "evm" ? evmSigner(review.connected.connection) : solanaSigner(review.connected.connection)
+    const registered = registerFamily(signer, review.actorId, review.saved) catch (error: RegistrationError) => ({ failed: error })
+    if ("failed" in registered) {
+      const failed = registered.failed
+      if (failed._tag === "SignedOut") return try stopped("Sign in again.", "signedOut")
+      if (failed._tag === "AccountChanged") return try stopped(failed.message, "accountChanged")
+      return try stopped(failed.message)
+    }
+    const claimId = registered.claims[review.payment.chain] ?? review.claimId
+    try edit((current) => ({ ...current, claimId }))
+    try Ref.update(flow, (held) => ({ ...held, notice: registered.message }))
+    return try view()
+  }
+
+  effect function prepareEvm(review: Review, state: Consent) {
+    const chainId = evmChainIdOf(review.payment.network)
+    const fields = { claimId: review.claimId, network: review.payment.network, vault: review.payment.vault }
+    const challenge = call(bindChallenge, { body: fields }, { ...options, expectedActor: review.actorId }) catch (failure) => ({ failed: failure })
+    if ("failed" in challenge) return try stopped(failureText(challenge.failed), lostBy(challenge.failed))
+    const typed = challenge.typedData
+    const terms: EvmBindingTerms | undefined = chainId === undefined || challenge.claimId !== review.claimId ? undefined : {
+      chainId,
+      vault: review.payment.vault,
+      actorId: review.actorId,
+      destination: state.walletAccount,
+      expectedVersion: typed.message.expectedVersion,
+      claimDigest: typed.message.claimDigest,
+      expiresAt: typed.message.expiresAt,
+    }
+    const expected = terms === undefined ? undefined : expectedEvmBinding(terms)
+    try edit((current) => ({ ...current, expected, terms, expectedVersion: typed.message.expectedVersion, expiresAt: typed.message.expiresAt }))
+    const message = canonicalJson(typed)
+    const rebuilt = expected === undefined ? "" : canonicalJson(expected)
+    const next = try tell({ type: "prepareReply", request: state.request, message, rebuilt, intent: state.request }, server)
+    if (next.phase === "Refused") try Ref.update(flow, (held) => ({ ...held, problem: mismatchedEvm }))
+    return try view()
+  }
+
+  effect function prepareSolana(review: Review, state: Consent) {
+    const answer = call(solanaBindPrepare, { body: { obligationId: review.payment.paymentId } }, { ...options, expectedActor: review.actorId }) catch (failure) => ({ failed: failure })
+    if ("failed" in answer) return try stopped(failureText(answer.failed), lostBy(answer.failed))
+    const encoded = answer.transaction
+    const bytes = encoded === undefined ? undefined : base64Decode(encoded)
+    if (encoded === undefined || bytes === undefined) return try stopped("The binding is already pending or unavailable. Reload this page before trying again.")
+    const context: SolanaBindingContext | undefined = answer.bindingContext
+    const named = context !== undefined && context.vault === review.payment.vault && context.githubUserId === review.actorId && context.destination === state.walletAccount
+    const message = named ? expectedSolanaMessage(bytes, context) : undefined
+    const attested = message !== undefined && sameText(message, preparedMessage(bytes)) && (try verifyMessageSignature(attesterKey(bytes), preparedMessage(bytes), attesterSignature(bytes)))
+    try edit((current) => ({ ...current, prepared: bytes }))
+    const rebuilt = attested && message !== undefined ? base64Encode(joined(bytes.slice(0, 129), message)) : ""
+    const next = try tell({ type: "prepareReply", request: state.request, message: base64Encode(bytes), rebuilt, intent: state.request }, server)
+    if (next.phase === "Refused") try Ref.update(flow, (held) => ({ ...held, problem: named ? "The prepared transaction differs from the reviewed destination binding." : mismatchedSolana }))
+    return try view()
+  }
+
+  effect function prepare() {
+    const review = try reviewing()
+    if (review === undefined) return try view()
+    try tell({ type: "prepare" }, (try consent.get()).actor)
+    const state = try consent.get()
+    if (state.phase !== "Preparing") return try view()
+    if (!(try actorHolds(review))) return try view()
+    return chainFamily(review.payment.chain) === "evm" ? try prepareEvm(review, state) : try prepareSolana(review, state)
+  }
+
+  effect function walletStopped(error: WalletError) {
+    return try stopped(error.message)
+  }
+
+  effect function signEvm(review: Review, connection: EvmConnection, state: Consent) {
+    const chainId = evmChainIdOf(review.payment.network)
+    if (chainId === undefined) return try stopped(unavailable)
+    const account = evmAccount(connection) catch (error) => ({ failed: error })
+    if (typeof account !== "string") return try walletStopped(account.failed)
+    if (account !== "" && account !== state.walletAccount) {
+      try edit((current) => ({ ...current, connected: { family: "evm", connection: { ...connection, address: account } } }))
+      try tell({ type: "changeWalletAccount", walletAddress: account }, adapter)
+      return try view()
+    }
+    const network = evmChainId(connection) catch (error) => ({ failed: error })
+    if (typeof network !== "bigint") return try walletStopped(network.failed)
+    if (network !== chainId) return try stopped(`Switch your wallet to ${networkLabel(review.payment.network)}, then review again.`)
+    const signature = signTypedData(connection, chainId, review.expected) catch (error) => ({ failed: error })
+    if (typeof signature !== "string") return try walletStopped(signature.failed)
+    const recovered = review.terms === undefined ? "" : evmBindingSigner(review.terms, signature)
+    try edit((current) => ({ ...current, signature }))
+    try tell({ type: "signReply", request: state.request, signedMessage: state.prepared, signature: { wallet: state.walletAccount, signer: recovered, intent: state.intent } }, adapter)
+    return try view()
+  }
+
+  effect function signSolana(review: Review, connection: SolanaConnection, state: Consent) {
+    const prepared = review.prepared
+    const destination = publicKey(state.walletAccount)
+    if (prepared === undefined || destination === undefined) return try stopped(alteredSolana)
+    const signed = solanaSignTransaction(connection, solanaChainOf(review.payment.network), prepared) catch (error) => ({ failed: error })
+    if ("failed" in signed) return try walletStopped(signed.failed)
+    const intact = signedCompletesPrepared(prepared, signed, destination) && (try verifyMessageSignature(destination, preparedMessage(prepared), destinationSignature(signed)))
+    try edit((current) => ({ ...current, signed }))
+    const next = try tell({
+      type: "signReply",
+      request: state.request,
+      signedMessage: base64Encode(withoutDestinationSignature(signed)),
+      signature: { wallet: state.walletAccount, signer: intact ? state.walletAccount : "", intent: state.intent },
+    }, adapter)
+    if (next.phase === "Refused") try Ref.update(flow, (held) => ({ ...held, problem: alteredSolana }))
+    return try view()
+  }
+
+  effect function sign() {
+    const review = try reviewing()
+    if (review === undefined || review.connected === undefined) return try view()
+    try tell({ type: "sign" }, (try consent.get()).actor)
+    const state = try consent.get()
+    if (state.phase !== "Signing") return try view()
+    if (!(try actorHolds(review))) return try view()
+    return review.connected.family === "evm" ? try signEvm(review, review.connected.connection, state) : try signSolana(review, review.connected.connection, state)
+  }
+
+  effect function posted(review: Review) {
+    if (chainFamily(review.payment.chain) === "evm") {
+      const body = { claimId: review.claimId, network: review.payment.network, vault: review.payment.vault, expectedVersion: review.expectedVersion, expiresAt: review.expiresAt, signature: review.signature }
+      const answer = call(bindAuthorize, { body }, { ...options, expectedActor: review.actorId }) catch (failure) => ({ failed: failure })
+      if ("failed" in answer) return { kind: "failed", failure: answer.failed } satisfies Posted
+      return (answer.authorized
+        ? { kind: "accepted", text: "Wallet consent saved. Payment is not yet verified. Reload this page to check progress." }
+        : { kind: "refused", text: "Payout consent was not stored. Refresh and review again." }) satisfies Posted
+    }
+    const transaction = review.signed === undefined ? "" : base64Encode(review.signed)
+    const answer = call(solanaBindComplete, { body: { obligationId: review.payment.paymentId, transaction } }, { ...options, expectedActor: review.actorId }) catch (failure) => ({ failed: failure })
+    if ("failed" in answer) return { kind: "failed", failure: answer.failed } satisfies Posted
+    return (answer.transactionId === ""
+      ? { kind: "refused", text: "Binding submission could not be verified. Reload this page before retrying." }
+      : { kind: "accepted", text: "Binding submitted; payment is not yet verified. Reload this page to check progress." }) satisfies Posted
+  }
+
+  effect function post() {
+    const review = try reviewing()
+    if (review === undefined) return try view()
+    try tell({ type: "post" }, (try consent.get()).actor)
+    const state = try consent.get()
+    if (state.phase !== "Posting") return try view()
+    if (!(try actorHolds(review))) return try view()
+    const outcome: Posted = try posted(review)
+    const lost = outcome.kind === "failed" ? lostBy(outcome.failure) : undefined
+    const result: PostResult = outcome.kind === "accepted" ? "PostAccepted" : lost === "signedOut" ? "PostUnauthorized" : "PostRefused"
+    try tell({ type: "postReply", request: state.request, result }, server)
+    const problem = outcome.kind === "refused" ? outcome.text
+      : outcome.kind === "accepted" ? ""
+      : lost === "signedOut" ? "Sign in again." : lost === "accountChanged" ? accountChangedMessage : failureText(outcome.failure)
+    try Ref.update(flow, (held) => ({ ...held, problem, notice: outcome.kind === "accepted" ? outcome.text : held.notice, accessLost: lost ?? held.accessLost }))
+    return try view()
+  }
+
+  return {
+    changes: consent.changes,
+    view,
+    follow: effect (actor: number, savedWallet: string) => {
+      const state = try consent.get()
+      if (actor === 0 && canSignOut(state, state.actor)) try tell({ type: "signOut" }, state.actor)
+      else if (actor > 0 && canSignIn(state, actor, savedWallet, actor)) try tell({ type: "signIn", account: actor, savedWallet }, actor)
+      if (actor !== state.actor) try Ref.set(flow, { review: undefined, problem: "", notice: "", accessLost: undefined })
+      return try view()
+    },
+    open: effect (payment: ReservedPayment, actorId: string, saved: ReadonlyArray<SavedWallet>) => {
+      const state = try consent.get()
+      const chain = walletChains[payment.chain]
+      if (!canOpenReview(state, chain, state.actor)) return try view()
+      try tell({ type: "openReview", chain }, state.actor)
+      try Ref.set(flow, {
+        review: { payment, actorId, saved, claimId: payment.claimId, connected: undefined, expected: undefined, terms: undefined, expectedVersion: "", expiresAt: "", prepared: undefined, signature: "", signed: undefined },
+        problem: "",
+        notice: "",
+        accessLost: undefined,
+      })
+      return try view()
+    },
+    choose,
+    replace,
+    prepare,
+    sign,
+    post,
+    close: effect () => {
+      const state = try consent.get()
+      if (canClose(state, state.actor)) try tell({ type: "close" }, state.actor)
+      try Ref.update(flow, (held) => ({ ...held, review: undefined, problem: "" }))
+      return try view()
+    },
+  }
+})

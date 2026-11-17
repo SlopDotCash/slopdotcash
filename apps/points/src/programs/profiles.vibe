@@ -1,0 +1,80 @@
+// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+import { collectedTargets, fetchRegistry } from "../census/projects.vibe"
+import { graphqlClient } from "../ingestion/graphql.vibe"
+import { actionsToken } from "../ingestion/token.vibe"
+import { collectProfileCensus } from "../profiles/census.vibe"
+import { extendPublishedProfiles } from "../profiles/extend.vibe"
+import { repositoryIdentity } from "../profiles/identity.vibe"
+import { ProfilesInvalid, profileIndexOf } from "../profiles/shape.vibe"
+import { assertPublishedProfiles, assertRetainedProfiles } from "../profiles/validate.vibe"
+import { attempt } from "../snapshot/files.vibe"
+
+export error ProfilesUsage { message: string }
+
+const usage = "profiles collect <previous census> <output> | profiles publish <input> <output> [--current] | profiles extend <census>"
+
+effect function readCensus(path: string) {
+  const text = try attempt((try FileSystem.FileSystem).readFileString(path), path, "Profile census is unavailable")
+  const raw = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw new ProfilesInvalid({ message: "Invalid profile census" })
+  }
+  return { raw, index: try profileIndexOf(raw) }
+}
+
+effect function writeCensus(path: string, value: unknown) {
+  const fs = try FileSystem.FileSystem
+  try attempt(fs.makeDirectory((try Path.Path).dirname(path), { recursive: true }), path, "Profile census directory could not be created")
+  const temporary = `${path}.tmp`
+  try attempt(fs.writeFileString(temporary, `${JSON.stringify(value)}\n`), path, "Profile census could not be written")
+  try attempt(fs.rename(temporary, path), path, "Profile census could not be replaced")
+}
+
+effect function registryView() {
+  const registered = try fetchRegistry()
+  const targets = try collectedTargets(registered)
+  return { targets, ids: targets.map((target) => target.id), identity: repositoryIdentity(registered.map((entry) => entry.project)) }
+}
+
+effect function collectProfiles(previousPath: string, outputPath: string) {
+  const registry = try registryView()
+  const { index: previous } = try readCensus(previousPath)
+  try assertRetainedProfiles(previous, registry.identity)
+  const result = try collectProfileCensus({ previous, targets: registry.targets, identity: registry.identity })
+  try writeCensus(outputPath, result)
+  try Console.log(`Published ${result.people.length} profiles`)
+}
+
+effect function publishProfiles(inputPath: string, outputPath: string, current: boolean) {
+  const registry = try registryView()
+  const { raw, index } = try readCensus(inputPath)
+  try assertPublishedProfiles(index, current, registry.ids, registry.identity)
+  try writeCensus(outputPath, raw)
+}
+
+effect function extendProfiles(path: string) {
+  const registry = try registryView()
+  const { index } = try readCensus(path)
+  const { census, added } = try extendPublishedProfiles(index, registry.ids, registry.identity)
+  try writeCensus(path, census)
+  try Console.log(added.length > 0 ? `Added newly active repositories to the retained census: ${added.join(", ")}` : "Published census reconciled with every active repository")
+}
+
+export effect function profiles(args: ReadonlyArray<string>) {
+  const [command, first = "", second = "", ...flags] = args
+  if (command === "collect" && args.length === 3) {
+    const token = try actionsToken()
+    provide graphqlClient({ token }) {
+      try collectProfiles(first, second)
+    }
+    return
+  }
+  if (command === "publish" && (args.length === 3 || (args.length === 4 && flags[0] === "--current"))) {
+    try publishProfiles(first, second, flags[0] === "--current")
+    return
+  }
+  if (command === "extend" && args.length === 2) {
+    try extendProfiles(first)
+    return
+  }
+  throw new ProfilesUsage({ message: `Usage: ${usage}` })
+}

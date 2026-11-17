@@ -1,0 +1,135 @@
+// spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type Disclosure, type Disclosures, type Event, apply, contradicts, decodeEvent, decodeState, initial } from "../../gen/settlement__directTransfers.effect.vibe"
+
+export error DisclosureContradiction { transactions: ReadonlyArray<string> }
+
+export interface DirectImportRow {
+  readonly network: string
+  readonly transactionId: string
+  readonly projectId: string
+  readonly contributionMonth: string
+  readonly githubUserId: string
+  readonly githubNodeId: string
+  readonly login: string
+  readonly chain: string
+  readonly recipient: string
+  readonly amountMicro: string
+  readonly blockTime: string
+  readonly blockId: string
+  readonly sourcePath: string
+}
+
+schema StoredTransfer {
+  readonly network: string
+  readonly transaction_id: string
+  readonly project_id: string
+  readonly contribution_month: string
+  readonly github_user_id: string
+  readonly chain: string
+  readonly recipient: string
+  readonly amount_micro: string
+  readonly block_time: string
+  readonly block_id: string
+}
+
+const monthText = /^(\d{4})-(0[1-9]|1[0-2])$/u
+
+function monthOf(text: string) {
+  const match = monthText.exec(text)
+  return match === null ? 0 : Number(match[1]) * 100 + Number(match[2])
+}
+
+function secondsOf(text: string) {
+  const millis = Date.parse(text)
+  return Number.isFinite(millis) ? Math.floor(millis / 1000) : 0
+}
+
+function wholeOf(text: string) {
+  const value = /^(?:0|[1-9]\d*)$/u.test(text) ? Number(text) : 0
+  return Number.isSafeInteger(value) ? value : 0
+}
+
+export function disclosureOf(row: DirectImportRow): Disclosure {
+  return {
+    network: row.network,
+    transaction: row.transactionId,
+    project: row.projectId,
+    month: monthOf(row.contributionMonth),
+    actor: wholeOf(row.githubUserId),
+    chain: row.chain,
+    recipient: row.recipient,
+    amountMicro: wholeOf(row.amountMicro),
+    blockTime: secondsOf(row.blockTime),
+    block: row.blockId,
+  }
+}
+
+function storedDisclosure(row: StoredTransfer): Disclosure {
+  return disclosureOf({
+    network: row.network,
+    transactionId: row.transaction_id,
+    projectId: row.project_id,
+    contributionMonth: row.contribution_month,
+    githubUserId: row.github_user_id,
+    githubNodeId: "",
+    login: "",
+    chain: row.chain,
+    recipient: row.recipient,
+    amountMicro: row.amount_micro,
+    blockTime: row.block_time,
+    blockId: row.block_id,
+    sourcePath: "",
+  })
+}
+
+function keyOf(network: string, transaction: string) {
+  return `${network}\u0000${transaction}`
+}
+
+effect function storedFor(keys: ReadonlyArray<string>) {
+  return try rows(StoredTransfer, sql`SELECT network, transaction_id, project_id, contribution_month, github_user_id, chain, recipient, amount_micro, block_time, block_id
+    FROM payment_direct_transfers WHERE network || char(0) || transaction_id IN (SELECT value FROM json_each(${JSON.stringify(keys)})) ORDER BY rowid`)
+}
+
+export effect function storedState(keys: ReadonlyArray<string>) {
+  const stored = try storedFor(keys)
+  return try decodeState({ ...initial, rows: stored.map(storedDisclosure) } satisfies Disclosures)
+}
+
+function insertAll(batch: ReadonlyArray<DirectImportRow>, importedAt: string) {
+  const values = JSON.stringify(batch.map((row) => ({ ...row, importedAt })))
+  return sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at)
+    SELECT json_extract(value, '$.network'), json_extract(value, '$.transactionId'), json_extract(value, '$.projectId'), json_extract(value, '$.contributionMonth'),
+      json_extract(value, '$.githubUserId'), json_extract(value, '$.githubNodeId'), json_extract(value, '$.login'), json_extract(value, '$.chain'),
+      json_extract(value, '$.recipient'), json_extract(value, '$.amountMicro'), json_extract(value, '$.blockTime'), json_extract(value, '$.blockId'),
+      json_extract(value, '$.sourcePath'), json_extract(value, '$.importedAt')
+    FROM json_each(${values}) WHERE true
+    ON CONFLICT(network, transaction_id) DO UPDATE SET github_login = excluded.github_login, source_path = excluded.source_path
+    WHERE github_login != excluded.github_login OR source_path != excluded.source_path`
+}
+
+effect function importEvent(event: Event, batch: ReadonlyArray<DirectImportRow>, importedAt: string) {
+  const current = try storedState([...new Set(batch.map((row) => keyOf(row.network, row.transactionId)))])
+  const next = try apply(current, event)
+  if (next.lastImport === "Contradiction") {
+    const contradicted = event.batch.filter((d) => contradicts(current.rows, d) || contradicts(event.batch, d))
+    throw new DisclosureContradiction({ transactions: [...new Set(contradicted.map((d) => `${d.network}:${d.transaction}`))] })
+  }
+  try (try D1).run(insertAll(batch, importedAt))
+  return { imported: next.rows.length - current.rows.length, unchanged: batch.length - (next.rows.length - current.rows.length) }
+}
+
+export effect function importTransfers(batch: ReadonlyArray<DirectImportRow>, importedAt: string) {
+  return try importEvent({ type: "importBatch", batch: batch.map(disclosureOf) }, batch, importedAt)
+}
+
+export effect function decodedImport(raw: unknown) {
+  return try decodeEvent(raw)
+}
+
+export effect function storedRows(transactionSuffix: string) {
+  const stored = try rows(StoredTransfer, sql`SELECT network, transaction_id, project_id, contribution_month, github_user_id, chain, recipient, amount_micro, block_time, block_id
+    FROM payment_direct_transfers WHERE substr(transaction_id, -length(${transactionSuffix})) = ${transactionSuffix} ORDER BY rowid`)
+  return stored.map(storedDisclosure)
+}

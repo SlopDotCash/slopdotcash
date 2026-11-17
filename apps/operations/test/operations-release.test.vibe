@@ -1,0 +1,215 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { githubFake } from "@repo/platform/testing/github"
+import { release } from "../src/programs/release.vibe"
+import { LockUnobserved } from "../src/publicationLock/group.vibe"
+import { BundleRefused } from "../src/release/manifest/inventory.vibe"
+import { githubDigest, registrySnapshotPath } from "../src/release/run/collect.vibe"
+import { writeCollection } from "../src/release/manifest/release.vibe"
+import { PublicationFailed, Publisher } from "../src/release/run/publisher.vibe"
+import { ReleaseStopped, release as publishRelease } from "../src/release/run/publish.vibe"
+import { runFacts } from "../src/release/run/facts.vibe"
+import { ReleaseRefused } from "../src/release/run/run.vibe"
+
+const repository = "SlopDotCash/slopdotcash"
+const workflowRef = `${repository}/.github/workflows/deploy.yml@refs/heads/main`
+const fullGates = ["Types", "Unit", "Isolation", "Identity", "ModelInventory", "ProofInventory", "Models", "Proofs", "Browser"]
+
+const workflow = [
+  "name: slop.cash",
+  "jobs:",
+  "  quality:",
+  "    runs-on: ubuntu-24.04",
+  "  production:",
+  "    runs-on: ubuntu-24.04",
+  "    concurrency:",
+  "      group: slop-production",
+  "      cancel-in-progress: false",
+  "    environment:",
+  "      name: slop-production",
+  "",
+].join("\n")
+
+function described(error: unknown) {
+  if (error instanceof ReleaseStopped) return `ReleaseStopped:${error.outcome}`
+  if (error instanceof ReleaseRefused) return `ReleaseRefused:${error.step}`
+  if (error instanceof LockUnobserved) return "LockUnobserved"
+  if (error instanceof BundleRefused) return "BundleRefused"
+  return error instanceof Error ? error.name : String(error)
+}
+
+effect function seeded() {
+  return try Effect.try(() => {
+    const fake = githubFake({ now: () => Date.UTC(2026, 10, 17) })
+    fake.world.addOrg({ id: 1, login: "SlopDotCash" })
+    fake.world.addRepo({ id: 100, owner: "SlopDotCash", name: "slopdotcash" })
+    return fake
+  })
+}
+
+effect function git(directory: string, args: ReadonlyArray<string>) {
+  const bytes = try gitBytes({ args: ["-C", directory, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+function recorder(calls: string[]) {
+  effect function refused(stage: string) {
+    calls.push(stage)
+    throw new PublicationFailed({ stage, message: "dry run publishes nothing" })
+  }
+  return Layer.succeed(Publisher, {
+    order: ["PaymentAttesters", "IdentityWorker", "VettingSandbox", "Referral", "RepositoryAccess", "FeeConverter", "Notify", "VettingBackup", "VettingRetention", "Slopbot"],
+    prepare: () => refused("prepare"),
+    publish: (service) => refused(`publish ${service}`),
+    feeSettings: () => refused("feeSettings"),
+    site: () => refused("site"),
+    deployments: () => refused("deployments"),
+    served: () => refused("served"),
+  })
+}
+
+effect function written(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.makeDirectory(files.dirname(path), { recursive: true })
+  try fs.writeFileString(path, text)
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, Layer.provide(systemGit, NodeServices.layer)), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Admit only a trusted run and publish under the environment lock only while the tested source is current (spec/operations/release.md, "Story: Admit only a trusted run of the exact environment branch"; spec/operations/release.md, "A release starts from a push or manual dispatch of the environment\'s branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const fake = try seeded()
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-release-" })
+    const origin = files.join(directory, "origin")
+    const root = files.join(directory, "checkout")
+    const bundle = files.join(directory, "bundle")
+    const event = files.join(directory, "event.json")
+    try fs.makeDirectory(origin, { recursive: true })
+    try git(origin, ["init", "-q", "-b", "main"])
+    try written(files.join(origin, ".github/workflows/deploy.yml"), workflow)
+    try written(files.join(origin, "README.md"), "# slop.cash\n")
+    try git(origin, ["add", "-A"])
+    try git(origin, ["commit", "-q", "-m", "initial"])
+    const initial = try git(origin, ["rev-parse", "HEAD"])
+    try written(files.join(origin, "apps/operations/src/notice.txt"), "tested\n")
+    try git(origin, ["add", "-A"])
+    try git(origin, ["commit", "-q", "-m", "tested"])
+    const tested = try git(origin, ["rev-parse", "HEAD"])
+    try git(directory, ["clone", "-q", origin, root])
+    const stray = try git(root, ["commit-tree", `${initial}^{tree}`, "-m", "stray history"])
+    try written(files.join(bundle, "site/index.html"), "<!doctype html><title>slop.cash</title>\n")
+    try written(files.join(bundle, "site/skill-manifest.json"), "{}\n")
+    try written(files.join(bundle, "deployables/notify.js"), "export default {}\n")
+    try written(files.join(bundle, "github/leaderboard.json"), "{\"records\":[]}\n")
+    const snapshot = "{\"projects\":[],\"revisions\":[]}\n"
+    try written(files.join(bundle, registrySnapshotPath), snapshot)
+    try writeCollection(bundle, {
+      schemaVersion: 1,
+      environment: "production",
+      kind: "fresh",
+      registrySha256: try sha256Hex(snapshot),
+      githubSha256: try githubDigest(bundle),
+      recordedAt: "2026-11-17T00:00:00.000Z",
+    })
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+    const base: Readonly<Record<string, string>> = {
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_EVENT_PATH: event,
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_REPOSITORY: repository,
+      GITHUB_SHA: tested,
+      GITHUB_WORKFLOW_REF: workflowRef,
+      GITHUB_RUN_ID: "41",
+      GITHUB_JOB: "production",
+      SLOP_GITHUB_ENVIRONMENT: "slop-production",
+    }
+    const calls: string[] = []
+    effect function settled<A, E, R>(program: A!E!R) {
+      const ended = try exit(provideService(program, FetchHttpClient.Fetch, fake.fetch))
+      return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
+    }
+    effect function attempt(args: ReadonlyArray<string>, overrides: Readonly<Record<string, string>> = {}) {
+      return try settled(Effect.provide(release(args), Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls))))
+    }
+    effect function publishing(environment: "Production" | "Staging", receiptsPath: string, overrides: Readonly<Record<string, string>> = {}, anchor = initial) {
+      const run = effect {
+        const facts = try runFacts()
+        return try publishRelease({ environment, facts, bundle, receipts: receiptsPath, root, anchor })
+      }
+      const services = Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromUnknown({ ...base, ...overrides })), recorder(calls), github({ token: undefined, userAgent: "slop-release-test" }))
+      return try settled(Effect.provide(run, services))
+    }
+    effect function receipts(name: string, gates: ReadonlyArray<string>, manifestSha256: string) {
+      const path = files.join(directory, name)
+      try written(files.join(path, "quality.json"), `${JSON.stringify({ schemaVersion: 1, sourceSha: tested, manifestSha256, gates }, null, 2)}\n`)
+      return path
+    }
+
+    const siteless = files.join(directory, "siteless")
+    try written(files.join(siteless, "deployables/notify.js"), "export default {}\n")
+    const withoutSite = try attempt(["manifest", "production", siteless])
+    const retainedWithoutTime = try attempt(["collect", "production", bundle, "--retained"])
+    const manifested = try attempt(["manifest", "production", bundle])
+    const verified = try attempt(["verify-bundle", bundle])
+    const manifestSha256 = try sha256Hex(try fs.readFile(files.join(bundle, "release-manifest.json")))
+    const complete = try receipts("receipts", fullGates, manifestSha256)
+    const withoutUnit = try receipts("partial", fullGates.filter((gate) => gate !== "Unit"), manifestSha256)
+    const otherArtifact = try receipts("stale", fullGates, "0".repeat(64))
+
+    try written(event, JSON.stringify({
+      repository: { full_name: repository },
+      pull_request: { head: { ref: "feature", sha: tested, repo: { full_name: repository } }, base: { ref: "main", sha: initial, repo: { full_name: repository } } },
+    }))
+    const pullRequest = try publishing("Production", complete, { GITHUB_EVENT_NAME: "pull_request", GITHUB_REF: "refs/pull/7/merge", GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/deploy.yml@refs/pull/7/merge` })
+    try written(event, JSON.stringify({ repository: { full_name: repository } }))
+    const wrongEnvironment = try publishing("Staging", complete)
+    const untrusted = try publishing("Production", complete, { GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/other.yml@refs/heads/main` })
+    const lacksHistory = try publishing("Production", complete, {}, stray)
+    const missingReceipt = try publishing("Production", withoutUnit)
+    const staleReceipt = try publishing("Production", otherArtifact)
+    const outsideLock = try publishing("Production", complete, { GITHUB_JOB: "quality" })
+    const beforeCurrent = calls.splice(0)
+    const current = try publishing("Production", complete)
+    const currentCalls = calls.splice(0)
+
+    try written(files.join(origin, "apps/operations/src/notice.txt"), "newer\n")
+    try git(origin, ["commit", "-q", "-a", "-m", "newer"])
+    const advanced = try publishing("Production", complete)
+    const advancedCalls = calls.splice(0)
+
+    try git(origin, ["reset", "-q", "--hard", initial])
+    try written(files.join(origin, "README.md"), "# rewritten\n")
+    try git(origin, ["commit", "-q", "-a", "-m", "rewritten"])
+    const rewritten = try publishing("Production", complete)
+    const rewrittenCalls = calls.splice(0)
+
+    try Effect.try(() => assert.deepStrictEqual({
+      withoutSite, retainedWithoutTime, manifested, verified, pullRequest, wrongEnvironment, untrusted, lacksHistory, missingReceipt, staleReceipt, outsideLock, beforeCurrent,
+      current, currentCalls, advanced, advancedCalls, rewritten, rewrittenCalls,
+    }, {
+      withoutSite: "BundleRefused",
+      retainedWithoutTime: "BundleRefused",
+      manifested: "ok",
+      verified: "ok",
+      pullRequest: "ReleaseRefused:configure",
+      wrongEnvironment: "ReleaseRefused:configure",
+      untrusted: "ReleaseRefused:configure",
+      lacksHistory: "ReleaseStopped:Refused",
+      missingReceipt: "ReleaseRefused:check",
+      staleReceipt: "ReleaseRefused:recordGates",
+      outsideLock: "LockUnobserved",
+      beforeCurrent: [],
+      current: "ReleaseStopped:PartiallyPublished",
+      currentCalls: ["prepare"],
+      advanced: "ok",
+      advancedCalls: [],
+      rewritten: "ReleaseStopped:Refused",
+      rewrittenCalls: [],
+    }))
+  }))
+})

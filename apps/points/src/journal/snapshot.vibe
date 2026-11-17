@@ -1,0 +1,379 @@
+// spec/points/journal.md, "Work units are formed, promoted and accepted inside the journal"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "Unit value changes only through a scored assessment or ratification of that unit"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"; spec/points/workUnits.md, "Acceptance and freezing follow the accepted merge and the reward month"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type ImplementationAllocation, type LeaderboardSnapshot, type ScoreEvent, type ValueCoverage, valueScoringApprovedHistoryFrom } from "../client/snapshot/schema.vibe"
+import { pointsOfThirdsText } from "../client/units/scoreUnits.ts"
+import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
+import { pointKey } from "../kernels/records/ids.vibe"
+import type { Event, SourceActor, SourceRule } from "../../gen/points__journal.effect.vibe"
+import { type Repositories, type Store, advanceTo, bandOf, command, countsFromDay, hold, instant, jointUnit, ownUnit, projectOf, ruleOf, workCounts } from "./ledger.vibe"
+import { reconcilePenalties } from "./penalties.vibe"
+import { appended, commit, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "./rows.vibe"
+
+export error UnregisteredRepository { repository: string }
+export error ScoreNotExact { eventId: string }
+export error ActorNotUser { eventId: string }
+export error ReviewOmissionContradicts { key: string; reason: string }
+
+export interface Credited { readonly award: Award; readonly event: ScoreEvent; readonly unit: string }
+
+export const octoberOriginalContributorDecision =
+  "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved."
+export const octoberDuplicateRetirementDecision = "Owner-reviewed duplicate accepted work already rewarded by earlier sources."
+
+const octoberDecisions = new Set([octoberOriginalContributorDecision, octoberDuplicateRetirementDecision])
+const unassessedCoverage = new Set(["missing", "legacy-policy"])
+const changedLineCount = /^(0|[1-9][0-9]*)$/u
+const omittedBeforePolicy = "review-credit-before-policy"
+const omittedOutsideWindow = "review-credit-outside-window"
+const valueDecision = /^value:[a-f0-9]{64}$/u
+const reallocated = (total: number) =>
+  `Complete primary-commit changed-line evidence reallocates the unchanged ${total} Points PR pool; this allocation-only correction does not reassess its value.`
+
+function pointsOf(event: ScoreEvent) {
+  const amount = pointsOfThirdsText(String(event.scoreThirds ?? event.points * 3))
+  const assessedZero = amount === 0 && event.category === "merged-pull-request" && valueDecision.test(event.scoreDecisionSourceId ?? "")
+  return amount === null || (amount <= 0 && !assessedZero) ? undefined : amount
+}
+
+export function actorKindOf(kind: string): SourceActor {
+  return kind === "User" ? "HumanActor" : "BotActor"
+}
+
+function sourceKey(projectId: string, sourceId: string) {
+  return `${projectId}\u0000${sourceId}`
+}
+
+export effect function awardFor(event: ScoreEvent, repositories: Repositories, workUnitId: string) {
+  const projectId = projectOf(repositories, event.repository)
+  if (projectId === undefined) throw new UnregisteredRepository({ repository: event.repository })
+  if (event.actor.kind !== "User") throw new ActorNotUser({ eventId: event.id })
+  const amount = pointsOf(event)
+  if (amount === undefined) throw new ScoreNotExact({ eventId: event.id })
+  const sourceId = event.category === "evidence" ? event.id : event.source.id
+  const merged = event.category === "merged-pull-request"
+  const joint = merged && event.id.includes(":joint:") && event.workUnitId !== undefined
+  const parts = { projectId, actorId: event.actor.id, category: event.category, sourceId }
+  const award: Award = {
+    key: try pointKey(joint ? { ...parts, workUnitId: event.workUnitId } : parts),
+    actor: { id: event.actor.id, login: event.actor.login },
+    projectId,
+    category: event.category,
+    amount,
+    occurredAt: try isoAt(millisOf(event.occurredAt)),
+    sourceId,
+    sourceUrl: event.source.url,
+    workUnitId,
+    provisional: event.scoreDecisionSourceId?.startsWith("value:") === true || (merged && event.scoreThirds !== undefined && event.scoreDecisionSourceId === undefined),
+  }
+  return { award, event, unit: joint ? jointUnit(projectId, workUnitId) : ownUnit(projectId, sourceId) } satisfies Credited
+}
+
+export function batchOwnedKeys(store: Store) {
+  const covered = new Set(store.coverage.map((entry) => entry.digest))
+  const keys = new Set<string>()
+  for (const row of store.latest.values()) {
+    const { award } = row
+    if (award.amount > 0 && (award.category === "substantive-review" || award.category === "evaluated-contribution") &&
+      row.sourceRule === "slop-score-v2" && !covered.has(row.sourceDigest)) keys.add(award.key)
+  }
+  return keys
+}
+
+function groupsOf(credited: ReadonlyArray<Credited>) {
+  const groups = new Map<string, Credited[]>()
+  for (const item of credited) {
+    if (item.award.category !== "merged-pull-request") continue
+    groups.set(item.unit, [...groups.get(item.unit) ?? [], item])
+  }
+  return groups
+}
+
+function templatesOf(store: Store, unit: string, members: ReadonlyArray<Credited>) {
+  const templates = new Map<string, Award>()
+  for (const key of store.units.get(unit)?.keys ?? []) {
+    const prior = store.latest.get(key)
+    if (prior !== undefined) templates.set(prior.award.actor.id, prior.award)
+  }
+  for (const { award } of members) templates.set(award.actor.id, award)
+  return templates
+}
+
+function sharesDiffer(prior: ReadonlyArray<{ actor: number; points: number }>, members: ReadonlyArray<Credited>, actors: ReadonlyMap<number, string>) {
+  const current = new Map(members.map(({ award }) => [award.actor.id, award.amount] as const))
+  return prior.length !== current.size || prior.some((share) => current.get(actors.get(share.actor) ?? "") !== share.points)
+}
+
+function changedLines(allocation: ImplementationAllocation | undefined) {
+  if (allocation === undefined || allocation.rule !== "changed-lines-v1") return undefined
+  const lines = new Map<string, number>()
+  for (const weight of allocation.weights) {
+    const count = Number(weight.changedLines)
+    if (lines.has(weight.actorNodeId) || !changedLineCount.test(weight.changedLines) || !Number.isSafeInteger(count)) return undefined
+    lines.set(weight.actorNodeId, count)
+  }
+  return lines
+}
+
+function lineEvidence(coverage: ReadonlyMap<string, ValueCoverage>, members: ReadonlyArray<Credited>) {
+  const actors = new Set(members.map(({ award }) => award.actor.id))
+  for (const { award } of members) {
+    const lines = changedLines(coverage.get(award.sourceId)?.implementationAllocation)
+    if (lines !== undefined && lines.size === actors.size && [...actors].every((actor) => lines.has(actor))) return lines
+  }
+  return undefined
+}
+
+function octoberHeld(store: Store) {
+  const held = new Set<string>()
+  for (const { award, decision } of store.latest.values()) {
+    if (award.category === "merged-pull-request" && award.occurredAt.startsWith("2026-10-") && octoberDecisions.has(decision?.reason ?? "")) {
+      held.add(sourceKey(award.projectId, award.sourceId))
+    }
+  }
+  return held
+}
+
+function priorMerges(store: Store) {
+  const merges = new Map<string, Row[]>()
+  for (const row of store.latest.values()) {
+    if (row.award.category !== "merged-pull-request") continue
+    const key = sourceKey(row.award.projectId, row.award.sourceId)
+    merges.set(key, [...merges.get(key) ?? [], row])
+  }
+  return merges
+}
+
+effect function checkOmissions(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot) {
+  const omitted = new Map<string, string>()
+  for (const exclusion of snapshot.reviewExclusions ?? []) {
+    const projectId = projectOf(repositories, exclusion.repository)
+    if (projectId === undefined || (exclusion.reason !== omittedBeforePolicy && exclusion.reason !== omittedOutsideWindow)) continue
+    omitted.set(sourceKey(projectId, exclusion.reviewId), exclusion.reason)
+  }
+  if (omitted.size === 0) return
+  const policyAt = snapshot.valuePolicyEffectiveAt ?? ""
+  const policyMillis = millisOf(policyAt)
+  let policyKnown = false
+  if (Number.isFinite(policyMillis)) policyKnown = (try isoAt(policyMillis)) === policyAt && policyAt >= valueScoringApprovedHistoryFrom
+  for (const { award } of store.latest.values()) {
+    if (award.category !== "substantive-review") continue
+    const omission = omitted.get(sourceKey(award.projectId, award.sourceId))
+    if (omission === undefined) continue
+    const consistent = omission === omittedBeforePolicy
+      ? policyKnown && award.occurredAt < policyAt
+      : award.occurredAt < snapshot.window.from || award.occurredAt >= snapshot.window.to
+    if (!consistent) throw new ReviewOmissionContradicts({ key: award.key, reason: omission })
+  }
+}
+
+effect function reallocateFromCoverage(store: Store, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string, coverage: ValueCoverage, projectId: string, prior: ReadonlyArray<Row>, current: ReadonlyArray<Credited>, unavailable: ReadonlySet<string>) {
+  const allocation = coverage.implementationAllocation
+  const lines = changedLines(allocation)
+  const [first] = current
+  if (allocation === undefined || lines === undefined || first === undefined || unavailable.has(coverage.pullRequestId) || current.some(({ award }) => !lines.has(award.actor.id))) return []
+  for (const award of [...prior.map((row) => row.award), ...current.map((item) => item.award)]) {
+    if (award.key !== (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }))) return []
+  }
+  if (prior.some((row) => row.recordedAt > snapshot.generatedAt || row.award.occurredAt !== first.award.occurredAt ||
+    row.award.occurredAt < snapshot.window.from || row.award.occurredAt >= snapshot.window.to)) return []
+  const unit = ownUnit(projectId, coverage.pullRequestId)
+  const currentByActor = new Map(current.map(({ award }) => [award.actor.id, award] as const))
+  const priorByActor = new Map(prior.map(({ award }) => [award.actor.id, award] as const))
+  const templates = new Map<string, Award>()
+  for (const weight of allocation.weights) {
+    const currentAward = currentByActor.get(weight.actorNodeId) ?? {
+      ...first.award,
+      key: try pointKey({ projectId, actorId: weight.actorNodeId, category: "merged-pull-request", sourceId: coverage.pullRequestId }),
+      actor: { id: weight.actorNodeId, login: weight.actorLogin },
+    }
+    templates.set(weight.actorNodeId, { ...(priorByActor.get(weight.actorNodeId) ?? currentAward), actor: currentAward.actor })
+  }
+  const opened = try command(store, { awards: [...templates.values()], units: [unit], sources: [coverage.pullRequestId] })
+  const recorded = opened.names.units.get(unit)
+  if (recorded === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key)) || prior.some((row) => opened.names.opaque.has(row.award.key))) {
+    hold(store, { subject: unit, reason: "the recorded history of this work unit is outside the journal model", digest })
+    return []
+  }
+  const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
+  const recipients = [...lines].map(([actor, count]) => ({ actor: actors.get(actor) ?? 0, lines: count })).sort((left, right) => left.actor - right.actor)
+  const total = prior.reduce((sum, row) => sum + row.award.amount, 0)
+  const refused = try sendAll(opened, [{ type: "reallocateUnit", project: projectId, unit: recorded, recipients, completeLines: true, reason: reallocated(total), digest }])
+  if (refused !== "") {
+    hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const valueSourceId = prior
+    .filter((row) => row.decision?.sourceId.startsWith("value:") === true)
+    .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt))[0]?.decision?.sourceId
+  const provenance = { recordedAt, sourceDigest: digest, effectiveAt: snapshot.generatedAt, decisionSourceId: decisionSourceOf([valueSourceId, coverage.pullRequestId]) }
+  const rows: Row[] = []
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+  return rows
+}
+
+effect function creditUnitGroup(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, coverage: ReadonlyMap<string, ValueCoverage>, digest: string, recordedAt: string, unit: string, members: ReadonlyArray<Credited>) {
+  const [first] = members
+  if (first === undefined) return []
+  const actorIds = members.map(({ award }) => award.actor.id)
+  if (new Set(actorIds).size !== actorIds.length) {
+    hold(store, { subject: unit, reason: "one actor holds several rows of one work unit", digest })
+    return []
+  }
+  const project = first.award.projectId
+  const opened = try command(store, { awards: members.map(({ award }) => award), units: [unit], sources: members.map(({ award }) => award.sourceId) })
+  if (members.some(({ award }) => opened.names.opaque.has(award.key)) || [...store.units.get(unit)?.keys ?? []].some((key) => opened.names.opaque.has(key))) {
+    hold(store, { subject: unit, reason: "the recorded history of this work unit is outside the journal model", digest })
+    return []
+  }
+  const total = members.reduce((sum, { award }) => sum + award.amount, 0)
+  const recorded = opened.names.units.get(unit)
+  const state = try opened.machine.get()
+  if (recorded !== undefined && store.units.has(unit)) {
+    const prior = state.revisions.find((revision) => revision.key.category === "MergedWork" && revision.key.workUnit === recorded)
+    if (prior === undefined) hold(store, { subject: unit, reason: "the recorded work unit is outside the journal model", digest })
+    else if (total !== prior.amount) hold(store, { subject: unit, reason: "a unit value changes only through a scored assessment or ratification", digest })
+    else if (sharesDiffer(prior.shares, members, opened.names.actorIds)) hold(store, { subject: unit, reason: "a recorded unit's shares change only through complete changed-line evidence", digest })
+    return []
+  }
+  const band = bandOf(total)
+  if (band === undefined) {
+    hold(store, { subject: unit, reason: "a first unit credit carries the value of its size band", digest })
+    return []
+  }
+  const lines = lineEvidence(coverage, members)
+  if (lines === undefined && members.length > 1) {
+    hold(store, { subject: unit, reason: "a shared unit credit needs complete changed-line evidence", digest })
+    return []
+  }
+  const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
+  const recipients = members
+    .map(({ award }) => ({ actor: actors.get(award.actor.id) ?? 0, lines: lines?.get(award.actor.id) ?? 0 }))
+    .sort((left, right) => left.actor - right.actor)
+  const occurredAt = try instant(first.award.occurredAt)
+  const formed = state.units.nextId
+  const events: Event[] = [
+    { type: "formUnit", g: { project, sources: members.map(({ award }) => opened.names.sources.get(award.sourceId) ?? 0), commits: [], band, hashesVerified: true, digest, promotion: { tag: "NotPromotion" } } },
+    { type: "acceptUnit", unit: formed, at: occurredAt },
+    { type: "creditUnit", c: {
+      project, unit: formed, recipients, completeLines: lines !== undefined, occurredAt,
+      repositoryCountsFrom: countsFromDay(repositories, first.event.repository),
+      projectCollected: snapshot.repositories.some((repository) => repository.projectId === project),
+      rule: ruleOf(snapshot.ruleVersion).rule, provisional: members.some(({ award }) => award.provisional), digest,
+    } },
+  ]
+  const refused = try sendAll(opened, events)
+  if (refused !== "") {
+    hold(store, { subject: unit, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const provenance = { recordedAt, sourceDigest: digest, effectiveAt: recordedAt, decisionSourceId: decisionSourceOf([first.award.sourceId]) }
+  const rows: Row[] = []
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, templatesOf(store, unit, members), provenance)))
+  for (const row of rows) if (store.unitOfKey.get(row.award.key) === undefined) store.unitOfKey.set(row.award.key, unit)
+  return rows
+}
+
+export interface Context {
+  readonly digest: string
+  readonly recordedAt: string
+  readonly rule: SourceRule
+  readonly projectCollected: boolean
+  readonly reason: string
+  readonly confirmation?: boolean
+}
+
+export effect function creditAward(store: Store, repositories: Repositories, item: Credited, context: Context) {
+  const { award, event } = item
+  const { digest, recordedAt } = context
+  const prior = store.latest.get(award.key)
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const key = opened.names.keys.get(award.key)
+  if (key === undefined || opened.names.opaque.has(award.key)) {
+    hold(store, { subject: award.key, reason: "the recorded history of this award is outside the journal model", digest })
+    return []
+  }
+  const occurredAt = try instant(award.occurredAt)
+  const evidence = {
+    source: key.source, project: award.projectId, actor: key.actor, actorKind: actorKindOf(event.actor.kind), accepted: true, occurredAt,
+    repositoryCountsFrom: countsFromDay(repositories, event.repository),
+    projectCollected: context.projectCollected,
+    workUnit: key.workUnit, digest,
+  }
+  const input = { key, amount: award.amount, occurredAt, rule: context.rule, provisional: award.provisional, digest }
+  const refused = try sendAll(opened, [prior === undefined ? { type: "credit", a: input, e: evidence } : { type: "rescoreSource", a: input, e: evidence, reason: context.reason }])
+  if (refused !== "") {
+    hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const provenance = {
+    recordedAt, sourceDigest: digest, effectiveAt: event.scoreDecisionAt === undefined ? recordedAt : try isoAt(millisOf(event.scoreDecisionAt)),
+    decisionSourceId: decisionSourceOf([event.scoreDecisionSourceId, award.sourceId]),
+    confirmation: context.confirmation === true,
+  }
+  const rows: Row[] = []
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, new Map([[award.actor.id, award]]), provenance)))
+  return rows
+}
+
+export effect function applySnapshot(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot, digest: string, recordedAt: string) {
+  if (store.coverage.some((entry) => entry.digest === digest)) return false
+  try checkOmissions(store, repositories, snapshot)
+  try advanceTo(store, recordedAt)
+  const owned = batchOwnedKeys(store)
+  const unavailable = new Set((snapshot.source.heldWorkUnits ?? []).flatMap((unit) => unit.sourceNodeIds))
+  const snapshotAwards: Credited[] = []
+  for (const event of snapshot.ledger) {
+    if (event.actor.kind !== "User" || !workCounts(repositories, event.repository, event.occurredAt)) continue
+    snapshotAwards.push(try awardFor(event, repositories, event.workUnitId ?? event.id))
+  }
+  const coverage = new Map<string, ValueCoverage>()
+  for (const row of snapshot.valueAssessmentCoverage ?? []) if (!coverage.has(row.pullRequestId)) coverage.set(row.pullRequestId, row)
+  const merges = priorMerges(store)
+  const held = octoberHeld(store)
+  const buffer: Row[] = []
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    const projectId = projectOf(repositories, row.repository)
+    if (!unassessedCoverage.has(row.status) || row.recordDigest !== null || projectId === undefined) continue
+    const key = sourceKey(projectId, row.pullRequestId)
+    const prior = merges.get(key) ?? []
+    if (held.has(key) || prior.length === 0) continue
+    held.add(key)
+    const current = snapshotAwards.filter(({ award }) => award.category === "merged-pull-request" && sourceKey(award.projectId, award.sourceId) === key)
+    try commit(store, buffer, try reallocateFromCoverage(store, snapshot, digest, recordedAt, row, projectId, prior, current, unavailable))
+  }
+  const credited: Credited[] = []
+  for (const item of snapshotAwards) {
+    const { award } = item
+    const merged = award.category === "merged-pull-request"
+    const recorded = store.latest.has(award.key) || store.unitsBySource.has(award.sourceId)
+    if (owned.has(award.key) || (merged && held.has(sourceKey(award.projectId, award.sourceId)))) continue
+    if (merged && award.provisional && unavailable.has(award.sourceId) && recorded) continue
+    credited.push(item)
+  }
+  for (const [unit, members] of groupsOf(credited)) try commit(store, buffer, try creditUnitGroup(store, repositories, snapshot, coverage, digest, recordedAt, unit, members))
+  for (const item of credited) {
+    const prior = store.latest.get(item.award.key)
+    if (item.award.category === "merged-pull-request" || (prior !== undefined && sameAward(prior.award, item.award))) continue
+    const context = {
+      digest, recordedAt, rule: ruleOf(snapshot.ruleVersion).rule, reason: item.event.reason,
+      projectCollected: snapshot.repositories.some((repository) => repository.projectId === item.award.projectId),
+    }
+    try commit(store, buffer, try creditAward(store, repositories, item, context))
+  }
+  flush(store, buffer)
+  const existing = new Set(store.coverage.map((entry) => `${entry.repository}:${entry.digest}`))
+  for (const repository of snapshot.repositories) {
+    if (!existing.has(`${repository.id}:${digest}`)) store.coverage.push({ repository: repository.id, from: snapshot.window.from, to: snapshot.window.to, digest })
+  }
+  try reconcilePenalties(store, repositories, snapshot, digest, recordedAt)
+  store.generatedAt = recordedAt
+  return true
+}
+
+export effect function applySnapshots(store: Store, repositories: Repositories, snapshots: ReadonlyArray<{ readonly snapshot: LeaderboardSnapshot; readonly digest: string }>, recordedAt: string) {
+  let applied = 0
+  for (const { snapshot, digest } of [...snapshots].sort((left, right) => left.snapshot.generatedAt.localeCompare(right.snapshot.generatedAt))) {
+    if (try applySnapshot(store, repositories, snapshot, digest, recordedAt)) applied += 1
+  }
+  return applied
+}

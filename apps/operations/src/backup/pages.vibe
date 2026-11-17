@@ -1,0 +1,200 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Statement } from "@repo/platform/d1"
+import { partBytes, retentionBucket } from "@repo/platform/r2"
+import { type Decision, load, update } from "@repo/platform/stored"
+import { canBeginCleanup, canQueueDay, cycleOpen, nextCycleDay } from "../../gen/operations__backup.effect.vibe"
+import { CompleteReceipt, type Copy, type CycleRow, type Digests, type PageJob, PageReceipt, type Recorded, StartReceipt, cleanupJob, currentCycle, cycleState, digests, firstPage, pageObjects, pageTokens, startBytes } from "./codec.vibe"
+import { cleanupBegun, cycleFinished, cycleStarted, dayQueued, heldCycle, observed, pageCopied, pageVerified, retentionReleased } from "./cycle.vibe"
+import { dayOfMillis, dayText } from "./days.ts"
+import {
+  BackupRefused,
+  BackupSettings,
+  EvidenceBackups,
+  EvidenceSource,
+  cleanupEntered,
+  completeKey,
+  copyKey,
+  cycleCompleted,
+  cycleInserted,
+  cycles,
+  enqueue,
+  failed,
+  headOf,
+  immutable,
+  immutableJson,
+  isMarker,
+  knownFacts,
+  pageKey,
+  queuedKey,
+  recorded,
+  startKey,
+  today,
+} from "./store.vibe"
+import { verifyMarker } from "./retirement.vibe"
+
+const generationKey = /^vetting\/generations\/[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}$/u
+
+effect function queued(days: ReadonlyArray<string>) {
+  const { binding } = try EvidenceBackups
+  for (const day of days) try immutableJson(binding, queuedKey(day), { day })
+}
+
+effect function startReceipt(day: string, startedAt: string) {
+  const { binding } = try EvidenceBackups
+  const key = try startKey(day)
+  const found = try recorded(StartReceipt, binding, key)
+  if (found !== undefined) return found
+  const sha256 = try immutable(binding, key, try startBytes(day, startedAt), "application/json")
+  return { value: { day, startedAt }, sha256 } satisfies Recorded<StartReceipt>
+}
+
+type Plan =
+  | { readonly kind: "idle" }
+  | { readonly kind: "resume"; readonly row: CycleRow; readonly queued: ReadonlyArray<string> }
+  | { readonly kind: "started"; readonly day: string; readonly startedAt: string; readonly queued: ReadonlyArray<string> }
+
+function decision(value: Plan, writes: ReadonlyArray<Statement> = []): Decision<Plan> {
+  return { value, writes }
+}
+
+effect function queueing(clock: number) {
+  if (!canQueueDay(try observed())) return []
+  try dayQueued()
+  return [dayText(clock)]
+}
+
+export effect function startDaily(scheduledTime: number) {
+  if (!(try BackupSettings).backup) return
+  const clock = dayOfMillis(scheduledTime)
+  const facts = try knownFacts(clock)
+  const startedAt = try isoAt(scheduledTime)
+  const plan = try update(cycles, (rows) => effect {
+    const known = digests()
+    const state = try cycleState({ ...facts, rows }, known)
+    provide heldCycle(state) {
+      const current = currentCycle(rows)
+      if (cycleOpen(state) && current !== undefined) return decision({ kind: "resume", row: current, queued: try queueing(clock) })
+      const day = dayText(nextCycleDay(state))
+      const opened = cycleStarted(1, known.of(try sha256Hex(try startBytes(day, startedAt)))) catch () => undefined
+      if (opened === undefined) return decision({ kind: "idle" })
+      return decision({ kind: "started", day, startedAt, queued: try queueing(clock) }, [cycleInserted(day, startedAt)])
+    }
+  })
+  if (plan.kind === "idle") return
+  try queued(plan.queued)
+  if (plan.kind === "started") {
+    try startReceipt(plan.day, plan.startedAt)
+    try enqueue(firstPage(plan.day))
+    return
+  }
+  try resume(plan.row)
+}
+
+effect function resume(row: CycleRow) {
+  if (row.phase === "cleanup") return try enqueue(cleanupJob(row.day))
+  if (row.phase === "complete") return
+  try startReceipt(row.day, row.started_at)
+  const complete = try recorded(CompleteReceipt, (try EvidenceBackups).binding, try completeKey(row.day))
+  if (complete !== undefined) return try finishCycle(row.day, complete)
+  try enqueue(firstPage(row.day))
+}
+
+effect function sourceCopy(day: string, key: string, size: number) {
+  const source = try EvidenceSource
+  const head = try headOf(source.binding, key)
+  if (isMarker(head?.customMetadata)) {
+    if (!generationKey.test(key)) throw new BackupRefused({ issue: "Retirement marker has an invalid target key" })
+    try verifyMarker(key)
+    return undefined
+  }
+  if (head === undefined || head.size !== size) throw new BackupRefused({ issue: "Scanner evidence changed during backup" })
+  const found = try tryPromise({ try: () => source.binding.get(key), catch: failed("get", key) })
+  if (found === null || isMarker(found.customMetadata) || found.size !== size) throw new BackupRefused({ issue: "Scanner evidence changed during backup" })
+  const bytes = new Uint8Array(try tryPromise({ try: () => found.arrayBuffer(), catch: failed("get", key) }))
+  if (bytes.length !== size) throw new BackupRefused({ issue: "Scanner evidence changed during backup" })
+  const backupKey = try copyKey(day, key)
+  const sha256 = try immutable((try EvidenceBackups).binding, backupKey, bytes, "application/octet-stream")
+  return { key, backupKey, sha256, sizeBytes: bytes.length } satisfies Copy
+}
+
+effect function copiedPage(job: PageJob, start: StartReceipt) {
+  const listing = try retentionBucket((try EvidenceSource).binding).list("vetting/", job.cursor, pageObjects)
+  const objects: Copy[] = []
+  for (const source of listing.objects) {
+    if (source.uploaded > millisOf(start.startedAt)) continue
+    if (!source.key.startsWith("vetting/") || source.size > partBytes) throw new BackupRefused({ issue: "Invalid scanner evidence object" })
+    const copy = try sourceCopy(job.day, source.key, source.size)
+    if (copy !== undefined) objects.push(copy)
+  }
+  const value: PageReceipt = { previous: job.previous, cursor: job.cursor ?? null, next: listing.cursor ?? null, objects }
+  return { value, sha256: try immutableJson((try EvidenceBackups).binding, try pageKey(job.day, job.page), value) } satisfies Recorded<PageReceipt>
+}
+
+function priorPages(job: PageJob, known: Digests) {
+  return pageTokens(job.day, job.page, known).map((token, index) => index === job.page - 1 && job.previous !== null ? known.of(job.previous) : token)
+}
+
+effect function verifiedPage(job: PageJob, start: Recorded<StartReceipt>, rows: ReadonlyArray<CycleRow>) {
+  const backups = (try EvidenceBackups).binding
+  const known = digests()
+  const facts = try knownFacts(try today())
+  const chain = { expectedPages: job.page + 1, pageDigests: priorPages(job, known), verifiedPages: job.page, manifestDigest: known.of(start.sha256), completeDigest: 0 }
+  provide heldCycle(try cycleState({ ...facts, rows }, known, chain)) {
+    const key = try pageKey(job.day, job.page)
+    const existing = try recorded(PageReceipt, backups, key)
+    const written = existing === undefined ? try copiedPage(job, start.value) : existing
+    try pageCopied(known.of(written.sha256))
+    const read = try recorded(PageReceipt, backups, key)
+    if (read === undefined) throw new BackupRefused({ issue: "Backup page receipt is missing after its write" })
+    try pageVerified(known.of(read.sha256))
+    return read
+  }
+}
+
+export effect function backupPage(job: PageJob) {
+  if (!(try BackupSettings).backup) throw new BackupRefused({ issue: "Evidence backup is disabled" })
+  const rows = (try load(cycles)).state
+  const row = rows.find((candidate) => candidate.day === job.day)
+  if (row === undefined) throw new BackupRefused({ issue: "Unknown storage cycle" })
+  if (row.phase === "complete") return
+  if (row.phase === "cleanup") return try enqueue(cleanupJob(job.day))
+  if (!Number.isSafeInteger(job.page) || job.page < 0) throw new BackupRefused({ issue: "Invalid backup page" })
+  const backups = (try EvidenceBackups).binding
+  const start = try recorded(StartReceipt, backups, try startKey(job.day))
+  if (start === undefined || start.value.day !== job.day || !Number.isFinite(millisOf(start.value.startedAt))) throw new BackupRefused({ issue: "Missing backup start receipt" })
+  const receipt = try verifiedPage(job, start, rows)
+  if (receipt.value.previous !== job.previous || receipt.value.cursor !== (job.cursor ?? null)) throw new BackupRefused({ issue: "Backup receipt chain changed" })
+  const objects = job.objects + receipt.value.objects.length
+  const bytes = job.bytes + receipt.value.objects.reduce((sum, object) => sum + object.sizeBytes, 0)
+  if (receipt.value.next !== null) {
+    return try enqueue({ day: job.day, page: job.page + 1, cursor: receipt.value.next, previous: receipt.sha256, objects, bytes })
+  }
+  const complete: CompleteReceipt = { day: job.day, startedAt: start.value.startedAt, pages: job.page + 1, lastPageSha256: receipt.sha256, objects, bytes }
+  const sha256 = try immutableJson(backups, try completeKey(job.day), complete)
+  try finishCycle(job.day, { value: complete, sha256 })
+}
+
+export effect function finishCycle(day: string, complete: Recorded<CompleteReceipt>) {
+  const settings = try BackupSettings
+  const backups = (try EvidenceBackups).binding
+  const start = try recorded(StartReceipt, backups, try startKey(day))
+  if (start === undefined || complete.value.day !== day) throw new BackupRefused({ issue: "Backup completion does not match its receipts" })
+  const named = try sha256Hex(try startBytes(complete.value.day, complete.value.startedAt))
+  const facts = try knownFacts(try today())
+  const next = try update(cycles, (rows) => effect {
+    const row = rows.find((candidate) => candidate.day === day)
+    if (row?.phase !== "backup") return { value: row?.phase === "cleanup", writes: [] } satisfies Decision<boolean>
+    const known = digests()
+    const pages = complete.value.pages
+    const chain = { expectedPages: pages, pageDigests: pageTokens(day, pages, known), verifiedPages: pages, manifestDigest: known.of(start.sha256), completeDigest: 0 }
+    provide heldCycle(try cycleState({ ...facts, rows }, known, chain)) {
+      try cycleFinished(known.of(named))
+      if (!canBeginCleanup(try retentionReleased(settings.retention))) return { value: false, writes: [cycleCompleted(day)] } satisfies Decision<boolean>
+      try cleanupBegun()
+      return { value: true, writes: [cleanupEntered(day)] } satisfies Decision<boolean>
+    }
+  })
+  if (next) try enqueue(cleanupJob(day))
+}

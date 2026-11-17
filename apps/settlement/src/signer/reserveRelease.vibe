@@ -1,0 +1,95 @@
+// spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "The original balances and allocation survive every recovery step"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Journal } from "@repo/platform/journal"
+import { type ReserveRelease, canApprove } from "../../gen/settlement__reserveRelease.effect.vibe"
+import { type ReleaseTerms, decodeMonthlyReserve, monthlyReleaseDigest, monthlyReserveCall, monthlyRootCall } from "../chain/evm/monthlyRoot.ts"
+import { fromAmount } from "../kernels/amounts.ts"
+import { type Period, parsePeriod } from "../kernels/calendar.ts"
+import { ordinaryScope, within } from "../journal/journal.vibe"
+import { ApprovalRefused, type ApprovalRequest, ReleaseApprover } from "../reserveRelease/release.vibe"
+import { release } from "../reserveRelease/store.vibe"
+import { AttesterConfig, type Deployment, authorityInForce, onChain, preflight, reviewedDeployment } from "./evm.vibe"
+import { signEscrowDigest } from "./monthlyRoot.vibe"
+
+schema ApprovalRecord {
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+  readonly authority: string
+  readonly messageHex: string
+  readonly signatureHex?: string
+}
+
+function refused(reason: string) {
+  return new ApprovalRefused({ reason })
+}
+
+effect function recorded(stored: unknown) {
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(ApprovalRecord)(stored) catch effect () => { throw refused("Release approval journal entry is malformed") }
+}
+
+effect function finalizedReserve(deployment: Deployment, period: Period) {
+  const rpc = try EvmRpc
+  const block = (try rpc.head("finalized")).number
+  const rootCall = try Effect.try({ try: () => monthlyRootCall(period), catch: () => refused("Invalid release period") })
+  const reserveCall = try Effect.try({ try: () => monthlyReserveCall(period), catch: () => refused("Invalid release period") })
+  const month = decodeMonthlyReserve({ root: try rpc.call({ to: deployment.vault, data: rootCall, block }), reserve: try rpc.call({ to: deployment.vault, data: reserveCall, block }) })
+  if (month === undefined) throw refused("The finalized vault state could not be decoded")
+  return month
+}
+
+function termsOf(state: ReserveRelease, month: { readonly root: string; readonly allocationDigest: string; readonly remaining: bigint }): ReleaseTerms | undefined {
+  const root = month.root.toLowerCase()
+  const reserved = fromAmount(state.reserved)
+  if (root !== state.allocationRoot.toLowerCase() || root !== state.root.toLowerCase() || month.remaining === 0n || month.remaining !== reserved) return undefined
+  return { allocationDigest: month.allocationDigest.toLowerCase() as ReleaseTerms["allocationDigest"], allocationRoot: root as ReleaseTerms["allocationRoot"], expectedRemaining: month.remaining, releasedGross: month.remaining }
+}
+
+effect function approved(request: ApprovalRequest) {
+  const deployment = try reviewedDeployment(request.network, request.vault, "ApproveReserveRelease")
+  if (deployment.identityAuthority !== request.identityAuthority) throw refused("Release signer is not the current identity authority")
+  const period = parsePeriod(request.period)
+  if (period === undefined) throw refused("Invalid release period")
+  const state = try release({ network: request.network, vault: request.vault, period: request.period })
+  const replay = state.phase === "Approved" && state.evidenceHeight === state.observedHeight && state.requestRevision === state.ownerRevision
+  if (!canApprove(state, "attester") && !replay) throw refused("The release evidence is not checked at the latest finalized height")
+  const observed = try onChain(deployment, effect {
+    try preflight(deployment)
+    const authority = try authorityInForce(deployment)
+    return { authority, month: try finalizedReserve(deployment, period) }
+  })
+  const { authority } = observed
+  if (authority !== request.identityAuthority) throw refused("Release signer is not the current identity authority")
+  const terms = termsOf(state, observed.month)
+  if (terms === undefined) throw refused("The finalized reserve differs from the checked release evidence")
+  const digest = try Effect.try({ try: () => monthlyReleaseDigest({ chainId: deployment.chainId, vault: deployment.vault }, period, terms), catch: () => refused("The release terms could not be encoded") })
+  if (digest.toLowerCase() !== request.digest.toLowerCase()) throw refused("The requested digest is not the finalized release of this reserve")
+  const messageHex = digest.slice(2).toLowerCase()
+  const key = `monthly-release:${request.network}:${request.vault}:${request.period}:${try sha256Hex(`${authority}:${messageHex}`)}`
+  const signature = try within(ordinaryScope, (entries) => effect {
+    const previous = try recorded(try entries.get(key))
+    if (previous?.signatureHex !== undefined) return `0x${previous.signatureHex}` as Hex
+    const signed = try signEscrowDigest(deployment, digest)
+    try entries.put(key, { network: request.network, vault: request.vault, period: request.period, authority, messageHex, signatureHex: signed.slice(2) })
+    return signed
+  })
+  if (recoverDigest(digest, signature)?.toLowerCase() !== authority) throw refused("Release signer is not the current identity authority")
+  return signature
+}
+
+function reasonOf(error: { readonly _tag: string }) {
+  return "reason" in error && typeof error.reason === "string" ? error.reason : error._tag
+}
+
+export const releaseApprover = Layer.effect(ReleaseApprover, effect {
+  const context = try Effect.context<AttesterConfig | Journal | KeyValueStore.KeyValueStore | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+  return {
+    approve: (request) => effect {
+      const signature = Effect.provide(approved(request), context) catch effect (error) => { throw refused(reasonOf(error)) }
+      return signature
+    },
+  } satisfies ReleaseApprover.Shape
+})

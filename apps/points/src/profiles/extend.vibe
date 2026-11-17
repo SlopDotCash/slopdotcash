@@ -1,0 +1,37 @@
+// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"
+import type { RepositoryIdentity } from "./identity.vibe"
+import type { ProfileIndex } from "./shape.vibe"
+import { assertProfiles, assertRetainedProfiles } from "./validate.vibe"
+
+export effect function extendPublishedProfiles(census: ProfileIndex, targets: ReadonlyArray<string>, identity: RepositoryIdentity) {
+  try assertRetainedProfiles(census, identity)
+  const collected = new Set(census.repositories.map((row) => row.repository))
+  const added = targets.filter((id) => !collected.has(id))
+  const repositories = [...census.repositories, ...added.map((repository) => ({ repository, count: 0, excluded: 0 }))]
+  const history = census.issues
+  if (history === undefined) {
+    const extended = { ...census, repositories } satisfies ProfileIndex
+    try assertProfiles(extended, targets, identity)
+    return { census: extended, added }
+  }
+  const retained = [...history.items, ...(history.archived ?? [])]
+  const items = retained.filter((issue) => targets.includes(issue.repository))
+  const archived = retained.filter((issue) => !targets.includes(issue.repository))
+  const previous = new Map(history.repositories.map((row) => [row.repository, row]))
+  const counts = new Map<string, number>()
+  for (const issue of items) {
+    if (issue.unavailableSince === null) counts.set(issue.repository, (counts.get(issue.repository) ?? 0) + 1)
+  }
+  const extended = {
+    ...census,
+    repositories,
+    issues: {
+      ...history,
+      repositories: targets.map((repository) => previous.get(repository) ?? { repository, count: counts.get(repository) ?? 0 }),
+      items,
+      ...(archived.length > 0 || history.archived !== undefined ? { archived } : {}),
+    },
+  } satisfies ProfileIndex
+  try assertProfiles(extended, targets, identity)
+  return { census: extended, added }
+}

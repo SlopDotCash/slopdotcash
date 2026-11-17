@@ -1,0 +1,383 @@
+// spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { DirectImportRow } from "./store.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export error DisclosuresRefused { failures: ReadonlyArray<string> }
+
+schema Observed {
+  readonly signature: string
+  readonly slot: number
+  readonly blockTime: string
+  readonly recipient: string
+  readonly amountMinor: string
+}
+
+schema WeightAdjustment {
+  readonly minor: string
+  readonly reason: string
+}
+
+schema DisclosureRow {
+  readonly actorId: string
+  readonly login: string
+  readonly publishedWeight: string
+  readonly effectiveWeight: string
+  readonly entitlementMinor: string
+  readonly wallet: string | null
+  readonly state: "paid-direct" | "held-below-minimum" | "unclaimed"
+  readonly observed: Observed | null
+  readonly deltaMinor?: string
+  readonly weightAdjustment?: WeightAdjustment
+  readonly walletAnomaly?: string
+}
+
+schema PreparationReference {
+  readonly path: string
+  readonly sha256: string
+  readonly totalWeight: string
+}
+
+schema ReconstructedBasis {
+  readonly capMinor: string
+  readonly denominatorWeight: string
+  readonly rounding: string
+  readonly allocatedMinor: string
+  readonly overCapMinor: string
+}
+
+schema StateTotal {
+  readonly rows: number
+  readonly amountMinor: string
+}
+
+schema DisclosureTotals {
+  readonly rows: number
+  readonly observedTransfers: number
+  readonly observedAmountMinor: string
+  readonly allocatedMinor: string
+  readonly byState: Record<string, StateTotal>
+}
+
+schema Disclosure {
+  readonly schemaVersion: string
+  readonly kind: string
+  readonly projectId: string
+  readonly contributionMonth: string
+  readonly network: string
+  readonly asset: string
+  readonly preparation: PreparationReference
+  readonly reconstructedBasis: ReconstructedBasis
+  readonly totals: DisclosureTotals
+  readonly rows: ReadonlyArray<DisclosureRow>
+}
+
+schema PreparedActor {
+  readonly id: string
+  readonly login: string
+}
+
+schema PreparedWallet {
+  readonly address: string
+}
+
+schema PreparedContributor {
+  readonly actor: PreparedActor
+  readonly weight: string
+  readonly wallet: PreparedWallet | null
+}
+
+schema PreparedCounts {
+  readonly weight: string
+}
+
+schema Preparation {
+  readonly projectId: string
+  readonly cycleId: string
+  readonly counts: PreparedCounts
+  readonly contributors: ReadonlyArray<PreparedContributor>
+}
+
+schema ReadmeWallet {
+  readonly sourceCommit?: string
+}
+
+schema ObservedEntry {
+  readonly actor: PreparedActor
+  readonly wallet?: ReadmeWallet | null
+}
+
+schema ObservationSource {
+  readonly contributors?: ReadonlyArray<ObservedEntry>
+  readonly allocations?: ReadonlyArray<ObservedEntry>
+}
+
+export interface DisclosureFile {
+  readonly name: string
+  readonly disclosure: Disclosure
+}
+
+const minimumTransferMinor = 2_000_000n
+const importedNetworks: Readonly<Record<string, "solana" | "base">> = { "solana-mainnet": "solana" }
+const projectText = /^[a-z0-9][a-z0-9-]*$/u
+const monthText = /^\d{4}-(0[1-9]|1[0-2])$/u
+const signatureText = /^[1-9A-HJ-NP-Za-km-z]{80,90}$/u
+const recipientText = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
+const positiveText = /^[1-9]\d*$/u
+const integerText = /^-?\d+$/u
+
+function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+effect function refused(failures: ReadonlyArray<string>) {
+  throw new DisclosuresRefused({ failures })
+}
+
+effect function integer(text: string, label: string) {
+  if (!integerText.test(text)) return try refused([`${label} must be integral`])
+  return try Effect.try({ try: () => BigInt(text), catch: () => new DisclosuresRefused({ failures: [`${label} must be integral`] }) })
+}
+
+effect function roundHalfUp(numerator: bigint, denominator: bigint) {
+  if (denominator <= 0n) return try refused(["denominator must be positive"])
+  return (2n * numerator + denominator) / (2n * denominator)
+}
+
+effect function rowFailures(row: DisclosureRow, source: PreparedContributor, cap: bigint, denominator: bigint) {
+  const failures: string[] = []
+  const fail = (message: string) => { failures.push(message) }
+  if (source.actor.login !== row.login) fail(`row ${row.actorId} login drifted from the preparation`)
+  if (source.weight !== row.publishedWeight) fail(`row ${row.login} publishedWeight ${row.publishedWeight} does not match preparation ${source.weight}`)
+  const adjustment = row.weightAdjustment === undefined ? 0n : try integer(row.weightAdjustment.minor, `${row.login} adjustment`)
+  if (adjustment !== 0n && (row.weightAdjustment?.reason.trim() ?? "") === "") fail(`row ${row.login} adjusts weight without a public reason`)
+  const effective = try integer(row.effectiveWeight, `${row.login} weight`)
+  if (effective !== (try integer(row.publishedWeight, "weight")) + adjustment) fail(`row ${row.login} effectiveWeight is not published weight plus the declared adjustment`)
+  const entitlement = try integer(row.entitlementMinor, `${row.login} entitlement`)
+  const expected = try roundHalfUp(cap * effective, denominator)
+  if (entitlement !== expected) fail(`row ${row.login} entitlement ${entitlement} does not equal the declared basis ${expected}`)
+  const frozenWallet = source.wallet?.address ?? null
+  if (row.wallet !== frozenWallet) fail(`row ${row.login} wallet does not match the preparation`)
+  let observedAmount = 0n
+  if (row.observed !== null) {
+    observedAmount = try integer(row.observed.amountMinor, `${row.login} amount`)
+    const delta = try integer(row.deltaMinor ?? "0", `${row.login} delta`)
+    if (observedAmount - entitlement !== delta) fail(`row ${row.login} deltaMinor does not equal observed minus entitlement`)
+    if (row.observed.recipient !== frozenWallet && row.walletAnomaly === undefined) fail(`row ${row.login} was paid to an address the preparation did not freeze, with no walletAnomaly recorded`)
+    if (row.state !== "paid-direct") fail(`row ${row.login} has an observed transfer but state ${row.state}`)
+  } else if (row.deltaMinor !== undefined) {
+    fail(`row ${row.login} records a delta with no observed transfer`)
+  } else if (entitlement < minimumTransferMinor) {
+    if (row.state !== "held-below-minimum") fail(`row ${row.login} is below the minimum transfer but state ${row.state}`)
+  } else if (row.state !== "unclaimed") {
+    fail(`row ${row.login} was not paid and is above the minimum but state ${row.state}`)
+  }
+  return { failures, entitlement, observedAmount }
+}
+
+export effect function verifyDisclosure(disclosure: Disclosure, preparationBytes: Uint8Array) {
+  const failures: string[] = []
+  const fail = (message: string) => { failures.push(message) }
+  if (disclosure.schemaVersion !== "1") fail("unsupported schemaVersion")
+  if (disclosure.kind !== "direct-payment-disclosure") fail("unsupported kind")
+  const digest = try sha256Hex(preparationBytes)
+  if (digest !== disclosure.preparation.sha256) fail(`preparation ${disclosure.preparation.path} is ${digest}, disclosure claims ${disclosure.preparation.sha256}`)
+  const preparation = Schema.decodeUnknownEffect(Preparation)(jsonOf(new TextDecoder().decode(preparationBytes))) catch effect () => {
+    return try refused([...failures, `preparation ${disclosure.preparation.path} is not a contributor preparation`])
+  }
+  if (preparation.projectId !== disclosure.projectId) fail(`projectId ${disclosure.projectId} does not match the preparation's ${preparation.projectId}`)
+  if (preparation.cycleId !== disclosure.contributionMonth) fail(`contributionMonth ${disclosure.contributionMonth} does not match the preparation's ${preparation.cycleId}`)
+  if (preparation.counts.weight !== disclosure.preparation.totalWeight) fail("preparation totalWeight does not match the preparation bytes")
+  const published = new Map(preparation.contributors.map((entry) => [entry.actor.id, entry] as const))
+  if (published.size !== disclosure.rows.length) fail(`disclosure has ${disclosure.rows.length} rows, preparation has ${published.size} contributors`)
+  const cap = try integer(disclosure.reconstructedBasis.capMinor, "capMinor")
+  const denominator = try integer(disclosure.reconstructedBasis.denominatorWeight, "denominatorWeight")
+  let allocated = 0n
+  let observedTotal = 0n
+  let observedRows = 0
+  const signatures = new Set<string>()
+  const covered = new Set<string>()
+  const byState = new Map<string, { rows: number; amountMinor: bigint }>()
+  for (const row of disclosure.rows) {
+    const source = published.get(row.actorId)
+    if (source === undefined) {
+      fail(`row ${row.login} is not in the preparation`)
+      continue
+    }
+    if (covered.has(row.actorId)) fail(`row ${row.login} repeats contributor ${row.actorId}`)
+    covered.add(row.actorId)
+    const checked = try rowFailures(row, source, cap, denominator)
+    failures.push(...checked.failures)
+    allocated += checked.entitlement
+    if (row.observed !== null) {
+      observedRows += 1
+      if (signatures.has(row.observed.signature)) fail(`signature ${row.observed.signature} is used twice`)
+      signatures.add(row.observed.signature)
+      observedTotal += checked.observedAmount
+    }
+    const bucket = byState.get(row.state) ?? { rows: 0, amountMinor: 0n }
+    bucket.rows += 1
+    bucket.amountMinor += row.state === "paid-direct" && row.observed !== null ? checked.observedAmount : checked.entitlement
+    byState.set(row.state, bucket)
+  }
+  for (const [actorId, entry] of published) if (!covered.has(actorId)) fail(`preparation contributor ${entry.actor.login} has no row`)
+  if (allocated !== (try integer(disclosure.totals.allocatedMinor, "allocated"))) fail("totals.allocatedMinor does not equal the sum of the rows")
+  if (allocated !== (try integer(disclosure.reconstructedBasis.allocatedMinor, "allocated"))) fail("reconstructedBasis.allocatedMinor does not equal the sum of the rows")
+  if (allocated - cap !== (try integer(disclosure.reconstructedBasis.overCapMinor, "overCap"))) fail("reconstructedBasis.overCapMinor does not equal allocated minus the cap")
+  if (observedRows !== disclosure.totals.observedTransfers) fail("totals.observedTransfers does not equal the observed rows")
+  if (observedTotal !== (try integer(disclosure.totals.observedAmountMinor, "observed"))) fail("totals.observedAmountMinor does not equal the sum of the observed transfers")
+  if (disclosure.rows.length !== disclosure.totals.rows) fail("totals.rows does not equal the row count")
+  for (const [state, bucket] of byState) {
+    const declared = Object.hasOwn(disclosure.totals.byState, state) ? disclosure.totals.byState[state] : undefined
+    if (declared === undefined) {
+      fail(`totals.byState is missing ${state}`)
+      continue
+    }
+    if (declared.rows !== bucket.rows) fail(`totals.byState.${state}.rows does not equal the row count`)
+    if ((try integer(declared.amountMinor, state)) !== bucket.amountMinor) fail(`totals.byState.${state}.amountMinor does not equal the summed rows`)
+  }
+  for (const state of Object.keys(disclosure.totals.byState)) if (!byState.has(state)) fail(`totals.byState declares unused state ${state}`)
+  return failures
+}
+
+effect function readText(path: string) {
+  const fs = try FileSystem.FileSystem
+  const bytes = fs.readFile(path) catch effect () => {
+    return try refused([`${path} could not be read`])
+  }
+  return bytes
+}
+
+export effect function disclosureFiles(root: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const directory = files.join(root, "disclosures")
+  const names = fs.readDirectory(directory) catch effect () => {
+    return try refused([`${directory} could not be read`])
+  }
+  const found: DisclosureFile[] = []
+  for (const name of names.filter((entry) => entry.endsWith(".json")).sort()) {
+    const bytes = try readText(files.join(directory, name))
+    const disclosure = Schema.decodeUnknownEffect(Disclosure)(jsonOf(new TextDecoder().decode(bytes))) catch effect () => {
+      return try refused([`${name}: not a direct-payment disclosure`])
+    }
+    found.push({ name, disclosure })
+  }
+  return found
+}
+
+export effect function checkedDisclosures(root: string) {
+  const files = try Path.Path
+  const found = try disclosureFiles(root)
+  const failures: string[] = []
+  for (const { name, disclosure } of found) {
+    const preparation = try readText(files.resolve(root, disclosure.preparation.path))
+    for (const failure of try verifyDisclosure(disclosure, preparation)) failures.push(`${name}: ${failure}`)
+  }
+  if (failures.length > 0) return try refused(failures)
+  return found
+}
+
+effect function rowsOf(file: DisclosureFile) {
+  const { disclosure } = file
+  const path = `disclosures/${file.name}`
+  const chain = Object.hasOwn(importedNetworks, disclosure.network) ? importedNetworks[disclosure.network] : undefined
+  if (chain === undefined || disclosure.asset !== "USDC") return try refused([`${path}: unsupported network or asset`])
+  if (!projectText.test(disclosure.projectId) || !monthText.test(disclosure.contributionMonth)) return try refused([`${path}: invalid project or month`])
+  const imported: DirectImportRow[] = []
+  for (const row of disclosure.rows) {
+    const observed = row.observed
+    if (row.state !== "paid-direct" || observed === null) continue
+    const githubUserId = githubUserIdFromNodeId(row.actorId)
+    if (githubUserId <= 0n || !signatureText.test(observed.signature) || !recipientText.test(observed.recipient) || !positiveText.test(observed.amountMinor) || !Number.isSafeInteger(observed.slot) || Number.isNaN(Date.parse(observed.blockTime)))
+      return try refused([`${path}: invalid observed transfer for ${row.login}`])
+    imported.push({
+      network: disclosure.network,
+      transactionId: observed.signature,
+      projectId: disclosure.projectId,
+      contributionMonth: disclosure.contributionMonth,
+      githubUserId: githubUserId.toString(),
+      githubNodeId: row.actorId,
+      login: row.login,
+      chain,
+      recipient: observed.recipient,
+      amountMicro: observed.amountMinor,
+      blockTime: observed.blockTime,
+      blockId: String(observed.slot),
+      sourcePath: path,
+    })
+  }
+  return imported
+}
+
+export effect function importRows(files: ReadonlyArray<DisclosureFile>) {
+  const imported: DirectImportRow[] = []
+  for (const file of files) imported.push(...(try rowsOf(file)))
+  if (files.length > 0 && imported.length === 0) return try refused(["no observed direct transfers"])
+  return imported
+}
+
+effect function listed(root: string, directory: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const names = fs.readDirectory(files.join(root, directory)) catch effect () => {
+    return try refused([`${directory} could not be read`])
+  }
+  return [...names]
+}
+
+effect function isDirectory(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.lstat(path) catch effect () => {
+    return try refused([`${path} could not be read`])
+  }
+  return info.type === "Directory"
+}
+
+effect function observationSourcePaths(root: string) {
+  const files = try Path.Path
+  const paths = (try listed(root, "funding/preparations")).filter((name) => name.endsWith(".json")).map((name) => `funding/preparations/${name}`)
+  for (const project of try listed(root, "cycles")) {
+    if (!(try isDirectory(files.join(root, "cycles", project)))) continue
+    for (const month of try listed(root, `cycles/${project}`)) paths.push(`cycles/${project}/${month}/proposal.json`)
+  }
+  return paths.sort()
+}
+
+effect function observationSource(root: string, path: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const text = fs.readFileString(files.join(root, path)) catch effect (error) => {
+    if (error.reason._tag === "NotFound") return undefined
+    return try refused([`${path} could not be read`])
+  }
+  if (text === undefined) return undefined
+  const source = Schema.decodeUnknownEffect(ObservationSource)(jsonOf(text)) catch effect () => {
+    return try refused([`${path} is not a contributor record`])
+  }
+  return source
+}
+
+export effect function refuseReadmeObservations(root: string) {
+  let sources = 0
+  const failures: string[] = []
+  for (const path of try observationSourcePaths(root)) {
+    const source = try observationSource(root, path)
+    if (source === undefined) continue
+    sources += 1
+    for (const { actor, wallet } of [...(source.contributors ?? []), ...(source.allocations ?? [])])
+      if ((wallet?.sourceCommit ?? "") !== "") failures.push(`${path}: the README wallet of ${actor.login} cannot be imported until the backend Wallets port writes wallet_observations, so nothing is imported`)
+  }
+  if (sources === 0) return
+  return try refused(failures.length === 0 ? ["no README wallet observations"] : failures)
+}

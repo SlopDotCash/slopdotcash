@@ -1,0 +1,115 @@
+// spec/slopbot/categories.md, "The verdict schema has ten categories and the PRD table names their actions"; spec/slopbot/categories.md, "Confidence uses hundredths and closure requires at least ninety"
+import type { Category as Finding } from "../../gen/slopbot__categories.effect.vibe"
+import { validConfidence } from "../../gen/slopbot__categories.effect.vibe"
+import type { Category as Reviewed } from "../../gen/slopbot__review.effect.vibe"
+import type { RuleRef } from "./grounding.ts"
+
+export const categories = ["none", "spam", "scam", "empty", "duplicate", "out_of_scope", "busywork", "missing_evidence", "gaming", "low_quality"] as const
+
+export type CategoryName = (typeof categories)[number]
+
+export interface Verdict {
+  readonly category: CategoryName
+  readonly confidence: number
+  readonly rule_refs: ReadonlyArray<RuleRef>
+  readonly evidence: ReadonlyArray<string>
+  readonly summary: string
+  readonly limitations: ReadonlyArray<string>
+  readonly objective_defect: string | null
+}
+
+export const verdictSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["category", "confidence", "rule_refs", "evidence", "summary", "limitations", "objective_defect"],
+  properties: {
+    objective_defect: { type: ["string", "null"] },
+    category: { type: "string", enum: [...categories] },
+    confidence: { type: "number" },
+    rule_refs: {
+      type: "array",
+      items: { type: "object", additionalProperties: false, required: ["source", "quote"], properties: { source: { type: "string" }, quote: { type: "string" } } },
+    },
+    evidence: { type: "array", items: { type: "string" } },
+    summary: { type: "string" },
+    limitations: { type: "array", items: { type: "string" } },
+  },
+} as const
+
+export const summaryLimit = 1200
+
+const objectiveDefectId = /^[a-f0-9]{64}$/u
+
+const findings: Readonly<Record<CategoryName, Finding>> = {
+  none: "NoFinding",
+  spam: "Spam",
+  scam: "Scam",
+  empty: "EmptyItem",
+  duplicate: "Duplicate",
+  out_of_scope: "OutOfScope",
+  busywork: "Busywork",
+  missing_evidence: "MissingEvidence",
+  gaming: "Gaming",
+  low_quality: "LowQuality",
+}
+
+const reviewed: Readonly<Record<CategoryName, Reviewed>> = {
+  none: "NoFinding",
+  spam: "Spam",
+  scam: "Scam",
+  empty: "OtherFinding",
+  duplicate: "OtherFinding",
+  out_of_scope: "OtherFinding",
+  busywork: "OtherFinding",
+  missing_evidence: "OtherFinding",
+  gaming: "OtherFinding",
+  low_quality: "LowQuality",
+}
+
+schema RuleRefWire { readonly source: string; readonly quote: string }
+
+schema VerdictWire {
+  readonly category: string
+  readonly confidence: number
+  readonly rule_refs: ReadonlyArray<RuleRefWire>
+  readonly evidence: ReadonlyArray<string>
+  readonly summary: string
+  readonly limitations: ReadonlyArray<string>
+  readonly objective_defect?: string | null
+}
+
+function categoryOf(text: string): CategoryName | undefined {
+  return categories.find((name) => name === text)
+}
+
+export function findingOf(category: CategoryName): Finding {
+  return findings[category]
+}
+
+export function reviewedOf(category: CategoryName): Reviewed {
+  return reviewed[category]
+}
+
+export function hundredths(confidence: number) {
+  return Math.min(100, Math.max(0, Math.floor(confidence * 100)))
+}
+
+export function validateVerdict(raw: unknown): Verdict | undefined {
+  if (!Schema.is(VerdictWire)(raw)) return undefined
+  const category = categoryOf(raw.category)
+  if (category === undefined || !(raw.confidence >= 0 && raw.confidence <= 1) || !validConfidence(hundredths(raw.confidence))) return undefined
+  if (raw.summary.length === 0) return undefined
+  const defect = raw.objective_defect ?? null
+  if (defect !== null && !objectiveDefectId.test(defect)) return undefined
+  return {
+    objective_defect: defect,
+    category,
+    confidence: raw.confidence,
+    rule_refs: raw.rule_refs.map((ref) => ({ source: ref.source, quote: ref.quote })),
+    evidence: [...raw.evidence],
+    summary: raw.summary.slice(0, summaryLimit),
+    limitations: [...raw.limitations],
+  }
+}
+
+export const verdictOutput = { schema: verdictSchema, validate: validateVerdict }

@@ -1,0 +1,77 @@
+// spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { millisOf } from "@repo/platform/clock"
+
+export interface RegisteredVault {
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+}
+
+export interface CheckResult {
+  readonly ok: boolean
+  readonly check: string
+  readonly detail: string
+}
+
+type Registered = { readonly vaults: ReadonlyArray<RegisteredVault> } | { readonly error: string }
+
+const refreshedNetworks: ReadonlySet<string> = new Set(["base-mainnet", "robinhood-mainnet", "solana-mainnet"])
+
+export function fieldOf(value: unknown, name: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>)[name] : undefined
+}
+
+function filled(value: unknown): value is string {
+  return typeof value === "string" && value !== ""
+}
+
+export function registeredVaults(registry: unknown): Registered {
+  const projects = fieldOf(registry, "projects")
+  if (fieldOf(registry, "schemaVersion") !== "1" || !Array.isArray(projects) || projects.length === 0) return { error: "Registry response has no projects" }
+  const vaults: RegisteredVault[] = []
+  for (const project of projects) {
+    const projectId = fieldOf(project, "id")
+    if (!filled(projectId)) return { error: "Registry project has no id" }
+    const deployments = fieldOf(fieldOf(project, "escrow"), "deployments") ?? []
+    if (!Array.isArray(deployments)) return { error: `Registry project ${projectId} has invalid deployments` }
+    for (const deployment of deployments) {
+      const vault = fieldOf(deployment, "vault")
+      const network = fieldOf(deployment, "network")
+      if (!filled(vault) || !filled(network)) return { error: `Registry project ${projectId} has a deployment without a vault or network` }
+      vaults.push({ projectId, network, vault })
+    }
+  }
+  return { vaults }
+}
+
+export function vaultLabel(expected: RegisteredVault): string {
+  return `vault ${expected.projectId} ${expected.network} ${expected.vault}`
+}
+
+function minutes(ms: number): string {
+  return `${Math.round(ms / 60_000)} min`
+}
+
+function sameVault(expected: RegisteredVault, listed: unknown): boolean {
+  const vault = fieldOf(listed, "vault")
+  if (fieldOf(listed, "network") !== expected.network || typeof vault !== "string") return false
+  return vault === expected.vault || (expected.vault.startsWith("0x") && vault.toLowerCase() === expected.vault.toLowerCase())
+}
+
+export function evaluateVault(expected: RegisteredVault, response: unknown, now: number): CheckResult {
+  const check = vaultLabel(expected)
+  const fail = (detail: string): CheckResult => ({ ok: false, check, detail })
+  const staleAfterMs = fieldOf(response, "staleAfterMs")
+  if (typeof staleAfterMs !== "number" || !Number.isSafeInteger(staleAfterMs) || staleAfterMs <= 0) return fail("response publishes no staleAfterMs")
+  const snapshots = fieldOf(response, "snapshots")
+  if (fieldOf(response, "projectId") !== expected.projectId || !Array.isArray(snapshots)) return fail("response does not describe this project")
+  const snapshot = snapshots.find((listed) => sameVault(expected, listed))
+  if (snapshot === undefined) return fail("no cached snapshot for this vault")
+  const observedAt = fieldOf(snapshot, "observedAt")
+  const observed = typeof observedAt === "string" ? millisOf(observedAt) : Number.NaN
+  if (!Number.isFinite(observed)) return fail("snapshot has no observation time")
+  if (!refreshedNetworks.has(expected.network)) return { ok: true, check, detail: `network not activated, no refresh expected; last observed ${String(observedAt)}` }
+  const age = now - observed
+  const detail = `observed ${String(observedAt)}, age ${minutes(age)} (limit ${minutes(staleAfterMs)})`
+  return age > staleAfterMs ? fail(`stale: ${detail}`) : { ok: true, check, detail }
+}

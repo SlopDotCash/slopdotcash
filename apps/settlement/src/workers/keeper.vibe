@@ -1,0 +1,6 @@
+// spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"
+import { keeperEntry } from "./keeper.classes.ts"
+
+export { OperatorKeeper } from "./keeper.classes.ts"
+
+export default keeperEntry

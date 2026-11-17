@@ -1,0 +1,36 @@
+// spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"; spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"
+import { webCrypto } from "@repo/platform/crypto"
+import { entrypoint } from "@repo/platform/entrypoints"
+import { type MergeFileRecovery, type MergeReconstruction, type MergeUnavailable, MergeVerifier as Verifier } from "@repo/ports/security"
+import { Containers } from "../sandbox/container.vibe"
+import { mergeVerifierLive } from "../sandbox/merge.vibe"
+import { type ReleaseVars, sandboxWorker } from "../sandbox/run.vibe"
+import { type Runner, isolation, openSandbox } from "./sandbox.classes.ts"
+
+export { OfflineSandbox } from "./sandbox.classes.ts"
+
+export interface Env extends ReleaseVars {
+  readonly RUNNER: Runner
+}
+
+function containers(env: Env) {
+  return Layer.succeed(Containers, { isolation, open: (id, transport) => succeed(openSandbox(env.RUNNER, id, transport)) })
+}
+
+export error MergeReconstructionUnavailable { message: string }
+
+function wireError(error: MergeUnavailable) {
+  return new MergeReconstructionUnavailable({ message: error.stage === "request" ? "Merge reconstruction unavailable" : `Merge reconstruction unavailable: ${error.stage}` })
+}
+
+effect function reconstruct(request: MergeReconstruction) {
+  return (try Verifier).reconstruct(request) catch effect (error) => throw wireError(error)
+}
+
+effect function recover(request: MergeFileRecovery) {
+  return (try Verifier).recover(request) catch effect (error) => throw wireError(error)
+}
+
+export const MergeVerifier = entrypoint((env: Env) => Layer.provide(mergeVerifierLive, Layer.merge(containers(env), webCrypto)), { reconstruct, recover })
+
+export default sandboxWorker(containers)

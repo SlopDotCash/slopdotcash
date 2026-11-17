@@ -1,0 +1,402 @@
+// spec/settlement/monthlySettlement.md, "On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"
+import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
+import type { SqlTx } from "@repo/platform/journal"
+import { leavesPerCall, nextLeafCursor } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type Bytes32, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBytes32, escrowGetter, evmAddress, isZero } from "../chain/evm/abi.ts"
+import { type MonthlyEntry, type MonthlyReservation, type MonthlyReserveState, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, decodeMonthlyReserve, monthlyDigest, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall, reserveMonthlyCalldata, sumTree } from "../chain/evm/monthlyRoot.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, parsePeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { type Attempt, type SendContext, fingerprintOf, parsedAttempt, readAttempt, reasonOf, retireReverted, signNewAttempt } from "./attempts.vibe"
+import { canonicalJson } from "./canonical.ts"
+import { monthlyCutoff } from "./config.vibe"
+import type { KeeperResult } from "./diagnostics.vibe"
+import { submitSigned } from "./pay.vibe"
+import { KeeperRefused, publicJson } from "./registry.vibe"
+import { RecordInvalid, inTransaction, keep, record, recordOf } from "./store.vibe"
+import { decimal, widen } from "./units.ts"
+
+export error MonthlyRefused { reason: string }
+
+schema PlanEntry {
+  readonly githubUserId: string
+  readonly grossMicro: string
+  readonly sourceDigest: string
+}
+
+schema PlanRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly snapshotSha256: string
+}
+
+schema PlanDeployment {
+  readonly vault: string
+  readonly asset: string
+  readonly identityAuthority?: string
+}
+
+schema Reservation {
+  readonly version: number
+  readonly allocationDigest: string
+  readonly allocationRoot: string
+  readonly wholeGross: string
+  readonly remainingGross: string
+  readonly count: number
+  readonly sourceSequence: string
+}
+
+schema Plan {
+  readonly request: PlanRequest
+  readonly deployment: PlanDeployment
+  readonly family: string
+  readonly allocationRoot: string
+  readonly messageHex: string
+  readonly totalGrossBase: string
+  readonly entries: ReadonlyArray<PlanEntry>
+  readonly evmReservation?: Reservation
+}
+
+schema LegacyAuthorization {
+  readonly plan: Plan
+  readonly signatureHex: string
+}
+
+schema Authorization {
+  readonly plan: Plan
+  readonly signatureHex: string
+  readonly legacyAuthorization?: LegacyAuthorization
+}
+
+const Publication = Schema.Struct({ authorization: Schema.Unknown })
+
+interface Retained {
+  readonly value: Authorization
+  readonly raw: unknown
+}
+
+export interface MonthlySubmission {
+  readonly transactionId: string | null
+  readonly alreadyCommitted: boolean
+  readonly complete?: boolean
+  readonly notAdmitted?: boolean
+  readonly committedSources?: ReadonlyArray<string>
+}
+
+export interface MonthContext {
+  readonly send: SendContext
+  readonly projectActive: boolean
+  readonly restricted: boolean
+  readonly execute: boolean
+}
+
+const SIGNATURE = /^[a-f0-9]{130}$/u
+const PERIOD_TEXT = /^[2-9][0-9]{3}-(0[1-9]|1[0-2])$/u
+const SEQUENCE = /^(0|[1-9][0-9]{0,77})$/u
+
+function refused(reason: string) {
+  return new MonthlyRefused({ reason })
+}
+
+function same(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+function rawField(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  let current = value
+  for (const key of path) current = typeof current === "object" && current !== null && key in current ? (current as Readonly<Record<string, unknown>>)[key] : undefined
+  return current ?? null
+}
+
+effect function decodedAuthorization(raw: unknown, key: string) {
+  return Schema.decodeUnknownEffect(Authorization)(raw) catch effect () => { throw new RecordInvalid({ key }) }
+}
+
+effect function retainAuthorization(key: string, raw: unknown, value: Authorization) {
+  try inTransaction((tx) => effect {
+    const previousRaw = try record(tx, key)
+    const previous = previousRaw === undefined ? undefined : try decodedAuthorization(previousRaw, key)
+    if (previous !== undefined && canonicalJson(previousRaw) !== canonicalJson(raw)) {
+      const old = previous.plan
+      const next = value.plan
+      const reservation = next.evmReservation
+      if (old.family !== "evm" || next.family !== "evm" || reservation === undefined || reservation.version !== 2
+        || canonicalJson(rawField(previousRaw, "plan", "request")) !== canonicalJson(rawField(raw, "plan", "request"))
+        || !same(old.deployment.vault, next.deployment.vault) || !same(old.deployment.asset, next.deployment.asset)
+        || reservation.allocationDigest !== `0x${next.request.snapshotSha256}`)
+        throw refused("Published authorization changed the frozen allocation")
+      if (old.evmReservation !== undefined) {
+        const later = SEQUENCE.test(reservation.sourceSequence) ? decimal(reservation.sourceSequence) : undefined
+        const earlier = SEQUENCE.test(old.evmReservation.sourceSequence) ? decimal(old.evmReservation.sourceSequence) : undefined
+        if (later === undefined || earlier === undefined || later <= earlier
+          || reservation.wholeGross !== old.evmReservation.wholeGross
+          || canonicalJson(rawField(previousRaw, "legacyAuthorization")) !== canonicalJson(rawField(raw, "legacyAuthorization")))
+          throw refused("Published authorization is not a later execution attempt")
+      } else if (canonicalJson(rawField(raw, "legacyAuthorization")) !== canonicalJson({ plan: rawField(previousRaw, "plan"), signatureHex: previous.signatureHex })) {
+        throw refused("Published authorization did not retain the original signature")
+      }
+    }
+    const retained: ReadonlyArray<Retained> = previous === undefined ? [{ value, raw }] : [{ value: previous, raw: previousRaw }, { value, raw }]
+    for (const authorization of retained) {
+      const attemptKey = `${key}:attempt:${authorization.value.plan.messageHex}`
+      const kept = try record(tx, attemptKey)
+      if (kept !== undefined && canonicalJson(kept) !== canonicalJson(authorization.raw)) throw refused("Retained monthly authorization changed")
+      if (kept === undefined) try keep(tx, attemptKey, authorization.raw)
+    }
+    try keep(tx, key, raw)
+  })
+}
+
+effect function entriesOf(plan: Plan) {
+  const entries: MonthlyEntry[] = []
+  for (const entry of plan.entries) {
+    const actor = parseBaseUnits(entry.githubUserId)
+    const gross = parseBaseUnits(entry.grossMicro)
+    const sourceDigest = bytes32(entry.sourceDigest)
+    if (actor === undefined || gross === undefined || sourceDigest === undefined) throw refused("Invalid monthly authorization")
+    entries.push({ actor, gross, sourceDigest })
+  }
+  return entries
+}
+
+effect function vaultRead(context: SendContext, data: Hex) {
+  const vault = evmAddress(context.deployment.vault)
+  if (vault === undefined) throw refused("Reviewed deployment identity is incomplete")
+  return try (try EvmRpc).call({ to: vault, data, block: "finalized" })
+}
+
+effect function reserveState(context: SendContext, period: Period) {
+  const rootAnswer = try vaultRead(context, try Effect.try({ try: () => monthlyRootCall(period), catch: () => refused("Invalid monthly authorization") }))
+  const reserveAnswer = try vaultRead(context, try Effect.try({ try: () => monthlyReserveCall(period), catch: () => refused("Invalid monthly authorization") }))
+  const state = decodeMonthlyReserve({ root: rootAnswer, reserve: reserveAnswer })
+  if (state === undefined) throw refused("Malformed contract state")
+  return state
+}
+
+effect function sendJournaledUntilMined(context: SendContext, key: string) {
+  const attempt = try inTransaction((tx) => readAttempt(tx, key))
+  if (attempt === undefined || attempt === null) return true
+  const signed = try parsedAttempt(attempt.rawTransaction, context.config.signer)
+  const mined = try (try EvmRpc).nonce(context.config.signer, "latest")
+  if (mined > widen(signed.request.nonce)) return true
+  try submitSigned(context, key, attempt)
+  return false
+}
+
+effect function resubmitted(context: SendContext, key: string) {
+  const previous = try inTransaction((tx) => readAttempt(tx, key))
+  if (previous === undefined || previous === null || (try retireReverted(key, previous, context.config.signer))) return undefined
+  return try submitSigned(context, key, previous)
+}
+
+effect function signedAndSent(context: SendContext, key: string, fingerprint: string, data: Hex, period: string) {
+  const previous = try inTransaction((tx) => readAttempt(tx, key))
+  if (previous !== undefined && previous !== null) try retireReverted(key, previous, context.config.signer)
+  const attempt: Attempt = try signNewAttempt(context, { key, fingerprint, data, monthlyPeriod: period })
+  return try submitSigned(context, key, attempt)
+}
+
+effect function keepCursor(key: string, cursor: number) {
+  try inTransaction((tx: SqlTx) => keep(tx, key, cursor))
+}
+
+function reservationOf(reservation: Reservation): MonthlyReservation | undefined {
+  const allocationDigest = bytes32(reservation.allocationDigest)
+  const root = bytes32(reservation.allocationRoot)
+  const wholeGross = parseBaseUnits(reservation.wholeGross)
+  const remainingGross = parseBaseUnits(reservation.remainingGross)
+  const sourceSequence = SEQUENCE.test(reservation.sourceSequence) ? decimal(reservation.sourceSequence) : undefined
+  if (allocationDigest === undefined || root === undefined || wholeGross === undefined || remainingGross === undefined || sourceSequence === undefined) return undefined
+  return { allocationDigest, allocationRoot: root, wholeGross, remainingGross, count: reservation.count, sourceSequence }
+}
+
+effect function legacyRootHeld(context: SendContext, legacy: LegacyAuthorization | undefined, period: Period, state: MonthlyReserveState) {
+  if (legacy === undefined) throw refused("The original legacy monthly authorization is required")
+  const vault = evmAddress(context.deployment.vault)
+  const entries = try entriesOf(legacy.plan)
+  const legacyRoot = Effect.try(() => allocationRoot(entries)) catch () => undefined
+  const legacyDigest = vault === undefined || legacyRoot === undefined ? undefined : Effect.try(() => monthlyDigest({ chainId: context.deployment.chainId, vault }, period, legacyRoot)) catch () => undefined
+  const signer = legacyDigest === undefined || !SIGNATURE.test(legacy.signatureHex) ? undefined : recoverDigest(legacyDigest, `0x${legacy.signatureHex}`)
+  if (legacyRoot === undefined || legacyDigest === undefined || state.root !== legacyRoot || legacy.plan.allocationRoot !== legacyRoot || legacy.plan.messageHex !== legacyDigest.slice(2)
+    || signer === undefined || legacy.plan.deployment.identityAuthority === undefined || !same(signer, legacy.plan.deployment.identityAuthority))
+    throw refused("Legacy monthly root differs from its original authorization")
+}
+
+function legacyMatches(legacy: LegacyAuthorization, plan: Plan, context: SendContext) {
+  const old = legacy.plan
+  return old.evmReservation === undefined && old.family === "evm" && old.request.projectId === plan.request.projectId && old.request.period === plan.request.period
+    && old.request.network === plan.request.network && old.request.snapshotSha256 === plan.request.snapshotSha256
+    && same(old.deployment.vault, context.deployment.vault) && same(old.deployment.asset, context.deployment.asset)
+    && plan.entries.every((entry) => old.entries.some((kept) => same(kept.sourceDigest, entry.sourceDigest) && kept.githubUserId === entry.githubUserId && kept.grossMicro === entry.grossMicro))
+}
+
+effect function submitReserve(context: SendContext, authorization: Authorization, reservation: Reservation, period: Period, admit: boolean, maxLeaves: number) {
+  const { plan, signatureHex } = authorization
+  const { deployment, config } = context
+  if (!Number.isSafeInteger(maxLeaves) || maxLeaves < 1) throw refused("Invalid monthly leaf bound")
+  const vault = evmAddress(deployment.vault)
+  const entries = try entriesOf(plan)
+  const tree = Effect.try(() => sumTree(entries)) catch () => undefined
+  const terms = reservationOf(reservation)
+  const expected = vault === undefined || terms === undefined ? undefined : Effect.try(() => monthlyReserveDigest({ chainId: deployment.chainId, vault }, period, terms)) catch () => undefined
+  if (tree === undefined || terms === undefined || expected === undefined || reservation.allocationDigest !== `0x${plan.request.snapshotSha256}`
+    || reservation.allocationRoot !== tree.root.hash || plan.allocationRoot !== tree.root.hash || reservation.count !== plan.entries.length
+    || reservation.remainingGross !== tree.root.total.toString() || reservation.wholeGross !== plan.totalGrossBase
+    || expected.slice(2) !== plan.messageHex || !SIGNATURE.test(signatureHex))
+    throw refused("Monthly reserve differs from its frozen authorization")
+  const state = try reserveState(context, period)
+  const legacy = authorization.legacyAuthorization
+  if (legacy !== undefined && !legacyMatches(legacy, plan, context)) throw refused("Legacy authorization differs from the frozen monthly allocation")
+  const network = config.network
+  const lowerVault = deployment.vault.toLowerCase()
+  const key = `monthly:v2:${network}:${lowerVault}:${plan.request.period}`
+  const legacyKey = `monthly:${network}:${lowerVault}:${plan.request.period}`
+  let rootSettled = true
+  if (!isZero(state.root))
+    for (const journaled of [legacyKey, key]) rootSettled = (try sendJournaledUntilMined(context, journaled)) && rootSettled
+  if (!isZero(state.root) && isZero(state.allocationDigest)) {
+    try legacyRootHeld(context, legacy, period, state)
+    return { transactionId: null, alreadyCommitted: true, complete: rootSettled } satisfies MonthlySubmission
+  }
+  if (isZero(state.root)) {
+    if (!admit) return { notAdmitted: true, transactionId: null, alreadyCommitted: false, complete: false } satisfies MonthlySubmission
+    const authority = decodeAddress(try vaultRead(context, escrowGetter("identityAuthority")))
+    const signer = recoverDigest(expected, `0x${signatureHex}`)
+    if (authority === undefined || signer === undefined || !same(signer, authority)) throw refused("Invalid monthly authority signature")
+    for (const journaled of [legacyKey, key]) {
+      const sent = try resubmitted(context, journaled)
+      if (sent !== undefined) return { transactionId: sent.transactionId, alreadyCommitted: false, complete: false } satisfies MonthlySubmission
+    }
+    const data = try Effect.try({ try: () => reserveMonthlyCalldata(period, terms, `0x${signatureHex}`), catch: () => refused("Invalid monthly attestation") })
+    const sent = try signedAndSent(context, key, fingerprintOf([deployment.chainId.toString(), lowerVault, expected]), data, plan.request.period)
+    return { transactionId: sent.transactionId, alreadyCommitted: false, complete: false } satisfies MonthlySubmission
+  }
+  if (state.root !== tree.root.hash || state.allocationDigest !== reservation.allocationDigest || state.total !== tree.root.total || state.count !== entries.length)
+    throw refused("Another monthly reserve is already admitted")
+  const cursorKey = `${key}:${tree.root.hash}:finalized-cursor`
+  const stored = try recordOf(cursorKey)
+  const kept = stored === undefined ? 0 : stored
+  if (typeof kept !== "number" || !Number.isSafeInteger(kept) || kept < 0 || kept > entries.length) throw refused("Invalid monthly execution cursor")
+  let cursor: number = kept
+  const bound = Math.min(maxLeaves, leavesPerCall)
+  if (state.remaining === 0n) {
+    let index = cursor
+    for (; index < entries.length && index < cursor + bound; index += 1) {
+      if (!(try sendJournaledUntilMined(context, `${key}:${tree.root.hash}:leaf:${index}`))) break
+      try keepCursor(cursorKey, index + 1)
+    }
+    return { transactionId: null, alreadyCommitted: true, complete: rootSettled && index === entries.length } satisfies MonthlySubmission
+  }
+  let transactionId: string | null = null
+  const committedSources: string[] = []
+  for (let index = cursor, examined = 0; index < entries.length && examined < bound; index += 1, examined += 1) {
+    const entry = entries[index]
+    const proof = tree.proofs[index]
+    if (entry === undefined || proof === undefined || vault === undefined) throw refused("Invalid monthly authorization")
+    const leafKey = `${key}:${tree.root.hash}:leaf:${index}`
+    const id: Bytes32 = try Effect.try({ try: () => awardId(deployment.chainId, vault, entry.sourceDigest), catch: () => refused("Invalid monthly authorization") })
+    const award = decodeAward(try vaultRead(context, awardCall(id)))
+    if (award === undefined) throw refused("Malformed contract state")
+    if (award.actor !== 0n) {
+      if (award.actor !== entry.actor || award.gross !== entry.gross || !payoutFeeAccepted(award.gross, award.fee, false))
+        throw refused("Admitted monthly source conflicts with a funded award")
+      const settled = try sendJournaledUntilMined(context, leafKey)
+      const next = nextLeafCursor(cursor, index, true, settled)
+      if (next !== cursor) {
+        cursor = next
+        try keepCursor(cursorKey, cursor)
+      }
+      continue
+    }
+    const data = try Effect.try({ try: () => commitMonthlyLeafCalldata(period, entry, index, proof), catch: () => refused("Invalid monthly authorization") })
+    const sent = try signedAndSent(context, leafKey, fingerprintOf([data]), data, plan.request.period)
+    transactionId = sent.transactionId
+    committedSources.push(entry.sourceDigest)
+  }
+  return { transactionId, alreadyCommitted: true, complete: false, committedSources } satisfies MonthlySubmission
+}
+
+export effect function submitEvmMonthly(context: SendContext, authorization: Authorization, admit: boolean, maxLeaves: number) {
+  const { plan, signatureHex } = authorization
+  const { deployment, config } = context
+  const period = PERIOD_TEXT.test(plan.request.period) ? parsePeriod(plan.request.period) : undefined
+  if (plan.family !== "evm" || period === undefined) throw refused("Invalid monthly authorization")
+  if (deployment.projectId !== plan.request.projectId || !same(deployment.asset, plan.deployment.asset) || same(config.signer, deployment.identityAuthority))
+    throw refused("Monthly executor or deployment mismatch")
+  const reservation = plan.evmReservation
+  if (reservation !== undefined) return try submitReserve(context, authorization, reservation, period, admit, maxLeaves)
+  if (!admit) return { transactionId: null, alreadyCommitted: false } satisfies MonthlySubmission
+  const vault = evmAddress(deployment.vault)
+  const entries = try entriesOf(plan)
+  const root = Effect.try(() => allocationRoot(entries)) catch () => undefined
+  const expected = vault === undefined || root === undefined ? undefined : Effect.try(() => monthlyDigest({ chainId: deployment.chainId, vault }, period, root)) catch () => undefined
+  const signer = expected === undefined || !SIGNATURE.test(signatureHex) ? undefined : recoverDigest(expected, `0x${signatureHex}`)
+  if (root === undefined || expected === undefined || root !== plan.allocationRoot || expected.slice(2) !== plan.messageHex || signer === undefined || !same(signer, deployment.identityAuthority))
+    throw refused("Invalid monthly authority signature")
+  const current = decodeBytes32(try vaultRead(context, try Effect.try({ try: () => monthlyRootCall(period), catch: () => refused("Invalid monthly authorization") })))
+  if (current === undefined) throw refused("Malformed contract state")
+  const key = `monthly:${config.network}:${deployment.vault.toLowerCase()}:${plan.request.period}`
+  if (!isZero(current)) {
+    const settled = try sendJournaledUntilMined(context, key)
+    if (current !== root) throw refused("Another monthly root is already committed")
+    return { transactionId: null, alreadyCommitted: true, ...settled ? {} : { complete: false } } satisfies MonthlySubmission
+  }
+  const data = try Effect.try({ try: () => commitMonthlyCalldata(period, entries, `0x${signatureHex}`), catch: () => refused("Invalid monthly authority signature") })
+  const fingerprint = fingerprintOf([deployment.chainId.toString(), deployment.vault.toLowerCase(), plan.request.period, root])
+  const sent = try signedAndSent(context, key, fingerprint, data, plan.request.period)
+  return { transactionId: sent.transactionId, alreadyCommitted: false } satisfies MonthlySubmission
+}
+
+effect function published(context: MonthContext, period: string, key: string) {
+  const { config, deployment } = context.send
+  const url = `${config.apiOrigin}/api/v1/payments/projects/${deployment.projectId}/monthly/${period}/authorization/${config.network}`
+  const answer = try publicJson(url, config.apiOrigin, () => new KeeperRefused({ message: "Monthly authorization publication unavailable" }))
+  if (answer === null) return undefined
+  const publication = Schema.decodeUnknownEffect(Publication)(answer) catch effect () => { throw refused("Published authorization is invalid") }
+  const value = Schema.decodeUnknownEffect(Authorization)(publication.authorization) catch effect () => { throw refused("Published authorization is invalid") }
+  if (value.plan.request.projectId !== deployment.projectId || value.plan.request.period !== period || value.plan.request.network !== config.network || value.plan.deployment.vault !== deployment.vault)
+    throw refused("Published authorization names another deployment")
+  try retainAuthorization(key, publication.authorization, value)
+  return value
+}
+
+export effect function serveMonths(context: MonthContext, scope: string, item: { readonly projectId: string; readonly vault: string }) {
+  const { config } = context.send
+  const results: KeeperResult[] = []
+  const nowSeconds = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const current = try Effect.try(() => periodContaining(nowSeconds))
+  let period = config.schedule.firstPeriod
+  for (; period < current; period = try Effect.try(() => shiftPeriod(period, 1))) {
+    const text = `${Math.trunc(period / 100)}-${String(period % 100).padStart(2, "0")}`
+    const operation = `monthly:${text}`
+    const key = `authorization:${scope}:${text}`
+    const stored = try recordOf(key)
+    let authorization = stored === undefined ? undefined : try decodedAuthorization(stored, key)
+    let fresh = false
+    const found = published(context, text, key) catch effect (error) => {
+      results.push({ ...item, operation, state: "publication-unavailable", error: reasonOf(error) })
+      return undefined
+    }
+    if (found !== undefined) {
+      authorization = found
+      fresh = true
+    }
+    if (authorization === undefined) continue
+    const cutoff = monthlyCutoff(config.schedule, period)
+    const closes = monthlyCutoff(config.schedule, try Effect.try(() => shiftPeriod(period, 1)))
+    const admit = fresh && context.projectActive && !context.restricted && cutoff !== undefined && closes !== undefined && nowSeconds >= cutoff && nowSeconds < closes
+    if (!context.execute) {
+      results.push({ ...item, operation, state: admit ? "published-not-executed" : "resume-only" })
+      continue
+    }
+    if (!admit && authorization.plan.evmReservation === undefined) continue
+    const chosen = authorization
+    const submitted = submitEvmMonthly(context.send, chosen, admit, config.perRun) catch effect (error) => {
+      results.push({ ...item, operation, state: "waiting", error: reasonOf(error) })
+      return undefined
+    }
+    if (submitted !== undefined) results.push({ ...item, operation, state: "execution-checked", ...submitted })
+  }
+  return results
+}

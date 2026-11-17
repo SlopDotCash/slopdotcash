@@ -1,0 +1,116 @@
+// spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+import { EdgeCache, cacheKey } from "@repo/platform/cache"
+import { isoNow } from "@repo/platform/clock"
+import { Refused, handle, handleRaw, json } from "@repo/platform/http"
+import { type Refusal, type Route, cacheControl } from "@repo/platform/route"
+import { actorDirectTransfers, actorVaultPayments, directHistoryHeader, paymentsMe, poolFunding as poolFundingRoute, projectDirectTransfers, projectVaultPayments, receivedTotals as receivedRoute, vaultPayments } from "../client/public.vibe"
+import { getPaymentsActorsByGithubIdVaultPayments as actorParity, getPaymentsMe as accountParity, getPaymentsProjectsByIdVault as vaultParity } from "../client/refusals.vibe"
+import { projectTotals as totalsRoute, projectVault, staleAfterMs, vaultEdgeSeconds } from "../client/vault.vibe"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { projectVaultSnapshots } from "../vault/totals.vibe"
+import { paymentsAccount } from "./account.vibe"
+import { poolFunding, projectTotals } from "./funding.vibe"
+import { type Scope, cursorOf, directTransferList, directTransferPage, includeTestnets, receivedTotals, vaultPaymentPage } from "./records.vibe"
+
+function row(entry: { readonly status: number; readonly error: string; readonly message?: string }): Refusal {
+  return { status: entry.status, code: entry.error, message: entry.message ?? "" }
+}
+
+const refusals = {
+  cursor: row(actorParity.invalidPaymentCursor),
+  actor: row(actorParity.invalidActor),
+  notFound: row(vaultParity.notFoundPrivateNoStore),
+  unavailable: row(accountParity.paymentsUnavailable),
+} satisfies Readonly<Record<string, Refusal>>
+
+const projectId = /^[a-z0-9][a-z0-9-]*$/u
+const actorId = /^[1-9]\d{0,15}$/u
+const receivedEdgeSeconds = 60
+
+effect function served<A, E extends { readonly _tag: string }, R>(program: A!E!R) {
+  return program catch effect (error) => {
+    if (error._tag === "Refused") throw error
+    if (error._tag === "CursorRefused") throw new Refused(refusals.cursor)
+    throw new Refused(refusals.unavailable)
+  }
+}
+
+effect function projectOf(params: Readonly<Record<string, string>>) {
+  const id = params.id ?? ""
+  if (!projectId.test(id)) throw new Refused(refusals.notFound)
+  return id
+}
+
+effect function cursor(query: URLSearchParams) {
+  const found = cursorOf(query)
+  if (found === undefined) throw new Refused(refusals.cursor)
+  return found
+}
+
+effect function pagedDirectHistory() {
+  return (try HttpServerRequest.HttpServerRequest).headers[directHistoryHeader] === "paged"
+}
+
+effect function encoded<A>(descriptor: Route<unknown, A>, answer: A) {
+  const body = try orDie(Schema.encodeUnknownEffect(descriptor.answer)(answer))
+  return json(body, 200, { "cache-control": cacheControl(descriptor.cache) })
+}
+
+effect function edgeCached<E, R>(build: HttpServerResponse.HttpServerResponse!E!R, seconds: number) {
+  const key = cacheKey((try HttpServerRequest.HttpServerRequest).originalUrl, 0)
+  const cache = try EdgeCache
+  const found = try cache.match(key)
+  if (found !== undefined) return HttpServerResponse.setHeader(found, "x-slop-cache", "hit")
+  const built = try build
+  if (built.status !== 200) return built
+  return try cache.put(key, HttpServerResponse.setHeader(built, "x-slop-cache", "miss"), seconds)
+}
+
+effect function vaultPage(scope: Scope, query: URLSearchParams) {
+  return try served(vaultPaymentPage(scope, try cursor(query)))
+}
+
+effect function directHistory(scope: Scope, query: URLSearchParams) {
+  if (try pagedDirectHistory()) return try served(directTransferPage(scope, try cursor(query)))
+  return try served(directTransferList(scope, false))
+}
+
+effect function projectVaultAnswer(id: string) {
+  const shown = try includeTestnets()
+  const snapshots = (try served(projectVaultSnapshots(id))).filter((snapshot) => shown || !(isNetworkKey(snapshot.network) && NETWORKS[snapshot.network].testnet))
+  return try encoded(projectVault, { projectId: id, snapshots, staleAfterMs, servedAt: try isoNow() })
+}
+
+export const publicRoutes = Layer.mergeAll(
+  handle(paymentsMe, (input) => effect {
+    return try served(paymentsAccount(input.actor.githubId, try pagedDirectHistory()))
+  }),
+  handleRaw(receivedRoute, () => edgeCached(effect {
+    return try encoded(receivedRoute, try served(receivedTotals(try isoNow())))
+  }, receivedEdgeSeconds)),
+  handle(vaultPayments, (input) => vaultPage({ kind: "all" }, input.query)),
+  handle(projectVaultPayments, (input) => effect {
+    return try vaultPage({ kind: "project", projectId: try projectOf(input.params) }, input.query)
+  }),
+  handle(actorVaultPayments, (input) => effect {
+    const githubUserId = input.params.id ?? ""
+    if (!actorId.test(githubUserId)) throw new Refused(refusals.actor)
+    return try vaultPage({ kind: "actor", githubUserId }, input.query)
+  }),
+  handle(projectDirectTransfers, (input) => effect {
+    return try directHistory({ kind: "project", projectId: try projectOf(input.params) }, input.query)
+  }),
+  handle(actorDirectTransfers, (input) => effect {
+    const githubUserId = input.params.id ?? ""
+    if (!actorId.test(githubUserId)) throw new Refused(refusals.notFound)
+    return try directHistory({ kind: "actor", githubUserId }, input.query)
+  }),
+  handle(poolFundingRoute, () => poolFunding()),
+  handle(totalsRoute, (input) => effect {
+    return try served(projectTotals(try projectOf(input.params)))
+  }),
+  handleRaw(projectVault, (input) => effect {
+    const id = try projectOf(input.params)
+    return try edgeCached(projectVaultAnswer(id), vaultEdgeSeconds)
+  }),
+)

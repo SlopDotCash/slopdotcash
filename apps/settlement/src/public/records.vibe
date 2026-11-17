@@ -1,0 +1,428 @@
+// spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+import { DeploymentTier } from "@repo/platform/config"
+import { D1, type NonEmpty, RowMismatch, type Statement, decoded, first, list, rows, sql } from "@repo/platform/d1"
+import { type DirectRecord, type VaultPaymentRecord, pageMicro, pageWindow, publicPageSize, receivedBy, receivedRecordBound, recordShown, recordValid, testnetsShownOn, validCursor } from "../../gen/settlement__publicRecords.effect.vibe"
+import type { DirectTransfer, DirectTransferList, DirectTransferPage, PublicVaultPayment, PublicVaultPaymentPage, ReceivedContributor, ReceivedTotals } from "../client/public.vibe"
+import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { type Chain, NETWORKS, type NetworkKey, isChain, isNetworkKey } from "../kernels/networks.ts"
+
+export error CursorRefused
+export error InvalidPaymentRecord { reason: string }
+
+export interface Cursor {
+  readonly after: number
+  readonly through: number | undefined
+}
+
+export type Scope =
+  | { readonly kind: "all" }
+  | { readonly kind: "project"; readonly projectId: string }
+  | { readonly kind: "actor"; readonly githubUserId: string }
+
+const decimalCursor = /^(?:0|[1-9]\d*)$/u
+const monthText = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const actorText = /^[1-9]\d{0,15}$/u
+const vaultPageRows = 100
+const directPageRows = 500
+
+function cursorNumber(raw: string | null) {
+  return raw !== null && decimalCursor.test(raw) ? Number(raw) : Number.NaN
+}
+
+export function cursorOf(query: URLSearchParams): Cursor | undefined {
+  if ([...query.keys()].some((key) => key !== "after" && key !== "through") || (query.has("after") && !query.has("through"))) return undefined
+  return { after: query.has("after") ? cursorNumber(query.get("after")) : 0, through: query.has("through") ? cursorNumber(query.get("through")) : undefined }
+}
+
+export effect function includeTestnets() {
+  const { tier } = try DeploymentTier
+  return testnetsShownOn(tier === "staging" ? "Staging" : "Production")
+}
+
+const testnetKeys = Object.keys(NETWORKS).filter((key): key is NetworkKey => isNetworkKey(key) && NETWORKS[key].testnet)
+
+function nonEmpty<T>(values: ReadonlyArray<T>): values is NonEmpty<T> {
+  return values.length > 0
+}
+
+export function testnetFilter(column: Statement, shown: boolean): Statement {
+  return shown || !nonEmpty(testnetKeys) ? sql`` : sql` AND ${column} NOT IN ${list(testnetKeys)}`
+}
+
+function scopeFilter(scope: Scope): Statement {
+  if (scope.kind === "project") return sql` AND o.project_id = ${scope.projectId}`
+  if (scope.kind === "actor") return sql` AND o.github_user_id = ${scope.githubUserId}`
+  return sql``
+}
+
+const finalizedRecords = sql`FROM payment_events e
+ JOIN payment_obligations o ON o.id = e.obligation_id AND o.network = e.network AND o.paid_transaction = e.transaction_id
+ LEFT JOIN monthly_payment_obligations m ON m.project_id = o.project_id AND m.network = o.network AND m.vault = o.vault
+   AND m.source_digest = o.source_digest AND m.github_user_id = o.github_user_id AND m.gross_base = o.gross_base AND m.fee_base = o.fee_base
+ WHERE e.kind = 'paid' AND o.state = 'paid'
+   AND NOT EXISTS (SELECT 1 FROM points_members p WHERE p.github_id = o.github_user_id AND (p.public != 1 OR p.closed_at IS NOT NULL))`
+
+const recordColumns = sql`e.rowid AS sequence, o.project_id, o.network, o.chain, o.vault, o.github_user_id, o.source_digest, o.gross_base, o.fee_base,
+ o.asset_address, o.asset_decimals, e.transaction_id, e.event_index, o.id AS obligation_id, e.evidence_json AS evidence, m.period AS contribution_month, e.observed_at AS indexed_at`
+
+schema PaidRow {
+  readonly sequence: number
+  readonly project_id: string
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly github_user_id: string
+  readonly source_digest: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly transaction_id: string
+  readonly event_index: number
+  readonly obligation_id: string
+  readonly evidence: string
+  readonly contribution_month: string | null
+  readonly indexed_at: string
+}
+
+schema ReceivedRow {
+  readonly sequence: number
+  readonly project_id: string
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly github_user_id: string
+  readonly source_digest: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly transaction_id: string
+  readonly event_index: number
+  readonly obligation_id: string
+  readonly evidence: string
+  readonly contribution_month: string | null
+  readonly indexed_at: string
+  readonly member_login: string | null
+}
+
+schema DirectRow {
+  readonly sequence: number
+  readonly project_id: string
+  readonly contribution_month: string
+  readonly github_user_id: string
+  readonly github_login: string
+  readonly network: string
+  readonly chain: string
+  readonly recipient: string
+  readonly amount_micro: string
+  readonly transaction_id: string
+  readonly block_time: string
+}
+
+schema DirectTotalRow {
+  readonly sequence: number
+  readonly project_id: string
+  readonly github_user_id: string
+  readonly github_login: string
+  readonly amount_micro: string
+  readonly member_login: string | null
+}
+
+schema Value { readonly value: number }
+
+effect function highestOf(table: "payment_events" | "payment_direct_transfers") {
+  const statement = table === "payment_events" ? sql`SELECT COALESCE(MAX(rowid), 0) AS value FROM payment_events` : sql`SELECT COALESCE(MAX(rowid), 0) AS value FROM payment_direct_transfers`
+  const found = try first(Value, statement)
+  if (found === undefined) throw new RowMismatch({ text: table, issue: "no history boundary" })
+  return found.value
+}
+
+effect function boundsOf(cursor: Cursor, highest: number) {
+  const through = cursor.through ?? highest
+  if (!Number.isSafeInteger(cursor.after) || !Number.isSafeInteger(through) || !validCursor(cursor.after, through, highest)) throw new CursorRefused()
+  return { after: cursor.after, through, highest }
+}
+
+effect function amountOf(value: bigint) {
+  return try orDie(Effect.try(() => toAmount(value)))
+}
+
+function referenceStablecoin(network: NetworkKey, address: string, decimals: number) {
+  const evm = address.startsWith("0x")
+  return NETWORKS[network].assets.some((asset) => asset.decimals === 6 && decimals === 6 && (evm ? asset.address.toLowerCase() === address.toLowerCase() : asset.address === address))
+}
+
+function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+function parsedEvidence(text: string): Readonly<Record<string, unknown>> | undefined {
+  const parsed = jsonOf(text)
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? Object.fromEntries(Object.entries(parsed)) : undefined
+}
+
+function evidenceMatches(row: PaidRow, network: NetworkKey | undefined, gross: bigint | undefined, fee: bigint | undefined) {
+  const evidence = parsedEvidence(row.evidence)
+  if (evidence === undefined || network === undefined || gross === undefined || fee === undefined || fee > gross) return false
+  const facts: Readonly<Record<string, string | number>> = {
+    kind: "paid",
+    transactionId: row.transaction_id,
+    eventIndex: row.event_index,
+    obligationId: row.obligation_id,
+    projectId: row.project_id,
+    network: row.network,
+    chain: row.chain,
+    vault: row.vault,
+    githubUserId: row.github_user_id,
+    sourceDigest: row.source_digest,
+    grossMicro: row.gross_base,
+    feeMicro: row.fee_base,
+    netMicro: (gross - fee).toString(),
+  }
+  return Object.entries(facts).every(([key, value]) => evidence[key] === value)
+    && (evidence.assetAddress === undefined || evidence.assetAddress === row.asset_address)
+    && (evidence.assetDecimals === undefined || evidence.assetDecimals === row.asset_decimals)
+    && isChain(row.chain)
+    && Number.isFinite(Date.parse(row.indexed_at))
+    && (row.contribution_month === null || monthText.test(row.contribution_month))
+    && actorText.test(row.github_user_id)
+}
+
+export effect function checkedPayment(row: PaidRow) {
+  const network = isNetworkKey(row.network) ? row.network : undefined
+  const gross = parseBaseUnits(row.gross_base)
+  const fee = parseBaseUnits(row.fee_base)
+  const matches = evidenceMatches(row, network, gross, fee)
+  const actor = Number(row.github_user_id)
+  const record: VaultPaymentRecord = {
+    sequence: row.sequence,
+    project: row.project_id,
+    actor: Number.isSafeInteger(actor) ? actor : 0,
+    network: row.network,
+    testnet: network !== undefined && NETWORKS[network].testnet,
+    asset: row.asset_address,
+    decimals: row.asset_decimals,
+    referenceStablecoin: network !== undefined && referenceStablecoin(network, row.asset_address, row.asset_decimals),
+    gross: try amountOf(gross ?? 0n),
+    fee: try amountOf(fee ?? 0n),
+    finalizedPaid: true,
+    evidenceMatches: matches && Number.isSafeInteger(actor),
+    publicAccount: true,
+  }
+  return { record, gross: gross ?? 0n, fee: fee ?? 0n }
+}
+
+function publicPayment(row: PaidRow, chain: Chain, net: bigint): PublicVaultPayment {
+  return {
+    id: `${row.network}:${row.transaction_id}:${row.event_index}`,
+    projectId: row.project_id,
+    network: row.network,
+    chain,
+    contributionMonth: row.contribution_month,
+    assetAddress: row.asset_address,
+    assetDecimals: row.asset_decimals,
+    netBase: net.toString(),
+    transactionId: row.transaction_id,
+    indexedAt: row.indexed_at,
+  }
+}
+
+effect function pageOf(checked: ReadonlyArray<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly net: bigint }>, sequences: ReadonlyArray<number>) {
+  const payments: PublicVaultPayment[] = []
+  for (const { row, record, net } of checked) {
+    if (!sequences.includes(record.sequence)) continue
+    if (!recordValid(record) || !isChain(row.chain)) throw new InvalidPaymentRecord({ reason: "Finalized payment evidence does not match obligation" })
+    payments.push(publicPayment(row, row.chain, net))
+  }
+  return payments
+}
+
+export effect function vaultPaymentPage(scope: Scope, cursor: Cursor) {
+  const shown = try includeTestnets()
+  const { after, through, highest } = try boundsOf(cursor, try highestOf("payment_events"))
+  const filters = sql`${scopeFilter(scope)}${testnetFilter(sql`o.network`, shown)}`
+  const [counted, paged] = try (try D1).batch([
+    sql`SELECT COUNT(*) AS value ${finalizedRecords}${filters} AND e.rowid <= ${through}`,
+    sql`SELECT ${recordColumns} ${finalizedRecords}${filters} AND e.rowid > ${after} AND e.rowid <= ${through} ORDER BY e.rowid LIMIT ${publicPageSize + 1}`,
+  ])
+  const [total] = try decoded(Value, counted?.rows ?? [], "vault payment count")
+  if (total === undefined) throw new RowMismatch({ text: "vault payment count", issue: "no count row" })
+  const checked: Array<{ readonly row: PaidRow; readonly record: VaultPaymentRecord; readonly net: bigint }> = []
+  for (const row of try decoded(PaidRow, paged?.rows ?? [], "vault payment page")) {
+    const { record, gross, fee } = try checkedPayment(row)
+    checked.push({ row, record, net: gross - fee })
+  }
+  const window = pageWindow(checked.filter((entry) => recordShown(entry.record, shown)).map((entry) => entry.record.sequence), after, through, highest)
+  if (!window.valid) throw new CursorRefused()
+  return { payments: try pageOf(checked, window.sequences), through, next: window.nextCursor === 0 ? null : window.nextCursor, total: total.value } satisfies PublicVaultPaymentPage
+}
+
+effect function directTransferOf(row: DirectRow) {
+  if (!isChain(row.chain)) throw new InvalidPaymentRecord({ reason: "Invalid direct transfer record" })
+  return {
+    projectId: row.project_id,
+    contributionMonth: row.contribution_month,
+    githubUserId: row.github_user_id,
+    login: row.github_login,
+    network: row.network,
+    chain: row.chain,
+    recipient: row.recipient,
+    amountMicro: row.amount_micro,
+    transactionId: row.transaction_id,
+    blockTime: row.block_time,
+  } satisfies DirectTransfer
+}
+
+effect function directRecordOf(row: { readonly sequence: number; readonly project_id: string; readonly github_user_id: string; readonly amount_micro: string }) {
+  const amount = parseBaseUnits(row.amount_micro)
+  const actor = Number(row.github_user_id)
+  if (amount === undefined || !actorText.test(row.github_user_id) || !Number.isSafeInteger(actor)) throw new InvalidPaymentRecord({ reason: "Invalid direct transfer record" })
+  return { sequence: row.sequence, project: row.project_id, actor, amountMicro: try amountOf(amount) } satisfies DirectRecord
+}
+
+const directColumns = sql`rowid AS sequence, project_id, contribution_month, github_user_id, github_login, network, chain, recipient, amount_micro, transaction_id, block_time`
+
+function directScope(scope: Scope): Statement {
+  if (scope.kind === "project") return sql`project_id = ${scope.projectId}`
+  if (scope.kind === "actor") return sql`github_user_id = ${scope.githubUserId}`
+  return sql`1 = 1`
+}
+
+export effect function directTransferPage(scope: Scope, cursor: Cursor) {
+  const { after, through, highest } = try boundsOf(cursor, try highestOf("payment_direct_transfers"))
+  const [counted, paged] = try (try D1).batch([
+    sql`SELECT COUNT(*) AS value FROM payment_direct_transfers WHERE ${directScope(scope)} AND rowid <= ${through}`,
+    sql`SELECT ${directColumns} FROM payment_direct_transfers WHERE ${directScope(scope)} AND rowid > ${after} AND rowid <= ${through} ORDER BY rowid LIMIT ${publicPageSize + 1}`,
+  ])
+  const [total] = try decoded(Value, counted?.rows ?? [], "direct transfer count")
+  if (total === undefined) throw new RowMismatch({ text: "direct transfer count", issue: "no count row" })
+  const found = try decoded(DirectRow, paged?.rows ?? [], "direct transfer page")
+  const window = pageWindow(found.map((row) => row.sequence), after, through, highest)
+  if (!window.valid) throw new CursorRefused()
+  const records: DirectRecord[] = []
+  const transfers: DirectTransfer[] = []
+  for (const row of found.filter((candidate) => window.sequences.includes(candidate.sequence))) {
+    records.push(try directRecordOf(row))
+    transfers.push(try directTransferOf(row))
+  }
+  return {
+    transfers,
+    totalMicro: fromAmount(pageMicro(records, window)).toString(),
+    through,
+    next: window.nextCursor === 0 ? null : window.nextCursor,
+    total: total.value,
+  } satisfies DirectTransferPage
+}
+
+export effect function directTransferList(scope: Scope, separate: boolean) {
+  const found = separate ? [] : try rows(DirectRow, sql`SELECT ${directColumns} FROM payment_direct_transfers WHERE ${directScope(scope)} ORDER BY block_time, transaction_id`)
+  const transfers: DirectTransfer[] = []
+  let total = 0n
+  for (const row of found) {
+    const amount = parseBaseUnits(row.amount_micro)
+    if (amount === undefined) throw new InvalidPaymentRecord({ reason: "Invalid direct transfer record" })
+    total += amount
+    transfers.push(try directTransferOf(row))
+  }
+  return { transfers, totalMicro: total.toString() } satisfies DirectTransferList
+}
+
+effect function pagedAll<S extends Schema.Constraint>(schema: S, table: "payment_events" | "payment_direct_transfers", page: (after: number, through: number) => Statement) {
+  const through = try highestOf(table)
+  const found: Array<S["Type"]> = []
+  let after = 0
+  while (true) {
+    const batch = try rows(Schema.Struct({ sequence: Schema.Number }), page(after, through))
+    const items = try decoded(schema, batch, table)
+    const last = batch.at(-1)
+    if (last === undefined) return found
+    found.push(...items)
+    if (found.length > receivedRecordBound) throw new InvalidPaymentRecord({ reason: "Received totals exceed the aggregate bound" })
+    after = last.sequence
+  }
+}
+
+interface Person {
+  login: string | null
+  readonly projects: Map<string, bigint>
+  readonly records: VaultPaymentRecord[]
+  readonly directs: DirectRecord[]
+}
+
+function byDollarsThenId(left: { readonly id: string; readonly usd: bigint }, right: { readonly id: string; readonly usd: bigint }) {
+  return left.usd < right.usd ? 1 : left.usd > right.usd ? -1 : left.id.localeCompare(right.id)
+}
+
+export effect function receivedTotals(generatedAt: string) {
+  const shown = try includeTestnets()
+  const vaultRows = try pagedAll(ReceivedRow, "payment_events", (after, through) => sql`SELECT ${recordColumns},
+    (SELECT login FROM points_members p WHERE p.github_id = o.github_user_id AND p.public = 1 AND p.closed_at IS NULL) AS member_login
+    ${finalizedRecords} AND e.rowid > ${after} AND e.rowid <= ${through} ORDER BY e.rowid LIMIT ${vaultPageRows}`)
+  const directRows = try pagedAll(DirectTotalRow, "payment_direct_transfers", (after, through) => sql`SELECT d.rowid AS sequence, d.project_id, d.github_user_id, d.github_login, d.amount_micro,
+    (SELECT login FROM points_members p WHERE p.github_id = d.github_user_id AND p.public = 1 AND p.closed_at IS NULL) AS member_login
+    FROM payment_direct_transfers d WHERE d.rowid > ${after} AND d.rowid <= ${through} ORDER BY d.rowid LIMIT ${directPageRows}`)
+  const people = new Map<string, Person>()
+  const person = (githubUserId: string) => {
+    const found = people.get(githubUserId)
+    if (found !== undefined) return found
+    const made: Person = { login: null, projects: new Map(), records: [], directs: [] }
+    people.set(githubUserId, made)
+    return made
+  }
+  for (const row of directRows) {
+    const record = try directRecordOf(row)
+    const value = person(row.github_user_id)
+    value.login = row.member_login ?? row.github_login
+    value.directs.push(record)
+    value.projects.set(row.project_id, (value.projects.get(row.project_id) ?? 0n) + fromAmount(record.amountMicro))
+  }
+  for (const row of vaultRows) {
+    const checked = try checkedPayment(row)
+    if (!recordShown(checked.record, shown)) continue
+    const value = person(row.github_user_id)
+    value.login ??= row.member_login
+    value.records.push(checked.record)
+    if (checked.record.referenceStablecoin && checked.record.decimals === 6) value.projects.set(row.project_id, (value.projects.get(row.project_id) ?? 0n) + checked.gross - checked.fee)
+  }
+  const ranked: Array<{ readonly id: string; readonly usd: bigint; readonly direct: bigint; readonly vault: bigint; readonly contributor: ReceivedContributor }> = []
+  for (const [githubUserId, value] of people) {
+    const total = receivedBy(value.records, value.directs, Number(githubUserId), shown)
+    if (!total.complete) throw new InvalidPaymentRecord({ reason: "Invalid finalized payment record" })
+    const usd = fromAmount(total.usdMicro)
+    const direct = fromAmount(total.directMicro)
+    const vault = fromAmount(total.vaultUsdMicro)
+    ranked.push({ id: githubUserId, usd, direct, vault, contributor: {
+      githubUserId,
+      login: value.login,
+      usdMicro: usd.toString(),
+      directMicro: direct.toString(),
+      vaultUsdMicro: vault.toString(),
+      directTransfers: total.directTransfers,
+      vaultPayments: total.vaultPayments,
+      projects: [...value.projects.entries()].map(([id, amount]) => ({ id, usd: amount })).sort(byDollarsThenId).map(({ id, usd: amount }) => ({ projectId: id, usdMicro: amount.toString() })),
+      otherAssets: total.otherAssets.map((asset) => ({ network: asset.network, assetAddress: asset.asset, assetDecimals: asset.decimals, netBase: fromAmount(asset.net).toString() })),
+    } })
+  }
+  ranked.sort(byDollarsThenId)
+  const contributors = ranked.map((entry) => entry.contributor)
+  const directMicro = ranked.reduce((total, entry) => total + entry.direct, 0n)
+  const vaultUsdMicro = ranked.reduce((total, entry) => total + entry.vault, 0n)
+  return {
+    schemaVersion: "1",
+    contributors,
+    totals: {
+      usdMicro: (directMicro + vaultUsdMicro).toString(),
+      directMicro: directMicro.toString(),
+      vaultUsdMicro: vaultUsdMicro.toString(),
+      directTransfers: directRows.length,
+      vaultPayments: ranked.reduce((total, entry) => total + entry.contributor.vaultPayments, 0),
+      contributors: contributors.length,
+    },
+    generatedAt,
+  } satisfies ReceivedTotals
+}

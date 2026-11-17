@@ -1,0 +1,184 @@
+// spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { concatBytes, textBytes } from "@repo/platform/git/bytes"
+import { Git } from "@repo/platform/git"
+import type { FetchOutcome } from "../../../gen/security__admission.effect.vibe"
+import { type AcquisitionRefusalReason, type BatchPiece, type StoredBlob, type TreeEntry, batchReader, byEntryPath, commitTree, exactPin, gitEnvironment, gitOptions, linkText, remoteOf, sha256Hex, sourceInventory, treeEntries, treeMismatch } from "./objects.ts"
+
+export const ACQUISITION_SECONDS = 45 * 60
+
+export error AcquisitionRefused { reason: AcquisitionRefusalReason }
+export error AcquisitionFailed { reason: string }
+export error InvalidTestRemote
+
+export interface AcquisitionRequest {
+  readonly repository: string
+  readonly commitSha: string
+  readonly directory: string
+  readonly testRemote?: string
+  readonly seconds?: number
+}
+
+export interface Acquired {
+  readonly directory: string
+  readonly inventorySha256: string
+  readonly treeSha: string
+  readonly entries: number
+}
+
+interface Session {
+  readonly binary: string
+  readonly prefix: ReadonlyArray<string>
+  readonly env: Readonly<Record<string, string>>
+}
+
+type Output = ChildProcessSpawner.ChildProcessHandle["stdout"]
+
+function failed(reason: string) {
+  return new AcquisitionFailed({ reason })
+}
+
+export function fetchedAs(outcome: Acquired | AcquisitionRefused | AcquisitionFailed): FetchOutcome {
+  return outcome instanceof AcquisitionRefused ? "FetchPathRefused" : outcome instanceof AcquisitionFailed ? "FetchUnavailable" : "Fetched"
+}
+
+effect function collected(stdout: Output) {
+  const chunks: Uint8Array[] = []
+  for try (const chunk of stdout) {
+    chunks.push(chunk)
+  }
+  return concatBytes(chunks)
+}
+
+effect function runGit<A, E, R>(session: Session, args: ReadonlyArray<string>, input: string | undefined, consume: (stdout: Output) => A!E!R) {
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const command = ChildProcess.make(session.binary, [...session.prefix, ...args], { env: { ...session.env }, extendEnv: false, stdin: input === undefined ? "ignore" : Stream.make(textBytes(input)), stderr: "ignore" })
+    const handle = spawner.spawn(command) catch effect () => {
+      throw failed("Git is unavailable")
+    }
+    const [value, code] = try.all [consume(handle.stdout), handle.exitCode]
+    if (Number(code) !== 0) throw failed(`Git ${args[0] ?? ""} failed`)
+    return value
+  })
+}
+
+effect function gitOutput(session: Session, args: ReadonlyArray<string>) {
+  return try runGit(session, args, undefined, collected)
+}
+
+effect function storedBlobs(session: Session, objects: string, blobs: ReadonlyArray<string>) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const reader = batchReader(blobs)
+  const stored = new Map<string, StoredBlob>()
+  const incoming = { count: 0, temporary: "" }
+  const write = effect function (piece: BatchPiece) {
+    if (piece.kind === "bytes") return try fs.writeFile(incoming.temporary, piece.bytes, { flag: "a" })
+    if (piece.kind === "stored") return try keep(piece.gitSha, piece.matches, piece.blob)
+    incoming.temporary = path.join(objects, `.incoming-${incoming.count}`)
+    incoming.count += 1
+    try fs.writeFile(incoming.temporary, new Uint8Array(0), { flag: "wx", mode: 0o600 })
+  }
+  const keep = effect function (gitSha: string, matches: boolean, blob: StoredBlob) {
+    if (!matches) throw failed("Blob bytes do not match the Git object")
+    const target = path.join(objects, blob.sha256)
+    if (try fs.exists(target)) try fs.remove(incoming.temporary)
+    else {
+      try fs.chmod(incoming.temporary, 0o400)
+      try fs.rename(incoming.temporary, target)
+    }
+    stored.set(gitSha, blob)
+  }
+  const consume = effect function (stdout: Output) {
+    for try (const chunk of stdout) {
+      try written(chunk)
+    }
+    const ended = reader.end()
+    if (ended !== undefined) throw failed(ended)
+  }
+  const written = effect function (chunk: Uint8Array) {
+    const step = reader.push(chunk)
+    if (step.kind === "failed") throw failed(step.reason)
+    for (const piece of step.pieces) try write(piece)
+  }
+  try runGit(session, ["cat-file", "--batch"], blobs.map((sha) => `${sha}\n`).join(""), consume)
+  return stored
+}
+
+effect function linkTexts(objects: string, entries: ReadonlyArray<TreeEntry>, stored: ReadonlyMap<string, StoredBlob>) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const texts = new Map<string, string | null>()
+  for (const entry of entries) {
+    if (entry.type !== "blob" || entry.mode !== "120000" || texts.has(entry.gitSha)) continue
+    const object = stored.get(entry.gitSha)
+    if (object === undefined) throw failed("Invalid immutable link blob")
+    const bytes = try fs.readFile(path.join(objects, object.sha256))
+    if (sha256Hex(bytes) !== object.sha256) throw failed("Acquired link bytes changed")
+    texts.set(entry.gitSha, linkText(bytes))
+  }
+  return texts
+}
+
+effect function fetchedInto(request: AcquisitionRequest, session: Session, url: string, directory: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  try gitOutput(session, ["init", "--bare", "--quiet", "--template="])
+  try gitOutput(session, ["fetch", "--quiet", "--depth=1", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", url, request.commitSha])
+  const treeSha = commitTree(try gitOutput(session, ["cat-file", "commit", request.commitSha]), request.commitSha)
+  if (treeSha === undefined) throw failed("Commit pin mismatch")
+  const listed = treeEntries(try gitOutput(session, ["ls-tree", "-r", "-t", "-z", "--full-tree", treeSha]))
+  if (listed.kind === "refused") throw new AcquisitionRefused({ reason: listed.reason })
+  if (listed.kind === "failed") throw failed(listed.reason)
+  const mismatch = treeMismatch(treeSha, listed.entries)
+  if (mismatch !== undefined) throw failed(mismatch)
+  const entries = [...listed.entries].sort(byEntryPath)
+  const objects = path.join(directory, "objects")
+  try fs.makeDirectory(objects, { mode: 0o700 })
+  const stored = try storedBlobs(session, objects, [...new Set(entries.filter((entry) => entry.type === "blob").map((entry) => entry.gitSha))])
+  const links = try linkTexts(objects, entries, stored)
+  const inventory = sourceInventory({ repository: request.repository, commitSha: request.commitSha, treeSha, entries, stored, links })
+  if (inventory === undefined) throw failed("Invalid immutable blob")
+  try fs.writeFile(path.join(directory, "inventory.json"), inventory.bytes, { flag: "wx", mode: 0o400 })
+  return { directory, inventorySha256: sha256Hex(inventory.bytes), treeSha, entries: inventory.records } satisfies Acquired
+}
+
+effect function removed(directory: string) {
+  const fs = try FileSystem.FileSystem
+  fs.remove(directory, { recursive: true, force: true }) catch () => undefined
+}
+
+effect function acquiredUnder(request: AcquisitionRequest, url: string, protocol: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const git = try Git
+  const parent = path.resolve(request.directory)
+  return try scoped(effect {
+    const scratch = try acquireRelease(fs.makeTempDirectory({ directory: parent, prefix: "slop-git-" }), (made) => removed(made))
+    const session = {
+      binary: git.binary,
+      prefix: [...gitOptions(protocol), `--git-dir=${path.join(scratch, "objects.git")}`],
+      env: gitEnvironment(scratch, protocol, git.searchPath),
+    } satisfies Session
+    const directory = try fs.makeTempDirectory({ directory: parent, prefix: "slop-source-" })
+    return try onExit(fetchedInto(request, session, url, directory), effect (exit) => {
+      if (Exit.isFailure(exit)) try removed(directory)
+    })
+  })
+}
+
+export effect function acquireRepository(request: AcquisitionRequest) {
+  if (!exactPin(request.repository, request.commitSha)) throw new AcquisitionRefused({ reason: "An exact repository and commit SHA are required" })
+  const remote = remoteOf(request.repository, request.testRemote)
+  if (remote === undefined) throw new InvalidTestRemote()
+  const bounded = timeoutOrElse(acquiredUnder(request, remote.url, remote.protocol), {
+    duration: Duration.seconds(request.seconds ?? ACQUISITION_SECONDS),
+    orElse: () => Effect.fail(failed("Acquisition timed out")),
+  })
+  return bounded catch effect (error) => match (error) {
+    when AcquisitionRefused: throw error;
+    when AcquisitionFailed: throw error;
+    default: throw failed("Source acquisition failed");
+  }
+}

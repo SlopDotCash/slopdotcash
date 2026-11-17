@@ -78,7 +78,7 @@ effect function choose(code: unknown, token = member) {
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
     const backend = try Backend
-    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [136, []]))
+    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [138, []]))
     try signIn("actor-1", "1", member, "2099-01-01T00:00:00.000Z")
     try signIn("actor-2", "2", other, "2099-01-01T00:00:00.000Z")
 

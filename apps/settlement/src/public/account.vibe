@@ -1,0 +1,137 @@
+// spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"
+import { RowMismatch, first, sql } from "@repo/platform/d1"
+import { type AccountBalance, AccountMonthlyAward, type AccountPayment, AccountWallet, DeliveryState, DirectTransfer, type PaymentsAccount, UnreservedAwardState, WalletObservation } from "../client/public.vibe"
+import { PaymentChain } from "../client/vault.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { CHAINS, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { InvalidPaymentRecord } from "./records.vibe"
+
+schema AccountRows {
+  readonly wallets: string
+  readonly payments: string
+  readonly monthlyAwards: string
+  readonly directTransfers: string
+  readonly walletObservations: string
+}
+
+schema PaymentRow {
+  readonly id: string
+  readonly vault: string
+  readonly projectId: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly state: "reserved" | "paid"
+  readonly transactionId: string | null
+  readonly submittedTransactionId: string | null
+  readonly deliveryState: DeliveryState
+}
+
+schema AwardRow {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number | null
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly state: UnreservedAwardState
+}
+
+function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+effect function listOf<S extends Schema.Constraint>(schema: S, text: string, label: string) {
+  return Schema.decodeUnknownEffect(Schema.Array(schema))(jsonOf(text)) catch effect (error) => {
+    throw new RowMismatch({ text: label, issue: error.message })
+  }
+}
+
+function accountQuery(githubId: string, separateDirectHistory: boolean) {
+  return sql`SELECT
+  (SELECT json_group_array(json_object('chain', w.chain, 'claimId', w.id, 'address', w.wallet_address,
+    'authorized', json(CASE WHEN a.claim_id IS NULL THEN 'false' ELSE 'true' END),
+    'firstAuthorizedAt', (SELECT MIN(first.authorized_at) FROM payment_wallet_authorizations first JOIN wallet_claims claim ON claim.id = first.claim_id
+      WHERE claim.github_user_id = w.github_user_id AND first.github_user_id = w.github_user_id AND claim.chain = w.chain)))
+    FROM effective_payment_wallet_claims w LEFT JOIN payment_wallet_authorizations a ON a.claim_id = w.id WHERE w.github_user_id = ${githubId}) AS wallets,
+  (SELECT json_group_array(json_object('id', o.id, 'vault', o.vault, 'projectId', project_id, 'network', network, 'chain', chain,
+    'assetAddress', asset_address, 'assetDecimals', asset_decimals, 'grossBase', gross_base, 'feeBase', fee_base, 'state', o.state,
+    'transactionId', paid_transaction,
+    'submittedTransactionId', (SELECT transaction_id FROM payment_attempts a WHERE a.obligation_id = o.id AND a.transaction_id IS NOT NULL ORDER BY created_at DESC LIMIT 1),
+    'deliveryState', CASE WHEN o.state = 'paid' THEN 'paid' WHEN q.state = 'submitted' THEN 'submitted' WHEN q.state = 'held' THEN 'held' WHEN q.state IS NULL THEN 'needs_wallet' ELSE 'ready' END))
+    FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id = o.id WHERE github_user_id = ${githubId}) AS payments,
+  (SELECT json_group_array(json_object('projectId', project_id, 'period', period, 'network', network, 'assetAddress', asset, 'assetDecimals', decimals,
+    'grossBase', gross, 'feeBase', fee, 'netBase', net, 'state', state))
+    FROM (SELECT r.project_id, r.period, r.network, json_extract(r.snapshot, '$.asset') asset,
+      COALESCE((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id = r.project_id AND v.network = r.network AND v.vault = r.vault AND lower(v.asset_address) = lower(json_extract(r.snapshot, '$.asset'))),
+        CASE WHEN lower(json_extract(b.manifest, '$.rewardAsset.address')) = lower(json_extract(r.snapshot, '$.asset')) THEN json_extract(b.manifest, '$.rewardAsset.decimals') END) decimals,
+      json_extract(a.value, '$.grossBase') gross, json_extract(a.value, '$.feeBase') fee, json_extract(a.value, '$.netBase') net,
+      CASE WHEN EXISTS(SELECT 1 FROM payment_obligations c WHERE c.network = r.network AND c.vault = r.vault AND c.source_digest = json_extract(a.value, '$.sourceDigest')) THEN 'conflict'
+        WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END state
+      FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id = r.project_id AND b.period = r.period, json_each(r.snapshot, '$.awards') a
+      WHERE json_extract(a.value, '$.githubUserId') = ${githubId}
+        AND NOT EXISTS(SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id = r.project_id AND e.period = r.period AND e.source_digest = json_extract(a.value, '$.sourceDigest'))
+        AND NOT EXISTS(SELECT 1 FROM payment_obligations o WHERE o.network = r.network AND o.vault = r.vault AND o.source_digest = json_extract(a.value, '$.sourceDigest')
+          AND o.github_user_id = json_extract(a.value, '$.githubUserId') AND o.gross_base = json_extract(a.value, '$.grossBase'))
+      ORDER BY r.period DESC, r.project_id)) AS monthlyAwards,
+  (SELECT json_group_array(json_object('projectId', project_id, 'contributionMonth', contribution_month, 'githubUserId', github_user_id, 'login', github_login,
+    'network', network, 'chain', chain, 'recipient', recipient, 'amountMicro', amount_micro, 'transactionId', transaction_id, 'blockTime', block_time))
+    FROM (SELECT * FROM payment_direct_transfers WHERE github_user_id = ${githubId} AND ${separateDirectHistory ? 0 : 1} ORDER BY block_time, transaction_id)) AS directTransfers,
+  (SELECT json_group_array(json_object('chain', chain, 'address', address, 'proofLevel', proof_level, 'sourceUrl', source_url, 'observedAt', observed_at))
+    FROM (SELECT * FROM wallet_observations WHERE github_user_id = ${githubId} ORDER BY observed_at DESC)) AS walletObservations`
+}
+
+effect function paymentOf(row: PaymentRow) {
+  const gross = parseBaseUnits(row.grossBase)
+  const fee = parseBaseUnits(row.feeBase)
+  if (gross === undefined || fee === undefined || fee > gross) throw new InvalidPaymentRecord({ reason: "Invalid payment obligation" })
+  return { payment: { ...row, netBase: (gross - fee).toString() } satisfies AccountPayment, net: gross - fee }
+}
+
+effect function awardOf(row: AwardRow) {
+  const network = isNetworkKey(row.network) ? NETWORKS[row.network] : undefined
+  const decimals = row.assetDecimals ?? network?.assets.find((entry) => entry.address.toLowerCase() === row.assetAddress.toLowerCase())?.decimals
+  if (network === undefined || decimals === undefined || !Number.isInteger(decimals)) throw new InvalidPaymentRecord({ reason: `Unreviewed monthly award asset on ${row.network}` })
+  return { ...row, assetDecimals: decimals, chain: network.chain } satisfies AccountMonthlyAward
+}
+
+function balancesOf(payments: ReadonlyArray<{ readonly payment: AccountPayment; readonly net: bigint }>): ReadonlyArray<AccountBalance> {
+  const byAsset = new Map<string, { readonly chain: PaymentChain; readonly network: string; readonly assetAddress: string; readonly assetDecimals: number; net: bigint }>()
+  for (const { payment, net } of payments) {
+    const key = `${payment.chain}\u0000${payment.network}\u0000${payment.assetAddress}`
+    const found = byAsset.get(key) ?? { chain: payment.chain, network: payment.network, assetAddress: payment.assetAddress, assetDecimals: payment.assetDecimals, net: 0n }
+    if (payment.state === "reserved") found.net += net
+    byAsset.set(key, found)
+  }
+  return [...byAsset.values()]
+    .sort((left, right) => CHAINS.indexOf(left.chain) - CHAINS.indexOf(right.chain) || left.network.localeCompare(right.network) || left.assetAddress.localeCompare(right.assetAddress))
+    .map(({ net, ...asset }) => ({ ...asset, netBase: net.toString() }))
+}
+
+export effect function paymentsAccount(githubId: string, separateDirectHistory: boolean) {
+  const found = try first(AccountRows, accountQuery(githubId, separateDirectHistory))
+  if (found === undefined) throw new RowMismatch({ text: "payments account", issue: "Payment account projection is unavailable" })
+  const payments: Array<{ readonly payment: AccountPayment; readonly net: bigint }> = []
+  for (const row of try listOf(PaymentRow, found.payments, "account payments")) payments.push(try paymentOf(row))
+  const monthlyAwards: AccountMonthlyAward[] = []
+  for (const row of try listOf(AwardRow, found.monthlyAwards, "account monthly awards")) monthlyAwards.push(try awardOf(row))
+  return {
+    githubUserId: githubId,
+    wallets: try listOf(AccountWallet, found.wallets, "account wallets"),
+    payments: payments.map((entry) => entry.payment),
+    monthlyAwards,
+    balances: balancesOf(payments),
+    directTransfers: try listOf(DirectTransfer, found.directTransfers, "account direct transfers"),
+    ...(separateDirectHistory ? { directTransfersPaged: true as const } : {}),
+    walletObservations: try listOf(WalletObservation, found.walletObservations, "account wallet observations"),
+  } satisfies PaymentsAccount
+}

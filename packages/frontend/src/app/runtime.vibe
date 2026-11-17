@@ -1,0 +1,39 @@
+// spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import type { Route } from "../../gen/app.ts"
+import { pageOf } from "../../gen/frontend__routes.effect.vibe"
+import { Deployment } from "../platform/config.vibe"
+import { browserServices } from "../platform/layer.vibe"
+import { BrowserSession, sessionServices, sessionWatch } from "../session/browserSession.vibe"
+import { Session, type SessionView } from "../session/session.vibe"
+
+export interface SessionShown {
+  readonly view: SessionView
+  readonly deployment: Deployment.Shape
+}
+
+effect function opened(route: Route) {
+  try (try BrowserSession).navigate(pageOf(route.kind))
+}
+
+export function pageServices(route: Route) {
+  const opening = Layer.provideMerge(Layer.effectDiscard(opened(route)), Layer.provideMerge(sessionServices, browserServices))
+  return Layer.provideMerge(sessionWatch, opening)
+}
+
+export type PageServices = Layer.Success<ReturnType<typeof pageServices>>
+
+export type PageRuntime = ManagedRuntime.ManagedRuntime<PageServices, Layer.Error<ReturnType<typeof pageServices>>>
+
+export function pageRuntime(route: Route): PageRuntime {
+  return ManagedRuntime.make(pageServices(route))
+}
+
+export effect function watchSession(show: (shown: SessionShown) => void!!) {
+  const deployment = try Deployment
+  const session = try Session
+  for try (const view of session.changes) try show({ view, deployment })
+}
+
+export effect function signOut() {
+  try (try BrowserSession).signOut()
+}

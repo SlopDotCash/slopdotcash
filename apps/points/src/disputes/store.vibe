@@ -1,0 +1,276 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/points/journal.md, "Undecided policy is refused: an upheld dispute appends no correction"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Notice, Notices } from "@repo/ports/operations"
+import { type Availability, type Dispute, type Escalation, type Event, type RecordView, NotAState, apply, decodeState, initial } from "../../gen/points__disputes.effect.vibe"
+import { resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
+import { type Retained, RevisionRow, retained, revisionRow } from "./records.vibe"
+
+export schema DisputeRow {
+  appeal_key: string
+  revision_id: string
+  appellant_github_id: string
+  statement: string
+  opened_at: string
+  due_at: string
+  draft: string | null
+  draft_confidence: number | null
+  escalated_at: string | null
+  escalation: string | null
+  resolved_at: string | null
+  resolution: string | null
+  resolution_reason: string | null
+  resolver_github_id: string | null
+  claim_token: string | null
+  claim_until: string | null
+}
+
+export interface Lease {
+  readonly token: string
+  readonly callsInFlight: boolean
+}
+
+export type Triage =
+  | { readonly type: "claim" }
+  | { readonly type: "release"; readonly lease: Lease }
+  | { readonly type: "startCall"; readonly lease: Lease }
+  | { readonly type: "draft"; readonly lease: Lease; readonly uphold: boolean; readonly confidenceHundredths: number }
+  | { readonly type: "escalateDrafted"; readonly lease: Lease }
+  | { readonly type: "escalateUnavailable"; readonly lease: Lease; readonly availability: Availability }
+  | { readonly type: "failTriage"; readonly lease: Lease }
+  | { readonly type: "escalateOverdue" }
+
+export type Intent =
+  | { readonly kind: "file"; readonly revisionId: string; readonly statement: string }
+  | { readonly kind: "decide"; readonly uphold: boolean; readonly reason: string }
+  | { readonly kind: "triage"; readonly triage: Triage }
+
+interface Held {
+  readonly key: string
+  readonly row: DisputeRow | undefined
+  readonly record: Retained | undefined
+  readonly dispute: Dispute
+  readonly nowMillis: number
+}
+
+export interface Sent {
+  readonly dispute: Dispute
+  readonly token: string | undefined
+}
+
+export error RecordMissing { revisionId: string }
+
+const escalationText = {
+  ProjectUnregistered: "The project is no longer registered; independent review is required",
+  ProjectRestricted: "The project is restricted; Slopbot cannot reassess ordinary work",
+  InstallationUnavailable: "Slopbot installation is unavailable; independent review is required",
+  TriageUnavailable: "Slopbot triage is unavailable; independent review is required",
+  ModeratorReviewRequired: "Original work evidence needs independent moderator review",
+  Overdue: "The dispute is still unresolved after seven days; independent review is required",
+} as const satisfies Readonly<Record<Exclude<Escalation, "NotEscalated">, string>>
+
+const draftChoices: Readonly<Record<string, string>> = { uphold: "DraftUphold", deny: "DraftDeny" }
+const resolutions: Readonly<Record<string, string>> = { upheld: "Upheld", denied: "Denied" }
+const escalations: Readonly<Record<string, string>> = Object.fromEntries(Object.entries(escalationText).map(([escalation, text]) => [text, escalation]))
+
+const columns = sql`appeal_key, revision_id, appellant_github_id, statement, opened_at, due_at, draft, draft_confidence, escalated_at, escalation, resolved_at, resolution, resolution_reason, resolver_github_id, claim_token, claim_until`
+
+function disputeRow(key: string) {
+  return sql`SELECT ${columns} FROM points_disputes WHERE appeal_key = ${key}`
+}
+
+function actionPath(key: string) {
+  return `/inbox?pointsDispute=${encodeURIComponent(key)}`
+}
+
+function secondsOf(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function projected(row: DisputeRow, now: number, statementDigest: string, lease: Lease | undefined) {
+  const resolved = row.resolved_at !== null
+  const held = row.claim_token !== null && row.claim_until !== null && !resolved
+  const claimToken = held ? 1 : 0
+  const callsInFlight = held && row.draft === null && lease !== undefined && lease.callsInFlight && lease.token === row.claim_token
+  const recipient = Number(row.appellant_github_id)
+  return {
+    filed: true,
+    revision: row.revision_id,
+    recipient,
+    statementLength: row.statement.length,
+    statementDigest,
+    now,
+    openedAt: secondsOf(row.opened_at),
+    lastToken: claimToken,
+    claimToken,
+    claimUntil: held && row.claim_until !== null ? secondsOf(row.claim_until) : 0,
+    callsInFlight,
+    modelCalls: row.draft !== null || callsInFlight ? 1 : 0,
+    unknownCostCalls: 0,
+    draft: row.draft === null ? "NoDraft" : draftChoices[row.draft] ?? row.draft,
+    draftConfidence: row.draft_confidence === null ? 0 : Math.round(row.draft_confidence * 100),
+    escalation: row.escalation === null ? "NotEscalated" : escalations[row.escalation] ?? row.escalation,
+    resolution: row.resolution === null ? "Unresolved" : resolutions[row.resolution] ?? row.resolution,
+    resolver: row.resolver_github_id === null ? 0 : Number(row.resolver_github_id),
+    reasonLength: row.resolution_reason?.length ?? 0,
+    notices: [
+      { kind: "OpenedNotice", recipient },
+      ...row.escalated_at === null ? [] : slopModerators.map((moderator) => ({ kind: "EscalatedNotice", recipient: moderator })),
+      ...resolved ? [{ kind: "ResolvedNotice", recipient }] : [],
+    ],
+  }
+}
+
+effect function heldOf(key: string, [disputes, revisions]: ReadonlyArray<Rows>, revisionId: string | undefined, lease: Lease | undefined) {
+  const [row] = try decoded(DisputeRow, disputes ?? [], "points dispute")
+  const nowMillis = try Clock.currentTimeMillis
+  const now = Math.floor(nowMillis / 1000)
+  let record: Retained | undefined = undefined
+  if (revisionId !== undefined) {
+    const [found] = try decoded(RevisionRow, revisions ?? [], "points revision")
+    if (found === undefined) throw new RecordMissing({ revisionId })
+    record = try retained(found)
+  }
+  const dispute = try decodeState(row === undefined ? { ...initial, now } : projected(row, now, try sha256Hex(row.statement), lease))
+  return { key, row, record, dispute, nowMillis } satisfies Held
+}
+
+function currency(revisionId: string | undefined) {
+  if (revisionId === undefined) return sql`''`
+  return sql`coalesce((SELECT ':' || NOT EXISTS (SELECT 1 FROM points_revisions newer WHERE newer.source_key = r.source_key AND newer.rowid > r.rowid) FROM points_revisions r WHERE r.id = ${revisionId}), ':none')`
+}
+
+function aggregate(key: string, revisionId: string | undefined, lease: Lease | undefined): Aggregate<Held, NotAState | RowMismatch | RecordMissing, Experimental.Crypto.Crypto> {
+  return {
+    name: `points dispute ${key}`,
+    version: sql`SELECT coalesce((SELECT json_array(${columns}) FROM points_disputes WHERE appeal_key = ${key}), 'none') || ${currency(revisionId)} AS version`,
+    reads: revisionId === undefined ? [disputeRow(key)] : [disputeRow(key), revisionRow(revisionId)],
+    decode: (rows) => heldOf(key, rows, revisionId, lease),
+  }
+}
+
+function leaseOf(intent: Intent) {
+  if (intent.kind !== "triage") return undefined
+  const { triage } = intent
+  return triage.type === "claim" || triage.type === "escalateOverdue" ? undefined : triage.lease
+}
+
+function presented(held: Held, lease: Lease) {
+  return held.dispute.claimToken > 0 && lease.token === held.row?.claim_token ? held.dispute.claimToken : held.dispute.claimToken + 1
+}
+
+function recordView(held: Held, revisionId: string): RecordView {
+  const record = held.record
+  return {
+    revision: revisionId,
+    recipient: record?.recipient ?? 0,
+    current: record?.current ?? false,
+    integrityVerified: record?.revision !== undefined,
+  }
+}
+
+function triageEvent(held: Held, triage: Triage): Event {
+  switch (triage.type) {
+    case "claim": return { type: "claim" }
+    case "escalateOverdue": return { type: "escalateOverdue" }
+    case "release": return { type: "release", token: presented(held, triage.lease) }
+    case "startCall": return { type: "startCall", token: presented(held, triage.lease) }
+    case "draft": return { type: "draft", token: presented(held, triage.lease), uphold: triage.uphold, confidenceHundredths: triage.confidenceHundredths }
+    case "escalateDrafted": return { type: "escalateDrafted", token: presented(held, triage.lease) }
+    case "escalateUnavailable": return { type: "escalateUnavailable", token: presented(held, triage.lease), availability: triage.availability }
+    case "failTriage": return { type: "failTriage", token: presented(held, triage.lease) }
+    default: {
+      const _exhaustive: never = triage
+      return _exhaustive
+    }
+  }
+}
+
+effect function eventOf(held: Held, intent: Intent) {
+  switch (intent.kind) {
+    case "file": return { type: "file", record: recordView(held, intent.revisionId), statementLength: intent.statement.length, statementDigest: try sha256Hex(intent.statement) } satisfies Event
+    case "decide": return { type: "decide", uphold: intent.uphold, reasonLength: intent.reason.length } satisfies Event
+    case "triage": return triageEvent(held, intent.triage)
+  }
+}
+
+function notice(key: string, suffix: string, recipient: number, subject: string, sourceAt: string): Notice {
+  return { eventKey: `slopbot-${key}${suffix}`, recipientGithubId: String(recipient), kind: "SlopbotAppealReview", subject, actionPath: actionPath(key), sourceAt }
+}
+
+effect function noticed(notices: ReadonlyArray<Notice>) {
+  return try (try Notices).statements({ notices })
+}
+
+effect function escalationWrites(held: Held, next: Dispute, at: string) {
+  const escalation = next.escalation
+  if (held.dispute.escalation !== "NotEscalated" || escalation === "NotEscalated" || held.row === undefined) return []
+  const { appeal_key: key, revision_id: subject } = held.row
+  const moderators = next.notices.filter((entry) => entry.kind === "EscalatedNotice" && entry.recipient !== next.recipient)
+  return [
+    sql`UPDATE points_disputes SET escalated_at = ${at}, escalation = ${escalationText[escalation]} WHERE appeal_key = ${key}`,
+    ...try noticed(moderators.map((entry) => notice(key, "", entry.recipient, subject, at))),
+  ]
+}
+
+effect function writesOf(held: Held, intent: Intent, event: Event, next: Dispute, by: number, token: string) {
+  const at = try isoAt(held.nowMillis)
+  const key = held.key
+  switch (event.type) {
+    case "file": {
+      if (intent.kind !== "file") return []
+      const due = try isoAt(held.nowMillis + resolutionSeconds * 1000)
+      return [
+        sql`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at) VALUES (${key}, ${intent.revisionId}, ${intent.revisionId}, ${String(by)}, ${intent.statement}, ${at}, ${due})`,
+        ...try noticed([notice(key, "", by, intent.revisionId, at)]),
+      ]
+    }
+    case "decide": {
+      if (intent.kind !== "decide" || held.row === undefined) return []
+      return [
+        sql`UPDATE points_disputes SET resolved_at = ${at}, resolution = ${event.uphold ? "upheld" : "denied"}, resolved_by = 'moderator', resolution_reason = ${intent.reason}, resolver_github_id = ${String(by)}, claim_token = NULL, claim_until = NULL WHERE appeal_key = ${key}`,
+        ...try noticed([notice(key, ":resolved", next.recipient, held.row.revision_id, at)]),
+      ]
+    }
+    case "claim": return [sql`UPDATE points_disputes SET claim_token = ${token}, claim_until = ${try isoAt(next.claimUntil * 1000)} WHERE appeal_key = ${key}`]
+    case "release": return [sql`UPDATE points_disputes SET claim_token = NULL, claim_until = NULL WHERE appeal_key = ${key}`]
+    case "draft": return [sql`UPDATE points_disputes SET draft = ${event.uphold ? "uphold" : "deny"}, draft_confidence = ${next.draftConfidence / 100}, drafted_at = ${at} WHERE appeal_key = ${key}`]
+    case "escalateDrafted": return try escalationWrites(held, next, at)
+    case "escalateUnavailable": return try escalationWrites(held, next, at)
+    case "failTriage": return try escalationWrites(held, next, at)
+    case "escalateOverdue": return try escalationWrites(held, next, at)
+    case "startCall": return []
+    case "observeTime": return []
+  }
+}
+
+effect function decide(held: Held, intent: Intent, by: number) {
+  const event = try eventOf(held, intent)
+  const next = try apply(held.dispute, event, by)
+  const token = event.type === "claim" ? try randomId() : ""
+  const writes: ReadonlyArray<Statement> = try writesOf(held, intent, event, next, by, token)
+  return { value: { dispute: next, token: token === "" ? undefined : token } satisfies Sent, writes } satisfies Decision<Sent>
+}
+
+export effect function send(key: string, intent: Intent, by: number) {
+  return try update(aggregate(key, intent.kind === "file" ? intent.revisionId : undefined, leaseOf(intent)), (held) => decide(held, intent, by))
+}
+
+export effect function heldDispute(key: string) {
+  return (try load(aggregate(key, undefined, undefined))).state
+}
+
+export effect function storedRow(key: string) {
+  return try first(DisputeRow, disputeRow(key))
+}
+
+export effect function disputeKey(revisionId: string, githubId: string) {
+  return `points-dispute:${try sha256Hex(`${revisionId}:${githubId}`)}`
+}
+
+export effect function retainedRevision(revisionId: string) {
+  const row = try first(RevisionRow, revisionRow(revisionId))
+  return row === undefined ? undefined : try retained(row)
+}

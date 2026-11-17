@@ -1,0 +1,91 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type AccountProof, type RouteExpectation, associatedCreations } from "../solana/accounts.vibe"
+import { joined, sameList, shortVec, u32At, u64At, u64Bytes } from "../solana/bytes.ts"
+import { ASSOCIATED_TOKEN_PROGRAM, MAX_TRANSACTION_BYTES, type ParsedTransaction, SYSTEM_PROGRAM, TOKEN_PROGRAM, type WireInstruction, ata, computeBudgetProgram, keyBytes, refuse, wrappedSol } from "../solana/wire.vibe"
+
+interface Planned {
+  readonly program: string
+  readonly accounts: ReadonlyArray<string>
+  readonly data: Uint8Array
+}
+
+effect function loadedKeys(lookups: ReadonlyArray<{ readonly address: string; readonly writable: ReadonlyArray<number>; readonly readonly: ReadonlyArray<number> }>, proof: AccountProof, writable: boolean) {
+  const keys: string[] = []
+  for (const lookup of lookups) {
+    const table = proof.tables.find((entry) => entry.address === lookup.address)
+    if (table === undefined) return try refuse("Native route lost a reviewed lookup table")
+    const indexes = writable ? table.writableIndexes : table.readonlyIndexes
+    const addresses = writable ? table.writableAddresses : table.readonlyAddresses
+    for (const index of writable ? lookup.writable : lookup.readonly) keys.push(addresses[indexes.indexOf(index)] ?? "")
+  }
+  return keys
+}
+
+effect function compiled(instruction: Planned, keys: ReadonlyArray<string>) {
+  const indexes = [instruction.program, ...instruction.accounts].map((key) => keys.indexOf(key))
+  if (indexes.some((index) => index < 0)) return try refuse("Native route account mapping is incomplete")
+  const [program = 0, ...accounts] = indexes
+  return joined([Uint8Array.of(program), shortVec(accounts.length), Uint8Array.from(accounts), shortVec(instruction.data.length), instruction.data])
+}
+
+export effect function wrapNativeRoute(raw: Uint8Array, parsed: ParsedTransaction, proof: AccountProof, wallet: string, amount: bigint) {
+  const source = try ata(wrappedSol, wallet, TOKEN_PROGRAM)
+  if (!proof.keys.includes(source)) return try refuse("Native route does not use the fee wallet's wrapped SOL account")
+  const creations = try associatedCreations(parsed, proof.keys, wallet)
+  const lamports = u64Bytes(amount)
+  if (lamports === undefined) return try refuse("u64 overflow")
+  const own: ReadonlyArray<Planned> = [
+    { program: ASSOCIATED_TOKEN_PROGRAM, accounts: [wallet, source, wallet, wrappedSol, SYSTEM_PROGRAM, TOKEN_PROGRAM], data: Uint8Array.of(1) },
+    { program: SYSTEM_PROGRAM, accounts: [wallet, source], data: joined([Uint8Array.of(2, 0, 0, 0), lamports]) },
+    { program: TOKEN_PROGRAM, accounts: [source], data: Uint8Array.of(17) },
+  ]
+  const builtIn: ReadonlyArray<string> = [SYSTEM_PROGRAM, TOKEN_PROGRAM, ASSOCIATED_TOKEN_PROGRAM]
+  const added = [...new Set(own.flatMap((instruction) => [instruction.program, ...instruction.accounts]))]
+    .filter((key) => !parsed.staticKeys.includes(key) && (!proof.keys.includes(key) || builtIn.includes(key)))
+  const moved = new Set(added)
+  const lookups = parsed.lookups.map((lookup, index) => {
+    const table = proof.tables[index]
+    return {
+      address: lookup.address,
+      writable: lookup.writable.filter((_, position) => !moved.has(table?.writableAddresses[position] ?? "")),
+      readonly: lookup.readonly.filter((_, position) => !moved.has(table?.readonlyAddresses[position] ?? "")),
+    }
+  }).filter((lookup) => lookup.writable.length + lookup.readonly.length > 0)
+  const staticKeys = [...parsed.staticKeys, ...added]
+  const keys = [...staticKeys, ...(try loadedKeys(lookups, proof, true)), ...(try loadedKeys(lookups, proof, false))]
+  if (keys.length > 256 || new Set(keys).size !== keys.length) return try refuse("Native route exceeds the account limit")
+  const existing = parsed.instructions
+    .filter((instruction) => !(instruction.program === ASSOCIATED_TOKEN_PROGRAM && creations.some((entry) => entry.index === instruction.accounts[1] && proof.keys[entry.index] === source)))
+    .map((instruction) => ({ program: instruction.program, accounts: instruction.accounts.map((index) => proof.keys[index] ?? ""), data: instruction.data }) satisfies Planned)
+  const instructions = [...existing.filter((instruction) => instruction.program === computeBudgetProgram), ...own, ...existing.filter((instruction) => instruction.program !== computeBudgetProgram)]
+  const parts: Uint8Array[] = parsed.legacy ? [] : [Uint8Array.of(128)]
+  parts.push(Uint8Array.of(parsed.requiredSignatures, parsed.readonlySigned, parsed.readonlyUnsigned + added.length), shortVec(staticKeys.length))
+  for (const key of staticKeys) parts.push(try keyBytes(key))
+  parts.push(raw.slice(parsed.blockhashOffset, parsed.blockhashOffset + 32), shortVec(instructions.length))
+  for (const instruction of instructions) parts.push(try compiled(instruction, keys))
+  if (!parsed.legacy) {
+    parts.push(shortVec(lookups.length))
+    for (const lookup of lookups) parts.push(try keyBytes(lookup.address), shortVec(lookup.writable.length), Uint8Array.from(lookup.writable), shortVec(lookup.readonly.length), Uint8Array.from(lookup.readonly))
+  }
+  const result = joined([Uint8Array.of(1), new Uint8Array(64), ...parts])
+  if (result.length > MAX_TRANSACTION_BYTES) return try refuse("Native route exceeds the transaction size limit")
+  return result
+}
+
+function accountsOf(instruction: WireInstruction, keys: ReadonlyArray<string>) {
+  return instruction.accounts.map((index) => keys[index] ?? "")
+}
+
+export effect function exactWrap(parsed: ParsedTransaction, keys: ReadonlyArray<string>, expected: RouteExpectation) {
+  if (!expected.nativeInput) return
+  if (expected.inputMint !== wrappedSol || expected.inputProgram !== TOKEN_PROGRAM) return try refuse("Native input must use the classic wrapped SOL mint")
+  const source = try ata(wrappedSol, expected.wallet, TOKEN_PROGRAM)
+  const direct = parsed.instructions.filter((instruction) => instruction.program === SYSTEM_PROGRAM || instruction.program === TOKEN_PROGRAM)
+  const [transfer, sync] = direct
+  if (direct.length !== 2 || transfer === undefined || sync === undefined) return try refuse("Native route must wrap its exact input once")
+  const exact = transfer.program === SYSTEM_PROGRAM && transfer.data.length === 12 && u32At(transfer.data, 0) === 2 && u64At(transfer.data, 4) === expected.amountIn
+    && sameList(accountsOf(transfer, keys), [expected.wallet, source])
+    && sync.program === TOKEN_PROGRAM && sync.data.length === 1 && sync.data[0] === 17 && sameList(accountsOf(sync, keys), [source])
+    && parsed.instructions.indexOf(sync) <= parsed.instructions.findIndex((instruction) => instruction.program === expected.program)
+  if (!exact) return try refuse("Native route transfer or sync differs from the exact reviewed input")
+}

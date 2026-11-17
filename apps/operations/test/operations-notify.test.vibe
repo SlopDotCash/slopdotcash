@@ -1,0 +1,302 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { D1, d1, decoded, sql } from "@repo/platform/d1"
+import { outboundVia } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@repo/ports/backend"
+import { IntakeHealth } from "@repo/ports/operations"
+import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
+import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
+import { SlopbotAudience } from "@repo/ports/slopbot"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { IntakeHealthLive } from "../src/intakeHealth/store.vibe"
+import { intakeWatch, productionWatch } from "../src/watch/checks.vibe"
+import { type NotifyEnv, notifyWorker } from "../src/workers/notify.vibe"
+
+service Journey {
+  readonly db: D1Database
+}
+
+const Started = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "notify-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  return Layer.mergeAll(Layer.succeed(Journey, { db }), d1(db))
+})
+
+interface Scripted {
+  readonly status: number
+  readonly body?: string
+  readonly headers?: Readonly<Record<string, string>>
+  readonly disconnect?: true
+}
+
+interface Seen {
+  readonly method: string
+  readonly url: string
+  readonly authorization: string
+}
+
+const seen: Seen[] = []
+const script: Scripted[] = []
+const pages = new Map<string, Scripted>()
+
+function answered(next: Scripted): Promise<globalThis.Response> {
+  if (next.disconnect === true) return Promise.reject(new TypeError("fetch failed"))
+  const response = new WebResponse(next.body ?? null, { status: next.status, headers: { "content-type": "application/json", ...next.headers } })
+  return Promise.resolve(response as unknown as globalThis.Response)
+}
+
+const internet: Fetcher = {
+  fetch: (request) => {
+    seen.push({ method: request.method, url: request.url, authorization: request.headers.get("authorization") ?? "" })
+    const page = pages.get(request.url)
+    if (page !== undefined) return answered(page)
+    return answered(script.shift() ?? { status: 599, body: JSON.stringify({ message: `nothing scripted for ${request.url}` }) })
+  },
+}
+
+function scripted(...answers: ReadonlyArray<Scripted>) {
+  seen.length = 0
+  script.length = 0
+  script.push(...answers)
+}
+
+const status = (enabled: unknown): Scripted => ({ status: 200, body: JSON.stringify({ enabled }) })
+
+const unreached = () => die(new Error("the notify journey reached another area's port"))
+
+const Ports = Layer.mergeAll(
+  Layer.succeed(EmailConsent, { destination: unreached, enrollment: unreached }),
+  Layer.succeed(EmailEnrollment, { registered: unreached, unsubscribeIssued: unreached, pendingVerification: unreached, markVerification: unreached }),
+  Layer.succeed(Registry, { project: unreached, byRepository: unreached, byPath: unreached, active: unreached, fence: unreached }),
+  Layer.succeed(ProjectAudience, { listedBy: unreached, owners: unreached }),
+  Layer.succeed(ContributorAudience, { affected: unreached }),
+  Layer.succeed(DisputeAudience, { dispute: unreached }),
+  Layer.succeed(SecurityNoticeAccess, { forCase: unreached }),
+  Layer.succeed(VettingBans, { serviceBan: unreached }),
+  Layer.succeed(SlopbotAudience, { escalatedAppeal: unreached, scamPenalty: unreached }),
+)
+
+const app = notifyWorker({ ports: () => Ports, internet: outboundVia(internet), envelope: (mail) => mail })
+
+const statusToken = `github_pat_${"a".repeat(40)}`
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+
+const envs = new Map<string, NotifyEnv>()
+
+effect function envFor(token: string | undefined) {
+  const key = token ?? "anonymous"
+  const found = envs.get(key)
+  if (found !== undefined) return found
+  const made: NotifyEnv = {
+    SLOP_DB: (try Journey).db,
+    ADMIN_EMAIL: { send: () => Promise.reject(new Error("the notify journey sends no mail")) },
+    NOTIFY_FROM_ADDRESS: "notifications@slop.cash",
+    NOTIFY_INBOX_URL: "https://slop.test/inbox",
+    ADMIN_GITHUB_IDS: "7",
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    ...token === undefined ? {} : { GITHUB_INTAKE_STATUS_TOKEN: token },
+  }
+  envs.set(key, made)
+  return made
+}
+
+effect function posted(url: string, token: string | undefined = statusToken) {
+  const env = try envFor(token)
+  const request = try orDie(Effect.try(() => new WebRequest(url, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })))
+  const response = try promise(() => app.fetch(request as unknown as globalThis.Request, env, context))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { status: response.status, cache: response.headers.get("cache-control") ?? "", body }
+}
+
+schema StoredIntake { readonly enabled: number; readonly verified_at: string }
+
+effect function stored() {
+  const [row] = try decoded(StoredIntake, try (try D1).all(sql`SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1`), "intake observation")
+  return row
+}
+
+effect function seed(enabled: number, verifiedAt: string) {
+  try (try D1).run(sql`DELETE FROM private_intake_status`)
+  try (try D1).run(sql`INSERT INTO private_intake_status(singleton, enabled, verified_at) VALUES (1, ${enabled}, ${verifiedAt})`)
+}
+
+const renewUrl = "https://notify.internal/v1/intake/renew"
+
+effect function renewed(...answers: ReadonlyArray<Scripted>) {
+  scripted(...answers)
+  const before = try isoNow()
+  const answer = try posted(renewUrl)
+  const row = try stored()
+  return { answer, credentials: seen.map((request) => request.authorization === "" ? "anonymous" : request.authorization === `Bearer ${statusToken}` ? "token" : "other"), row: row === undefined ? undefined : { enabled: row.enabled, fresh: row.verified_at >= before } }
+}
+
+const now = Date.UTC(2030, 5, 1, 12)
+const clock = settableClock(now)
+
+effect function hoursAgo(count: number) {
+  return try isoAt(now - count * 3_600_000)
+}
+
+const registry = JSON.stringify({
+  schemaVersion: "1",
+  projects: [
+    { id: "slopdotcash", escrow: { deployments: [{ network: "base-mainnet", vault: "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36" }, { network: "ethereum", vault: "0x1111111111111111111111111111111111111111" }] } },
+    { id: "canonry", status: "paused" },
+  ],
+})
+
+effect function vault(baseObservedAt: string) {
+  const ethereumObservedAt = try hoursAgo(48)
+  return JSON.stringify({
+    projectId: "slopdotcash",
+    staleAfterMs: 1_800_000,
+    snapshots: [
+      { network: "base-mainnet", vault: "0x6C1297C3B96A00347CB501F572CB5811C2A8ED36", observedAt: baseObservedAt },
+      { network: "ethereum", vault: "0x1111111111111111111111111111111111111111", observedAt: ethereumObservedAt },
+    ],
+  })
+}
+
+effect function site(overrides: Readonly<Record<string, Scripted>> = {}) {
+  const recent = try vault(try isoAt(now - 600_000))
+  seen.length = 0
+  pages.clear()
+  const defaults: Readonly<Record<string, Scripted>> = {
+    "https://slop.cash/": { status: 200, body: "<!doctype html>", headers: { "content-type": "text/html" } },
+    "https://identity.slop.cash/v1/oauth/authorize": { status: 400, body: JSON.stringify({ error: "invalid_request" }) },
+    "https://slopbot.slop.cash/health": { status: 200, body: JSON.stringify({ ok: true }) },
+    "https://slop.cash/api/v1/projects": { status: 200, body: registry },
+    "https://slop.cash/api/v1/payments/projects/slopdotcash/vault": { status: 200, body: recent },
+  }
+  for (const [url, page] of Object.entries({ ...defaults, ...overrides })) pages.set(url, page)
+}
+
+function intakePage(page: Scripted) {
+  seen.length = 0
+  pages.clear()
+  pages.set("https://api.slop.cash/api/v1/private-request-intake", page)
+}
+
+schema Fingerprint { readonly version: string }
+
+effect function intakePort() {
+  provide IntakeHealthLive {
+    const health = try IntakeHealth
+    const version = try health.version()
+    const [fingerprint] = try decoded(Fingerprint, try (try D1).all(sql`SELECT ${version} AS version`), "intake version")
+    return { status: try health.status(), version: fingerprint?.version }
+  }
+}
+
+effect function watched<A, E, R>(program: A!E!R) {
+  provide Layer.merge(outboundVia(internet), clock.layer) {
+    return try program
+  }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Renew the observation only from a usable GitHub answer through the notify Worker (spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"; spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours")', () => effect {
+    scripted(status(true))
+    const outside = try posted("https://slop.cash/v1/intake/renew")
+    const outsideReads = seen.length
+    const enabled = try renewed(status(true))
+    const disabled = try renewed(status(false))
+    const refusedToken = try renewed({ status: 401, body: JSON.stringify({ message: "Bad credentials" }) }, status(true))
+    const rateLimited = try renewed({ status: 403, body: JSON.stringify({ message: "API rate limit exceeded" }), headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1" } })
+    const malformed = try renewed(status("yes"))
+    const unavailable = try renewed({ status: 500, body: "{}" })
+    const unreachable = try renewed({ status: 0, disconnect: true })
+    const unauthorized = try renewed({ status: 401, body: "{}" }, { status: 401, body: "{}" })
+    scripted(status(true))
+    const badToken = try posted(renewUrl, "short")
+    const badTokenReads = seen.map((request) => request.authorization)
+    try seed(0, "2100-01-01T00:00:00.000Z")
+    const late = try renewed(status(true))
+    const port = try intakePort()
+    try Effect.try(() => assert.deepStrictEqual({ outside, outsideReads, enabled, disabled, refusedToken, rateLimited, malformed, unavailable, unreachable, unauthorized, badToken: badToken.body, badTokenReads, late, port }, {
+      outside: { status: 404, cache: "no-store", body: { error: "not_found" } },
+      outsideReads: 0,
+      enabled: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: true } },
+      disabled: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: false, tokenRejected: false } }, credentials: ["token"], row: { enabled: 0, fresh: true } },
+      refusedToken: { answer: { status: 200, cache: "no-store", body: { result: "Renewed", enabled: true, tokenRejected: true } }, credentials: ["token", "anonymous"], row: { enabled: 1, fresh: true } },
+      rateLimited: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "RateLimited", httpStatus: 403, enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
+      malformed: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Malformed", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unavailable: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Rejected", httpStatus: 500, enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unreachable: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Unreachable", enabled: true, tokenRejected: false } }, credentials: ["token"], row: { enabled: 1, fresh: false } },
+      unauthorized: { answer: { status: 503, cache: "no-store", body: { result: "Skipped", reason: "Unauthorized", httpStatus: 401, enabled: true, tokenRejected: true } }, credentials: ["token", "anonymous"], row: { enabled: 1, fresh: false } },
+      badToken: { result: "Renewed", enabled: true, tokenRejected: true },
+      badTokenReads: [""],
+      late: { answer: { status: 200, cache: "no-store", body: { result: "OlderThanStored", enabled: false, tokenRejected: false } }, credentials: ["token"], row: { enabled: 0, fresh: true } },
+      port: { status: { enabled: false, verifiedAt: "2100-01-01T00:00:00.000Z" }, version: "0:2100-01-01T00:00:00.000Z" },
+    }))
+  })
+
+  it.effect('The notify Worker serves only internal callers and answers an unconfigured pilot without delivering (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous")', () => effect {
+    scripted()
+    const outside = try posted("https://slop.cash/v1/security-notifications/dispatch")
+    const security = try posted("https://notify.internal/v1/security-notifications/dispatch")
+    const activity = try posted("https://notify.internal/v1/activity-notifications/dispatch")
+    const capabilities = try posted("https://notify.internal/v1/email/capabilities")
+    try Effect.try(() => assert.deepStrictEqual({ outside, security, activity, capabilities, outbound: seen.length }, {
+      outside: { status: 404, cache: "no-store", body: { error: "not_found" } },
+      security: { status: 503, cache: "private, no-store", body: null },
+      activity: { status: 503, cache: "private, no-store", body: null },
+      capabilities: { status: 200, cache: "private, no-store", body: { enrollmentAvailable: false } },
+      outbound: 0,
+    }))
+  })
+
+  it.effect('The hourly watches only read and alert after three hours (spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it")', () => effect {
+    const hourAgo = try hoursAgo(1)
+    const pastAlert = try isoAt(now - 10_800_001)
+    const tenMinutesAgo = try isoAt(now - 600_000)
+    const twoDaysAgo = try hoursAgo(48)
+    intakePage({ status: 200, body: JSON.stringify({ enabled: true, source: "github-public-status", verifiedAt: hourAgo }) })
+    const fresh = try watched(intakeWatch())
+    intakePage({ status: 200, body: JSON.stringify({ enabled: true, source: "github-public-status", verifiedAt: pastAlert }) })
+    const stale = try watched(intakeWatch())
+    intakePage({ status: 200, body: JSON.stringify({ enabled: false, source: "github-public-status", verifiedAt: hourAgo }) })
+    const disabled = try watched(intakeWatch())
+    intakePage({ status: 503, body: JSON.stringify({ error: "private_intake_unavailable" }) })
+    const unavailable = try watched(intakeWatch())
+    const intakeReads = seen.map((request) => `${request.method} ${request.url} ${request.authorization}`)
+    try site()
+    const healthy = try watched(productionWatch())
+    const productionReads = seen.map((request) => request.method)
+    try site({ "https://slop.cash/api/v1/payments/projects/slopdotcash/vault": { status: 200, body: try vault(hourAgo) } })
+    const staleVault = try watched(productionWatch())
+    try site({ "https://identity.slop.cash/v1/oauth/authorize": { status: 400, body: JSON.stringify({ error: "other" }) }, "https://slop.cash/api/v1/projects": { status: 200, body: JSON.stringify({ schemaVersion: "1", projects: [] }) } })
+    const broken = try watched(productionWatch())
+    const intakeFailed = "private request intake"
+    try Effect.try(() => assert.deepStrictEqual({ fresh, stale, disabled, unavailable, intakeReads, healthy, productionReads, staleVault: staleVault.filter((result) => !result.ok), broken: broken.filter((result) => !result.ok) }, {
+      fresh: [{ ok: true, check: intakeFailed, detail: "HTTP 200 (0 ms)" }],
+      stale: [{ ok: false, check: intakeFailed, detail: "Optional trace intake observation is older than three hours; the hourly Worker renewal is not landing." }],
+      disabled: [{ ok: false, check: intakeFailed, detail: "Optional trace intake is not enabled; GitHub contribution remains open." }],
+      unavailable: [{ ok: false, check: intakeFailed, detail: "Optional trace intake is unavailable (HTTP 503 (0 ms)). GitHub contribution remains open. The slop-identity Worker renews the observation hourly through slop-notify." }],
+      intakeReads: ["GET https://api.slop.cash/api/v1/private-request-intake "],
+      healthy: [
+        { ok: true, check: "site home", detail: "HTTP 200 (0 ms)" },
+        { ok: true, check: "identity sign-in", detail: "HTTP 400 (0 ms)" },
+        { ok: true, check: "slopbot health", detail: "HTTP 200 (0 ms)" },
+        { ok: true, check: "registry api", detail: "HTTP 200 (0 ms), 2 registered vaults" },
+        { ok: true, check: "vault slopdotcash base-mainnet 0x6c1297c3b96a00347cb501f572cb5811c2a8ed36", detail: `observed ${tenMinutesAgo}, age 10 min (limit 30 min)` },
+        { ok: true, check: "vault slopdotcash ethereum 0x1111111111111111111111111111111111111111", detail: `network not activated, no refresh expected; last observed ${twoDaysAgo}` },
+      ],
+      productionReads: ["GET", "GET", "GET", "GET", "GET"],
+      staleVault: [{ ok: false, check: "vault slopdotcash base-mainnet 0x6c1297c3b96a00347cb501f572cb5811c2a8ed36", detail: `stale: observed ${hourAgo}, age 60 min (limit 30 min)` }],
+      broken: [
+        { ok: false, check: "identity sign-in", detail: "identity did not return its invalid-link refusal" },
+        { ok: false, check: "registry api", detail: "Registry response has no projects" },
+      ],
+    }))
+  })
+})

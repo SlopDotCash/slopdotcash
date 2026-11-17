@@ -1,0 +1,54 @@
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"
+module verified {
+  import type { MonthPart } from "./months.ts"
+  import { censusParts as parts, cutoffBefore as cutoff, secondFloor as floor } from "./months.ts"
+  /** @throws {never} */
+  export function censusParts(start: number, end: number): MonthPart[] { return parts(start, end) }
+  /** @throws {never} */
+  export function cutoffBefore(through: number): number { return cutoff(through) }
+  /** @throws {never} */
+  export function secondFloor(millis: number): number { return floor(millis) }
+}
+import { censusParts, cutoffBefore, secondFloor } from verified
+
+export interface CensusMonth {
+  readonly month: string
+  readonly from: string
+  readonly to: string
+}
+
+const monthPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+
+function iso(millis: number) {
+  return new Date(millis).toISOString()
+}
+
+export function canonicalInstant(value: string): string | undefined {
+  const millis = Date.parse(value)
+  return Number.isFinite(millis) ? iso(millis) : undefined
+}
+
+export function isCanonicalInstant(value: string): boolean {
+  return canonicalInstant(value) === value
+}
+
+export function isCensusMonth(value: string): boolean {
+  return monthPattern.test(value)
+}
+
+export function wholeSecondIso(millis: number): string {
+  return iso(secondFloor(millis))
+}
+
+export function historicalCutoff(through: string): string {
+  return iso(cutoffBefore(Date.parse(through)))
+}
+
+export function censusMonths(createdAt: string, through: string): ReadonlyArray<CensusMonth> | undefined {
+  const start = Date.parse(createdAt)
+  const end = Date.parse(through)
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < 0) return undefined
+  const last = secondFloor(end)
+  if (start >= last) return undefined
+  return censusParts(secondFloor(start), last).map((part) => ({ month: iso(part.from).slice(0, 7), from: iso(part.from), to: iso(part.to) }))
+}

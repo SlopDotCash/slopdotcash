@@ -1,0 +1,25 @@
+// spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"
+import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
+
+export error KeeperRefused { message: string; classified?: ClassifiedError }
+
+const PUBLIC_TIMEOUT = Duration.seconds(20)
+const PUBLIC_BYTES = 16 * 1024 * 1024
+
+export effect function publicJson(url: string, origin: string, unavailable: () => KeeperRefused) {
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.get(url, { headers: { accept: "application/json", origin } })
+  const answered = timeout(effect {
+    const response = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" }) catch effect () => { throw unavailable() }
+    if (response.status === 404) return null
+    if (response.status < 200 || response.status > 299) throw new KeeperRefused({ message: `Public registry HTTP ${response.status}` })
+    if (Number(response.headers["content-length"] ?? "0") > PUBLIC_BYTES) throw unavailable()
+    const bytes = response.arrayBuffer catch effect () => { throw unavailable() }
+    if (bytes.byteLength > PUBLIC_BYTES) throw unavailable()
+    return Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => { throw unavailable() }
+  }, PUBLIC_TIMEOUT) catch effect (error) => match (error) {
+    when KeeperRefused: throw error;
+    default: throw unavailable();
+  }
+  return answered
+}

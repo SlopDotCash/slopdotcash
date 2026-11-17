@@ -1,0 +1,51 @@
+// spec/settlement/privateAward.md, "A finalized vault payout records the obligation paid and notifies the case"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"
+import { type Statement, first, sql } from "@repo/platform/d1"
+import { Notices } from "@repo/ports/operations"
+import { type FinalizedPaymentEvent, type VaultAsset, refused } from "../payments/terms.vibe"
+
+schema SettlementRow {
+  readonly award_state: string
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+  readonly asset_decimals: number
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly reporter_github_id: string
+  readonly source_digest: string
+  readonly deployment: string
+}
+
+schema DeploymentProject { readonly projectId: string }
+
+schema CaseRow { readonly case_id: string }
+
+const mismatch = "Finalized bounty differs from the private approved settlement"
+
+export effect function authorizeBounty(event: FinalizedPaymentEvent, asset: VaultAsset) {
+  const row = try first(SettlementRow, sql`SELECT c.award_state, s.network, s.vault, s.asset, s.asset_decimals, s.gross_base, s.fee_base, s.reporter_github_id, s.source_digest, s.deployment FROM security_settlements s JOIN security_cases c ON c.id = s.case_id WHERE s.obligation_id = ${event.obligationId}`)
+  if (row === undefined) throw refused(mismatch)
+  const deployment = Schema.decodeUnknownEffect(Schema.fromJsonString(DeploymentProject))(row.deployment) catch () => undefined
+  if (row.award_state !== "approved" || row.network !== event.network || row.vault !== event.vault || row.asset !== asset.address || row.asset_decimals !== asset.decimals
+    || row.gross_base !== event.gross.toString() || row.fee_base !== event.fee.toString() || row.reporter_github_id !== event.githubUserId
+    || row.source_digest !== event.sourceDigest || deployment?.projectId !== event.projectId) throw refused(mismatch)
+}
+
+function recipients(caseId: string): Statement {
+  return sql`SELECT reporter_github_id FROM security_cases WHERE id = ${caseId}
+    UNION SELECT json_extract(a.value, '$.githubId') FROM security_cases c JOIN projects p ON p.id = c.project_id, json_each(p.manifest, '$.securityBounty.approvers.financial') a WHERE c.id = ${caseId}
+    UNION SELECT json_extract(a.value, '$.githubId') FROM security_cases c JOIN projects p ON p.id = c.project_id, json_each(p.manifest, '$.securityBounty.approvers.technical') a WHERE c.id = ${caseId}`
+}
+
+export effect function bountyNotices(obligationId: string, state: "reserved" | "paid" | "held", at: string) {
+  const owner = try first(CaseRow, sql`SELECT case_id FROM security_settlements WHERE obligation_id = ${obligationId}`)
+  if (owner === undefined) return []
+  return try (try Notices).fanout({
+    eventKey: `security-payment:${obligationId}:${state}`,
+    recipients: recipients(owner.case_id),
+    kind: "SecurityCase",
+    subject: owner.case_id,
+    actionPath: `/security?case=${owner.case_id}`,
+    sourceAt: at,
+  })
+}

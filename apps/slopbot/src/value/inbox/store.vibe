@@ -1,0 +1,227 @@
+// spec/slopbot/assessmentInbox.md, "Only a matching accepted final outcome at or after the gap resolves it"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/slopbot/assessmentInbox.md, "Denial clears the item and uncertain authority is retryable"
+import { isoAt } from "@repo/platform/clock"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import type { Refusal } from "@repo/platform/route"
+import { Registry, RegistryManifests } from "@repo/ports/backend"
+import { type AccessCheck, type PrKey, type QueueRead, type QueueRequest, type QueueRoute, type RegistryBinding, accessUnavailable, apply, emptyBinding, initial, openGap } from "../../../gen/slopbot__assessmentInbox.effect.vibe"
+import { initial as unknownInstallation } from "../../../gen/slopbot__installation.effect.vibe"
+import type { Delivery } from "../../../gen/slopbot__valueRequests.effect.vibe"
+import { type IncompleteAssessment, type IncompleteAssessments, assessmentRefusals, assessmentsPerPage, maxCursorLength } from "../../client/inbox.vibe"
+import { DeliveryRow, deliveriesWhere, deliveryFrom, numbered } from "../requests/rows.vibe"
+import { type AccessActor, type AccessAnswer, RepositoryAccessReader } from "./access.vibe"
+
+export type PageOutcome =
+  | { readonly kind: "ready"; readonly answer: IncompleteAssessments }
+  | { readonly kind: "unavailable"; readonly status: number; readonly refusal: Refusal }
+
+type Cursor = readonly [string, number, number]
+
+interface Bound {
+  readonly projectId: string
+  readonly projectName: string
+  readonly path: string
+  readonly manifest: string
+  readonly binding: RegistryBinding
+}
+
+interface Pending {
+  readonly key: PrKey
+  readonly bound: Bound
+  readonly read: QueueRead
+}
+
+schema ListedRepository { id: string; githubUrl?: string; githubId?: string | number; aliases?: ReadonlyArray<string> }
+schema ListedAuthority { repositoryId: string | number }
+schema ListedManifest { id: string; name: string; authority: ListedAuthority; repositories: ReadonlyArray<ListedRepository> }
+
+const projectIdPattern = /^[a-z0-9-]+$/u
+const reader = 1
+const activeInstallation = { ...unknownInstallation, known: true }
+
+export const idleQueue: QueueRead = initial
+
+const gapPulls = sql`SELECT gr.repository_id, gr.pull_request_number FROM slopbot_value_requests gr
+  JOIN slopbot_value_processing gp ON gp.delivery_id = gr.delivery_id WHERE gp.incomplete_since IS NOT NULL`
+
+function pullScope(key: PrKey | undefined): Statement {
+  return key === undefined
+    ? sql`(r.repository_id, r.pull_request_number) IN (${gapPulls})`
+    : sql`r.repository_id = ${key.repository} AND r.pull_request_number = ${key.pullRequest}`
+}
+
+export effect function pullDeliveries(key?: PrKey) {
+  const found = try rows(DeliveryRow, deliveriesWhere(pullScope(key), sql`JOIN`))
+  const ids = numbered(found.map((row) => row.delivery_id))
+  const tokens = numbered(found.map((row) => row.claim_token ?? ""))
+  const deliveries: Delivery[] = []
+  for (const row of found) deliveries.push(try deliveryFrom(row, { delivery: (id) => ids.get(id) ?? 0, token: (token) => tokens.get(token) ?? 0 }, "millis"))
+  return deliveries
+}
+
+function ofPull(deliveries: ReadonlyArray<Delivery>, key: PrKey): Delivery[] {
+  return deliveries.filter((delivery) => delivery.key.repository === key.repository && delivery.key.pull === key.pullRequest)
+}
+
+export effect function readItem(current: QueueRead, request: QueueRequest, by: number, deliveries: ReadonlyArray<Delivery>) {
+  return try apply(current, { type: "read", request, rows: ofPull(deliveries, request.key) }, by)
+}
+
+export effect function completeItem(current: QueueRead, requestId: number, currentBinding: RegistryBinding, access: AccessCheck, deliveries: ReadonlyArray<Delivery>) {
+  return try apply(current, { type: "complete", requestId, currentBinding, access, rows: ofPull(deliveries, current.request.key) }, current.request.actor)
+}
+
+export effect function cursorOf(text: string | null) {
+  if (text === null) return null
+  if (text.length > maxCursorLength) return undefined
+  const parsed: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  if (!Array.isArray(parsed) || parsed.length !== 3) return undefined
+  const [project, repository, pull] = parsed as ReadonlyArray<unknown>
+  if (typeof project !== "string" || !projectIdPattern.test(project)) return undefined
+  if (typeof repository !== "number" || typeof pull !== "number" || ![repository, pull].every((id) => Number.isSafeInteger(id) && id > 0)) return undefined
+  return [project, repository, pull] satisfies Cursor
+}
+
+function currentPath(repository: ListedRepository) {
+  const path = repository.githubUrl === undefined ? undefined : URL.parse(repository.githubUrl)?.pathname.replace(/^\/|\/$/gu, "")
+  return path === undefined || path === "" ? repository.id : path
+}
+
+effect function listedOf(manifest: string) {
+  const parsed = try orDie(Effect.try(() => JSON.parse(manifest) as unknown))
+  return try orDie(Schema.decodeUnknownEffect(ListedManifest)(parsed))
+}
+
+effect function boundTo(owner: string, repo: string, repositoryId: number, projects: Map<string, number>) {
+  const found = try (try Registry).byPath(`${owner}/${repo}`)
+  if (found === undefined) return undefined
+  const registered = try (try RegistryManifests).project(found.project.projectId)
+  if (registered === undefined) return undefined
+  const listed = try listedOf(registered.manifest)
+  const original = `${owner}/${repo}`.toLowerCase()
+  const index = listed.repositories.findIndex((repository) => [repository.id, currentPath(repository), ...repository.aliases ?? []].some((name) => name.toLowerCase() === original))
+  const repository = listed.repositories[index]
+  if (repository === undefined) return undefined
+  const registeredId = index === 0 ? String(listed.authority.repositoryId) : String(repository.githubId ?? repositoryId)
+  if (registeredId !== String(repositoryId)) return undefined
+  const path = currentPath(repository)
+  const project = projects.get(listed.id) ?? projects.size + 1
+  projects.set(listed.id, project)
+  return {
+    projectId: listed.id,
+    projectName: listed.name,
+    path,
+    manifest: registered.manifest,
+    binding: { project, repository: repositoryId, path: path.toLowerCase(), manifest: 1 },
+  } satisfies Bound
+}
+
+effect function currentBindingOf(bound: Bound) {
+  const registered = try (try RegistryManifests).project(bound.projectId)
+  if (registered === undefined) return emptyBinding
+  return registered.manifest === bound.manifest ? bound.binding : { ...bound.binding, manifest: 2 }
+}
+
+function accessOf(answer: AccessAnswer | undefined): AccessCheck {
+  const unchecked: AccessCheck = { actor: reader, configuredAdmin: false, permission: "AuthorityUnavailable", repository: 0, path: "", install: unknownInstallation, visibility: "VisibilityUnknown" }
+  if (answer === undefined) return unchecked
+  if (answer.installation === "missing") return { ...unchecked, permission: "DeniedPermission" }
+  if (answer.installation === "suspended") return { ...unchecked, permission: "DeniedPermission", install: { ...activeInstallation, suspended: true } }
+  const repository = answer.repository
+  return {
+    actor: reader,
+    configuredAdmin: false,
+    permission: answer.permission === "admin" || answer.permission === "write" ? "CurrentWriter" : "DeniedPermission",
+    repository: repository?.id ?? 0,
+    path: repository?.full_name.toLowerCase() ?? "",
+    install: activeInstallation,
+    visibility: repository === undefined ? "VisibilityUnknown" : repository.private ? "PrivateRepo" : "PublicRepo",
+  }
+}
+
+const administratorAccess: AccessCheck = { actor: reader, configuredAdmin: true, permission: "AuthorityUnavailable", repository: 0, path: "", install: unknownInstallation, visibility: "VisibilityUnknown" }
+
+effect function accessFor(bound: Bound, actor: AccessActor, administrator: boolean) {
+  if (administrator) return administratorAccess
+  return accessOf(try (try RepositoryAccessReader).read({ path: bound.path, repositoryId: bound.binding.repository }, actor))
+}
+
+function after(entry: IncompleteAssessment & { readonly repositoryId: number }, cursor: Cursor | null) {
+  if (cursor === null) return true
+  const [project, repository, pull] = cursor
+  return entry.projectId > project || (entry.projectId === project && (entry.repositoryId > repository || (entry.repositoryId === repository && entry.pullRequest > pull)))
+}
+
+function ordered(a: { readonly projectId: string; readonly repositoryId: number; readonly pullRequest: number }, b: typeof a) {
+  if (a.projectId !== b.projectId) return a.projectId < b.projectId ? -1 : 1
+  return a.repositoryId !== b.repositoryId ? a.repositoryId - b.repositoryId : a.pullRequest - b.pullRequest
+}
+
+export effect function assessmentPage(actor: AccessActor, cursorText: string | null, route: QueueRoute) {
+  let requestId = 0
+  const requestOf = (key: PrKey, binding: RegistryBinding, validCursor: boolean): QueueRequest => {
+    requestId += 1
+    return { actor: reader, expected: reader, requestId, lifetime: 1, route, binding, key, validCursor }
+  }
+  const cursor = try cursorOf(cursorText)
+  if (cursor === undefined) {
+    const refused = try readItem(initial, requestOf({ repository: 0, pullRequest: 0 }, emptyBinding, false), reader, [])
+    return { kind: "unavailable", status: refused.status, refusal: assessmentRefusals.invalidCursor } satisfies PageOutcome
+  }
+  const deliveries = try pullDeliveries()
+  const projects = new Map<string, number>()
+  const bindings = new Map<string, Bound | undefined>()
+  const pending: Pending[] = []
+  const keys = new Map<string, PrKey>()
+  for (const delivery of deliveries) keys.set(`${delivery.key.repository}:${delivery.key.pull}`, { repository: delivery.key.repository, pullRequest: delivery.key.pull })
+  for (const key of keys.values()) {
+    const named = ofPull(deliveries, key).find((delivery) => openGap(deliveries, delivery))
+    if (named === undefined) continue
+    const name = `${named.key.owner}/${named.key.repo}:${key.repository}`
+    if (!bindings.has(name)) bindings.set(name, try boundTo(named.key.owner, named.key.repo, key.repository, projects))
+    const bound = bindings.get(name)
+    const read = try readItem(initial, requestOf(key, bound?.binding ?? emptyBinding, true), reader, deliveries)
+    if (read.phase === "Checking" && bound !== undefined) pending.push({ key, bound, read })
+  }
+  const administrator = try (try Roles).has(actor.githubId, "administrator")
+  const accesses = new Map<string, AccessCheck>()
+  for (const { bound } of pending) {
+    const scope = `${bound.projectId}:${bound.binding.repository}`
+    if (!accesses.has(scope)) accesses.set(scope, try accessFor(bound, actor, administrator))
+  }
+  const current = new Map<string, RegistryBinding>()
+  const entries: Array<IncompleteAssessment & { readonly repositoryId: number }> = []
+  let failed: { readonly status: number; readonly refusal: Refusal } | undefined = undefined
+  for (const { key, bound, read } of pending) {
+    const scope = `${bound.projectId}:${bound.binding.repository}`
+    const access = accesses.get(scope) ?? accessOf(undefined)
+    if (!current.has(scope)) current.set(scope, try currentBindingOf(bound))
+    const completed = try completeItem(read, read.request.requestId, current.get(scope) ?? emptyBinding, access, deliveries)
+    if (completed.phase === "Unavailable") {
+      const github = access.actor !== reader || accessUnavailable(bound.binding, access)
+      if (failed === undefined || github) failed = { status: completed.status, refusal: github ? assessmentRefusals.githubUnavailable : assessmentRefusals.projectChanged }
+      continue
+    }
+    const item = completed.item
+    if (item.tag !== "Unresolved") continue
+    entries.push({
+      projectId: bound.projectId,
+      projectName: bound.projectName,
+      repository: bound.path,
+      repositoryId: key.repository,
+      pullRequest: key.pullRequest,
+      since: try isoAt(item.since),
+      retryAt: item.retryAt > 0 ? try isoAt(item.retryAt) : null,
+      running: item.retryStatus === "Retrying",
+    })
+  }
+  if (failed !== undefined) return { kind: "unavailable", status: failed.status, refusal: failed.refusal } satisfies PageOutcome
+  const listed = entries.filter((entry) => after(entry, cursor)).sort(ordered)
+  const page = listed.slice(0, assessmentsPerPage)
+  const last = page.at(-1)
+  const next = listed.length > assessmentsPerPage && last !== undefined ? JSON.stringify([last.projectId, last.repositoryId, last.pullRequest]) : null
+  return {
+    kind: "ready",
+    answer: { recipientGithubId: actor.githubId, items: page.map(({ repositoryId: _, ...item }) => item), next },
+  } satisfies PageOutcome
+}

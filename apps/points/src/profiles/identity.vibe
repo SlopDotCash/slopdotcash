@@ -1,0 +1,49 @@
+// spec/points/profiles.md, "A renamed repository is followed by its permanent registry identity"
+import { legacyHolder } from "@repo/backend/legacy"
+import type { RegistryProject } from "../census/projects.vibe"
+
+export interface RepositoryIdentity {
+  historical(repository: string): boolean
+  canonical(repository: string): string | undefined
+}
+
+export function repositoryIdentity(projects: ReadonlyArray<RegistryProject>): RepositoryIdentity {
+  const byName = new Map<string, string>()
+  const byLegacy = new Map<string, string>()
+  for (const project of projects) {
+    for (const repository of project.repositories) {
+      const identity = `registry:${repository.id.toLowerCase()}`
+      for (const name of [repository.id, ...(repository.aliases ?? [])]) {
+        byName.set(name.toLowerCase(), identity)
+        const holder = legacyHolder(name)
+        if (holder !== undefined) byLegacy.set(holder, identity)
+      }
+    }
+  }
+  return {
+    historical: (repository) => byName.has(repository.toLowerCase()) || legacyHolder(repository) !== undefined,
+    canonical: (repository) => {
+      const registered = byName.get(repository.toLowerCase())
+      if (registered !== undefined) return registered
+      const holder = legacyHolder(repository)
+      return holder === undefined ? undefined : byLegacy.get(holder) ?? `legacy:${holder}`
+    },
+  }
+}
+
+export interface Numbering {
+  of(key: string): number
+}
+
+export function numbering(): Numbering {
+  const numbers = new Map<string, number>()
+  return {
+    of: (key) => {
+      const known = numbers.get(key)
+      if (known !== undefined) return known
+      const next = numbers.size + 1
+      numbers.set(key, next)
+      return next
+    },
+  }
+}

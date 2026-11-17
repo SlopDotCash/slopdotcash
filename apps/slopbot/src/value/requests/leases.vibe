@@ -1,0 +1,47 @@
+// spec/slopbot/valueRequests.md, "Overlapping groups contend by permanent source ID"
+import { nowSeconds } from "@repo/platform/clock"
+import { type Statement, sql } from "@repo/platform/d1"
+import { Conflict, type Decision, update } from "@repo/platform/stored"
+import { Rejected, apply, mayUseGroup } from "../../../gen/slopbot__valueRequests.effect.vibe"
+import { InvalidSources, type Source, scopeKeysOf } from "./rows.vibe"
+import { type Claim, type Scope, aggregate, claimed, idle, installationOfRequest, sourceNumbers } from "./store.vibe"
+
+function groupScope(claim: Claim, wanted: string): Scope {
+  const holders = sql`SELECT held.delivery_id FROM slopbot_value_source_leases held JOIN json_each(${wanted}) w ON w.value = held.scope_key`
+  return {
+    name: `value sources of ${claim.deliveryId}`,
+    deliveries: sql`r.delivery_id = ${claim.deliveryId} OR r.delivery_id IN (${holders})`,
+    installation: installationOfRequest(claim.deliveryId),
+    groups: sql`l.delivery_id = ${claim.deliveryId} OR l.delivery_id IN (${holders})`,
+    checks: sql`0`,
+  }
+}
+
+function leaseWrite(claim: Claim, wanted: string, leaseUntil: string): Statement {
+  return sql`INSERT INTO slopbot_value_source_leases (scope_key, delivery_id, claim_token, lease_until)
+    SELECT wanted.value, ${claim.deliveryId}, ${claim.token}, ${leaseUntil} FROM json_each(${wanted}) wanted WHERE 1
+    ON CONFLICT(scope_key) DO UPDATE SET delivery_id = excluded.delivery_id, claim_token = excluded.claim_token, lease_until = excluded.lease_until`
+}
+
+export effect function leaseSources(claim: Claim, sources: ReadonlyArray<Source>) {
+  const wanted = try scopeKeysOf(sources)
+  if (wanted.length === 0) throw new InvalidSources({ issue: "Invalid valuation source identities" })
+  const listed = JSON.stringify(wanted)
+  const now = try nowSeconds()
+  return update(aggregate(groupScope(claim, listed), { now, run: idle, wanted }), (current) => effect {
+    const token = current.names.tokens.get(claim.token) ?? 0
+    try apply(current.state, { type: "claimGroup", token, sources: sourceNumbers(current.names, wanted) })
+    const owner = current.rows.find((row) => row.delivery_id === claim.deliveryId)
+    return { value: true, writes: [leaseWrite(claim, listed, owner?.lease_until ?? "")] } satisfies Decision<boolean>
+  }) catch effect (error) => match (error) {
+    when Rejected: false;
+    when Conflict: false;
+    default: throw error;
+  }
+}
+
+export effect function ownsSources(claim: Claim, sources: ReadonlyArray<Source>) {
+  const wanted = try scopeKeysOf(sources)
+  const current = try claimed(claim, wanted)
+  return mayUseGroup(current.state, current.names.tokens.get(claim.token) ?? 0, sourceNumbers(current.names, wanted))
+}

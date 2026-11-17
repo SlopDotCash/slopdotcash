@@ -1,0 +1,198 @@
+// spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"; spec/frontend/wallets.md, "A Solana wallet qualifies only with a solana chain, connect and sign-message features"; spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"
+import type { Wallet } from "@wallet-standard/base"
+import { type Consent, type Event as ConsentEvent, Machine as ConsentMachine, discovery, machine as consentMachineOf, trusted } from "../../../gen/frontend__walletConsent.effect.vibe"
+import { legacySolanaOffered, solanaBinds, solanaFunds, solanaQualifies } from "../../../gen/frontend__wallets.effect.vibe"
+import { type Announcement, type Eip1193, type LegacySolana, type ProviderFeed, type WalletSource, browserSource, shownIcon, standardShape } from "./injected.ts"
+
+export type Family = "evm" | "solana"
+
+export type Held =
+  | { readonly kind: "announced"; readonly provider: Eip1193; readonly name: string; readonly icon: string }
+  | { readonly kind: "legacyEvm"; readonly provider: Eip1193; readonly name: string }
+  | { readonly kind: "standard"; readonly wallet: Wallet }
+  | { readonly kind: "legacySolana"; readonly provider: LegacySolana; readonly name: string }
+
+export interface WalletOffer {
+  readonly id: number
+  readonly name: string
+  readonly icon: string | undefined
+  readonly family: Family
+  readonly solanaFunding: boolean
+  readonly solanaBinding: boolean
+}
+
+export const conflictMessage = "Conflicting wallet details. Reload and check your wallet extensions."
+export const changedMessage = "The wallet account or network changed. Connect and review again."
+
+export error WalletUntrusted { message: string }
+export error WalletDeclined { message: string }
+export error WalletFailed { message: string }
+export error WalletChanged { message: string }
+
+export type WalletError = WalletUntrusted | WalletDeclined | WalletFailed | WalletChanged
+
+export service WalletChoice {
+  readonly offers: Stream.Stream<ReadonlyArray<WalletOffer>>
+  current(): ReadonlyArray<WalletOffer>!!
+  trusted(id: number): boolean!!
+  held(id: number): (Held | undefined)!!
+}
+
+interface Registry {
+  readonly held: Map<number, Held>
+  readonly uuids: Map<string, number>
+  readonly objects: Map<object, number>
+  readonly details: Map<string, Announcement>
+  seen: number
+  next: number
+}
+
+function fresh(registry: Registry): number {
+  const id = registry.next
+  registry.next = id + 1
+  return id
+}
+
+function sameDetails(previous: Announcement | undefined, entry: Announcement): boolean {
+  return previous !== undefined && previous.provider === entry.provider && previous.name === entry.name && previous.rdns === entry.rdns && previous.icon === entry.icon
+}
+
+function qualifying(wallets: ReadonlyArray<Wallet>): ReadonlyArray<Wallet> {
+  return wallets.filter((wallet) => solanaQualifies(standardShape(wallet)))
+}
+
+function offersOf(registry: Registry, state: Consent, standards: ReadonlyArray<Wallet>): ReadonlyArray<WalletOffer> {
+  const icons = new Map(standards.map((wallet) => [wallet.name, wallet.icon]))
+  const current = qualifying(standards)
+  const names = current.map((wallet) => wallet.name.toLowerCase())
+  const offers: WalletOffer[] = []
+  const order = [...state.announced, ...state.legacy.filter((id) => !state.announced.includes(id))]
+  for (const id of order) {
+    const held = registry.held.get(id)
+    if (held === undefined || !trusted(state, id)) continue
+    if (held.kind === "announced") offers.push({ id, name: held.name, icon: shownIcon(held.icon, icons.get(held.name)), family: "evm", solanaFunding: false, solanaBinding: false })
+    else if (held.kind === "legacyEvm") offers.push({ id, name: held.name, icon: shownIcon(icons.get(held.name)), family: "evm", solanaFunding: false, solanaBinding: false })
+  }
+  for (const id of order) {
+    const held = registry.held.get(id)
+    if (held === undefined || held.kind !== "standard" || !trusted(state, id) || !current.includes(held.wallet)) continue
+    const shape = standardShape(held.wallet)
+    offers.push({ id, name: held.wallet.name, icon: shownIcon(held.wallet.icon), family: "solana", solanaFunding: solanaFunds(shape), solanaBinding: solanaBinds(shape) })
+  }
+  for (const id of order) {
+    const held = registry.held.get(id)
+    if (held === undefined || held.kind !== "legacySolana" || !trusted(state, id) || !legacySolanaOffered(held.name.toLowerCase(), names)) continue
+    offers.push({ id, name: held.name, icon: shownIcon(icons.get(held.name)), family: "solana", solanaFunding: false, solanaBinding: false })
+  }
+  return offers
+}
+
+export function walletChoiceOver(source: WalletSource) {
+  return Layer.effect(WalletChoice, effect {
+    const consent = try ConsentMachine
+    const feed: ProviderFeed = try acquireRelease(sync(() => source.listen()), (opened) => sync(() => opened.stop()))
+    const registry: Registry = { held: new Map(), uuids: new Map(), objects: new Map(), details: new Map(), seen: 0, next: 1 }
+    const shown = try SubscriptionRef.make<ReadonlyArray<WalletOffer>>([])
+    const lock = try Semaphore.make(1)
+
+    effect function tell(event: ConsentEvent) {
+      consent.send(event, discovery) catch () => undefined
+    }
+
+    effect function announced(entry: Announcement) {
+      const earlier = registry.objects.get(entry.provider)
+      const id = earlier ?? fresh(registry)
+      registry.objects.set(entry.provider, id)
+      if (earlier === undefined || registry.held.get(earlier)?.kind === "legacyEvm") registry.held.set(id, { kind: "announced", provider: entry.provider, name: entry.name, icon: entry.icon })
+      try tell({ type: "announce", provider: id, sameMetadata: true })
+      return id
+    }
+
+    effect function announce(entry: Announcement) {
+      const known = registry.uuids.get(entry.uuid)
+      if (known === undefined) {
+        registry.uuids.set(entry.uuid, try announced(entry))
+        registry.details.set(entry.uuid, entry)
+        return
+      }
+      if (sameDetails(registry.details.get(entry.uuid), entry)) {
+        try tell({ type: "announce", provider: known, sameMetadata: true })
+        return
+      }
+      try tell({ type: "announce", provider: known, sameMetadata: false })
+      const other = try announced(entry)
+      if (other !== known) try tell({ type: "announce", provider: other, sameMetadata: false })
+    }
+
+    effect function observe(provider: object, held: Held) {
+      if (registry.objects.has(provider)) return
+      const id = fresh(registry)
+      registry.objects.set(provider, id)
+      registry.held.set(id, held)
+      try tell({ type: "observeLegacy", provider: id })
+    }
+
+    effect function refreshed() {
+      while (registry.seen < feed.announcements.length) {
+        const entry = feed.announcements[registry.seen]
+        registry.seen += 1
+        if (entry !== undefined) try announce(entry)
+      }
+      for (const legacy of source.legacyEvm()) try observe(legacy.provider, { kind: "legacyEvm", provider: legacy.provider, name: legacy.name })
+      const standards = feed.standard()
+      for (const wallet of qualifying(standards)) {
+        if (registry.objects.has(wallet)) continue
+        const id = fresh(registry)
+        registry.objects.set(wallet, id)
+        registry.held.set(id, { kind: "standard", wallet })
+        try tell({ type: "announce", provider: id, sameMetadata: true })
+      }
+      const names = qualifying(standards).map((wallet) => wallet.name.toLowerCase())
+      for (const legacy of source.legacySolana()) {
+        if (legacySolanaOffered(legacy.name.toLowerCase(), names)) try observe(legacy.provider, { kind: "legacySolana", provider: legacy.provider, name: legacy.name })
+      }
+      const offers = offersOf(registry, try consent.get(), standards)
+      try SubscriptionRef.set(shown, offers)
+      return offers
+    }
+
+    const refresh = () => Semaphore.withPermit(lock, refreshed())
+
+    effect function watch() {
+      while (true) {
+        try promise((signal) => feed.changed(signal))
+        try refresh()
+      }
+    }
+
+    try refresh()
+    fork.scoped watch()
+
+    return {
+      offers: SubscriptionRef.changes(shown),
+      current: () => refresh(),
+      trusted: effect (id: number) => {
+        try refresh()
+        return trusted(try consent.get(), id)
+      },
+      held: effect (id: number) => {
+        try refresh()
+        return registry.held.get(id)
+      },
+    }
+  })
+}
+
+export function walletChoiceServicesOver(source: WalletSource) {
+  return Layer.provideMerge(walletChoiceOver(source), consentMachineOf())
+}
+
+export const walletChoiceServices = walletChoiceServicesOver(browserSource)
+
+export effect function sendConsent(event: ConsentEvent, by: number) {
+  return try (try ConsentMachine).send(event, by)
+}
+
+export effect function consentState() {
+  return try (try ConsentMachine).get()
+}

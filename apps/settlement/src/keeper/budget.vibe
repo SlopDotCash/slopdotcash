@@ -1,0 +1,181 @@
+// spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block"; spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"
+import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import { jsonRpc } from "@repo/platform/chain/rpc"
+import { isoAt } from "@repo/platform/clock"
+import { decoded, sql } from "@repo/platform/d1"
+import type { SqlTx } from "@repo/platform/journal"
+import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
+import { apply } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { executionGasCost, nativeFeeTotal, withinBudget } from "../kernels/budget.ts"
+import type { KeeperConfig } from "./config.vibe"
+import { classifyFailure } from "./diagnostics.vibe"
+import { type GroupWork, type KeeperCore, bytesOf, withGroup } from "./lifecycle.vibe"
+import { inTransaction } from "./store.vibe"
+import { decimal, exact, quantityOf, widen } from "./units.ts"
+
+export error BudgetRefused { reason: string; classified?: ClassifiedError }
+
+export interface GasScope {
+  readonly config: KeeperConfig
+  readonly core: KeeperCore
+  readonly runId: number
+}
+
+const BASE_GAS_PRICE_ORACLE = "0x420000000000000000000000000000000000000f"
+const L1_FEE_UPPER_BOUND = "0xf1c7a58b"
+const OPERATOR_FEE = "0x275aedd2"
+const WORD = /^0x[0-9a-fA-F]{64}$/u
+
+schema GasRow {
+  readonly id: string
+  readonly day: string
+  readonly maximum: string
+  readonly transaction_id: string
+  readonly actual: string | null
+  readonly settled_day: string | null
+  readonly expiry_evidence: string | null
+}
+
+interface Amounted {
+  readonly row: GasRow
+  readonly maximum: bigint
+  readonly actual: bigint | undefined
+}
+
+export function nonceGroup(id: string) {
+  return id.replace(/:r[1-9][0-9]*$/u, "")
+}
+
+export function groupOf(chainId: bigint, signer: string, nonce: number) {
+  return `${chainId}:${signer.toLowerCase()}:${nonce}`
+}
+
+function sameNonce(group: string) {
+  return sql`(id = ${group} OR substr(id, 1, ${group.length + 2}) = ${`${group}:r`})`
+}
+
+export effect function utcDay(millis: number) {
+  return (try isoAt(millis)).slice(0, 10)
+}
+
+effect function gasRows(tx: SqlTx) {
+  const rows = try decoded(GasRow, try tx.all(sql`SELECT id, day, maximum, transaction_id, actual, settled_day, expiry_evidence FROM gas`), "keeper gas journal")
+  const amounts: Amounted[] = []
+  for (const row of rows) {
+    const maximum = decimal(row.maximum)
+    const actual = row.actual === null ? undefined : decimal(row.actual)
+    if (maximum === undefined || (row.actual !== null && actual === undefined)) throw new BudgetRefused({ reason: "Gas journal holds an invalid amount" })
+    amounts.push({ row, maximum, actual })
+  }
+  return amounts
+}
+
+export effect function groupRows(tx: SqlTx, group: string) {
+  return try decoded(GasRow, try tx.all(sql`SELECT id, day, maximum, transaction_id, actual, settled_day, expiry_evidence FROM gas WHERE ${sameNonce(group)} ORDER BY rowid`), "keeper gas group")
+}
+
+effect function committedLiability(tx: SqlTx, config: KeeperConfig, day: string, group: string, maximum: bigint) {
+  const rows = try gasRows(tx)
+  for (const { actual, maximum: reserved } of rows)
+    if (actual !== undefined && actual > reserved && actual > config.gas.perTransaction)
+      throw new BudgetRefused({ reason: "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge" })
+  let settled = 0n
+  const pending = new Map<string, bigint>([[group, maximum]])
+  for (const { row, actual, maximum: reserved } of rows) {
+    if (actual !== undefined || row.expiry_evidence !== null) {
+      if (row.settled_day === day) settled += actual ?? reserved
+      continue
+    }
+    const bucket = nonceGroup(row.id)
+    const held = pending.get(bucket) ?? 0n
+    if (reserved > held) pending.set(bucket, reserved)
+  }
+  return [...pending.values()].reduce((total, value) => total + value, settled)
+}
+
+export effect function reserveGas(tx: SqlTx, config: KeeperConfig, id: string, maximum: bigint, transactionId: string, millis: number) {
+  const day = try utcDay(millis)
+  const committed = try committedLiability(tx, config, day, nonceGroup(id), maximum)
+  if (!withinBudget(maximum, committed, config.gas.perTransaction, config.gas.perDay))
+    throw new BudgetRefused({ reason: "Operator gas budget reached; signed unknown transactions remain reserved" })
+  try tx.run(sql`INSERT INTO gas(id, day, maximum, transaction_id) VALUES(${id}, ${day}, ${maximum.toString()}, ${transactionId})`)
+}
+
+effect function oracleFee(selector: string, amount: bigint, block: bigint) {
+  const answer = (try EvmRpc).call({ to: BASE_GAS_PRICE_ORACLE, data: `${selector}${amount.toString(16).padStart(64, "0")}` as Hex, block }) catch effect (error) => {
+    throw new BudgetRefused({ reason: "Base fee oracle unavailable", classified: classifyFailure(error) })
+  }
+  const fee = WORD.test(answer) ? quantityOf(answer) : undefined
+  if (fee === undefined) throw new BudgetRefused({ reason: "Base fee oracle unavailable" })
+  return fee
+}
+
+export effect function additionalFee(config: KeeperConfig, gas: bigint, unsignedBytes: number) {
+  if (!config.base) return 0n
+  const block = ((try EvmRpc).head("latest") catch effect (error) => { throw new BudgetRefused({ reason: "Base quote block unavailable", classified: classifyFailure(error) }) }).number
+  const extra = (try oracleFee(L1_FEE_UPPER_BOUND, widen(unsignedBytes), block)) + (try oracleFee(OPERATOR_FEE, gas, block))
+  if (extra > config.gas.additionalFeeReserve) throw new BudgetRefused({ reason: "Base additional fees exceed the operator reserve" })
+  return extra
+}
+
+schema L1Receipt {
+  readonly l1Fee?: string
+}
+
+effect function l1FeeOf(config: KeeperConfig, transactionId: string) {
+  const raw = try jsonRpc({ urls: Redacted.make([Redacted.value(config.rpcUrl)]), timeoutMs: 20_000, maxBytes: 16 * 1024 * 1024 })
+  const receipt = try raw.call("eth_getTransactionReceipt", [transactionId], Schema.NullOr(L1Receipt))
+  const fee = receipt?.l1Fee === undefined ? undefined : quantityOf(receipt.l1Fee)
+  if (fee === undefined) throw new BudgetRefused({ reason: "Finalized L2 data fee unavailable" })
+  return fee
+}
+
+export interface GasSettlement {
+  readonly settled: number
+  readonly exceeded: number
+}
+
+effect function settleGroup(scope: GasScope, row: GasRow, actual: bigint, settledAt: number, millis: number) {
+  const day = try utcDay(settledAt * 1000)
+  const group = nonceGroup(row.id)
+  return try withGroup(scope.core, group, Math.floor(millis / 1000), undefined, (state, found, tx) => effect {
+    if (found === undefined) throw new BudgetRefused({ reason: "Legacy keeper gas row requires operator review" })
+    const charged = exact(actual) ?? -1
+    const recorded = try apply(state, { type: "recordGasEvidence", runId: scope.runId, evidence: { bytes: bytesOf(found.hashes, row.transaction_id), finalized: true, charged } })
+    if (recorded.journal.gasSettled) {
+      try tx.run(sql`UPDATE gas SET actual = ${actual.toString()}, settled_day = ${day} WHERE id = ${row.id} AND actual IS NULL`)
+      const evidence = JSON.stringify({ kind: "same-nonce-finalized", transactionId: row.transaction_id, day })
+      try tx.run(sql`UPDATE gas SET actual = '0', settled_day = ${day}, expiry_evidence = ${evidence} WHERE ${sameNonce(group)} AND id <> ${row.id} AND actual IS NULL`)
+    }
+    return { state: recorded, hashes: found.hashes, value: recorded.journal.gasSettled } satisfies GroupWork<boolean>
+  })
+}
+
+export effect function reconcileGas(scope: GasScope) {
+  const config = scope.config
+  const rpc = try EvmRpc
+  const millis = try Clock.currentTimeMillis
+  const open = try inTransaction((tx) => effect {
+    return (try gasRows(tx)).filter((entry) => entry.actual === undefined && entry.row.expiry_evidence === null).map((entry) => entry.row)
+  })
+  let exceeded = 0
+  let settled = 0
+  for (const row of open) {
+    if (row.transaction_id === "unsigned") throw new BudgetRefused({ reason: "Incomplete signing transaction in gas journal" })
+    const receipt = try rpc.receipt(row.transaction_id as Hex)
+    if (receipt === undefined) continue
+    const finalized = try rpc.head("finalized")
+    if (receipt.blockNumber > finalized.number) continue
+    const block = try rpc.blockByNumber(receipt.blockNumber)
+    if (block === undefined || receipt.transactionHash.toLowerCase() !== row.transaction_id.toLowerCase() || block.hash !== receipt.blockHash)
+      throw new BudgetRefused({ reason: "Gas receipt identity mismatch" })
+    const l1 = config.base ? try l1FeeOf(config, row.transaction_id) : 0n
+    const operator = config.base ? try oracleFee(OPERATOR_FEE, receipt.gasUsed, receipt.blockNumber) : 0n
+    if (receipt.effectiveGasPrice === undefined) throw new BudgetRefused({ reason: "Finalized gas price unavailable" })
+    const actual = nativeFeeTotal(executionGasCost(receipt.gasUsed, receipt.effectiveGasPrice), 0n, l1, operator)
+    if (try settleGroup(scope, row, actual, block.timestamp, millis)) settled += 1
+    else exceeded += 1
+  }
+  if (exceeded > 0) throw new BudgetRefused({ reason: "A native charge exceeded its reserve; the current operator transaction budget must cover that exact charge" })
+  return settled
+}

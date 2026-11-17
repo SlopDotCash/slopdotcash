@@ -1,0 +1,281 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"; spec/settlement/monthlySettlement.md, "The owner may also commit any source by hand on chain; the month observes it"
+import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain } from "@repo/platform/chain/rpc"
+import { type Address, type Blockhash, GenesisPinMissing, SolanaRpc, address, base64Encode, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
+import { first, sql } from "@repo/platform/d1"
+import type { Actor } from "@repo/platform/http"
+import { Rejected as ReviewRejected } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { CommitmentPlan, CommitmentReview, SolanaCommitmentAction, SolanaCommitmentAnswer } from "../client/monthly.vibe"
+import { postPaymentsProjectsByIdMonthlyByPeriodCommitment as planRows, postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment as solanaRows } from "../client/refusals.vibe"
+import { type Digest, type U64, U64_MAX, digest, u64 } from "../chain/solana/bytes.ts"
+import { commitAward } from "../chain/solana/instructions.ts"
+import { awardId, originAddress } from "../chain/solana/pda.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { PaymentNetworks } from "../owner/networks.vibe"
+import { DeploymentUnverified, type VerifiedDeployment, finalizedFunds, verifiedDeployment } from "../owner/solanaDeployment.vibe"
+import { WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "../owner/solanaWallet.vibe"
+import { type Capture, outcomeOf, reviewed, submitted } from "../owner/store.vibe"
+import { holdsAward } from "../payments/chainAwards.vibe"
+import { EvidenceRefused, type SolanaPaymentDeployment } from "../payments/terms.vibe"
+import { verifyFinalized } from "../payments/verify.vibe"
+import { registryDeployments } from "../vault/deployments.vibe"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { type Authorized, authorize, authorityRefusals, loadedMonth, periodOf, refused, unchanged } from "./owner.vibe"
+import { type MonthKey, servedDeploymentOf } from "./store.vibe"
+
+schema ObligationRow {
+  readonly github_login: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly source_digest: string
+  readonly chain_state: "reserved" | "paid" | null
+  readonly chain_actor: string | null
+  readonly chain_gross: string | null
+  readonly chain_fee: string | null
+}
+
+schema RunRow { readonly snapshot_sha256: string; readonly network: string; readonly vault: string }
+schema ExcludedRow { readonly excluded: number }
+
+const reviewInput = /^[a-f0-9]{64}$/u
+const actorInput = /^[1-9][0-9]{0,19}$/u
+
+interface Prepared {
+  readonly plan: CommitmentPlan
+  readonly vault: string
+  readonly capture: Capture
+  readonly facts: ReviewFacts
+  readonly authorized: Authorized
+}
+
+function reviewAccepted(input: CommitmentReview) {
+  return actorInput.test(input.githubUserId) && reviewInput.test(input.manifestSha256) && reviewInput.test(input.snapshotSha256)
+}
+
+effect function rawDeployment(manifestText: string, network: string) {
+  const parsed = Effect.try(() => JSON.parse(manifestText) as unknown) catch () => undefined
+  const escrow = typeof parsed === "object" && parsed !== null && "escrow" in parsed ? parsed.escrow : undefined
+  const deployments = typeof escrow === "object" && escrow !== null && "deployments" in escrow && Array.isArray(escrow.deployments) ? escrow.deployments as ReadonlyArray<unknown> : []
+  return deployments.find((entry) => typeof entry === "object" && entry !== null && "network" in entry && entry.network === network) ?? null
+}
+
+effect function prepareCommitment(projectId: string, periodText: string, actor: Actor, expected: CommitmentReview) {
+  const period = try periodOf(periodText)
+  if (!reviewAccepted(expected)) throw refused(planRows.invalidCommitmentReview)
+  const authorized = try authorize(projectId, actor, "maintainer")
+  const { project, facts, manifest } = authorized
+  const eligibility = facts.eligibility
+  if (!eligibility.active || eligibility.paused || eligibility.restricted || eligibility.retired) throw refused(planRows.projectRestrictedThisProjectIsRestricted)
+  if (project.manifestSha256 !== expected.manifestSha256) throw refused(planRows.projectChanged)
+  const deployment = servedDeploymentOf(manifest, facts.served)
+  if (deployment === undefined || deployment.network !== expected.network) throw refused(planRows.vaultNotServed)
+  const key: MonthKey = { projectId, period }
+  const text = periodText
+  const run = try first(RunRow, sql`SELECT snapshot_sha256, network, vault FROM monthly_payment_runs WHERE project_id = ${projectId} AND period = ${text}`)
+  if (run === undefined || run.snapshot_sha256 !== expected.snapshotSha256) throw refused(planRows.snapshotChanged)
+  if (run.network !== deployment.network || run.vault !== deployment.vault) throw refused(planRows.vaultChanged)
+  const obligation = try first(ObligationRow, sql`SELECT m.github_login, m.gross_base, m.fee_base, m.source_digest, o.state AS chain_state, o.github_user_id AS chain_actor, o.gross_base AS chain_gross, o.fee_base AS chain_fee FROM monthly_payment_obligations m LEFT JOIN payment_obligations o ON o.network = m.network AND o.vault = m.vault AND o.source_digest = m.source_digest WHERE m.project_id = ${projectId} AND m.period = ${text} AND m.github_user_id = ${expected.githubUserId}`)
+  if (obligation === undefined) {
+    const excluded = try first(ExcludedRow, sql`SELECT 1 AS excluded FROM monthly_payment_exclusions WHERE project_id = ${projectId} AND period = ${text} AND github_user_id = ${expected.githubUserId}`)
+    throw refused(excluded === undefined ? planRows.awardUnfunded : planRows.awardExcluded)
+  }
+  const month = (try loadedMonth(key, facts)).state
+  if (isNetworkKey(run.network) && NETWORKS[run.network].family === "solana" && month.automatic) throw refused(planRows.monthlyAutomatic)
+  if (obligation.chain_state !== null) {
+    const held = { githubUserId: obligation.chain_actor ?? "", grossBase: obligation.chain_gross ?? "", feeBase: obligation.chain_fee ?? "", state: obligation.chain_state }
+    throw refused(holdsAward(held, { githubUserId: expected.githubUserId, grossBase: obligation.gross_base }) ? planRows.awardReserved : planRows.awardConflict)
+  }
+  const gross = parseBaseUnits(obligation.gross_base)
+  const fee = parseBaseUnits(obligation.fee_base)
+  if (gross === undefined || fee === undefined || fee > gross) throw refused(planRows.paymentsUnavailable)
+  try unchanged(project)
+  const plan = {
+    schemaVersion: "2",
+    projectId,
+    cycleId: text,
+    manifestSha256: project.manifestSha256,
+    snapshotSha256: run.snapshot_sha256,
+    deployment: try rawDeployment(facts.current?.manifest ?? "", deployment.network),
+    award: { githubUserId: expected.githubUserId, login: obligation.github_login, sourceDigest: obligation.source_digest, gross: gross.toString(), fee: fee.toString(), net: (gross - fee).toString() },
+  } satisfies CommitmentPlan
+  const capture: Capture = { revision: project.revision, snapshotDigest: run.snapshot_sha256 }
+  const reviewFacts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: run.snapshot_sha256, obligationFunded: true }
+  return { plan, vault: deployment.vault, capture, facts: reviewFacts, authorized } satisfies Prepared
+}
+
+effect function reviewedPlan(prepared: Prepared, message: string) {
+  return reviewed(prepared.capture, "AwardPlan", prepared.facts, message) catch effect (error) => match (error) {
+    when ReviewRejected: throw refused(prepared.facts.steward ? planRows.projectChanged : authorityRefusals.ownerRequired);
+    default: throw error;
+  }
+}
+
+export effect function evmCommitmentPlan(projectId: string, periodText: string, actor: Actor, expected: CommitmentReview) {
+  const prepared = try prepareCommitment(projectId, periodText, actor, expected)
+  try reviewedPlan(prepared, JSON.stringify(prepared.plan))
+  return prepared.plan
+}
+
+type SolanaStep =
+  | { readonly step: "review"; readonly network: string; readonly vault: string; readonly wallet: Address; readonly review: CommitmentReview }
+  | { readonly step: "check"; readonly network: string; readonly vault: string; readonly wallet: Address; readonly source: Digest; readonly sourceDigest: string; readonly githubUserId: string; readonly actor: U64; readonly gross: U64; readonly blockhash: Blockhash; readonly transactionId: string }
+
+effect function solanaStepOf(body: SolanaCommitmentAction) {
+  const wallet = address(body.wallet)
+  if (wallet === undefined || (body.step !== "review" && body.step !== "check")) throw refused(solanaRows.invalidCommitmentAction)
+  if (body.step === "review") {
+    const review = { network: body.network, githubUserId: body.githubUserId ?? "", manifestSha256: body.manifestSha256 ?? "", snapshotSha256: body.snapshotSha256 ?? "" }
+    if (!reviewAccepted(review)) throw refused(solanaRows.invalidCommitmentReview)
+    return { step: "review", network: body.network, vault: body.vault, wallet, review } satisfies SolanaStep
+  }
+  const sourceDigest = body.sourceDigest ?? ""
+  const githubUserId = body.githubUserId ?? ""
+  const grossText = body.gross ?? ""
+  const blockhash = body.blockhash ?? ""
+  const transactionId = body.transactionId ?? ""
+  const source = reviewInput.test(sourceDigest) ? digest(sourceDigest) : undefined
+  const actor = actorInput.test(githubUserId) ? u64Of(githubUserId) : undefined
+  const gross = actorInput.test(grossText) ? u64Of(grossText) : undefined
+  if (source === undefined || actor === undefined || gross === undefined || !isBlockhash(blockhash) || transactionId.length > 100) throw refused(solanaRows.invalidCommitmentCheck)
+  return { step: "check", network: body.network, vault: body.vault, wallet, source, sourceDigest, githubUserId, actor, gross, blockhash, transactionId } satisfies SolanaStep
+}
+
+effect function registeredSolana(projectId: string, network: string, vault: string) {
+  const networks = try PaymentNetworks
+  if (!isNetworkKey(network) || NETWORKS[network].family !== "solana" || !networks.served.includes(network)) throw refused(solanaRows.ownerCommitmentUnavailable)
+  const registry = try registryDeployments([network], "ordinary")
+  const matches = registry.deployments.filter((entry) => entry.projectId === projectId && entry.network === network && entry.vault === vault)
+  const [deployment] = matches
+  if (matches.length !== 1 || deployment === undefined || deployment.family !== "solana") throw refused(solanaRows.fundingVaultNotFound)
+  const urls = try networks.urls(network)
+  if (urls === undefined) throw refused(solanaRows.ownerCommitmentUnavailable)
+  return { deployment: deployment satisfies SolanaDeployment, urls }
+}
+
+function u64Of(text: string) {
+  const value = parseBaseUnits(text, U64_MAX)
+  return value === undefined ? undefined : u64(value)
+}
+
+function walletRefused(message: string) {
+  return new WalletActionRefused({ message })
+}
+
+effect function commitInstruction(verified: VerifiedDeployment, wallet: Address, source: Digest, actor: U64, gross: U64) {
+  if (wallet !== verified.owner) throw walletRefused("Connect the vault owner's wallet to authorize awards.")
+  return commitAward({ program: verified.program, project: verified.project, owner: wallet, purpose: "Ordinary", source, actor, gross })
+}
+
+effect function solanaReview(projectId: string, periodText: string, actor: Actor, step: Extract<SolanaStep, { readonly step: "review" }>) {
+  const prepared = try prepareCommitment(projectId, periodText, actor, step.review)
+  const { plan } = prepared
+  if (prepared.vault !== step.vault || !isNetworkKey(step.network) || NETWORKS[step.network].family !== "solana") throw refused(solanaRows.commitmentVaultChanged)
+  const { deployment, urls } = try registeredSolana(projectId, step.network, step.vault)
+  if (deployment.vault !== step.vault) throw refused(solanaRows.commitmentVaultChanged)
+  const source = digest(plan.award.sourceDigest)
+  const awardActor = u64Of(plan.award.githubUserId)
+  const gross = u64Of(plan.award.gross)
+  if (source === undefined || awardActor === undefined || gross === undefined) throw walletRefused("The award identity or amount is invalid.")
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = verifiedDeployment(deployment) catch effect () => { throw refused(solanaRows.commitmentVaultChangedTheVaultChangedDuring) }
+    const instruction = try commitInstruction(verified, step.wallet, source, awardActor, gross)
+    const existing = try (try SolanaRpc).account(originAddress(verified.program, verified.project, source), "finalized")
+    if (existing !== undefined) throw walletRefused("This award is already committed. Check its existing transaction.")
+    const funds = try finalizedFunds(verified)
+    if (funds.free < gross) throw walletRefused("The vault has insufficient free funds for this award.")
+    const transaction = try prepareWalletTransaction(step.wallet, [instruction])
+    const message = try walletMessage(step.wallet, transaction.blockhash, [instruction])
+    try reviewedPlan(prepared, base64Encode(message.bytes))
+    return {
+      plan,
+      transaction: {
+        wallet: step.wallet,
+        sourceDigest: plan.award.sourceDigest,
+        githubUserId: plan.award.githubUserId,
+        gross: plan.award.gross,
+        blockhash: transaction.blockhash,
+        lastValidBlockHeight: transaction.lastValidBlockHeight,
+        transaction: transaction.transaction,
+        networkFeeLamports: transaction.networkFeeLamports,
+        fee: plan.award.fee,
+        net: plan.award.net,
+        decimals: funds.decimals,
+        freeBalance: funds.free.toString(),
+      },
+    } satisfies SolanaCommitmentAnswer
+  }
+}
+
+schema FundedRow { readonly funded: number }
+
+effect function checkFacts(projectId: string, periodText: string, actor: Actor, githubUserId: string) {
+  try periodOf(periodText)
+  const authorized = try authorize(projectId, actor, "maintainer")
+  const run = try first(RunRow, sql`SELECT snapshot_sha256, network, vault FROM monthly_payment_runs WHERE project_id = ${projectId} AND period = ${periodText}`)
+  const funded = try first(FundedRow, sql`SELECT 1 AS funded FROM monthly_payment_obligations WHERE project_id = ${projectId} AND period = ${periodText} AND github_user_id = ${githubUserId}`)
+  const snapshot = run?.snapshot_sha256 ?? ""
+  const eligibility = authorized.facts.eligibility
+  const capture: Capture = { revision: authorized.project.revision, snapshotDigest: snapshot }
+  const facts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: authorized.project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: snapshot, obligationFunded: funded !== undefined }
+  return { capture, facts }
+}
+
+effect function solanaCheck(projectId: string, periodText: string, actor: Actor, step: Extract<SolanaStep, { readonly step: "check" }>) {
+  const { capture, facts } = try checkFacts(projectId, periodText, actor, step.githubUserId)
+  const { deployment, urls } = try registeredSolana(projectId, step.network, step.vault)
+  const payment: SolanaPaymentDeployment = {
+    projectId,
+    network: deployment.network,
+    vault: deployment.vault,
+    owner: deployment.owner,
+    feeRecipient: deployment.feeRecipient,
+    scope: "Ordinary",
+    rpc: urls,
+    family: "solana",
+    chain: "solana",
+    program: deployment.programId,
+    project: deployment.projectPda,
+    mint: deployment.asset,
+    genesis: deployment.genesisHash,
+  }
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = try verifiedDeployment(deployment)
+    const instruction = try commitInstruction(verified, step.wallet, step.source, step.actor, step.gross)
+    const message = try walletMessage(step.wallet, step.blockhash, [instruction])
+    const text = base64Encode(message.bytes)
+    const request = reviewed(capture, "AwardPlan", facts, text) catch effect (error) => match (error) {
+      when ReviewRejected: throw refused(facts.steward ? planRows.projectChanged : authorityRefusals.ownerRequired);
+      default: throw error;
+    }
+    const checked = try checkWalletTransaction(step.wallet, message, step.transactionId, false)
+    if (checked.status === "finalized") {
+      const event = verifyFinalized(payment, { kind: "reserved", transactionId: step.transactionId, eventIndex: 0, obligationId: awardId(verified.project, step.source) }, step.sourceDigest) catch effect (error) => match (error) {
+        when EvidenceRefused: throw walletRefused("The finalized commitment differs from the approved award.");
+        default: throw error;
+      }
+      if (event.githubUserId !== step.githubUserId || event.sourceDigest !== step.sourceDigest || event.gross !== step.gross || !payoutFeeAccepted(event.gross, event.fee, false) || event.net !== event.gross - event.fee)
+        throw walletRefused("The finalized commitment differs from the approved award.")
+    }
+    const prefix = checked.status === "pending" ? "" : checked.prefix
+    const result = { transaction: step.transactionId, message: text, finalized: checked.status !== "pending", succeeded: checked.status === "finalized", expired: checked.status === "pending" && checked.expired }
+    const next = try submitted(request, { message: text, prefix, signature: step.transactionId, transaction: step.transactionId }, result)
+    return { status: outcomeOf(next) } satisfies SolanaCommitmentAnswer
+  }
+}
+
+effect function chainRefusals<A, E, R>(program: A!E!R) {
+  return program catch effect (error) => {
+    if (error instanceof WalletActionRefused || error instanceof DeploymentUnverified) throw refused(solanaRows.commitmentActionRejected, error.message)
+    if (error instanceof RpcUnavailable || error instanceof RpcMalformed || error instanceof RpcRefused || error instanceof WrongChain || error instanceof GenesisPinMissing) throw refused(solanaRows.paymentsUnavailable)
+    throw error
+  }
+}
+
+export effect function solanaCommitment(projectId: string, periodText: string, actor: Actor, body: SolanaCommitmentAction) {
+  const step = try solanaStepOf(body)
+  if (step.step === "review") return try chainRefusals(solanaReview(projectId, periodText, actor, step))
+  return try chainRefusals(solanaCheck(projectId, periodText, actor, step))
+}
+

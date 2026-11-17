@@ -1,0 +1,45 @@
+// spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { type Hex, keccak } from "@repo/platform/chain/evm"
+import { type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
+
+export const keeperMarker = "slop-signer:operator-keeper"
+
+export error OperatorKeyUnavailable { reason: string }
+
+export service OperatorKey {
+  read(): string | undefined
+}
+
+export function operatorKey(read: () => string | undefined) {
+  return Layer.succeed(OperatorKey, { read })
+}
+
+export interface Signed {
+  readonly raw: Hex
+  readonly id: string
+  readonly sender: EvmAddress
+}
+
+function addressOfKey(key: Uint8Array) {
+  const point = secp256k1.getPublicKey(key, false)
+  return evmAddress(`0x${keccak(point.slice(1)).slice(-40)}`)
+}
+
+export effect function signWithOperatorKey(signer: EvmAddress, request: Type2Request) {
+  const text = (try OperatorKey).read()
+  if (text === undefined || !/^0x[0-9a-fA-F]{64}$/u.test(text)) throw new OperatorKeyUnavailable({ reason: "Dedicated operator EVM key unavailable" })
+  const key = try Effect.try({ try: () => hexToBytes(text.slice(2)), catch: () => new OperatorKeyUnavailable({ reason: "Dedicated operator EVM key unavailable" }) })
+  const address = try Effect.try({ try: () => addressOfKey(key), catch: () => new OperatorKeyUnavailable({ reason: "Dedicated operator EVM key unavailable" }) })
+  if (address !== signer) throw new OperatorKeyUnavailable({ reason: "Operator key does not match configured signer" })
+  const hash = try Effect.try({ try: () => signingHash(request), catch: () => new OperatorKeyUnavailable({ reason: "Unsignable transaction" }) })
+  const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new OperatorKeyUnavailable({ reason: "Signing failed" }) })
+  const recovery = signature[0]
+  if (recovery !== 0 && recovery !== 1) throw new OperatorKeyUnavailable({ reason: "Signing failed" })
+  const raw = try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => new OperatorKeyUnavailable({ reason: "Signing failed" }) })
+  const signed = readSignedType2(raw)
+  if (signed === undefined || signed.sender !== signer) throw new OperatorKeyUnavailable({ reason: "Signed transaction differs from its signer" })
+  return { raw, id: signed.id, sender: signed.sender } satisfies Signed
+}

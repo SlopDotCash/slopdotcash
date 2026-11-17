@@ -1,0 +1,77 @@
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { type Aggregate, type Rows, load } from "@repo/platform/stored"
+import type { ReadFailure } from "@repo/ports/backend"
+import type { RegistryMirror } from "@repo/ports/security"
+import type { Enforcement } from "../../gen/security__enforcement.ts"
+import { decodeState } from "../../gen/security__enforcement.effect.vibe"
+import { ManifestFacts, type Roster, dayMillis, idOf, keysOf, listedOf, replay } from "./replay.vibe"
+import { type ProjectHistory, historyOf, jsonOf, scopeReads, scopeVersion } from "./rows.vibe"
+
+export effect function rosterOf() {
+  const roles = try Roles
+  return {
+    administrators: (try roles.snapshot("administrator")).map(idOf),
+    moderators: (try roles.snapshot("moderator")).map(idOf),
+  } satisfies Roster
+}
+
+effect function decodedEnforcement(rows: ReadonlyArray<Rows>, mirror: RegistryMirror, roster: Roster) {
+  const history = try historyOf(rows)
+  const today = Math.floor((try Clock.currentTimeMillis) / dayMillis)
+  const start = { projectRow: history.facts?.project_row ?? 0, mirror, steward: idOf(history.facts?.steward), creator: idOf(history.facts?.creator), roster }
+  const replayed = try replay(start, history, today)
+  const state = decodeState(replayed) catch effect () => { throw new RowMismatch({ text: "enforcement state", issue: "the replayed history breaks an always rule of the enforcement model" }) }
+  return { history, state }
+}
+
+export effect function decodeEnforcement(projectId: string, rows: ReadonlyArray<Rows>, mirror: RegistryMirror, roster: Roster) {
+  return decodedEnforcement(rows, mirror, roster) catch effect (error) => {
+    try Effect.logError("enforcement history does not decode", { projectId, failure: error._tag, text: error.text, issue: error.issue })
+    throw error
+  }
+}
+
+schema CurrentProject { revision: number; manifest_sha256: string; manifest: string }
+
+export effect function mirrorOf(project: CurrentProject | undefined) {
+  if (project === undefined) return { revision: 0, manifestSha256: "", repositoryGithubIds: [], repositoryKeys: [] } satisfies RegistryMirror
+  const manifest = try jsonOf(ManifestFacts, project.manifest, "current manifest")
+  return {
+    revision: project.revision,
+    manifestSha256: project.manifest_sha256,
+    repositoryGithubIds: listedOf(manifest).map((repository) => String(repository.githubId)),
+    repositoryKeys: keysOf(manifest),
+  } satisfies RegistryMirror
+}
+
+export interface Loaded {
+  readonly projectId: string
+  readonly found: boolean
+  readonly mirror: RegistryMirror
+  readonly history: ProjectHistory
+  readonly state: Enforcement
+}
+
+function currentProject(projectId: string): Statement {
+  return sql`SELECT revision, manifest_sha256, manifest FROM projects WHERE id = ${projectId}`
+}
+
+export function enforcementAggregate(projectId: string, roster: Roster): Aggregate<Loaded, ReadFailure, never> {
+  return {
+    name: `enforcement of ${projectId}`,
+    version: sql`SELECT COALESCE((SELECT revision || ':' || manifest_sha256 FROM projects WHERE id = ${projectId}), '-') || '#' || ${scopeVersion(projectId)} AS version`,
+    reads: [currentProject(projectId), ...scopeReads(projectId)],
+    decode: ([project, ...rest]: ReadonlyArray<Rows>) => effect {
+      const [current] = try decoded(CurrentProject, project ?? [], "projects")
+      const mirror = try mirrorOf(current)
+      const { history, state } = try decodeEnforcement(projectId, rest, mirror, roster)
+      return { projectId, found: current !== undefined, mirror, history, state } satisfies Loaded
+    },
+  }
+}
+
+export effect function loadEnforcement(projectId: string) {
+  return (try load(enforcementAggregate(projectId, try rosterOf()))).state
+}

@@ -1,0 +1,48 @@
+// spec/security/sandbox.md, "The digest check and the isolation profile precede execution"; spec/security/sandbox.md, "Every request destroys its sandbox, and a cleanup failure never completes"
+import type { Profile } from "../../gen/security__sandbox.effect.vibe"
+
+export interface Written {
+  readonly success: boolean
+}
+
+export interface Executed {
+  readonly success: boolean
+  readonly stdout: string
+}
+
+export interface Opened {
+  readonly content: ReadableStream<Uint8Array>
+}
+
+export interface Box {
+  writeFile(path: string, content: string | ReadableStream<Uint8Array>, options?: { readonly encoding?: string }): Promise<Written>
+  exec(command: string, options: { readonly timeout: number }): Promise<Executed>
+  readFile(path: string, options: { readonly encoding: "none" }): Promise<Opened>
+  destroy(): Promise<void>
+}
+
+export type Transport = "http" | "rpc"
+
+export interface Isolation {
+  readonly enableInternet: boolean
+  readonly envVars: Readonly<Record<string, string>>
+}
+
+export service Containers {
+  readonly isolation: Isolation
+  open(id: string, transport: Transport): Box!!
+}
+
+export function profileOf(isolation: Isolation, filterLoaded: boolean): Profile {
+  return { filterLoaded, internetDisabled: !isolation.enableInternet, secretsProvided: Object.keys(isolation.envVars).length > 0 }
+}
+
+export effect function settled<A>(run: () => Promise<A>) {
+  const outcome = tryPromise(run) catch () => undefined
+  return outcome
+}
+
+export effect function destroyed(box: Box) {
+  const outcome = Effect.map(tryPromise(() => box.destroy()), () => true) catch () => false
+  return outcome
+}

@@ -1,0 +1,97 @@
+// spec/operations/localCommand.md, "Only a current local stage can start the command"; spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"
+import { type ValidatorMode, stageCount } from "../../gen/operations__localValidator.effect.vibe"
+import { childEnvironment } from "./command/environment.vibe"
+import { supervise } from "./command/supervisor.vibe"
+import { type AccountFixture, type ProgramFixture, runStages } from "./validator/stages.vibe"
+
+export error UsageInvalid { usage: string }
+export error CommandFailed { code: number }
+export error StagesFailed { status: number }
+
+const commandUsage = "local command <receipt> (with ANCHOR_PROVIDER_URL and ANCHOR_WALLET set)"
+const validatorUsage = "local validator <acceptance|shell> [--program <id>=<absolute .so>]... then, once per stage (acceptance 1, shell 2): --stage [--account <address>=<absolute .json>]... -- <test command> [arguments...]"
+const stageFlag = "--stage"
+const modes: Readonly<Record<string, ValidatorMode>> = { acceptance: "AcceptanceCaller", shell: "ShellCaller" }
+const receiptPattern = /^[1-9][0-9]{0,8}$/u
+
+effect function required(name: string, usage: string) {
+  const value = try Config.option(Config.String(name))
+  if (Option.isNone(value) || value.value === "") throw new UsageInvalid({ usage })
+  return value.value
+}
+
+export effect function command(args: ReadonlyArray<string>) {
+  const [receiptText = "", ...rest] = args
+  if (!receiptPattern.test(receiptText) || rest.length > 0) throw new UsageInvalid({ usage: commandUsage })
+  const endpoint = try required("ANCHOR_PROVIDER_URL", commandUsage)
+  const keypair = try required("ANCHOR_WALLET", commandUsage)
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const local = path.resolve(".local")
+  try fs.makeDirectory(local, { recursive: true, mode: 0o700 })
+  const directory = try fs.makeTempDirectory({ directory: local, prefix: "airdrop-" })
+  const receipt = Number(receiptText)
+  const supervised = try supervise({
+    receipt,
+    endpoint,
+    keypair,
+    command: "solana",
+    args: ["--url", endpoint, "airdrop", "100", "--keypair", keypair],
+    cwd: path.resolve("."),
+    env: try childEnvironment(),
+    log: path.join(directory, "command.log"),
+  })
+  try Console.log(JSON.stringify({ stage: "validator-airdrop", receipt, code: supervised.result.code, cleanupConfirmed: supervised.result.cleanupConfirmed, log: supervised.log }))
+  if (supervised.result.code !== 0) throw new CommandFailed({ code: supervised.result.code })
+}
+
+function fixture(text: string | undefined) {
+  const at = text === undefined ? -1 : text.indexOf("=")
+  return text === undefined || at < 1 ? undefined : [text.slice(0, at), text.slice(at + 1)] as const
+}
+
+function fixtures(flags: ReadonlyArray<string>, flag: "--program" | "--account") {
+  if (flags.length % 2 !== 0) return undefined
+  const pairs: Array<readonly [string, string]> = []
+  for (let index = 0; index < flags.length; index += 2) {
+    const pair = fixture(flags[index + 1])
+    if (flags[index] !== flag || pair === undefined) return undefined
+    pairs.push(pair)
+  }
+  return pairs
+}
+
+function stageOf(args: ReadonlyArray<string>, cwd: string) {
+  const separator = args.indexOf("--")
+  const accounts = separator < 0 ? undefined : fixtures(args.slice(0, separator), "--account")
+  const [command, ...rest] = separator < 0 ? [] : args.slice(separator + 1)
+  if (accounts === undefined || command === undefined) return undefined
+  return { accounts: accounts.map(([address, jsonPath]) => ({ address, jsonPath }) satisfies AccountFixture), test: { command, args: rest, cwd } }
+}
+
+export function parsedStages(args: ReadonlyArray<string>, cwd: string) {
+  const [modeText = "", ...rest] = args
+  const mode = Object.hasOwn(modes, modeText) ? modes[modeText] : undefined
+  const groups: string[][] = [[]]
+  for (const arg of rest) {
+    if (arg === stageFlag) groups.push([])
+    else groups[groups.length - 1]?.push(arg)
+  }
+  const [head = [], ...stageArgs] = groups
+  const programs = fixtures(head, "--program")
+  const stages = stageArgs.flatMap((group) => {
+    const stage = stageOf(group, cwd)
+    return stage === undefined ? [] : [stage]
+  })
+  const [first, ...others] = stages
+  if (mode === undefined || programs === undefined || first === undefined || stages.length !== stageArgs.length || stages.length !== stageCount(mode)) return undefined
+  return { mode, programs: programs.map(([id, soPath]) => ({ id, soPath }) satisfies ProgramFixture), stages: [first, ...others] as const }
+}
+
+export effect function validator(args: ReadonlyArray<string>) {
+  const parsed = parsedStages(args, (try Path.Path).resolve("."))
+  if (parsed === undefined) throw new UsageInvalid({ usage: validatorUsage })
+  const outcome = try runStages(parsed)
+  try Console.log(JSON.stringify({ stage: "local-validator", mode: parsed.mode, status: outcome.state.status, stages: outcome.receipts }))
+  if (outcome.state.status !== 0) throw new StagesFailed({ status: outcome.state.status })
+}

@@ -1,0 +1,91 @@
+// spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"
+import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import { isoAt } from "@repo/platform/clock"
+import { type Bytes32, awardCall, awardId, bindingCall, bytes32, decodeAddress, decodeAward, decodeBinding, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
+import { payCalldata } from "../chain/evm/actions.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { type Attempt, AttemptRefused, type NewAttempt, type SendContext, fingerprintOf, readAttempt, retireReverted, signNewAttempt, signedAttempts } from "./attempts.vibe"
+import { type Sent, replaceOrRebroadcast } from "./replacement.vibe"
+import { inTransaction } from "./store.vibe"
+import { decimal, widen } from "./units.ts"
+
+export type PayOutcome =
+  | { readonly state: "paid" }
+  | { readonly state: "awaiting-wallet" }
+  | { readonly state: "ready"; readonly data: Hex; readonly destination: string; readonly version: string }
+  | { readonly state: "submitted"; readonly transactionId: string }
+
+effect function vaultCall(context: SendContext, data: Hex) {
+  const vault = evmAddress(context.deployment.vault)
+  if (vault === undefined) throw new AttemptRefused({ reason: "Reviewed deployment identity is incomplete" })
+  return try (try EvmRpc).call({ to: vault, data, block: "finalized" })
+}
+
+effect function payable(context: SendContext, activatesAt: bigint, committedAt: bigint) {
+  const latest = try (try EvmRpc).head("latest")
+  const now = widen(latest.timestamp)
+  if (now < activatesAt) throw new AttemptRefused({ reason: `Destination binding activates at ${try isoAt(Number(activatesAt) * 1000)}; retry after activation` })
+  const delay = decimal(context.deployment.bindingDelaySeconds)
+  if (delay === undefined) throw new AttemptRefused({ reason: "Escrow delays do not match reviewed deployment" })
+  const payableAt = committedAt + delay
+  if (now < payableAt) throw new AttemptRefused({ reason: `Award is inside its commit delay until ${try isoAt(Number(payableAt) * 1000)}; retry after it ends` })
+}
+
+export effect function readPermissionlessPayment(context: SendContext, obligationId: string) {
+  const id = /^0x[0-9a-fA-F]{64}$/u.test(obligationId) ? bytes32(obligationId.toLowerCase()) : undefined
+  if (id === undefined) throw new AttemptRefused({ reason: "Invalid award ID" })
+  const vault = evmAddress(context.deployment.vault)
+  const award = decodeAward(try vaultCall(context, awardCall(id)))
+  if (award === undefined || vault === undefined) throw new AttemptRefused({ reason: "Malformed contract state" })
+  const bounty = context.deployment.scope === "security-bounty"
+  const recomputed = Effect.try(() => awardId(context.deployment.chainId, vault, award.sourceDigest)) catch () => undefined
+  if (award.actor === 0n || award.gross === 0n || !payoutFeeAccepted(award.gross, award.fee, bounty) || recomputed !== id)
+    throw new AttemptRefused({ reason: "Finalized funded award is invalid" })
+  if (award.paid) return { state: "paid" } satisfies PayOutcome
+  const binding = decodeBinding(try vaultCall(context, bindingCall(award.actor)))
+  if (binding === undefined) throw new AttemptRefused({ reason: "Malformed contract state" })
+  if (binding.version === 0n) return { state: "awaiting-wallet" } satisfies PayOutcome
+  if (binding.cancelled) throw new AttemptRefused({ reason: "Project owner cancelled this destination binding; identity review required" })
+  try payable(context, binding.activatesAt, award.committedAt)
+  const data = try Effect.try({ try: () => payCalldata(id as Bytes32, binding.version), catch: () => new AttemptRefused({ reason: "Invalid actor/version" }) })
+  return { state: "ready", data, destination: binding.destination, version: binding.version.toString() } satisfies PayOutcome
+}
+
+effect function rolesOf(context: SendContext) {
+  const roles: string[] = [context.deployment.feeRecipient, context.deployment.registrar]
+  for (const getter of ["identityAuthority", "owner"] as const) {
+    const role = decodeAddress(try vaultCall(context, escrowGetter(getter)))
+    if (role === undefined) throw new AttemptRefused({ reason: "Malformed contract state" })
+    roles.push(role)
+  }
+  return roles
+}
+
+export effect function submitSigned(context: SendContext, key: string, attempt: Attempt) {
+  const attempts = try signedAttempts(attempt, context.config.signer)
+  for (const signed of [...attempts].reverse()) {
+    const receipt = try (try EvmRpc).receipt(signed.id as Hex)
+    if (receipt === undefined) continue
+    if (receipt.status !== "success") throw new AttemptRefused({ reason: "Recorded transaction reverted; operator reconciliation required" })
+    return { transactionId: signed.id } satisfies Sent
+  }
+  return try replaceOrRebroadcast(context, key, attempt)
+}
+
+export effect function submitPermissionlessPayment(context: SendContext, obligationId: string) {
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(obligationId)) throw new AttemptRefused({ reason: "Invalid award ID" })
+  if ((try rolesOf(context)).some((role) => role.toLowerCase() === context.config.signer)) throw new AttemptRefused({ reason: "Keeper key must have no vault role" })
+  const fingerprint = fingerprintOf([context.deployment.chainId.toString(), context.deployment.vault.toLowerCase(), obligationId.toLowerCase()])
+  const key = `keeper:pay:${fingerprint}`
+  const previous = try inTransaction((tx) => readAttempt(tx, key))
+  if (previous !== undefined && previous !== null && !(try retireReverted(key, previous, context.config.signer))) {
+    const sent = try submitSigned(context, key, previous)
+    return { state: "submitted", transactionId: sent.transactionId } satisfies PayOutcome
+  }
+  const plan = try readPermissionlessPayment(context, obligationId)
+  if (plan.state !== "ready") return plan
+  const next = { key, fingerprint, data: plan.data, obligationId } satisfies NewAttempt
+  const attempt = try signNewAttempt(context, next)
+  const sent = try submitSigned(context, key, attempt)
+  return { state: "submitted", transactionId: sent.transactionId } satisfies PayOutcome
+}

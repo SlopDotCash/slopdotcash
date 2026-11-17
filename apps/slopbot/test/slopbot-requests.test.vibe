@@ -1,0 +1,288 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import type { RegistryObservation } from "../gen/slopbot__repositoryScope.ts"
+import { leaseSources } from "../src/value/requests/leases.vibe"
+import { type Gathered, type Run, claimRequest, nextDue, recordOutcome, resumeParked, startRun } from "../src/value/requests/store.vibe"
+import { type SiteEnv, idle, inboxSite, registryOver, slopbotAccess } from "./support/requestsWorker.vibe"
+
+service Journey {
+  readonly db: D1Database
+  readonly github: GitHubFake
+  readonly env: SiteEnv
+}
+
+const origin = "https://slop.test"
+const t0 = Date.parse("2026-11-02T00:00:00.000Z")
+const clock = settableClock(t0)
+const maintainer = { githubId: "8100001", login: "maya" }
+const reader = { githubId: "8100002", login: "otto" }
+const administrator = { githubId: "8100003", login: "root-admin" }
+const gapSince = "2026-11-03T00:00:00.000Z"
+const gapRetry = "2026-11-03T01:00:00.000Z"
+const seededAt = "2026-11-01T00:00:00.000Z"
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static asset", { status: 404 }) as unknown as globalThis.Response) }
+
+type ProjectStatus = "active" | "paused"
+type RevisionKind = "Created" | "AdminHold" | "Activated" | "OwnerUpdate"
+
+function manifestOf(name: string, status: ProjectStatus) {
+  return JSON.stringify({
+    id: "alpha",
+    name,
+    status,
+    listingTier: "community",
+    steward: { github: { actorId: "101", nodeId: "U_ada", login: "ada" } },
+    authority: { repositoryId: "7001", repositoryNodeId: "R_alpha01" },
+    terms: { repositoryLicense: { state: "unknown", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    repositories: [{ id: "ada/alpha", githubUrl: "https://github.com/ada/alpha" }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "points" },
+    funding: {},
+  })
+}
+
+const activeRegistry: RegistryObservation = { lookup: "CurrentPath", registeredId: 7001, observedId: 7001, rowActive: true, manifestActive: true, retirement: "NotRetired", restriction: "Clear", flags: "NotFlagged" }
+const publishable: Gathered = {
+  threw: false,
+  registry: activeRegistry,
+  configured: true,
+  repositoryMatches: true,
+  pull: "PullClosed",
+  occurredAt: Math.floor(t0 / 1000),
+  evidenceComplete: true,
+  groupComplete: true,
+  alreadyCurrent: false,
+  admission: "AdmitEligible",
+  providerResult: true,
+  authorityHeld: true,
+}
+
+effect function revised(name: string, status: ProjectStatus, kind: RevisionKind) {
+  const manifest = manifestOf(name, status)
+  const digest = try sha256Hex(manifest)
+  const next = sql`coalesce((SELECT revision FROM projects WHERE id = 'alpha'), 0) + 1`
+  const pointer = kind === "Created"
+    ? [
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('alpha', ${status}, 1, ${manifest}, ${digest}, ${seededAt}, ${seededAt})`,
+      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES ('ada/alpha', 'alpha')`,
+    ]
+    : [sql`UPDATE projects SET status = ${status}, revision = revision + 1, manifest = ${manifest}, manifest_sha256 = ${digest}, updated_at = ${seededAt} WHERE id = 'alpha'`]
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', ${next}, ${manifest}, ${digest}, ${kind}, ${seededAt})`,
+    sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', ${next}, ${kind})`,
+    ...pointer,
+  ]
+}
+
+effect function world(github: GitHubFake) {
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: 101, login: "ada", nodeId: "U_ada" })
+    github.world.addUser({ id: 8100001, login: "maya", nodeId: "U_maya" })
+    github.world.addUser({ id: 8100002, login: "otto", nodeId: "U_otto" })
+    github.world.addRepo({ id: 7001, owner: "ada", name: "alpha", nodeId: "R_alpha01" })
+    github.world.setPermission("ada/alpha", "maya", "write")
+    github.world.setPermission("ada/alpha", "otto", "read")
+    github.world.addInstallation({ id: 501, account: "ada", repositories: ["alpha"], permissions: { metadata: "read" } })
+  }))
+}
+
+const Started = Layer.unwrap(effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try world(github)
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "value-requests-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  provide d1(db), webCrypto {
+    try (try D1).batch(try revised("Alpha", "active", "Created"))
+  }
+  const access = slopbotAccess({ fetch: (request) => github.fetch(request) }, { id: github.app.id, privateKeyPem: github.app.privateKeyPem })
+  const env: SiteEnv = { SLOPBOT_DB: db, ASSETS: assets, SLOPBOT: access, ADMIN_GITHUB_IDS: administrator.githubId }
+  return Layer.mergeAll(registryOver(db), webCrypto, clock.layer, Layer.succeed(Journey, { db, github, env }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function batch(statements: ReadonlyArray<Statement>) {
+  try (try D1).batch(statements)
+}
+
+function at(seconds: number) {
+  return new Date(t0 + seconds * 1000).toISOString()
+}
+
+function requested(deliveryId: string, pull: number, receivedAt: string): ReadonlyArray<Statement> {
+  return [
+    sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
+    sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+      VALUES (${deliveryId}, 501, 7001, 'ada', 'alpha', ${pull}, ${receivedAt})`,
+  ]
+}
+
+effect function processing(prefix: string) {
+  return try (try D1).all(sql`SELECT delivery_id, state, outcome, retry_at, attempts, incomplete_since FROM slopbot_value_processing
+    WHERE delivery_id LIKE ${`${prefix}%`} ORDER BY delivery_id`)
+}
+
+effect function claimed(run: Run, deliveryId: string) {
+  const found = try claimRequest(run, deliveryId)
+  if (found === undefined) return try die(new Error(`${deliveryId} was not claimed`))
+  return found
+}
+
+function tokenOf(githubId: string) {
+  return `value-requests-journey-session-${githubId}`.padEnd(48, "x")
+}
+
+effect function signedUp(members: ReadonlyArray<{ readonly githubId: string; readonly login: string }>) {
+  const statements: Statement[] = []
+  for (const member of members) {
+    statements.push(
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${member.githubId}`}, ${member.githubId}, ${member.login}, ${seededAt}, 1, 5)`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(tokenOf(member.githubId))}, ${`actor-${member.githubId}`}, '2099-01-01T00:00:00.000Z')`,
+    )
+  }
+  try batch(statements)
+}
+
+effect function inbox(options: { readonly as?: string; readonly expected?: string; readonly query?: string; readonly method?: string } = {}) {
+  const { env } = try Journey
+  const headers: Record<string, string> = {}
+  if (options.as !== undefined) headers.cookie = `__Host-slop_points=${tokenOf(options.as)}`
+  if (options.as !== undefined || options.expected !== undefined) headers["x-slop-expected-github-id"] = options.expected ?? options.as ?? ""
+  const request = try orDie(Effect.try(() => new WebRequest(`${origin}/api/v1/notifications/incomplete-assessments${options.query ?? ""}`, { method: options.method ?? "GET", headers })))
+  const response = try promise(() => inboxSite.fetch(request as unknown as globalThis.Request, env, idle))
+  const text = try promise(() => response.text())
+  const body: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  const error = typeof body === "object" && body !== null && "error" in body ? body.error : undefined
+  return { status: response.status, cache: response.headers.get("cache-control"), body: error === undefined ? body : { error } }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Value requests settle in order, back off, park and resume, and overlapping groups never both lease (spec/slopbot/valueRequests.md, "Story: Claim each due request alone for its pull request"; spec/slopbot/valueRequests.md, "A ten-minute claim needs a due row and no other live claim on the same pull request"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop"; spec/slopbot/valueRequests.md, "A parked request resumes when its repository is active again, checked in rotation"; spec/slopbot/valueRequests.md, "Overlapping groups contend by permanent source ID")', () => effect {
+    try batch([
+      sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (501, 101, 'ada', 'User', ${seededAt}, 1)`,
+      ...requested("vr-a1", 5, at(0)),
+      ...requested("vr-a2", 5, at(1)),
+      ...requested("vr-b1", 6, at(2)),
+    ])
+    clock.set(t0 + 10_000)
+    const first = (try nextDue())?.deliveryId
+    const a1 = try claimed(try startRun(), "vr-a1")
+    const busy = try claimRequest(a1.run, "vr-a2")
+    const incomplete = try recordOutcome(a1.claim, { ...publishable, evidenceComplete: false }, [])
+    const afterGap = try processing("vr-a")
+
+    clock.set(t0 + 3_610_000)
+    const second = try claimed(try startRun(a1.run), "vr-a1")
+    const budget = try recordOutcome(second.claim, { ...publishable, configured: false }, [])
+
+    clock.set(t0 + 10_810_000)
+    const third = try claimed(try startRun(second.run), "vr-a1")
+    const transient = try recordOutcome(third.claim, { ...publishable, threw: true }, [])
+    const afterRetry = try processing("vr-a")
+
+    clock.set(t0 + 14_410_000)
+    const fourth = try claimed(try startRun(third.run), "vr-a1")
+    const leased = try leaseSources(fourth.claim, [{ repositoryDatabaseId: 7001, pullRequestNumber: 5 }])
+    const b1 = try claimed(fourth.run, "vr-b1")
+    const overlapping = try leaseSources(b1.claim, [{ repositoryDatabaseId: 7001, pullRequestNumber: 5 }, { repositoryDatabaseId: 7001, pullRequestNumber: 6 }])
+    const disjoint = try leaseSources(b1.claim, [{ repositoryDatabaseId: 7001, pullRequestNumber: 6 }])
+    const published = try recordOutcome(fourth.claim, publishable, [{ repositoryDatabaseId: 7001, pullRequestNumber: 5 }])
+    const parked = try recordOutcome(b1.claim, { ...publishable, registry: { ...activeRegistry, rowActive: false } }, [{ repositoryDatabaseId: 7001, pullRequestNumber: 6 }])
+
+    try batch(try revised("Alpha", "paused", "AdminHold"))
+    const stillPaused = try resumeParked()
+    const checked = try (try D1).all(sql`SELECT repository_id, owner, repo, checked_at FROM slopbot_value_parked_checks WHERE repository_id = 7001`)
+    try batch(try revised("Alpha", "active", "Activated"))
+    clock.set(t0 + 14_470_000)
+    const resumed = try resumeParked()
+    const due = (try nextDue())?.deliveryId
+
+    try same({ first, busy, outcomes: [incomplete, budget, transient, published, parked], leases: [leased, overlapping, disjoint], resumes: [stillPaused, resumed], due, checked }, {
+      first: "vr-a1",
+      busy: undefined,
+      outcomes: ["SourceIncomplete", "BudgetWait", "Retry", "Published", "Parked"],
+      leases: [true, false, true],
+      resumes: [0, 1],
+      due: "vr-b1",
+      checked: [{ repository_id: 7001, owner: "ada", repo: "alpha", checked_at: at(14_410) }],
+    })
+    try same(afterGap, [
+      { delivery_id: "vr-a1", state: "waiting", outcome: "source-incomplete", retry_at: at(3_610), attempts: 1, incomplete_since: at(10) },
+      { delivery_id: "vr-a2", state: "waiting", outcome: "source-incomplete", retry_at: at(3_610), attempts: 0, incomplete_since: at(10) },
+    ])
+    try same(afterRetry, [
+      { delivery_id: "vr-a1", state: "waiting", outcome: "retry", retry_at: at(14_410), attempts: 2, incomplete_since: at(10) },
+      { delivery_id: "vr-a2", state: "waiting", outcome: "retry", retry_at: at(14_410), attempts: 0, incomplete_since: at(10) },
+    ])
+    try same(try processing("vr-"), [
+      { delivery_id: "vr-a1", state: "completed", outcome: "published", retry_at: null, attempts: 2, incomplete_since: null },
+      { delivery_id: "vr-a2", state: "completed", outcome: "published", retry_at: null, attempts: 0, incomplete_since: null },
+      { delivery_id: "vr-b1", state: "waiting", outcome: "parked", retry_at: at(14_470), attempts: 0, incomplete_since: null },
+    ])
+  })
+
+  it.effect('A current maintainer sees an incomplete assessment until it completes, a denial clears it and uncertain authority is retryable (spec/slopbot/assessmentInbox.md, "Story: Show one unresolved assessment and its retry status"; spec/slopbot/assessmentInbox.md, "Only a matching accepted final outcome at or after the gap resolves it"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/slopbot/assessmentInbox.md, "Denial clears the item and uncertain authority is retryable"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response")', () => effect {
+    const { github } = try Journey
+    try signedUp([maintainer, reader, administrator])
+    try batch([
+      ...requested("ia-1", 15, "2026-11-02T23:00:00.000Z"),
+      ...requested("ia-2", 16, "2026-11-02T23:00:00.000Z"),
+      ...requested("ia-3", 16, "2026-11-02T23:30:00.000Z"),
+      sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, outcome, retry_at, updated_at, attempts, incomplete_since)
+        VALUES ('ia-1', 'token-ia-1', '2026-11-03T00:10:00.000Z', 'waiting', 'source-incomplete', ${gapRetry}, ${gapSince}, 1, ${gapSince})`,
+      sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, outcome, retry_at, updated_at, attempts, incomplete_since)
+        VALUES ('ia-2', 'token-ia-2', '2026-11-03T00:10:00.000Z', 'waiting', 'source-incomplete', ${gapRetry}, ${gapSince}, 1, ${gapSince})`,
+      sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, outcome, retry_at, updated_at, attempts, incomplete_since)
+        VALUES ('ia-3', 'token-ia-3', '2026-11-03T00:20:00.000Z', 'completed', 'published', NULL, '2026-11-03T00:20:00.000Z', 0, NULL)`,
+    ])
+    const item = { projectId: "alpha", projectName: "Alpha", repository: "ada/alpha", pullRequest: 15, since: gapSince, retryAt: gapRetry, running: false }
+    const signedOut = try inbox()
+    const shown = try inbox({ as: maintainer.githubId })
+    const denied = try inbox({ as: reader.githubId })
+    const lookups = github.requests.length
+    const configured = try inbox({ as: administrator.githubId })
+    const administratorLookups = github.requests.length - lookups
+    try orDie(Effect.try(() => github.failNext("/collaborators/maya/permission", { status: 502 })))
+    const uncertain = try inbox({ as: maintainer.githubId })
+    const renamed = try revised("Alpha renamed", "active", "OwnerUpdate")
+    const services = try Effect.context<D1>()
+    try orDie(Effect.try(() => github.alterNext("/collaborators/maya/permission", (response) =>
+      Effect.runPromise(Effect.provide(batch(renamed), services)).then(() => response))))
+    const changedProject = try inbox({ as: maintainer.githubId })
+    try batch(try revised("Alpha", "active", "OwnerUpdate"))
+    const changedActor = try inbox({ as: maintainer.githubId, expected: reader.githubId })
+    const badCursor = try inbox({ as: maintainer.githubId, query: "?after=not-a-page" })
+    const otherMethod = try inbox({ as: maintainer.githubId, method: "DELETE" })
+    try batch([
+      ...requested("ia-4", 15, "2026-11-03T02:00:00.000Z"),
+      sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, outcome, retry_at, updated_at, attempts, incomplete_since)
+        VALUES ('ia-4', 'token-ia-4', '2026-11-03T02:10:00.000Z', 'completed', 'published', NULL, '2026-11-03T02:05:00.000Z', 0, NULL)`,
+    ])
+    const completed = try inbox({ as: maintainer.githubId })
+
+    try same({ signedOut, shown, denied, configured, administratorLookups, uncertain, changedProject, changedActor, badCursor, otherMethod, completed }, {
+      signedOut: { status: 401, cache: "private, no-store", body: { error: "not_signed_in" } },
+      shown: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [item], next: null } },
+      denied: { status: 200, cache: "private, no-store", body: { recipientGithubId: reader.githubId, items: [], next: null } },
+      configured: { status: 200, cache: "private, no-store", body: { recipientGithubId: administrator.githubId, items: [item], next: null } },
+      administratorLookups: 0,
+      uncertain: { status: 503, cache: "private, no-store", body: { error: "github_unavailable" } },
+      changedProject: { status: 503, cache: "private, no-store", body: { error: "project_changed" } },
+      changedActor: { status: 403, cache: "private, no-store", body: { error: "actor_changed" } },
+      badCursor: { status: 400, cache: "private, no-store", body: { error: "invalid_cursor" } },
+      otherMethod: { status: 405, cache: "private, no-store", body: { error: "method_not_allowed" } },
+      completed: { status: 200, cache: "private, no-store", body: { recipientGithubId: maintainer.githubId, items: [], next: null } },
+    })
+  })
+})

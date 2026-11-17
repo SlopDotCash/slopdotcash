@@ -1,0 +1,79 @@
+// spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"
+import { GitHub } from "@repo/platform/github"
+import { isAncestor } from "./heads.vibe"
+import type { Run } from "./run.vibe"
+
+export error StagingHistoryRefused { message: string }
+
+schema Deployment {
+  readonly id: number
+  readonly sha: string
+  readonly ref: string
+  readonly environment: string
+  readonly production_environment: boolean
+}
+schema DeploymentStatus { readonly log_url?: string | null }
+schema WorkflowRun { readonly head_sha: string; readonly path: string }
+
+const stagingEnvironment = "slop-staging"
+const revision = /^[0-9a-f]{40}$/u
+const nonReleaseWorkflows: ReadonlySet<string> = new Set([
+  ".github/workflows/vetting-recovery-qualification.yml",
+  ".github/workflows/vetting-sandbox-qualification.yml",
+  ".github/workflows/vetting-controller.yml",
+  ".github/workflows/operator.yml",
+  ".github/workflows/scheduled.yml",
+])
+
+export type HistoryOutcome = "InOrder" | "NewerAttempt"
+
+effect function createdOutsideRelease(repository: string, deployment: Deployment) {
+  const github = try GitHub
+  if (!Number.isSafeInteger(deployment.id)) return false
+  const statuses = try github.json(`/repos/${repository}/deployments/${deployment.id}/statuses?per_page=100`, Schema.Array(DeploymentStatus))
+  if (statuses.length === 0) return false
+  const prefix = `https://github.com/${repository}/actions/runs/`
+  const runOf = (url: string) => url.startsWith(prefix) ? /^(\d+)\//u.exec(url.slice(prefix.length))?.[1] ?? null : null
+  const runs = new Set(statuses.map((status) => runOf(status.log_url ?? "")))
+  const [run] = [...runs]
+  if (runs.size !== 1 || run === null || run === undefined) return false
+  const workflow = try github.json(`/repos/${repository}/actions/runs/${run}`, WorkflowRun)
+  return workflow.head_sha === deployment.sha && nonReleaseWorkflows.has(workflow.path)
+}
+
+effect function replayNewerAttempt(run: Run) {
+  const environment = run.environment
+  try run.send({ type: "advanceBranch" })
+  try run.lock.send({ type: "advanceBranch", environment }, run.lockBy)
+  const rival = (try run.state()).lock.nextRival
+  try run.send({ type: "rivalStart" })
+  try run.send({ type: "rivalTakeLock", rival })
+  try run.send({ type: "rivalFinish", rival })
+}
+
+export effect function stagingHistory(run: Run, repository: string, root: string, tested: string) {
+  const github = try GitHub
+  const history = github.pages(`/repos/${repository}/deployments?environment=${stagingEnvironment}`, Deployment, { perPage: 100, maxPages: 10 }) catch effect (error) => {
+    throw new StagingHistoryRefused({ message: error._tag === "GitHubMalformed" ? "Staging history exceeds its bound or is malformed; require human review" : `Staging history is unreadable (${error._tag})` })
+  }
+  const checked = new Set<string>()
+  for (const deployment of history) {
+    if (deployment.environment !== stagingEnvironment || deployment.ref !== "development" || deployment.production_environment || !revision.test(deployment.sha)) {
+      throw new StagingHistoryRefused({ message: "Unknown staging deployment provenance; require human review" })
+    }
+    if (checked.has(deployment.sha)) continue
+    if (try isAncestor(root, deployment.sha, tested)) {
+      checked.add(deployment.sha)
+      continue
+    }
+    const outside = createdOutsideRelease(repository, deployment) catch () => false
+    if (outside) {
+      try run.send({ type: "recordNonReleaseDeployment" })
+      continue
+    }
+    try replayNewerAttempt(run)
+    return "NewerAttempt" satisfies HistoryOutcome
+  }
+  if (!checked.has(tested)) throw new StagingHistoryRefused({ message: "Current staging attempt is absent from deployment history" })
+  return "InOrder" satisfies HistoryOutcome
+}

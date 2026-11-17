@@ -1,0 +1,52 @@
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"
+import { loopbackOrigin } from "@repo/platform/config"
+import { type FailureCategory, Provider, providers } from "@repo/platform/providers"
+
+export const privateProvider = "surplus"
+export const privateModel = "claude-sonnet-5.5"
+export const backgroundBudgetMs = 25000
+export const ownerBudgetMs = 120000
+const maxOutputTokens = 16000
+const maxReplyBytes = 1024 * 1024
+
+export type RouteFailure = "NotConfigured" | FailureCategory
+
+export type RouteOutcome =
+  | { readonly kind: "answered"; readonly text: string }
+  | { readonly kind: "failed"; readonly failure: RouteFailure }
+
+export interface PrivateRouteKey {
+  readonly apiKey: string | undefined
+  readonly baseUrl?: string
+}
+
+export function privateRoute(key: PrivateRouteKey) {
+  const apiKey = key.apiKey?.trim() ?? ""
+  const { baseUrl } = key
+  return providers({
+    ...apiKey === "" ? {} : { surplus: { apiKey: Redacted.make(apiKey), ...baseUrl !== undefined && loopbackOrigin(baseUrl) ? { baseUrl } : {} } },
+    timeoutMs: ownerBudgetMs,
+    maxReplyBytes,
+  })
+}
+
+export effect function privateRouteReady() {
+  return (try Provider).configured.has("surplus-anthropic")
+}
+
+export effect function privateCall(system: string, content: string, timeoutMs: number) {
+  const provider = try Provider
+  if (!provider.configured.has("surplus-anthropic")) return { kind: "failed", failure: "NotConfigured" } satisfies RouteOutcome
+  const reply = provider.complete({
+    route: "surplus-anthropic",
+    model: privateModel,
+    system,
+    messages: [{ role: "user", content }],
+    maxTokens: maxOutputTokens,
+    effort: "high",
+    timeoutMs,
+    accept: "allText",
+  }) catch (failure) => failure.category
+  if (typeof reply === "string") return { kind: "failed", failure: reply } satisfies RouteOutcome
+  return { kind: "answered", text: reply.text } satisfies RouteOutcome
+}

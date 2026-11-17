@@ -1,0 +1,236 @@
+// spec/operations/backup.md, "Writers reserve a fresh target, and a frozen generation refuses reservations and pointer publication"; spec/operations/backup.md, "A generation retires only with a verified marker and a D1 record for every reserved target"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { partBytes } from "@repo/platform/r2"
+import { GenerationTarget, type RetirementOutcome, RetirementUnrecorded } from "@repo/ports/security"
+import { type Backup, type Copy as TargetCopy, type GenerationState, type Target, noTarget } from "../../gen/operations__backup.effect.vibe"
+import { type CompleteReceipt, type Copy, type Recorded, RetirementBackup, encoded, sha256Pattern } from "./codec.vibe"
+import { admitted } from "./cycle.vibe"
+import { chainIntact, snapshotCopies, validRetirement } from "./restore.vibe"
+import {
+  BackupRefused,
+  EvidenceBackups,
+  EvidenceSource,
+  failed,
+  headOf,
+  immutable,
+  immutableJson,
+  isMarker,
+  markerMetadataKey,
+  markerMetadataValue,
+  recorded,
+  retirementKey,
+  supplementalKey,
+  verifiedBytes,
+} from "./store.vibe"
+
+const generationKey = /^vetting\/generations\/([A-Za-z0-9_-]{1,100})\/[A-Za-z0-9_-]{1,100}$/u
+
+export const permanentAdmission = sql`a.state='clean'
+  AND json_extract(a.result,'$.schemaVersion')='slop-vetting-result-v2'
+  AND json_extract(a.result,'$.disposition')='clean'`
+
+const openReference = sql`EXISTS (
+  SELECT 1 FROM vetting_evidence_objects o
+  JOIN vetting_assessments a ON a.id=o.assessment_id
+  LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
+  WHERE o.storage_generation=vetting_evidence_generations.id
+    AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
+    AND (c.closed_at IS NULL OR julianday(c.closed_at,'+90 days') IS NULL OR julianday(c.closed_at,'+90 days') > julianday('now') OR COALESCE((${permanentAdmission}),0)=1)
+)`
+
+schema StateRow { state: string }
+schema GenerationRow { state: string; eligible: number }
+schema RecordedRetirement { outcome: string; backup_day: string; backup_key: string | null; observed_sha256: string | null; observed_size_bytes: number | null }
+
+export type Retired = "held" | "unreleased" | "pending" | "retired"
+
+const outcomes: Readonly<Record<TargetCopy, RetirementOutcome | undefined>> = { Unclassified: undefined, Backed: "backed", Changed: "changed", Missing: "missing" }
+
+export function projectedGeneration(state: Backup, lifecycle: GenerationState, referencesEligible: boolean, targets: ReadonlyArray<Target> = []): Backup {
+  return { ...state, generations: [{ id: 1, lifecycle, referencesEligible }], targets: [...targets] }
+}
+
+function reserved(key: number, written: boolean): Target {
+  return { ...noTarget, key, generation: 1, written }
+}
+
+effect function marked(state: Backup, targetKey: string, written: boolean, exact: boolean) {
+  const next = try admitted(projectedGeneration(state, "GenerationFrozen", true, [reserved(1, written)]), { type: "markTarget", key: 1, exact })
+  const outcome = outcomes[next?.targets[0]?.copy ?? "Unclassified"]
+  if (next === undefined || outcome === undefined) throw new RetirementUnrecorded({ targetKey, issue: "Evidence retirement is not released" })
+  return { next, outcome }
+}
+
+effect function markerBytes(targetKey: string) {
+  if (!generationKey.test(targetKey)) throw new RetirementUnrecorded({ targetKey, issue: "Invalid evidence retirement target" })
+  return try encoded({ schemaVersion: "slop-evidence-retirement-v1", targetKey })
+}
+
+export effect function verifyMarker(targetKey: string, outcome?: RetirementOutcome) {
+  const bytes = try markerBytes(targetKey)
+  const { binding } = try EvidenceSource
+  const head = try headOf(binding, targetKey)
+  if (!isMarker(head?.customMetadata)) throw new RetirementUnrecorded({ targetKey, issue: "Evidence retirement marker is absent" })
+  if (outcome !== undefined && head?.customMetadata?.retirementOutcome !== outcome) throw new RetirementUnrecorded({ targetKey, issue: "Evidence retirement marker outcome differs" })
+  try verifiedBytes(binding, targetKey, try sha256Hex(bytes), bytes.length)
+}
+
+effect function writeMarker(targetKey: string, outcome: RetirementOutcome, createOnly: boolean) {
+  const bytes = try markerBytes(targetKey)
+  const sha256 = try sha256Hex(bytes)
+  const { binding } = try EvidenceSource
+  tryPromise({
+    try: () => binding.put(targetKey, bytes, {
+      customMetadata: { sha256, [markerMetadataKey]: markerMetadataValue, retirementOutcome: outcome },
+      httpMetadata: { contentType: "application/octet-stream" },
+      ...(createOnly ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
+    }),
+    catch: failed("put", targetKey),
+  }) catch effect (error) => {
+    verifyMarker(targetKey, outcome) catch effect () => { throw error }
+    return null
+  }
+  try verifyMarker(targetKey, outcome)
+}
+
+function invalidTarget(target: GenerationTarget) {
+  return generationKey.exec(target.target_key)?.[1] !== target.generation_id || !sha256Pattern.test(target.sha256)
+    || !Number.isSafeInteger(target.part_index) || target.part_index < -1
+    || !Number.isSafeInteger(target.size_bytes) || target.size_bytes < 0 || target.size_bytes > partBytes
+}
+
+effect function observedSource(key: string) {
+  const { binding } = try EvidenceSource
+  const found = try tryPromise({ try: () => binding.get(key), catch: failed("get", key) })
+  if (found === null) throw new BackupRefused({ issue: "Evidence backup source is missing" })
+  if (isMarker(found.customMetadata)) throw new BackupRefused({ issue: "Evidence target has retired" })
+  if (!Number.isSafeInteger(found.size) || found.size < 0 || found.size > partBytes) throw new BackupRefused({ issue: "Evidence backup source exceeds bounded part size" })
+  const bytes = new Uint8Array(try tryPromise({ try: () => found.arrayBuffer(), catch: failed("get", key) }))
+  if (bytes.length !== found.size) throw new BackupRefused({ issue: "Evidence backup source length changed" })
+  return bytes
+}
+
+effect function fenced(state: Backup, target: GenerationTarget, day: string) {
+  const source = try EvidenceSource
+  const key = target.target_key
+  let head = try headOf(source.binding, key)
+  if (head === undefined) {
+    try marked(state, key, false, false)
+    writeMarker(key, "missing", true) catch effect (error) => {
+      if ((try headOf(source.binding, key)) === undefined) throw error
+      return undefined
+    }
+    head = try headOf(source.binding, key)
+  }
+  if (isMarker(head?.customMetadata)) {
+    try verifyMarker(key, "missing")
+    return undefined
+  }
+  const bytes = try observedSource(key)
+  const backupKey = try supplementalKey(day, key)
+  const sha256 = try immutable((try EvidenceBackups).binding, backupKey, bytes, "application/octet-stream")
+  return { key, backupKey, sha256, sizeBytes: bytes.length } satisfies Copy
+}
+
+effect function backupReceipt(state: Backup, day: string, snapshotSha256: string, target: GenerationTarget, primary: Copy | undefined) {
+  const backups = (try EvidenceBackups).binding
+  const key = try retirementKey(day, target.target_key)
+  const existing = try recorded(RetirementBackup, backups, key)
+  if (existing !== undefined) return existing
+  if (primary !== undefined) try verifiedBytes(backups, primary.backupKey, primary.sha256, primary.sizeBytes)
+  const copy = primary ?? try fenced(state, target, day)
+  const value: RetirementBackup = {
+    schemaVersion: "slop-evidence-retirement-backup-v1",
+    day,
+    snapshotSha256,
+    generationId: target.generation_id,
+    targetKey: target.target_key,
+    partIndex: target.part_index,
+    sha256: target.sha256,
+    sizeBytes: target.size_bytes,
+    outcome: copy === undefined ? "missing" : copy.sha256 === target.sha256 && copy.sizeBytes === target.size_bytes ? "backed" : "changed",
+    backupKey: copy?.backupKey ?? null,
+    observedSha256: copy?.sha256 ?? null,
+    observedSizeBytes: copy?.sizeBytes ?? null,
+  }
+  return { value, sha256: try immutableJson(backups, key, value) } satisfies Recorded<RetirementBackup>
+}
+
+effect function retireTarget(state: Backup, day: string, snapshotSha256: string, target: GenerationTarget, primary: Copy | undefined) {
+  if (invalidTarget(target)) throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Invalid reserved evidence target" })
+  const receipt = (try backupReceipt(state, day, snapshotSha256, target, primary)).value
+  try validRetirement(receipt, day, target.target_key, snapshotSha256)
+  if (receipt.partIndex !== target.part_index || receipt.sha256 !== target.sha256 || receipt.sizeBytes !== target.size_bytes) {
+    throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Retirement target differs from its receipt" })
+  }
+  if (receipt.backupKey !== null && receipt.observedSha256 !== null && receipt.observedSizeBytes !== null) {
+    try verifiedBytes((try EvidenceBackups).binding, receipt.backupKey, receipt.observedSha256, receipt.observedSizeBytes)
+  }
+  const mark = try marked(state, target.target_key, receipt.outcome !== "missing", receipt.outcome === "backed")
+  if (mark.outcome !== receipt.outcome) throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Retirement outcome differs from its receipt" })
+  if (receipt.outcome === "missing") try verifyMarker(target.target_key, "missing")
+  else try writeMarker(target.target_key, receipt.outcome, false)
+  if ((try admitted(mark.next, { type: "recordRetirement", key: 1 })) === undefined) {
+    throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Target retirement cannot be recorded" })
+  }
+  const db = try D1
+  try db.run(sql`INSERT OR IGNORE INTO vetting_evidence_target_retirements
+    (target_key,outcome,backup_day,backup_key,observed_sha256,observed_size_bytes,observed_at)
+    VALUES(${target.target_key},${receipt.outcome},${day},${receipt.backupKey},${receipt.observedSha256},${receipt.observedSizeBytes},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+  const found = try first(RecordedRetirement, sql`SELECT outcome,backup_day,backup_key,observed_sha256,observed_size_bytes FROM vetting_evidence_target_retirements WHERE target_key=${target.target_key}`)
+  if (
+    found === undefined || found.outcome !== receipt.outcome || found.backup_day !== day || found.backup_key !== receipt.backupKey ||
+    found.observed_sha256 !== receipt.observedSha256 || found.observed_size_bytes !== receipt.observedSizeBytes
+  ) throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Target retirement was not recorded exactly" })
+}
+
+effect function generationState(generation: string) {
+  const found = try first(StateRow, sql`SELECT state FROM vetting_evidence_generations WHERE id=${generation}`)
+  if (found === undefined) throw new RetirementUnrecorded({ targetKey: generation, issue: "Evidence generation is missing" })
+  return found.state
+}
+
+effect function pendingTargets(generation: string) {
+  return try rows(GenerationTarget, sql`SELECT t.target_key,t.generation_id,t.part_index,t.sha256,t.size_bytes
+    FROM vetting_evidence_targets t WHERE t.generation_id=${generation}
+      AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
+    ORDER BY t.target_key LIMIT 16`)
+}
+
+effect function frozen(state: Backup, generation: string) {
+  const found = try first(GenerationRow, sql`SELECT state, CASE WHEN ${openReference} THEN 0 ELSE 1 END AS eligible FROM vetting_evidence_generations WHERE id=${generation}`)
+  if (found === undefined) throw new RetirementUnrecorded({ targetKey: generation, issue: "Evidence generation is missing" })
+  if (found.state !== "active") return found.state
+  const freezing = try admitted(projectedGeneration(state, "GenerationOpen", found.eligible === 1), { type: "freezeGeneration", generation: 1 })
+  if (freezing === undefined) {
+    if (found.eligible === 1) throw new BackupRefused({ issue: "An earlier storage cycle is incomplete" })
+    return found.state
+  }
+  try (try D1).run(sql`UPDATE vetting_evidence_generations SET state='retiring' WHERE id=${generation} AND state='active' AND NOT ${openReference}`)
+  return try generationState(generation)
+}
+
+export effect function retireGeneration(state: Backup, day: string, snapshot: Recorded<CompleteReceipt>, generation: string) {
+  if (!state.retirementReleased) return ((try generationState(generation)) === "retired" ? "retired" : "unreleased") satisfies Retired
+  const now = try frozen(state, generation)
+  if (now === "active") return "held" satisfies Retired
+  if (now === "retired") return "retired" satisfies Retired
+  if (now !== "retiring") throw new RetirementUnrecorded({ targetKey: generation, issue: "Invalid evidence generation state" })
+  const targets = try pendingTargets(generation)
+  const copies = try snapshotCopies(day, snapshot, new Set(targets.map((target) => target.target_key)))
+  if (!chainIntact(copies)) throw new BackupRefused({ issue: "Backup receipt chain is incomplete" })
+  for (const target of targets) try retireTarget(state, day, snapshot.sha256, target, copies.found.get(target.target_key))
+  const remaining = try pendingTargets(generation)
+  const retiring = try admitted(
+    projectedGeneration(state, "GenerationFrozen", true, remaining.map((_, index) => reserved(index + 1, false))),
+    { type: "retireGeneration", generation: 1 },
+  )
+  if (retiring === undefined) return "pending" satisfies Retired
+  try (try D1).run(sql`UPDATE vetting_evidence_generations SET state='retired',retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE id=${generation} AND state='retiring' AND NOT EXISTS (
+      SELECT 1 FROM vetting_evidence_targets t WHERE t.generation_id=vetting_evidence_generations.id
+        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
+    )`)
+  return ((try generationState(generation)) === "retired" ? "retired" : "pending") satisfies Retired
+}

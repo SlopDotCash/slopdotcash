@@ -1,0 +1,134 @@
+// spec/security/assessment.md, "Attempts are permanent, version-bound and finish once"; spec/security/journey.md, "The maintainer assessment starts only for a qualified current version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { type Actor, refuse } from "@repo/platform/http"
+import { Rejected, canStartOwnerRun, initial, retryable } from "../../gen/security__assessment.effect.vibe"
+import { mayReadBody } from "../../gen/security__cases.effect.vibe"
+import { jsonValue } from "../analysis/prompts.ts"
+import { backgroundBudgetMs, ownerBudgetMs } from "../analysis/route.vibe"
+import { AuthorityUnavailable, type CaseAuthority, caseAuthority } from "../caseAuthority/snapshot.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { type CaseStanding, caseOf, caseStanding } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { type CaseAssessment, NotAssessable, assessmentAt, attempted, authorityAfter, started } from "./store.vibe"
+
+export interface AssessmentView {
+  readonly attempt: number
+  readonly sourceReportVersion: number | null
+  readonly state: "running" | "complete" | "failed" | "unavailable"
+  readonly provider: string | null
+  readonly model: string | null
+  readonly promptRevision: string
+  readonly advisoryDigest: string | null
+  readonly summary: string | null
+  readonly proposedSeverity: string | null
+  readonly potentialLoss: string | null
+  readonly duplicateCaseIds: ReadonlyArray<string>
+  readonly rootCauseKey: string | null
+  readonly remediation: string | null
+  readonly startedAt: string
+  readonly finishedAt: string | null
+  readonly retryable: boolean
+}
+
+export interface CaseRead {
+  readonly record: CaseStanding
+  readonly roles: CaseAuthority
+  readonly viewerGithubId: string
+}
+
+export type Automatic = { readonly kind: "finished"; readonly analysis: AssessmentView | null } | { readonly kind: "skipped" }
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+function refused(row: Row) {
+  return refuse(row.status, row.error, row.message)
+}
+
+function caseIds(text: string | null): ReadonlyArray<string> {
+  const value = text === null ? [] : jsonValue(text)
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []
+}
+
+function viewOf(current: CaseAssessment, nowMs: number): AssessmentView | null {
+  const { assessment, rows } = current
+  if (assessment.qualifiedVersion !== assessment.reportVersion) return null
+  const row = rows.find((found) => found.attempt === assessment.shown) ?? rows.filter((found) => found.report_version === assessment.reportVersion).at(-1)
+  if (row === undefined) return null
+  return {
+    attempt: row.attempt,
+    sourceReportVersion: row.report_version,
+    state: row.state,
+    provider: row.provider,
+    model: row.model,
+    promptRevision: row.prompt_revision,
+    advisoryDigest: row.advisory_digest,
+    summary: row.summary,
+    proposedSeverity: row.proposed_severity,
+    potentialLoss: row.potential_loss,
+    duplicateCaseIds: caseIds(row.duplicate_case_ids),
+    rootCauseKey: row.root_cause_key,
+    remediation: row.remediation,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    retryable: retryable(assessment, nowMs),
+  }
+}
+
+function advised(read: CaseRead) {
+  const viewer = githubNumber(read.viewerGithubId)
+  return viewer !== githubNumber(read.record.reporter_github_id) && mayReadBody(caseOf(read.record, 0, read.roles), viewer, read.roles.authority.epoch)
+}
+
+effect function assessable(caseId: string, authority: CaseAuthority["authority"]) {
+  return assessmentAt(caseId, authority) catch effect (error) => {
+    if (error instanceof NotAssessable) return undefined
+    throw error
+  }
+}
+
+export effect function assessmentRead(read: CaseRead) {
+  if (!advised(read)) return undefined
+  const current = try assessable(read.record.id, read.roles.authority)
+  if (current === undefined) return { analysis: null, analyze: false }
+  const nowMs = try Clock.currentTimeMillis
+  return {
+    analysis: viewOf(current, nowMs),
+    analyze: canStartOwnerRun(current.assessment, githubNumber(read.viewerGithubId), read.roles.authority.epoch, nowMs),
+  }
+}
+
+export effect function analyze(input: { readonly caseId: string; readonly actor: Actor }) {
+  const record = try caseStanding(input.caseId)
+  if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
+  const program = try (try ReportingPrograms).current(record.project_id)
+  const scope = { caseId: record.id, projectId: record.project_id, reporterGithubId: record.reporter_github_id, viewerGithubId: input.actor.githubId, program: program?.approvers }
+  const roles = caseAuthority(scope, 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(actionRows.githubUnavailable);
+    default: throw error;
+  }
+  const by = githubNumber(input.actor.githubId)
+  if (!mayReadBody(caseOf(record, 0, roles), by, roles.authority.epoch)) throw refused(actionRows.notFoundCaseNotFound)
+  if (record.submission_state !== "verified" || !roles.authority.technical.includes(by)) throw refused(actionRows.actionNotAllowedTheCaseDoesNotAllowAnalyzeIn)
+  const nowMs = try Clock.currentTimeMillis
+  const run = Effect.flatMap(authorityAfter(record.id, initial.authority, roles.authority), (authority) => started(record.id, { type: "startOwnerRun", checkedEpoch: authority.epoch, nowMs }, by, authority)) catch effect (error) => {
+    if (error instanceof Rejected || error instanceof NotAssessable) throw refused(actionRows.analysisRunningAnalysisIsNotAvailable)
+    throw error
+  }
+  const finished = try attempted(run, ownerBudgetMs)
+  return viewOf(finished, try Clock.currentTimeMillis)
+}
+
+export effect function assessQualified(input: { readonly caseId: string; readonly version: number; readonly timeoutMs?: number }) {
+  const nowMs = try Clock.currentTimeMillis
+  const run = started(input.caseId, { type: "startAutomatic", nowMs }, 0, initial.authority, input.version) catch effect (error) => {
+    if (error instanceof Rejected || error instanceof NotAssessable) return undefined
+    throw error
+  }
+  if (run === undefined) return { kind: "skipped" } satisfies Automatic
+  const finished = try attempted(run, Math.min(input.timeoutMs ?? backgroundBudgetMs, backgroundBudgetMs))
+  return { kind: "finished", analysis: viewOf(finished, try Clock.currentTimeMillis) } satisfies Automatic
+}

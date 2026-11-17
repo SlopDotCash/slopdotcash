@@ -1,0 +1,69 @@
+// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referralWatch.md, "Each posted root equals its file's tree, every void is covered and every finalized distributor event is canonical and covered once"
+import { failureCode } from "../referrals/watchChecks.ts"
+import { WatchStopped, watchReferralRoots, watchSetup } from "../referrals/watch.vibe"
+
+export error ReferralWatchFailed { message: string }
+
+export error ReferralWatchUsage { message: string }
+
+const usage = "usage: referral-roots [--config <wrangler jsonc>] [--origin <https origin>]"
+const unavailable = "referral_watch_unavailable"
+const inactive = { status: "inactive", reason: "Program deployment is not configured; this is not qualification." }
+
+schema WranglerVars {
+  readonly vars: Readonly<Record<string, string>>
+}
+
+interface Options {
+  readonly config: string
+  readonly origin: string
+}
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  let options: Options = { config: "apps/settlement/wrangler/referralAccrual.production.jsonc", origin: "https://slop.cash" }
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index]
+    const value = args[index + 1]
+    if (value === undefined) throw new ReferralWatchUsage({ message: usage })
+    if (flag === "--config") options = { ...options, config: value }
+    else if (flag === "--origin") options = { ...options, origin: value }
+    else throw new ReferralWatchUsage({ message: usage })
+  }
+  return options
+}
+
+effect function varsOf(path: string) {
+  const text = try (try FileSystem.FileSystem).readFileString(path)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ReferralWatchUsage({ message: `${path} is not JSON` }) })
+  return (try Schema.decodeUnknownEffect(WranglerVars)(value)).vars
+}
+
+effect function line(value: unknown) {
+  return try Effect.try({ try: () => JSON.stringify(value), catch: () => new ReferralWatchFailed({ message: unavailable }) })
+}
+
+effect function summarize(text: string) {
+  const target = Option.getOrUndefined(try Config.option(Config.String("GITHUB_STEP_SUMMARY")))
+  if (target === undefined || target === "") return
+  try (try FileSystem.FileSystem).writeFileString(target, `${text}\n`, { flag: "a" })
+}
+
+effect function watchOnce(options: Options) {
+  const setup = try watchSetup(try varsOf(options.config))
+  const result = try line(setup === undefined ? inactive : try watchReferralRoots(setup, options.origin))
+  try Console.log(result)
+  try summarize(`Referral root watch: ${result}`)
+}
+
+function codeOf(error: unknown) {
+  return error instanceof WatchStopped ? failureCode(error.failure) : unavailable
+}
+
+export effect function referralRoots(args: ReadonlyArray<string>) {
+  const outcome = try exit(watchOnce(try optionsOf(args)))
+  if (Exit.isSuccess(outcome)) return
+  const code = codeOf(Cause.squash(outcome.cause))
+  try Console.error(`::error::${code}`)
+  summarize(`Referral root watch failed: ${code}`) catch () => undefined
+  throw new ReferralWatchFailed({ message: code })
+}

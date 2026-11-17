@@ -1,0 +1,257 @@
+// spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"; spec/slopbot/review.md, "A closure needs a second, agreeing review, and limited coverage stays advisory"
+import { first, sql, D1 } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { holdSeconds } from "../../gen/slopbot__maintainerHold.effect.vibe"
+import { type CommentHistory, type EchoedText, type IssueComment, commentHistoryPageLimit, commentPlan, publishableEcho, reviewCommentMarker } from "../../gen/slopbot__review.effect.vibe"
+import { type ReviewClaim, assertReviewClaim } from "../lease/store.vibe"
+import type { CallRecord } from "../route/route.vibe"
+import type { Verdict } from "../review/verdict.vibe"
+import { uncertainLabel } from "./labels.vibe"
+import { type ScopedItem, type WriteScope, requireScope } from "./scope.vibe"
+
+module verified {
+  import { isNeutral as neutral, neutralize as neutralized } from "./text.ts"
+  /** @throws {never} */
+  export function neutralize(text: string): string { return neutralized(text) }
+  /** @throws {never} */
+  export function isNeutral(text: string): boolean { return neutral(text) }
+}
+import { isNeutral, neutralize } from verified
+
+export type CommentAction = "label" | "close" | "hold" | "comment"
+
+export interface PenaltyNotice {
+  readonly points: number
+  readonly period: string
+  readonly moderatorReview: boolean
+}
+
+export interface DefectRule {
+  readonly source: string
+  readonly quote: string
+}
+
+export interface VerifiedDefect {
+  readonly id: string
+  readonly kind: "removed_behavior" | "reproduced_regression" | "contradicted_claim"
+  readonly profile: string
+  readonly expiresAt: string
+  readonly rule: DefectRule
+  readonly evidence: string
+  readonly repair: string
+  readonly description: string
+  readonly sourceUrl: string
+}
+
+export interface Reviewed {
+  readonly revision: string
+  readonly policyDigest: string
+  readonly limitations: ReadonlyArray<string>
+  readonly scope: WriteScope
+  readonly defects: ReadonlyArray<VerifiedDefect>
+}
+
+export interface CommentInput {
+  readonly verdict: Verdict
+  readonly action: CommentAction
+  readonly blockedClose: string | null
+  readonly reviewed: Reviewed
+  readonly triage: CallRecord | undefined
+  readonly confirm: CallRecord | undefined
+  readonly penalty?: PenaltyNotice
+}
+
+export interface Composed {
+  readonly body: string
+  readonly echoes: ReadonlyArray<string>
+}
+
+export interface CommentTarget extends ScopedItem {
+  readonly appUser: number
+}
+
+export error CommentRefused { itemNodeId: string; lookup: string }
+export error CommentUnconfirmed { itemNodeId: string; status: number }
+export error CommentChanged { itemNodeId: string }
+
+schema CommentAuthor { readonly id: number; readonly type: string }
+schema CommentRead { readonly id: number; readonly body: string | null; readonly user: CommentAuthor | null }
+schema CommentWritten { readonly id: number }
+schema KeptComment { readonly comment_id: number }
+
+const commentPage = Schema.Array(CommentRead)
+const pageSize = 100
+const holdDays = holdSeconds / 86400
+const detailedLimitations = 40
+const limitationChars = 500
+
+export const appealInvitation = "If this is wrong, the author can comment `/slopbot appeal`. Slopbot drafts a resolution first, and a Slop moderator decides an escalated appeal. A maintainer's decision always wins."
+
+export function disclosure(call: CallRecord | undefined) {
+  if (call === undefined) return "deterministic pre-filter (no model)"
+  return `${call.gateway} / ${call.requestedModel} (route step ${call.routeStep}, served model unverified)`
+}
+
+function headline(input: CommentInput) {
+  const { verdict, reviewed } = input
+  if (input.action === "comment") return reviewed.limitations.length > 0 ? "**Slopbot limited review — maintainer review needed**" : "**Slopbot review complete — no finding**"
+  if (input.action === "close") return `**Slopbot closed this item** under the repository's \`${verdict.category}\` rule.`
+  if (input.action === "hold") return `**Slopbot review (uncertain, maintainer decides):** \`${verdict.category}\``
+  return `**Slopbot review:** \`${verdict.category}\``
+}
+
+function blockedLine(input: CommentInput) {
+  const reason = input.blockedClose ?? "uncertain result"
+  if (input.action === "hold" && input.reviewed.scope === "security") return `_Slopbot is not certain about this finding (${reason}), so a maintainer decides. This project is restricted: Slopbot adds no label and never closes this item._`
+  if (input.action === "hold") return `_Slopbot is not certain about this finding (${reason}), so a maintainer decides first. If no maintainer acts within ${holdDays} days, Slopbot adds the \`${uncertainLabel}\` label only and keeps this verdict here. An uncertain finding never closes this item._`
+  return input.blockedClose === null ? "" : `_This item was not closed: ${input.blockedClose}._`
+}
+
+function penaltyLine(penalty: PenaltyNotice | undefined) {
+  if (penalty === undefined) return ""
+  return `_Under the published penalty table, this close removes ${penalty.points} points from the author's ${penalty.period} Slop Score. A month never goes below zero, and approved, scheduled or paid awards do not change.${penalty.moderatorReview ? " A Slop moderator also reviews the account." : ""}_`
+}
+
+export function commentBody(input: CommentInput): Composed {
+  const { verdict, reviewed } = input
+  const echoes: string[] = []
+  const echo = (text: string) => {
+    const neutral = neutralize(text)
+    echoes.push(neutral)
+    return neutral
+  }
+  const rules = verdict.rule_refs.map((ref) => `> ${echo(ref.quote)}\n> — ${echo(ref.source)}`).join("\n\n")
+  const defects = reviewed.defects.filter((defect) => defect.id === verdict.objective_defect)
+  const lines = [
+    reviewCommentMarker,
+    headline(input),
+    "",
+    echo(verdict.summary),
+    ...(input.action === "comment"
+      ? ["", reviewed.limitations.length > 0
+        ? "Some changed content could not be reviewed. No label or closure was applied. This is not approval of the pull request."
+        : "This is an advisory intake review, not approval of the pull request. Tests were not run by this review."]
+      : []),
+    "",
+    rules,
+    "",
+    blockedLine(input),
+    penaltyLine(input.penalty),
+    "",
+    "<details><summary>Review details</summary>",
+    "",
+    `- Reviewed revision: \`${reviewed.revision}\``,
+    `- Policy digest: \`${reviewed.policyDigest}\``,
+    ...reviewed.limitations.slice(0, detailedLimitations).map((limitation) => `- Not reviewed: ${echo(limitation).slice(0, limitationChars)}`),
+    ...(reviewed.limitations.length > detailedLimitations
+      ? [`- ${reviewed.limitations.length - detailedLimitations} additional coverage limitations. Inspect the immutable comparison for this revision.`]
+      : []),
+    ...defects.flatMap((defect) => [`- Verified defect: \`${defect.id}\` (${defect.kind})`, `- ${echo(defect.description)}`, `- Evidence: ${defect.sourceUrl}`, `- Repair: ${echo(defect.repair)}`]),
+    `- Triage: ${disclosure(input.triage)}`,
+    input.confirm === undefined ? "" : `- Confirmation: ${disclosure(input.confirm)}`,
+    `- Limitations: ${defects.length > 0 ? "the approved verifier supplied the evidence above; the reviewer did not execute code." : "static review only; tests were not run."}${verdict.limitations.length > 0 ? ` ${echo(verdict.limitations.join(" "))}` : ""}`,
+    "",
+    "</details>",
+    "",
+    appealInvitation,
+  ]
+  return { body: lines.filter((line, index, all) => !(line === "" && all[index - 1] === "")).join("\n"), echoes }
+}
+
+export function failureBody(revision: string): Composed {
+  return {
+    body: [
+      reviewCommentMarker,
+      "**Slopbot review could not complete**",
+      `Revision: \`${revision}\`.`,
+      "Slopbot will retry this attempt. If retries are exhausted, an operator must recover it. This is not approval or a finding against the contribution.",
+    ].join("\n\n"),
+    echoes: [],
+  }
+}
+
+function echoedOf(composed: Composed): EchoedText[] {
+  return composed.echoes.map((text) => ({ neutralized: isNeutral(text), echoChars: text.length }))
+}
+
+function ownsMarker(body: string | null) {
+  return body !== null && (body === reviewCommentMarker || body.startsWith(`${reviewCommentMarker}\n`))
+}
+
+function issueCommentOf(comment: typeof CommentRead.Type): IssueComment {
+  return {
+    commentId: Number.isSafeInteger(comment.id) && comment.id > 0 ? comment.id : 0,
+    botAuthor: comment.user?.type === "Bot",
+    authorId: comment.user?.id ?? 0,
+    startsWithMarker: ownsMarker(comment.body),
+  }
+}
+
+effect function commentHistory(target: CommentTarget) {
+  const github = try GitHub
+  const comments: IssueComment[] = []
+  for (let page = 1; page <= commentHistoryPageLimit; page++) {
+    const read = try github.json(`/repositories/${target.ref.repositoryId}/issues/${target.number}/comments?per_page=${pageSize}&page=${page}`, commentPage)
+    if (read.length > pageSize) throw new CommentRefused({ itemNodeId: target.itemNodeId, lookup: "HistoryUnavailable" })
+    comments.push(...read.map(issueCommentOf))
+    if (read.length < pageSize) return { comments, pagesRead: page, historyComplete: true } satisfies CommentHistory
+  }
+  return { comments, pagesRead: commentHistoryPageLimit + 1, historyComplete: false } satisfies CommentHistory
+}
+
+effect function keptComment(itemNodeId: string) {
+  const found: typeof KeptComment.Type | undefined = try first(KeptComment, sql`SELECT comment_id FROM slopbot_item_comments WHERE item_node_id = ${itemNodeId}`)
+  return found?.comment_id
+}
+
+effect function keepComment(target: CommentTarget, commentId: number) {
+  try (try D1).run(sql`INSERT INTO slopbot_item_comments (item_node_id, repository_id, comment_id) VALUES (${target.itemNodeId}, ${target.ref.repositoryId}, ${commentId})
+    ON CONFLICT(item_node_id) DO UPDATE SET comment_id = excluded.comment_id`)
+}
+
+export effect function findReviewComment(target: CommentTarget) {
+  const history = try commentHistory(target)
+  const plan = commentPlan(0, history, target.appUser)
+  if (plan === "RefuseComment") throw new CommentRefused({ itemNodeId: target.itemNodeId, lookup: history.historyComplete ? "CommentConflict" : "HistoryUnavailable" })
+  if (plan === "CreateComment") return undefined
+  return history.comments.find((comment) => comment.commentId > 0 && comment.botAuthor && comment.authorId === target.appUser && comment.startsWithMarker)?.commentId
+}
+
+effect function guarded(target: CommentTarget, claim: ReviewClaim, scope: WriteScope) {
+  try assertReviewClaim(claim)
+  try requireScope(target, scope)
+}
+
+effect function edited(target: CommentTarget, commentId: number, body: string) {
+  const github = try GitHub
+  const sent = github.send("PATCH", `/repositories/${target.ref.repositoryId}/issues/comments/${commentId}`, { body }, CommentWritten) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  if (sent === undefined) return false
+  if (sent.status !== 200 || sent.value?.id !== commentId) throw new CommentUnconfirmed({ itemNodeId: target.itemNodeId, status: sent.status })
+  return true
+}
+
+export effect function upsertComment(target: CommentTarget, composed: Composed, claim: ReviewClaim, scope: WriteScope) {
+  if (!publishableEcho(echoedOf(composed))) throw new CommentRefused({ itemNodeId: target.itemNodeId, lookup: "RawEcho" })
+  try guarded(target, claim, scope)
+  let kept: number | undefined = try keptComment(target.itemNodeId)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (kept === undefined) {
+      kept = try findReviewComment(target)
+      if (kept === undefined) break
+      try keepComment(target, kept)
+    }
+    try guarded(target, claim, scope)
+    if (try edited(target, kept, composed.body)) return kept
+    kept = undefined
+    if (attempt === 1) throw new CommentChanged({ itemNodeId: target.itemNodeId })
+  }
+  try guarded(target, claim, scope)
+  const created = try (try GitHub).send("POST", `/repositories/${target.ref.repositoryId}/issues/${target.number}/comments`, { body: composed.body }, CommentWritten)
+  const id = created.value?.id ?? 0
+  if (created.status !== 201 || !Number.isSafeInteger(id) || id <= 0) throw new CommentUnconfirmed({ itemNodeId: target.itemNodeId, status: created.status })
+  try keepComment(target, id)
+  return id
+}

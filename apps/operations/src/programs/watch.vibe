@@ -1,0 +1,34 @@
+// spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { type CheckResult, intakeWatch, productionWatch } from "../watch/checks.vibe"
+
+export error WatchArguments { message: string }
+export error WatchFailed { message: string }
+
+const titles = { production: "production", intake: "private intake" } as const
+
+function lineOf(result: CheckResult, actions: boolean): string {
+  return `${result.ok ? "ok" : actions ? "::error::FAIL" : "FAIL"} ${result.check}: ${result.detail}`
+}
+
+effect function environment(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+export effect function watch(args: ReadonlyArray<string>) {
+  const [target, ...rest] = args
+  if (rest.length > 0 || (target !== "production" && target !== "intake")) throw new WatchArguments({ message: "usage: watch production|intake" })
+  const results = try (target === "production" ? productionWatch() : intakeWatch())
+  const actions = (try environment("GITHUB_ACTIONS")) === "true"
+  const failed = results.filter((result) => !result.ok).length
+  const lines = [
+    ...results.map((result) => lineOf(result, actions)),
+    failed > 0 ? `${failed} of ${results.length} ${titles[target]} checks failed` : `All ${results.length} ${titles[target]} checks passed`,
+  ]
+  try Console.log(lines.join("\n"))
+  const summary = try environment("GITHUB_STEP_SUMMARY")
+  if (summary !== undefined && summary !== "") {
+    const text = `${titles[target]} watch\n\n${lines.map((line) => `- ${line.replace("::error::", "")}`).join("\n")}\n`
+    try (try FileSystem.FileSystem).writeFileString(summary, text, { flag: "a" })
+  }
+  if (failed > 0) throw new WatchFailed({ message: `${failed} of ${results.length} ${titles[target]} checks failed` })
+}

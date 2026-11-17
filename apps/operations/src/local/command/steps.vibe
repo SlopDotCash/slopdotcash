@@ -1,0 +1,36 @@
+// spec/operations/localCommand.md, "Only a current local stage can start the command"
+import { type LocalCommand, Machine, initial, machineOver } from "../../../gen/operations__localCommand.effect.vibe"
+
+export type CommandMachine = Machine.Shape
+
+export interface LaunchFacts {
+  readonly loopbackHttp: boolean
+  readonly localPayer: boolean
+}
+
+const loopbackHosts: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+export effect function commandMachine(start: LocalCommand = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export effect function loopbackHttp(endpoint: string) {
+  const url = Effect.try(() => new URL(endpoint)) catch () => undefined
+  return url !== undefined && url.protocol === "http:" && loopbackHosts.has(url.hostname) && url.username === "" && url.password === ""
+}
+
+export effect function localPayer(keypair: string) {
+  const path = try Path.Path
+  if (!path.isAbsolute(keypair)) return false
+  const info = (try FileSystem.FileSystem).lstat(keypair) catch () => undefined
+  return info?.type === "File"
+}
+
+export effect function launchFacts(endpoint: string, keypair: string) {
+  return { loopbackHttp: try loopbackHttp(endpoint), localPayer: try localPayer(keypair) } satisfies LaunchFacts
+}
+
+export effect function launch(machine: CommandMachine, receipt: number, group: number, now: number, facts: LaunchFacts) {
+  return try machine.send({ type: "launch", receipt, group, now, loopbackHttp: facts.loopbackHttp, localPayer: facts.localPayer })
+}

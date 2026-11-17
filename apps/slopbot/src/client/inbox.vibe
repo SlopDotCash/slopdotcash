@@ -1,0 +1,59 @@
+// spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"
+import { type AnyRoute, type Method, type Refusal, route } from "@repo/platform/route"
+import { getNotificationsIncompleteAssessments as refusals } from "./refusals.vibe"
+
+export schema IncompleteAssessment {
+  readonly projectId: string
+  readonly projectName: string
+  readonly repository: string
+  readonly pullRequest: number
+  readonly since: string
+  readonly retryAt: string | null
+  readonly running: boolean
+}
+
+export schema IncompleteAssessments {
+  readonly recipientGithubId: string
+  readonly items: ReadonlyArray<IncompleteAssessment>
+  readonly next: string | null
+}
+
+export const assessmentsPerPage = 25
+
+export const maxCursorLength = 1000
+
+function refusal(row: { readonly status: number; readonly error: string; readonly headers: Readonly<Record<string, string>> }): Refusal {
+  return { status: row.status, code: row.error, message: "", headers: row.headers }
+}
+
+export const assessmentRefusals = {
+  notSignedIn: refusal(refusals.notSignedIn),
+  invalidExpectedActor: refusal(refusals.invalidExpectedActor),
+  actorChanged: refusal(refusals.actorChanged),
+  invalidCursor: refusal(refusals.invalidCursor),
+  githubUnavailable: refusal(refusals.githubUnavailable),
+  projectChanged: refusal(refusals.projectChanged),
+  methodNotAllowed: refusal(refusals.otherMethods.methodNotAllowed),
+} satisfies Readonly<Record<string, Refusal>>
+
+export const incompleteAssessments = route({
+  method: "GET",
+  path: "/api/v1/notifications/incomplete-assessments",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: IncompleteAssessments,
+  rejected: refusals.githubUnavailable.error,
+  cache: "private",
+  unauthenticated: assessmentRefusals.notSignedIn,
+  sessionExpired: assessmentRefusals.notSignedIn,
+  actorMismatch: assessmentRefusals.actorChanged,
+})
+
+function refusedMethod(method: Method) {
+  return route({ method, path: incompleteAssessments.path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: refusals.otherMethods.methodNotAllowed.error, cache: "private" })
+}
+
+export const otherAssessmentMethods = (["POST", "PUT", "DELETE"] as const).map(refusedMethod)
+
+export const assessmentApi: ReadonlyArray<AnyRoute> = [incompleteAssessments, ...otherAssessmentMethods]

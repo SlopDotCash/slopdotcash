@@ -1,0 +1,109 @@
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import { type Outcome, exchanged, outgoing } from "@repo/platform/browser"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { base64url, randomBytes, sha256Hex } from "@repo/platform/crypto"
+import { D1, sql } from "@repo/platform/d1"
+import { json } from "@repo/platform/http"
+
+export const productionIdentity = "https://identity.slop.cash"
+
+const audience = "slop-points-web"
+const requestLimitBytes = 4096
+const answerLimitBytes = 16384
+const assertionLifetimeMs = 90_000
+const githubActor = /^[1-9][0-9]*$/u
+const githubLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+
+schema Started { flowId: string; pollCapability: string; authorizationUrl: string; expiresAt: string; pollAfterSeconds: number }
+schema LocalIdentity { returnOrigin: string; githubActorId: string; githubLogin: string; githubNodeId: string }
+
+export type Flow = typeof Started.Type
+
+export interface Bridge {
+  readonly origin: string
+  readonly flows: Ref.Ref<ReadonlyMap<string, Flow>>
+}
+
+export effect function identityBridge(origin: string) {
+  return { origin, flows: try Ref.make<ReadonlyMap<string, Flow>>(new Map()) } satisfies Bridge
+}
+
+effect function remote(path: string, body: unknown) {
+  const exchange = provideService(exchanged(outgoing("POST", `${productionIdentity}${path}`, body, {}), answerLimitBytes), FetchHttpClient.RequestInit, { redirect: "error" })
+  return timeout(exchange, Duration.seconds(15)) catch () => ({ kind: "unreachable" }) satisfies Outcome
+}
+
+effect function requestBody(request: HttpServerRequest.HttpServerRequest) {
+  const buffer = provideService(request.arrayBuffer, HttpServerRequest.MaxBodySize, ByteSize.bytes(requestLimitBytes)) catch () => undefined
+  if (buffer === undefined) return undefined
+  const value: unknown = Effect.try((): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(buffer)))) catch () => undefined
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+effect function pruned(bridge: Bridge) {
+  const now = try Clock.currentTimeMillis
+  return try Ref.updateAndGet(bridge.flows, (flows) => new Map([...flows].filter(([, flow]) => millisOf(flow.expiresAt) > now)))
+}
+
+effect function start(bridge: Bridge) {
+  const answer = try remote("/v1/local/start", { audience, returnOrigin: bridge.origin })
+  if (answer.kind !== "answered" || answer.status < 200 || answer.status > 299) {
+    return json({ error: "local_login_unavailable", message: "Slop's local sign-in handoff is not available yet." }, 503)
+  }
+  const started = Schema.decodeUnknownEffect(Started)(answer.value) catch () => undefined
+  const authorization = started === undefined ? undefined : Effect.try(() => new URL(started.authorizationUrl)) catch () => undefined
+  const now = try Clock.currentTimeMillis
+  if (started === undefined || authorization === undefined || authorization.origin !== productionIdentity || authorization.pathname !== "/v1/oauth/authorize"
+    || authorization.searchParams.get("flow_id") !== started.flowId || !(millisOf(started.expiresAt) > now)) {
+    return json({ error: "invalid_identity_response" }, 502)
+  }
+  try Ref.update(bridge.flows, (flows) => new Map([...flows, [started.flowId, started]]))
+  return json({ ...started, authorizationUrl: `${bridge.origin}${authorization.pathname}${authorization.search}` }, 201)
+}
+
+effect function assertionFor(identity: typeof LocalIdentity.Type) {
+  const assertion = `slop_assert_v1_${base64url(try randomBytes(32))}`
+  const now = try Clock.currentTimeMillis
+  const expiresAt = try isoAt(now + assertionLifetimeMs)
+  const stored = (try D1).run(sql`INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, audience, created_at, expires_at, consumed_at, github_node_id)
+    VALUES (${try sha256Hex(assertion)}, ${identity.githubActorId}, ${identity.githubLogin}, ${audience}, ${try isoAt(now)}, ${expiresAt}, NULL, ${identity.githubNodeId})
+    ON CONFLICT(token_hash) DO NOTHING`) catch () => 0
+  if (stored !== 1) return json({ error: "local_identity_unavailable" }, 503)
+  return json({ status: "complete", assertion, assertionType: "SlopIdentity", expiresAt }, 200)
+}
+
+effect function poll(bridge: Bridge, body: Readonly<Record<string, unknown>>) {
+  const flowId = typeof body.flowId === "string" ? body.flowId : undefined
+  const flow = flowId === undefined ? undefined : (try Ref.get(bridge.flows)).get(flowId)
+  if (flowId === undefined || flow === undefined || flow.pollCapability !== body.pollCapability) return json({ error: "flow_expired" }, 410)
+  const answer = try remote("/v1/local/poll", body)
+  if (answer.kind !== "answered") return json({ error: "identity_unavailable" }, answer.kind === "unreachable" ? 503 : answer.status)
+  if (answer.status === 202) return json(answer.value, 202)
+  if (answer.status < 200 || answer.status > 299) return json({ error: "identity_unavailable" }, answer.status)
+  const identity = Schema.decodeUnknownEffect(LocalIdentity)(answer.value) catch () => undefined
+  if (identity === undefined || identity.returnOrigin !== bridge.origin || !githubActor.test(identity.githubActorId) || !githubLogin.test(identity.githubLogin)) {
+    return json({ error: "invalid_identity_response" }, 502)
+  }
+  try Ref.update(bridge.flows, (flows) => new Map([...flows].filter(([id]) => id !== flowId)))
+  return try assertionFor(identity)
+}
+
+export effect function bridged(bridge: Bridge, url: URL) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const flows = try pruned(bridge)
+  const declared = request.headers.origin
+  if (url.origin !== bridge.origin || (declared !== undefined && declared !== bridge.origin)) return json({ error: "origin_forbidden" }, 403)
+  if (request.method === "GET" && url.pathname === "/v1/oauth/authorize") {
+    const flow = flows.get(url.searchParams.get("flow_id") ?? "")
+    const target = flow === undefined ? undefined : Effect.try(() => new URL(flow.authorizationUrl)) catch () => undefined
+    if (flow === undefined || target === undefined || target.search !== url.search) return json({ error: "flow_expired" }, 410)
+    return HttpServerResponse.empty({ status: 302, headers: { location: flow.authorizationUrl, "cache-control": "no-store", "referrer-policy": "no-referrer" } })
+  }
+  if (request.method !== "POST") return json({ error: "not_found" }, 404)
+  const body = try requestBody(request)
+  if (body === undefined) return json({ error: "invalid_json" }, 400)
+  if (body.audience !== audience) return json({ error: "invalid_audience" }, 400)
+  if (url.pathname === "/v1/oauth/start") return try start(bridge)
+  if (url.pathname === "/v1/oauth/poll") return try poll(bridge, body)
+  return json({ error: "not_found" }, 404)
+}

@@ -1,0 +1,143 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+import type { R2Bucket } from "@repo/platform/bindings"
+import { sha256Hex } from "@repo/platform/crypto"
+import { load } from "@repo/platform/stored"
+import { bucket, partBytes } from "@repo/platform/r2"
+import { CompleteReceipt, type Copy, PageReceipt, type Recorded, RetirementBackup, type RestoreReceipt, StartReceipt, cycleState, digests, sha256Pattern, startBytes } from "./codec.vibe"
+import { chainChecked, destinationRead, destinationWritten, heldCycle, prefixOf, restoreBegun, restoreRefused } from "./cycle.vibe"
+import { BackupRefused, EvidenceBackups, completeKey, copyKey, cycles, headOf, immutable, immutableJson, knownFacts, pageKey, recorded, restoredKey, retirementKey, startKey, supplementalKey, today } from "./store.vibe"
+
+const checkIdentity = /^[a-zA-Z0-9_-]{1,80}$/u
+const generationKey = /^vetting\/generations\/([A-Za-z0-9_-]{1,100})\/[A-Za-z0-9_-]{1,100}$/u
+
+export interface Snapshot {
+  readonly named: ReadonlyArray<string>
+  readonly observed: ReadonlyArray<string>
+  readonly found: ReadonlyMap<string, Copy & { readonly page: string }>
+}
+
+function boundedSize(size: number | null) {
+  return size !== null && Number.isSafeInteger(size) && size >= 0 && size <= partBytes
+}
+
+export effect function snapshotCopies(day: string, complete: Recorded<CompleteReceipt>, wanted: ReadonlySet<string>) {
+  if (!Number.isSafeInteger(complete.value.pages) || complete.value.pages < 1) throw new BackupRefused({ issue: "Backup is incomplete" })
+  const backups = (try EvidenceBackups).binding
+  const found = new Map<string, Copy & { readonly page: string }>()
+  const named: string[] = []
+  const observed: string[] = []
+  let objects = 0
+  let bytes = 0
+  for (let page = 0; page < complete.value.pages; page++) {
+    const record = try recorded(PageReceipt, backups, try pageKey(day, page))
+    if (record === undefined || (page === 0) !== (record.value.previous === null)) throw new BackupRefused({ issue: "Backup receipt chain is incomplete" })
+    if (record.value.previous !== null) named.push(record.value.previous)
+    observed.push(record.sha256)
+    for (const object of record.value.objects) {
+      objects++
+      bytes += object.sizeBytes
+      if (!wanted.has(object.key)) continue
+      if (found.has(object.key) || object.backupKey !== (try copyKey(day, object.key)) || !sha256Pattern.test(object.sha256) || !boundedSize(object.sizeBytes)) {
+        throw new BackupRefused({ issue: "Invalid snapshot object receipt" })
+      }
+      found.set(object.key, { ...object, page: record.sha256 })
+    }
+  }
+  named.push(complete.value.lastPageSha256)
+  if (objects !== complete.value.objects || bytes !== complete.value.bytes) throw new BackupRefused({ issue: "Backup completion does not match its receipts" })
+  return { named, observed, found } satisfies Snapshot
+}
+
+export function chainIntact(snapshot: Snapshot) {
+  return snapshot.named.length === snapshot.observed.length && snapshot.named.every((digest, index) => digest === snapshot.observed[index])
+}
+
+export effect function validRetirement(value: RetirementBackup, day: string, key: string, snapshotSha256: string) {
+  const generation = generationKey.exec(key)?.[1]
+  const copied = value.outcome !== "missing"
+  const backupKey = copied && (value.backupKey === (try copyKey(day, key)) || value.backupKey === (try supplementalKey(day, key)))
+  const observedValid = copied && sha256Pattern.test(value.observedSha256 ?? "") && boundedSize(value.observedSizeBytes)
+    && (value.observedSha256 === value.sha256 && value.observedSizeBytes === value.sizeBytes) === (value.outcome === "backed")
+  const missingValid = !copied && value.backupKey === null && value.observedSha256 === null && value.observedSizeBytes === null
+  if (
+    value.day !== day || value.snapshotSha256 !== snapshotSha256 || value.targetKey !== key || value.generationId !== generation ||
+    !Number.isSafeInteger(value.partIndex) || value.partIndex < -1 || !sha256Pattern.test(value.sha256) || !boundedSize(value.sizeBytes) ||
+    !(missingValid || (backupKey && observedValid))
+  ) throw new BackupRefused({ issue: "Invalid retirement backup receipt" })
+}
+
+effect function located(day: string, sourceKey: string, complete: Recorded<CompleteReceipt>, snapshot: Snapshot) {
+  const listed = snapshot.found.get(sourceKey)
+  const supplemental = try recorded(RetirementBackup, (try EvidenceBackups).binding, try retirementKey(day, sourceKey))
+  if (supplemental === undefined) return { copy: listed, page: listed?.page, outcome: null, supplement: undefined }
+  try validRetirement(supplemental.value, day, sourceKey, complete.sha256)
+  const value = supplemental.value
+  if (value.outcome === "missing" || value.backupKey === null || value.observedSha256 === null || value.observedSizeBytes === null) {
+    if (listed !== undefined) throw new BackupRefused({ issue: "Missing retirement conflicts with snapshot backup" })
+    return { copy: undefined, page: undefined, outcome: value.outcome, supplement: supplemental.sha256 }
+  }
+  if (listed !== undefined && (listed.sha256 !== value.observedSha256 || listed.sizeBytes !== value.observedSizeBytes || listed.backupKey !== value.backupKey)) {
+    throw new BackupRefused({ issue: "Snapshot and retirement backup disagree" })
+  }
+  const copy: Copy = { key: sourceKey, backupKey: value.backupKey, sha256: value.observedSha256, sizeBytes: value.observedSizeBytes }
+  return { copy, page: supplemental.sha256, outcome: value.outcome, supplement: supplemental.sha256 }
+}
+
+export interface RestoreCheck {
+  readonly day: string
+  readonly sourceKey: string
+  readonly checkId: string
+}
+
+effect function existingDigest(destination: R2Bucket, key: string, copy: Copy, source: number, other: number) {
+  const head = try headOf(destination, key)
+  if (head === undefined) return 0
+  const same = bucket(destination).getVerified(key, copy.sha256, copy.sizeBytes) catch () => undefined
+  return same === undefined ? other : source
+}
+
+export effect function restoreCheck(check: RestoreCheck, destination: R2Bucket) {
+  if (!checkIdentity.test(check.checkId)) throw new BackupRefused({ issue: "Invalid restore check identity" })
+  const backups = (try EvidenceBackups).binding
+  const complete = try recorded(CompleteReceipt, backups, try completeKey(check.day))
+  const start = try recorded(StartReceipt, backups, try startKey(check.day))
+  if (complete === undefined || start === undefined) throw new BackupRefused({ issue: "Backup is incomplete" })
+  const snapshot = try snapshotCopies(check.day, complete, new Set([check.sourceKey]))
+  const { copy, page, outcome, supplement } = try located(check.day, check.sourceKey, complete, snapshot)
+  if (copy === undefined || page === undefined) throw new BackupRefused({ issue: "Object has no verified backup receipt" })
+  const known = digests()
+  const chain = (list: ReadonlyArray<string>) => [...list, ...(supplement === undefined ? [] : [supplement])].map((digest) => known.of(digest))
+  const pages = chain(snapshot.named)
+  const facts = try knownFacts(try today())
+  const rows = (try load(cycles)).state
+  if (!rows.some((row) => row.day === check.day)) throw new BackupRefused({ issue: "Unknown storage cycle" })
+  const manifest = known.of(start.sha256)
+  const state = try cycleState({ ...facts, rows: rows.filter((row) => row.day <= check.day) }, known, {
+    expectedPages: pages.length,
+    pageDigests: pages,
+    verifiedPages: pages.length,
+    manifestDigest: manifest,
+    completeDigest: manifest,
+  })
+  const key = `restore-checks/${check.checkId}/${check.sourceKey}`
+  const source = known.of(page)
+  const restoring = effect {
+    try chainChecked(known.of(try sha256Hex(try startBytes(complete.value.day, complete.value.startedAt))), chain(snapshot.observed))
+    const data = try bucket(backups).getVerified(copy.backupKey, copy.sha256, copy.sizeBytes)
+    if (data === undefined) throw new BackupRefused({ issue: "Backup copy is missing" })
+    try destinationWritten(prefixOf(key), try existingDigest(destination, key, copy, source, known.of(`conflict:${key}`)))
+    try immutable(destination, key, data, "application/octet-stream")
+    const back = bucket(destination).getVerified(key, copy.sha256, copy.sizeBytes) catch () => undefined
+    try destinationRead(back === undefined ? known.of(`changed:${key}`) : source)
+  }
+  provide heldCycle(state) {
+    try restoreBegun(source)
+    restoring catch effect (error) => {
+      try restoreRefused()
+      throw error
+    }
+  }
+  const receipt: RestoreReceipt = { day: check.day, checkId: check.checkId, key, sha256: copy.sha256, sizeBytes: copy.sizeBytes, completeSha256: complete.sha256 }
+  try immutableJson(backups, restoredKey(check.day, check.checkId), receipt)
+  return { key, sha256: copy.sha256, sizeBytes: copy.sizeBytes, retirementOutcome: outcome }
+}

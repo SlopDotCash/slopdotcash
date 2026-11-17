@@ -1,0 +1,33 @@
+// spec/slopbot/assessmentInbox.md, "Denial clears the item and uncertain authority is retryable"
+import type { Fetcher } from "@repo/platform/bindings"
+import { serviceClient } from "@repo/platform/binding"
+import { RepositoryAccess, repositoryAccessOrigin } from "../../access/route.vibe"
+
+export type AccessAnswer = typeof RepositoryAccess.Type
+
+export interface AccessTarget {
+  readonly path: string
+  readonly repositoryId: number
+}
+
+export interface AccessActor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export service RepositoryAccessReader {
+  read(target: AccessTarget, actor: AccessActor): (AccessAnswer | undefined)!!
+}
+
+const answerLimitBytes = 4 * 1024
+
+export function repositoryAccessReader(fetcher: Fetcher | undefined) {
+  const client = fetcher === undefined ? undefined : serviceClient(fetcher, { binding: "SLOPBOT", origin: repositoryAccessOrigin })
+  return Layer.succeed(RepositoryAccessReader, {
+    read: (target, actor) => effect {
+      if (client === undefined) return undefined
+      const query = new URLSearchParams({ repository: target.path, repositoryId: String(target.repositoryId), login: actor.login, githubId: actor.githubId, includeRepository: "1" })
+      return client.call("GET", `/v1/repository-access?${query.toString()}`, undefined, RepositoryAccess, answerLimitBytes, { accept: "application/json" }) catch () => undefined
+    },
+  })
+}

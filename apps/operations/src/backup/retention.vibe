@@ -1,0 +1,178 @@
+// spec/operations/backup.md, "Retention needs a proven restoration, and never deletes admission evidence or unbacked bytes"; spec/operations/backup.md, "A generation retires only with a verified marker and a D1 record for every reserved target"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { partBytes } from "@repo/platform/r2"
+import { type Decision, load, update } from "@repo/platform/stored"
+import { type Backup, type EvidenceObject, type Retention, type Target, decodeState, noTarget, unclassified } from "../../gen/operations__backup.effect.vibe"
+import { CompleteReceipt, type Recorded, StartReceipt, cleanupJob, cleanupRows, cycleState, digests, pageTokens, sha256Pattern, startBytes } from "./codec.vibe"
+import { cleanupFinished, heldCycle, objectClassified, objectRetained, retentionReleased, retirementReleased, sent } from "./cycle.vibe"
+import { dayNumber, dayOfIso } from "./days.ts"
+import { permanentAdmission, projectedGeneration, retireGeneration } from "./retirement.vibe"
+import { BackupRefused, BackupSettings, EvidenceBackups, cleanupAdvanced, completeKey, cycleCompleted, cycles, enqueue, knownFacts, recorded, startKey, today } from "./store.vibe"
+
+schema Candidate {
+  assessment_id: string
+  run_id: string
+  sha256: string
+  object_key: string
+  chunks: string | null
+  size_bytes: number
+  storage: string
+  storage_generation: string | null
+  closed_at: string
+  today: string
+}
+
+schema Slot { index: number; sha256: string; sizeBytes: number }
+schema Missing { count: number }
+
+const identity = /^[a-zA-Z0-9_-]{1,100}$/u
+const Slots = Schema.Array(Slot)
+
+function candidates(after: string) {
+  return sql`SELECT o.assessment_id,o.run_id,o.sha256,o.object_key,o.chunks,o.size_bytes,o.storage,o.storage_generation,c.closed_at,date('now') AS today
+    FROM vetting_evidence_objects o JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
+    JOIN vetting_assessments a ON a.id=o.assessment_id
+    WHERE julianday(c.closed_at,'+90 days') <= julianday('now')
+      AND COALESCE((${permanentAdmission}),0)=0
+      AND o.object_key > ${after}
+      AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
+    ORDER BY o.object_key LIMIT ${cleanupRows}`
+}
+
+function audited(action: "retention-held" | "retention-missing", id: string, row: Candidate, reason: string) {
+  return sql`INSERT OR IGNORE INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,reason,created_at)
+    VALUES(${id},'storage-retention',${action},${row.assessment_id},${row.run_id},${row.sha256},${reason},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+}
+
+function deleted(row: Candidate) {
+  return sql`INSERT OR IGNORE INTO vetting_evidence_deletions(assessment_id,run_id,sha256,deleted_at) VALUES(${row.assessment_id},${row.run_id},${row.sha256},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+}
+
+effect function retainedAs(state: Backup) {
+  provide heldCycle(try decodeState(state)) {
+    return (try objectRetained(1)).objects[0]?.retention ?? "Kept"
+  }
+}
+
+effect function settledAs(state: Backup, object: EvidenceObject, backed: boolean) {
+  const target: Target = { ...noTarget, key: 1, generation: 1, written: backed, marker: true, recorded: true, copy: backed ? "Backed" : "Missing" }
+  const retired = projectedGeneration({ ...state, objects: [object] }, "GenerationRetired", true, [target])
+  provide heldCycle(try decodeState(retired)) {
+    try objectClassified(1)
+    const retention = (try objectRetained(1)).objects[0]?.retention ?? "Kept"
+    const settled = try sent({ type: "settleReference", key: 1 })
+    if ((retention === "Deleted") !== settled.deletionReceipts.includes(1)) throw new BackupRefused({ issue: "Retention and generation retirement disagree" })
+    return retention
+  }
+}
+
+function unreadableSlots() {
+  return new BackupRefused({ issue: "Generation retirement slots could not be read" })
+}
+
+effect function slotsOf(row: Candidate) {
+  const chunks = row.chunks
+  if (chunks === null) return [{ index: -1, sha256: row.sha256, sizeBytes: row.size_bytes }]
+  const value: unknown = try Effect.try({ try: () => JSON.parse(chunks), catch: unreadableSlots })
+  const slots = Schema.decodeUnknownEffect(Slots)(value, { onExcessProperty: "error" }) catch effect () => { throw unreadableSlots() }
+  const size = row.size_bytes
+  if (
+    !Number.isSafeInteger(size) || size <= partBytes || slots.length !== Math.ceil(size / partBytes)
+    || slots.some((slot, index) => slot.index !== index || !sha256Pattern.test(slot.sha256) || slot.sizeBytes !== Math.min(partBytes, size - index * partBytes))
+  ) throw unreadableSlots()
+  return slots
+}
+
+effect function missingSlots(row: Candidate, generation: string) {
+  const layout = try slotsOf(row)
+  const slots = try orDie(Effect.try(() => JSON.stringify(layout)))
+  const found = try first(Missing, sql`SELECT count(*) AS count FROM json_each(${slots}) slot WHERE NOT EXISTS (
+      SELECT 1 FROM vetting_evidence_heads h
+      JOIN vetting_evidence_target_retirements r ON r.target_key=h.target_key
+      WHERE h.generation_id=${generation} AND h.part_index=json_extract(slot.value,'$.index')
+        AND h.sha256=json_extract(slot.value,'$.sha256') AND h.size_bytes=json_extract(slot.value,'$.sizeBytes')
+        AND r.outcome='backed'
+    )`)
+  if (found === undefined || !Number.isSafeInteger(found.count) || found.count < 0) throw unreadableSlots()
+  return found.count
+}
+
+type Step = "next" | "pending"
+
+effect function retainOne(day: string, snapshot: Recorded<CompleteReceipt>, state: Backup, row: Candidate) {
+  if (!identity.test(row.assessment_id) || !identity.test(row.run_id) || !sha256Pattern.test(row.sha256)
+    || row.object_key !== `vetting/${row.assessment_id}/${row.run_id}/${row.sha256}` || (row.storage !== "run" && row.storage !== "content")) {
+    throw new BackupRefused({ issue: "Invalid retained evidence key" })
+  }
+  const closedDay = dayOfIso(row.closed_at)
+  const clockDay = dayNumber(row.today)
+  if (closedDay === undefined || clockDay === undefined) throw new BackupRefused({ issue: "Invalid case closure day" })
+  const base = { ...unclassified, id: 1, closedDay, declared: 1 }
+  const at = { ...state, clockDay: Math.max(clockDay, state.clockDay) }
+  const db = try D1
+  const advance = cleanupAdvanced(day, row.object_key)
+  if (row.storage_generation === null) {
+    const outcome = try retainedAs({ ...at, objects: [{ ...base, generation: "LegacyNullGeneration", stored: 1 }] })
+    if (outcome !== "RetentionHeld") throw new BackupRefused({ issue: "Legacy evidence must remain held" })
+    try db.batch([audited("retention-held", `retention-held:legacy:${row.object_key}`, row, "Legacy storage has no generation fence; bytes remain retained without a deletion receipt."), advance])
+    return "next" satisfies Step
+  }
+  if (row.storage !== "content" || !identity.test(row.storage_generation)) throw new BackupRefused({ issue: "Invalid evidence storage generation" })
+  const retired = try retireGeneration(at, day, snapshot, row.storage_generation)
+  if (retired === "pending") return "pending" satisfies Step
+  if (retired === "held") {
+    try db.batch([audited("retention-held", `retention-held:shared:${row.object_key}`, row, "A current reference keeps this storage generation active."), advance])
+    return "next" satisfies Step
+  }
+  if (retired === "unreleased") {
+    try db.batch([audited("retention-held", `retention-held:unreleased:${row.object_key}`, row, "Generation retirement is not released; bytes remain retained without a deletion receipt."), advance])
+    return "next" satisfies Step
+  }
+  const missing = try missingSlots(row, row.storage_generation)
+  const outcome: Retention = try settledAs(at, { ...base, generation: "Generational", stored: missing === 0 ? 1 : 0, marker: missing > 0 }, missing === 0)
+  const recorded: Statement = outcome === "Deleted"
+    ? deleted(row)
+    : audited("retention-missing", `retention-missing:${day}:${row.object_key}`, row, `${missing} declared slots have no backed current head. Targets are fenced, but no complete deletion receipt was recorded.`)
+  try db.batch([recorded, advance])
+  return "next" satisfies Step
+}
+
+export effect function cleanupEvidence(day: string) {
+  const settings = try BackupSettings
+  if (!settings.backup) throw new BackupRefused({ issue: "Evidence backup is disabled" })
+  const rowsNow = (try load(cycles)).state
+  const cycle = rowsNow.find((row) => row.day === day)
+  if (cycle?.phase === "complete") return
+  if (cycle?.phase !== "cleanup") throw new BackupRefused({ issue: "Snapshot is not complete" })
+  const backups = (try EvidenceBackups).binding
+  const snapshot = try recorded(CompleteReceipt, backups, try completeKey(day))
+  const start = try recorded(StartReceipt, backups, try startKey(day))
+  if (snapshot === undefined || start === undefined) throw new BackupRefused({ issue: "Snapshot completion receipt is missing" })
+  if ((try sha256Hex(try startBytes(snapshot.value.day, snapshot.value.startedAt))) !== start.sha256) throw new BackupRefused({ issue: "Backup completion does not match its receipts" })
+  const facts = try knownFacts(try today())
+  const chainOf = (known: ReturnType<typeof digests>) => {
+    const token = known.of(start.sha256)
+    return { expectedPages: snapshot.value.pages, pageDigests: pageTokens(day, snapshot.value.pages, known), verifiedPages: snapshot.value.pages, manifestDigest: token, completeDigest: token }
+  }
+  const known = digests()
+  provide heldCycle(try cycleState({ ...facts, rows: rowsNow }, known, chainOf(known))) {
+    try retentionReleased(settings.retention)
+    const state = try retirementReleased(settings.retirement)
+    if (state.retentionEnabled) {
+      const found = try rows(Candidate, candidates(cycle.cleanup_after ?? ""))
+      for (const row of found) {
+        if ((try retainOne(day, snapshot, state, row)) === "pending") return try enqueue(cleanupJob(day))
+      }
+      if (found.length > 0) return try enqueue(cleanupJob(day))
+    }
+  }
+  try update(cycles, (rows) => effect {
+    if (rows.find((row) => row.day === day)?.phase !== "cleanup") return { value: undefined, writes: [] } satisfies Decision<undefined>
+    const fresh = digests()
+    provide heldCycle(try cycleState({ ...facts, rows }, fresh, chainOf(fresh))) {
+      try cleanupFinished()
+      return { value: undefined, writes: [cycleCompleted(day)] } satisfies Decision<undefined>
+    }
+  })
+}

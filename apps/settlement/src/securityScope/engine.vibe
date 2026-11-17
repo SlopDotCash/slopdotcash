@@ -1,0 +1,111 @@
+// spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/paymentDispatch.md, "Story: Recover uncertainty without opening a competing transfer"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import { Wallets } from "@repo/ports/backend"
+import { isChain, type NetworkKey } from "../kernels/networks.ts"
+import { type ExecutorBindings, type ServedVault, executors } from "../payments/dispatch.vibe"
+import { vaultAsset } from "../payments/ledger.vibe"
+import { reconcileFailedAttempts, recoverUncertainAttempts } from "../payments/recovery.vibe"
+import { failureTag, networkOf } from "../payments/terms.vibe"
+import { PaymentIndexerLive, paymentDeploymentOf } from "../scan/index.vibe"
+import { SECURITY_SCOPE } from "../signer/privateScope.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { syncRegistryVaults } from "../vault/sync.vibe"
+
+const privateLedger = /\b(payment_obligations|payment_events|payment_outbox|payment_attempts|payment_attempt_failures|payment_chain_cursors|payment_solana_scans|payment_solana_scan_pages|vault_snapshots)\b/gu
+
+export function privateStatement(statement: Statement): Statement {
+  return { text: statement.text.replace(privateLedger, "security_$1"), params: statement.params }
+}
+
+module rewrite {
+  import type { Fetcher } from "@repo/platform/bindings"
+  /** @throws {never} */
+  export function privatePath(fetcher: Fetcher, prefix: string): Fetcher {
+    return {
+      fetch: (request) => request.arrayBuffer().then((body) => {
+        const url = new URL(request.url)
+        url.pathname = url.pathname.replace(/^\/v1\//u, prefix)
+        return fetcher.fetch(new Request(url, { method: request.method, headers: request.headers, body: request.method === "GET" || request.method === "HEAD" ? undefined : body }))
+      }),
+    }
+  }
+}
+import { privatePath } from rewrite
+
+export function privateExecutors(bindings: ExecutorBindings) {
+  return executors({
+    ...bindings.evm === undefined ? {} : { evm: privatePath(bindings.evm, SECURITY_SCOPE.pathPrefix) },
+    ...bindings.solana === undefined ? {} : { solana: privatePath(bindings.solana, SECURITY_SCOPE.pathPrefix) },
+  })
+}
+
+export const PrivateLedger = Layer.effect(D1, effect {
+  const shared = try D1
+  return {
+    all: (statement) => shared.all(privateStatement(statement)),
+    run: (statement) => shared.run(privateStatement(statement)),
+    batch: (statements) => shared.batch(statements.map(privateStatement)),
+  } satisfies D1.Shape
+})
+
+export error SecurityPaymentsFailed { failures: ReadonlyArray<string> }
+
+schema HeldRow {
+  readonly obligation_id: string
+  readonly github_user_id: string
+  readonly chain: string
+}
+
+effect function readyAuthorizedHolds() {
+  const now = try isoNow()
+  const wallets = try Wallets
+  const d1 = try D1
+  const held = try rows(HeldRow, sql`SELECT o.id AS obligation_id, o.github_user_id, o.chain FROM payment_obligations o LEFT JOIN payment_outbox b ON b.obligation_id = o.id WHERE o.state = 'reserved' AND (b.obligation_id IS NULL OR b.state = 'held') ORDER BY o.rowid`)
+  for (const row of held) {
+    if (!isChain(row.chain)) continue
+    const owner = { githubId: row.github_user_id, network: networkOf(row.chain) }
+    const wallet = try wallets.payable(owner)
+    if (wallet === undefined) continue
+    const current = try wallets.fence({ ...owner, claimId: wallet.claimId, digest: wallet.digest })
+    try d1.run(sql`INSERT INTO payment_outbox (obligation_id, state, updated_at) SELECT ${row.obligation_id}, 'ready', ${now} WHERE ${current}
+      AND NOT EXISTS (SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id = ${row.obligation_id} AND attempt.state IN ('prepared', 'unknown', 'submitted') AND attempt.claim_id <> ${wallet.claimId})
+      ON CONFLICT (obligation_id) DO UPDATE SET state = 'ready', updated_at = excluded.updated_at WHERE payment_outbox.state = 'held'`)
+  }
+}
+
+effect function servedVaults(networks: ReadonlyArray<NetworkKey>, failures: string[]) {
+  const synced = try syncRegistryVaults(networks, "security-bounty")
+  failures.push(...synced.failures)
+  const rpc = try PaymentRpc
+  const served: ServedVault[] = []
+  for (const registered of synced.deployments) {
+    const deployment = paymentDeploymentOf(registered, rpc)
+    if (deployment === undefined) {
+      failures.push(`${registered.network} ${registered.vault}: private RPC configuration unavailable`)
+      continue
+    }
+    const asset = vaultAsset(deployment) catch (error) => failureTag(error)
+    if (typeof asset === "string") failures.push(`${registered.network} ${registered.vault}: ${asset}`)
+    else served.push({ deployment, asset })
+  }
+  return served
+}
+
+function failuresOf(error: { readonly _tag: string; readonly failures?: unknown }): ReadonlyArray<string> {
+  return Array.isArray(error.failures) ? error.failures.filter((failure): failure is string => typeof failure === "string") : [error._tag]
+}
+
+export effect function runSecurityPayments(networks: ReadonlyArray<NetworkKey>, bindings: ExecutorBindings) {
+  const failures: string[] = []
+  provide Layer.mergeAll(Layer.provideMerge(PaymentIndexerLive, PrivateLedger), privateExecutors(bindings)) {
+    const readied = readyAuthorizedHolds() catch (error) => [failureTag(error)]
+    if (Array.isArray(readied)) failures.push(...readied)
+    const vaults = try servedVaults(networks, failures)
+    const recovered = recoverUncertainAttempts(vaults) catch (error) => failuresOf(error)
+    if (Array.isArray(recovered)) failures.push(...recovered)
+    const reconciled = reconcileFailedAttempts(vaults) catch (error) => failuresOf(error)
+    if (Array.isArray(reconciled)) failures.push(...reconciled)
+  }
+  if (failures.length > 0) throw new SecurityPaymentsFailed({ failures })
+}

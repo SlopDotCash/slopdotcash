@@ -1,0 +1,35 @@
+// spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"
+import { BundleRefused, byteOrder } from "../manifest/inventory.vibe"
+
+schema Gate = "Types" | "Models" | "Proofs" | "ModelInventory" | "ProofInventory" | "Unit" | "Browser" | "BrowserSmoke" | "Isolation" | "Identity"
+
+export schema GateReceipts {
+  readonly schemaVersion: 1
+  readonly sourceSha: string
+  readonly manifestSha256: string
+  readonly gates: ReadonlyArray<Gate>
+}
+
+const receiptsLimit = 64
+
+export effect function readReceipts(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const names = fs.readDirectory(directory) catch effect () => {
+    throw new BundleRefused({ message: "the gate receipts are unreadable" })
+  }
+  const chosen = [...names].filter((name) => name.endsWith(".json")).sort(byteOrder)
+  if (chosen.length > receiptsLimit) throw new BundleRefused({ message: `more than ${receiptsLimit} gate receipt files` })
+  const receipts: GateReceipts[] = []
+  for (const name of chosen) {
+    const text = fs.readFileString(files.join(directory, name)) catch effect () => {
+      throw new BundleRefused({ message: `gate receipt ${name} is unreadable` })
+    }
+    const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new BundleRefused({ message: `gate receipt ${name} is not JSON` }) })
+    const receipt = Schema.decodeUnknownEffect(GateReceipts)(value, { onExcessProperty: "error" }) catch effect () => {
+      throw new BundleRefused({ message: `gate receipt ${name} has an invalid schema` })
+    }
+    receipts.push(receipt)
+  }
+  return receipts
+}

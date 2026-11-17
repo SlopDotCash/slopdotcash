@@ -1,0 +1,170 @@
+// spec/settlement/contributorAllocation.md, "An unpublished distribution exposes no recipient row"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/contributorAllocation.md, "Only the owner sender records the single transaction"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Allocation, type Event, type PublishedList, Rejected, apply, decodeEvent, initial, mayRead } from "../../gen/settlement__contributorAllocation.effect.vibe"
+import { parseNativeCostLimit, toAmount } from "../kernels/amounts.ts"
+import { type Chain, NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import type { AccountWallet } from "./public.vibe"
+
+export const contributorAllocationUrl = "/contributor-allocation.json"
+
+export error AllocationUnverified { message: string }
+
+export interface AllocationToken {
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
+}
+
+export interface AllocationRecipient {
+  readonly githubId: string
+  readonly amountBase: string
+  readonly transactionId: string | null
+}
+
+export interface ContributorAllocation {
+  readonly network: NetworkKey
+  readonly chain: Chain
+  readonly token: AllocationToken
+  readonly registrationClosesAt: string
+  readonly closed: boolean
+  readonly recipients: ReadonlyArray<AllocationRecipient>
+  readonly digest: string
+}
+
+export type AllocationState = "sent" | "scheduled" | "awaiting-wallet" | "unclaimed"
+
+export interface AllocationStep {
+  readonly event: Event
+  readonly by: string
+}
+
+export interface RecipientAllocation {
+  readonly recipient: AllocationRecipient
+  readonly state: AllocationState
+  readonly allocation: Allocation
+}
+
+const unverified = "The contributor allocation could not be verified."
+const evmAddress = /^0x[0-9a-fA-F]{40}$/u
+const evmHash = /^0x[0-9a-f]{64}$/u
+const githubId = /^[1-9][0-9]{0,19}$/u
+const tokenSymbol = /^[A-Z0-9]{1,11}$/u
+const utcInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u
+
+function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : undefined
+}
+
+function instantValid(text: string) {
+  if (!utcInstant.test(text)) return false
+  const millis = Date.parse(text)
+  return Number.isFinite(millis) && new Date(millis).toISOString().startsWith(text.slice(0, 19))
+}
+
+function recipientOf(value: unknown): AllocationRecipient | undefined {
+  const row = recordOf(value)
+  if (row === undefined || typeof row.githubId !== "string" || !githubId.test(row.githubId) || !Number.isSafeInteger(Number(row.githubId))) return undefined
+  if (typeof row.amountBase !== "string" || parseNativeCostLimit(row.amountBase) === undefined) return undefined
+  const transaction = row.transactionId
+  if (transaction !== null && (typeof transaction !== "string" || !evmHash.test(transaction))) return undefined
+  return { githubId: row.githubId, amountBase: row.amountBase, transactionId: transaction }
+}
+
+effect function verifiedOf(value: unknown, digest: string) {
+  const file = recordOf(value)
+  if (file === undefined) throw new AllocationUnverified({ message: unverified })
+  if (file.distribution === null) return undefined
+  const d = recordOf(file.distribution)
+  const token = recordOf(d?.token)
+  const network = d !== undefined && typeof d.network === "string" && isNetworkKey(d.network) ? d.network : undefined
+  if (d === undefined || token === undefined || network === undefined || NETWORKS[network].family !== "evm") throw new AllocationUnverified({ message: unverified })
+  const { symbol, decimals, address } = token
+  const closesAt = d.registrationClosesAt
+  if (typeof symbol !== "string" || !tokenSymbol.test(symbol) || typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36
+    || typeof address !== "string" || !evmAddress.test(address) || typeof closesAt !== "string" || !instantValid(closesAt) || typeof d.closed !== "boolean" || !Array.isArray(d.recipients))
+    throw new AllocationUnverified({ message: unverified })
+  const recipients: AllocationRecipient[] = []
+  const seen = new Set<string>()
+  for (const entry of d.recipients) {
+    const recipient = recipientOf(entry)
+    if (recipient === undefined || seen.has(recipient.githubId)) throw new AllocationUnverified({ message: unverified })
+    seen.add(recipient.githubId)
+    recipients.push(recipient)
+  }
+  return { network, chain: NETWORKS[network].chain, token: { symbol, decimals, address }, registrationClosesAt: closesAt, closed: d.closed, recipients, digest } satisfies ContributorAllocation
+}
+
+export effect function contributorAllocation(text: string) {
+  const value = jsonOf(text)
+  if (value === undefined) throw new AllocationUnverified({ message: unverified })
+  return try verifiedOf(value, try sha256Hex(text))
+}
+
+export effect function replayed(steps: ReadonlyArray<AllocationStep>, start: Allocation = initial) {
+  let current = start
+  for (const step of steps) current = try apply(current, step.event, step.by)
+  return current
+}
+
+export effect function receivedStep(steps: ReadonlyArray<AllocationStep>, raw: unknown, by: string, start: Allocation = initial) {
+  const event = try decodeEvent(raw)
+  const step: AllocationStep = { event, by }
+  return { step, state: try replayed([...steps, step], start) }
+}
+
+effect function accepted(current: Allocation, step: AllocationStep) {
+  const next = apply(current, step.event, step.by) catch effect (error) => {
+    if (error instanceof Rejected) return current
+    throw error
+  }
+  return next
+}
+
+effect function publishedList(allocation: ContributorAllocation) {
+  const rows: PublishedList["rows"] = []
+  for (const recipient of allocation.recipients) rows.push({ actor: Number(recipient.githubId), amount: try orDie(Effect.try(() => toAmount(BigInt(recipient.amountBase)))) })
+  return { present: true, digest: allocation.digest, network: allocation.network, deadline: Math.floor(Date.parse(allocation.registrationClosesAt) / 1000), rows } satisfies PublishedList
+}
+
+function registeredWallet(allocation: ContributorAllocation, wallets: ReadonlyArray<AccountWallet>) {
+  return wallets.find((wallet) => wallet.chain === allocation.chain && wallet.authorized && typeof wallet.firstAuthorizedAt === "string" && Number.isFinite(Date.parse(wallet.firstAuthorizedAt)))
+}
+
+function stateOf(allocation: Allocation): AllocationState | undefined {
+  switch (allocation.phase) {
+    case "Sent": return "sent"
+    case "Scheduled": return "scheduled"
+    case "AwaitingWallet": return "awaiting-wallet"
+    case "Unclaimed": return "unclaimed"
+    case "Unpublished": return undefined
+  }
+}
+
+export effect function recipientAllocation(allocation: ContributorAllocation, viewer: string, wallets: ReadonlyArray<AccountWallet>, nowMillis: number) {
+  const recipient = allocation.recipients.find((entry) => entry.githubId === viewer)
+  if (recipient === undefined) return undefined
+  const actor = Number(recipient.githubId)
+  const now = Math.floor(nowMillis / 1000)
+  let current = try accepted({ ...initial, actor }, { event: { type: "publish", list: try publishedList(allocation) }, by: "owner" })
+  const wallet = registeredWallet(allocation, wallets)
+  if (wallet?.firstAuthorizedAt) {
+    const confirmedAt = Math.floor(Date.parse(wallet.firstAuthorizedAt) / 1000)
+    if (confirmedAt > current.now) current = try accepted(current, { event: { type: "observeClock", now: confirmedAt }, by: "clock" })
+    current = try accepted(current, { event: { type: "confirmWallet", confirmation: { actor, wallet: wallet.address, network: allocation.network, confirmedAt } }, by: "recipient" })
+  }
+  if (recipient.transactionId !== null) current = try accepted(current, { event: { type: "recordSend", transaction: recipient.transactionId }, by: "owner" })
+  if (now > current.now) current = try accepted(current, { event: { type: "observeClock", now }, by: "clock" })
+  if (current.phase === "AwaitingWallet") current = try accepted(current, { event: { type: "expire" }, by: "clock" })
+  if (allocation.closed) current = try accepted(current, { event: { type: "closeBatch" }, by: "owner" })
+  const state = stateOf(current)
+  if (state === undefined || !mayRead(current, actor)) return undefined
+  return { recipient, state, allocation: current } satisfies RecipientAllocation
+}

@@ -1,0 +1,238 @@
+// spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"; spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained"; spec/points/quotaRecovery.md, "Resume requires progress or a bounded number of refusals before the deadline"
+import { isoAt } from "@repo/platform/clock"
+import { type Admission, type Attempt, type Event, type Hint, type Output, type Reply, type Run, Machine, machineOver, newInvocation, productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
+
+module verified {
+  import { hintTime as time, secondsLater as later } from "./hintTimes.ts"
+  /** @throws {never} */
+  export function hintTime(millis: number): number { return time(millis) }
+  /** @throws {never} */
+  export function secondsLater(now: number, seconds: number): number { return later(now, seconds) }
+}
+import { hintTime, secondsLater } from verified
+
+export error CampaignRefused { message: string }
+export error CollectionDeferred { message: string; kind: "Quota" | "RequestBudget"; requests: number; reportedGraphqlCost: number; retryAt: number }
+export error CollectionTimedOut { message: string }
+
+export interface RunLimits {
+  readonly started: number
+  readonly budget: number
+  readonly durationMs: number
+}
+
+export interface ResponseFacts {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string | undefined>>
+  readonly graphql: boolean
+  readonly payload: unknown
+}
+
+export interface ReplyFacts {
+  readonly attempt: Attempt
+  readonly bodyDigest: string
+  readonly cost: number
+  readonly acceptableSuccess: boolean
+  readonly recoverableStatistics: boolean
+  readonly hint: Hint
+}
+
+export service QuotaRun {
+  readonly machine: Machine.Shape
+  identity(text: string): number!!
+}
+
+export const productionLimits = { budget: productionBudget, durationMs: productionDuration }
+
+const digits = /^\d+$/u
+const secondaryMessage = /secondary rate limit|abuse detection/iu
+
+function safeTime(millis: number) {
+  return Number.isSafeInteger(millis) ? hintTime(millis) : 0
+}
+
+function objectOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function secondsHeader(value: string | undefined) {
+  return value !== undefined && digits.test(value) ? Number(value) : Number.NaN
+}
+
+export function hintOf(facts: ResponseFacts, now: number): Hint {
+  const payload = objectOf(facts.payload)
+  const retrySeconds = secondsHeader(facts.headers["retry-after"])
+  const resetSeconds = secondsHeader(facts.headers["x-ratelimit-reset"])
+  const errors = payload?.errors
+  const rateLimit = objectOf(objectOf(payload?.data)?.rateLimit)
+  const graphReset = typeof rateLimit?.resetAt === "string" ? Date.parse(rateLimit.resetAt) : Number.NaN
+  return {
+    status: facts.status,
+    graphql: facts.graphql,
+    graphqlLimited: Array.isArray(errors) && errors.some((error) => objectOf(error)?.type === "RATE_LIMITED"),
+    remainingZero: facts.headers["x-ratelimit-remaining"] === "0",
+    secondaryMessage: typeof payload?.message === "string" && secondaryMessage.test(payload.message),
+    retryAt: Number.isSafeInteger(retrySeconds) && Number.isSafeInteger(now) ? safeTime(secondsLater(now, retrySeconds)) : 0,
+    headerReset: Number.isSafeInteger(resetSeconds) ? safeTime(secondsLater(0, resetSeconds)) : 0,
+    graphReset: Number.isFinite(graphReset) ? safeTime(graphReset) : 0,
+  }
+}
+
+export effect function invocationMachine(limits: RunLimits) {
+  const held = try Ref.make(newInvocation(limits.started, limits.budget, limits.durationMs))
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function quotaRun(limits: RunLimits) {
+  return Layer.effect(QuotaRun, effect {
+    const machine = try invocationMachine(limits)
+    const identities = new Map<string, number>()
+    return {
+      machine,
+      identity: (text) => effect {
+        const known = identities.get(text)
+        if (known !== undefined) return known
+        const next = identities.size + 1
+        identities.set(text, next)
+        return next
+      },
+    } satisfies QuotaRun.Shape
+  })
+}
+
+effect function sent(event: Event) {
+  return try orDie((try QuotaRun).machine.send(event))
+}
+
+export effect function runState() {
+  return try (try QuotaRun).machine.get()
+}
+
+export effect function identityOf(text: string) {
+  return try (try QuotaRun).identity(text)
+}
+
+export effect function advanceClock() {
+  const now = try Clock.currentTimeMillis
+  const state = try runState()
+  if (now > state.now && (state.phase === "Collecting" || state.phase === "Draining" || state.phase === "Waiting")) return try sent({ type: "tick", time: now })
+  return state
+}
+
+export effect function admitCampaign(entry: Admission, describe: (state: Run) => string) {
+  try advanceClock()
+  const state = try runState()
+  const admitted = (try QuotaRun).machine.send({ type: "admit", entry }) catch effect () => {
+    throw new CampaignRefused({ message: describe(state) })
+  }
+  return admitted
+}
+
+export effect function interrupted() {
+  const state = try runState()
+  return state.phase !== "Collecting" || state.refusal.kind !== "None"
+}
+
+export effect function beginRead(key: string) {
+  const state = try advanceClock()
+  if (state.phase !== "Collecting") return undefined
+  const read = { key: try identityOf(key), kind: "NewEvidence" as const, canonicalRead: true }
+  if (state.requests >= state.budget) {
+    try sent({ type: "reachBudget", read })
+    return undefined
+  }
+  if (state.now >= state.deadline) {
+    try sent({ type: "timeout" })
+    return undefined
+  }
+  const next = (try QuotaRun).machine.send({ type: "request", read }) catch () => undefined
+  return next?.outstanding.at(-1)
+}
+
+function observing(state: Run) {
+  return state.phase === "Collecting" || state.phase === "Draining"
+}
+
+export effect function observeReply(facts: ReplyFacts) {
+  const state = try advanceClock()
+  if (!observing(state)) return state
+  const reply: Reply = {
+    attempt: facts.attempt,
+    digest: try identityOf(facts.bodyDigest),
+    cost: Number.isSafeInteger(facts.cost) && facts.cost >= 0 ? facts.cost : 0,
+    acceptableSuccess: facts.acceptableSuccess,
+    recoverableStatistics: facts.recoverableStatistics,
+    hint: facts.hint,
+  }
+  return try sent({ type: "observe", reply })
+}
+
+export effect function failAttempt(attempt: Attempt) {
+  const state = try runState()
+  if (!observing(state) || !state.outstanding.some((open) => open.number === attempt.number && open.key === attempt.key)) return state
+  return try sent({ type: "failRead", attempt })
+}
+
+export effect function reuseRetained(key: string) {
+  const state = try runState()
+  const cachedKey = try identityOf(key)
+  if (state.phase !== "Collecting" || !state.indexed.includes(cachedKey)) return state
+  return try sent({ type: "reuse", cachedKey, exactBytes: true })
+}
+
+export effect function finishCollection(output: Output) {
+  try advanceClock()
+  return (try QuotaRun).machine.send({ type: "finish", output }) catch effect () => {
+    throw new CampaignRefused({ message: "An interrupted collection or a manifest that does not match its receipt cannot complete the campaign" })
+  }
+}
+
+function deferred(state: Run) {
+  const kind = state.refusal.kind === "RequestBudget" ? "RequestBudget" as const : "Quota" as const
+  const reason = kind === "Quota"
+    ? "GitHub API quota exhausted; wait for quota recovery and rerun the same baseline-bound campaign"
+    : "Request budget reached; rerun the same baseline-bound campaign"
+  return new CollectionDeferred({
+    message: `${reason} (${state.requests} requests, ${state.cost} reported GraphQL points in this invocation)`,
+    kind,
+    requests: state.requests,
+    reportedGraphqlCost: state.cost,
+    retryAt: state.refusal.retryAt,
+  })
+}
+
+effect function timedOut(state: Run) {
+  if (state.phase === "Checkpoint") return deferred(state)
+  return new CollectionTimedOut({ message: `Historical collection reached its deadline at ${try isoAt(state.deadline)} (${state.requests} requests)` })
+}
+
+export effect function resumeAcrossQuota<A, E, R>(pass: () => A!E!R, sleeping: (millis: number) => void!!, resume: boolean) {
+  while (true) {
+    const outcome = try exit(pass())
+    if (Exit.isSuccess(outcome)) return outcome.value
+    let state = try advanceClock()
+    if (state.phase === "Unbound" || (state.phase === "Failed" && state.now < state.deadline) || (state.phase === "Collecting" && state.refusal.kind === "None" && state.now < state.deadline)) {
+      return try Effect.failCause(outcome.cause)
+    }
+    for (const attempt of state.outstanding) {
+      if (observing(state)) state = try failAttempt(attempt)
+    }
+    if (state.now >= state.deadline && state.phase !== "Failed" && state.phase !== "Checkpoint") state = try sent({ type: "timeout" })
+    if (state.phase === "Failed") {
+      const failure = try timedOut(state)
+      throw failure
+    }
+    if (state.phase === "Draining") state = try sent({ type: "drain" })
+    if (state.phase === "Checkpoint" || !resume) throw deferred(state)
+    try Console.warn(`Historical evidence checkpoint saved after ${state.requests} requests; resuming after GitHub quota at ${try isoAt(state.wakeAt)}`)
+    while (state.phase === "Waiting" && state.now < state.wakeAt && state.now < state.deadline) {
+      try sleeping(Math.min(state.wakeAt, state.deadline) - state.now)
+      state = try advanceClock()
+    }
+    if (state.now >= state.deadline) {
+      state = try sent({ type: "timeout" })
+      throw deferred(state)
+    }
+    try sent({ type: "resume" })
+  }
+}

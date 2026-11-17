@@ -1,0 +1,436 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { type Anvil, type Validator, anvil, solanaValidator } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type EffectiveWallet, Registry, RegistryManifests, Wallets } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { DirectBounty } from "@repo/ports/settlement"
+import { reviewedFactory } from "../src/chain/evm/factories.ts"
+import { DirectIntent } from "../src/client/direct.vibe"
+import { SOLANA_NATIVE_ASSET } from "../src/kernels/networks.ts"
+import { evmDirectRails } from "../src/direct/evm.vibe"
+import { DirectBountyLive } from "../src/direct/port.vibe"
+import { type RecoverPaymentBody, directActions, recoverPayment, recoveryView } from "../src/direct/recovery.vibe"
+import { type CaseContext, DirectRefused } from "../src/direct/routes.vibe"
+import { IssuedPlan, RecoveryRefused, solanaDirectRails } from "../src/direct/solana.vibe"
+import { runSecurityPayments } from "../src/securityScope/engine.vibe"
+import { paymentRpc } from "../src/vault/rpc.vibe"
+
+module helpers {
+  import { ed25519 } from "@noble/curves/ed25519.js"
+  import type { Fetcher } from "@repo/platform/bindings"
+  import { base58Encode, base64Decode, base64Encode } from "@repo/platform/chain/solana"
+  /** @throws {never} */
+  export function big(value: unknown): bigint {
+    try {
+      return BigInt(String(value))
+    } catch {
+      return -1n
+    }
+  }
+  /** @throws {never} */
+  export function parsedJson(text: unknown): unknown {
+    try {
+      return JSON.parse(String(text))
+    } catch {
+      return undefined
+    }
+  }
+  /** @throws {never} */
+  export function keyOfSeed(seed: number): string {
+    return base58Encode(ed25519.getPublicKey(new Uint8Array(32).fill(seed)))
+  }
+  /** @throws {never} */
+  export function signedWire(unsigned: string, secretKey: Uint8Array): string {
+    const wire = new Uint8Array(base64Decode(unsigned) ?? new Uint8Array())
+    wire.set(ed25519.sign(wire.slice(65), secretKey.slice(0, 32)), 1)
+    return base64Encode(wire)
+  }
+  /** @throws {never} */
+  export function signedMessage(message: string, secretKey: Uint8Array): string {
+    return base58Encode(ed25519.sign(base64Decode(message) ?? new Uint8Array(), secretKey.slice(0, 32)))
+  }
+  /** @throws {never} */
+  export function finalizedStatus(reply: unknown): boolean {
+    const value = typeof reply === "object" && reply !== null && "value" in reply && Array.isArray(reply.value) ? reply.value[0] : undefined
+    return typeof value === "object" && value !== null && "confirmationStatus" in value && value.confirmationStatus === "finalized"
+  }
+  /** @throws {never} */
+  export function lamportsOf(reply: unknown): bigint {
+    return typeof reply === "object" && reply !== null && "value" in reply && typeof reply.value === "number" ? BigInt(reply.value) : -1n
+  }
+  /** @throws {never} */
+  export function recordingFetcher(paths: string[]): Fetcher {
+    return {
+      fetch: (request) => {
+        paths.push(new URL(request.url).pathname)
+        return Promise.resolve(Response.json({ transactionId: null, retired: false }))
+      },
+    }
+  }
+  /** @throws {never} */
+  export function stillValid(reply: unknown): boolean {
+    return typeof reply === "object" && reply !== null && "value" in reply && reply.value === true
+  }
+}
+import { big, finalizedStatus, keyOfSeed, lamportsOf, parsedJson, recordingFetcher, signedMessage, signedWire, stillValid } from helpers
+
+error MigrationFailed { file: string }
+
+service Ledger {
+  readonly db: D1Database
+}
+
+service Chains {
+  readonly evm: Anvil
+  readonly solana: Validator
+}
+
+effect function ledger() {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "direct-solana" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+}
+
+const LedgerStarted = Layer.effect(Ledger, ledger())
+
+const ChainsStarted = Layer.mergeAll(LedgerStarted, Layer.effect(Chains, effect {
+  const evm = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  try promise(() => evm.rpc("anvil_setCode", ["0x420000000000000000000000000000000000000f", "0x60206000f3"]))
+  const solana = try acquireRelease(promise(() => solanaValidator()), (started) => promise(() => started.close()))
+  return { evm, solana }
+}))
+
+const awards = new Map<string, ApprovedAward>()
+const wallets = new Map<string, EffectiveWallet>()
+
+function walletKey(githubId: string, network: string) {
+  return `${githubId}:${network}`
+}
+
+const fakePorts = Layer.mergeAll(
+  Layer.succeed(ApprovedAwards, { forCase: (caseId) => effect { return awards.get(caseId) } }),
+  Layer.succeed(Wallets, {
+    effective: ({ githubId, network }) => effect { return wallets.get(walletKey(githubId, network)) },
+    payable: ({ githubId, network }) => effect { return wallets.get(walletKey(githubId, network)) },
+    authorized: ({ githubId, network }) => effect { return [...wallets.entries()].flatMap(([owner, wallet]) => owner === walletKey(githubId, network) ? [wallet] : []) },
+    fence: ({ githubId, network, claimId, digest }) => effect {
+      const current = wallets.get(walletKey(githubId, network))
+      return sql`${current?.claimId === claimId && current?.digest === digest ? 1 : 0} = 1`
+    },
+  }),
+)
+
+effect function seedCase(db: D1Database, caseId: string, projectId: string, reporterGithubId: string, grossBase: string) {
+  const now = "2026-11-17T00:00:00.000Z"
+  const manifest = JSON.stringify({ id: projectId, status: "active" })
+  const sha = "a".repeat(64)
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind(projectId, manifest, sha, now),
+    db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind(projectId, manifest, sha, now, now),
+    db.prepare("INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key) VALUES (?, ?, 'owner/repo', ?, 'reporter', 'verified', ?, ?, '7', 1, '{}', 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ?, ?, ?)").bind(caseId, projectId, reporterGithubId, now, now, now, now, `root-${caseId}`),
+    db.prepare("INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (?, ?, ?, '{}', ?, ?)").bind(caseId, projectId, `root-${caseId}`, grossBase, now),
+  ]))
+}
+
+function approved(caseId: string, projectId: string, grossBaseUnits: string, network: ApprovedAward["network"], asset: string): ApprovedAward {
+  return { caseId, projectId, caseRevision: 3, termsRevision: 1, direct: true, split: "StandardSplit", grossBaseUnits, asset, network, rootCauseKey: `root-${caseId}`, approvedAt: "2026-11-17T00:00:00.000Z" }
+}
+
+effect function reasonOf<A, E, R>(run: A!E!R) {
+  const answer = run catch effect (error) => {
+    if (error instanceof DirectRefused || error instanceof RecoveryRefused) return error.reason
+    throw error
+  }
+  return typeof answer === "string" ? answer : answer
+}
+
+effect function rowsOf(db: D1Database, text: string, ...params: ReadonlyArray<string>) {
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function legsFor(caseId: string) {
+  provide DirectBountyLive {
+    return (try (try DirectBounty).legs(caseId)).map((leg) => [leg.lane, leg.state, leg.baseUnits])
+  }
+}
+
+effect function currentIntentOf(db: D1Database, caseId: string) {
+  const [stored] = try rowsOf(db, "SELECT intent FROM security_direct_current_payments WHERE case_id = ?", caseId)
+  return try Schema.decodeUnknownEffect(DirectIntent)(parsedJson(stored?.intent))
+}
+
+effect function issuedPlanOf(db: D1Database, caseId: string) {
+  const [stored] = try rowsOf(db, "SELECT json_extract(intent, '$.solana') AS plan FROM security_direct_current_payments WHERE case_id = ?", caseId)
+  return try Schema.decodeUnknownEffect(IssuedPlan)(parsedJson(stored?.plan))
+}
+
+const confirmed = { confirmation: true } as const
+
+function railsOf(chains: { readonly evm: Anvil; readonly solana: Validator }) {
+  return Layer.mergeAll(
+    evmDirectRails(JSON.stringify({ "base-mainnet": chains.evm.url })),
+    solanaDirectRails({
+      paymentRpcUrls: JSON.stringify({ "solana-mainnet": chains.solana.url }),
+      localSolanaGenesis: chains.solana.genesis,
+      recoveryRpcUrl: chains.solana.url.replace("127.0.0.1", "localhost"),
+    }),
+  )
+}
+
+effect function sendSolana(validator: Validator, unsigned: string) {
+  const signature = try promise(() => validator.rpc("sendTransaction", [signedWire(unsigned, validator.payer.secretKey), { encoding: "base64", preflightCommitment: "confirmed" }]))
+  for (let attempt = 0; attempt < 240; attempt++) {
+    if (finalizedStatus(try promise(() => validator.rpc("getSignatureStatuses", [[signature], { searchTransactionHistory: true }])))) return String(signature)
+    try Effect.sleep("500 millis")
+  }
+  return try die(new Error("the Solana transfer never finalized"))
+}
+
+effect function expired(validator: Validator, blockhash: string) {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    if (!stillValid(try promise(() => validator.rpc("isBlockhashValid", [blockhash, { commitment: "finalized" }])))) return
+    try Effect.sleep("500 millis")
+  }
+  return try die(new Error("the Solana blockhash never expired"))
+}
+
+layer(ChainsStarted, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Private-award successor on anvil: renewed consent, finalized cancellation, then the successor pays (spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "A destination requires the current account and wallet consent")', () => effect {
+    const { db } = try Ledger
+    const chains = try Chains
+    const { evm } = chains
+    const caseId = "sc_evm_successor"
+    const gross = 4_000_000_000_000_000n
+    const [payerAccount, oldReporter, newReporter] = evm.accounts
+    const feeRecipient = reviewedFactory("base-mainnet")?.feeRecipient ?? ""
+    if (payerAccount === undefined || oldReporter === undefined || newReporter === undefined) return try die(new Error("anvil has too few accounts"))
+    try seedCase(db, caseId, "evm-successor-project", "212", gross.toString())
+    awards.set(caseId, approved(caseId, "evm-successor-project", gross.toString(), "Base", "0x0000000000000000000000000000000000000000"))
+    wallets.set(walletKey("212", "Base"), { address: oldReporter.address.toLowerCase(), claimId: "claim-old-reporter", digest: "b".repeat(64) })
+    wallets.set(walletKey("111", "Base"), { address: payerAccount.address.toLowerCase(), claimId: "claim-evm-payer", digest: "c".repeat(64) })
+    const reporter = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "212", actorGithubId: "212" })
+    const payer = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "212", actorGithubId: "111" })
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, railsOf(chains), fakePorts) {
+      try directActions["consent-payment"](reporter(3), { network: "base-mainnet", confirmation: true }, [])
+      try directActions["prepare-payment"](payer(4), { network: "base-mainnet", confirmation: true }, [])
+      const intent = try currentIntentOf(db, caseId)
+      const feeLeg = try promise(() => evm.transact({ from: payerAccount.address, to: feeRecipient as `0x${string}`, value: big(intent.feeBase) }))
+      try promise(() => evm.mine(80))
+      try directActions["verify-payment"](payer(5), { transactionIds: [feeLeg.transactionHash], confirmation: true }, [])
+      wallets.set(walletKey("212", "Base"), { address: newReporter.address.toLowerCase(), claimId: "claim-new-reporter", digest: "d".repeat(64) })
+      const unconsentedView = try recoveryView(payer(6))
+      const unconsented = try reasonOf(recoverPayment(payer(6), confirmed, []))
+      const renewed = try directActions["consent-payment"](reporter(6), { network: "base-mainnet", confirmation: true }, [])
+      const consentedView = try recoveryView(payer(7))
+      const uncancelled = try reasonOf(recoverPayment(payer(7), confirmed, []))
+      const cancellation = try promise(() => evm.transact({ from: payerAccount.address, to: payerAccount.address, value: 0n }))
+      try promise(() => evm.mine(80))
+      const recovered = try recoverPayment(payer(7), { confirmation: true, cancellationTransactionId: cancellation.transactionHash } satisfies RecoverPaymentBody, [])
+      const successor = try currentIntentOf(db, caseId)
+      const before = big(try promise(() => evm.rpc("eth_getBalance", [newReporter.address, "latest"])))
+      const researcherLeg = try promise(() => evm.transact({ from: payerAccount.address, to: newReporter.address, value: big(successor.netBase) }))
+      try promise(() => evm.mine(80))
+      const verified = try directActions["verify-payment"](payer(8), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, [])
+      const after = big(try promise(() => evm.rpc("eth_getBalance", [newReporter.address, "latest"])))
+      const revisions = try rowsOf(db, "SELECT generation, json_extract(retirement, '$.kind') AS kind, json_extract(intent, '$.recipient.id') AS recipient FROM security_direct_payment_revisions WHERE case_id = ?", caseId)
+      const nonces = try rowsOf(db, "SELECT generation, leg_index FROM security_direct_nonce_reservations WHERE case_id = ? ORDER BY generation, leg_index", caseId)
+      const paid = try rowsOf(db, "SELECT case_id FROM security_direct_payment_receipts WHERE case_id = ?", caseId)
+      try same({
+        unconsented: [unconsentedView?.mode, unconsented],
+        renewed,
+        consented: [consentedView?.mode, consentedView?.legIndex, uncancelled],
+        recovered,
+        successor: [successor.recipient.id, successor.transfers[0]?.recipient.toLowerCase(), successor.transfers[1]?.recipient.toLowerCase()],
+        verified,
+        received: after - before,
+        revisions,
+        nonces,
+        paid: paid.length,
+        legs: try legsFor(caseId),
+        finished: try recoveryView(payer(9)),
+      }, {
+        unconsented: ["consent-required", "paymentConsentRequiredTheReporterMustConsent"],
+        renewed: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        consented: ["cancellation-required", 0, "cancellationRequired"],
+        recovered: { generation: 1, legIndex: 0, retirement: "finalized-cancellation" },
+        successor: ["claim-new-reporter", newReporter.address.toLowerCase(), feeRecipient.toLowerCase()],
+        verified: { verified: true, rail: "direct" },
+        received: gross * 3n / 4n,
+        revisions: [{ generation: 1, kind: "evm-nonce-retired", recipient: "claim-new-reporter" }],
+        nonces: [{ generation: 0, leg_index: 0 }, { generation: 0, leg_index: 1 }, { generation: 1, leg_index: 0 }],
+        paid: 1,
+        legs: [["Researcher", "PaidExact", (gross * 3n / 4n).toString()], ["Fee", "PaidExact", (gross / 4n).toString()]],
+        finished: null,
+      })
+    }
+  })
+
+  it.effect('An old finalized winner ends recovery without a successor payment (spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request")', () => effect {
+    const { db } = try Ledger
+    const chains = try Chains
+    const { evm } = chains
+    const caseId = "sc_old_winner"
+    const gross = 8_000_000_000_000_000n
+    const [payerAccount, , , oldReporter, newReporter] = evm.accounts
+    const feeRecipient = reviewedFactory("base-mainnet")?.feeRecipient ?? ""
+    if (payerAccount === undefined || oldReporter === undefined || newReporter === undefined) return try die(new Error("anvil has too few accounts"))
+    try seedCase(db, caseId, "old-winner-project", "222", gross.toString())
+    awards.set(caseId, approved(caseId, "old-winner-project", gross.toString(), "Base", "0x0000000000000000000000000000000000000000"))
+    wallets.set(walletKey("222", "Base"), { address: oldReporter.address.toLowerCase(), claimId: "claim-winner-old", digest: "e".repeat(64) })
+    const reporter = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "222", actorGithubId: "222" })
+    const payer = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "222", actorGithubId: "111" })
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, railsOf(chains), fakePorts) {
+      try directActions["consent-payment"](reporter(3), { network: "base-mainnet", confirmation: true }, [])
+      try directActions["prepare-payment"](payer(4), { network: "base-mainnet", confirmation: true }, [])
+      const intent = try currentIntentOf(db, caseId)
+      wallets.set(walletKey("222", "Base"), { address: newReporter.address.toLowerCase(), claimId: "claim-winner-new", digest: "f".repeat(64) })
+      const feeLeg = try promise(() => evm.transact({ from: payerAccount.address, to: feeRecipient as `0x${string}`, value: big(intent.feeBase) }))
+      const oldLeg = try promise(() => evm.transact({ from: payerAccount.address, to: oldReporter.address, value: big(intent.netBase) }))
+      try promise(() => evm.mine(80))
+      const verified = try directActions["verify-payment"](payer(5), { transactionIds: [feeLeg.transactionHash, oldLeg.transactionHash], confirmation: true }, [])
+      const ended = try reasonOf(recoverPayment(payer(6), confirmed, []))
+      try same({
+        verified,
+        view: try recoveryView(payer(6)),
+        ended,
+        revisions: (try rowsOf(db, "SELECT generation FROM security_direct_payment_revisions WHERE case_id = ?", caseId)).length,
+        legs: try legsFor(caseId),
+      }, {
+        verified: { verified: true, rail: "direct" },
+        view: null,
+        ended: "paymentAlreadyVerifiedThisPaymentIsAlready",
+        revisions: 0,
+        legs: [["Researcher", "PaidExact", (gross * 3n / 4n).toString()], ["Fee", "PaidExact", (gross / 4n).toString()]],
+      })
+    }
+  })
+
+  it.effect('Private-award successor on solana-test-validator: an expired, unpaid message is retired by two histories before the successor pays (spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/payment.md, "A destination requires the current account and wallet consent")', () => effect {
+    const { db } = try Ledger
+    const chains = try Chains
+    const validator = chains.solana
+    const caseId = "sc_solana_successor"
+    const gross = 4_000_000_000n
+    const oldReporter = keyOfSeed(31)
+    const newReporter = keyOfSeed(32)
+    try promise(() => validator.airdrop(validator.payer.address, 20_000_000_000n))
+    try seedCase(db, caseId, "solana-successor-project", "232", gross.toString())
+    awards.set(caseId, approved(caseId, "solana-successor-project", gross.toString(), "Solana", SOLANA_NATIVE_ASSET))
+    wallets.set(walletKey("232", "Solana"), { address: oldReporter, claimId: "claim-solana-old", digest: "1".repeat(64) })
+    wallets.set(walletKey("131", "Solana"), { address: validator.payer.address, claimId: "claim-solana-payer", digest: "2".repeat(64) })
+    const reporter = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "232", actorGithubId: "232" })
+    const payer = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "232", actorGithubId: "131" })
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, railsOf(chains), fakePorts) {
+      const consented = try directActions["consent-payment"](reporter(3), { network: "solana-mainnet", confirmation: true }, [])
+      const prepared = try directActions["prepare-payment"](payer(4), { network: "solana-mainnet", confirmation: true }, [])
+      const original = try issuedPlanOf(db, caseId)
+      wallets.set(walletKey("232", "Solana"), { address: newReporter, claimId: "claim-solana-new", digest: "3".repeat(64) })
+      const renewed = try directActions["consent-payment"](reporter(5), { network: "solana-mainnet", confirmation: true }, [])
+      const early = try recoverPayment(payer(6), confirmed, [])
+      try expired(validator, original.blockhash)
+      const challenged = try recoverPayment(payer(6), confirmed, [])
+      const challenges = "messages" in challenged ? challenged.messages ?? [] : []
+      const signatures = challenges.map((challenge) => ({ messageId: challenge.messageId, signature: signedMessage(challenge.message, validator.payer.secretKey) }))
+      let outcome = try recoverPayment(payer(6), { confirmation: true, signatures }, [])
+      for (let round = 0; round < 60 && !("retirement" in outcome); round++) outcome = try recoverPayment(payer(6), { confirmation: true, signatures }, [])
+      const successor = try issuedPlanOf(db, caseId)
+      const sent = try sendSolana(validator, successor.transaction)
+      const balance = lamportsOf(try promise(() => validator.rpc("getBalance", [newReporter, { commitment: "finalized" }])))
+      const verified = try directActions["verify-payment"](payer(7), { transactionIds: [sent], confirmation: true }, [])
+      const scans = try rowsOf(db, "SELECT DISTINCT operator FROM security_direct_recovery_scans WHERE case_id = ? ORDER BY operator", caseId)
+      try same({
+        consented,
+        prepared,
+        renewed,
+        early: "state" in early ? early.state : early,
+        challenged: [challenges.length, challenges[0]?.messageId === original.messageId],
+        outcome,
+        successor: successor.messageId !== original.messageId,
+        verified,
+        received: balance,
+        operators: scans.length,
+        revisions: try rowsOf(db, "SELECT generation, json_extract(retirement, '$.kind') AS kind FROM security_direct_payment_revisions WHERE case_id = ?", caseId),
+        legs: try legsFor(caseId),
+      }, {
+        consented: { network: "solana-mainnet", publicChainVisibilityAccepted: true },
+        prepared: { network: "solana-mainnet", rail: "direct" },
+        renewed: { network: "solana-mainnet", publicChainVisibilityAccepted: true },
+        early: "expiry-required",
+        challenged: [1, true],
+        outcome: { generation: 1, legIndex: 0, retirement: "expired-and-unpaid" },
+        successor: true,
+        verified: { verified: true, rail: "direct" },
+        received: gross * 3n / 4n,
+        operators: 2,
+        revisions: [{ generation: 1, kind: "solana-expired" }],
+        legs: [["Researcher", "PaidExact", (gross * 3n / 4n).toString()], ["Fee", "PaidExact", (gross / 4n).toString()]],
+      })
+    }
+  })
+})
+
+layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('The security-scope vault engine readies only its own private ledger (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+    const { db } = try Ledger
+    const now = "2026-11-17T00:00:00.000Z"
+    const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    try promise(() => db.batch([
+      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-ready', 'private-project', '303', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c1', ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(usdc, "4".repeat(64), now),
+      db.prepare("INSERT INTO security_payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('private-walletless', 'private-project', '304', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c1', ?, 6, '4000000', '1000000', ?, 'reserved', ?, NULL)").bind(usdc, "5".repeat(64), now),
+      db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES ('ordinary-reserved', 'ordinary-project', '303', 'base-mainnet', 'base', '0x00000000000000000000000000000000000000c2', ?, 6, '4000000', '80000', ?, 'reserved', ?, NULL)").bind(usdc, "6".repeat(64), now),
+      db.prepare("INSERT INTO security_payment_outbox (obligation_id, state, updated_at) VALUES ('private-walletless', 'held', ?)").bind(now),
+    ]))
+    const asked: string[] = []
+    const executed: string[] = []
+    const executor = recordingFetcher(executed)
+    wallets.set(walletKey("303", "Base"), { address: "0x00000000000000000000000000000000000000d3", claimId: "claim-private-303", digest: "7".repeat(64) })
+    const ports = Layer.mergeAll(
+      fakePorts,
+      Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+      Layer.succeed(Notices, {
+        statements: (batch) => effect {
+          asked.push(...batch.notices.map((notice) => notice.kind))
+          return []
+        },
+        fanout: (fanout) => effect {
+          asked.push(fanout.kind)
+          return []
+        },
+      }),
+      Layer.succeed(Registry, {
+        project: () => effect { return undefined },
+        byRepository: () => effect { return undefined },
+        byPath: () => effect { return undefined },
+        active: () => effect { return [] },
+        fence: () => effect { return sql`1` },
+      }),
+      paymentRpc("{}", "{}"),
+    )
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, ports) {
+      try runSecurityPayments(["base-mainnet"], { evm: executor, solana: executor })
+      try same({
+        privateOutbox: try rowsOf(db, "SELECT obligation_id, state FROM security_payment_outbox ORDER BY obligation_id"),
+        ordinaryOutbox: try rowsOf(db, "SELECT obligation_id FROM payment_outbox WHERE obligation_id = 'ordinary-reserved'"),
+        asked,
+        executed: executed.filter((path) => !path.startsWith("/v1/security/")),
+      }, {
+        privateOutbox: [{ obligation_id: "private-ready", state: "ready" }, { obligation_id: "private-walletless", state: "held" }],
+        ordinaryOutbox: [],
+        asked: [],
+        executed: [],
+      })
+    }
+  })
+})

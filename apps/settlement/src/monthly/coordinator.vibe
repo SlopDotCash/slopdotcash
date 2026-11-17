@@ -1,0 +1,163 @@
+// spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault's finalized free balance covers the month"
+import { rows, sql } from "@repo/platform/d1"
+import { Conflict } from "@repo/platform/stored"
+import { Registry } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { type Monthly, Rejected as MonthRejected, canAutoFreeze, cutoff, financialTermsSame, firstAutomaticPeriod } from "../../gen/settlement__monthly.effect.vibe"
+import { Rejected, canCreateObligations, canNoteUnderfunded } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
+import { type Settlement, loadSettlement, settle } from "../monthlySettlement/store.vibe"
+import { type MonthKey, FundingStale, ProjectChanged, amountOf } from "./store.vibe"
+
+const coordinator = "coordinator"
+
+export type Funding = "Created" | "AlreadyCreated" | "Underfunded" | "StaleFunding" | "NotFrozen"
+
+type Freezing = "Frozen" | "BeforeCutoff" | "BeforeFirstPeriod" | "AutomaticOff" | "ProjectRestricted" | "VaultNotServed" | "FinancialPolicyChanged" | "ProjectChanged" | "AlreadyFrozen"
+
+export interface Waiting {
+  readonly key: string
+  readonly reason: string
+}
+
+export interface CoordinatorReport {
+  readonly frozen: ReadonlyArray<string>
+  readonly created: ReadonlyArray<string>
+  readonly waiting: ReadonlyArray<Waiting>
+  readonly failures: ReadonlyArray<Waiting>
+}
+
+schema DueRow { readonly project_id: string; readonly period: string }
+
+export effect function underfundedNotice(settlement: Settlement) {
+  const run = settlement.loaded.rows.run
+  const project = try (try Registry).project(settlement.key.projectId)
+  if (run === undefined || project === undefined) return []
+  const period = formatPeriod(settlement.key.period)
+  const projectId = settlement.key.projectId
+  return try (try Notices).statements({
+    notices: [{
+      eventKey: `monthly-underfunded:${projectId}:${period}`,
+      recipientGithubId: project.stewardGithubId,
+      kind: "PayoutException",
+      subject: projectId,
+      detail: `The ${period} monthly awards wait for funds. No award is created until the vault covers the whole month.`,
+      actionPath: `/projects/${projectId}/funding`,
+      sourceAt: run.frozen_at,
+    }],
+    onlyIf: sql`EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = ${projectId} AND r.period = ${period} AND r.obligations_created_at IS NULL)`,
+  })
+}
+
+export effect function fundMonth(key: MonthKey) {
+  const settlement = try loadSettlement(key)
+  const { state } = settlement
+  if (state.month.phase === "Funded" || state.month.phase === "Completed") return "AlreadyCreated" satisfies Funding
+  if (state.month.phase !== "Frozen") return "NotFrozen" satisfies Funding
+  const earlierUnreserved = amountOf(settlement.earlierUnreserved)
+  const bans = [...settlement.bans]
+  if (canCreateObligations(state, earlierUnreserved, bans)) {
+    const outcome = settle(settlement, { type: "createObligations", earlierUnreserved, bans }, coordinator) catch effect (error) => match (error) {
+      when FundingStale: "StaleFunding" satisfies Funding;
+      when Conflict: "StaleFunding" satisfies Funding;
+      when Rejected: "StaleFunding" satisfies Funding;
+      when MonthRejected: "StaleFunding" satisfies Funding;
+      default: throw error;
+    }
+    return typeof outcome === "string" ? outcome : "Created" satisfies Funding
+  }
+  if (!canNoteUnderfunded(state, earlierUnreserved, bans)) return "StaleFunding" satisfies Funding
+  const notices = try underfundedNotice(settlement)
+  settle(settlement, { type: "noteUnderfunded", earlierUnreserved, bans }, coordinator, { alongside: notices }) catch effect (error) => match (error) {
+    when Conflict: undefined;
+    when Rejected: undefined;
+    when MonthRejected: undefined;
+    default: throw error;
+  }
+  return "Underfunded" satisfies Funding
+}
+
+function waitingReason(month: Monthly): Freezing {
+  if (month.phase !== "Proposed") return "AlreadyFrozen"
+  if (month.period < firstAutomaticPeriod) return "BeforeFirstPeriod"
+  if (month.now < cutoff(month)) return "BeforeCutoff"
+  if (!month.automatic) return "AutomaticOff"
+  if (month.eligibility.paused || month.eligibility.restricted) return "ProjectRestricted"
+  if (!month.eligibility.networkServed) return "VaultNotServed"
+  if (!financialTermsSame(month.revision, month.currentRevision)) return "FinancialPolicyChanged"
+  return "ProjectChanged"
+}
+
+effect function freezeDue(key: MonthKey) {
+  const settlement = try loadSettlement(key)
+  const month = settlement.state.month
+  if (!canAutoFreeze(month)) return waitingReason(month)
+  const outcome = settle(settlement, { type: "autoFreeze" }, coordinator) catch effect (error) => match (error) {
+    when ProjectChanged: "ProjectChanged" satisfies Freezing;
+    when Conflict: "ProjectChanged" satisfies Freezing;
+    when Rejected: "ProjectChanged" satisfies Freezing;
+    when MonthRejected: "ProjectChanged" satisfies Freezing;
+    default: throw error;
+  }
+  return typeof outcome === "string" ? outcome : "Frozen" satisfies Freezing
+}
+
+const kebab: Readonly<Record<Exclude<Freezing, "Frozen" | "BeforeCutoff" | "AlreadyFrozen">, string>> = {
+  BeforeFirstPeriod: "before-first-period",
+  AutomaticOff: "automatic-off",
+  ProjectRestricted: "project-restricted",
+  VaultNotServed: "vault-not-served",
+  FinancialPolicyChanged: "financial-policy-changed",
+  ProjectChanged: "project-changed",
+}
+
+const fundingReasons: Readonly<Record<Exclude<Funding, "Created" | "AlreadyCreated">, string>> = {
+  Underfunded: "underfunded",
+  StaleFunding: "stale-funding",
+  NotFrozen: "not-frozen",
+}
+
+function keyOf(row: DueRow): MonthKey | undefined {
+  const period: Period | undefined = parsePeriod(row.period)
+  return period === undefined ? undefined : { projectId: row.project_id, period }
+}
+
+function failureOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : "failure"
+}
+
+export effect function coordinateMonthlyPayments() {
+  const frozen: string[] = []
+  const created: string[] = []
+  const waiting: Waiting[] = []
+  const failures: Waiting[] = []
+  const due = try rows(DueRow, sql`SELECT project_id, period FROM monthly_reward_bases b WHERE NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = b.project_id AND r.period = b.period) ORDER BY period, project_id`)
+  for (const row of due) {
+    const label = `${row.project_id}/${row.period}`
+    const key = keyOf(row)
+    if (key === undefined) {
+      failures.push({ key: label, reason: "invalid-period" })
+      continue
+    }
+    const outcome = freezeDue(key) catch effect (error) => failureOf(error)
+    if (outcome === "Frozen") frozen.push(label)
+    else if (outcome === "BeforeCutoff" || outcome === "AlreadyFrozen") continue
+    else if (outcome in kebab) waiting.push({ key: label, reason: kebab[outcome as keyof typeof kebab] })
+    else failures.push({ key: label, reason: outcome })
+  }
+  const pending = try rows(DueRow, sql`SELECT project_id, period FROM monthly_payment_runs WHERE obligations_created_at IS NULL ORDER BY period, project_id`)
+  for (const row of pending) {
+    const label = `${row.project_id}/${row.period}`
+    const key = keyOf(row)
+    if (key === undefined) {
+      failures.push({ key: label, reason: "invalid-period" })
+      continue
+    }
+    const outcome = fundMonth(key) catch effect (error) => failureOf(error)
+    if (outcome === "Created") created.push(label)
+    else if (outcome === "AlreadyCreated") continue
+    else if (outcome in fundingReasons) waiting.push({ key: label, reason: fundingReasons[outcome as keyof typeof fundingReasons] })
+    else failures.push({ key: label, reason: outcome })
+  }
+  return { frozen, created, waiting, failures } satisfies CoordinatorReport
+}

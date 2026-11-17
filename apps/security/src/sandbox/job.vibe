@@ -1,0 +1,56 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/security/sandbox.md, "Every request destroys its sandbox, and a cleanup failure never completes"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { collectVerifiedMergeResolutionBatch, recoverFiles, systemGit, unbundledStore, verifyMergeObjectStore } from "@repo/platform/git"
+import { lossyText, parsedJson, sha256Of, textBytes } from "@repo/platform/git/bytes"
+import { FileRequest, MERGE_PROFILE, MergeInput } from "@repo/platform/git/evidence"
+
+const fileLimit = 8 * 1024 * 1024
+const bundleLimit = 32 * 1024 * 1024
+const digestPattern = /^[a-f0-9]{64}$/u
+
+schema JobInput {
+  readonly profile: string
+  readonly inputs: ReadonlyArray<MergeInput>
+  readonly bundleBytes: number
+  readonly bundleSha256: string
+  readonly fileRequests?: ReadonlyArray<FileRequest>
+}
+
+error JobRefused
+
+function sources(value: unknown): ReadonlyArray<unknown> {
+  const found: unknown = typeof value === "object" && value !== null ? Reflect.get(value, "inputs") : undefined
+  return Array.isArray(found) ? found : []
+}
+
+export effect function mergeJob(root: string) {
+  const fs = try FileSystem.FileSystem
+  const inputPath = `${root}/merge-input.json`
+  const bundlePath = `${root}/merge.bundle`
+  const repository = `${root}/work/objects.git`
+  if (Number((try fs.stat(inputPath)).size) > fileLimit) throw new JobRefused()
+  const parsed = parsedJson(lossyText(try fs.readFile(inputPath)))
+  const input = try Schema.decodeUnknownEffect(JobInput)(parsed?.value)
+  const bundleSize = Number((try fs.stat(bundlePath)).size)
+  if (input.profile !== MERGE_PROFILE || input.inputs.length === 0 || !Number.isSafeInteger(input.bundleBytes) || input.bundleBytes <= 0 || input.bundleBytes > bundleLimit || !digestPattern.test(input.bundleSha256) || bundleSize !== input.bundleBytes) throw new JobRefused()
+  if (sha256Of(try fs.readFile(bundlePath)) !== input.bundleSha256) throw new JobRefused()
+  try unbundledStore(bundlePath, repository)
+  try verifyMergeObjectStore(input.inputs, repository, input.fileRequests ?? [])
+  const resolutions = input.fileRequests === undefined ? try collectVerifiedMergeResolutionBatch(input.inputs, repository) : []
+  const result = input.fileRequests === undefined
+    ? sources(parsed?.value).map((source, index) => ({ inputSha256: sha256Of(JSON.stringify(source)), mergeResolutions: resolutions[index] }))
+    : try recoverFiles(repository, input.fileRequests)
+  const bytes = textBytes(JSON.stringify(result))
+  if (bytes.length > fileLimit) throw new JobRefused()
+  try fs.writeFile(`${root}/work/merge-result.json`, bytes, { flag: "wx", mode: 0o600 })
+}
+
+effect function main() {
+  mergeJob("/analysis") catch effect () => {
+    try Console.error("Fixed merge reconstruction refused")
+    throw new JobRefused()
+  }
+}
+
+NodeRuntime.runMain(Effect.provide(main(), Layer.mergeAll(NodeServices.layer, systemGit)), { disableErrorReporting: true })

@@ -1,0 +1,50 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"
+import { ConfigInvalid } from "@repo/platform/config"
+import { type Scope, ordinaryScope, partition } from "../journal/journal.vibe"
+import { type PaymentTables, ordinaryTables, securityTables } from "./binding.vibe"
+import { type AttesterVars, attesterConfig } from "./evm.vibe"
+import type { IntentKind } from "./intents.ts"
+
+export type ScopeKind = "ordinary" | "security-bounty"
+
+export interface SignerScope {
+  readonly kind: ScopeKind
+  readonly journal: Scope
+  readonly tables: PaymentTables
+  readonly pinsVar: "PAYMENT_DEPLOYMENTS" | "SECURITY_PAYMENT_DEPLOYMENTS"
+  readonly pathPrefix: "/v1/" | "/v1/security/"
+}
+
+export const securityJournal: Scope = (entries) => partition(entries, "security:", ["nonce:"])
+
+export const ORDINARY_SCOPE: SignerScope = { kind: "ordinary", journal: ordinaryScope, tables: ordinaryTables, pinsVar: "PAYMENT_DEPLOYMENTS", pathPrefix: "/v1/" }
+
+export const SECURITY_SCOPE: SignerScope = { kind: "security-bounty", journal: securityJournal, tables: securityTables, pinsVar: "SECURITY_PAYMENT_DEPLOYMENTS", pathPrefix: "/v1/security/" }
+
+export error OutOfScope { scope: ScopeKind; intent: IntentKind }
+
+const ordinaryOnly: ReadonlySet<IntentKind> = new Set(["SignMonthlyRoot", "ApproveReserveRelease"])
+
+export effect function admitIntent(scope: SignerScope, intent: IntentKind) {
+  if (scope.kind === "security-bounty" && ordinaryOnly.has(intent)) throw new OutOfScope({ scope: scope.kind, intent })
+  return scope
+}
+
+export function scopeOfPath(path: string): { readonly scope: SignerScope; readonly path: string } {
+  if (path.startsWith(SECURITY_SCOPE.pathPrefix)) return { scope: SECURITY_SCOPE, path: `/v1/${path.slice(SECURITY_SCOPE.pathPrefix.length)}` }
+  return { scope: ORDINARY_SCOPE, path }
+}
+
+export interface ScopedPins {
+  readonly PAYMENT_DEPLOYMENTS?: string
+  readonly SECURITY_PAYMENT_DEPLOYMENTS?: string
+}
+
+export effect function scopedAttesterConfig(scope: SignerScope, vars: AttesterVars, pins: ScopedPins) {
+  const text = pins[scope.pinsVar]
+  if (text === undefined || text.trim() === "") throw new ConfigInvalid({ name: scope.pinsVar, issue: "missing" })
+  const config = try attesterConfig(vars, text)
+  const bounty = scope.kind === "security-bounty"
+  if (config.pins.some((pin) => (pin.payoutPolicy === "security-bounty") !== bounty)) throw new ConfigInvalid({ name: scope.pinsVar, issue: "pins a vault of the other payment scope" })
+  return config
+}

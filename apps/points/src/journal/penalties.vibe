@@ -1,0 +1,99 @@
+// spec/points/journal.md, "A penalty revision records one published debit request"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
+import type { LeaderboardSnapshot } from "../client/snapshot/schema.vibe"
+import type { Award, Penalty, Revision as Row } from "../kernels/records/canonical.ts"
+import { pointKey } from "../kernels/records/ids.vibe"
+import { type Repositories, type Store, command, countsFromDay, hold, instant, projectOf, ruleOf, workCounts } from "./ledger.vibe"
+import { appended, commit, flush, rowsOf, samePenalty, sendAll } from "./rows.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export error PenaltyRefused { key: string; reason: string }
+
+interface Candidate { readonly award: Award; readonly penalty: Penalty; readonly sourceRule: string; readonly repository: string }
+
+const pullPath = /^\/([^/]+\/[^/]+)\/pull\/[1-9][0-9]*$/u
+
+function repositoryOf(award: Award) {
+  return pullPath.exec(URL.parse(award.sourceUrl)?.pathname ?? "")?.[1] ?? ""
+}
+
+function reasonOf(candidate: Candidate) {
+  const { penalty, award } = candidate
+  return penalty.reversedAt !== null
+    ? `Slopbot reversed the penalty: ${penalty.reversal}.`
+    : `Slopbot ${penalty.category} penalty: ${penalty.debit} Points, limited to accepted work in ${award.occurredAt.slice(0, 7)}.`
+}
+
+effect function candidatesOf(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot | undefined) {
+  const candidates = new Map<string, Candidate>()
+  for (const row of store.latest.values()) {
+    if (row.penalty !== undefined) candidates.set(row.award.key, { award: row.award, penalty: row.penalty, sourceRule: row.sourceRule, repository: repositoryOf(row.award) })
+  }
+  for (const published of snapshot?.penalties ?? []) {
+    const projectId = projectOf(repositories, published.repository)
+    if (projectId === undefined || published.actor.kind !== "User") throw new PenaltyRefused({ key: published.id, reason: "Invalid penalty identity" })
+    if (!workCounts(repositories, published.repository, published.occurredAt)) continue
+    const key = try pointKey({ projectId, actorId: published.actor.id, category: "slopbot-penalty", sourceId: published.source.id })
+    const award: Award = {
+      key, actor: { id: published.actor.id, login: published.actor.login }, projectId, category: "slopbot-penalty", amount: 0,
+      occurredAt: published.occurredAt, sourceId: published.source.id, sourceUrl: published.source.url, workUnitId: published.id, provisional: false,
+    }
+    const penalty = { category: published.category, debit: published.debitThirds * 10, reversedAt: null, reversal: null }
+    const prior = candidates.get(key)
+    if (prior !== undefined && (prior.sourceRule !== published.tableVersion || prior.award.occurredAt !== award.occurredAt ||
+      prior.penalty.debit !== penalty.debit || prior.penalty.category !== penalty.category)) throw new PenaltyRefused({ key, reason: "Penalty identity changed" })
+    if (prior === undefined) candidates.set(key, { award, penalty, sourceRule: published.tableVersion, repository: published.repository })
+  }
+  const bySource = new Map([...candidates.values()].map((candidate) => [candidate.award.sourceId, candidate] as const))
+  for (const evidence of snapshot?.penaltyHistory ?? []) {
+    const prior = bySource.get(evidence.itemNodeId)
+    if (prior === undefined) continue
+    if (prior.award.projectId !== evidence.projectId || String(githubUserIdFromNodeId(prior.award.actor.id)) !== evidence.authorGithubId ||
+      prior.award.occurredAt !== evidence.recordedAt || prior.sourceRule !== evidence.tableVersion ||
+      prior.penalty.debit !== evidence.debitThirds * 10 || prior.penalty.category !== evidence.category) throw new PenaltyRefused({ key: prior.award.key, reason: "Penalty reversal identity mismatch" })
+    if (evidence.reversedAt === null) continue
+    if (prior.penalty.reversedAt !== null && (prior.penalty.reversedAt !== evidence.reversedAt || prior.penalty.reversal !== evidence.reversal)) {
+      throw new PenaltyRefused({ key: prior.award.key, reason: "Penalty reversal changed" })
+    }
+    candidates.set(prior.award.key, { ...prior, penalty: { ...prior.penalty, reversedAt: evidence.reversedAt, reversal: evidence.reversal } })
+  }
+  return [...candidates.values()].sort((left, right) =>
+    left.award.occurredAt.localeCompare(right.award.occurredAt) || left.award.workUnitId.localeCompare(right.award.workUnitId))
+}
+
+effect function recordCandidate(store: Store, repositories: Repositories, candidate: Candidate, digest: string, recordedAt: string) {
+  const { award, penalty } = candidate
+  const requested = penalty.reversedAt === null ? penalty.debit : 0
+  const prior = store.latest.get(award.key)
+  if (prior?.award.amount === -requested) {
+    if (!samePenalty(prior.penalty, penalty)) hold(store, { subject: award.key, reason: "an unchanged debit request appends no revision for new reversal evidence", digest })
+    return []
+  }
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const key = opened.names.keys.get(award.key)
+  if (key === undefined || opened.names.opaque.has(award.key)) throw new PenaltyRefused({ key: award.key, reason: "the recorded penalty is outside the journal model" })
+  const effectiveAt = penalty.reversedAt ?? (prior === undefined ? award.occurredAt : recordedAt)
+  const refused = try sendAll(opened, [{ type: "recordPenalty", p: {
+    key, occurredAt: try instant(award.occurredAt), repositoryCountsFrom: countsFromDay(repositories, candidate.repository),
+    tableVersion: ruleOf(candidate.sourceRule).tableVersion, requested: penalty.debit, reversed: penalty.reversedAt !== null,
+    digest, effectiveAt: try instant(effectiveAt), reason: reasonOf(candidate),
+  } }])
+  if (refused !== "") throw new PenaltyRefused({ key: award.key, reason: `the journal refused ${refused}` })
+  const rows: Row[] = []
+  const provenance = { recordedAt, sourceDigest: digest, effectiveAt, decisionSourceId: award.sourceId, penalty }
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, new Map([[award.actor.id, award]]), provenance)))
+  return rows
+}
+
+export effect function reconcilePenalties(store: Store, repositories: Repositories, snapshot: LeaderboardSnapshot | undefined, digest: string, recordedAt: string) {
+  for (const candidate of try candidatesOf(store, repositories, snapshot)) {
+    const buffer: Row[] = []
+    try commit(store, buffer, try recordCandidate(store, repositories, candidate, digest, recordedAt))
+    flush(store, buffer)
+  }
+}

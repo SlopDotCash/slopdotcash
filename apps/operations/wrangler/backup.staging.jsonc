@@ -1,0 +1,51 @@
+{
+  "name": "slop-staging-vetting-backup",
+  "main": "../dist/backup.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": ["17 2 * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "EVIDENCE_DATABASE",
+      "database_name": "slop-staging",
+      "database_id": "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
+      "migrations_dir": "../../../migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "EVIDENCE_SOURCE", "bucket_name": "slop-staging-vetting-evidence" },
+    { "binding": "EVIDENCE_BACKUPS", "bucket_name": "slop-staging-vetting-evidence-backups" }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "EVIDENCE_BACKUP_QUEUE", "queue": "slop-staging-vetting-backup" }
+    ],
+    "consumers": [
+      {
+        "queue": "slop-staging-vetting-backup",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 5,
+        "retry_delay": 60,
+        "dead_letter_queue": "slop-staging-vetting-backup-failed",
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "vars": {
+    "EVIDENCE_BACKUP_MODE": "off",
+    "EVIDENCE_RETENTION_MODE": "off",
+    "EVIDENCE_RETIREMENT_MODE": "off"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "expectedSecrets": []
+}

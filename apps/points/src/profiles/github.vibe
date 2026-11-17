@@ -1,0 +1,100 @@
+// spec/points/profiles.md, "A renamed repository is followed by its permanent registry identity"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+import type { CollectedTarget } from "../census/projects.vibe"
+import { Graphql } from "../ingestion/graphql.vibe"
+
+export error ProfileCensusFailed { message: string }
+
+export schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+
+export schema GraphqlAuthor { readonly __typename: string; readonly id?: string; readonly login: string; readonly avatarUrl: string }
+
+schema PullRequestNode { readonly id: string; readonly state: string; readonly author: GraphqlAuthor | null }
+
+schema PullRequestConnection { readonly totalCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<PullRequestNode> }
+
+schema PullRequestRepository { readonly id: string; readonly pullRequests: PullRequestConnection }
+
+schema PullRequestPage { readonly repository: PullRequestRepository | null }
+
+schema RelatedIssue { readonly id?: string }
+
+export schema GraphqlEvent {
+  readonly __typename: string
+  readonly id?: string
+  readonly createdAt?: string
+  readonly stateReason?: string | null
+  readonly canonical?: RelatedIssue | null
+  readonly duplicateOf?: RelatedIssue | null
+}
+
+export schema EventConnection { readonly totalCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<GraphqlEvent> }
+
+export schema IssueNode {
+  readonly id: string
+  readonly number: number
+  readonly createdAt: string
+  readonly state: "OPEN" | "CLOSED"
+  readonly stateReason: string | null
+  readonly author: GraphqlAuthor | null
+  readonly timelineItems: EventConnection
+}
+
+schema IssueConnection { readonly totalCount: number; readonly pageInfo: PageInfo; readonly nodes: ReadonlyArray<IssueNode> }
+
+schema IssueRepository { readonly id: string; readonly issues: IssueConnection }
+
+schema IssuePage { readonly repository: IssueRepository | null }
+
+schema TimelineNode { readonly timelineItems: EventConnection }
+
+schema TimelinePage { readonly node: TimelineNode | null }
+
+const itemTypes = "[CLOSED_EVENT,REOPENED_EVENT,MARKED_AS_DUPLICATE_EVENT,UNMARKED_AS_DUPLICATE_EVENT,TRANSFERRED_EVENT]"
+const events = "totalCount pageInfo{hasNextPage endCursor} nodes{__typename ... on ClosedEvent{id createdAt stateReason duplicateOf{... on Issue{id}}} ... on ReopenedEvent{id createdAt stateReason} ... on MarkedAsDuplicateEvent{id createdAt canonical{... on Issue{id}}} ... on UnmarkedAsDuplicateEvent{id createdAt canonical{... on Issue{id}}} ... on TransferredEvent{id createdAt}}"
+const rateLimit = "rateLimit{cost limit remaining resetAt}"
+
+export const pullRequestQuery = `query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id pullRequests(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){totalCount pageInfo{hasNextPage endCursor} nodes{id state author{__typename login avatarUrl ... on User{id}}}}}${rateLimit}}`
+export const issueQuery = `query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){id issues(first:100,after:$after,orderBy:{field:CREATED_AT,direction:ASC}){totalCount pageInfo{hasNextPage endCursor} nodes{id number createdAt state stateReason author{__typename login avatarUrl ... on User{id}} timelineItems(first:5,itemTypes:${itemTypes}){${events}}}}}${rateLimit}}`
+export const timelineQuery = `query($id:ID!,$after:String){node(id:$id){... on Issue{timelineItems(first:100,after:$after,itemTypes:${itemTypes}){${events}}}}${rateLimit}}`
+
+effect function decoded<S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, label: string) {
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw new ProfileCensusFailed({ message: `GitHub returned an unexpected ${label} page` })
+  }
+}
+
+export effect function pullRequestPage(target: CollectedTarget, after: string | null) {
+  const data = try (try Graphql).execute(pullRequestQuery, { owner: target.owner, name: target.name, after })
+  return (try decoded(PullRequestPage, data, "pull request")).repository
+}
+
+export effect function issuePage(target: CollectedTarget, after: string | null) {
+  const data = try (try Graphql).execute(issueQuery, { owner: target.owner, name: target.name, after })
+  return (try decoded(IssuePage, data, "issue")).repository
+}
+
+export effect function timelinePage(issueId: string, after: string) {
+  const data = try (try Graphql).execute(timelineQuery, { id: issueId, after })
+  return (try decoded(TimelinePage, data, "issue history")).node
+}
+
+export function userAuthorId(author: GraphqlAuthor | null) {
+  return author?.__typename === "User" && author.id !== undefined && author.id !== "" ? author.id : null
+}
+
+export interface RepositoryTallyRow { readonly repository: string; merged: number; open: number; closed: number }
+
+export interface PersonTally {
+  readonly id: string
+  login: string
+  avatarUrl: string
+  readonly repositories: RepositoryTallyRow[]
+}
+
+export function personOf(people: Map<string, PersonTally>, id: string, author: GraphqlAuthor) {
+  const person = people.get(id) ?? { id, login: author.login, avatarUrl: author.avatarUrl, repositories: [] }
+  person.login = author.login
+  person.avatarUrl = author.avatarUrl
+  people.set(id, person)
+  return person
+}

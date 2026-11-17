@@ -1,0 +1,462 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { type Request as WebRequest, Response as WebResponse, fetch as webFetch } from "miniflare"
+import { encodeFunctionData, keccak256, parseAbi } from "viem"
+import { CallerLive } from "@repo/backend/caller"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { type Anvil, type Served, anvil, deploy, forgeBuild, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { area, pages } from "@repo/platform/worker"
+import { referralApi } from "../src/client/referrals.vibe"
+import { referralRoots } from "../src/programs/referralRoots.vibe"
+import { type FileAccrual, type FileInput, assembleFile } from "../src/referrals/fileBytes.ts"
+import { referralRoutes } from "../src/referrals/routes.vibe"
+import { type WatchSetup, type WatchVars, watchFiles, watchReferralRoots, watchSetup } from "../src/referrals/watch.vibe"
+import { failureCode, postedTopic } from "../src/referrals/watchChecks.ts"
+import { reviewedVars } from "./support/referralVectors.ts"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+interface Site {
+  readonly env: Env
+  readonly origin: string
+}
+
+service Files {
+  readonly good: Site
+  readonly digest: Site
+  readonly pin: Site
+  readonly total: Site
+}
+
+service Chain {
+  readonly chain: Anvil
+  readonly site: Site
+  readonly distributor: string
+  readonly token: string
+  readonly codeHash: string
+  readonly deploymentBlock: bigint
+  readonly owner: `0x${string}`
+  readonly poster: `0x${string}`
+}
+
+type Rewrite = (method: string, result: unknown) => unknown
+
+interface Fixture {
+  readonly url: string
+  readonly spans: ReadonlyArray<readonly [bigint, bigint]>
+}
+
+const usdg = "0x7e955252e15c84f5768b83c41a71f9eba181802f"
+const referrer = "900000100"
+const walletA = `0x${"a1".repeat(20)}`
+const walletB = `0x${"b2".repeat(20)}`
+const rate = 3_000_000_000_000n
+const filedAt: Readonly<Record<string, string>> = { "2026-11": "2026-12-01T01:23:00.000Z", "2026-12": "2027-01-01T01:23:00.000Z" }
+const context: ExecutionContext = { waitUntil: () => undefined }
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static asset", { status: 404 }) as unknown as globalThis.Response) }
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const distributorAbi = parseAbi(["function postRoot(uint256 index, bytes32 root, uint256 newTotal)", "function voidRoot(uint256 index)"])
+const dollarAbi = parseAbi(["function mint(address to, uint256 amount)"])
+const scanLimit = 1_000_000n
+const chainNow = "2027-01-01T03:00:00.000Z"
+const keep: Rewrite = (_method, result) => result
+
+const site = pages({
+  areas: [area({ name: "referrals", api: referralApi, routes: referralRoutes, provides: Layer.empty })],
+  services: (env: Env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto)),
+  assets: "ASSETS",
+})
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function field(value: unknown, key: string): unknown {
+  return isRecord(value) ? value[key] : undefined
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function accrual(obligationId: string, gross: bigint, outcome: "accrued" | "held"): FileAccrual {
+  const computed = outcome === "accrued" ? gross * rate : 0n
+  return {
+    obligationId,
+    projectId: "prj_referred",
+    referrerGithubId: referrer,
+    referrerGithubLogin: "referrer",
+    network: "robinhood-testnet",
+    paidTransaction: `0x${"c".repeat(64)}`,
+    paidObservedAt: "2026-11-10T00:00:00.000Z",
+    grossBase: gross.toString(),
+    assetAddress: usdg,
+    assetSymbol: "USDG",
+    computedBase: computed.toString(),
+    accruedBase: computed.toString(),
+    outcome,
+    reason: outcome === "accrued" ? null : "rhold_watch01: paused",
+  }
+}
+
+const november = [accrual("pobl_watch_1", 10_000_000n, "accrued"), accrual("pobl_watch_2", 4_000_000n, "held")]
+const december = [accrual("pobl_watch_3", 5_000_000n, "accrued")]
+const novemberTotal = 10_000_000n * rate
+const decemberTotal = novemberTotal + 5_000_000n * rate
+
+function month(period: string, epoch: number, accruals: ReadonlyArray<FileAccrual>, cumulative: bigint, wallet: string, pool = cumulative): FileInput {
+  return {
+    period,
+    epoch,
+    mode: "dry_run",
+    generatedAt: filedAt[period] ?? "",
+    runId: `rrun_watch000${epoch}`,
+    parameters: { rateBasePerMicro: reviewedVars.REFERRAL_RATE_BASE_PER_MICRO, tokenDecimals: 18, poolBase: reviewedVars.REFERRAL_POOL_BASE, projectCapBase: reviewedVars.REFERRAL_PROJECT_CAP_BASE, windowMonths: 12 },
+    accruals,
+    poolAccruedBase: pool,
+    referrers: [{ githubId: referrer, githubLogin: "referrer", cumulativeBase: cumulative, wallet }],
+  }
+}
+
+effect function file(target: Site, input: FileInput, tamper: (body: string) => string = (body) => body) {
+  const assembled = try orDie(Effect.try(() => assembleFile(input)))
+  const digest = try sha256Hex(assembled.body)
+  try promise(() => target.env.SLOP_DB.prepare("INSERT INTO referral_accrual_files (period, epoch, run_id, mode, body, body_sha256, merkle_root, tree_total_base, leaf_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(input.period, input.epoch, input.runId, input.mode, tamper(assembled.body), digest, assembled.merkleRoot, assembled.treeTotalBase, assembled.leafCount, input.generatedAt).run())
+  return assembled
+}
+
+effect function served(handler: Handler) {
+  return try acquireRelease(promise(() => serve(handler)), (opened: Served) => promise(() => opened.close()))
+}
+
+effect function siteOver(db: D1Database) {
+  const env: Env = { SLOP_DB: db, ASSETS: assets }
+  const opened = try served((request) => site.fetch(request as unknown as globalThis.Request, env, context) as unknown as Promise<WebResponse>)
+  return { env, origin: opened.url } satisfies Site
+}
+
+effect function migrated(names: ReadonlyArray<string>) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: Object.fromEntries(names.map((name) => [name, `referral-watch-${name.toLowerCase()}`])) })), (started) => promise(() => started.dispose()))
+  const sites: Site[] = []
+  for (const name of names) {
+    const applied = try promise(() => migrate(mf, name, migrationsDir))
+    const failed = applied.find((entry) => entry.error !== undefined)
+    if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+    sites.push(try siteOver(try promise(() => database(mf, name))))
+  }
+  return sites
+}
+
+function varsFor(rpcUrl: string, chain: { readonly distributor: string; readonly token: string; readonly block: string; readonly codeHash: string }): WatchVars {
+  return {
+    ...reviewedVars,
+    REFERRAL_POST_NETWORK: "robinhood-testnet",
+    RPC_URL_REFERRAL: rpcUrl,
+    REFERRAL_DISTRIBUTOR_ADDRESS: chain.distributor,
+    REFERRAL_TOKEN_ADDRESS: chain.token,
+    REFERRAL_DEPLOYMENT_BLOCK: chain.block,
+    REFERRAL_DISTRIBUTOR_CODE_HASH: chain.codeHash,
+  }
+}
+
+const absentChain = { distributor: `0x${"3".repeat(40)}`, token: `0x${"2".repeat(40)}`, block: "1", codeHash: `0x${"f".repeat(64)}` }
+
+effect function setupOf(vars: WatchVars) {
+  const setup = try watchSetup(vars)
+  if (setup === undefined) return try die(new Error("the watch configuration is inactive"))
+  return setup
+}
+
+effect function outcome(setup: WatchSetup, origin: string, at: string) {
+  const clock = settableClock(Date.parse(at))
+  return Effect.provide(watchReferralRoots(setup, origin), clock.layer) catch (error) => failureCode(error.failure)
+}
+
+function recording(out: string[], errors: string[]): Console.Console {
+  const ignore = () => undefined
+  return {
+    assert: ignore, clear: ignore, count: ignore, countReset: ignore, debug: ignore, dir: ignore, dirxml: ignore,
+    group: ignore, groupCollapsed: ignore, groupEnd: ignore, info: ignore, table: ignore, time: ignore, timeEnd: ignore,
+    timeLog: ignore, trace: ignore, warn: ignore,
+    log: (...args: ReadonlyArray<unknown>) => { out.push(args.join(" ")) },
+    error: (...args: ReadonlyArray<unknown>) => { errors.push(args.join(" ")) },
+  }
+}
+
+effect function command(vars: Readonly<Record<string, string>>, origin: string, at: string) {
+  provide NodeServices.layer {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try fs.makeTempDirectoryScoped()
+    const config = files.join(directory, "referralAccrual.jsonc")
+    const summary = files.join(directory, "summary.md")
+    try fs.writeFileString(config, JSON.stringify({ vars }))
+    const out: string[] = []
+    const errors: string[] = []
+    const watcher = program({ services: Layer.mergeAll(webCrypto, outbound), commands: { "referral-roots": referralRoots } })
+    const environment = Layer.mergeAll(settableClock(Date.parse(at)).layer, ConfigProvider.layer(ConfigProvider.fromUnknown({ GITHUB_STEP_SUMMARY: summary })))
+    provide environment, Console.Console = recording(out, errors) {
+      const status = try watcher.run(["referral-roots", "--config", config, "--origin", origin])
+      return { status, out, errors, summary: try fs.readFileString(summary) }
+    }
+  }
+}
+
+effect function filesAt(setup: WatchSetup, origin: string, at: string) {
+  const clock = settableClock(Date.parse(at))
+  provide clock.layer {
+    return (try watchFiles(origin, setup.firstPeriod)).check
+  }
+}
+
+function passed(body: unknown) {
+  return new WebResponse(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+}
+
+function answer(id: unknown, body: Readonly<Record<string, unknown>>) {
+  return new WebResponse(JSON.stringify({ jsonrpc: "2.0", id, ...body }), { headers: { "content-type": "application/json" } })
+}
+
+effect function relay(upstream: string, request: WebRequest, spans: Array<readonly [bigint, bigint]>, rewrite: Rewrite) {
+  const text = try promise(() => request.text())
+  const call = try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  const method = String(field(call, "method"))
+  const params = field(call, "params")
+  if (method === "eth_getLogs" && Array.isArray(params)) {
+    const filter: unknown = params[0]
+    const from = try orDie(Effect.try(() => BigInt(String(field(filter, "fromBlock")))))
+    const to = try orDie(Effect.try(() => BigInt(String(field(filter, "toBlock")))))
+    spans.push([from, to])
+    if (to - from + 1n > scanLimit) return answer(field(call, "id"), { error: { code: -32005, message: "query exceeds max block range 1000000" } })
+  }
+  const upstreamAnswer = try promise(() => webFetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body: text }))
+  const body: unknown = try promise(() => upstreamAnswer.json())
+  if (!isRecord(body) || !("result" in body)) return passed(body)
+  return answer(body.id, { result: rewrite(method, body.result) })
+}
+
+effect function rangeLimited(chain: Anvil, rewrite: Rewrite = keep) {
+  const spans: Array<readonly [bigint, bigint]> = []
+  const opened = try served((request) => runPromise(relay(chain.url, request, spans, rewrite)))
+  return { url: opened.url, spans } satisfies Fixture
+}
+
+const chainIdOnly = (request: WebRequest) => runPromise(effect {
+  const text = try promise(() => request.text())
+  const call = try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return answer(field(call, "id"), { result: "0xb626" })
+})
+
+const withoutPosts: Rewrite = (method, result) =>
+  method === "eth_getLogs" && Array.isArray(result) ? result.filter((log) => !(Array.isArray(field(log, "topics")) && (field(log, "topics") as ReadonlyArray<unknown>)[0] === postedTopic)) : result
+
+const forgedReceipts: Rewrite = (method, result) =>
+  method === "eth_getTransactionReceipt" && isRecord(result) ? { ...result, blockHash: `0x${"ab".repeat(32)}` } : result
+
+const FilesStarted = Layer.effect(Files, effect {
+  const [good, digest, pin, total] = try migrated(["GOOD_DB", "DIGEST_DB", "PIN_DB", "TOTAL_DB"])
+  if (good === undefined || digest === undefined || pin === undefined || total === undefined) return try die(new Error("a referral watch database is missing"))
+  return { good, digest, pin, total }
+})
+
+effect function transact(chain: Anvil, from: `0x${string}`, to: string, data: `0x${string}`) {
+  const receipt = try promise(() => chain.transact({ from, to: to as `0x${string}`, data }))
+  if (receipt.status !== "success") return try die(new Error(`${data.slice(0, 10)} reverted in ${receipt.transactionHash}`))
+  return receipt
+}
+
+effect function headOf(chain: Anvil) {
+  const head = try promise(() => chain.rpc("eth_blockNumber"))
+  return try orDie(Effect.try(() => BigInt(String(head))))
+}
+
+const ChainStarted = Layer.effect(Chain, effect {
+  const [chainSite] = try migrated(["CHAIN_DB"])
+  if (chainSite === undefined) return try die(new Error("the chain journey database is missing"))
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 46630 })), (started) => promise(() => started.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["src/ReferralDistributor.sol", "integration/TestDollar.sol"])), (output) => promise(() => output.close()))
+  const [ownerAccount, posterAccount] = chain.accounts
+  if (ownerAccount === undefined || posterAccount === undefined) return try die(new Error("anvil has fewer than two accounts"))
+  const owner = ownerAccount.address
+  const poster = posterAccount.address
+  const token = try promise(() => deploy(chain, `${built.out}/TestDollar.sol/TestDollar.json`, [], owner))
+  const distributor = try promise(() => deploy(chain, `${built.out}/ReferralDistributor.sol/ReferralDistributor.json`, [token, owner, poster, 2n * 10n ** 24n, 0n], owner))
+  const deploymentBlock = try headOf(chain)
+  try transact(chain, owner, token, try orDie(Effect.try(() => encodeFunctionData({ abi: dollarAbi, functionName: "mint", args: [distributor, 10n ** 24n] }))))
+  const code = try promise(() => chain.rpc("eth_getCode", [distributor, "latest"]))
+  const codeHash = try orDie(Effect.try(() => keccak256(String(code) as `0x${string}`)))
+  try promise(() => chain.mine(64))
+  return { chain, site: chainSite, distributor: distributor.toLowerCase(), token: token.toLowerCase(), codeHash, deploymentBlock, owner, poster }
+})
+
+effect function chainSetup(bench: Chain.Shape, rpcUrl: string) {
+  return try setupOf(varsFor(rpcUrl, { distributor: bench.distributor, token: bench.token, block: bench.deploymentBlock.toString(), codeHash: bench.codeHash }))
+}
+
+effect function postRoot(bench: Chain.Shape, index: bigint, root: string, total: bigint) {
+  try transact(bench.chain, bench.poster, bench.distributor, try orDie(Effect.try(() => encodeFunctionData({ abi: distributorAbi, functionName: "postRoot", args: [index, root as `0x${string}`, total] }))))
+}
+
+effect function snapshotted<A, E, R>(bench: Chain.Shape, run: A!E!R) {
+  const id = try promise(() => bench.chain.snapshot())
+  return try ensuring(run, promise(() => bench.chain.revert(id)))
+}
+
+layer(Layer.mergeAll(FilesStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A closed month is awaited until 02:00 and stale after it, and good files pass (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Every month closed more than two hours ago has a filed accrual file, and an earlier month is only awaiting filing"; spec/settlement/referralWatch.md, "Each public file\'s bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralFiles.md, "The index lists every filed period once in epoch order with its digest, root, total, leaf count and URL"; spec/settlement/referralFiles.md, "A period file answers its exact stored bytes and the SHA-256 recorded when it was filed")', () => effect {
+    const { good } = try Files
+    const setup = try setupOf(varsFor("https://rpc.invalid", absentChain))
+    const empty = try filesAt(setup, good.origin, "2026-12-01T01:59:59.000Z")
+    const emptyStale = try filesAt(setup, good.origin, "2026-12-01T02:00:01.000Z")
+    try file(good, month("2026-11", 0, november, novemberTotal, walletA))
+    const awaiting = try filesAt(setup, good.origin, "2027-01-01T01:30:00.000Z")
+    const stale = try filesAt(setup, good.origin, "2027-01-01T02:00:01.000Z")
+    try file(good, month("2026-12", 1, december, decemberTotal, walletA))
+    const filed = try filesAt(setup, good.origin, "2027-01-01T02:30:00.000Z")
+    try same({ empty, emptyStale, awaiting, stale, filed }, {
+      empty: { failure: "NoFailure", filed: 0, awaiting: true },
+      emptyStale: { failure: "FilesStale", filed: 0, awaiting: false },
+      awaiting: { failure: "NoFailure", filed: 1, awaiting: true },
+      stale: { failure: "FilesStale", filed: 1, awaiting: false },
+      filed: { failure: "NoFailure", filed: 2, awaiting: false },
+    })
+  })
+
+  it.effect('Changed bytes, totals and wallet pins fail with their own codes, and the referral-roots command reports them with its exit status (spec/settlement/referralWatch.md, "Each public file\'s bytes, digest, identity, amounts, arithmetic, caps, excluded amounts and wallet pins recompute exactly from its own records"; spec/settlement/referralWatch.md, "Cumulative totals and accounts never decrease across files and no obligation appears twice"; spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")', () => effect {
+    const { digest, pin, total } = try Files
+    const setup = try setupOf(varsFor("https://rpc.invalid", absentChain))
+    const at = "2027-01-01T02:30:00.000Z"
+    try file(digest, month("2026-11", 0, november, novemberTotal, walletA), (body) => body.replace("\"referrer\"", "\"referrex\""))
+    try file(pin, month("2026-11", 0, november, novemberTotal, walletA))
+    try file(pin, month("2026-12", 1, december, decemberTotal, walletB))
+    try file(total, month("2026-11", 0, november, novemberTotal, walletA, novemberTotal + 1n))
+    try same({
+      digest: try outcome(setup, digest.origin, at),
+      pin: try outcome(setup, pin.origin, at),
+      total: try outcome(setup, total.origin, at),
+    }, { digest: "referral_file_digest_mismatch", pin: "referral_wallet_pin_mismatch", total: "referral_cumulative_total_mismatch" })
+    const inactiveLine = JSON.stringify({ status: "inactive", reason: "Program deployment is not configured; this is not qualification." })
+    try same({
+      inactive: try command({ REFERRAL_ACCRUAL_MODE: "Off" }, digest.origin, at),
+      failed: try command({ ...varsFor("https://rpc.invalid", absentChain) }, digest.origin, at),
+    }, {
+      inactive: { status: 0, out: [inactiveLine], errors: [], summary: `Referral root watch: ${inactiveLine}\n` },
+      failed: {
+        status: 1,
+        out: [],
+        errors: ["::error::referral_file_digest_mismatch", "ReferralWatchFailed: referral_file_digest_mismatch"],
+        summary: "Referral root watch failed: referral_file_digest_mismatch\n",
+      },
+    })
+  })
+
+  it.effect('Unavailable, redirected and oversized public data, a failing provider and the wrong chain fail explicitly (spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/referralWatch.md, "Each posted root equals its file\'s tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation")', () => effect {
+    const { good } = try Files
+    const at = "2027-01-01T02:30:00.000Z"
+    const before = "2026-11-15T00:00:00.000Z"
+    const offline = try setupOf(varsFor("https://rpc.invalid", absentChain))
+    const blankIndex = try served(() => Promise.resolve(new WebResponse("{\"schema\":\"slop-referral-accrual-index-v1\",\"files\":[]}", { headers: { "content-type": "application/json" } })))
+    const down = try served(() => Promise.resolve(new WebResponse("unavailable", { status: 503 })))
+    const moved = try served(() => Promise.resolve(new WebResponse(null, { status: 302, headers: { location: `${good.origin}/api/v1/referrals/accruals` } })))
+    const huge = try served(() => Promise.resolve(new WebResponse(`{"schema":"slop-referral-accrual-index-v1","files":[],"pad":"${"x".repeat(16 * 1024 * 1024)}"}`, { headers: { "content-type": "application/json" } })))
+    const failing = try served(try orDie(Effect.try(() => rpcFaults(chainIdOnly, [{ fault: "http500" }]))))
+    const foreign = try served(try orDie(Effect.try(() => rpcFaults(chainIdOnly, [{ method: "eth_chainId", fault: "wrongChain" }]))))
+    const inactive = try watchSetup({ REFERRAL_ACCRUAL_MODE: "Off" })
+    const missingEvidence = watchSetup(varsFor("https://rpc.invalid", { ...absentChain, codeHash: "" })) catch (error) => error._tag === "WatchStopped" ? failureCode(error.failure) : error._tag
+    try same({
+      inactive,
+      missingEvidence,
+      down: try outcome(offline, down.url, at),
+      moved: try outcome(offline, moved.url, at),
+      huge: try outcome(offline, huge.url, at),
+      provider: try outcome(try setupOf(varsFor(failing.url, absentChain)), blankIndex.url, before),
+      chain: try outcome(try setupOf(varsFor(foreign.url, absentChain)), blankIndex.url, before),
+    }, {
+      inactive: undefined,
+      missingEvidence: "referral_deployment_evidence_missing",
+      down: "referral_public_data_unavailable",
+      moved: "referral_public_data_unavailable",
+      huge: "referral_public_data_oversized",
+      provider: "referral_watch_unavailable",
+      chain: "referral_wrong_chain",
+    })
+  })
+})
+
+layer(Layer.mergeAll(ChainStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Posted roots verify after finality, and a changed root or total, a missing event and a non-canonical receipt fail (spec/settlement/referralWatch.md, "Story: Fail loudly on any difference between files, roots and events"; spec/settlement/referralWatch.md, "Each posted root equals its file\'s tree, every void is covered and every finalized distributor event is canonical and covered once"; spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")', () => effect {
+    const bench = try Chain
+    const november2026 = try file(bench.site, month("2026-11", 0, november, novemberTotal, walletA))
+    const december2026 = try file(bench.site, month("2026-12", 1, december, decemberTotal, walletA))
+    const firstRoot = november2026.merkleRoot ?? ""
+    const secondRoot = december2026.merkleRoot ?? ""
+    const limited = try rangeLimited(bench.chain)
+    const setup = try chainSetup(bench, limited.url)
+    const changedRoot = try snapshotted(bench, effect {
+      try postRoot(bench, 0n, `0x${"1".repeat(64)}`, novemberTotal)
+      try promise(() => bench.chain.mine(64))
+      return try outcome(setup, bench.site.origin, chainNow)
+    })
+    const changedTotal = try snapshotted(bench, effect {
+      try postRoot(bench, 0n, firstRoot, novemberTotal + 1n)
+      try promise(() => bench.chain.mine(64))
+      return try outcome(setup, bench.site.origin, chainNow)
+    })
+    const unposted = try outcome(setup, bench.site.origin, chainNow)
+    try postRoot(bench, 0n, firstRoot, novemberTotal)
+    try postRoot(bench, 1n, secondRoot, decemberTotal)
+    const pending = try outcome(setup, bench.site.origin, chainNow)
+    try promise(() => bench.chain.mine(64))
+    const verified = try outcome(setup, bench.site.origin, chainNow)
+    const missing = try outcome(try chainSetup(bench, (try rangeLimited(bench.chain, withoutPosts)).url), bench.site.origin, chainNow)
+    const forged = try outcome(try chainSetup(bench, (try rangeLimited(bench.chain, forgedReceipts)).url), bench.site.origin, chainNow)
+    try transact(bench.chain, bench.owner, bench.distributor, try orDie(Effect.try(() => encodeFunctionData({ abi: distributorAbi, functionName: "voidRoot", args: [1n] }))))
+    try promise(() => bench.chain.mine(64))
+    const voided = try outcome(setup, bench.site.origin, chainNow)
+    const shape = (result: unknown) => typeof result === "string" ? result : { status: field(result, "status"), files: field(result, "files"), unpostedFiles: field(result, "unpostedFiles"), mappings: (field(result, "mappings") as ReadonlyArray<unknown>).map((entry) => [field(entry, "epoch"), field(entry, "period"), field(entry, "finalized"), field(entry, "voided")]) }
+    try same({
+      changedRoot,
+      changedTotal,
+      unposted: shape(unposted),
+      pending: shape(pending),
+      verified: shape(verified),
+      missing,
+      forged,
+      voided: shape(voided),
+      widest: limited.spans.every(([from, to]) => to - from + 1n <= scanLimit),
+    }, {
+      changedRoot: "referral_posted_root_mismatch",
+      changedTotal: "referral_posted_root_mismatch",
+      unposted: { status: "pending", files: 2, unpostedFiles: 2, mappings: [] },
+      pending: { status: "pending", files: 2, unpostedFiles: 0, mappings: [[0, "2026-11", false, false], [1, "2026-12", false, false]] },
+      verified: { status: "verified", files: 2, unpostedFiles: 0, mappings: [[0, "2026-11", true, false], [1, "2026-12", true, false]] },
+      missing: "referral_event_coverage_mismatch",
+      forged: "referral_event_not_canonical",
+      voided: { status: "verified", files: 2, unpostedFiles: 0, mappings: [[0, "2026-11", true, false], [1, "2026-12", true, true]] },
+      widest: true,
+    })
+  })
+
+  it.effect('A scan over more than one million blocks is split and reads every block once (spec/settlement/referralWatch.md, "Log scans cover every block from deployment to the observed tip once, in ranges of at most one million blocks")', () => effect {
+    const bench = try Chain
+    try promise(() => bench.chain.mine(1_000_001))
+    const limited = try rangeLimited(bench.chain)
+    const setup = try chainSetup(bench, limited.url)
+    const tip = try headOf(bench.chain)
+    const result = try outcome(setup, bench.site.origin, chainNow)
+    const first = bench.deploymentBlock
+    const pages = [[first, first + scanLimit - 1n], [first + scanLimit, tip]]
+    try same({ status: field(result, "status"), spans: limited.spans.map(([from, to]) => [from, to]) }, { status: "verified", spans: [...pages, ...pages] })
+  })
+})

@@ -1,0 +1,397 @@
+// spec/security/enforcement.md, "Flagger standing is read at filing time and bound to the current revision"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { type Actor, Refused, admission, handleRaw, json, refuse, strictBody } from "@repo/platform/http"
+import { GitHub } from "@repo/platform/github"
+import { Roles } from "@repo/platform/roles"
+import { Conflict } from "@repo/platform/stored"
+import { Authority, Restrictions } from "@repo/ports/backend"
+import type { Enforcement, FlagStanding, GrantRequest } from "../../gen/security__enforcement.ts"
+import { activeFlag, canFlag, canGrantExemption, canRevokeExemption, flagView, latestOf, pausedByFlagsOnly } from "../../gen/security__enforcement.effect.vibe"
+import { type ReporterFlag, fileFlag, grantExemption, projectFlag, revokeExemption, withdrawFlag } from "../client/enforcement.vibe"
+import { getProjectFlagsById, postAdminVettingExemptions, postAdminVettingExemptionsByIdRevoke, postProjectFlagsById, postProjectFlagsByIdWithdraw } from "../client/refusals.vibe"
+import { ProjectEvents, ProjectRefused, projectClearance, repositoryClearances } from "./port.vibe"
+import { ManifestAuthority, ManifestRepository, idOf } from "./replay.vibe"
+import { withRetainedEvidence } from "./retained.vibe"
+import { type FlagRow, jsonOf } from "./rows.vibe"
+import { flaggerStanding, maintainerOf } from "./standing.vibe"
+import { EnforcementRecord, type RecordDetails, flagLifetimeMillis } from "./statements.vibe"
+import { type Loaded, loadEnforcement } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+function refused(row: Row, message?: string) {
+  return refuse(row.status, row.error, message ?? row.message ?? "")
+}
+
+const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+const exemptionIdPattern = /^vex_[A-Za-z0-9_-]{4,76}$/u
+const bodyBytes = 65536
+const categories = ["wallet-drainer", "credential-theft", "secret-exfiltration", "unsafe-execution", "prompt-injection", "other"] as const
+const minEvidence = 20
+const maxEvidence = 4000
+
+const AnyObject = Schema.Record(Schema.String, Schema.Unknown)
+
+const restrictions: Readonly<Record<Enforcement["restriction"], "clear" | "quarantined" | "banned">> = { Clear: "clear", FlagQuarantine: "quarantined", ModeratorQuarantine: "quarantined", ServiceBan: "banned", ModeratorBan: "banned" }
+
+effect function projectOf(projectId: string, missing: Row) {
+  if (!projectIdPattern.test(projectId)) throw refused(missing)
+  const loaded = try loadEnforcement(projectId)
+  if (!loaded.found) throw refused(missing)
+  return loaded
+}
+
+function publicState(state: Enforcement) {
+  return { restriction: restrictions[state.restriction], pausedByFlags: pausedByFlagsOnly(state) }
+}
+
+effect function reporterFlag(row: FlagRow) {
+  return {
+    id: row.id,
+    category: row.category,
+    evidence: row.evidence,
+    evidenceUrl: row.evidence_url,
+    revision: row.revision,
+    createdAt: row.created_at,
+    expiresAt: try isoAt(millisOf(row.created_at) + flagLifetimeMillis),
+    state: row.state,
+  } satisfies ReporterFlag
+}
+
+function activeRowOf(loaded: Loaded, githubId: string) {
+  const by = idOf(githubId)
+  const counting = loaded.state.flags.find((flag) => flag.actor === by && activeFlag(loaded.state, flag))
+  const row = counting === undefined ? undefined : loaded.history.flags.find((each) => each.row === counting.receipt && each.state === "active")
+  return row !== undefined && flagView(loaded.state, by, row.row) === "FlagWithEvidence" ? row : undefined
+}
+
+effect function shownFlag(loaded: Loaded, githubId: string) {
+  const row = activeRowOf(loaded, githubId)
+  return row === undefined ? null : try reporterFlag(row)
+}
+
+effect function send(projectId: string, event: unknown, by: number, details?: RecordDetails) {
+  const sent = (try ProjectEvents).send({ projectId, event, by })
+  try (details === undefined ? sent : provideService(sent, EnforcementRecord, { details }))
+}
+
+effect function mine(actor: Actor, projectId: string) {
+  const loaded = try projectOf(projectId, getProjectFlagsById.notFoundProjectNotFound)
+  return json({ projectId, flag: try shownFlag(loaded, actor.githubId), ...publicState(loaded.state) })
+}
+
+effect function evidenceOf(value: unknown) {
+  const evidence = typeof value === "string" ? value.trim() : ""
+  const characters = [...evidence].length
+  if (characters < minEvidence || characters > maxEvidence || /\p{Cc}/u.test(evidence.replace(/[\n\r\t]/gu, ""))) throw refused(postProjectFlagsById.invalidRequestDescribeTheEvidenceIn)
+  return evidence
+}
+
+effect function evidenceUrlOf(value: unknown) {
+  if (value === undefined || value === null || value === "") return null
+  if (typeof value !== "string" || value.length > 500) throw refused(postProjectFlagsById.invalidRequestEvidenceUrlMustBeA)
+  const url = URL.parse(value)
+  if (url === null) throw refused(postProjectFlagsById.invalidRequestEvidenceUrlMustBeA)
+  if (url.protocol !== "https:" || url.hostname !== "github.com" || url.username !== "" || url.password !== "" || url.port !== "" || url.href.length < 20) throw refused(postProjectFlagsById.invalidRequestEvidenceUrlMustBeAn)
+  return url.href
+}
+
+effect function participationBanned(githubId: string) {
+  return (try (try Restrictions).account(githubId)).banned
+}
+
+function refusalOf(state: Enforcement, by: number, standing: FlagStanding) {
+  const rows = postProjectFlagsById
+  if (by === state.steward) return rows.ownerCannotFlag
+  if (standing.maintainer === "ReadYes") return rows.maintainerCannotFlag
+  if (standing.maintainer === "ReadUnavailable" || standing.banned === "ReadUnavailable") return rows.flaggerStandingUnavailable
+  if (standing.banned === "ReadYes") return rows.participationBannedThisAccountCannotFile
+  if (standing.accountAgeDays < 30) return rows.flaggerAccountTooNew
+  if (standing.acceptedContributions < 1) return rows.flaggerNeedsAcceptedContribution
+  if (state.flags.some((flag) => flag.actor === by && activeFlag(state, flag))) return rows.flagActive
+  return rows.flagRetry
+}
+
+effect function standingOf(loaded: Loaded, actor: Actor) {
+  const rows = postProjectFlagsById
+  const flagger = { githubId: actor.githubId, primaryRepositoryId: loaded.mirror.repositoryGithubIds[0] ?? "", revision: loaded.mirror.revision }
+  const maintainer = try maintainerOf(flagger)
+  if (maintainer === "ReadYes") throw refused(rows.maintainerCannotFlag)
+  if (maintainer === "ReadUnavailable") throw refused(rows.flaggerStandingUnavailable)
+  return flaggerStanding(flagger, maintainer) catch effect (error) => {
+    if (error._tag === "StandingUnavailable") {
+      try Effect.logError("flagger standing read failure", error.detail)
+      throw refused(rows.flaggerStandingUnavailable)
+    }
+    throw error
+  }
+}
+
+effect function retryRefusal(projectId: string, actor: Actor) {
+  const rows = postProjectFlagsById
+  if (try participationBanned(actor.githubId)) return refused(rows.participationBannedThisAccountCannotFile)
+  const settled = try loadEnforcement(projectId)
+  return refused(activeRowOf(settled, actor.githubId) === undefined ? rows.flagRetry : rows.flagActive)
+}
+
+effect function file(actor: Actor, projectId: string) {
+  const rows = postProjectFlagsById
+  if (try participationBanned(actor.githubId)) throw refused(rows.participationBannedThisAccountCannotFile)
+  const body = try strictBody(AnyObject, bodyBytes)
+  if (Object.keys(body).some((key) => !["category", "evidence", "evidenceUrl"].includes(key))) throw refused(rows.invalidRequestSendCategoryEvidenceAnd)
+  const category = categories.find((candidate) => candidate === body.category)
+  if (category === undefined) throw refused(rows.invalidRequestNoStore, `category must be one of ${categories.join(", ")}`)
+  const evidence = try evidenceOf(body.evidence)
+  const evidenceUrl = try evidenceUrlOf(body.evidenceUrl)
+  const loaded = try projectOf(projectId, rows.notFoundProjectNotFound)
+  const by = idOf(actor.githubId)
+  if (by === loaded.state.steward) throw refused(rows.ownerCannotFlag)
+  const standing = try standingOf(loaded, actor)
+  const receipt = loaded.state.flags.reduce((highest, flag) => Math.max(highest, flag.receipt), 0) + 1
+  if (!canFlag(loaded.state, by, receipt, standing)) throw refused(refusalOf(loaded.state, by, standing))
+  const flagId = `flg_${(try randomId()).replaceAll("-", "").toLowerCase()}`
+  const unbanned = try (try Restrictions).unbanned(actor.githubId)
+  const filing = { id: flagId, reporter: { githubId: actor.githubId, login: actor.login }, category, evidence, evidenceUrl, unbanned }
+  send(projectId, { type: "flag", receipt, standing }, by, { kind: "flag", flag: filing }) catch effect (error) => {
+    if (error instanceof Conflict || error instanceof ProjectRefused) throw (try retryRefusal(projectId, actor))
+    throw error
+  }
+  const settled = try loadEnforcement(projectId)
+  const filed = settled.history.flags.find((row) => row.id === flagId)
+  return json({
+    projectId,
+    flag: filed === undefined ? null : try reporterFlag(filed),
+    paused: settled.state.restriction === "FlagQuarantine" && loaded.state.restriction === "Clear",
+    freshScan: null,
+    ...publicState(settled.state),
+  }, 201)
+}
+
+effect function withdraw(actor: Actor, projectId: string) {
+  const rows = postProjectFlagsByIdWithdraw
+  const body = try strictBody(AnyObject, bodyBytes)
+  if (Object.keys(body).length !== 0) throw refused(rows.invalidRequestSendAnEmptyJSON)
+  const loaded = try projectOf(projectId, rows.notFoundProjectNotFound)
+  const row = activeRowOf(loaded, actor.githubId)
+  if (row === undefined) throw refused(rows.notFoundYouHaveNoActive)
+  send(projectId, { type: "withdrawFlag", receipt: row.row }, idOf(actor.githubId)) catch effect (error) => {
+    if (error instanceof Conflict || error instanceof ProjectRefused) throw refused(rows.notFoundYouHaveNoActive)
+    throw error
+  }
+  return json({ projectId, flag: null, ...publicState((try loadEnforcement(projectId)).state) })
+}
+
+effect function requireAdmin(actor: Actor) {
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refused(postAdminVettingExemptions.forbiddenAdminAccessIsRequired)
+}
+
+function exactKeys(body: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const keys = Object.keys(body)
+  return required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key))
+}
+
+effect function decisionOf(body: Readonly<Record<string, unknown>>) {
+  const rows = postAdminVettingExemptions
+  if (body.confirmation !== true) throw refused(rows.confirmationRequiredConfirmTheExplicitHuman)
+  const reason = typeof body.reason === "string" ? body.reason.trim() : ""
+  const decisionReference = typeof body.decisionReference === "string" ? body.decisionReference.trim() : ""
+  if (reason.length < 1 || reason.length > 1000 || decisionReference.length < 1 || decisionReference.length > 500) throw refused(rows.invalidRequestProvideAReason1)
+  return { reason, decisionReference }
+}
+
+schema StewardGitHub { actorId: string; nodeId: string; type?: string }
+schema ExemptionManifest { listingTier?: string; steward: { github: StewardGitHub }; authority: ManifestAuthority; repositories: ReadonlyArray<ManifestRepository> }
+
+schema ExemptionRow {
+  sequence: number
+  id: string
+  project_id: string
+  revision: number
+  manifest_sha256: string
+  repository_id: string
+  repository_node_id: string
+  steward_id: string
+  steward_node_id: string
+  granted_by_github_id: string
+  granted_by_github_login: string
+  granted_at: string
+  reason: string
+  decision_reference: string
+  revoked_at: string | null
+  revoked_by_github_id: string | null
+  revoked_by_github_login: string | null
+  revocation_reason: string | null
+  revocation_decision_reference: string | null
+}
+
+const exemptionSelect = sql`SELECT g.sequence, g.id, g.project_id, g.revision, g.manifest_sha256, g.repository_id, g.repository_node_id, g.steward_id, g.steward_node_id, g.granted_by_github_id, g.granted_by_github_login, g.granted_at, g.reason, g.decision_reference, r.revoked_at, r.revoked_by_github_id, r.revoked_by_github_login, r.reason AS revocation_reason, r.decision_reference AS revocation_decision_reference FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id`
+
+function exemptionView(row: ExemptionRow) {
+  return {
+    id: row.id,
+    kind: "owner-approved-admission" as const,
+    projectId: row.project_id,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    repositoryId: row.repository_id,
+    repositoryNodeId: row.repository_node_id,
+    stewardId: row.steward_id,
+    stewardNodeId: row.steward_node_id,
+    grantedBy: { githubId: row.granted_by_github_id, githubLogin: row.granted_by_github_login },
+    grantedAt: row.granted_at,
+    reason: row.reason,
+    decisionReference: row.decision_reference,
+    revokedAt: row.revoked_at,
+    revokedBy: row.revoked_by_github_id === null || row.revoked_by_github_login === null ? null : { githubId: row.revoked_by_github_id, githubLogin: row.revoked_by_github_login },
+    revocationReason: row.revocation_reason,
+    revocationDecisionReference: row.revocation_decision_reference,
+  }
+}
+
+effect function exemptionById(id: string) {
+  return try first(ExemptionRow, sql`${exemptionSelect} WHERE g.id = ${id}`)
+}
+
+effect function clearanceView(loaded: Enforcement) {
+  const state = try withRetainedEvidence(loaded)
+  return { state: projectClearance(state), repositories: repositoryClearances(state) }
+}
+
+function listedPath(manifest: ExemptionManifest, value: string) {
+  const wanted = value.toLowerCase()
+  return manifest.repositories.find((repository) => [repository.id, ...(repository.aliases ?? [])].some((path) => path.toLowerCase() === wanted))?.id
+}
+
+function identityOf(manifest: ExemptionManifest, path: string) {
+  const index = manifest.repositories.findIndex((repository) => repository.id === path)
+  if (index === 0) return manifest.authority.repositoryNodeId === undefined ? undefined : { githubId: String(manifest.authority.repositoryId), nodeId: manifest.authority.repositoryNodeId }
+  const listed = manifest.repositories[index]
+  return listed?.githubId === undefined || listed.nodeId === undefined ? undefined : { githubId: listed.githubId, nodeId: listed.nodeId }
+}
+
+effect function authorizedMaintainer(loaded: Loaded, manifest: ExemptionManifest, repositoryId: string) {
+  const rows = postAdminVettingExemptions
+  const steward = manifest.steward.github
+  const maintainers = [...new Set([...(loaded.history.facts?.creator === null || loaded.history.facts?.creator === undefined ? [] : [loaded.history.facts.creator]), ...(steward.type === undefined || steward.type === "User" ? [steward.actorId] : [])])]
+  let unavailable = false
+  for (const maintainer of maintainers) {
+    const read = try (try Authority).repository({ actorGithubId: maintainer, repositoryId })
+    if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") {
+      unavailable = true
+      continue
+    }
+    if (read.permission === "PermissionVerified" && read.installation === "Installed") return maintainer
+  }
+  if (unavailable) throw refused(rows.githubUnavailableNoStore, admission.github.message)
+  throw refused(rows.forbiddenTheRegisteredProjectCreator)
+}
+
+schema LiveRepository { id: number; node_id: string }
+
+effect function liveIdentity(identity: { readonly githubId: string; readonly nodeId: string }) {
+  const rows = postAdminVettingExemptions
+  const live = (try GitHub).json(`/repositories/${identity.githubId}`, LiveRepository) catch effect () => { throw refused(rows.githubUnavailableNoStore, "Current immutable repository identity is unavailable.") }
+  if (String(live.id) !== identity.githubId || live.node_id !== identity.nodeId) throw refused(rows.repositoryMismatch)
+}
+
+effect function grant(actor: Actor) {
+  const rows = postAdminVettingExemptions
+  try requireAdmin(actor)
+  const body = try strictBody(AnyObject, bodyBytes)
+  if (!exactKeys(body, ["projectId", "revision", "reason", "decisionReference", "confirmation"], ["repository"])) throw refused(rows.invalidRequestRequestBodyHasUnexpectedFields)
+  const decision = try decisionOf(body)
+  const repository = body.repository
+  if (repository !== undefined && (typeof repository !== "string" || repository.length < 3 || repository.length > 201)) throw refused(rows.invalidRequestInvalidRepository)
+  const projectId = body.projectId
+  const revision = body.revision
+  if (typeof projectId !== "string" || !projectIdPattern.test(projectId) || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) throw refused(rows.invalidRequestProvideTheProjectAnd)
+  const loaded = try loadEnforcement(projectId)
+  if (!loaded.found) throw refused(rows.notFoundProjectNotFoundNoStore)
+  if (loaded.mirror.revision !== revision) throw refused(rows.staleRevisionTheProjectChangedReview)
+  const current = loaded.history.revisions.find((each) => each.revision === revision)
+  if (current === undefined) throw refused(rows.staleRevisionTheProjectChangedReview)
+  const manifest = try jsonOf(ExemptionManifest, current.manifest, "current manifest")
+  const path = typeof repository === "string" ? listedPath(manifest, repository) : manifest.repositories[0]?.id
+  if (path === undefined) throw refused(rows.repositoryNotListed)
+  const identity = identityOf(manifest, path)
+  if (identity === undefined) throw refused(rows.unsupportedRepository)
+  const maintainer = try authorizedMaintainer(loaded, manifest, identity.githubId)
+  try liveIdentity(identity)
+  const state = loaded.state
+  if (state.restriction !== "Clear" || manifest.listingTier === "retired") throw refused(rows.projectRestricted)
+  if (state.repositories.some((each) => latestOf(state, each).state === "AMalicious")) throw refused(rows.projectMalicious)
+  const steward = manifest.steward.github
+  const existing = try first(ExemptionRow, sql`${exemptionSelect} WHERE g.project_id = ${projectId} AND g.repository_id = ${identity.githubId} AND g.repository_node_id = ${identity.nodeId} AND g.steward_id = ${steward.actorId} AND g.steward_node_id = ${steward.nodeId} AND r.exemption_id IS NULL ORDER BY g.sequence DESC LIMIT 1`)
+  if (existing !== undefined) return json({ exemption: exemptionView(existing), replayed: true, clearance: try clearanceView(state) })
+  const repositoryNumber = idOf(identity.githubId)
+  const request: GrantRequest = {
+    id: state.grants.reduce((highest, each) => Math.max(highest, each.id), 0) + 1,
+    kind: "OwnerApproved",
+    repository: repositoryNumber,
+    revision,
+    manifestDigest: revision,
+    steward: idOf(steward.actorId),
+    check: { actor: idOf(maintainer), repository: repositoryNumber, access: "AccessVerified" },
+    decision: 1,
+    reason: 1,
+    branch: "IntegrationBranch",
+    head: 1,
+    scope: 1,
+    limitations: 1,
+    confirmed: true,
+  }
+  const by = idOf(actor.githubId)
+  const fence = { revision: state.revision, sequence: state.journal.length + 1 }
+  if (!canGrantExemption(state, by, fence, request)) throw new Refused(admission.rejected)
+  const id = `vex_${(try randomId()).replaceAll("-", "")}`
+  const exemption = { id, repositoryId: identity.githubId, repositoryNodeId: identity.nodeId, stewardId: steward.actorId, stewardNodeId: steward.nodeId, approver: { githubId: actor.githubId, login: actor.login }, ...decision }
+  send(projectId, { type: "grantExemption", fence, request }, by, { kind: "exemption", exemption }) catch effect (error) => {
+    if (error instanceof Conflict || error instanceof ProjectRefused) throw refused(rows.staleRevisionTheProjectItsRestrictions)
+    throw error
+  }
+  const saved = try exemptionById(id)
+  if (saved === undefined) throw refused(rows.staleRevisionTheProjectItsRestrictions)
+  return json({ exemption: exemptionView(saved), setup: null, clearance: try clearanceView((try loadEnforcement(projectId)).state) }, 201)
+}
+
+effect function revoke(actor: Actor, id: string) {
+  const rows = postAdminVettingExemptionsByIdRevoke
+  try requireAdmin(actor)
+  const body = try strictBody(AnyObject, bodyBytes)
+  if (!exactKeys(body, ["reason", "decisionReference", "confirmation"])) throw refused(rows.invalidRequestRequestBodyHasUnexpectedFields)
+  const decision = try decisionOf(body)
+  if (!exemptionIdPattern.test(id)) throw refused(rows.notFoundExemptionNotFound)
+  const existing = try exemptionById(id)
+  if (existing === undefined) throw refused(rows.notFoundExemptionNotFound)
+  if (existing.revoked_at !== null) return json({ exemption: exemptionView(existing), replayed: true })
+  const loaded = try loadEnforcement(existing.project_id)
+  const revocation = { grant: existing.sequence, decision: 1, reason: 1, confirmed: true }
+  const by = idOf(actor.githubId)
+  if (!canRevokeExemption(loaded.state, by, revocation)) throw new Refused(admission.rejected)
+  const details = { kind: "revocation" as const, revocation: { exemptionId: id, administrator: { githubId: actor.githubId, login: actor.login }, ...decision } }
+  const raced = send(existing.project_id, { type: "revokeExemption", revoke: revocation }, by, details) catch effect (error) => {
+    if (error instanceof Conflict || error instanceof ProjectRefused) return true
+    throw error
+  }
+  if (raced === true) {
+    const settled = try exemptionById(id)
+    if (settled === undefined || settled.revoked_at === null) throw new Refused(admission.rejected)
+    return json({ exemption: exemptionView(settled), replayed: true })
+  }
+  const saved = try exemptionById(id)
+  return json({ exemption: saved === undefined ? exemptionView(existing) : exemptionView(saved), setup: null })
+}
+
+export const enforcementRoutes = Layer.mergeAll(
+  handleRaw(projectFlag, (input) => mine(input.actor, input.params.id ?? "")),
+  handleRaw(fileFlag, (input) => file(input.actor, input.params.id ?? "")),
+  handleRaw(withdrawFlag, (input) => withdraw(input.actor, input.params.id ?? "")),
+  handleRaw(grantExemption, (input) => grant(input.actor)),
+  handleRaw(revokeExemption, (input) => revoke(input.actor, input.params.id ?? "")),
+)

@@ -1,0 +1,97 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type JupiterRoute, decodeJupiterRoute } from "../kernels/jupiterSchema.ts"
+import type { RouteBinding, RouteExpectedKeys, RouteRole } from "../kernels/jupiterPolicy.ts"
+import { boundsExceeded, collectionTooLarge, emptyRoute, invalidBool, invalidOption, sizeRefused, trailingBytes, truncated, unknownInstruction, unknownVariant } from "../kernels/jupiterWire.ts"
+import { type AccountProof, type RouteExpectation, verifyAccountProof } from "../solana/accounts.vibe"
+import { type ParsedTransaction, ata, refuse } from "../solana/wire.vibe"
+import { exactWrap } from "./nativeWrap.vibe"
+
+module verified {
+  import { type RouteBinding, type RouteExpectedKeys, type RouteRole, invalidRouteRole as invalid, routeAmountsMatch as amountsMatch, routeBindingError as bindingError, routeValue as value } from "../kernels/jupiterPolicy.ts"
+  /** @throws {never} */
+  export function invalidRouteRole(roles: readonly RouteRole[], indices: readonly number[], keys: readonly string[], signed: number, readonlySigned: number, staticCount: number, readonlyUnsigned: number, loadedWritable: number): number {
+    return invalid(roles, indices, keys, signed, readonlySigned, staticCount, readonlyUnsigned, loadedWritable)
+  }
+  /** @throws {never} */
+  export function routeValue(bindings: readonly RouteBinding[], name: string): string { return value(bindings, name) }
+  /** @throws {never} */
+  export function routeBindingError(bindings: readonly RouteBinding[], expected: RouteExpectedKeys, shared: boolean): string { return bindingError(bindings, expected, shared) }
+  /** @throws {never} */
+  export function routeAmountsMatch(input: bigint, quoted: bigint, slippage: number, platformFee: number, positiveSlippage: number, expectedInput: bigint, expectedQuoted: bigint, expectedSlippage: number, minimum: bigint): boolean {
+    return amountsMatch(input, quoted, slippage, platformFee, positiveSlippage, expectedInput, expectedQuoted, expectedSlippage, minimum)
+  }
+}
+import { invalidRouteRole, routeAmountsMatch, routeBindingError, routeValue } from verified
+
+const decodeRefusals: ReadonlyMap<number, string> = new Map([
+  [sizeRefused, "Jupiter instruction size is invalid"],
+  [unknownInstruction, "Jupiter instruction is not an admitted exact-in route"],
+  [truncated, "Truncated Jupiter instruction"],
+  [collectionTooLarge, "Jupiter collection exceeds route bounds"],
+  [boundsExceeded, "Jupiter instruction exceeds decode bounds"],
+  [invalidBool, "Invalid Jupiter boolean"],
+  [invalidOption, "Invalid Jupiter option tag"],
+  [unknownVariant, "Unknown Jupiter route variant"],
+  [trailingBytes, "Trailing bytes after Jupiter route"],
+  [emptyRoute, "Jupiter route has no steps"],
+])
+
+export interface BoundRoute {
+  readonly source: string
+  readonly destination: string
+  readonly route: string
+}
+
+export effect function decodedRoute(data: Uint8Array) {
+  const route: JupiterRoute = decodeJupiterRoute(data)
+  if (route.kind === "refused") return try refuse(decodeRefusals.get(route.error) ?? "Unknown Jupiter decode result")
+  return route
+}
+
+function small(value: bigint | undefined, absent: number) {
+  return value === undefined ? absent : value > 65_535n ? -1 : Number(value)
+}
+
+export effect function boundRoute(raw: Uint8Array, parsed: ParsedTransaction, proof: AccountProof, expected: RouteExpectation) {
+  const keys = try verifyAccountProof(raw, parsed, proof)
+  try exactWrap(parsed, keys, expected)
+  if (parsed.requiredSignatures !== 1 || parsed.readonlySigned !== 0 || keys[0] !== expected.wallet) return try refuse("Jupiter route requires the fee wallet as its sole signer")
+  const routes = parsed.instructions.filter((instruction) => instruction.program === expected.program)
+  const [instruction] = routes
+  if (routes.length !== 1 || instruction === undefined) return try refuse("Jupiter transaction must contain exactly one route")
+  const route = try decodedRoute(instruction.data)
+  const roles: ReadonlyArray<RouteRole> = route.instruction.accounts
+  if (instruction.accounts.length < roles.length) return try refuse("Jupiter route account list is incomplete")
+  const invalid = invalidRouteRole(roles, instruction.accounts, keys, parsed.requiredSignatures, parsed.readonlySigned, parsed.staticKeys.length, parsed.readonlyUnsigned, proof.loadedWritable.length)
+  if (invalid >= 0) return try refuse(`Jupiter route ${roles[invalid]?.name ?? "account"} has incorrect privileges`)
+  const bindings: ReadonlyArray<RouteBinding> = roles.map((role, position) => ({ name: role.name, value: keys[instruction.accounts[position] ?? -1] ?? "" }))
+  if (routeValue(bindings, "user_transfer_authority") !== expected.wallet) return try refuse("Jupiter route user_transfer_authority differs from the reviewed swap")
+  const source = try ata(expected.inputMint, expected.wallet, expected.inputProgram)
+  const destination = try ata(expected.outputMint, expected.wallet, expected.outputProgram)
+  const reviewed: RouteExpectedKeys = {
+    wallet: expected.wallet,
+    source,
+    destination,
+    inputMint: expected.inputMint,
+    outputMint: expected.outputMint,
+    inputProgram: expected.inputProgram,
+    outputProgram: expected.outputProgram,
+    program: expected.program,
+  }
+  const bindingError = routeBindingError(bindings, reviewed, route.instruction.name.startsWith("shared_"))
+  if (bindingError !== "") return try refuse(bindingError)
+  const { args } = route
+  const matches = Number.isInteger(expected.slippageBps) && routeAmountsMatch(
+    args.in_amount ?? -1n,
+    args.quoted_out_amount ?? -1n,
+    small(args.slippage_bps, -1),
+    small(args.platform_fee_bps, -1),
+    small(args.positive_slippage_bps, 0),
+    expected.amountIn,
+    expected.quotedOut,
+    expected.slippageBps,
+    expected.minimumOut,
+  )
+  if (!matches) return try refuse("Jupiter instruction amounts, fees or slippage differ from the reviewed swap")
+  return { source, destination, route: route.instruction.name } satisfies BoundRoute
+}

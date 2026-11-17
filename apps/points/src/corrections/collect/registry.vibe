@@ -1,0 +1,148 @@
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"
+import { sha256Hex } from "@repo/platform/crypto"
+import { RegistryProject } from "../../census/projects.vibe"
+import { isCanonicalInstant } from "./calendar.vibe"
+import { digestOf, encoded } from "./inventory.vibe"
+
+export error RegistryAuthorityInvalid { message: string }
+
+type JsonObject = Readonly<Record<string, unknown>>
+
+const sha256Pattern = /^[a-f0-9]{64}$/u
+const revisionKeys = "createdAt,manifest,manifestSha256,projectId,reason,revision"
+const maximumProjects = 100
+const maximumRevisions = 10_000
+schema HistoricalRepository { readonly id: string; readonly githubUrl: string; readonly aliases?: ReadonlyArray<string> }
+schema HistoricalProject { readonly id: string; readonly status: string; readonly listingTier?: string; readonly repositories: ReadonlyArray<HistoricalRepository> }
+
+const decodeProjects = Schema.decodeUnknownEffect(Schema.Array(RegistryProject))
+const decodeHistorical = Schema.decodeUnknownEffect(HistoricalProject)
+
+function objectOf(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
+}
+
+function refuse(message: string) {
+  return new RegistryAuthorityInvalid({ message })
+}
+
+effect function instantOf(value: unknown) {
+  if (typeof value !== "string" || !isCanonicalInstant(value)) throw refuse("Correction registry time is not a canonical UTC timestamp")
+  return Date.parse(value)
+}
+
+function duplicated(values: ReadonlyArray<string>) {
+  return new Set(values).size !== values.length
+}
+
+effect function projectRegistry(value: unknown) {
+  if (!Array.isArray(value) || value.length > maximumProjects) throw refuse("project registry must contain 0 to 100 projects")
+  const raw: ReadonlyArray<unknown> = value
+  const projects = decodeProjects(raw) catch effect () => {
+    throw refuse("Correction registry history is malformed")
+  }
+  if (projects.filter((project) => project.skill.publishAtRoot === true).length > 1) throw refuse("project registry must declare at most one root-published contributor skill")
+  if (duplicated(projects.map((project) => project.id))) throw refuse("project registry contains duplicate ids")
+  if (duplicated(projects.flatMap((project) => project.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((id) => id.toLowerCase()))))) {
+    throw refuse("project registry contains duplicate repositories")
+  }
+  return raw.map((project) => objectOf(project) ?? {})
+}
+
+function restrictionOf(manifest: JsonObject | undefined, definition: JsonObject) {
+  return manifest !== undefined && definition.status === "paused" && definition.listingTier === "retired"
+    && encoded({ ...manifest, status: "paused", listingTier: "retired" }) === encoded(definition)
+}
+
+effect function boundRevisions(revisions: ReadonlyArray<unknown>, definitions: ReadonlyArray<JsonObject>) {
+  if (revisions.length > maximumRevisions) throw refuse("project revisions must be a bounded array")
+  const latest = new Map<string, number>()
+  const newest = new Map<string, { readonly manifest: JsonObject; readonly manifestSha256: string }>()
+  for (const value of revisions) {
+    const row = objectOf(value)
+    if (row === undefined || Object.keys(row).sort().join(",") !== revisionKeys) throw refuse("project revision has an unexpected shape")
+    const manifest = objectOf(row.manifest)
+    const decoded = decodeHistorical(row.manifest) catch () => undefined
+    if (manifest === undefined || decoded === undefined || typeof row.projectId !== "string" || typeof row.revision !== "number" || typeof row.manifestSha256 !== "string") {
+      throw refuse("project revision has an unexpected shape")
+    }
+    const previous = latest.get(row.projectId) ?? 0
+    if (manifest.id !== row.projectId || row.revision !== previous + 1 || (try sha256Hex(encoded(manifest))) !== row.manifestSha256) {
+      throw refuse(`project revision ${row.projectId}@${row.revision} is out of order or does not match its digest`)
+    }
+    latest.set(row.projectId, row.revision)
+    newest.set(row.projectId, { manifest, manifestSha256: row.manifestSha256 })
+  }
+  for (const definition of definitions) {
+    const id = String(definition.id)
+    const bound = newest.get(id)
+    if (bound?.manifestSha256 !== (try sha256Hex(encoded(definition))) && !restrictionOf(bound?.manifest, definition)) {
+      throw refuse(`project ${id} does not match its newest revision`)
+    }
+  }
+  if (latest.size !== definitions.length) throw refuse("project revisions name a project that is not listed")
+}
+
+export effect function assertCorrectionRegistry(archivedDigest: string, through: string, projects: ReadonlyArray<string> | undefined, registry: unknown) {
+  if (!sha256Pattern.test(archivedDigest)) throw refuse("Correction registry digest is invalid")
+  const cutoff = try instantOf(through)
+  if (projects !== undefined && (projects.length === 0 || projects.some((id) => id.length === 0 || id.trim() !== id) || new Set(projects).size !== projects.length)) {
+    throw refuse("Correction registry requires distinct selected projects")
+  }
+  if ((try digestOf(registry)) === archivedDigest) return
+  if (projects === undefined) throw refuse("Historical correction registry requires selected projects")
+  const record = objectOf(registry)
+  if (record === undefined || Object.keys(record).sort().join(",") !== "projects,revisions,withheld" || !Array.isArray(record.revisions) || !Array.isArray(record.withheld)) {
+    throw refuse("Correction registry history is malformed")
+  }
+  const current = try projectRegistry(record.projects)
+  const history: ReadonlyArray<unknown> = record.revisions
+  try boundRevisions(history, current)
+  const withheldIds: ReadonlyArray<unknown> = record.withheld
+  const withheld = new Set(withheldIds)
+  if (withheld.size !== withheldIds.length || withheldIds.some((id) => typeof id !== "string" || !current.some((project) => project.id === id))) {
+    throw refuse("Correction registry withheld scope is malformed")
+  }
+  const latest = new Map<string, JsonObject>()
+  const archived = new Map<string, JsonObject>()
+  const revisions: JsonObject[] = []
+  const laterProjects = new Set<string>()
+  let previousProjectId = ""
+  let previousTime = Number.NEGATIVE_INFINITY
+  for (const value of history) {
+    const row = objectOf(value)
+    const manifest = objectOf(row?.manifest)
+    if (row === undefined || manifest === undefined || typeof row.projectId !== "string" || typeof row.reason !== "string" || row.reason.trim() === "") {
+      throw refuse("Correction registry revision is malformed")
+    }
+    const time = try instantOf(row.createdAt)
+    if (row.projectId < previousProjectId || (row.projectId === previousProjectId && time < previousTime)) throw refuse("Correction registry revision order changed")
+    previousProjectId = row.projectId
+    previousTime = time
+    latest.set(row.projectId, manifest)
+    if (time <= cutoff) {
+      archived.set(row.projectId, manifest)
+      revisions.push(row)
+    } else {
+      laterProjects.add(row.projectId)
+    }
+  }
+  const orderedCurrent: JsonObject[] = []
+  for (const [id, manifest] of latest) {
+    if (!withheld.has(id)) {
+      orderedCurrent.push(manifest)
+      continue
+    }
+    if (manifest.status === "paused" && manifest.listingTier === "retired") throw refuse("Correction registry withheld scope does not match history")
+    orderedCurrent.push({ ...manifest, status: "paused", listingTier: "retired" })
+  }
+  if (encoded(orderedCurrent) !== encoded(current)) throw refuse("Correction registry manifests do not match ordered immutable history")
+  const archivedProjects = try projectRegistry([...archived.values()])
+  if ((try digestOf({ projects: archivedProjects, revisions, withheld: [] })) !== archivedDigest) throw refuse("Archived correction registry cannot be reproduced exactly")
+  const selected = new Set(projects)
+  const archivedScope = archivedProjects.filter((project) => selected.has(String(project.id)))
+  const currentScope = current.filter((project) => selected.has(String(project.id)))
+  if (archivedScope.length !== projects.length || encoded(archivedScope) !== encoded(currentScope) || projects.some((id) => laterProjects.has(id) || withheld.has(id))) {
+    throw refuse("Selected correction registry scope changed")
+  }
+}

@@ -1,0 +1,433 @@
+// spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/monthlyCommitment.md, "A finalized admitted root that matches a signed attempt admits the month"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { EvmRpc, type Hex, recoverDigest } from "@repo/platform/chain/evm"
+import { first, rows, sql } from "@repo/platform/d1"
+import { type ChainView, type Commitment, type Event, type SigningFacts, apply, canAdmit, canAdmitLegacy, canCloseWindow, canComplete, canInvestigate, canObserve, canObserveFacts, canRefuseSigning, canSignEvm, signingRefusal, stale, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { type AwardState, type Bytes32, U128_MAX, U256_MAX, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBool, decodeBytes32, decodeUint, escrowGetter, isZero } from "../chain/evm/abi.ts"
+import { MONTHLY_RESERVE_VERSION, MONTHLY_RESERVE_VERSION_CALL, type MonthlyEntry, type MonthlyReservation, SOURCE_SEQUENCE_CALL, decodeMonthlyReserve, monthlyReservation, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall } from "../chain/evm/monthlyRoot.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, parsePeriod } from "../kernels/calendar.ts"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { type Entries, ordinaryScope, within } from "../journal/journal.vibe"
+import { type AttestationPlan, type AttestationRequest, type PlanOptions, type Planned, PlanRefused, preparePlan } from "../monthlyCommitment/plan.vibe"
+import { type EvmReservation, type JournalContext, type JournalKey, type JournalRun, type SignedPlan, loadJournal, runJournal } from "../monthlyCommitment/store.vibe"
+import { amountOf } from "../monthly/store.vibe"
+import { AttesterConfig, type Deployment, DeploymentRefused, SignerUnavailable, onChain, reviewedDeployment } from "./evm.vibe"
+import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
+
+export error MonthlyRefused { reason: string }
+
+function refusedMonth(reason: string) {
+  return new MonthlyRefused({ reason })
+}
+
+export interface MonthAttestation {
+  readonly key: JournalKey
+  readonly context: JournalContext
+  readonly run: JournalRun
+}
+
+export interface Decided {
+  readonly state: Commitment
+  readonly events: ReadonlyArray<Event>
+  readonly sign: boolean
+}
+
+const RecordedPlan = Schema.Struct({
+  request: Schema.Struct({ projectId: Schema.String, period: Schema.String, network: Schema.String, snapshotSha256: Schema.String }),
+  deployment: Schema.Unknown,
+  family: Schema.Literals(["evm", "solana"]),
+  allocationRoot: Schema.String,
+  messageHex: Schema.String,
+  totalGrossBase: Schema.String,
+  frozenAt: Schema.optionalKey(Schema.String),
+  entries: Schema.Array(Schema.Struct({ githubUserId: Schema.String, grossMicro: Schema.String, sourceDigest: Schema.String })),
+  evmReservation: Schema.optionalKey(Schema.Struct({
+    version: Schema.Literal(2),
+    allocationDigest: Schema.String,
+    allocationRoot: Schema.String,
+    wholeGross: Schema.String,
+    remainingGross: Schema.String,
+    count: Schema.Number,
+    sourceSequence: Schema.String,
+  })),
+})
+
+export const MonthlyIntent = Schema.Struct({
+  snapshotSha256: Schema.String,
+  messageHex: Schema.String,
+  authority: Schema.String,
+  frozenAt: Schema.optionalKey(Schema.String),
+  authorization: Schema.optionalKey(Schema.Struct({ plan: RecordedPlan, signatureHex: Schema.String })),
+})
+
+export type MonthlyIntentRecord = typeof MonthlyIntent.Type
+
+schema Allocation { readonly snapshotSha256: string }
+
+export function monthKey(network: string, vault: string, period: string) {
+  return `monthly:${network}:${vault}:${period}`
+}
+
+effect function decodedIntent(key: string, stored: unknown) {
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(MonthlyIntent)(stored) catch effect () => { throw refusedMonth(`Monthly journal entry ${key} is malformed`) }
+}
+
+export effect function readIntent(entries: Entries, key: string) {
+  return try decodedIntent(key, try entries.get(key))
+}
+
+export effect function journalIntent(entries: Entries, key: string, expected: MonthlyIntentRecord, allocation: { readonly month: string; readonly snapshotSha256: string } | undefined) {
+  if (allocation !== undefined) {
+    const bindingKey = `${allocation.month}:allocation`
+    const legacy = try readIntent(entries, allocation.month)
+    const bound = try entries.get(bindingKey)
+    const boundSnapshot = bound === undefined ? undefined : (Schema.decodeUnknownEffect(Allocation)(bound) catch effect () => { throw refusedMonth("Monthly allocation binding is malformed") }).snapshotSha256
+    if ((legacy !== undefined && legacy.snapshotSha256 !== allocation.snapshotSha256) || (boundSnapshot !== undefined && boundSnapshot !== allocation.snapshotSha256))
+      throw refusedMonth("Monthly authorization already bound to another allocation")
+    try entries.put(bindingKey, { snapshotSha256: allocation.snapshotSha256 })
+  }
+  const previous = try readIntent(entries, key)
+  if (previous === undefined) {
+    try entries.put(key, expected)
+    return expected
+  }
+  if (previous.snapshotSha256 !== expected.snapshotSha256 || previous.messageHex !== expected.messageHex || previous.authority !== expected.authority)
+    throw refusedMonth("Monthly authorization already bound to another allocation or authority")
+  return previous
+}
+
+export effect function retainSignature(key: string, intent: MonthlyIntentRecord, signed: SignedPlan) {
+  return try within(ordinaryScope, (entries) => effect {
+    const current = try readIntent(entries, key)
+    if (current?.authorization !== undefined) return current.authorization as SignedPlan
+    if (current === undefined || current.messageHex !== intent.messageHex || current.authority !== intent.authority) throw refusedMonth("Monthly journal intent changed during signing")
+    try entries.put(key, { ...current, authorization: signed })
+    return signed
+  })
+}
+
+export function plannedFacts(height: number, digest: string): SigningFacts {
+  return { height, projectActive: true, restricted: false, vaultServed: true, automaticOn: true, snapshotDigest: digest }
+}
+
+export const refusedFacts: Readonly<Record<string, (facts: SigningFacts) => SigningFacts>> = {
+  project_restricted: (facts) => ({ ...facts, restricted: true }),
+  vault_not_served: (facts) => ({ ...facts, vaultServed: false }),
+  automatic_off: (facts) => ({ ...facts, automaticOn: false }),
+  snapshot_changed: (facts) => ({ ...facts, snapshotDigest: "" }),
+}
+
+export effect function signingFacts(request: AttestationRequest, options: PlanOptions, height: number) {
+  const facts = plannedFacts(height, request.snapshotSha256)
+  const refusal = effect {
+    try preparePlan(request, options)
+    return undefined
+  } catch effect (error) => match (error) {
+    when PlanRefused: error;
+    default: throw error;
+  }
+  if (refusal === undefined) return facts
+  const observed = refusedFacts[refusal.code]
+  if (observed === undefined) throw refusal
+  return observed(facts)
+}
+
+effect function stepped(state: Commitment, events: Event[], event: Event, by: string) {
+  events.push(event)
+  return try apply(state, event, by)
+}
+
+export effect function decide(state: Commitment, view: ChainView, facts: SigningFacts, by: string) {
+  const events: Event[] = []
+  if (!canObserve(state, view)) {
+    if (view.height === state.view.height) return { state, events, sign: false } satisfies Decided
+    throw refusedMonth("The finalized view regressed or contradicts the monthly journal")
+  }
+  let current = try stepped(state, events, { type: "observe", view }, by)
+  if (canAdmit(current)) current = try stepped(current, events, { type: "admit" }, by)
+  else if (canAdmitLegacy(current)) current = try stepped(current, events, { type: "admitLegacy" }, by)
+  else if (canInvestigate(current)) current = try stepped(current, events, { type: "investigate" }, by)
+  if (canComplete(current)) current = try stepped(current, events, { type: "complete" }, by)
+  if (canCloseWindow(current)) current = try stepped(current, events, { type: "closeWindow" }, by)
+  if (current.phase !== "Authorized" || current.view.admittedRoot !== "") return { state: current, events, sign: false } satisfies Decided
+  if (canObserveFacts(current, facts)) current = try stepped(current, events, { type: "observeFacts", facts }, by)
+  if (signingRefusal(current) !== "NoRefusal") {
+    if (canRefuseSigning(current)) current = try stepped(current, events, { type: "refuseSigning" }, by)
+    return { state: current, events, sign: false } satisfies Decided
+  }
+  return { state: current, events, sign: stale(current) && (current.family === "EvmV2" || current.attempts.length === 0) } satisfies Decided
+}
+
+export function servedNetworks(pins: ReadonlyArray<{ readonly network: string }>): ReadonlySet<string> {
+  return new Set(pins.map((pin) => pin.network))
+}
+
+export effect function periodOf(text: string) {
+  const period = parsePeriod(text)
+  if (period === undefined) throw refusedMonth("Invalid monthly period")
+  return period
+}
+
+schema PlannedDeployment {
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly identityAuthority: string
+  readonly feeRecipient: string
+}
+
+export effect function plannedDeployment(plan: AttestationPlan) {
+  return Schema.decodeUnknownEffect(PlannedDeployment)(plan.deployment) catch effect () => { throw refusedMonth("Monthly deployment differs from pinned configuration") }
+}
+
+function sameAddress(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+effect function pinnedFor(request: AttestationRequest, plan: AttestationPlan) {
+  const planned = try plannedDeployment(plan)
+  const deployment = try reviewedDeployment(request.network, planned.vault, "SignMonthlyRoot")
+  const { pin } = deployment
+  if (pin.projectId !== request.projectId || !sameAddress(pin.asset, planned.asset) || !sameAddress(pin.owner, planned.owner) || !sameAddress(pin.identityAuthority, planned.identityAuthority) || !sameAddress(pin.feeRecipient, planned.feeRecipient))
+    throw refusedMonth("Monthly deployment differs from pinned configuration")
+  return deployment
+}
+
+export interface EvmMonth {
+  readonly view: ChainView
+  readonly reservation: MonthlyReservation
+  readonly remaining: ReadonlyArray<MonthlyEntry>
+}
+
+effect function entriesOf(plan: AttestationPlan) {
+  const entries: MonthlyEntry[] = []
+  for (const entry of plan.entries) {
+    const actor = parseBaseUnits(entry.githubUserId)
+    const gross = parseBaseUnits(entry.grossMicro)
+    const sourceDigest = bytes32(entry.sourceDigest)
+    if (actor === undefined || gross === undefined || sourceDigest === undefined) throw refusedMonth("The frozen allocation contains an invalid award")
+    entries.push({ actor, gross, sourceDigest })
+  }
+  return entries
+}
+
+function sourceOf(digest: Bytes32) {
+  return digest.slice(2).toLowerCase()
+}
+
+function safeNumber(value: bigint) {
+  return value <= 9_007_199_254_740_991n ? Number(value) : undefined
+}
+
+effect function finalizedMonth(deployment: Deployment, period: Period, allocationDigest: Bytes32, entries: ReadonlyArray<MonthlyEntry>) {
+  const rpc = try EvmRpc
+  const head = try rpc.head("finalized")
+  const block = head.number
+  verifyEvmDeployment(deployment.review, block) catch effect (error) => match (error) {
+    when DeploymentMismatch: throw new DeploymentRefused({ reason: error.message });
+    default: throw error;
+  }
+  const read = (data: Hex) => rpc.call({ to: deployment.vault, data, block })
+  const version = read(MONTHLY_RESERVE_VERSION_CALL) catch effect (error) => {
+    if (error._tag === "RpcRefused" && error.emptyRevert) throw refusedMonth("Unreviewed monthly reserve version")
+    throw error
+  }
+  if (decodeUint(version, U256_MAX) !== MONTHLY_RESERVE_VERSION) throw refusedMonth("Unreviewed monthly reserve version")
+  const rootCall = try Effect.try({ try: () => monthlyRootCall(period), catch: () => refusedMonth("Invalid monthly period") })
+  const reserveCall = try Effect.try({ try: () => monthlyReserveCall(period), catch: () => refusedMonth("Invalid monthly period") })
+  const rootAnswer = try read(rootCall)
+  const root = decodeBytes32(rootAnswer)
+  const sequence = decodeUint(try read(SOURCE_SEQUENCE_CALL), U256_MAX)
+  const authority = decodeAddress(try read(escrowGetter("identityAuthority")))
+  const enabled = decodeBool(try read(escrowGetter("monthlyEnabled")))
+  const cap = decodeUint(try read(escrowGetter("monthlyCap")), U128_MAX)
+  if (root === undefined || sequence === undefined || authority === undefined || enabled === undefined || cap === undefined) throw refusedMonth("Malformed monthly chain state")
+  const awards: AwardState[] = []
+  for (const entry of entries) {
+    const id = try Effect.try({ try: () => awardId(deployment.chainId, deployment.vault, entry.sourceDigest), catch: () => refusedMonth("Invalid monthly award") })
+    const award = decodeAward(try read(awardCall(id)))
+    if (award === undefined) throw refusedMonth("Malformed monthly chain state")
+    awards.push(award)
+  }
+  const reserved = try Effect.try({ try: () => monthlyReservation({ allocationDigest, entries, awards, sourceSequence: sequence }), catch: () => refusedMonth("Invalid monthly reservation") })
+  const admitted = isZero(root) ? undefined : decodeMonthlyReserve({ root: rootAnswer, reserve: try read(reserveCall) })
+  if (!isZero(root) && admitted === undefined) throw refusedMonth("Malformed monthly chain state")
+  const height = safeNumber(block)
+  const sourceSequence = safeNumber(sequence)
+  if (height === undefined || sourceSequence === undefined) throw refusedMonth("Monthly chain position exceeds the journal range")
+  const view: ChainView = {
+    height,
+    time: head.timestamp,
+    sourceSequence,
+    authority: authority.toLowerCase(),
+    monthlyEnabled: enabled,
+    cap: amountOf(cap),
+    consumed: entries.filter((_, index) => awards[index]?.actor !== 0n).map((entry) => sourceOf(entry.sourceDigest)),
+    otherMonthSources: [],
+    admittedRoot: admitted === undefined ? "" : admitted.root.toLowerCase(),
+    legacyRoot: admitted !== undefined && isZero(admitted.allocationDigest),
+    remaining: amountOf(admitted?.remaining ?? 0n),
+  }
+  return { view, reservation: reserved.reservation, remaining: reserved.remaining } satisfies EvmMonth
+}
+
+effect function attestationKey(deployment: Deployment) {
+  const configured = (try AttesterConfig).evmKey
+  if (configured === undefined) throw new SignerUnavailable({ reason: "Signer unavailable" })
+  const text = Redacted.value(configured)
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(text)) throw new SignerUnavailable({ reason: "Signer unavailable" })
+  return try Effect.try({ try: () => hexToBytes(text.slice(2)), catch: () => new SignerUnavailable({ reason: "Signer unavailable" }) })
+}
+
+export effect function signEscrowDigest(deployment: Deployment, digest: Bytes32) {
+  const key = try attestationKey(deployment)
+  const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(digest.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
+  const recovery = signature[0]
+  if (recovery !== 0 && recovery !== 1) throw new SignerUnavailable({ reason: "Signing failed" })
+  const hex = (try Effect.try({ try: () => `0x${bytesToHex(signature.slice(1, 65))}${(27 + recovery).toString(16)}`, catch: () => new SignerUnavailable({ reason: "Signing failed" }) })) as Hex
+  if (recoverDigest(digest, hex)?.toLowerCase() !== deployment.identityAuthority) throw new SignerUnavailable({ reason: "Wrong identity signer" })
+  return hex
+}
+
+function reservationOf(reservation: MonthlyReservation): EvmReservation {
+  return {
+    version: 2,
+    allocationDigest: reservation.allocationDigest,
+    allocationRoot: reservation.allocationRoot.toLowerCase(),
+    wholeGross: reservation.wholeGross.toString(),
+    remainingGross: reservation.remainingGross.toString(),
+    count: reservation.count,
+    sourceSequence: reservation.sourceSequence.toString(),
+  }
+}
+
+effect function evmPlan(planned: Planned, deployment: Deployment, period: Period, month: EvmMonth) {
+  const reservation = month.reservation
+  if (reservation.wholeGross.toString() !== planned.plan.totalGrossBase) throw refusedMonth("Monthly execution attempt changed the frozen allocation")
+  const digest = try Effect.try({ try: () => monthlyReserveDigest({ chainId: deployment.chainId, vault: deployment.vault }, period, reservation), catch: () => refusedMonth("Invalid monthly reservation") })
+  const plan = {
+    ...planned.plan,
+    evmReservation: reservationOf(reservation),
+    entries: month.remaining.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.sourceDigest.toLowerCase() })),
+    allocationRoot: reservation.allocationRoot.toLowerCase(),
+    messageHex: digest.slice(2),
+  } satisfies SignedPlan["plan"]
+  return { plan, digest }
+}
+
+effect function preparedEvm(request: AttestationRequest, options: PlanOptions, deployment: Deployment, period: Period) {
+  const planned = try preparePlan(request, options)
+  const allocationDigest = bytes32(`0x${request.snapshotSha256}`)
+  if (allocationDigest === undefined) throw refusedMonth("Invalid monthly snapshot digest")
+  const entries = try entriesOf(planned.plan)
+  const month = try onChain(deployment, finalizedMonth(deployment, period, allocationDigest, entries))
+  return { planned, month, signed: try evmPlan(planned, deployment, period, month) }
+}
+
+export effect function attestEvmMonth(request: AttestationRequest, now: number) {
+  const { pins } = try AttesterConfig
+  const options: PlanOptions = { served: servedNetworks(pins), now, retainEvmSources: true }
+  const period = try periodOf(request.period)
+  const first = try preparePlan(request, options)
+  const planned = try plannedDeployment(first.plan)
+  const deployment = try pinnedFor(request, first.plan)
+  const prepared = try preparedEvm(request, options, deployment, period)
+  const key: JournalKey = { projectId: request.projectId, period, network: request.network }
+  const context: JournalContext = { family: "EvmV2", funded: prepared.planned.funded, authority: deployment.identityAuthority }
+  const by = prepared.month.view.authority
+  const facts = try signingFacts(request, options, prepared.month.view.height)
+  const journal = (try loadJournal(key, context)).state
+  const decided = try decide(journal, prepared.month.view, facts, by)
+  if (!decided.sign) return { key, context, run: { events: decided.events, by } } satisfies MonthAttestation
+  const attemptId = decided.state.attempts.length + 1
+  const root = prepared.signed.plan.allocationRoot
+  if (by !== deployment.identityAuthority || !canSignEvm(decided.state, attemptId, root, by)) throw refusedMonth("The identity authority in force cannot sign this monthly attempt")
+  const month = monthKey(request.network, planned.vault, request.period)
+  const intentKey = `${month}:v2:${prepared.month.reservation.sourceSequence}`
+  const expected: MonthlyIntentRecord = { snapshotSha256: request.snapshotSha256, messageHex: prepared.signed.plan.messageHex, authority: deployment.identityAuthority }
+  const intent = try within(ordinaryScope, (entries) => journalIntent(entries, intentKey, expected, { month, snapshotSha256: request.snapshotSha256 }))
+  const signed: SignedPlan = intent.authorization !== undefined
+    ? intent.authorization as SignedPlan
+    : try freshEvmSignature(request, options, deployment, period, prepared.signed, intentKey, intent)
+  const events: ReadonlyArray<Event> = [...decided.events, { type: "signEvm", attemptId, root }]
+  return { key, context, run: { events, by, signed } } satisfies MonthAttestation
+}
+
+effect function freshEvmSignature(request: AttestationRequest, options: PlanOptions, deployment: Deployment, period: Period, prepared: { readonly plan: SignedPlan["plan"]; readonly digest: Bytes32 }, intentKey: string, intent: MonthlyIntentRecord) {
+  const signatureHex = (try signEscrowDigest(deployment, prepared.digest)).slice(2)
+  const current = try preparedEvm(request, options, deployment, period)
+  if (current.signed.plan.messageHex !== prepared.plan.messageHex) throw refusedMonth("Monthly authorization changed during signing")
+  return try retainSignature(intentKey, intent, { plan: prepared.plan, signatureHex })
+}
+
+schema Candidate {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly snapshotSha256: string
+}
+
+schema CandidateList { readonly items: string }
+schema AutomaticRow { readonly automatic: number }
+
+const CandidateItems = Schema.Array(Candidate)
+
+effect function candidates() {
+  const found = try first(CandidateList, sql`SELECT json_group_array(json_object('projectId', r.project_id, 'period', r.period, 'network', r.network, 'snapshotSha256', r.snapshot_sha256)) AS items FROM monthly_payment_runs r LEFT JOIN monthly_payment_authorizations a ON a.project_id = r.project_id AND a.period = r.period AND a.network = r.network WHERE r.obligations_created_at IS NOT NULL AND EXISTS (SELECT 1 FROM monthly_payment_obligations o WHERE o.project_id = r.project_id AND o.period = r.period) AND (a.authorization IS NULL OR json_extract(a.authorization, '$.plan.family') = 'evm')`)
+  const parsed = try Effect.try({ try: () => JSON.parse(found?.items ?? "[]") as unknown, catch: () => refusedMonth("Monthly candidates are malformed") })
+  return Schema.decodeUnknownEffect(CandidateItems)(parsed) catch effect () => { throw refusedMonth("Monthly candidates are malformed") }
+}
+
+effect function automaticPayment(projectId: string) {
+  const [latest] = try rows(AutomaticRow, sql`SELECT automatic FROM monthly_payment_settings WHERE project_id = ${projectId} ORDER BY sequence DESC LIMIT 1`)
+  return latest === undefined || latest.automatic === 1
+}
+
+export type MonthAttester<E extends { readonly _tag: string }, R> = (request: AttestationRequest, now: number) => MonthAttestation!E!R
+
+export interface MonthAttesters<EE extends { readonly _tag: string }, ER, SE extends { readonly _tag: string }, SR> {
+  readonly EvmV2: MonthAttester<EE, ER>
+  readonly SolanaV3: MonthAttester<SE, SR>
+}
+
+export interface PublicationReport {
+  readonly published: ReadonlyArray<string>
+  readonly refused: ReadonlyArray<string>
+  readonly failures: ReadonlyArray<string>
+}
+
+function outcomeOf(error: { readonly _tag: string }) {
+  if (error._tag === "PublicationSkipped") return "skipped"
+  if (error instanceof PlanRefused && Object.hasOwn(refusedFacts, error.code)) return `refused: ${error.code}`
+  return `failed: ${error._tag}`
+}
+
+function inWindow(period: Period, now: number) {
+  return now >= windowOpensAt(period) && now < windowClosesAt(period)
+}
+
+export effect function publishMonthlyAuthorizations<EE extends { readonly _tag: string }, ER, SE extends { readonly _tag: string }, SR>(networks: ReadonlySet<string>, now: number, attesters: MonthAttesters<EE, ER, SE, SR>) {
+  const published: string[] = []
+  const refused: string[] = []
+  const failures: string[] = []
+  for (const request of try candidates()) {
+    const label = `${request.projectId}/${request.period}/${request.network}`
+    const period = parsePeriod(request.period)
+    if (!networks.has(request.network) || !isNetworkKey(request.network) || period === undefined || !inWindow(period, now) || !(try automaticPayment(request.projectId))) continue
+    const attest = NETWORKS[request.network].family === "solana" ? attesters.SolanaV3 : attesters.EvmV2
+    const outcome = effect {
+      const attested = try attest(request, now)
+      if (attested.run.events.length === 0) return "skipped"
+      try runJournal(attested.key, attested.context, attested.run)
+      return attested.run.signed === undefined ? "observed" : "published"
+    } catch (error) => outcomeOf(error)
+    if (outcome === "published") published.push(label)
+    else if (outcome.startsWith("refused")) refused.push(`${label} ${outcome}`)
+    else if (outcome.startsWith("failed")) failures.push(`${label} ${outcome}`)
+  }
+  return { published, refused, failures } satisfies PublicationReport
+}
+

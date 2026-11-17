@@ -1,0 +1,167 @@
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"
+import { randomId } from "@repo/platform/crypto"
+import { D1, type NonEmpty, RowMismatch, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import type { Conflict } from "@repo/platform/stored"
+import type { ReadFailure } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { ContributorAudience } from "@repo/ports/points"
+import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRows, PublicSecurity, type RestrictionFacts, type VettingState } from "@repo/ports/security"
+import type { ClearanceState, Enforcement as EnforcementState } from "../../gen/security__enforcement.ts"
+import { basis, basisLabel, clearanceState, latestOf, mayContribute } from "../../gen/security__enforcement.effect.vibe"
+import { currentRestrictions, earliestRecorded, generation, journalColumns, journalFrom, keysOf, restrictionOf, scopeReads, scopeVersion } from "./rows.vibe"
+import { EnforcementRecord, changeWrites, owners } from "./statements.vibe"
+import { EvidenceBucket } from "../evidence/objects.vibe"
+import { withRetainedEvidence } from "./retained.vibe"
+import { type Loaded, decodeEnforcement, loadEnforcement, rosterOf } from "./store.vibe"
+
+export error ProjectRefused { reason: string }
+
+export interface ProjectEvent {
+  readonly projectId: string
+  readonly event: unknown
+  readonly by: number
+}
+
+export service ProjectEvents {
+  send(action: ProjectEvent): void!(ProjectRefused | Conflict | ReadFailure)
+}
+
+function isNonEmpty(ids: ReadonlyArray<string>): ids is NonEmpty<string> {
+  return ids.length > 0
+}
+
+effect function recordId() {
+  return (try randomId()).replaceAll("-", "").toLowerCase()
+}
+
+export const EnforcementRowsLive = Layer.effect(EnforcementRows, effect {
+  const services = try Effect.context<D1 | Roles | Notices | ContributorAudience | Experimental.Crypto.Crypto>()
+  return {
+    scope: (projectId) => succeed({ version: scopeVersion(projectId), reads: scopeReads(projectId) }),
+    decode: (projectId, rows, registry) => Effect.provide(effect {
+      return (try decodeEnforcement(projectId, rows, registry, try rosterOf())).state
+    }, services),
+    writes: (change) => effect {
+      const recorded = try Effect.serviceOption(EnforcementRecord)
+      const details = Option.isSome(recorded) ? recorded.value.details : undefined
+      const writer = { recordId: () => Effect.provide(recordId(), services) }
+      return Effect.provide(changeWrites(change, details, writer), services) catch effect (error) => {
+        if (error._tag === "DetailsMissing") return try die(error)
+        throw error
+      }
+    },
+    generation: () => succeed(generation),
+    restrictions: () => Effect.provide(effect {
+      const found = try currentRestrictions()
+      const active: ActiveRestriction[] = []
+      for (const record of found) active.push({ projectId: record.project_id, repositoryGithubId: record.repository_github_id, repositoryKeys: try keysOf(record) })
+      return active
+    }, services),
+    recordedAt: (ids) => Effect.provide(effect {
+      return isNonEmpty(ids) ? try earliestRecorded(ids) : undefined
+    }, services),
+  } satisfies EnforcementRows.Shape
+})
+
+effect function accountRecord(record: AccountRecord) {
+  const notices = try Notices
+  const repository = sql`COALESCE((SELECT latest.repository_github_id FROM project_enforcements latest WHERE latest.project_id = p.id ORDER BY latest.sequence DESC LIMIT 1), CAST(json_extract(p.manifest, '$.authority.repositoryId') AS TEXT))`
+  const keys = sql`COALESCE((SELECT latest.repository_keys FROM project_enforcements latest WHERE latest.project_id = p.id ORDER BY latest.sequence DESC LIMIT 1), json_array(json_extract(p.manifest, '$.repositories[0].id')))`
+  const source = record.role === "banned-account" ? "account-request" : "admin-panel"
+  const written = sql`EXISTS (SELECT 1 FROM project_enforcements WHERE id = ${record.id})`
+  const owned = record.action === "deny_reinstatement" || record.action === "request_reinstatement"
+    ? try notices.fanout({ eventKey: `project-enforcement:${record.id}`, recipients: owners(record.projectId), kind: record.action === "request_reinstatement" ? "ReinstatementRequested" : "ReinstatementDenied", subject: record.projectId, actionPath: `/projects/${record.projectId}`, sourceAt: record.at, onlyIf: written })
+    : []
+  const reviewers = record.action !== "request_reinstatement" ? [] : record.reviewers.filter((reviewer) => reviewer !== record.actor.githubId)
+  return [
+    sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+      SELECT ${record.id}, p.id, ${record.sequence}, ${record.action}, ${record.stateAfter}, ${record.appealAfter}, ${record.reason}, ${record.evidenceReference}, ${repository}, ${keys}, ${record.actor.githubId}, ${record.actor.login}, NULL, ${record.role}, ${source}, p.revision, p.manifest_sha256, NULL, NULL, 'no_revision_needed', ${record.at} FROM projects p WHERE p.id = ${record.projectId}`,
+    ...owned,
+    ...(reviewers.length === 0 ? [] : try notices.statements({ notices: reviewers.map((reviewer) => ({ eventKey: `reinstatement-review:${record.id}`, recipientGithubId: reviewer, kind: "ReinstatementReview" as const, subject: record.projectId, actionPath: "/admin", sourceAt: record.at })), onlyIf: written })),
+  ]
+}
+
+export const AccessJournalLive = Layer.effect(AccessJournal, effect {
+  const services = try Effect.context<Notices>()
+  return {
+    rows: () => succeed(sql`SELECT ${journalColumns} FROM ${journalFrom} ORDER BY e.rowid`),
+    version: () => succeed(sql`(SELECT COALESCE(MAX(rowid), 0) FROM project_enforcements)`),
+    append: (record) => Effect.provide(accountRecord(record), services),
+    recordAt: (projectId, sequence) => succeed(sql`SELECT id FROM project_enforcements WHERE project_id = ${projectId} AND sequence = ${sequence}`),
+  } satisfies AccessJournal.Shape
+})
+
+schema Generation { generation: number; clearance: string }
+
+export const EnforcementLive = Layer.effect(Enforcement, effect {
+  const services = try Effect.context<D1>()
+  return {
+    project: (projectId) => Effect.provide(effect {
+      const [current] = try currentRestrictions(projectId)
+      const [found] = try (try D1).all(sql`SELECT ${generation} AS generation, ${scopeVersion(projectId)} AS clearance`)
+      const read = Schema.decodeUnknownEffect(Generation)(found) catch effect (error) => { throw new RowMismatch({ text: "enforcement generation", issue: error.message }) }
+      return { restriction: current === undefined ? "Clear" as const : restrictionOf(current), enforcementGeneration: read.generation, clearanceGeneration: read.clearance }
+    }, services),
+    fence: (pin) => succeed(sql`SELECT CASE WHEN ${generation} = ${pin.enforcementGeneration} THEN 1 ELSE json('stale aggregate version') END AS fresh`),
+  } satisfies Enforcement.Shape
+})
+
+const vettingStates: Readonly<Record<ClearanceState, VettingState>> = { Unscanned: "unscanned", Unverified: "unverified", Stale: "stale", Queued: "queued", Quarantined: "quarantined", Cleared: "cleared", Banned: "banned" }
+
+export function repositoryClearances(state: EnforcementState) {
+  return state.repositories.map((repository) => ({
+    repositoryId: String(repository),
+    state: vettingStates[clearanceState(state, repository)],
+    basis: basisLabel(basis(state, repository)),
+  }))
+}
+
+export function projectClearance(state: EnforcementState): VettingState {
+  const each = repositoryClearances(state)
+  if (each.some((repository) => repository.state === "banned")) return "banned"
+  return each.find((repository) => repository.state !== "cleared")?.state ?? "cleared"
+}
+
+effect function clearanceOf(loaded: Loaded, revision: number, templateSha256: string) {
+  if (!loaded.found || loaded.mirror.revision !== revision || loaded.state.restriction !== "Clear") return "ClearanceRefused" satisfies ClearanceRead
+  const state = try withRetainedEvidence(loaded.state)
+  if (mayContribute(state)) {
+    const templates = state.repositories.filter((repository) => basis(state, repository) === "Scanned")
+      .map((repository) => loaded.history.assessments.find((row) => row.row === latestOf(state, repository).id)?.template_sha256)
+    return (templates.every((template) => template === templateSha256) ? "ClearanceCleared" : "ClearanceRefused") satisfies ClearanceRead
+  }
+  return (state.repositories.some((repository) => clearanceState(state, repository) === "Unverified") ? "ClearanceUnverified" : "ClearanceRefused") satisfies ClearanceRead
+}
+
+export const ClearanceLive = Layer.effect(Clearance, effect {
+  const services = try Effect.context<D1 | Roles | EvidenceBucket | Experimental.Crypto.Crypto>()
+  return {
+    of: (pin) => Effect.provide(effect {
+      return try clearanceOf(try loadEnforcement(pin.projectId), pin.revision, pin.templateSha256)
+    }, services),
+  } satisfies Clearance.Shape
+})
+
+const appeals = { none: "none", requested: "requested", granted: "granted", denied: "denied" } as const
+
+export const PublicSecurityLive = Layer.effect(PublicSecurity, effect {
+  const services = try Effect.context<D1 | Roles | EvidenceBucket | Experimental.Crypto.Crypto>()
+  return {
+    restrictions: () => Effect.provide(effect {
+      const facts: RestrictionFacts[] = []
+      for (const record of try currentRestrictions()) {
+        facts.push({ projectId: record.project_id, restriction: restrictionOf(record), appeal: appeals[record.appeal_after], since: record.since, repositoryGithubId: record.repository_github_id, repositoryKeys: try keysOf(record) })
+      }
+      return facts
+    }, services),
+    vetting: (project) => Effect.provide(effect {
+      const loaded = try loadEnforcement(project.projectId)
+      if (!loaded.found || loaded.mirror.revision < project.revision) return { state: "unscanned" as const, repositories: [] }
+      const state = try withRetainedEvidence(loaded.state)
+      return { state: projectClearance(state), repositories: repositoryClearances(state) }
+    }, services),
+  } satisfies PublicSecurity.Shape
+})
+
+export const enforcementPorts = Layer.mergeAll(EnforcementRowsLive, AccessJournalLive, EnforcementLive, ClearanceLive, PublicSecurityLive)

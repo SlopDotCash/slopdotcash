@@ -1,0 +1,64 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"
+import { type Statement, sql } from "@repo/platform/d1"
+import { pointRevisionId } from "../kernels/records/ids.vibe"
+import { PointRevision } from "../kernels/records/records.schema.ts"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export schema RevisionRow { id: string; payload: string; current: number }
+
+export interface Retained {
+  readonly id: string
+  readonly current: boolean
+  readonly revision: PointRevision | undefined
+  readonly recipient: number
+}
+
+const decodeRevision = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
+
+const largestId = 9007199254740991n
+
+const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+const urlSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+function sextet(node: string, position: number, alphabet: string) {
+  return `(instr('${alphabet}', substr(${node}, ${position}, 1)) - 1)`
+}
+
+function legacyId(node: string) {
+  const groups = [0, 1, 2, 3, 4, 5].map((group) => {
+    const start = 9 + group * 4
+    const [a, b, c, d] = [0, 1, 2, 3].map((offset) => sextet(node, start + offset, standard))
+    return `CASE WHEN length(${node}) >= ${start + 3} THEN char((${a} << 2) | (${b} >> 4)) || CASE WHEN ${c} >= 0 THEN char(((${b} & 15) << 4) | (${c} >> 2)) ELSE '' END || CASE WHEN ${d} >= 0 THEN char(((${c} & 3) << 6) | ${d}) ELSE '' END ELSE '' END`
+  })
+  return `(SELECT CASE WHEN substr(t, 1, 1) = 'r' AND substr(t, 2) GLOB '[1-9]*' AND substr(t, 2) NOT GLOB '*[^0-9]*' AND length(t) <= 17 THEN substr(t, 2) END FROM (SELECT ${groups.join(" || ")} AS t))`
+}
+
+function currentId(node: string) {
+  const positions = (count: number) => Array.from({ length: count }, (_, index) => index)
+  const bits = (count: number) => positions(count).map((index) => `(${sextet(node, 7 + index, urlSafe)} << ${6 * (count - 1 - index)})`).join(" | ")
+  const valid = (count: number) => positions(count).map((index) => `${sextet(node, 7 + index, urlSafe)} >= 0`).join(" AND ")
+  return `CASE WHEN substr(${node}, 1, 6) = 'U_kgDO' AND length(${node}) = 12 AND ${valid(6)} THEN CAST(((${bits(6)}) >> 4) AS TEXT) WHEN substr(${node}, 1, 6) = 'U_kgDP' AND length(${node}) = 17 AND ${valid(11)} AND ${sextet(node, 7, urlSafe)} = 0 THEN CAST((((${bits(10)}) << 4) | (${sextet(node, 17, urlSafe)} >> 2)) AS TEXT) END`
+}
+
+export const awardRecipientGithubId: Statement = {
+  text: `(SELECT CASE WHEN substr(n, 1, 8) = 'MDQ6VXNl' THEN ${legacyId("n")} WHEN substr(n, 1, 2) = 'U_' THEN ${currentId("n")} END FROM (SELECT json_extract(r.payload, '$.award.actor.id') AS n))`,
+  params: [],
+}
+
+export function revisionRow(id: string) {
+  return sql`SELECT r.id, r.payload, NOT EXISTS (SELECT 1 FROM points_revisions newer WHERE newer.source_key = r.source_key AND newer.rowid > r.rowid) AS current FROM points_revisions r WHERE r.id = ${id}`
+}
+
+export effect function retained(row: RevisionRow) {
+  const revision = decodeRevision(row.payload, { onExcessProperty: "error" }) catch () => undefined
+  if (revision === undefined) return { id: row.id, current: row.current === 1, revision: undefined, recipient: 0 } satisfies Retained
+  const recipient = githubUserIdFromNodeId(revision.award.actor.id)
+  const verified = revision.id === row.id && (try pointRevisionId(revision)) === row.id && recipient > 0n && recipient <= largestId
+  return { id: row.id, current: row.current === 1, revision: verified ? revision : undefined, recipient: verified ? Number(recipient) : 0 } satisfies Retained
+}

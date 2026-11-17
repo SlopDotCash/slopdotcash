@@ -1,0 +1,311 @@
+// spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type EmailView, emailConsent, emailPreference, emailVerification } from "@repo/backend/client"
+import { randomToken } from "@repo/platform/crypto"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { BrowserSession, type Lifetime } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const emailLimitBytes = 4096
+
+export const emailMessages = {
+  accountCheck: "The account check failed.",
+  accountCheckBeforeChange: "The account check failed. Retry before changing email.",
+  sessionExpired: "Your session expired.",
+  accountChanged: "The inbox account changed. Retry.",
+  unavailable: "Email preferences are unavailable.",
+  invalid: "The email service returned an invalid preference.",
+  destinationChanged: "Your verified destination changed. Review it before turning on email.",
+  unsaved: "Your preference could not be saved. Please retry.",
+  unverified: "The saved preference could not be verified. Please retry.",
+  rateLimited: "Wait before requesting another verification email.",
+  notRequested: "The verification email could not be requested. Retry.",
+} as const
+
+export type EmailState =
+  | { readonly status: "loading" }
+  | { readonly status: "signedOut" }
+  | { readonly status: "failed"; readonly message: string }
+  | { readonly status: "ready"; readonly value: EmailView; readonly actor: string }
+
+export interface EmailPanel {
+  readonly state: EmailState
+  readonly checking: boolean
+  readonly busy: boolean
+  readonly editing: boolean
+  readonly problem: string | undefined
+}
+
+export type ConsentField = "enabled" | "securityEnabled"
+
+export interface Enrollment {
+  readonly email: string
+  readonly enabled: boolean
+  readonly securityEnabled: boolean
+}
+
+const pendingStates = ["queued", "sending", "sent", "unknown", "expired"]
+const versionPattern = /^[a-f0-9]{64}$/u
+
+export function validPreference(value: EmailView): boolean {
+  const pending = value.pending
+  if (pending !== null && (!Number.isFinite(Date.parse(pending.expiresAt)) || !pendingStates.includes(pending.state))) return false
+  if (value.availability !== "verified") return true
+  return value.email !== undefined && value.email.length > 0 && value.email.length <= 254 && value.destinationVersion !== undefined && versionPattern.test(value.destinationVersion)
+}
+
+export function enrollmentOf(value: EmailView): Enrollment {
+  return { email: value.pending?.email ?? (value.availability === "verified" ? value.email ?? "" : ""), enabled: value.enabled, securityEnabled: value.securityEnabled }
+}
+
+error Halted { message: string }
+
+error AccountProblem { message: string }
+
+function statusOf(failure: CallFailure): number {
+  switch (failure._tag) {
+    case "Refused":
+    case "InvalidResponse":
+      return failure.status
+    case "ActorChanged": return 403
+    case "NetworkError": return 0
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+function halted(failure: CallFailure, refused: string): Halted {
+  return new Halted({ message: failure._tag === "NetworkError" ? failure.message : refused })
+}
+
+const opened: EmailPanel = { state: { status: "loading" }, checking: true, busy: false, editing: false, problem: undefined }
+
+export service EmailPreferences {
+  readonly changes: Stream.Stream<EmailPanel>
+  view(): EmailPanel!!
+  load(): EmailPanel!!HttpClient.HttpClient
+  refresh(): EmailPanel!!HttpClient.HttpClient
+  toggle(field: ConsentField): EmailPanel!!HttpClient.HttpClient
+  editAddress(): (Enrollment | undefined)!!
+  requestVerification(enrollment: Enrollment): EmailPanel!!(HttpClient.HttpClient | Experimental.Crypto.Crypto)
+}
+
+export const emailLayer = Layer.effect(EmailPreferences, effect {
+  const session = try Session
+  const browser = try BrowserSession
+  const shown = try SubscriptionRef.make(opened)
+  let generation = 0
+  let actorHeld: string | null = null
+  let requestKey: string | undefined = undefined
+
+  const current = (mine: number) => generation === mine
+
+  effect function update(change: (panel: EmailPanel) => EmailPanel) {
+    return try SubscriptionRef.updateAndGet(shown, change)
+  }
+
+  effect function settle(mine: number, state: EmailState) {
+    if (current(mine)) try update((panel) => ({ ...panel, state }))
+  }
+
+  effect function resetIdentity() {
+    actorHeld = null
+    requestKey = undefined
+    try update((panel) => ({ ...panel, editing: false }))
+  }
+
+  effect function publish(mine: number, lifetime: Lifetime, value: EmailView, actor: string) {
+    if (!current(mine)) return
+    if (try browser.acceptPrivate({ actorId: actorNumber(actor), epoch: lifetime.epoch }, 1, true)) return try settle(mine, { status: "ready", value, actor })
+    try resetIdentity()
+    try settle(mine, { status: "failed", message: emailMessages.accountChanged })
+  }
+
+  effect function read(mine: number) {
+    const lifetime = try browser.lifetime()
+    const before = session.current() catch (failure) => failure._tag === "Refused" && failure.status === 401 ? null : undefined
+    if (!current(mine)) return
+    if (before === undefined) return try settle(mine, { status: "failed", message: emailMessages.accountCheck })
+    if (before === null || (actorHeld !== null && actorHeld !== before.githubId)) {
+      try resetIdentity()
+      try settle(mine, { status: "loading" })
+    }
+    actorHeld = before?.githubId ?? null
+    const answered = call(emailPreference, {}, { limitBytes: emailLimitBytes, ...before === null ? {} : { expectedActor: before.githubId } }) catch (failure) => ({ failure })
+    if (!current(mine)) return
+    if ("failure" in answered) {
+      const status = statusOf(answered.failure)
+      if (status === 401) {
+        try resetIdentity()
+        return try settle(mine, { status: "signedOut" })
+      }
+      if (status === 403) {
+        try resetIdentity()
+        return try settle(mine, { status: "failed", message: emailMessages.accountChanged })
+      }
+      const message = answered.failure._tag === "NetworkError" ? answered.failure.message : answered.failure._tag === "InvalidResponse" && status >= 200 && status <= 299 ? emailMessages.invalid : emailMessages.unavailable
+      return try settle(mine, { status: "failed", message })
+    }
+    if (!validPreference(answered)) return try settle(mine, { status: "failed", message: emailMessages.invalid })
+    if (before === null) return try settle(mine, { status: "failed", message: emailMessages.accountCheck })
+    const after = session.current() catch (failure) => ({ failure })
+    if (!current(mine)) return
+    if (after !== null && "failure" in after) return try settle(mine, { status: "failed", message: after.failure.message })
+    if (after === null) {
+      try resetIdentity()
+      return try settle(mine, { status: "signedOut" })
+    }
+    if (after.githubId !== before.githubId) {
+      try resetIdentity()
+      return try settle(mine, { status: "failed", message: emailMessages.accountChanged })
+    }
+    try publish(mine, lifetime, answered, before.githubId)
+  }
+
+  effect function load(background: boolean) {
+    generation += 1
+    const mine = generation
+    try update((panel) => ({
+      ...panel,
+      checking: true,
+      problem: undefined,
+      state: background && panel.state.status === "ready" ? panel.state : { status: "loading" },
+    }))
+    try Effect.ensuring(read(mine), effect {
+      if (current(mine)) try update((panel) => ({ ...panel, checking: false }))
+    })
+    return try SubscriptionRef.get(shown)
+  }
+
+  effect function checkActor(actor: string, mine: number) {
+    if (!current(mine)) return false
+    const found = session.current() catch () => undefined
+    if (!current(mine)) return false
+    if (found === undefined) {
+      try settle(mine, { status: "failed", message: emailMessages.accountCheck })
+      throw new AccountProblem({ message: emailMessages.accountCheckBeforeChange })
+    }
+    if (found === null) {
+      try resetIdentity()
+      try settle(mine, { status: "signedOut" })
+      throw new AccountProblem({ message: emailMessages.sessionExpired })
+    }
+    if (found.githubId !== actor) {
+      try resetIdentity()
+      try load(false)
+      try update((panel) => ({ ...panel, problem: emailMessages.accountChanged }))
+      throw new AccountProblem({ message: emailMessages.accountChanged })
+    }
+    return true
+  }
+
+  effect function reloadWith(problem: string) {
+    try load(false)
+    try update((panel) => ({ ...panel, problem }))
+  }
+
+  effect function runCurrent<R>(mine: number, actor: string, action: void!(Halted | AccountProblem)!R) {
+    try update((panel) => ({ ...panel, busy: true, problem: undefined }))
+    const work = effect {
+      if (!current(mine)) return
+      const outcome = action catch (error) => ({ error })
+      if (outcome === undefined || !current(mine)) return
+      const failed = outcome.error
+      let message = failed.message
+      if (failed._tag === "Halted") {
+        const recheck = checkActor(actor, mine) catch (error) => ({ error })
+        if (recheck === false) return
+        if (recheck !== true) message = recheck.error.message
+      }
+      if (current(mine)) try update((panel) => ({ ...panel, problem: message }))
+    }
+    try Effect.ensuring(work, update((panel) => ({ ...panel, busy: false })))
+    return try SubscriptionRef.get(shown)
+  }
+
+  effect function toggle(field: ConsentField) {
+    const panel = try SubscriptionRef.get(shown)
+    if (panel.busy || panel.checking || panel.state.status !== "ready") return panel
+    const { value: previous, actor } = panel.state
+    if (!previous[field] && previous.availability !== "verified") return panel
+    const enabled = field === "enabled" ? !previous.enabled : previous.enabled
+    const securityEnabled = field === "securityEnabled" ? !previous.securityEnabled : previous.securityEnabled
+    const binds = (enabled || securityEnabled) && previous.availability === "verified" && previous.destinationVersion !== undefined
+    const body = binds ? { enabled, securityEnabled, destinationVersion: previous.destinationVersion } : { enabled, securityEnabled }
+    const mine = generation
+    const lifetime = try browser.lifetime()
+    return try runCurrent(mine, actor, effect {
+      if (!(try checkActor(actor, mine))) return
+      const saved = call(emailConsent, { body }, { limitBytes: emailLimitBytes, expectedActor: actor }) catch (failure) => ({ failure })
+      if (!current(mine)) return
+      if ("failure" in saved) {
+        const status = statusOf(saved.failure)
+        if (status === 401) {
+          try resetIdentity()
+          return try settle(mine, { status: "signedOut" })
+        }
+        if (status === 403) {
+          try resetIdentity()
+          return try reloadWith(emailMessages.accountChanged)
+        }
+        if (status === 409) return try reloadWith(emailMessages.destinationChanged)
+        throw halted(saved.failure, emailMessages.unsaved)
+      }
+      if (saved.enabled !== enabled || saved.securityEnabled !== securityEnabled) throw new Halted({ message: emailMessages.unverified })
+      if (!(try checkActor(actor, mine))) return
+      try publish(mine, lifetime, { ...previous, enabled, securityEnabled }, actor)
+    })
+  }
+
+  effect function requestVerification(enrollment: Enrollment) {
+    const panel = try SubscriptionRef.get(shown)
+    if (panel.busy || panel.checking || panel.state.status !== "ready") return panel
+    const actor = panel.state.actor
+    const mine = generation
+    const lifetime = try browser.lifetime()
+    const key = requestKey ?? (try randomToken(16))
+    requestKey = key
+    const body = { email: enrollment.email.trim(), idempotencyKey: key, enabled: enrollment.enabled, securityEnabled: enrollment.securityEnabled }
+    return try runCurrent(mine, actor, effect {
+      if (!(try checkActor(actor, mine))) return
+      const requested = call(emailVerification, { body }, { limitBytes: emailLimitBytes, expectedActor: actor }) catch (failure) => ({ failure })
+      if (!current(mine)) return
+      if ("failure" in requested && statusOf(requested.failure) === 401) {
+        try resetIdentity()
+        return try settle(mine, { status: "signedOut" })
+      }
+      if (!(try checkActor(actor, mine))) return
+      if ("failure" in requested) throw halted(requested.failure, statusOf(requested.failure) === 429 ? emailMessages.rateLimited : emailMessages.notRequested)
+      if (!validPreference(requested)) throw new Halted({ message: emailMessages.invalid })
+      requestKey = undefined
+      try update((shownPanel) => ({ ...shownPanel, editing: false }))
+      try publish(mine, lifetime, requested, actor)
+    })
+  }
+
+  try browser.onAccountChange(() => effect {
+    generation += 1
+    try resetIdentity()
+    try update((panel) => ({ ...panel, state: { status: "loading" }, busy: false, problem: undefined }))
+  })
+
+  return {
+    changes: SubscriptionRef.changes(shown),
+    view: () => SubscriptionRef.get(shown),
+    load: () => load(false),
+    effect refresh() {
+      const panel = try SubscriptionRef.get(shown)
+      return panel.busy ? panel : try load(true)
+    },
+    toggle,
+    effect editAddress() {
+      const panel = try SubscriptionRef.get(shown)
+      if (panel.state.status !== "ready") return undefined
+      requestKey = undefined
+      try update((shownPanel) => ({ ...shownPanel, editing: true, problem: undefined }))
+      return enrollmentOf(panel.state.value)
+    },
+    requestVerification,
+  }
+})

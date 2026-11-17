@@ -1,0 +1,120 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/security/sandbox.md, "Every request destroys its sandbox, and a cleanup failure never completes"
+import { runningSha256 } from "@repo/platform/digest"
+import { concatBytes, hexOf, lossyText, parsedJson } from "@repo/platform/git/bytes"
+import { FileRecovery, FileRequest, MERGE_PROFILE, MergeInput } from "@repo/platform/git/evidence"
+import { type MergeFileRecovery, type MergeReconstruction, MergeResult, MergeUnavailable, MergeVerifier } from "@repo/ports/security"
+import { type Box, Containers, destroyed, settled } from "./container.vibe"
+
+const inputLimit = 8 * 1024 * 1024
+const bundleLimit = 32 * 1024 * 1024
+const resultLimit = 8 * 1024 * 1024
+const bundlePath = "/analysis/merge.bundle"
+const inputPath = "/analysis/merge-input.json"
+const resultPath = "/analysis/work/merge-result.json"
+const supervisorStatuses: ReadonlyArray<unknown> = ["exited", "timeout", "disk-limit", "output-limit", "not-executable"]
+
+interface Meter {
+  bytes: number
+  readonly digest: ReturnType<typeof runningSha256>
+}
+
+function unavailable(stage: string) {
+  return new MergeUnavailable({ stage })
+}
+
+function field(value: unknown, name: string): unknown {
+  return typeof value === "object" && value !== null ? Reflect.get(value, name) : undefined
+}
+
+function supervisorStage(report: unknown): string {
+  const status = field(report, "status")
+  const code = field(report, "exitCode")
+  return supervisorStatuses.includes(status) && typeof code === "number" && Number.isInteger(code) && Math.abs(code) <= 255 ? `supervisor-${String(status)}-${code}` : "supervisor-result"
+}
+
+function supervisorSucceeded(report: unknown): boolean {
+  return field(report, "status") === "exited" && field(report, "exitCode") === 0 && field(report, "outputComplete") === true
+}
+
+effect function admitted(inputs: unknown, fileRequests: unknown) {
+  const decodedInputs = Schema.decodeUnknownEffect(Schema.Array(MergeInput))(inputs) catch () => undefined
+  const decodedRequests = fileRequests === undefined ? [] : Schema.decodeUnknownEffect(Schema.Array(FileRequest))(fileRequests) catch () => undefined
+  if (decodedInputs === undefined || decodedInputs.length === 0 || decodedRequests === undefined) throw unavailable("request")
+  if (new TextEncoder().encode(JSON.stringify({ inputs, fileRequests })).length > inputLimit) throw unavailable("request")
+}
+
+effect function metered(bundle: ReadableStream<Uint8Array>, meter: Meter) {
+  const counted = Stream.mapEffect(Stream.fromReadableStream({ evaluate: () => bundle, onError: () => unavailable("bundle-write") }), (chunk: Uint8Array) => effect {
+    meter.bytes += chunk.byteLength
+    if (meter.bytes > bundleLimit) throw unavailable("bundle-write")
+    meter.digest.update(chunk)
+    return chunk
+  })
+  return try Stream.toReadableStreamEffect(counted)
+}
+
+effect function boundedResult(content: ReadableStream<Uint8Array>) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of Stream.fromReadableStream({ evaluate: () => content, onError: () => unavailable("output-read") })) {
+    size += chunk.byteLength
+    if (size > resultLimit) throw unavailable("output-read")
+    chunks.push(chunk)
+  }
+  const parsed = parsedJson(lossyText(concatBytes(chunks)))
+  if (parsed === undefined) throw unavailable("output-read")
+  return parsed.value
+}
+
+effect function contained(box: Box, inputs: unknown, fileRequests: unknown, bundle: ReadableStream<Uint8Array>) {
+  const meter: Meter = { bytes: 0, digest: runningSha256() }
+  const stream = try metered(bundle, meter)
+  const written = try settled(() => box.writeFile(bundlePath, stream))
+  if (written?.success !== true || meter.bytes === 0) throw unavailable("bundle-write")
+  const input = JSON.stringify({ profile: MERGE_PROFILE, inputs, ...(fileRequests === undefined ? {} : { fileRequests }), bundleBytes: meter.bytes, bundleSha256: hexOf(meter.digest.finish()) })
+  if ((try settled(() => box.writeFile(inputPath, input)))?.success !== true) throw unavailable("input-write")
+  if ((try settled(() => box.exec(`chmod 0444 ${bundlePath} ${inputPath}`, { timeout: 10_000 })))?.success !== true) throw unavailable("setup")
+  const executed = try settled(() => box.exec("python3 /opt/slop/supervise.py merge", { timeout: 40_000 }))
+  if (executed?.success !== true) throw unavailable("supervisor-exec")
+  const report = parsedJson(executed.stdout)?.value
+  if (!supervisorSucceeded(report)) throw unavailable(supervisorStage(report))
+  const output = try settled(() => box.readFile(resultPath, { encoding: "none" }))
+  if (output === undefined) throw unavailable("output-read")
+  return try boundedResult(output.content)
+}
+
+effect function verified<A>(containers: Containers.Shape, id: string, inputs: unknown, fileRequests: unknown, bundle: ReadableStream<Uint8Array>, shape: (value: unknown) => A!MergeUnavailable) {
+  try admitted(inputs, fileRequests)
+  const box = try containers.open(id, "rpc")
+  const outcome = try exit(Effect.flatMap(contained(box, inputs, fileRequests, bundle), shape))
+  if (!(try destroyed(box))) throw unavailable("destroy")
+  return try outcome
+}
+
+effect function results(count: number, value: unknown) {
+  const decoded = Schema.decodeUnknownEffect(Schema.Array(MergeResult))(value) catch () => undefined
+  if (decoded === undefined || decoded.length !== count) throw unavailable("output-shape")
+  return decoded
+}
+
+effect function recovery(value: unknown) {
+  const decoded = Schema.decodeUnknownEffect(FileRecovery)(value) catch () => undefined
+  if (decoded === undefined) throw unavailable("output-shape")
+  return decoded
+}
+
+export const mergeVerifierLive = Layer.effect(MergeVerifier, effect {
+  const containers = try Containers
+  const crypto = try Experimental.Crypto.Crypto
+  const fresh = orDie(crypto.randomUUIDv4())
+  return {
+    reconstruct: (request: MergeReconstruction) => effect {
+      const id = try fresh
+      return try verified(containers, id, request.inputs, undefined, request.bundle, (value) => results(Array.isArray(request.inputs) ? request.inputs.length : 0, value))
+    },
+    recover: (request: MergeFileRecovery) => effect {
+      const id = try fresh
+      return try verified(containers, id, request.inputs, request.fileRequests, request.bundle, recovery)
+    },
+  }
+})

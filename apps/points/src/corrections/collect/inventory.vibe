@@ -1,0 +1,129 @@
+// spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Journal, Revision } from "../../kernels/records/canonical.ts"
+import { pointKey } from "../../kernels/records/ids.vibe"
+
+export const correctionRule = "historical-implementation-allocation-v1"
+
+export error InventoryInvalid { message: string }
+
+export interface CorrectionBaseline {
+  readonly revisionCount: number
+  readonly revisionIdsDigest: string
+}
+
+export interface ExpectedPredecessor {
+  readonly key: string
+  readonly revisionId: string
+}
+
+export interface HeldProof {
+  readonly status: "held"
+}
+
+export interface CompleteProof {
+  readonly status: "complete"
+  readonly censusDigest: string
+}
+
+export type CandidateProof = HeldProof | CompleteProof
+
+export interface CorrectionCandidate {
+  readonly id: string
+  readonly kind: "pull-request" | "work-unit"
+  readonly projectId: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly occurredAt: string
+  readonly workUnitId: string
+  readonly sourceIds: ReadonlyArray<string>
+  readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
+  readonly proof: CandidateProof
+}
+
+export interface CorrectionPool {
+  readonly candidate: CorrectionCandidate
+  readonly totalPoints: number
+  readonly predecessors: ReadonlyArray<Revision>
+}
+
+export interface CorrectionManifest {
+  readonly schemaVersion: "1"
+  readonly rule: typeof correctionRule
+  readonly generatedAt: string
+  readonly baseline: CorrectionBaseline
+  readonly candidates: ReadonlyArray<CorrectionCandidate>
+}
+
+export function encoded(value: unknown) {
+  return JSON.stringify(value)
+}
+
+export effect function digestOf(value: unknown) {
+  return try sha256Hex(encoded(value))
+}
+
+export effect function correctionBaseline(journal: Journal) {
+  return { revisionCount: journal.revisions.length, revisionIdsDigest: try digestOf(journal.revisions.map((revision) => revision.id)) } satisfies CorrectionBaseline
+}
+
+export effect function hasBaselinePrefix(journal: Journal, baseline: CorrectionBaseline) {
+  if (journal.revisions.length < baseline.revisionCount) return false
+  return (try digestOf(journal.revisions.slice(0, baseline.revisionCount).map((revision) => revision.id))) === baseline.revisionIdsDigest
+}
+
+function latestRevisions(journal: Journal) {
+  const latest = new Map<string, Revision>()
+  for (const revision of journal.revisions) latest.set(revision.award.key, revision)
+  return latest
+}
+
+effect function ownPullRequestKey(revision: Revision) {
+  const award = revision.award
+  return award.key === (try pointKey({ projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }))
+}
+
+export effect function inventoryCorrectionPools(journal: Journal, projects: ReadonlyArray<string>) {
+  const selected = new Set(projects)
+  const groups = new Map<string, Revision[]>()
+  for (const revision of latestRevisions(journal).values()) {
+    const award = revision.award
+    if (!selected.has(award.projectId) || award.category !== "merged-pull-request") continue
+    const own = try ownPullRequestKey(revision)
+    const key = encoded([award.projectId, award.sourceId, own ? null : award.workUnitId])
+    const rows = groups.get(key) ?? []
+    rows.push(revision)
+    groups.set(key, rows)
+  }
+  const pools: CorrectionPool[] = []
+  for (const [key, rows] of groups) {
+    rows.sort((left, right) => left.award.key.localeCompare(right.award.key))
+    const totalPoints = rows.reduce((sum, row) => sum + row.award.amount, 0)
+    if (totalPoints <= 0) continue
+    if (!Number.isSafeInteger(totalPoints)) throw new InventoryInvalid({ message: "Recorded pool total overflows" })
+    const first = rows[0]
+    if (first === undefined) continue
+    const award = first.award
+    if (!rows.every((row) => row.award.sourceUrl === award.sourceUrl && row.award.occurredAt === award.occurredAt && row.award.workUnitId === award.workUnitId)) {
+      throw new InventoryInvalid({ message: "Recorded pool identities disagree" })
+    }
+    const own = try ownPullRequestKey(first)
+    pools.push({
+      totalPoints,
+      predecessors: rows,
+      candidate: {
+        id: `correction_${try sha256Hex(key)}`,
+        kind: own ? "pull-request" : "work-unit",
+        projectId: award.projectId,
+        sourceId: award.sourceId,
+        sourceUrl: award.sourceUrl,
+        occurredAt: award.occurredAt,
+        workUnitId: award.workUnitId,
+        sourceIds: [award.sourceId],
+        expectedPredecessors: rows.map((row) => ({ key: row.award.key, revisionId: row.id })),
+        proof: { status: "held" },
+      },
+    })
+  }
+  return pools.sort((left, right) => left.candidate.id.localeCompare(right.candidate.id))
+}

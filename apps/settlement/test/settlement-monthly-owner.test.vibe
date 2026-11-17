@@ -1,0 +1,304 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest } from "miniflare"
+import type { D1Database, ExecutionContext, SqlValue } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { worker } from "@repo/platform/worker"
+import { Authority, type ProjectView, Registry, RegistryManifests, Restrictions } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { coordinateMonthlyPayments } from "../src/monthly/coordinator.vibe"
+import { monthlyRoutes } from "../src/monthly/routes.vibe"
+import { monthlyFacts } from "../src/monthly/store.vibe"
+import { PaymentNetworks } from "../src/owner/networks.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+}
+
+service Journey {
+  readonly env: Env
+}
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+const served = new Set(["base-sepolia"])
+const vaultDigits: Readonly<Record<string, string>> = { alpha: "1", bravo: "2", charlie: "3", delta: "4", echo: "7", foxtrot: "8", golf: "5" }
+const userStewarded = new Set(["golf"])
+const asset = `0x${"6".repeat(40)}`
+const steward = "77"
+const maintainer = "55"
+const clock = settableClock(Date.parse("2026-12-02T12:00:00.000Z"))
+const banned = new Set<string>()
+const views = new Map<string, ProjectView>()
+
+const Started = Layer.effect(Journey, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "monthly-owner" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.filter((file) => file.error !== undefined)
+  if (failed.length > 0) return try die(new Error(`migration ${failed[0]?.file} failed: ${failed[0]?.error}`))
+  return { env: { SLOP_DB: try promise(() => database(mf, "SLOP_DB")) } }
+})
+
+function vaultOf(projectId: string) {
+  return `0x${(vaultDigits[projectId] ?? "9").repeat(40)}`
+}
+
+function manifestOf(projectId: string) {
+  return JSON.stringify({
+    id: projectId,
+    status: "active",
+    name: projectId,
+    steward: { github: { actorId: steward, login: `user${steward}`, type: userStewarded.has(projectId) ? "User" : "Organization" } },
+    authority: { state: "verified" },
+    terms: { receiptPolicy: { state: "active" } },
+    reward: { kind: "monthly-pool", monthlyCapMinor: "1000000000", rewardStartAt: "2026-10-01T00:00:00.000Z" },
+    escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "base-sepolia", vault: vaultOf(projectId), asset }] },
+  })
+}
+
+effect function seed(env: Env, text: string, ...params: ReadonlyArray<SqlValue>) {
+  try promise(() => env.SLOP_DB.prepare(text).bind(...params).run())
+}
+
+effect function count(env: Env, text: string, ...params: ReadonlyArray<SqlValue>) {
+  const found = try promise(() => env.SLOP_DB.prepare(text).bind(...params).all())
+  return Number((found.results[0] as Readonly<Record<string, unknown>> | undefined)?.n ?? -1)
+}
+
+effect function origin(projectId: string, actor: string) {
+  return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, "2026-11", actor]))
+}
+
+const shares: ReadonlyArray<readonly [string, string]> = [["77", "100000000"], ["101", "500000000"], ["102", "400000000"]]
+
+effect function proposed(env: Env, projectId: string) {
+  const manifest = manifestOf(projectId)
+  const manifestSha256 = try sha256Hex(manifest)
+  try seed(env, "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
+  try seed(env, "INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, '2026-10-01T00:00:00.000Z', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
+  try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (?, '2026-11', ?, ?, ?, '1000000000', 3, '2026-12-01T00:11:00.000Z')", projectId, manifest, manifestSha256, "a".repeat(64))
+  for (const [actor, gross] of shares) try seed(env, "INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) VALUES (?, '2026-11', ?, ?, ?, ?)", projectId, actor, `user${actor}`, gross, try origin(projectId, actor))
+  views.set(projectId, { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [{ id: "9001", nodeId: "R_1", fullName: `slop/${projectId}`, integrationBranch: "main", aliases: [] }], closureConsent: false })
+}
+
+effect function snapshot(env: Env, projectId: string, free: string | null, observedAt: string) {
+  try seed(env, "INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, block_number, block_time, observed_at) VALUES (?, 'base-sepolia', 'base', ?, ?, 6, ?, '0', '0', '0', '0', '0', ?, '1', ?, ?) ON CONFLICT (project_id, network, vault) DO UPDATE SET free_balance = excluded.free_balance, total_deposited = excluded.total_deposited, observed_at = excluded.observed_at", projectId, vaultOf(projectId), asset, free ?? "0", free, observedAt, observedAt)
+}
+
+effect function banAccount(env: Env, projectId: string, githubId: string) {
+  const issuer = JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malice" })
+  const manifestSha256 = views.get(projectId)?.manifestSha256 ?? ""
+  try seed(env, "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'confirmed malice', 'scan-1', '9001', '[\"github:9001\"]', NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, NULL, NULL, 'no_revision_needed', '2026-12-02T00:00:00.000Z')", `enf_${projectId}_vetting`, projectId, issuer, manifestSha256)
+  try seed(env, "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 2, 'ban', 'banned', 'none', 'moderator decision', 'scan-1', '9001', '[\"github:9001\"]', '7', 'moderator', NULL, 'project-moderator', 'admin-panel', 1, ?, NULL, NULL, 'no_revision_needed', '2026-12-02T00:01:00.000Z')", `enf_${projectId}_moderator`, projectId, manifestSha256)
+  try seed(env, "INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (?, ?, ?)", `enf_${projectId}_moderator`, githubId, `user${githubId}`)
+}
+
+const caller = Layer.succeed(Caller, {
+  current: () => effect {
+    const request = try HttpServerRequest.HttpServerRequest
+    const id = request.headers["x-test-actor"]
+    if (id === undefined) throw new Unauthenticated()
+    return { githubId: id, login: `user${id}`, actorId: `actor-${id}` }
+  },
+})
+
+const ports = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => effect { return views.get(projectId) },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return [...views.values()] },
+    fence: () => effect { return sql`1` },
+  }),
+  Layer.succeed(Restrictions, {
+    account: (githubId) => effect { return { banned: banned.has(githubId) } },
+    project: () => effect { return { restricted: false } },
+    fence: (account) => effect { return banned.has(account.githubId) ? sql`SELECT json('account banned') AS unbanned` : sql`SELECT 1 AS unbanned` },
+    unbanned: (githubId) => effect { return banned.has(githubId) ? sql`0` : sql`1` },
+  }),
+  Layer.succeed(Authority, {
+    repository: (read) => effect {
+      const verified = read.actorGithubId === steward || read.actorGithubId === maintainer
+      return { ...read, permission: verified ? "PermissionVerified" : "PermissionDenied", installation: "Installed" }
+    },
+  }),
+  Layer.succeed(Notices, {
+    statements: (batch) => effect {
+      return batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at) SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'payout_exception', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${notice.sourceAt} WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
+    },
+    fanout: () => effect { return [] },
+  }),
+  Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+  Layer.succeed(PaymentNetworks, { served: [], urls: () => effect { return undefined } }),
+  Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => effect { return try die(new Error("the monthly owner routes must not call an RPC endpoint in these journeys")) })),
+)
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOP_DB), webCrypto, clock.layer, caller, ports)
+  return Layer.provideMerge(monthlyFacts(served), base)
+}
+
+const site = worker({ services, routes: monthlyRoutes })
+
+effect function ask(env: Env, path: string, init: { readonly as?: string; readonly json?: unknown } = {}) {
+  const headers: Record<string, string> = { origin: "https://slop.test" }
+  if (init.as !== undefined) headers["x-test-actor"] = init.as
+  if (init.json !== undefined) headers["content-type"] = "application/json"
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test/api/v1/payments/projects${path}`, { method: init.json === undefined ? "GET" : "POST", headers, body: init.json === undefined ? undefined : JSON.stringify(init.json) })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+  const body = try promise(() => response.json())
+  return { status: response.status, body } satisfies Answer
+}
+
+function errorOf(answer: Answer) {
+  const body = answer.body
+  return [answer.status, typeof body === "object" && body !== null && "error" in body ? body.error : "ok"] as const
+}
+
+function field(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  return path.reduce<unknown>((at, key) => typeof at === "object" && at !== null && key in at ? (at as Readonly<Record<string, unknown>>)[key] : undefined, value)
+}
+
+effect function coordinate(env: Env) {
+  provide services(env) {
+    return try coordinateMonthlyPayments()
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Owner adjusts another recipient, never their own row, and a banned owner is refused (spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient\'s amount")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    try proposed(env, "alpha")
+    const view = try ask(env, "/alpha/monthly/2026-11", { as: steward })
+    const outsider = try ask(env, "/alpha/monthly/2026-11/allocations", { as: "66", json: { githubUserId: "101", grossBase: "500000000", expectedSequence: 0 } })
+    const writer = try ask(env, "/alpha/monthly/2026-11/allocations", { as: maintainer, json: { githubUserId: "101", grossBase: "500000000", expectedSequence: 0 } })
+    const own = try ask(env, "/alpha/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "77", grossBase: "100000000", expectedSequence: 0 } })
+    const overCap = try ask(env, "/alpha/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "102", grossBase: "500000000", expectedSequence: 0 } })
+    const kept = try ask(env, "/alpha/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "102", grossBase: "400000000", expectedSequence: 0 } })
+    const stale = try ask(env, "/alpha/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "102", grossBase: "400000000", expectedSequence: 0 } })
+    banned.add(steward)
+    const bannedOwner = try ask(env, "/alpha/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "102", grossBase: "400000000", expectedSequence: 1 } })
+    banned.delete(steward)
+    try proposed(env, "golf")
+    const userStewardRead = try ask(env, "/golf/monthly/2026-11", { as: maintainer })
+    const changes = try count(env, "SELECT count(*) AS n FROM monthly_allocation_changes WHERE project_id = 'alpha'")
+    try same({
+      view: [view.status, field(view.body, "canManage"), field(view.body, "proposal", "allocationSequence"), field(view.body, "cutoffAt")],
+      outsider: errorOf(outsider), writer: errorOf(writer), own: errorOf(own), overCap: errorOf(overCap),
+      kept: [kept.status, field(kept.body, "proposal", "allocationSequence")], stale: errorOf(stale), bannedOwner: errorOf(bannedOwner), changes,
+      userStewardRead: [...errorOf(userStewardRead), field(userStewardRead.body, "message"), field(userStewardRead.body, "proposal")],
+      overCapMessage: field(overCap.body, "message"),
+    }, {
+      view: [200, true, 0, "2026-12-04T00:00:00.000Z"],
+      outsider: [403, "owner_required"], writer: [403, "owner_required"], own: [403, "invalid_allocation"], overCap: [400, "invalid_allocation"],
+      kept: [200, 1], stale: [409, "allocations_changed"], bannedOwner: [403, "account_banned"], changes: 1,
+      userStewardRead: [403, "owner_required", "Only the current project steward can manage this project's awards.", undefined],
+      overCapMessage: "The month's allocations would exceed its monthly amount.",
+    })
+  })
+
+  it.effect('A cut needs a public reason, is listed publicly, closes 24 hours before the cutoff and delays finalization by 24 hours (spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor\'s latest change when that change is a cut"; spec/settlement/monthly.md, "A month with a cut freezes no earlier than 24 hours after the latest cut")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    try proposed(env, "foxtrot")
+    const short = try ask(env, "/foxtrot/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason: "too short" } })
+    const cut = try ask(env, "/foxtrot/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "101", grossBase: "450000000", expectedSequence: 0, reason: "  Half of the reviewed work was reverted upstream.  " } })
+    const publicList = try ask(env, "/foxtrot/monthly/2026-11/cuts")
+    const early = try ask(env, "/foxtrot/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 1 } })
+    clock.set(Date.parse("2026-12-03T01:00:00.000Z"))
+    const late = try ask(env, "/foxtrot/monthly/2026-11/allocations", { as: steward, json: { githubUserId: "102", grossBase: "350000000", expectedSequence: 1, reason: "Duplicate pull request credited twice this month." } })
+    clock.set(Date.parse("2026-12-03T12:00:00.000Z"))
+    const finalized = try ask(env, "/foxtrot/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 1 } })
+    const notices = try count(env, "SELECT count(*) AS n FROM notifications WHERE event_key = 'monthly-cut:foxtrot:2026-11:1' AND recipient_github_id = '101'")
+    const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'foxtrot' AND trigger = 'owner' AND actor_id = '77'")
+    try same({
+      short: errorOf(short), cut: cut.status,
+      list: [publicList.status, field(publicList.body, "cuts")],
+      early: errorOf(early), late: errorOf(late), finalized: finalized.status, notices, runs,
+    }, {
+      short: [400, "cut_reason_required"], cut: 200,
+      list: [200, [{ githubUserId: "101", login: "user101", proposedGrossBase: "500000000", grossBase: "450000000", reason: "Half of the reviewed work was reverted upstream.", cutAt: "2026-12-02T12:00:00.000Z" }]],
+      early: [409, "cut_notice_pending"], late: [409, "cut_notice_window"], finalized: 200, notices: 1, runs: 1,
+    })
+  })
+
+  it.effect('The owner finalize and the coordinator race at the cutoff and exactly one run row is written (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off")', () => effect {
+    const { env } = try Journey
+    try proposed(env, "bravo")
+    clock.set(Date.parse("2026-12-04T00:00:00.000Z"))
+    const [owner, report] = try.all [ask(env, "/bravo/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } }), coordinate(env)]
+    const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'bravo'")
+    const frozen = report.frozen.includes("bravo/2026-11")
+    try same({ owner: owner.status, runs, single: frozen !== (field(owner.body, "run", "trigger") === "owner") }, { owner: 200, runs: 1, single: true })
+  })
+
+  it.effect('An underfunded month records one Inbox notice however often it is retried, a stale snapshot waits and a later deposit funds the whole month (spec/settlement/monthly.md, "Fresh finalized free funds must cover this month and every earlier unreserved obligation"; spec/settlement/monthlySettlement.md, "Obligations are created only when the vault\'s finalized free balance covers the month")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    try proposed(env, "charlie")
+    const finalized = try ask(env, "/charlie/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    try snapshot(env, "charlie", null, "2026-12-02T11:45:00.000Z")
+    const unknownFree = try coordinate(env)
+    const noticesAfterUnknownFree = try count(env, "SELECT count(*) AS n FROM notifications WHERE event_key = 'monthly-underfunded:charlie:2026-11' AND recipient_github_id = '77'")
+    try snapshot(env, "charlie", "500000000", "2026-12-02T11:50:00.000Z")
+    const first = try coordinate(env)
+    const second = try coordinate(env)
+    try snapshot(env, "charlie", "2000000000", "2026-12-02T11:20:00.000Z")
+    const stale = try coordinate(env)
+    try snapshot(env, "charlie", "2000000000", "2026-12-02T11:55:00.000Z")
+    const funded = try coordinate(env)
+    const notices = try count(env, "SELECT count(*) AS n FROM notifications WHERE event_key = 'monthly-underfunded:charlie:2026-11' AND recipient_github_id = '77'")
+    const obligations = try count(env, "SELECT count(*) AS n FROM monthly_payment_obligations WHERE project_id = 'charlie' AND period = '2026-11'")
+    const waitingOf = (report: typeof first) => report.waiting.filter((entry) => entry.key === "charlie/2026-11").map((entry) => entry.reason)
+    try same({ finalized: finalized.status, unknownFree: waitingOf(unknownFree), noticesAfterUnknownFree, first: waitingOf(first), second: waitingOf(second), stale: waitingOf(stale), funded: funded.created.includes("charlie/2026-11"), notices, obligations }, {
+      finalized: 200, unknownFree: ["underfunded"], noticesAfterUnknownFree: 1, first: ["underfunded"], second: ["underfunded"], stale: ["stale-funding"], funded: true, notices: 1, obligations: 3,
+    })
+  })
+
+  it.effect('A banned account is excluded at funding with its ban recorded, while the others are funded from the unchanged snapshot (spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    try proposed(env, "delta")
+    const finalized = try ask(env, "/delta/monthly/2026-11/finalize", { as: steward, json: { expectedSequence: 0 } })
+    try banAccount(env, "delta", "102")
+    try snapshot(env, "delta", "2000000000", "2026-12-02T11:55:00.000Z")
+    const report = try coordinate(env)
+    const excluded = try count(env, "SELECT count(*) AS n FROM monthly_payment_exclusions WHERE project_id = 'delta' AND github_user_id = '102' AND enforcement_id = 'enf_delta_moderator'")
+    const obligations = try count(env, "SELECT count(*) AS n FROM monthly_payment_obligations WHERE project_id = 'delta' AND github_user_id <> '102'")
+    const snapshotKept = try count(env, "SELECT count(*) AS n FROM monthly_reward_base_rows WHERE project_id = 'delta'")
+    const view = try ask(env, "/delta/monthly/2026-11", { as: steward })
+    const states = (field(view.body, "run", "awards") as ReadonlyArray<unknown>).map((award) => [field(award, "githubUserId"), field(award, "state")])
+    try same({ finalized: finalized.status, created: report.created.includes("delta/2026-11"), excluded, obligations, snapshotKept, states }, {
+      finalized: 200, created: true, excluded: 1, obligations: 2, snapshotKept: 3,
+      states: [["101", "awaiting-reservation"], ["102", "excluded"], ["77", "awaiting-reservation"]],
+    })
+  })
+
+  it.effect('An owner who turned the automatic default off is never frozen at the cutoff (spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence")', () => effect {
+    const { env } = try Journey
+    clock.set(Date.parse("2026-12-02T12:00:00.000Z"))
+    try proposed(env, "echo")
+    const off = try ask(env, "/echo/monthly-settings", { as: steward, json: { automatic: false } })
+    const writer = try ask(env, "/echo/monthly-settings", { as: maintainer, json: { automatic: true } })
+    clock.set(Date.parse("2026-12-04T00:05:00.000Z"))
+    const report = try coordinate(env)
+    const runs = try count(env, "SELECT count(*) AS n FROM monthly_payment_runs WHERE project_id = 'echo'")
+    try same({
+      off: [off.status, off.body], writer: errorOf(writer),
+      waiting: report.waiting.filter((entry) => entry.key === "echo/2026-11").map((entry) => entry.reason), runs,
+    }, { off: [200, { automatic: false }], writer: [403, "owner_required"], waiting: ["automatic-off"], runs: 0 })
+  })
+})

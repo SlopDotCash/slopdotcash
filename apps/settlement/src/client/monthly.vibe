@@ -1,0 +1,260 @@
+// spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"; spec/settlement/monthly.md, "The owner may finalize early; the coordinator freezes at the cutoff unless the default is off"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettlement.md, "The owner may prepare one funded obligation by hand, and only while no pool gross is pending"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { getPaymentsProjectsByIdMonthlyByPeriod, postPaymentsProjectsByIdMonthlyByPeriodAllocations, postPaymentsProjectsByIdMonthlyByPeriodCommitment, postPaymentsProjectsByIdMonthlyByPeriodFinalize, postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment, postPaymentsProjectsByIdMonthlySettings } from "./refusals.vibe"
+
+export schema MonthlyAwardState = "excluded" | "underfunded" | "awaiting-reservation" | "reserved" | "paid" | "conflict"
+
+export schema MonthlyAllocation {
+  readonly githubUserId: string
+  readonly login: string
+  readonly grossBase: string
+  readonly sourceDigest: string
+  readonly proposedGrossBase: string
+}
+
+export schema MonthlyAwardView {
+  readonly githubUserId: string
+  readonly login: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly state: MonthlyAwardState
+}
+
+export schema MonthlyAsset {
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly symbol: string | null
+}
+
+export schema MonthlyProposal {
+  readonly capBase: string
+  readonly allocationSequence: number
+  readonly allocations: ReadonlyArray<MonthlyAllocation>
+  readonly latestCutAt: string | null
+}
+
+export schema MonthlyRun {
+  readonly trigger: "owner" | "automatic"
+  readonly frozenAt: string
+  readonly snapshotSha256: string
+  readonly totalGrossBase: string
+  readonly network: string
+  readonly vault: string
+  readonly funded: boolean
+  readonly awards: ReadonlyArray<MonthlyAwardView>
+}
+
+export schema MonthlyOwnerView {
+  readonly projectId: string
+  readonly period: string
+  readonly manifestSha256: string
+  readonly automatic: boolean
+  readonly canManage: boolean
+  readonly cutoffAt: string | null
+  readonly deployment: Schema.Unknown
+  readonly asset: MonthlyAsset | null
+  readonly proposal: MonthlyProposal | null
+  readonly run: MonthlyRun | null
+}
+
+export schema AllocationChange {
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly expectedSequence: number
+  readonly reason?: string
+}
+
+export schema Finalization {
+  readonly expectedSequence: number
+}
+
+export schema MonthlySetting {
+  readonly automatic: boolean
+}
+
+export schema MonthlySettingAnswer {
+  readonly automatic: boolean
+}
+
+export schema CommitmentReview {
+  readonly network: string
+  readonly githubUserId: string
+  readonly manifestSha256: string
+  readonly snapshotSha256: string
+}
+
+export schema CommitmentAward {
+  readonly githubUserId: string
+  readonly login: string
+  readonly sourceDigest: string
+  readonly gross: string
+  readonly fee: string
+  readonly net: string
+}
+
+export schema CommitmentPlan {
+  readonly schemaVersion: "2"
+  readonly projectId: string
+  readonly cycleId: string
+  readonly manifestSha256: string
+  readonly snapshotSha256: string
+  readonly deployment: Schema.Unknown
+  readonly award: CommitmentAward
+}
+
+export schema SolanaCommitmentAction {
+  readonly step: string
+  readonly network: string
+  readonly vault: string
+  readonly wallet: string
+  readonly githubUserId?: string
+  readonly manifestSha256?: string
+  readonly snapshotSha256?: string
+  readonly sourceDigest?: string
+  readonly gross?: string
+  readonly blockhash?: string
+  readonly transactionId?: string
+}
+
+export schema SolanaCommitmentTransaction {
+  readonly wallet: string
+  readonly sourceDigest: string
+  readonly githubUserId: string
+  readonly gross: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly fee: string
+  readonly net: string
+  readonly decimals: number
+  readonly freeBalance: string
+}
+
+export schema SolanaCommitmentReviewed {
+  readonly plan: CommitmentPlan
+  readonly transaction: SolanaCommitmentTransaction
+}
+
+export schema SolanaCommitmentChecked {
+  readonly status: "pending" | "failed" | "finalized"
+}
+
+export schema SolanaCommitmentAnswer = SolanaCommitmentReviewed | SolanaCommitmentChecked
+
+export schema MonthlyCut {
+  readonly githubUserId: string
+  readonly login: string
+  readonly proposedGrossBase: string
+  readonly grossBase: string
+  readonly reason: string
+  readonly cutAt: string
+}
+
+export schema MonthlyCuts {
+  readonly projectId: string
+  readonly period: string
+  readonly cuts: ReadonlyArray<MonthlyCut>
+}
+
+function refusal(row: { readonly status: number; readonly error: string; readonly message?: string; readonly headers: Readonly<Record<string, string>> }) {
+  return { status: row.status, code: row.error, message: row.message ?? "", headers: row.headers }
+}
+
+const sessionRefusals = {
+  unauthenticated: refusal(getPaymentsProjectsByIdMonthlyByPeriod.notSignedIn),
+  sessionExpired: refusal(getPaymentsProjectsByIdMonthlyByPeriod.sessionExpired),
+  actorMismatch: refusal(getPaymentsProjectsByIdMonthlyByPeriod.actorChangedYourAccountChangedReload),
+}
+
+export const monthlyView = route({
+  method: "GET",
+  path: "/api/v1/payments/projects/:id/monthly/:period",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: MonthlyOwnerView,
+  rejected: "monthly_awards_unavailable",
+  cache: "private",
+  ...sessionRefusals,
+})
+
+export const monthlyAllocations = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly/:period/allocations",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: AllocationChange,
+  answer: MonthlyOwnerView,
+  rejected: "invalid_allocation",
+  cache: "private",
+  invalid: refusal(postPaymentsProjectsByIdMonthlyByPeriodAllocations.invalidAllocation),
+  ...sessionRefusals,
+})
+
+export const monthlyFinalize = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly/:period/finalize",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: Finalization,
+  answer: MonthlyOwnerView,
+  rejected: "allocations_changed",
+  cache: "private",
+  invalid: refusal(postPaymentsProjectsByIdMonthlyByPeriodFinalize.invalidFinalization),
+  ...sessionRefusals,
+})
+
+export const monthlySettings = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly-settings",
+  access: "sessionWrite",
+  limitKib: 1,
+  request: MonthlySetting,
+  answer: MonthlySettingAnswer,
+  rejected: "setting_changed",
+  cache: "private",
+  invalid: refusal(postPaymentsProjectsByIdMonthlySettings.invalidMonthlySetting),
+  ...sessionRefusals,
+})
+
+export const monthlyCommitment = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly/:period/commitment",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: CommitmentReview,
+  answer: CommitmentPlan,
+  rejected: "award_unfunded",
+  cache: "private",
+  invalid: refusal(postPaymentsProjectsByIdMonthlyByPeriodCommitment.invalidCommitmentReview),
+  ...sessionRefusals,
+})
+
+export const monthlySolanaCommitment = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/monthly/:period/solana-commitment",
+  access: "sessionWrite",
+  limitKib: 4,
+  request: SolanaCommitmentAction,
+  answer: SolanaCommitmentAnswer,
+  rejected: "commitment_action_rejected",
+  cache: "private",
+  invalid: refusal(postPaymentsProjectsByIdMonthlyByPeriodSolanaCommitment.invalidCommitmentAction),
+  ...sessionRefusals,
+})
+
+export const monthlyCuts = route({
+  method: "GET",
+  path: "/api/v1/payments/projects/:id/monthly/:period/cuts",
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: MonthlyCuts,
+  rejected: "payments_unavailable",
+  cache: "private",
+})
+
+export const monthlyApi: ReadonlyArray<AnyRoute> = [monthlyView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyCommitment, monthlySolanaCommitment, monthlyCuts]

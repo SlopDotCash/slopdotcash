@@ -1,0 +1,316 @@
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/security/enforcement.md, "An appended repository needs its own admission and the registry mirror stays current"; spec/security/enforcement.md, "The frozen migration-0075 rows cover only original repositories"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch } from "@repo/platform/d1"
+import type { JournalRow, RegistryMirror } from "@repo/ports/security"
+import type { Disposition } from "../../gen/security__admission.ts"
+import type { Enforcement, Fence, Issuer, PinRead, RecordAction, RevisionPlan } from "../../gen/security__enforcement.ts"
+import { advanceDay, ban, canDenyAppeal, canObserveIdentity, canObserveRevision, canRequestAppeal, decideMalice, denyAppeal, flag, grantExemption, identityOf, initial, latestOf, observeIdentity, observeRevision, platform, quarantine, recognizeFrozen, recordResult, reinstate, reinstateFlagPause, requestAppeal, requestAssessment, requeueTemplate, revokeExemption, settlePendingRevision, withdrawFlag } from "../../gen/security__enforcement.effect.vibe"
+import { type AssessmentRow, type GrantRow, type ProjectHistory, jsonOf } from "./rows.vibe"
+
+export const dayMillis = 86_400_000
+
+export function idOf(text: string | number | null | undefined): number {
+  if (text === null || text === undefined) return 0
+  const value = typeof text === "number" ? text : /^[1-9][0-9]{0,19}$/u.test(text) ? Number(text) : 0
+  return Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+export schema ManifestRepository { id: string; githubId?: string; nodeId?: string; aliases?: ReadonlyArray<string> }
+export schema ManifestAuthority { repositoryId: string | number; repositoryNodeId?: string }
+schema ManifestSteward { github?: { actorId?: string } }
+export schema ManifestFacts { status?: string; listingTier?: string; steward?: ManifestSteward; authority: ManifestAuthority; repositories: ReadonlyArray<ManifestRepository> }
+schema Issued { assessmentId?: string }
+
+export interface ListedRepository {
+  readonly path: string
+  readonly githubId: number
+  readonly nodeId: string
+}
+
+export interface Revision {
+  readonly revision: number
+  readonly at: string
+  readonly retired: boolean
+  readonly steward: number
+  readonly repositories: ReadonlyArray<ListedRepository>
+}
+
+export function keysOf(manifest: ManifestFacts): ReadonlyArray<string> {
+  return [...new Set(manifest.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((path) => path.toLowerCase())))]
+}
+
+export function listedOf(manifest: ManifestFacts): ReadonlyArray<ListedRepository> {
+  return manifest.repositories.map((repository, index) => index === 0
+    ? { path: repository.id, githubId: idOf(manifest.authority.repositoryId), nodeId: manifest.authority.repositoryNodeId ?? "" }
+    : { path: repository.id, githubId: idOf(repository.githubId), nodeId: repository.nodeId ?? "" })
+}
+
+effect function revisionsOf(history: Pick<ProjectHistory, "revisions">) {
+  const revisions: Revision[] = []
+  for (const row of history.revisions) {
+    const manifest = try jsonOf(ManifestFacts, row.manifest, `revision ${row.revision} manifest`)
+    revisions.push({ revision: row.revision, at: row.created_at, retired: manifest.status === "paused" && manifest.listingTier === "retired", steward: idOf(manifest.steward?.github?.actorId), repositories: listedOf(manifest) })
+  }
+  return revisions satisfies ReadonlyArray<Revision>
+}
+
+export interface Roster {
+  readonly administrators: ReadonlyArray<number>
+  readonly moderators: ReadonlyArray<number>
+}
+
+interface Item {
+  readonly at: number
+  readonly order: number
+  readonly index: number
+  readonly apply: (e: Enforcement) => Enforcement!RowMismatch
+}
+
+const plans: Readonly<Record<string, RevisionPlan>> = { revision_appended: "RevisionAppended", revision_pending: "RevisionPending", no_revision_needed: "RevisionNotNeeded" }
+const dispositions: Readonly<Record<AssessmentRow["state"], Disposition>> = { pending: "NoDisposition", incomplete: "DIncomplete", clean: "DClean", malicious: "DMalicious" }
+
+effect function planOf(row: JournalRow) {
+  const plan = plans[row.result]
+  if (plan === undefined) throw new RowMismatch({ text: "project enforcements", issue: `record ${row.id} has result ${row.result}` })
+  return plan
+}
+
+function fenceOf(e: Enforcement): Fence {
+  return { revision: e.revision, sequence: e.journal.length + 1 }
+}
+
+function matched(e: Enforcement): PinRead[] {
+  return e.repositories.map((repository) => ({ repository, pin: "PinMatches" as const }))
+}
+
+function unproducible(row: JournalRow, issue: string) {
+  return new RowMismatch({ text: "project enforcements", issue: `record ${row.id} (${row.action} by ${row.actor_role}) ${issue}` })
+}
+
+interface Expected {
+  readonly kind: RecordAction
+  readonly issuer: Issuer
+}
+
+const kinds: Readonly<Record<string, RecordAction>> = { quarantine: "RecordQuarantine", ban: "RecordBan", request_reinstatement: "RecordAppeal", reinstate: "RecordReinstate", deny_reinstatement: "RecordDeny" }
+
+function expectedOf(row: Pick<JournalRow, "action" | "actor_role">): Expected | undefined {
+  const kind = kinds[row.action]
+  if (kind === undefined) return undefined
+  if (row.actor_role === "contributor-flags") return { kind, issuer: "ByContributorFlags" }
+  if (row.actor_role === "vetting-service") return { kind, issuer: "ByVettingService" }
+  if (row.action === "request_reinstatement") return { kind, issuer: "ByAppellant" }
+  return { kind, issuer: "ByModerator" }
+}
+
+effect function journalStep(e: Enforcement, row: JournalRow, accounts: ReadonlyArray<number>) {
+  if (row.actor_role === "contributor-flags" || row.actor_role === "vetting-service" && row.action === "ban") return e
+  const by = idOf(row.actor_github_id)
+  switch (row.action) {
+    case "quarantine": return quarantine(e, by, fenceOf(e), try planOf(row))
+    case "ban": return e.restriction === "ServiceBan" ? decideMalice(e, by, fenceOf(e), [...accounts]) : ban(e, by, fenceOf(e), try planOf(row))
+    case "request_reinstatement":
+      if (!canRequestAppeal(e, by)) throw unproducible(row, "is an appeal the project appeal does not admit")
+      return requestAppeal(e, by)
+    case "reinstate": return row.actor_role === "vetting-service" ? reinstateFlagPause(e, 0, matched(e)) : reinstate(e, by, fenceOf(e), matched(e))
+    case "deny_reinstatement":
+      if (!canDenyAppeal(e, by, fenceOf(e))) throw unproducible(row, "denies no open project appeal")
+      return denyAppeal(e, by, fenceOf(e))
+    default: throw unproducible(row, "has no enforcement transition")
+  }
+}
+
+effect function issuedAssessment(row: JournalRow) {
+  if (row.system_issuer === null) return undefined
+  return (try jsonOf(Issued, row.system_issuer, `issuer of ${row.id}`)).assessmentId
+}
+
+function identityAt(revisions: ReadonlyArray<Revision>, githubId: number, revision: number, nodeId?: string): number {
+  let epoch = 0
+  let node: string | undefined = undefined
+  for (const each of revisions) {
+    const listed = each.repositories.find((repository) => repository.githubId === githubId)
+    if (listed !== undefined && listed.nodeId !== "" && listed.nodeId !== node) {
+      epoch += 1
+      node = listed.nodeId
+    }
+    if (nodeId === undefined && each.revision === revision) return Math.max(epoch, 1)
+    if (nodeId !== undefined && node === nodeId && each.revision >= revision) return epoch
+  }
+  return nodeId === undefined ? Math.max(epoch, 1) : 0
+}
+
+function repositoryAt(revisions: ReadonlyArray<Revision>, revision: number, path: string | null): number {
+  const listed = revisions.find((each) => each.revision === revision)?.repositories
+  return listed?.find((repository) => repository.path === path)?.githubId ?? 0
+}
+
+function originalOf(revisions: ReadonlyArray<Revision>, frozenAt: string | null): ReadonlyArray<number> {
+  const first = revisions[0]?.repositories[0]?.githubId
+  if (frozenAt === null) return first === undefined || first === 0 ? [] : [first]
+  const listedThen = revisions.filter((each) => millisOf(each.at) <= millisOf(frozenAt)).at(-1) ?? revisions[0]
+  return [...new Set((listedThen?.repositories ?? []).map((repository) => repository.githubId).filter((id) => id > 0))]
+}
+
+function grantRequestOf(grant: GrantRow) {
+  const repository = idOf(grant.repository_id)
+  const steward = idOf(grant.steward_id)
+  return {
+    id: grant.sequence,
+    kind: "OwnerApproved" as const,
+    repository,
+    revision: grant.revision,
+    manifestDigest: grant.revision,
+    steward,
+    check: { actor: steward, repository, access: "AccessVerified" as const },
+    decision: 1,
+    reason: 1,
+    branch: "IntegrationBranch" as const,
+    head: 1,
+    scope: 1,
+    limitations: 1,
+    confirmed: true,
+  }
+}
+
+export interface Start {
+  readonly projectRow: number
+  readonly mirror: RegistryMirror
+  readonly steward: number
+  readonly creator: number
+  readonly roster: Roster
+}
+
+function startOf(start: Start, original: ReadonlyArray<number>): Enforcement {
+  const repositories = start.mirror.repositoryGithubIds.map(idOf)
+  return {
+    ...initial,
+    projectId: start.projectRow,
+    repositories,
+    original: original.length > 0 ? [...original] : repositories.slice(0, 1),
+    administrators: [...start.roster.administrators],
+    moderators: [...start.roster.moderators],
+  }
+}
+
+effect function items(history: ProjectHistory, revisions: ReadonlyArray<Revision>, creator: number) {
+  const found: Item[] = []
+  const journalTimes = new Map<string, number>()
+  let previous = 0
+  for (const row of history.journal) {
+    previous = Math.max(previous, millisOf(row.created_at))
+    journalTimes.set(row.id, previous)
+  }
+  const bans = new Map<string, number>()
+  const pauses = history.journal.filter((row) => row.actor_role === "contributor-flags").map((row) => journalTimes.get(row.id) ?? 0)
+  for (const row of history.journal) {
+    if (row.actor_role !== "vetting-service" || row.action !== "ban") continue
+    const assessment = try issuedAssessment(row)
+    if (assessment !== undefined) bans.set(assessment, history.journal.indexOf(row))
+  }
+  let known = new Map<number, string>()
+  for (const each of revisions) {
+    const changed = each.repositories.filter((repository) => repository.nodeId !== "" && known.has(repository.githubId) && known.get(repository.githubId) !== repository.nodeId)
+    known = new Map([...known, ...each.repositories.filter((repository) => repository.nodeId !== "").map((repository) => [repository.githubId, repository.nodeId] as const)])
+    found.push({
+      at: millisOf(each.at), order: 0, index: each.revision,
+      apply: (e) => effect {
+        let observed = canObserveRevision(e, platform, each.revision, each.steward, creator) ? observeRevision(e, platform, each.revision, each.steward, creator) : e
+        for (const repository of changed) {
+          const identity = identityAt(revisions, repository.githubId, each.revision)
+          if (!canObserveIdentity(observed, platform, repository.githubId, identity)) throw new RowMismatch({ text: "project revisions", issue: `revision ${each.revision} does not advance the identity of repository ${repository.githubId}` })
+          observed = observeIdentity(observed, platform, repository.githubId, identity)
+        }
+        return observed.revisionPending && each.retired ? settlePendingRevision(observed, platform) : observed
+      },
+    })
+  }
+  if (history.facts?.frozen_at !== null && history.facts?.frozen_at !== undefined) {
+    const frozenAt = history.facts.frozen_at
+    found.push({
+      at: millisOf(frozenAt), order: 1, index: 0,
+      apply: (e) => effect { return e.original.reduce((state, repository) => recognizeFrozen(state, platform, { projectId: state.projectId, repository }), e) },
+    })
+  }
+  for (const row of history.assessments) {
+    const repository = repositoryAt(revisions, row.revision, row.repository_id)
+    found.push({
+      at: millisOf(row.requested_at), order: 2, index: row.row,
+      apply: (e) => effect {
+        if (row.replaces_assessment_id !== null && latestOf(e, repository).state === "APending") return requeueTemplate(e, 0, repository, row.row)
+        return requestAssessment(e, 0, repository, "AdminInvestigation", row.row)
+      },
+    })
+    if (row.state === "pending" || row.completed_at === null) continue
+    const banIndex = bans.get(row.id)
+    const banRow = banIndex === undefined ? undefined : history.journal[banIndex]
+    const plan = banRow === undefined ? "RevisionNotNeeded" : try planOf(banRow)
+    const completed = banRow === undefined ? millisOf(row.completed_at) : Math.min(millisOf(row.completed_at), journalTimes.get(banRow.id) ?? 0)
+    found.push({
+      at: completed, order: 3, index: row.row,
+      apply: (e) => effect {
+        const latest = latestOf(e, repository)
+        if (latest.id !== row.row || latest.state !== "APending") return e
+        return recordResult(e, 0, { assessment: row.row, repository, revision: latest.revision, disposition: dispositions[row.state], confirmation: "NoConfirmation", reused: row.reused === 1, retained: false }, plan)
+      },
+    })
+  }
+  for (const row of history.flags) {
+    const filed = millisOf(row.created_at)
+    const paused = pauses.find((at) => at >= filed && at - filed < 1000)
+    found.push({
+      at: paused === undefined ? filed : Math.min(filed, paused), order: 4, index: row.row,
+      apply: (e) => effect {
+        const reporter = idOf(row.reporter_github_id)
+        return flag(e, reporter, row.row, { actor: reporter, revision: row.revision, accountAgeDays: 30, acceptedContributions: 1, maintainer: "ReadNo", banned: "ReadNo" })
+      },
+    })
+    if (row.state === "withdrawn" && row.closed_at !== null) {
+      found.push({ at: millisOf(row.closed_at), order: 7, index: row.row, apply: (e) => effect { return withdrawFlag(e, idOf(row.reporter_github_id), row.row) } })
+    }
+  }
+  for (const grant of history.grants) {
+    found.push({
+      at: millisOf(grant.granted_at), order: 5, index: grant.sequence,
+      apply: (e) => effect {
+        const request = grantRequestOf(grant)
+        if (identityAt(revisions, request.repository, grant.revision, grant.repository_node_id) !== identityOf(e, request.repository)) throw new RowMismatch({ text: "admission exemptions", issue: `grant ${grant.id} names a repository identity that was not current when it was granted` })
+        return grantExemption(e, idOf(grant.granted_by_github_id), fenceOf(e), request)
+      },
+    })
+    const revokedAt = grant.revoked_at
+    if (revokedAt !== null) {
+      found.push({ at: millisOf(revokedAt), order: 6, index: grant.sequence, apply: (e) => effect { return revokeExemption(e, idOf(grant.revoked_by_github_id), { grant: grant.sequence, decision: 1, reason: 1, confirmed: true }) } })
+    }
+  }
+  for (const row of history.journal) {
+    const accounts = history.bans.filter((each) => each.enforcement_id === row.id).map((each) => idOf(each.github_id))
+    found.push({ at: journalTimes.get(row.id) ?? 0, order: 8, index: row.sequence, apply: (e) => journalStep(e, row, accounts) })
+  }
+  return found.toSorted((left, right) => left.at - right.at || left.order - right.order || left.index - right.index)
+}
+
+effect function advanced(e: Enforcement, day: number) {
+  return day > e.clockDay ? advanceDay(e, platform, day) : e
+}
+
+export effect function replay(start: Start, history: ProjectHistory, today: number) {
+  const revisions = try revisionsOf(history)
+  let state = startOf(start, originalOf(revisions, history.facts?.frozen_at ?? null))
+  for (const item of try items(history, revisions, start.creator)) {
+    state = try advanced(state, Math.floor(item.at / dayMillis))
+    state = try item.apply(state)
+  }
+  state = try advanced(state, today)
+  if (canObserveRevision(state, platform, start.mirror.revision, start.steward, start.creator)) state = observeRevision(state, platform, start.mirror.revision, start.steward, start.creator)
+  if (state.revision !== start.mirror.revision || state.steward !== start.steward) throw new RowMismatch({ text: "project revisions", issue: `the history registers revision ${state.revision}, the project row ${start.mirror.revision}` })
+  if (state.journal.length !== history.journal.length) throw new RowMismatch({ text: "project enforcements", issue: `replay produced ${state.journal.length} records for ${history.journal.length} stored` })
+  for (const [index, row] of history.journal.entries()) {
+    const produced = state.journal[index]
+    const expected = expectedOf(row)
+    if (produced === undefined || expected === undefined || produced.seq !== row.sequence || produced.kind !== expected.kind || produced.issuer !== expected.issuer) {
+      throw new RowMismatch({ text: "project enforcements", issue: `record ${row.id} does not replay as stored` })
+    }
+  }
+  return state
+}

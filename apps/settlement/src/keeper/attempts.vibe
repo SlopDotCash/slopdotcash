@@ -1,0 +1,226 @@
+// spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"
+import { EvmRpc, type Hex, keccak } from "@repo/platform/chain/evm"
+import type { SqlTx } from "@repo/platform/journal"
+import type { KeeperMode } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { apply } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type Type2Request, readSignedType2, unsignedType2 } from "../chain/evm/transactions.ts"
+import { nativeCostWithin } from "../kernels/budget.ts"
+import { parseNativeCostLimit } from "../kernels/amounts.ts"
+import type { EvmDeployment } from "../vault/policy.vibe"
+import { additionalFee, groupOf, reserveGas } from "./budget.vibe"
+import type { KeeperConfig } from "./config.vibe"
+import { type GroupWork, type KeeperCore, bytesOf, withGroup } from "./lifecycle.vibe"
+import { signWithOperatorKey } from "./signer.vibe"
+import { RecordInvalid, inTransaction, keep, record, recordOf } from "./store.vibe"
+import { MAX_EXACT } from "./units.ts"
+
+export error AttemptRefused { reason: string }
+export error KeeperWaiting { reason: string }
+
+export schema Attempt {
+  readonly obligationId?: string
+  readonly monthlyPeriod?: string
+  readonly network: string
+  readonly vault: string
+  readonly fingerprint: string
+  readonly rawTransaction: string
+  readonly transactionId: string
+  readonly maxNativeCostWei?: string
+}
+
+export schema FeeReplacement {
+  readonly rawTransaction: string
+  readonly transactionId: string
+  readonly signedAt: string
+}
+
+export schema FeeReplacements {
+  readonly original: string
+  readonly observedAt: string
+  readonly replacements: ReadonlyArray<FeeReplacement>
+}
+
+export interface KeeperScope {
+  readonly config: KeeperConfig
+  readonly mode: KeeperMode
+  readonly core: KeeperCore
+  readonly runId: number
+}
+
+export interface SendContext extends KeeperScope {
+  readonly deployment: EvmDeployment
+}
+
+export interface SignedAttempt {
+  readonly raw: Hex
+  readonly id: string
+  readonly request: Type2Request
+}
+
+const PRIORITY_FEE = 1_000_000n
+const MAX_FEE_PER_GAS = 10_000_000_000n
+
+export function reasonOf(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    if ("reason" in error && typeof error.reason === "string") return error.reason
+    if ("message" in error && typeof error.message === "string" && error.message !== "") return error.message
+    if ("_tag" in error && typeof error._tag === "string") return error._tag
+  }
+  return String(error)
+}
+
+export function fingerprintOf(parts: ReadonlyArray<string>) {
+  return keccak(new TextEncoder().encode(JSON.stringify(parts)))
+}
+
+export function feeReplacementKey(attempt: Attempt) {
+  return `fee-bump:${attempt.transactionId.toLowerCase()}`
+}
+
+export function nonceCursorKey(chainId: bigint, signer: string) {
+  return `nonce:${chainId}:${signer.toLowerCase()}`
+}
+
+export effect function readAttempt(tx: SqlTx, key: string) {
+  const found = try record(tx, key)
+  if (found === undefined || found === null) return found === null ? null : undefined
+  return Schema.decodeUnknownEffect(Attempt)(found) catch effect () => { throw new RecordInvalid({ key }) }
+}
+
+export effect function readReplacements(tx: SqlTx, attempt: Attempt) {
+  const found = try record(tx, feeReplacementKey(attempt))
+  if (found === undefined) return undefined
+  return Schema.decodeUnknownEffect(FeeReplacements)(found) catch effect () => { throw new RecordInvalid({ key: feeReplacementKey(attempt) }) }
+}
+
+export effect function parsedAttempt(raw: string, signer: EvmAddress) {
+  const signed = readSignedType2(raw as Hex)
+  if (signed === undefined || signed.sender !== signer) throw new AttemptRefused({ reason: "Journaled transaction cannot be read back" })
+  return { raw: raw as Hex, id: signed.id, request: signed.request } satisfies SignedAttempt
+}
+
+export effect function signedAttempts(attempt: Attempt, signer: EvmAddress) {
+  const replacements = try inTransaction((tx) => readReplacements(tx, attempt))
+  const all = [try parsedAttempt(attempt.rawTransaction, signer)]
+  for (const item of replacements?.replacements ?? []) all.push(try parsedAttempt(item.rawTransaction, signer))
+  return all
+}
+
+export function groupOfAttempt(context: SendContext, signed: SignedAttempt) {
+  return groupOf(context.deployment.chainId, context.config.signer, signed.request.nonce)
+}
+
+export effect function withinNativeCost(deployment: EvmDeployment, attempt: Attempt | undefined, request: Pick<Type2Request, "gas" | "maxFeePerGas" | "value">) {
+  const limits: bigint[] = []
+  for (const text of [deployment.maxNativeCostWei, attempt?.maxNativeCostWei]) {
+    if (text === undefined) continue
+    const limit = parseNativeCostLimit(text)
+    if (limit === undefined) throw new AttemptRefused({ reason: "Invalid EVM native cost limit" })
+    limits.push(limit)
+  }
+  return nativeCostWithin(request.gas, request.maxFeePerGas, request.value, limits)
+}
+
+export effect function knownTransaction(id: string) {
+  return (try (try EvmRpc).transaction(id as Hex)) !== undefined
+}
+
+export effect function broadcastSigned(context: SendContext, signed: SignedAttempt, ignoreFailure: boolean) {
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  try withGroup(context.core, groupOfAttempt(context, signed), now, undefined, (state, found) => effect {
+    if (found === undefined) throw new AttemptRefused({ reason: "Journaled attempt has no send journal" })
+    const next = try apply(state, { type: "broadcast", runId: context.runId, bytes: bytesOf(found.hashes, signed.id) })
+    return { state: next, hashes: found.hashes, value: undefined } satisfies GroupWork<undefined>
+  })
+  const sent = (try EvmRpc).sendRaw(signed.raw) catch effect (error) => {
+    const known = knownTransaction(signed.id) catch () => false
+    if (known || ignoreFailure) return signed.id
+    throw error
+  }
+  if (sent.toLowerCase() !== signed.id.toLowerCase() && !ignoreFailure) throw new AttemptRefused({ reason: "Transaction hash mismatch" })
+}
+
+export interface NewAttempt {
+  readonly key: string
+  readonly fingerprint: string
+  readonly data: Hex
+  readonly obligationId?: string
+  readonly monthlyPeriod?: string
+}
+
+export effect function signNewAttempt(context: SendContext, next: NewAttempt) {
+  const { config, deployment } = context
+  const rpc = try EvmRpc
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined) throw new AttemptRefused({ reason: "Reviewed deployment identity is incomplete" })
+  const chainNonce = try rpc.nonce(config.signer, "pending")
+  const latest = try rpc.head("latest")
+  if (latest.baseFeePerGas === undefined) throw new AttemptRefused({ reason: "Latest base fee unavailable" })
+  const maxFeePerGas = latest.baseFeePerGas * 2n + PRIORITY_FEE
+  if (maxFeePerGas > MAX_FEE_PER_GAS) throw new AttemptRefused({ reason: "Gas fee exceeds test signer policy" })
+  const gas = (try rpc.estimateGas({ from: config.signer, to: vault, data: next.data, value: 0n })) * 12n / 10n
+  if (gas > deployment.gasCeiling) throw new AttemptRefused({ reason: "Gas exceeds narrow operation policy" })
+  if (!(try withinNativeCost(deployment, undefined, { gas, maxFeePerGas, value: 0n }))) throw new AttemptRefused({ reason: "EVM transaction exceeds native cost limit" })
+  if (gas > MAX_EXACT) throw new AttemptRefused({ reason: "Gas exceeds the keeper's exact range" })
+  const cursorKey = nonceCursorKey(deployment.chainId, config.signer)
+  const cursorBefore = try recordOf(cursorKey)
+  const nonce = Math.max(Number(chainNonce), typeof cursorBefore === "number" ? cursorBefore : 0)
+  if (!Number.isSafeInteger(nonce)) throw new AttemptRefused({ reason: "Invalid signer nonce" })
+  const request = { chainId: Number(deployment.chainId), nonce, gas, maxFeePerGas, maxPriorityFeePerGas: PRIORITY_FEE, to: vault, value: 0n, data: next.data } satisfies Type2Request
+  const unsigned = try Effect.try({ try: () => unsignedType2(request), catch: () => new AttemptRefused({ reason: "Unsignable transaction" }) })
+  const extraFee = try additionalFee(config, gas, (unsigned.length - 2) / 2)
+  const maximum = gas * maxFeePerGas + config.gas.additionalFeeReserve
+  const millis = try Clock.currentTimeMillis
+  const group = groupOf(deployment.chainId, config.signer, nonce)
+  const attempt = try withGroup(context.core, group, Math.floor(millis / 1000), Number(gas), (state, found, tx) => effect {
+    const existing = try readAttempt(tx, next.key)
+    if (existing !== undefined && existing !== null) {
+      if (existing.fingerprint !== next.fingerprint) throw new AttemptRefused({ reason: "Idempotency collision" })
+      return { state: undefined, hashes: [], value: existing } satisfies GroupWork<Attempt>
+    }
+    const cursor = try record(tx, cursorKey)
+    if (cursor !== cursorBefore) throw new AttemptRefused({ reason: "Signer nonce changed before signing" })
+    if (found !== undefined) throw new AttemptRefused({ reason: "Gas reservation conflict: this nonce is already reserved" })
+    const signed = try signWithOperatorKey(config.signer, request)
+    try reserveGas(tx, config, group, maximum, signed.id, millis)
+    const candidate = { bytes: 1, maxFee: Number(maxFeePerGas), priorityFee: Number(PRIORITY_FEE), signedAt: Math.floor(millis / 1000), extraFee: Number(extraFee) }
+    const staged = try apply(state, { type: "stageAttempt", runId: context.runId, attempt: candidate, signer: { wallet: signed.sender, expectedWallet: config.signer } })
+    const committed = try apply(staged, { type: "commitAttempt", runId: context.runId, storageCommitted: true })
+    const stored = {
+      ...next.obligationId === undefined ? {} : { obligationId: next.obligationId },
+      ...next.monthlyPeriod === undefined ? {} : { monthlyPeriod: next.monthlyPeriod },
+      network: config.network,
+      vault: deployment.vault,
+      fingerprint: next.fingerprint,
+      rawTransaction: signed.raw,
+      transactionId: signed.id,
+      ...deployment.maxNativeCostWei === undefined ? {} : { maxNativeCostWei: deployment.maxNativeCostWei },
+    } satisfies Attempt
+    try keep(tx, next.key, stored)
+    try keep(tx, cursorKey, nonce + 1)
+    return { state: committed, hashes: [signed.id], value: stored } satisfies GroupWork<Attempt>
+  })
+  return attempt
+}
+
+export effect function retireReverted(key: string, attempt: Attempt, signer: EvmAddress) {
+  const rpc = try EvmRpc
+  let proof: { readonly transactionId: string; readonly blockHash: string; readonly blockNumber: string } | undefined = undefined
+  for (const signed of try signedAttempts(attempt, signer)) {
+    const receipt = try rpc.finalizedReceipt(signed.id as Hex)
+    if (receipt !== undefined && receipt.status === "reverted") {
+      proof = { transactionId: signed.id, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() }
+      break
+    }
+  }
+  if (proof === undefined) return false
+  const revert = proof
+  return try inTransaction((tx) => effect {
+    const current = try readAttempt(tx, key)
+    if (current === undefined || current === null || current.transactionId !== attempt.transactionId) return false
+    try keep(tx, `${key}:reverted:${attempt.transactionId}`, { ...current, revert })
+    try keep(tx, key, null)
+    return true
+  })
+}

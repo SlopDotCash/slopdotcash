@@ -1,0 +1,342 @@
+// spec/slopbot/valueRequests.md, "A ten-minute claim needs a due row and no other live claim on the same pull request"; spec/slopbot/valueRequests.md, "The outcome follows the consumer's checks in order"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop"; spec/slopbot/valueRequests.md, "A parked request resumes when its repository is active again, checked in rotation"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type RowMismatch, type Statement, decoded, first, rows, sql } from "@repo/platform/d1"
+import { type Aggregate, Conflict, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { RegistryObservation } from "../../../gen/slopbot__repositoryScope.effect.vibe"
+import { type Delivery, type NotAState, type Observation, type Outcome, type ValueRequests, Rejected, apply, decodeState, deliveryOf, initial, outcomeFor, parked, settleDelivery, tokenLive } from "../../../gen/slopbot__valueRequests.effect.vibe"
+import { installationOf } from "../../installation/store.vibe"
+import { observe } from "../../scope/facts.vibe"
+import { DeliveryRow, type Numbering, type Source, deliveriesVersion, deliveriesWhere, deliveryFrom, numbered, outcomeNames, scopeKeysOf, stateNames, timeOf } from "./rows.vibe"
+
+export { type Source, InvalidSources } from "./rows.vibe"
+
+export interface Run {
+  readonly startedAt: number
+  readonly claims: number
+}
+
+export const idle: Run = { startedAt: 0, claims: 0 }
+
+export interface Claim {
+  readonly deliveryId: string
+  readonly token: string
+}
+
+export type Gathered = Omit<Observation, "sources">
+
+export interface ValueRequest {
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly number: number
+}
+
+export interface Target {
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+}
+
+export interface Names {
+  readonly deliveries: ReadonlyMap<string, number>
+  readonly tokens: ReadonlyMap<string, number>
+  readonly sources: ReadonlyMap<string, number>
+  readonly lastToken: number
+}
+
+export interface Projection {
+  readonly state: ValueRequests
+  readonly names: Names
+  readonly rows: ReadonlyArray<DeliveryRow>
+}
+
+export const parkedChecksPerRun = 20
+
+export interface Scope {
+  readonly name: string
+  readonly deliveries: Statement
+  readonly installation: Statement
+  readonly groups: Statement
+  readonly checks: Statement
+}
+
+export interface Context {
+  readonly now: number
+  readonly run: Run
+  readonly wanted: ReadonlyArray<string>
+  readonly names?: Names
+}
+
+schema LeaseRow { scope_key: string; claim_token: string; delivery_id: string; lease_until: string }
+schema CheckRow { repository_id: number; owner: string; repo: string; checked_at: string }
+schema DueRow { delivery_id: string; installation_id: number; repository_id: number; owner: string; repo: string; pull_request_number: number }
+schema ParkedRow { repository_id: number; owner: string; repo: string }
+
+const parkedRow = sql`p.state = 'waiting' AND p.outcome = 'parked' AND p.retry_at IS NULL`
+
+function installationRead(scope: Statement): Statement {
+  return sql`SELECT installation_id, account_id, account_login, account_type, created_at, suspended_at, removed_at, source_updated_at FROM slopbot_installations WHERE ${scope}`
+}
+
+function groupsRead(scope: Statement): Statement {
+  return sql`SELECT l.scope_key, l.claim_token, l.delivery_id, l.lease_until FROM slopbot_value_source_leases l
+    JOIN slopbot_value_processing p ON p.delivery_id = l.delivery_id AND p.claim_token = l.claim_token
+    WHERE p.state = 'running' AND (${scope}) ORDER BY l.claim_token, l.scope_key`
+}
+
+function checksRead(scope: Statement): Statement {
+  return sql`SELECT c.repository_id, c.owner, c.repo, c.checked_at FROM slopbot_value_parked_checks c WHERE ${scope} ORDER BY c.repository_id, c.owner, c.repo`
+}
+
+function versionOf(scope: Scope): Statement {
+  return sql`SELECT ${deliveriesVersion(scope.deliveries)}
+    || '|' || coalesce((SELECT group_concat(installation_id || ':' || coalesce(suspended_at, '-') || ':' || coalesce(removed_at, '-') || ':' || coalesce(source_updated_at, '-'), ',') FROM (${installationRead(scope.installation)})), '')
+    || '|' || coalesce((SELECT group_concat(scope_key || ':' || claim_token || ':' || delivery_id || ':' || lease_until, ',') FROM (${groupsRead(scope.groups)})), '')
+    || '|' || coalesce((SELECT group_concat(repository_id || ':' || owner || ':' || repo || ':' || checked_at, ',') FROM (${checksRead(scope.checks)})), '') AS version`
+}
+
+function namesOf(found: ReadonlyArray<DeliveryRow>, leases: ReadonlyArray<LeaseRow>, wanted: ReadonlyArray<string>): Names {
+  const tokens = numbered([...found.map((row) => row.claim_token ?? ""), ...leases.map((lease) => lease.claim_token)])
+  return {
+    deliveries: numbered(found.map((row) => row.delivery_id)),
+    tokens,
+    sources: numbered([...leases.map((lease) => lease.scope_key), ...wanted]),
+    lastToken: tokens.size,
+  }
+}
+
+export function sourceNumbers(names: Names, keys: ReadonlyArray<string>): number[] {
+  return [...new Set(keys.map((key) => names.sources.get(key) ?? 0))].sort((a, b) => a - b)
+}
+
+effect function projected(found: ReadonlyArray<Rows>, context: Context) {
+  const deliveryRows = try decoded(DeliveryRow, found[0] ?? [], "value requests")
+  const install = try installationOf([found[1] ?? []], [])
+  const leases = try decoded(LeaseRow, found[2] ?? [], "value source leases")
+  const checks = try decoded(CheckRow, found[3] ?? [], "parked value checks")
+  const names = context.names ?? namesOf(deliveryRows, leases, context.wanted)
+  const numbering: Numbering = { delivery: (id) => names.deliveries.get(id) ?? 0, token: (token) => names.tokens.get(token) ?? 0 }
+  const deliveries: Delivery[] = []
+  for (const row of deliveryRows) deliveries.push(try deliveryFrom(row, numbering, "seconds"))
+  const parkedChecks: Array<ValueRequests["parkedChecks"][number]> = []
+  for (const check of checks) parkedChecks.push({ target: { repository: check.repository_id, owner: check.owner, repo: check.repo }, checkedAt: try timeOf(check.checked_at, "seconds") })
+  const groups = [...new Set(leases.map((lease) => lease.claim_token))].map((token) => ({
+    token: names.tokens.get(token) ?? 0,
+    sources: sourceNumbers(names, leases.filter((lease) => lease.claim_token === token).map((lease) => lease.scope_key)),
+  }))
+  const state = try decodeState({
+    now: context.now,
+    lastToken: names.lastToken,
+    deliveries,
+    groups,
+    install,
+    runStartedAt: context.run.startedAt,
+    runClaims: context.run.claims,
+    parkedChecks,
+  })
+  return { state, names, rows: deliveryRows } satisfies Projection
+}
+
+export function aggregate(scope: Scope, context: Context): Aggregate<Projection, RowMismatch | NotAState, never> {
+  return {
+    name: scope.name,
+    version: versionOf(scope),
+    reads: [deliveriesWhere(scope.deliveries), installationRead(scope.installation), groupsRead(scope.groups), checksRead(scope.checks)],
+    decode: (found) => projected(found, context),
+  }
+}
+
+function samePullOf(deliveryId: string): Statement {
+  return sql`r.repository_id = (SELECT repository_id FROM slopbot_value_requests WHERE delivery_id = ${deliveryId})
+    AND r.pull_request_number = (SELECT pull_request_number FROM slopbot_value_requests WHERE delivery_id = ${deliveryId})`
+}
+
+export function installationOfRequest(deliveryId: string): Statement {
+  return sql`installation_id = (SELECT installation_id FROM slopbot_value_requests WHERE delivery_id = ${deliveryId})`
+}
+
+export function claimScope(deliveryId: string): Scope {
+  return {
+    name: `value request ${deliveryId}`,
+    deliveries: samePullOf(deliveryId),
+    installation: installationOfRequest(deliveryId),
+    groups: sql`l.delivery_id IN (SELECT r.delivery_id FROM slopbot_value_requests r WHERE ${samePullOf(deliveryId)})`,
+    checks: sql`0`,
+  }
+}
+
+function sameTarget(alias: string, target: Target): Statement {
+  return alias === "c"
+    ? sql`c.repository_id = ${target.repositoryId} AND c.owner = ${target.owner} AND c.repo = ${target.repo}`
+    : sql`r.repository_id = ${target.repositoryId} AND r.owner = ${target.owner} AND r.repo = ${target.repo}`
+}
+
+const parkedRepresentatives = sql`SELECT min(pr.delivery_id) FROM slopbot_value_requests pr JOIN slopbot_value_processing pp ON pp.delivery_id = pr.delivery_id
+  WHERE pp.state = 'waiting' AND pp.outcome = 'parked' AND pp.retry_at IS NULL GROUP BY pr.repository_id, pr.owner, pr.repo`
+
+function parkedScope(target: Target): Scope {
+  return {
+    name: `parked value requests of ${target.owner}/${target.repo}`,
+    deliveries: sql`${parkedRow} AND ((${sameTarget("r", target)}) OR r.delivery_id IN (${parkedRepresentatives}))`,
+    installation: sql`0`,
+    groups: sql`0`,
+    checks: sql`(${sameTarget("c", target)}) OR EXISTS (SELECT 1 FROM slopbot_value_requests pr JOIN slopbot_value_processing pp ON pp.delivery_id = pr.delivery_id
+      WHERE pp.state = 'waiting' AND pp.outcome = 'parked' AND pp.retry_at IS NULL AND pr.repository_id = c.repository_id AND pr.owner = c.owner AND pr.repo = c.repo)`,
+  }
+}
+
+function observedScope(deliveryIds: ReadonlyArray<string>, installationId: number): Scope {
+  const ids = JSON.stringify(deliveryIds)
+  return {
+    name: "observed value requests",
+    deliveries: sql`r.delivery_id IN (SELECT value FROM json_each(${ids}))`,
+    installation: sql`installation_id = ${installationId}`,
+    groups: sql`l.delivery_id IN (SELECT value FROM json_each(${ids}))`,
+    checks: sql`EXISTS (SELECT 1 FROM slopbot_value_requests pr WHERE pr.delivery_id IN (SELECT value FROM json_each(${ids})) AND pr.repository_id = c.repository_id AND pr.owner = c.owner AND pr.repo = c.repo)`,
+  }
+}
+
+effect function instant(seconds: number) {
+  return seconds === 0 ? null : try isoAt(seconds * 1000)
+}
+
+effect function claimWrite(deliveryId: string, token: string, claimed: Delivery) {
+  const leaseUntil = try isoAt(claimed.leaseUntil * 1000)
+  const updatedAt = try isoAt(claimed.updatedAt * 1000)
+  return sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, updated_at)
+    VALUES (${deliveryId}, ${token}, ${leaseUntil}, 'running', ${updatedAt})
+    ON CONFLICT(delivery_id) DO UPDATE SET claim_token = excluded.claim_token, lease_until = excluded.lease_until,
+      state = 'running', outcome = NULL, retry_at = NULL, updated_at = excluded.updated_at`
+}
+
+effect function settledWrite(deliveryId: string, before: Delivery, after: Delivery) {
+  const state = stateNames[after.state === "Completed" ? "Completed" : "Waiting"]
+  const outcome = after.code === "NoOutcome" ? null : outcomeNames[after.code]
+  const retryAt = try instant(after.retryAt)
+  const updatedAt = try isoAt(after.updatedAt * 1000)
+  const incompleteSince = try instant(after.incompleteSince)
+  if (before.state === "Unread") {
+    return sql`INSERT INTO slopbot_value_processing (delivery_id, claim_token, lease_until, state, outcome, retry_at, updated_at, attempts, incomplete_since)
+      VALUES (${deliveryId}, '', '', ${state}, ${outcome}, ${retryAt}, ${updatedAt}, ${after.attempts}, ${incompleteSince})`
+  }
+  return sql`UPDATE slopbot_value_processing SET state = ${state}, outcome = ${outcome}, retry_at = ${retryAt}, updated_at = ${updatedAt},
+      attempts = ${after.attempts}, incomplete_since = ${incompleteSince} WHERE delivery_id = ${deliveryId}`
+}
+
+function checkWrite(target: Target, checkedAt: string): Statement {
+  return sql`INSERT INTO slopbot_value_parked_checks (repository_id, owner, repo, checked_at) VALUES (${target.repositoryId}, ${target.owner}, ${target.repo}, ${checkedAt})
+    ON CONFLICT(repository_id, owner, repo) DO UPDATE SET checked_at = excluded.checked_at`
+}
+
+function resumeWrite(target: Target, at: string): Statement {
+  return sql`UPDATE slopbot_value_processing SET retry_at = ${at}, updated_at = ${at}
+    WHERE outcome = 'parked' AND state = 'waiting' AND retry_at IS NULL
+      AND delivery_id IN (SELECT delivery_id FROM slopbot_value_requests WHERE repository_id = ${target.repositoryId} AND owner = ${target.owner} AND repo = ${target.repo})`
+}
+
+export effect function startRun(previous: Run = idle) {
+  const now = try nowSeconds()
+  const next = try apply({ ...initial, now, runStartedAt: previous.startedAt, runClaims: previous.claims }, { type: "startRun" })
+  return { startedAt: next.runStartedAt, claims: next.runClaims } satisfies Run
+}
+
+export effect function nextDue() {
+  const now = try isoAt((try nowSeconds()) * 1000)
+  const row = try first(DueRow, sql`SELECT r.delivery_id, r.installation_id, r.repository_id, r.owner, r.repo, r.pull_request_number
+    FROM slopbot_value_requests r LEFT JOIN slopbot_value_processing p ON p.delivery_id = r.delivery_id
+    WHERE (p.delivery_id IS NULL
+      OR (p.state = 'waiting' AND p.retry_at <= ${now})
+      OR (p.state = 'running' AND p.lease_until <= ${now}))
+      AND NOT EXISTS (
+        SELECT 1 FROM slopbot_value_processing busy
+        JOIN slopbot_value_requests other ON other.delivery_id = busy.delivery_id
+        WHERE busy.state = 'running' AND busy.lease_until > ${now}
+          AND other.repository_id = r.repository_id AND other.pull_request_number = r.pull_request_number)
+    ORDER BY COALESCE(p.retry_at, p.lease_until, r.received_at), r.delivery_id
+    LIMIT 1`)
+  if (row === undefined) return undefined
+  return { deliveryId: row.delivery_id, installationId: row.installation_id, repositoryId: row.repository_id, owner: row.owner, repo: row.repo, number: row.pull_request_number } satisfies ValueRequest
+}
+
+export effect function claimRequest(run: Run, deliveryId: string) {
+  const now = try nowSeconds()
+  const token = try randomId()
+  const claimed = update(aggregate(claimScope(deliveryId), { now, run, wanted: [] }), (current) => effect {
+    const id = current.names.deliveries.get(deliveryId) ?? 0
+    const next = try apply(current.state, { type: "claim", deliveryId: id })
+    return { value: next, writes: [try claimWrite(deliveryId, token, deliveryOf(next, id))] } satisfies Decision<ValueRequests>
+  }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    default: throw error;
+  }
+  if (claimed === undefined) return undefined
+  return { claim: { deliveryId, token } satisfies Claim, run: { startedAt: claimed.runStartedAt, claims: claimed.runClaims } satisfies Run }
+}
+
+export effect function recordOutcome(claim: Claim, gathered: Gathered, sources: ReadonlyArray<Source>) {
+  const wanted = try scopeKeysOf(sources)
+  const now = try nowSeconds()
+  return try update(aggregate(claimScope(claim.deliveryId), { now, run: idle, wanted }), (current) => effect {
+    const id = current.names.deliveries.get(claim.deliveryId) ?? 0
+    const token = current.names.tokens.get(claim.token) ?? 0
+    const observation: Observation = { ...gathered, sources: sourceNumbers(current.names, wanted) }
+    try apply(current.state, { type: "finish", deliveryId: id, token, observation })
+    const owner = deliveryOf(current.state, id)
+    const code = outcomeFor(current.state, token, observation)
+    const writes: Statement[] = []
+    for (const [index, before] of current.state.deliveries.entries()) {
+      const after = settleDelivery(before, owner, code, current.state.now)
+      const row = current.rows[index]
+      if (after !== before && row !== undefined) writes.push(try settledWrite(row.delivery_id, before, after))
+    }
+    return { value: code, writes } satisfies Decision<Outcome>
+  })
+}
+
+export effect function claimed(claim: Claim, wanted: ReadonlyArray<string>) {
+  const now = try nowSeconds()
+  return (try load(aggregate(claimScope(claim.deliveryId), { now, run: idle, wanted }))).state
+}
+
+export effect function ownsRequest(claim: Claim) {
+  const current = try claimed(claim, [])
+  return tokenLive(current.state, current.names.tokens.get(claim.token) ?? 0)
+}
+
+export effect function checkParked(target: Target, registry: RegistryObservation) {
+  const now = try nowSeconds()
+  const at = try isoAt(now * 1000)
+  return update(aggregate(parkedScope(target), { now, run: idle, wanted: [] }), (current) => effect {
+    const next = try apply(current.state, { type: "checkParked", target: { repository: target.repositoryId, owner: target.owner, repo: target.repo }, registry })
+    const resumed = current.state.deliveries.filter((before, index) => parked(before) && !parked(next.deliveries[index] ?? before)).length
+    return { value: resumed, writes: [checkWrite(target, at), ...resumed > 0 ? [resumeWrite(target, at)] : []] } satisfies Decision<number>
+  }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    default: throw error;
+  }
+}
+
+export effect function resumeParked(limit = parkedChecksPerRun) {
+  const targets = try rows(ParkedRow, sql`SELECT parked.repository_id, parked.owner, parked.repo FROM (
+      SELECT DISTINCT r.repository_id, r.owner, r.repo FROM slopbot_value_processing p
+      JOIN slopbot_value_requests r ON r.delivery_id = p.delivery_id WHERE ${parkedRow}
+    ) parked LEFT JOIN slopbot_value_parked_checks c
+      ON c.repository_id = parked.repository_id AND c.owner = parked.owner AND c.repo = parked.repo
+    ORDER BY c.checked_at IS NOT NULL, c.checked_at, parked.repository_id, parked.owner, parked.repo LIMIT ${limit}`)
+  let resumed = 0
+  for (const target of targets) {
+    const { observation } = try observe({ owner: target.owner, repo: target.repo, repositoryId: target.repository_id })
+    resumed += (try checkParked({ repositoryId: target.repository_id, owner: target.owner, repo: target.repo }, observation)) ?? 0
+  }
+  return resumed
+}
+
+export effect function valueRequestsOf(deliveryIds: ReadonlyArray<string>, installationId: number, run: Run, names: Names) {
+  const now = try nowSeconds()
+  return (try load(aggregate(observedScope(deliveryIds, installationId), { now, run, wanted: [], names }))).state.state
+}

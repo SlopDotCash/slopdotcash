@@ -1,0 +1,49 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { handle, outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { AccountRoutes, type AccountVars, accountSettings } from "@repo/backend/points"
+import { noticePorts } from "@repo/operations/live"
+import { type TriageOutcome, disputeTriage, triageDispute } from "../../../src/disputes/port.vibe"
+import { disputeRoutes } from "../../../src/disputes/routes.vibe"
+
+interface Env extends RoleVars, AccountVars {
+  readonly SLOP_DB: D1Database
+  readonly SLOPBOT?: Fetcher
+}
+
+schema TriagePlan { key: string; plan: "drafted" | "restricted" | "stale"; uphold: boolean; confidenceHundredths: number }
+schema TriageSteps { steps: ReadonlyArray<boolean> }
+
+const triageRoute = route({ method: "POST", path: "/api/v1/test/points-disputes/triage", access: "public", limitKib: 1, request: TriagePlan, answer: TriageSteps, rejected: "rejected", cache: "no-store" })
+
+effect function triaged(plan: TriagePlan) {
+  const claimed = try triageDispute(plan.key, { type: "claim" })
+  const lease = { token: claimed.token ?? "", callsInFlight: false }
+  const stale = { token: "a-replaced-lease", callsInFlight: true }
+  const steps: TriageOutcome[] = [claimed]
+  if (plan.plan === "restricted") {
+    steps.push(try triageDispute(plan.key, { type: "escalateUnavailable", lease, availability: "Restricted" }))
+  } else {
+    const held = plan.plan === "stale" ? stale : { ...lease, callsInFlight: true }
+    steps.push(try triageDispute(plan.key, { type: "startCall", lease }))
+    steps.push(try triageDispute(plan.key, { type: "draft", lease: held, uphold: plan.uphold, confidenceHundredths: plan.confidenceHundredths }))
+    steps.push(try triageDispute(plan.key, { type: "escalateDrafted", lease: plan.plan === "stale" ? stale : lease }))
+  }
+  steps.push(try triageDispute(plan.key, { type: "release", lease }))
+  return { steps: steps.map((step) => step.accepted) }
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env)), Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))),
+    noticePorts,
+    disputeTriage(env.SLOPBOT),
+  ),
+  routes: Layer.mergeAll(AccountRoutes, disputeRoutes, handle(triageRoute, (input) => triaged(input.body))),
+})

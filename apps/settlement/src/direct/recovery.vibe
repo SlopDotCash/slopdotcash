@@ -1,0 +1,416 @@
+// spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"
+import { isoNow } from "@repo/platform/clock"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import type { Network } from "../../gen/fees__runtime.ts"
+import { type Intent, type Retirement, Rejected } from "../../gen/settlement__directBounty.effect.vibe"
+import type { ConsentPaymentBody, DirectIntent, PaymentTransaction, PaymentWallet, PreparePaymentBody, VerifyPaymentBody } from "../client/direct.vibe"
+import { EvmDirectRails, type EvmDirectRail, evmModel, evmRecoveryState, evmTransactions, payerChain, verifyEvmCancellation } from "./evm.vibe"
+import { type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, generationOf, highestReservedNonce, intentModel, journalFor, storedWallet, walletModel } from "./journal.vibe"
+import { type CaseContext, consentPayment, preparePayment, verifyPayment } from "./routes.vibe"
+import { type IssuedPlan, type RecoveryRefusal, type SolanaDirectRail, RecoveryRefused, SolanaDirectRails, consentSolanaPayment, isSolanaNetwork, issuedPlans, prepareSolanaPayment, prepareSolanaPlan, verifySolanaPayment, walletFence, walletOfIntent } from "./solana.vibe"
+import { RecoverySignature, RecoverySignatureInvalid, retireSolanaPlans } from "./solanaRecovery.vibe"
+
+module limbs {
+  /** @throws {never} */
+  export function nonceValue(text: string | undefined): bigint {
+    return text !== undefined && (/^0x[\da-f]{1,16}$/iu.test(text) || /^(?:0|[1-9]\d{0,19})$/u.test(text)) ? BigInt(text) : -1n
+  }
+  /** @throws {never} */
+  export function blockValue(text: string | undefined): bigint {
+    return text !== undefined && /^(?:0|[1-9]\d{0,19})$/u.test(text) ? BigInt(text) : -1n
+  }
+  /** @throws {never} */
+  export function wholeNumber(text: string | undefined): number {
+    if (text === undefined) return -1
+    const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
+    return Number.isSafeInteger(value) ? value : -1
+  }
+}
+import { blockValue, nonceValue, wholeNumber } from limbs
+
+export schema RecoverPaymentBody {
+  readonly confirmation: boolean
+  readonly cancellationTransactionId?: string
+  readonly signatures?: ReadonlyArray<RecoverySignature>
+}
+
+schema ProgressMessage { readonly messageId: string; readonly message: string }
+
+schema Progress {
+  readonly generation: number
+  readonly targetId: string
+  readonly state?: string
+  readonly messages?: ReadonlyArray<ProgressMessage>
+  readonly signatures?: ReadonlyArray<RecoverySignature>
+  readonly transactionIds?: ReadonlyArray<string>
+}
+
+export type RecoveryDetail =
+  | {
+    readonly generation: number
+    readonly targetId: string
+    readonly state: "expiry-required" | "history-check" | "signature-required" | "payment-found"
+    readonly messages?: ReadonlyArray<ProgressMessage>
+    readonly signatures?: ReadonlyArray<RecoverySignature>
+    readonly transactionIds?: ReadonlyArray<string>
+  }
+  | { readonly generation: number; readonly legIndex: number; readonly retirement: "expired-and-unpaid" | "consent-renewal" | "finalized-cancellation" }
+
+export type RecoveryMode =
+  | "wallet-required"
+  | "expiry-required"
+  | "history-check"
+  | "signature-required"
+  | "payment-found"
+  | "resume-original"
+  | "legacy-manual"
+  | "consent-required"
+  | "fee-pending"
+  | "retirement-required"
+  | "payer-review"
+  | "cancellation-required"
+
+export interface RecoveryView {
+  readonly generation: number
+  readonly mode: RecoveryMode
+  readonly target: { readonly address: string } | PaymentWallet | null
+  readonly consented: boolean
+  readonly payer?: string
+  readonly legIndex?: number
+  readonly role?: "researcher" | "fee"
+  readonly retirementNonce?: string
+  readonly messages?: ReadonlyArray<ProgressMessage>
+  readonly transactionIds?: ReadonlyArray<string>
+  readonly cancellationRequest?: { readonly chainId: string | undefined; readonly from: string; readonly to: string; readonly nonce: string | undefined; readonly value: "0x0"; readonly data: "0x" }
+}
+
+type Rail = { readonly kind: "evm"; readonly rail: EvmDirectRail } | { readonly kind: "solana"; readonly rail: SolanaDirectRail }
+
+effect function refuse(reason: RecoveryRefusal): never!RecoveryRefused {
+  throw new RecoveryRefused({ reason })
+}
+
+function solana(intent: DirectIntent) {
+  return intent.chain === "solana"
+}
+
+function modelOf(intent: DirectIntent): Network | undefined {
+  return solana(intent) ? "Solana" : evmModel(intent.network)
+}
+
+function sameAddress(intent: DirectIntent, left: string, right: string) {
+  return solana(intent) ? left === right : left.toLowerCase() === right.toLowerCase()
+}
+
+effect function railOf(network: string) {
+  if (isSolanaNetwork(network)) {
+    const rail = try (try SolanaDirectRails).rail(network)
+    return rail === undefined ? undefined : { kind: "solana", rail } satisfies Rail
+  }
+  const rail = try (try EvmDirectRails).rail(network)
+  return rail === undefined ? undefined : { kind: "evm", rail } satisfies Rail
+}
+
+interface Context {
+  readonly journal: Journal
+  readonly intent: DirectIntent
+  readonly model: Network
+  readonly generation: number
+  readonly target: PaymentWallet
+  readonly targetWallet: EffectiveWallet
+  readonly paid: ReadonlyArray<boolean>
+  readonly researcherPaid: boolean
+  readonly feePending: boolean
+  readonly marker: string
+  readonly consented: boolean
+}
+
+effect function payable(githubId: string, network: Network) {
+  return try (try Wallets).payable({ githubId, network })
+}
+
+function markerOf(intent: DirectIntent, target: PaymentWallet, generation: number) {
+  return JSON.stringify({ rail: "direct-recovery", network: intent.network, asset: intent.asset, recipient: target, generation })
+}
+
+effect function contextOf(caseId: string, reporterGithubId: string) {
+  const journal = try journalFor(caseId)
+  const intent = currentIntent(journal)
+  if (intent === undefined) return try refuse("paymentNotPreparedPrepareTheExactPayment")
+  const model = modelOf(intent)
+  if (model === undefined) return try refuse("railUnavailablePaymentRecoveryIsUnavailable")
+  const paid = intent.transfers.map((_, index) => journal.legs.some((leg) => leg.legIndex === index))
+  const researcherPaid = paid[0] ?? false
+  const current = researcherPaid ? walletOfIntent(intent.recipient) : try payable(reporterGithubId, model)
+  const target = storedWallet(current)
+  if (current === undefined || target === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const generation = generationOf(journal)
+  const marker = markerOf(intent, target, generation)
+  return {
+    journal,
+    intent,
+    model,
+    generation,
+    target,
+    targetWallet: current,
+    paid,
+    researcherPaid,
+    feePending: intent.transfers.length > 1 && !(paid[1] ?? false),
+    marker,
+    consented: journal.consents.some((consent) => JSON.stringify(consent.deployment) === marker),
+  } satisfies Context
+}
+
+effect function evmState(context: Context, rail: EvmDirectRail) {
+  return try evmRecoveryState(rail, context.intent.payer.address, {
+    nonces: (context.intent.transactions ?? []).map((transaction) => nonceValue(transaction.nonce)),
+    paid: context.paid,
+    researcherPaid: context.researcherPaid,
+    targetChanged: context.target.id !== context.intent.recipient.id,
+  })
+}
+
+function legacy(intent: DirectIntent) {
+  return intent.protocolVersion !== 2 || (!solana(intent) && !(intent.transactions ?? []).every((transaction) => transaction.nonce !== undefined && transaction.nonce !== ""))
+}
+
+schema DetailRow { detail: string }
+
+effect function progressOf(caseId: string, context: Context) {
+  const [row] = try rows(DetailRow, sql`SELECT detail FROM security_case_events WHERE case_id = ${caseId} AND kind = 'recover-payment' ORDER BY case_revision DESC LIMIT 1`)
+  if (row === undefined) return undefined
+  const progress = Schema.decodeUnknownEffect(Schema.fromJsonString(Progress))(row.detail) catch () => undefined
+  return progress !== undefined && progress.generation === context.generation && progress.targetId === context.target.id ? progress : undefined
+}
+
+const modes: ReadonlyArray<RecoveryMode> = ["expiry-required", "history-check", "signature-required", "payment-found"]
+
+function progressMode(progress: Progress | undefined): RecoveryMode {
+  return modes.find((mode) => mode === progress?.state) ?? "expiry-required"
+}
+
+export effect function recoveryView(context: CaseContext) {
+  const found = contextOf(context.caseId, context.reporterGithubId) catch effect (error) => {
+    if (error._tag === "RecoveryRefused" && error.reason === "paymentWalletRequiredConfirmAPayoutWallet") return undefined
+    throw error
+  }
+  if (found === undefined) {
+    const journal = try journalFor(context.caseId)
+    const waiting: RecoveryView = { generation: generationOf(journal), mode: "wallet-required", target: null, consented: false }
+    return waiting
+  }
+  const c = found
+  const evm = !solana(c.intent)
+  if (c.researcherPaid && (!evm || !c.feePending)) return null
+  const old = legacy(c.intent)
+  const route = evm && !old ? try railOf(c.intent.network) : undefined
+  const state = route?.kind === "evm" ? try evmState(c, route.rail) : undefined
+  if (evm && !old && state?.legIndex === undefined) return null
+  if (evm && old && (c.researcherPaid || c.target.id === c.intent.recipient.id)) return null
+  const legIndex = state?.legIndex ?? 0
+  const original = sameAddress(c.intent, c.target.address, c.intent.recipient.address)
+  const consented = legIndex === 1 || c.consented || c.target.id === c.intent.recipient.id
+  const progress = evm ? undefined : try progressOf(context.caseId, c)
+  const mode: RecoveryMode = !evm && !old && consented ? progressMode(progress)
+    : old ? (original ? "resume-original" : "legacy-manual")
+    : !consented ? "consent-required"
+    : state?.blockedByLower === true ? "fee-pending"
+    : state?.consumed === true ? "retirement-required"
+    : original ? "resume-original"
+    : state?.payerReview === true ? "payer-review"
+    : "cancellation-required"
+  const nonce = c.intent.transactions?.[legIndex]?.nonce
+  const view: RecoveryView = {
+    generation: c.generation,
+    target: legIndex === 1 ? { address: c.intent.transfers[1]?.recipient ?? "" } : c.target,
+    payer: c.intent.payer.address,
+    legIndex,
+    role: legIndex === 0 ? "researcher" : "fee",
+    consented,
+    mode,
+    ...(state?.consumed === true && nonce !== undefined ? { retirementNonce: nonce } : {}),
+    ...(progress?.messages === undefined ? {} : { messages: progress.messages }),
+    ...(progress?.transactionIds === undefined ? {} : { transactionIds: progress.transactionIds }),
+    ...(mode === "cancellation-required" ? { cancellationRequest: { chainId: c.intent.transactions?.[legIndex]?.chainId, from: c.intent.payer.address, to: c.intent.payer.address, nonce, value: "0x0", data: "0x" } } : {}),
+  }
+  return view
+}
+
+const laneOfLeg: ReadonlyArray<Retirement["lane"]> = ["Researcher", "Fee"]
+const retirementKinds: Readonly<Record<string, Retirement["kind"]>> = { "evm-nonce-retired": "EvmRetired", "consent-renewal": "SameRequest", "solana-expired": "SolanaRetired" }
+
+function retirementOf(stored: StoredRetirement, generation: number): Retirement {
+  const kind = retirementKinds[stored.kind] ?? "Unverified"
+  return {
+    kind,
+    generation,
+    lane: kind === "SolanaRetired" ? "Both" : laneOfLeg[stored.legIndex ?? 0] ?? "Researcher",
+    nonce: kind === "EvmRetired" ? wholeNumber(stored.nonce) : -1,
+    message: stored.message ?? "",
+    coveredMessages: [...(stored.coveredMessages ?? [])],
+    height: wholeNumber(stored.blockNumber ?? "0"),
+    observation: stored.transactionId ?? "",
+    certified: kind !== "Unverified",
+    lowerSettled: true,
+  }
+}
+
+interface Successor {
+  readonly intent: DirectIntent
+  readonly retirement: StoredRetirement & Readonly<Record<string, unknown>>
+  readonly legIndex: number
+  readonly detail: "expired-and-unpaid" | "consent-renewal" | "finalized-cancellation"
+}
+
+effect function originalPayer(context: CaseContext, c: Context) {
+  const wallet = try payable(context.actorGithubId, c.model)
+  const named = c.intent.payerGithubId === undefined || c.intent.payerGithubId === context.actorGithubId
+  if (wallet === undefined || !named || !sameAddress(c.intent, wallet.address, c.intent.payer.address)) return try refuse("originalPayerRequired")
+  return wallet
+}
+
+effect function frozenRoute(caseId: string, intent: DirectIntent) {
+  const award: ApprovedAward | undefined = try (try ApprovedAwards).forCase(caseId)
+  const route = try railOf(intent.network)
+  if (award === undefined || route === undefined || route.rail.model !== award.network) return try refuse("railUnavailablePaymentRecoveryIsUnavailable")
+  return { award, route }
+}
+
+function signaturesWellFormed(signatures: ReadonlyArray<RecoverySignature>) {
+  return new Set(signatures.map((entry) => entry.messageId)).size === signatures.length && signatures.every((entry) => /^[1-9A-HJ-NP-Za-km-z]{1,88}$/u.test(entry.signature))
+}
+
+effect function evmSuccessor(c: Context, rail: EvmDirectRail, next: DirectIntent, legIndex: number, cancellation: string | undefined, blockedByLower: boolean) {
+  if (c.intent.protocolVersion !== 2) return try refuse("legacyPaymentReviewRequiredThisLegacyRequestHas")
+  if (blockedByLower) return try refuse("feePaymentPending")
+  const nonce = c.intent.transactions?.[legIndex]?.nonce
+  if (nonce === undefined || nonce === "" || cancellation === undefined) return try refuse("cancellationRequired")
+  const proof = verifyEvmCancellation(rail, { payer: c.intent.payer.address, nonce: nonceValue(nonce), transactionId: cancellation, afterBlock: blockValue(c.intent.afterBlocks?.[legIndex] ?? c.intent.afterBlock) }) catch effect () => {
+    throw new RecoveryRefused({ reason: "cancellationUnverified" })
+  }
+  const chain = try payerChain(rail, c.intent.payer.address)
+  const reserved = try highestReservedNonce(c.intent.network, c.intent.payer.address)
+  const replacement = reserved !== undefined && reserved >= chain.pendingNonce ? reserved + 1n : chain.pendingNonce
+  const transfer = next.transfers[legIndex]
+  if (transfer === undefined) return try refuse("cancellationRequired")
+  const [transaction] = evmTransactions(rail, c.intent.payer.address, c.intent.asset, [transfer], [replacement])
+  const head = chain.head.toString()
+  return {
+    intent: {
+      ...next,
+      transactions: (c.intent.transactions ?? []).map((existing, index) => index === legIndex && transaction !== undefined ? { ...transaction } satisfies PaymentTransaction : existing),
+      afterBlocks: c.intent.transfers.map((_, index) => index === legIndex ? head : c.intent.afterBlocks?.[index] ?? c.intent.afterBlock),
+    },
+    retirement: { ...proof, legIndex },
+    legIndex,
+    detail: "finalized-cancellation",
+  } satisfies Successor
+}
+
+effect function solanaProgressCommit(context: CaseContext, c: Context, detail: RecoveryDetail, fence: Statement, alongside: ReadonlyArray<Statement>) {
+  return try commit(context.caseId, (current) => effect {
+    if (generationOf(current) !== c.generation) return try refuse("paymentRecoveryChanged")
+    return { value: detail, writes: [fence] }
+  }, alongside)
+}
+
+export effect function recoverPayment(context: CaseContext, body: RecoverPaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheReviewedPayment")
+  if ((body.signatures?.length ?? 0) > 64) return try refuse("invalidRequestEachExpiredRequestNeeds")
+  const c = try contextOf(context.caseId, context.reporterGithubId)
+  if (c.researcherPaid && (solana(c.intent) || !c.feePending)) return try refuse("paymentAlreadyVerifiedThisPaymentIsAlready")
+  const payerWallet = try originalPayer(context, c)
+  const { award, route } = try frozenRoute(context.caseId, c.intent)
+  const state = route.kind === "evm" && c.intent.protocolVersion === 2 ? try evmState(c, route.rail) : undefined
+  const legIndex = state?.legIndex ?? (c.researcherPaid ? 1 : 0)
+  if (c.paid[legIndex] === true) return try refuse("paymentAlreadyVerifiedThisTransferIsAlready")
+  if (legIndex === 0) {
+    if (!c.consented && c.target.id !== c.intent.recipient.id) return try refuse("paymentConsentRequiredTheReporterMustConsent")
+    if (sameAddress(c.intent, c.target.address, c.intent.payer.address) || c.intent.transfers.slice(1).some((transfer) => sameAddress(c.intent, transfer.recipient, c.target.address))) return try refuse("paymentWalletConflict")
+  }
+  const owners: Array<readonly [string, EffectiveWallet]> = [[context.actorGithubId, payerWallet]]
+  if (legIndex === 0) owners.push([context.reporterGithubId, c.targetWallet])
+  const fence = try walletFence(owners, c.model, "payment recovery changed")
+  const original = legIndex === 1 || sameAddress(c.intent, c.target.address, c.intent.recipient.address)
+  const next: DirectIntent = {
+    ...c.intent,
+    recipient: legIndex === 0 ? c.target : c.intent.recipient,
+    transfers: c.intent.transfers.map((transfer, index) => legIndex === 0 && index === 0 ? { ...transfer, recipient: c.target.address } : transfer),
+  }
+  const retireEvm = c.intent.protocolVersion === 2 && route.kind === "evm"
+    && (!original || body.cancellationTransactionId !== undefined || state?.consumed === true || c.target.id === c.intent.recipient.id)
+  let successor: Successor = { intent: next, retirement: { kind: "consent-renewal" }, legIndex, detail: "consent-renewal" }
+  if (route.kind === "solana" && c.intent.protocolVersion === 2) {
+    const issued = try issuedPlans(context.caseId)
+    if (issued.generation !== c.generation || issued.plans.some((plan) => plan.messageId === undefined || !Number.isSafeInteger(plan.blockhashSlot))) return try refuse("legacyPaymentReviewRequired")
+    const prior = try progressOf(context.caseId, c)
+    if (body.signatures !== undefined && !signaturesWellFormed(body.signatures)) return try refuse("invalidRequestEachExpiredRequestNeeds")
+    const signatures = [...new Map([...(prior?.signatures ?? []), ...(body.signatures ?? [])].map((entry) => [entry.messageId, entry] as const)).values()]
+    const result = retireSolanaPlans({ rail: route.rail, payer: c.intent.payer.address, plans: issued.plans, signatures, owner: { caseId: context.caseId, generation: c.generation } }) catch effect (error) => match (error) {
+      when RecoverySignatureInvalid: throw new RecoveryRefused({ reason: "invalidRequestSignTheExactExpired" });
+      default: throw error;
+    }
+    if (result.state !== "retired") {
+      const messages = result.state === "signature-required" ? result.challenges : prior?.messages
+      return try solanaProgressCommit(context, c, {
+        generation: c.generation,
+        targetId: c.target.id,
+        state: result.state,
+        ...(messages === undefined ? {} : { messages }),
+        ...(signatures.length > 0 ? { signatures } : {}),
+        ...(result.state === "payment-found" ? { transactionIds: result.transactionIds } : {}),
+      }, fence, alongside)
+    }
+    const plan: IssuedPlan = try prepareSolanaPlan(route.rail, { payer: c.intent.payer.address, asset: c.intent.asset, transfers: next.transfers })
+    const retired = c.intent.solana?.transaction ?? ""
+    successor = {
+      intent: { ...next, solana: plan, afterBlock: plan.afterSlot },
+      retirement: { kind: "solana-expired", proof: result.proof, message: retired, coveredMessages: [retired], blockNumber: String(result.height), transactionId: result.observation },
+      legIndex,
+      detail: "expired-and-unpaid",
+    }
+  } else if (!original || retireEvm) {
+    if (route.kind === "solana") return try refuse("expiryProofRequired")
+    successor = try evmSuccessor(c, route.rail, next, legIndex, body.cancellationTransactionId, state?.blockedByLower === true)
+  }
+  const now = try isoNow()
+  const generation = c.generation + 1
+  return try commit(context.caseId, (current) => effect {
+    if (generationOf(current) !== c.generation) return try refuse("paymentRecoveryChanged")
+    const facts: Facts = {
+      approval: award,
+      network: c.model,
+      rail: route.rail,
+      caseRevision: context.revision,
+      reporterGithubId: context.reporterGithubId,
+      payerGithubId: context.actorGithubId,
+      payerWallet,
+      reporterWallet: c.targetWallet,
+      otherUses: [],
+    }
+    const eventOf = ({ state: loaded, claims }: { readonly state: { readonly caseRevision: number }; readonly claims: Claims }) => ({
+      type: "recover",
+      successor: intentModel(successor.intent, generation, claims) satisfies Intent,
+      retirement: retirementOf(successor.retirement, c.generation),
+      observedRevision: loaded.caseRevision,
+      nonceReserved: true,
+    } as const)
+    const { writes } = decided(current, facts, [c.target], eventOf, Number(context.actorGithubId), { kind: "successor", generation, intent: successor.intent, retirement: successor.retirement, actorGithubId: context.actorGithubId, createdAt: now }) catch effect (error) => match (error) {
+      when Rejected: throw new RecoveryRefused({ reason: "paymentRecoveryChanged" });
+      default: throw error;
+    }
+    return { value: { generation, legIndex: successor.legIndex, retirement: successor.detail } satisfies RecoveryDetail, writes: [fence, ...writes] }
+  }, alongside)
+}
+
+export const directActions = {
+  "consent-payment": (context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) => isSolanaNetwork(body.network) ? consentSolanaPayment(context, body, alongside) : consentPayment(context, body, alongside),
+  "prepare-payment": (context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) => isSolanaNetwork(body.network) ? prepareSolanaPayment(context, body, alongside) : preparePayment(context, body, alongside),
+  "verify-payment": (context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) => effect {
+    const intent = currentIntent(try journalFor(context.caseId))
+    return intent !== undefined && solana(intent) ? try verifySolanaPayment(context, body, alongside) : try verifyPayment(context, body, alongside)
+  },
+  "recover-payment": recoverPayment,
+}

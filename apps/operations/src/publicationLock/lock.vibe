@@ -1,0 +1,24 @@
+// spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { type Actor, type Event, type Locks, initial, machineOver } from "../../gen/operations__publicationLock.effect.vibe"
+
+export error LockRefused { step: string }
+
+export const thisRun = 1
+
+export interface LockRecord {
+  state(): Locks!!
+  send(event: Event, by: Actor): Locks!LockRefused
+}
+
+export effect function lockRecord(start: Locks = initial) {
+  const held = try Ref.make(start)
+  const machine = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  return {
+    state: () => machine.get(),
+    effect send(event: Event, by: Actor) {
+      return machine.send(event, by) catch effect () => {
+        throw new LockRefused({ step: event.type })
+      }
+    },
+  } satisfies LockRecord
+}

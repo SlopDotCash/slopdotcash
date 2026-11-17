@@ -1,0 +1,181 @@
+// spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/quotaRecovery.md, "Resume requires progress or a bounded number of refusals before the deadline"
+import { type Command } from "@repo/platform/program"
+import { GitHub, github } from "@repo/platform/github"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import { productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
+import { type CollectionOptions, type ProveCandidates, type Provenance, collectCorrections, collectorWorkflow, repositoryPattern, shaPattern } from "../corrections/collect/collect.vibe"
+import { cachedGraphql, evidenceCache, evidenceClient } from "../corrections/collect/cache.vibe"
+import { isCanonicalInstant, isCensusMonth } from "../corrections/collect/calendar.vibe"
+import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
+import { graphqlClient } from "../ingestion/graphql.vibe"
+import { actionsToken } from "../ingestion/token.vibe"
+import { type RunLimits, quotaRun, resumeAcrossQuota } from "../quotaRecovery/run.vibe"
+
+export error CorrectionsUsage { message: string }
+
+export interface CollectArguments {
+  readonly options: CollectionOptions
+  readonly requestBudget: number
+  readonly resumeForSeconds?: number
+  readonly resumeRun?: string
+}
+
+export interface CorrectionCommands<PE, PR, AE, AR> {
+  readonly prove: ProveCandidates<PE, PR>
+  readonly apply: Command<AE, AR>
+}
+
+const usage = "corrections collect --project <registered-id> --output <campaign-directory> [--month YYYY-MM] [--candidate-month YYYY-MM] [--before <UTC instant>] [--sample <ids>] [--request-budget <n>] [--resume-for-seconds <1..18000>] [--resume-run <run id>] [--graphql-discussions true|false] [--october-original-credit true|false] | corrections apply …"
+const defaultRequestBudget = 2_000
+const maximumResumeSeconds = 18_000
+const runIdPattern = /^[0-9]+$/u
+
+schema ResumeRun {
+  readonly head_sha: string
+  readonly head_branch: string | null
+  readonly event: string
+  readonly path: string
+  readonly repository: { readonly full_name: string }
+  readonly head_repository: { readonly full_name: string } | null
+}
+
+function refused(message: string) {
+  return new CorrectionsUsage({ message })
+}
+
+effect function flag(name: string, value: string) {
+  if (value !== "true" && value !== "false") throw refused(name)
+  return value === "true"
+}
+
+effect function positiveInteger(value: string, upper: number, message: string) {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > upper) throw refused(message)
+  return parsed
+}
+
+export effect function parseCollectArguments(args: ReadonlyArray<string>) {
+  const projects: string[] = []
+  let directory = ""
+  let requestBudget = defaultRequestBudget
+  let options: Omit<CollectionOptions, "projects" | "directory"> = {}
+  let resumeForSeconds: number | undefined = undefined
+  let resumeRun: string | undefined = undefined
+  for (let index = 0; index < args.length; index += 2) {
+    const argument = args[index] ?? ""
+    const value = args[index + 1]
+    if (value === undefined) throw refused(`Missing value for ${argument}`)
+    if (argument === "--project") projects.push(value)
+    else if (argument === "--output") directory = value
+    else if (argument === "--month") options = { ...options, month: value }
+    else if (argument === "--candidate-month") options = { ...options, candidateMonth: value }
+    else if (argument === "--october-original-credit") options = { ...options, octoberOriginalCredit: try flag("Invalid October original credit flag", value) }
+    else if (argument === "--graphql-discussions") options = { ...options, graphqlDiscussions: try flag("Invalid GraphQL discussion option", value) }
+    else if (argument === "--sample") options = { ...options, sampleSourceIds: value.split(",") }
+    else if (argument === "--before") {
+      if (!isCanonicalInstant(value)) throw refused("Use a canonical UTC --before instant")
+      options = { ...options, before: value }
+    } else if (argument === "--request-budget") requestBudget = try positiveInteger(value, productionBudget, "Invalid request budget")
+    else if (argument === "--resume-for-seconds") resumeForSeconds = try positiveInteger(value, maximumResumeSeconds, "Invalid quota resume duration (maximum five hours)")
+    else if (argument === "--resume-run") {
+      if (!runIdPattern.test(value)) throw refused("Invalid resume run")
+      resumeRun = value
+    } else throw refused(`Unknown argument: ${argument}`)
+  }
+  if (projects.length === 0 || directory === "") throw refused(`Usage: ${usage}`)
+  if (options.month !== undefined && !isCensusMonth(options.month)) throw refused("Invalid census month")
+  if (options.candidateMonth !== undefined && !isCensusMonth(options.candidateMonth)) throw refused("Invalid candidate month")
+  return {
+    options: { ...options, projects, directory },
+    requestBudget,
+    ...(resumeForSeconds === undefined ? {} : { resumeForSeconds }),
+    ...(resumeRun === undefined ? {} : { resumeRun }),
+  } satisfies CollectArguments
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function trustedArtifact(runId: string, repository: string, head: string) {
+  const run = (try GitHub).json(`/repos/${repository}/actions/runs/${runId}`, ResumeRun) catch effect () => {
+    throw refused("Resume evidence does not belong to this trusted main collector")
+  }
+  if (!repositoryPattern.test(repository) || !shaPattern.test(head) || !shaPattern.test(run.head_sha)
+    || run.repository.full_name !== repository || run.head_repository?.full_name !== repository) {
+    throw refused("Resume evidence does not belong to this trusted main collector")
+  }
+  const ancestor = run.head_sha === head || (gitBytes({ args: ["merge-base", "--is-ancestor", run.head_sha, head], limit: 0, seconds: 60 }, "Resume source is not in the current main history") catch () => undefined) !== undefined
+  return {
+    repository,
+    head: run.head_sha,
+    main: run.head_branch === "main",
+    manual: run.event === "workflow_dispatch",
+    collectorWorkflow: run.path === collectorWorkflow,
+    ancestorVerified: ancestor,
+  }
+}
+
+effect function provenanceOf(resumeRun: string | undefined, token: Redacted.Redacted<string>) {
+  const repository = try environment("GITHUB_REPOSITORY")
+  const head = try environment("GITHUB_SHA")
+  const authority = {
+    manual: (try environment("GITHUB_EVENT_NAME")) === "workflow_dispatch",
+    onMain: (try environment("GITHUB_REF")) === "refs/heads/main",
+    repository,
+    head,
+  }
+  if (resumeRun === undefined) return { authority } satisfies Provenance
+  provide Layer.mergeAll(github({ token, userAgent: "slopbot" }), systemGit) {
+    return { authority, artifact: try trustedArtifact(resumeRun, repository, head) } satisfies Provenance
+  }
+}
+
+effect function inputsOf() {
+  const journal = try publishedJournal()
+  const registry = try publishedRegistry()
+  return { journal, registry, collectedAt: try Clock.currentTimeMillis }
+}
+
+export interface CollectionSettings {
+  readonly directory: string
+  readonly token: Redacted.Redacted<string>
+  readonly limits: RunLimits
+  readonly graphqlRetrySleep?: (millis: number) => void!!
+}
+
+export function collectionServices(settings: CollectionSettings) {
+  const run = quotaRun(settings.limits)
+  const cache = Layer.provide(evidenceCache({ directory: settings.directory }), run)
+  const client = Layer.provide(evidenceClient, Layer.mergeAll(cache, run))
+  const live = graphqlClient({ token: settings.token, ...(settings.graphqlRetrySleep === undefined ? {} : { sleep: settings.graphqlRetrySleep }) })
+  const graph = Layer.provide(cachedGraphql, Layer.mergeAll(Layer.provide(live, client), cache, run))
+  const rest = Layer.provide(github({ token: settings.token, userAgent: "slopbot" }), client)
+  return Layer.mergeAll(run, cache, graph, rest)
+}
+
+effect function collect<E, R>(args: ReadonlyArray<string>, prove: ProveCandidates<E, R>) {
+  const parsed = try parseCollectArguments(args)
+  const token = try actionsToken()
+  const provenance = try provenanceOf(parsed.resumeRun, token)
+  const inputs = try inputsOf()
+  const services = collectionServices({
+    directory: parsed.options.directory,
+    token,
+    limits: { started: inputs.collectedAt, budget: parsed.requestBudget, durationMs: parsed.resumeForSeconds === undefined ? productionDuration : parsed.resumeForSeconds * 1_000 },
+  })
+  provide services {
+    const result = try resumeAcrossQuota(() => collectCorrections(parsed.options, inputs, provenance, prove), (millis) => sleep(Duration.millis(millis)), parsed.resumeForSeconds !== undefined)
+    const { limitations, missingMonths, ...summary } = result.receipt
+    try Console.log(JSON.stringify({ ...summary, missingMonthCount: missingMonths.length, limitationCount: limitations.length }))
+  }
+}
+
+export function corrections<PE, PR, AE, AR>(commands: CorrectionCommands<PE, PR, AE, AR>) {
+  return (args: ReadonlyArray<string>) => effect {
+    const [subcommand, ...rest] = args
+    if (subcommand === "collect") return try collect(rest, commands.prove)
+    if (subcommand === "apply") return try commands.apply(rest)
+    throw refused(`Usage: ${usage}`)
+  }
+}

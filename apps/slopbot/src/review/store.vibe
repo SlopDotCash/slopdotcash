@@ -1,0 +1,202 @@
+// spec/slopbot/review.md, "A routed item is reviewed only with isolation and an exact bound source"; spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "A failed review restarts on a new delivery, and a blocked one only after its reset"
+import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
+import { first, rows, sql } from "@repo/platform/d1"
+import { type Denial } from "../../gen/slopbot__budgetBlocks.effect.vibe"
+import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type CallKind, type CallRecord as ModelCall, type Provider, type Review, type SourceBinding, type Verdict as ModelVerdict, Machine, canRetry, decodeState, initial, machineOver, noVerdict, routeScope } from "../../gen/slopbot__review.effect.vibe"
+import type { Route } from "../../gen/slopbot__routing.effect.vibe"
+import { budgetBlockedUntil, recordBudgetBlock } from "../budget/store.vibe"
+import type { ReviewJob } from "../jobs/job.vibe"
+import { type ClaimRequest, type ReviewClaim, assertCallClaim, claimReview, finishReview } from "../lease/store.vibe"
+import type { FinishDetail, Finished, ReviewRow } from "../lease/writes.vibe"
+import { recordCalls } from "../route/calls.vibe"
+import { type CallRecord, type RouteControl, type RouteStatus, budgetExhausted, stepOf, triageRoute } from "../route/route.vibe"
+import { unregistered } from "../scope/facts.vibe"
+
+export interface Attempt {
+  readonly row: ReviewRow
+  readonly job: ReviewJob
+  readonly claim: ReviewClaim
+  readonly review: Machine.Shape
+}
+
+export type Opened =
+  | { readonly kind: "claimed"; readonly attempt: Attempt }
+  | { readonly kind: "blocked"; readonly until: string }
+  | { readonly kind: "completed" }
+  | { readonly kind: "limited" }
+
+export type Phase = "absent" | "running" | "failed" | "blocked" | "completed" | "skipped"
+
+export interface ReviewView {
+  readonly phase: Phase
+  readonly calls: ReadonlyArray<readonly [CallKind, Provider, ModelCall["outcome"]]>
+}
+
+export interface Answer<T> {
+  readonly verdict: T
+  readonly reviewed: ModelVerdict
+}
+
+schema CostRow {
+  readonly call_kind: string
+  readonly provider: string
+  readonly requested_model: string
+  readonly served_model: string | null
+  readonly outcome: string
+  readonly failure: string | null
+  readonly cost_micro_usd: number
+  readonly billed_micro_usdc: number
+  readonly provider_cost_micro_usd: number | null
+}
+
+schema StatusRow { readonly status: string; readonly blocked: number }
+
+schema PriorRow { readonly status: string; readonly retry_at: string | null }
+
+const callKinds: Readonly<Record<string, CallKind>> = { triage: "Triage", confirm: "Confirm" }
+const lowerKinds: Readonly<Record<CallKind, "triage" | "confirm">> = { Triage: "triage", Confirm: "confirm" }
+
+function providerNamed(gateway: string, model: string) {
+  return triageRoute.find((provider) => stepOf(provider).gateway === gateway && stepOf(provider).model === model)
+}
+
+function outcomeNamed(outcome: string, failure: string | null): ModelCall["outcome"] {
+  if (outcome === "ok") return "CallOk"
+  return failure === budgetExhausted ? "CallBudgetDenied" : "CallFailed"
+}
+
+function storedCall(row: typeof CostRow.Type): ModelCall[] {
+  const kind = callKinds[row.call_kind]
+  const provider = providerNamed(row.provider, row.requested_model)
+  if (kind === undefined || provider === undefined) return []
+  return [{
+    kind,
+    provider,
+    outcome: outcomeNamed(row.outcome, row.failure),
+    servedModel: row.served_model ?? "",
+    known: row.provider_cost_micro_usd !== null,
+    amount: row.provider_cost_micro_usd ?? row.cost_micro_usd,
+    customerCharge: row.billed_micro_usdc,
+    verdict: noVerdict,
+  }]
+}
+
+export effect function storedCalls(reviewKey: string) {
+  const found = try rows(CostRow, sql`SELECT call_kind, provider, requested_model, served_model, outcome, failure, cost_micro_usd, billed_micro_usdc, provider_cost_micro_usd
+    FROM slopbot_costs WHERE review_key = ${reviewKey} ORDER BY id`)
+  return found.flatMap(storedCall)
+}
+
+export effect function storedReview(reviewKey: string, route: Route) {
+  const now = try nowSeconds()
+  const prior: typeof PriorRow.Type | undefined = try first(PriorRow, sql`SELECT r.status, (SELECT b.retry_at FROM slopbot_budget_blocks b WHERE b.review_key = r.review_key AND b.claim_token = r.claim_token) AS retry_at
+    FROM slopbot_reviews r WHERE r.review_key = ${reviewKey}`)
+  if (prior === undefined || (prior.status !== "failed" && prior.status !== "running")) return try decodeState({ ...initial, now })
+  const retryAt = prior.retry_at === null ? 0 : Math.floor(millisOf(prior.retry_at) / 1000)
+  return try decodeState({ ...initial, status: retryAt > 0 ? "BudgetBlocked" : "RetryableFailure", bound: true, scope: routeScope(route), calls: try storedCalls(reviewKey), attempts: 1, now, retryAt } satisfies Review)
+}
+
+export effect function openAttempt(row: ReviewRow, job: ReviewJob, request: ClaimRequest) {
+  const until = try budgetBlockedUntil(row.reviewKey)
+  if (until !== undefined) return { kind: "blocked", until } satisfies Opened
+  const stored = try storedReview(row.reviewKey, request.route)
+  if (stored.status !== "Queued" && !canRetry(stored)) return { kind: "blocked", until: try isoAt(stored.retryAt * 1000) } satisfies Opened
+  const claimed = try claimReview(row, request)
+  if (claimed.kind !== "claimed") return claimed satisfies Opened
+  const held = try Ref.make(stored)
+  const review = try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+  if (stored.status !== "Queued") try review.send({ type: "retry" })
+  return { kind: "claimed", attempt: { row, job, claim: claimed.claim, review } } satisfies Opened
+}
+
+export effect function bindAttempt(attempt: Attempt, route: Route, source: SourceBinding) {
+  const current = try attempt.review.get()
+  if (current.bound) return current
+  return try attempt.review.send({ type: "bindSource", route, source })
+}
+
+export effect function startCalls(attempt: Attempt, kind: CallKind) {
+  return try attempt.review.send(kind === "Triage" ? { type: "start" } : { type: "startConfirm" })
+}
+
+effect function caughtUp(attempt: Attempt) {
+  const now = try nowSeconds()
+  const current = try attempt.review.get()
+  if (now > current.now) try attempt.review.send({ type: "elapse", seconds: now - current.now })
+}
+
+export function modelCall(kind: CallKind, provider: Provider, call: CallRecord, verdict: ModelVerdict): ModelCall {
+  return {
+    kind,
+    provider,
+    outcome: outcomeNamed(call.outcome, call.failure),
+    servedModel: call.servedModel ?? "",
+    known: call.providerCostMicroUsd !== null,
+    amount: call.providerCostMicroUsd ?? 0,
+    customerCharge: 0,
+    verdict: call.outcome === "ok" ? verdict : noVerdict,
+  }
+}
+
+export effect function recordAttemptCall(attempt: Attempt, kind: CallKind, provider: Provider, call: CallRecord, verdict: ModelVerdict, denial: Denial) {
+  try caughtUp(attempt)
+  const next = try attempt.review.send({ type: "recordCall", call: modelCall(kind, provider, call, verdict), resetAt: Math.ceil(denial.resetAt / 1000) })
+  const status: RouteStatus = next.status === "Answered" || next.status === "BudgetBlocked" || next.status === "RetryableFailure" ? next.status : "InFlight"
+  return status
+}
+
+export effect function recheckAttempt(attempt: Attempt, registry: RegistryObservation) {
+  try assertCallClaim(attempt.claim)
+  const next = try attempt.review.send({ type: "recheckRegistry", registry })
+  const status: RouteStatus = next.status === "InFlight" ? "InFlight" : "RetryableFailure"
+  return status
+}
+
+export effect function skipAttemptStep(attempt: Attempt) {
+  const next = try attempt.review.send({ type: "skipMissingCredential" })
+  const status: RouteStatus = next.status === "InFlight" ? "InFlight" : "RetryableFailure"
+  return status
+}
+
+type Rechecked = ReturnType<typeof recheckAttempt>
+
+export type ControlFailure = Effect.Error<Rechecked>
+
+export function attemptControl<T, E, R>(attempt: Attempt, kind: CallKind, observed: () => RegistryObservation!E!R, answered: () => Answer<T> | undefined): RouteControl<ControlFailure, R | Effect.Services<Rechecked>> {
+  return {
+    recheck: () => effect {
+      const registry = observed() catch () => unregistered
+      return try recheckAttempt(attempt, registry)
+    },
+    skip: () => skipAttemptStep(attempt),
+    record: (call, provider, denial) => recordAttemptCall(attempt, kind, provider, call, answered()?.reviewed ?? noVerdict, denial),
+  }
+}
+
+export effect function keepCalls(attempt: Attempt, kind: CallKind, calls: ReadonlyArray<CallRecord>) {
+  try recordCalls(attempt.row.reviewKey, attempt.row.installationId, lowerKinds[kind], calls)
+}
+
+export effect function blockAttempt(attempt: Attempt, denial: Denial) {
+  return try recordBudgetBlock({ reviewKey: attempt.claim.reviewKey, token: attempt.claim.token }, attempt.job, denial)
+}
+
+export effect function completeAttempt(attempt: Attempt, detail: FinishDetail, unreviewed: number) {
+  try attempt.review.send({ type: "finish", unreviewed })
+  return try finishReview(attempt.claim, "completed", detail)
+}
+
+export effect function finishAttempt(attempt: Attempt, status: Finished, detail: FinishDetail) {
+  return try finishReview(attempt.claim, status, detail)
+}
+
+export effect function reviewView(reviewKey: string) {
+  const found = try first(StatusRow, sql`SELECT r.status, EXISTS (SELECT 1 FROM slopbot_budget_blocks b WHERE b.review_key = r.review_key AND b.claim_token = r.claim_token) AS blocked
+    FROM slopbot_reviews r WHERE r.review_key = ${reviewKey}`)
+  const calls = (try storedCalls(reviewKey)).map((call) => [call.kind, call.provider, call.outcome] as const)
+  const phase: Phase = found === undefined ? "absent"
+    : found.status === "failed" ? (found.blocked === 1 ? "blocked" : "failed")
+    : found.status === "running" || found.status === "completed" || found.status === "skipped" ? found.status : "failed"
+  return { phase, calls } satisfies ReviewView
+}

@@ -1,0 +1,100 @@
+// spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"; spec/settlement/keeperDiagnostics.md, "Failed results aggregate into positive counts with no output for healthy work"
+import type { DurableObjectNamespace, DurableObjectState, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { durableJournal } from "@repo/platform/journal"
+import type { Caller, KeeperMode } from "../../gen/settlement__keeperLifecycle.effect.vibe"
+import { type KeeperConfig, journalRegistry, keeperConfig, keeperMode, modelConfiguration } from "./config.vibe"
+import { CAUSE_LABELS, type KeeperResult, STAGE_LABELS, failedInvocation, unavailableWorkSummary } from "./diagnostics.vibe"
+import { type KeeperCore, type Started, conclusionOf, configuredStart, keeperCore } from "./lifecycle.vibe"
+import { KeeperRefused } from "./registry.vibe"
+import { type KeeperRun, keeperTick } from "./run.vibe"
+import { operatorKey } from "./signer.vibe"
+import { IDENTITY_KEY, openKeeperStore, recordOf } from "./store.vibe"
+
+export interface KeeperEnv {
+  readonly KEEPER: DurableObjectNamespace<Fetcher>
+  readonly KEEPER_MODE?: string
+  readonly KEEPER_CONFIG?: string
+  readonly KEEPER_RPC_URL?: string
+  readonly KEEPER_EVM_PRIVATE_KEY?: string
+}
+
+export interface KeeperObject {
+  readonly core: KeeperCore
+  readonly mode: KeeperMode
+  readonly config: KeeperConfig | undefined
+}
+
+export interface Answer {
+  readonly status: number
+  readonly body: unknown
+}
+
+export function objectServices(state: DurableObjectState, env: KeeperEnv) {
+  return Layer.mergeAll(durableJournal(state), webCrypto, outbound, operatorKey(() => env.KEEPER_EVM_PRIVATE_KEY))
+}
+
+export effect function openObject(env: KeeperEnv) {
+  try openKeeperStore()
+  const mode = keeperMode(env.KEEPER_MODE)
+  const config = mode === "Off" ? undefined : keeperConfig(env.KEEPER_CONFIG, env.KEEPER_RPC_URL) catch () => undefined
+  const stored = try recordOf(IDENTITY_KEY)
+  const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(stored, config)))
+  return { core, mode, config } satisfies KeeperObject
+}
+
+export effect function admitRequest(object: KeeperObject, requestId: number, caller: Caller) {
+  try object.core.admit(requestId, caller)
+  if (caller !== "InternalTick") return { runId: 0, fresh: false, working: false } satisfies Started
+  return try object.core.begin(requestId)
+}
+
+export effect function runObject(object: KeeperObject, runId: number) {
+  return try keeperTick(object.core, runId, object.config, object.mode)
+}
+
+export effect function answer(object: KeeperObject, requestId: number, run: KeeperRun | undefined) {
+  const delivered = try object.core.delivered(requestId, true)
+  const conclusion = conclusionOf(delivered, requestId)
+  if (conclusion === "RanOff") return { status: 200, body: { mode: "off", results: [] } } satisfies Answer
+  if (conclusion === undefined || conclusion === "RunFailed" || run === undefined)
+    return { status: failedInvocation.status, body: { error: failedInvocation.errorCode } } satisfies Answer
+  return { status: 200, body: run } satisfies Answer
+}
+
+export const failedAnswer: Answer = { status: failedInvocation.status, body: { error: failedInvocation.errorCode } }
+
+const ResultBody = Schema.Struct({
+  projectId: Schema.String,
+  vault: Schema.String,
+  operation: Schema.String,
+  state: Schema.String,
+  transactionId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  error: Schema.optionalKey(Schema.String),
+  failureStage: Schema.optionalKey(Schema.Literals(STAGE_LABELS)),
+  failureCause: Schema.optionalKey(Schema.Literals(CAUSE_LABELS)),
+})
+
+const RunBody = Schema.Struct({ mode: Schema.Literals(["off", "dry_run", "execute"]), results: Schema.Array(ResultBody) })
+
+export interface TickAnswer {
+  readonly ok: boolean
+  readonly body: unknown
+}
+
+export effect function scheduledTick(env: KeeperEnv, tick: (env: KeeperEnv, name: string) => Promise<TickAnswer>) {
+  const mode = keeperMode(env.KEEPER_MODE)
+  if (mode === "Off") return
+  if (mode === "InvalidMode") throw new KeeperRefused({ message: "Select off, dry_run, or execute keeper mode" })
+  const config = keeperConfig(env.KEEPER_CONFIG, env.KEEPER_RPC_URL) catch effect (error) => { throw new KeeperRefused({ message: error.message }) }
+  const answered = tryPromise({ try: () => tick(env, JSON.stringify([config.network, config.signer])), catch: () => new KeeperRefused({ message: "Operator keeper run failed; durable attempts are retained" }) })
+  const reply = try answered
+  if (!reply.ok) throw new KeeperRefused({ message: "Operator keeper run failed; durable attempts are retained" })
+  const body = Schema.decodeUnknownEffect(RunBody)(reply.body) catch effect () => { throw new KeeperRefused({ message: "Operator keeper response body is invalid" }) }
+  const results: ReadonlyArray<KeeperResult> = body.results
+  const summary = unavailableWorkSummary(results)
+  if (summary === undefined) return
+  try Effect.logError(summary.event, summary)
+  throw new KeeperRefused({ message: "Operator keeper has unavailable work; durable attempts are retained" })
+}

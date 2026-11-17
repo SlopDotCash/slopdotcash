@@ -1,0 +1,40 @@
+// spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"
+import { isoNow } from "@repo/platform/clock"
+import { buildIndex, checkCycleIndex, publishCycleIndex, refuseCycleHistory } from "../public/cycleIndex.vibe"
+
+export error CycleIndexArguments { message: string }
+
+const usage = "usage: cycle-index --out DIRECTORY [--cycles DIRECTORY] [--generated-at ISO-8601] [--check]"
+
+interface Options {
+  readonly out: string
+  readonly cycles: string
+  readonly generatedAt: string | undefined
+  readonly check: boolean
+}
+
+effect function optionsOf(args: ReadonlyArray<string>) {
+  const values = new Map<string, string>()
+  let check = false
+  for (let index = 0; index < args.length; index++) {
+    const flag = args[index] ?? ""
+    const value = args[index + 1]
+    if (flag === "--check") check = true
+    else if ((flag === "--out" || flag === "--cycles" || flag === "--generated-at") && value !== undefined && !values.has(flag)) {
+      values.set(flag, value)
+      index++
+    } else throw new CycleIndexArguments({ message: usage })
+  }
+  const out = values.get("--out")
+  if (out === undefined) throw new CycleIndexArguments({ message: usage })
+  return { out, cycles: values.get("--cycles") ?? "cycles", generatedAt: values.get("--generated-at"), check } satisfies Options
+}
+
+export effect function cycleIndex(args: ReadonlyArray<string>) {
+  const options = try optionsOf(args)
+  try refuseCycleHistory(options.cycles)
+  const index = try buildIndex(options.generatedAt ?? try isoNow())
+  if (options.check) try checkCycleIndex(options.out, index)
+  else try publishCycleIndex(options.out, index)
+  try Console.log(`[Slop] validated ${index.cycles.length} reward cycle${index.cycles.length === 1 ? "" : "s"}`)
+}

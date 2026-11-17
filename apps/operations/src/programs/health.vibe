@@ -1,0 +1,44 @@
+// spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { isoAt } from "@repo/platform/clock"
+import { d1Http } from "@repo/platform/d1Http"
+import { renewIntake } from "../intakeHealth/renewal.vibe"
+
+export error HealthArguments { message: string }
+export error RenewalFailed { message: string }
+
+const databases = {
+  production: "1b453124-2709-45af-8389-151a8105c461",
+  staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
+} as const
+
+const renewers = { release: "ReleaseJob", operator: "OperatorScript" } as const
+
+const usage = "usage: health renew production|staging release|operator"
+
+function isEnvironment(text: string | undefined): text is keyof typeof databases {
+  return text === "production" || text === "staging"
+}
+
+function isRenewer(text: string | undefined): text is keyof typeof renewers {
+  return text === "release" || text === "operator"
+}
+
+export effect function health(args: ReadonlyArray<string>) {
+  const [action, environment, renewer, ...rest] = args
+  if (action !== "renew" || !isEnvironment(environment) || !isRenewer(renewer) || rest.length > 0) throw new HealthArguments({ message: usage })
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const apiToken = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  const githubToken = Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
+  provide d1Http({ accountId, databaseId: databases[environment], token: apiToken }) {
+    const renewal = try renewIntake(renewers[renewer], githubToken)
+    const observation = renewal.observation
+    const observed = observation.tag === "Observed" ? { enabled: observation.enabled, verifiedAt: try isoAt(observation.verifiedAt) } : {}
+    try Console.log(JSON.stringify({
+      result: renewal.result.tag,
+      ...observed,
+      tokenRejected: renewal.tokenRejected,
+    }))
+    if (renewal.failed) throw new RenewalFailed({ message: `private reporting renewal ${renewal.result.tag === "Skipped" ? `skipped: ${renewal.result.reason}` : "failed"}` })
+    if (observation.tag === "Observed" && !observation.enabled) throw new RenewalFailed({ message: "Private reporting is disabled; optional trace uploads are stopped" })
+  }
+}

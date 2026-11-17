@@ -1,0 +1,441 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { decoded, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { fileJournal } from "@repo/platform/journal"
+import { type StartedWorker, bundle, scheduled, startWorker } from "@repo/platform/testing"
+import { type Account, anvil, forward, refuseMainnet, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { frozenCopy } from "@repo/platform/testing/frozen"
+import { workerBuild } from "@repo/platform/vite"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { type Request, Response } from "miniflare"
+import { createBuilder } from "vite"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress } from "../src/chain/evm/abi.ts"
+import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { readSignedType2 } from "../src/chain/evm/transactions.ts"
+import { bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
+import { fingerprintOf } from "../src/keeper/attempts.vibe"
+import { journalRegistry, keeperConfig, modelConfiguration } from "../src/keeper/config.vibe"
+import { configuredStart, keeperCore } from "../src/keeper/lifecycle.vibe"
+import { type KeeperRun, keeperTick } from "../src/keeper/run.vibe"
+import { operatorKey } from "../src/keeper/signer.vibe"
+import { IDENTITY_KEY, inTransaction, openKeeperStore, recordOf } from "../src/keeper/store.vibe"
+import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
+
+service Bench {
+  readonly escrow: EscrowStack
+  readonly vault: EvmAddress
+  readonly operator: Account
+  readonly registry: string
+  readonly registryBody: string
+  readonly scratch: string
+  readonly journalPath: string
+  readonly clock: SettableClock
+}
+
+const project = "33333333-4444-4555-8666-777777777777"
+const sourceCommit = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+const ORACLE = "0x420000000000000000000000000000000000000f"
+const TERA_WORD_CODE = "0x64e8d4a5100060005260206000f3"
+
+schema GasRow {
+  readonly id: string
+  readonly maximum: string
+  readonly transaction_id: string
+  readonly actual: string | null
+}
+
+effect function lower(text: string) {
+  const parsed = evmAddress(text.toLowerCase())
+  if (parsed === undefined) return try die(new Error(`${text} is not an address`))
+  return parsed
+}
+
+effect function codeDigest(escrow: EscrowStack, at: string) {
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  if (typeof code !== "string") return try die(new Error("eth_getCode answered no code"))
+  return try sha256Hex(try Effect.try(() => hexToBytes(code.slice(2))))
+}
+
+effect function manifest(escrow: EscrowStack, vault: EvmAddress) {
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
+  const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = try lower(`0x${slot.slice(-40)}`)
+  const deployment = {
+    network: "base-mainnet", vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar,
+    owner: try lower(escrow.roles.owner.address), identityAuthority: try lower(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT,
+    deploymentTransaction: created.at.transaction, sourceCommit, codeSha256: try codeDigest(escrow, vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow, escrow.factory), registrar: try lower(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try lower(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow, escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(escrow, factoryImplementation),
+    },
+  }
+  const policy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] }
+  return try Effect.try(() => JSON.stringify({ schemaVersion: "1", projects: [{ id: project, status: "active", escrow: policy }], restrictions: [] }))
+}
+
+effect function finalize() {
+  const { escrow } = try Bench
+  escrow.chain.setFinalized(try promise(() => escrow.head()))
+}
+
+const Started = Layer.effect(Bench, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  try promise(() => refuseMainnet({ url: chain.url, family: "evm" }))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const owner = try lower(escrow.roles.owner.address)
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(0x7e3n), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 0n, monthlyEnabled: false }))
+  try promise(() => escrow.fund(vault, 100_000n, escrow.roles.owner.address))
+  const operator = chain.accounts[6]
+  if (operator === undefined) return try die(new Error("anvil has no seventh account"))
+  const body = try manifest(escrow, vault)
+  const served = try acquireRelease(promise(() => serve(async (request) => new URL(request.url).pathname === "/api/v1/projects" ? new Response(body, { headers: { "content-type": "application/json" } }) : new Response("missing", { status: 404 }))), (server) => promise(() => server.close()))
+  const scratch = try acquireRelease(Effect.try(() => frozenCopy([])), (copy) => orDie(Effect.try(() => copy.dispose())))
+  chain.setFinalized(try promise(() => escrow.head()))
+  return { escrow, vault, operator, registry: new URL(served.url).origin, registryBody: body, scratch: scratch.root, journalPath: `${scratch.root}/keeper.sqlite`, clock: settableClock(Date.UTC(2026, 10, 17, 12)) }
+})
+
+interface Budget {
+  readonly perTransaction?: string
+  readonly perDay?: string
+  readonly additionalFeeReserve?: string
+}
+
+effect function operatorConfig(rpcUrl: string, budget: Budget = {}, apiOrigin?: string) {
+  const { registry, operator } = try Bench
+  return try Effect.try(() => JSON.stringify({
+    apiOrigin: apiOrigin ?? registry, network: "base-mainnet", projectIds: [project], signer: operator.address, rpcUrl, perRun: 10, replacementActivated: true,
+    gas: { perTransaction: budget.perTransaction ?? "5000000000000000", perDay: budget.perDay ?? "9000000000000000", additionalFeeReserve: budget.additionalFeeReserve ?? "0" },
+  }))
+}
+
+effect function keeperRun(text: string, execute = true) {
+  const { journalPath, operator, clock } = try Bench
+  const mode = execute ? "Execute" as const : "DryRun" as const
+  provide Layer.mergeAll(fileJournal(journalPath), outbound, operatorKey(() => operator.privateKey), clock.layer) {
+    try openKeeperStore()
+    const config = try keeperConfig(text, undefined)
+    const core = try keeperCore(try configuredStart(modelConfiguration(mode, config, 0), journalRegistry(try recordOf(IDENTITY_KEY), config)))
+    try core.admit(1, "InternalTick")
+    const started = try core.begin(1)
+    return try orDie(keeperTick(core, started.runId, config, mode))
+  }
+}
+
+effect function journal<A>(read: A!unknown!any) {
+  const { journalPath } = try Bench
+  provide fileJournal(journalPath) {
+    return try orDie(read)
+  }
+}
+
+effect function gasRows() {
+  return try journal(inTransaction((tx) => effect {
+    return try decoded(GasRow, try tx.all(sql`SELECT id, maximum, transaction_id, actual FROM gas ORDER BY rowid`), "gas rows")
+  }))
+}
+
+effect function award(actor: bigint, source: bigint, gross: bigint) {
+  const { escrow, vault } = try Bench
+  const sourceDigest = word(source)
+  const id = try Effect.try(() => awardId(escrow.chainId, vault, sourceDigest))
+  const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor, gross, sourceDigest }))
+  try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
+  return id
+}
+
+effect function bind(actor: bigint, wallet: Account) {
+  const { escrow, vault } = try Bench
+  const input = { actor, destination: try lower(wallet.address), expectedVersion: 0n, claimDigest: word(actor + 0xc1a1n) as Bytes32, expiresAt: 4_102_444_800n }
+  const typedData = try Effect.try(() => bindingTypedData({ chainId: escrow.chainId, vault }, input))
+  const walletSignature = try promise(() => escrow.signTypedData(wallet.address, typedData))
+  const data = try Effect.try(() => bindCalldata({ ...input, walletSignature }))
+  try promise(() => escrow.send(escrow.roles.authority.address, vault, data))
+}
+
+function outcomeOf(run: KeeperRun, id: string) {
+  const found = run.results.find((result) => result.operation === `award:${id}`)
+  return found === undefined ? undefined : { state: found.state, error: found.error }
+}
+
+effect function operatorNonce() {
+  const { escrow, operator } = try Bench
+  const count = try promise(() => escrow.chain.rpc("eth_getTransactionCount", [operator.address, "latest"]))
+  return try Effect.try(() => BigInt(String(count)))
+}
+
+effect function settled() {
+  const { escrow } = try Bench
+  try promise(() => escrow.chain.mine())
+  try finalize()
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const REGISTRY_HOST = "registry.keeper.test"
+const CONFIGURED_RPC = "rpc-configured.keeper.test"
+const OVERRIDE_RPC = "rpc-override.keeper.test"
+
+interface Ticked {
+  readonly status: number
+  readonly text: string
+}
+
+interface DurableStub {
+  fetch(url: string, init: { readonly method: string }): Promise<{ readonly status: number; text(): Promise<string> }>
+}
+
+interface DurableNamespace {
+  idFromName(name: string): unknown
+  get(id: unknown): DurableStub
+}
+
+interface KeeperWorker {
+  readonly mf: StartedWorker
+  readonly seen: ReadonlyArray<string>
+}
+
+effect function keeperWorker(script: string, vars: Readonly<Record<string, string>>) {
+  const { escrow, registryBody } = try Bench
+  const seen: string[] = []
+  const chain = forward(escrow.chain.url)
+  const outbound = (request: Request) => {
+    const url = new URL(request.url)
+    seen.push(`${url.host}${url.pathname}`)
+    if (url.host !== REGISTRY_HOST) return chain(request)
+    return url.pathname === "/api/v1/projects" ? new Response(registryBody, { headers: { "content-type": "application/json" } }) : new Response("missing", { status: 404 })
+  }
+  const mf = try acquireRelease(sync(() => startWorker({ script, vars, durableObjects: { KEEPER: "OperatorKeeper" }, outbound })), (started) => promise(() => started.dispose()))
+  return { mf, seen } satisfies KeeperWorker
+}
+
+effect function objectTick(mf: StartedWorker, name: string, method: string, path: string) {
+  return try promise(() => mf.getDurableObjectNamespace("KEEPER").then((found) => {
+    const namespace = found as unknown as DurableNamespace
+    return namespace.get(namespace.idFromName(name)).fetch(`https://keeper.internal${path}`, { method })
+  }).then((response) => response.text().then((text) => ({ status: response.status, text }) satisfies Ticked)))
+}
+
+effect function keeperProgram() {
+  const { scratch } = try Bench
+  const outDir = `${scratch}/dist`
+  const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir })
+  try promise(() => createBuilder({ root: new URL("..", import.meta.url).pathname, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
+  return `${outDir}/programs/main.js`
+}
+
+effect function writtenConfig(file: string, text: string) {
+  const { scratch } = try Bench
+  const path = `${scratch}/${file}`
+  try (try FileSystem.FileSystem).writeFileString(path, text)
+  return path
+}
+
+effect function spawnKeeper(program: string, configPath: string) {
+  const { journalPath, operator } = try Bench
+  const spawner = try ChildProcessSpawner.ChildProcessSpawner
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, KEEPER_EVM_PRIVATE_KEY: operator.privateKey }
+  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, "--execute"], { env }))
+}
+
+layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Recipient isolation: an unbound recipient waits while a bound one is paid and its gas settles from the finalized receipt (spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"; spec/settlement/keeperScan.md, "Returning to scanning requires successful receipt verification and indexing"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues")', () => effect {
+    const { escrow } = try Bench
+    const paid = try award(101n, 0xa101n, 1_000n)
+    const unbound = try award(102n, 0xa102n, 2_000n)
+    try bind(101n, escrow.roles.recipient)
+    try finalize()
+    const text = try operatorConfig(escrow.chain.url)
+    const dry = try keeperRun(text, false)
+    const first = try keeperRun(text)
+    try settled()
+    const second = try keeperRun(text)
+    const rows = try gasRows()
+    try same({
+      dry: [outcomeOf(dry, paid)?.state, outcomeOf(dry, unbound)?.state],
+      first: [outcomeOf(first, paid)?.state, outcomeOf(first, unbound)?.state],
+      second: [outcomeOf(second, paid), outcomeOf(second, unbound)?.state],
+      gas: rows.map((row) => row.actual !== null),
+    }, {
+      dry: ["ready", "awaiting-wallet"],
+      first: ["submitted", "awaiting-wallet"],
+      second: [undefined, "awaiting-wallet"],
+      gas: [true],
+    })
+  })
+
+  it.effect('A keeper CLI killed after the journal commit and before the broadcast answers sends the same bytes once on the next run (spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"; spec/settlement/keeperLifecycle.md, "Restart abandons only ephemeral work and unresolved callers from that instance")', () => effect {
+    const { escrow } = try Bench
+    const id = try award(103n, 0xa103n, 3_000n)
+    try bind(103n, escrow.roles.donor)
+    try finalize()
+    const main = try keeperProgram()
+    const before = try operatorNonce()
+    let arrived: () => void = () => undefined
+    const broadcastSeen = new Promise<void>((resolve) => {
+      arrived = resolve
+    })
+    const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_sendRawTransaction", fault: "timeout" }]))
+    const stalled = try acquireRelease(promise(() => serve((request) => request.clone().text().then((text) => {
+      if (text.includes("eth_sendRawTransaction")) arrived()
+      return faults(request)
+    }))), (server) => promise(() => server.close()))
+    const killed = try scoped(effect {
+      const handle = try spawnKeeper(main, try writtenConfig("stalled.json", try operatorConfig(stalled.url)))
+      try timeout(promise(() => broadcastSeen), "120 seconds")
+      try handle.kill({ killSignal: "SIGKILL" })
+      return Number(try handle.exitCode)
+    })
+    const committed = try gasRows()
+    const resumed = try scoped(effect {
+      const handle = try spawnKeeper(main, try writtenConfig("direct.json", try operatorConfig(escrow.chain.url)))
+      const [stdout, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode]
+      return { code: Number(code), printed: try Effect.try(() => JSON.parse(stdout) as KeeperRun & { readonly mode: string }) }
+    })
+    try settled()
+    const after = try operatorNonce()
+    const rows = try gasRows()
+    try same({
+      killed: killed === 0,
+      mode: resumed.printed.mode,
+      resumed: outcomeOf(resumed.printed, id)?.state,
+      fired: faults.fired.map((fired) => fired.fault),
+      sameBytes: rows.at(-1)?.transaction_id === committed.at(-1)?.transaction_id,
+      rowsAdded: rows.length - committed.length,
+      nonces: after - before,
+    }, { killed: false, mode: "execute", resumed: "submitted", fired: ["timeout"], sameBytes: true, rowsAdded: 0, nonces: 1n })
+  })
+
+  it.effect('The operator Worker answers only the internal tick, coalesces concurrent ticks into one run and reports a failed run with a fixed answer (spec/settlement/keeperLifecycle.md, "Public and wrong internal routes cannot start work"; spec/settlement/keeperLifecycle.md, "Core completion and per-request result delivery have independent lifetimes"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"; spec/settlement/keeperRpc.md, "Only an absent override uses the originally configured endpoint")', () => effect {
+    const { operator } = try Bench
+    const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "keeper" }))
+    const name = JSON.stringify(["base-mainnet", operator.address.toLowerCase()])
+    const config = try operatorConfig(`https://${CONFIGURED_RPC}`, {}, `https://${REGISTRY_HOST}`)
+    const dry = try keeperWorker(script, { KEEPER_MODE: "dry_run", KEEPER_CONFIG: config, KEEPER_RPC_URL: `https://${OVERRIDE_RPC}` })
+    const publicAnswer = try promise(() => dry.mf.dispatchFetch("https://keeper.test/tick", { method: "POST" }).then((response) => response.status))
+    const wrongMethod = try objectTick(dry.mf, name, "GET", "/tick")
+    const wrongPath = try objectTick(dry.mf, name, "POST", "/other")
+    const [first, second] = try.all [objectTick(dry.mf, name, "POST", "/tick"), objectTick(dry.mf, name, "POST", "/tick")]
+    const registryReads = dry.seen.filter((line) => line === `${REGISTRY_HOST}/api/v1/projects`).length
+    const cron = try promise(() => scheduled(dry.mf, "*/5 * * * *"))
+    const off = try keeperWorker(script, { KEEPER_MODE: "off", KEEPER_RPC_URL: "http://invalid" })
+    const offTick = try objectTick(off.mf, name, "POST", "/tick")
+    const offCron = try promise(() => scheduled(off.mf, "*/5 * * * *"))
+    const broken = try keeperWorker(script, { KEEPER_MODE: "dry_run", KEEPER_CONFIG: "{" })
+    const brokenTick = try objectTick(broken.mf, name, "POST", "/tick")
+    const brokenCron = try promise(() => scheduled(broken.mf, "*/5 * * * *"))
+    try same({
+      publicAnswer,
+      wrong: [wrongMethod.status, wrongPath.status],
+      coalesced: { statuses: [first.status, second.status], sameBody: first.text === second.text, registryReads },
+      rpcHosts: { override: dry.seen.some((line) => line.startsWith(OVERRIDE_RPC)), configured: dry.seen.some((line) => line.startsWith(CONFIGURED_RPC)) },
+      cron: cron.outcome,
+      off: { tick: [offTick.status, offTick.text], cron: offCron.outcome, outbound: off.seen.length },
+      broken: { tick: [brokenTick.status, brokenTick.text], cron: brokenCron.outcome, outbound: broken.seen.length },
+    }, {
+      publicAnswer: 404,
+      wrong: [404, 404],
+      coalesced: { statuses: [200, 200], sameBody: true, registryReads: 1 },
+      rpcHosts: { override: true, configured: false },
+      cron: "ok",
+      off: { tick: [200, JSON.stringify({ mode: "off", results: [] })], cron: "ok", outbound: 0 },
+      broken: { tick: [503, JSON.stringify({ error: "keeper_run_failed" })], cron: "exception", outbound: 0 },
+    })
+  })
+
+  it.effect('Base L1 and operator fees are reserved before signing and charged into the day when the receipt finalizes (spec/settlement/keeperLifecycle.md, "On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes")', () => effect {
+    const { escrow } = try Bench
+    const id = try award(104n, 0xa104n, 4_000n)
+    try bind(104n, escrow.roles.upgrader)
+    try promise(() => escrow.chain.rpc("anvil_setCode", [ORACLE, TERA_WORD_CODE]))
+    try finalize()
+    const short = try keeperRun(try operatorConfig(escrow.chain.url, { additionalFeeReserve: "1000000000000" }))
+    const rowsBefore = try gasRows()
+    const covered = try keeperRun(try operatorConfig(escrow.chain.url, { additionalFeeReserve: "3000000000000" }))
+    try settled()
+    try keeperRun(try operatorConfig(escrow.chain.url, { additionalFeeReserve: "3000000000000" }))
+    const rows = try gasRows()
+    const row = rows.at(-1)
+    const receipt = try promise(() => escrow.chain.rpc("eth_getTransactionReceipt", [row?.transaction_id ?? "0x"]))
+    const fields = receipt as { readonly gasUsed: string; readonly effectiveGasPrice: string }
+    const execution = try Effect.try(() => BigInt(fields.gasUsed) * BigInt(fields.effectiveGasPrice))
+    try same({
+      short: outcomeOf(short, id),
+      covered: outcomeOf(covered, id)?.state,
+      rowsAdded: rows.length - rowsBefore.length,
+      operatorFee: try Effect.try(() => BigInt(row?.actual ?? "0") - execution),
+    }, {
+      short: { state: "waiting", error: "Base additional fees exceed the operator reserve" },
+      covered: "submitted",
+      rowsAdded: 1,
+      operatorFee: 1_000_000_000_000n,
+    })
+    try promise(() => escrow.chain.rpc("anvil_setCode", [ORACLE, "0x600060005260206000f3"]))
+  })
+
+  it.effect('A base-fee spike replaces the unmined send by 25% steps up to three times its fee, and a budget refusal leaves it waiting (spec/settlement/keeperLifecycle.md, "An unmined send is replaced only by fee, same nonce and content, after activation"; spec/settlement/keeperLifecycle.md, "A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
+    const { escrow, clock, vault } = try Bench
+    const id = try award(105n, 0xa105n, 5_000n)
+    try bind(105n, escrow.roles.owner)
+    try finalize()
+    try promise(() => escrow.chain.rpc("evm_setAutomine", [false]))
+    const text = try operatorConfig(escrow.chain.url)
+    const first = try keeperRun(text)
+    const original = (try gasRows()).at(-1)
+    try promise(() => escrow.chain.setNextBaseFee(20_000_000_000n))
+    try promise(() => escrow.chain.mine())
+    const early = try keeperRun(text)
+    clock.advance(601_000)
+    const tight = try keeperRun(try operatorConfig(escrow.chain.url, { perTransaction: original?.maximum ?? "1" }))
+    const steps: Array<string | undefined> = []
+    for (let step = 0; step < 6; step += 1) {
+      clock.advance(601_000)
+      try promise(() => escrow.chain.setNextBaseFee(20_000_000_000n))
+      try promise(() => escrow.chain.mine())
+      const run = try keeperRun(text)
+      steps.push(outcomeOf(run, id)?.error ?? outcomeOf(run, id)?.state)
+    }
+    const record = try journal(recordOf(`fee-bump:${original?.transaction_id ?? ""}`))
+    const replacements = (record as { readonly replacements: ReadonlyArray<{ readonly rawTransaction: string }> } | undefined)?.replacements ?? []
+    const stored = try journal(recordOf(`keeper:pay:${fingerprintOf([escrow.chainId.toString(), vault.toLowerCase(), id.toLowerCase()])}`))
+    const originalFee = readSignedType2(((stored as { readonly rawTransaction?: string } | undefined)?.rawTransaction ?? "0x") as never)?.request.maxFeePerGas
+    const maxFees = replacements.map((item) => readSignedType2(item.rawTransaction as never)?.request.maxFeePerGas ?? 0n)
+    const group = (try gasRows()).filter((row) => original !== undefined && row.id.startsWith(original.id))
+    try promise(() => escrow.chain.rpc("evm_setAutomine", [true]))
+    try promise(() => escrow.chain.setNextBaseFee(1_000_000n))
+    try settled()
+    try same({
+      first: outcomeOf(first, id)?.state,
+      early: outcomeOf(early, id)?.state,
+      tight: outcomeOf(tight, id),
+      steps: steps.at(-1),
+      replaced: replacements.length,
+      reserved: group.length,
+      bounded: maxFees.every((fee, index) => {
+        const previous = index === 0 ? originalFee ?? fee : maxFees[index - 1] ?? fee
+        return fee * 100n >= previous * 110n && (fee - 1n) * 100n < previous * 125n
+      }),
+    }, {
+      first: "submitted",
+      early: "submitted",
+      tight: { state: "waiting", error: "Fee replacement waits: Fee replacement is outside the keeper budget" },
+      steps: "Fee replacement cap reached; journaled attempts wait for a lower network fee",
+      replaced: 5,
+      reserved: 6,
+      bounded: true,
+    })
+  })
+})

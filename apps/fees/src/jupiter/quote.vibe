@@ -1,0 +1,164 @@
+// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { boundedBytes } from "@repo/platform/browser"
+import { base64Decode } from "@repo/platform/chain/solana"
+import type { QuoteRead } from "../conversion/chain.vibe"
+import { decimalBps, jsonText, jsonValue, venuesOf, wholeText, wideOf } from "../solana/bytes.ts"
+import { refuse, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { minimumOutput as floor } from "../kernels/arithmetic.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
+}
+import { errorText, minimumOutput } from verified
+
+export error JupiterUnavailable { path: string; detail: string }
+export error JupiterRefused { path: string; status: number; message: string }
+
+export interface JupiterSettings {
+  readonly apiUrl: string
+  readonly apiKey: Redacted.Redacted<string> | undefined
+  readonly usdc: string
+  readonly feeMicro: bigint
+}
+
+export const responseLimitBytes = 2_000_000
+
+const Quote = Schema.Struct({
+  inputMint: Schema.String,
+  outputMint: Schema.String,
+  inAmount: Schema.String,
+  outAmount: Schema.String,
+  otherAmountThreshold: Schema.String,
+  swapMode: Schema.String,
+  slippageBps: Schema.Number,
+  priceImpactPct: Schema.optionalKey(Schema.Unknown),
+  platformFee: Schema.optionalKey(Schema.Unknown),
+  routePlan: Schema.optionalKey(Schema.Unknown),
+})
+const Swap = Schema.Struct({ swapTransaction: Schema.String, lastValidBlockHeight: Schema.Number })
+const Refusal = Schema.Struct({ error: Schema.optionalKey(Schema.Unknown), errorCode: Schema.optionalKey(Schema.Unknown) })
+
+export interface JupiterQuote {
+  readonly raw: unknown
+  readonly inputMint: string
+  readonly amountIn: bigint
+  readonly outAmount: bigint
+  readonly threshold: bigint
+  readonly slippageBps: number
+  readonly priceImpactPct: unknown
+  readonly routePlan: unknown
+}
+
+export interface SwapBuilt {
+  readonly raw: Uint8Array
+  readonly lastValidBlockHeight: number
+}
+
+const digits = /^\d+$/u
+
+effect function jupiter(settings: JupiterSettings, path: string, body?: unknown) {
+  const label = path.split("?")[0] ?? path
+  const key = settings.apiKey === undefined ? {} : { "x-api-key": Redacted.value(settings.apiKey) }
+  const headers = { "content-type": "application/json", accept: "application/json", ...key }
+  const url = `${settings.apiUrl}/${path}`
+  const request = body === undefined ? HttpClientRequest.get(url, { headers }) : HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(url, { headers }), body)
+  const response = HttpClient.execute(request) catch effect (error) => { throw new JupiterUnavailable({ path: label, detail: errorText(String(error)) }) }
+  const bytes = boundedBytes(response, responseLimitBytes, "Jupiter") catch effect () => { throw new JupiterUnavailable({ path: label, detail: "Jupiter response too large or unreadable" }) }
+  const parsed = jsonValue(new TextDecoder().decode(bytes))
+  const ok = response.status >= 200 && response.status <= 299
+  if (ok && parsed === undefined) throw new JupiterUnavailable({ path: label, detail: `Jupiter ${label}: unparseable response` })
+  if (!ok) {
+    const detail = Schema.decodeUnknownEffect(Refusal)(parsed) catch () => undefined
+    const reason = detail?.errorCode ?? detail?.error ?? response.status
+    const message = errorText(`Jupiter ${label}: ${String(reason).slice(0, 200)}`)
+    if (response.status >= 400 && response.status < 500) throw new JupiterRefused({ path: label, status: response.status, message })
+    throw new JupiterUnavailable({ path: label, detail: message })
+  }
+  return parsed
+}
+
+export function inputMintOf(token: string) {
+  return token === solanaNativeAsset ? wrappedSol : token
+}
+
+export effect function jupiterQuote(settings: JupiterSettings, token: string, amount: bigint, slippageBps: number) {
+  const inputMint = inputMintOf(token)
+  const query = new URLSearchParams({
+    inputMint,
+    outputMint: settings.usdc,
+    amount: amount.toString(),
+    slippageBps: String(slippageBps),
+    swapMode: "ExactIn",
+    restrictIntermediateTokens: "true",
+    asLegacyTransaction: "false",
+    instructionVersion: "V2",
+  })
+  const raw = try jupiter(settings, `quote?${query.toString()}`)
+  const quote = Schema.decodeUnknownEffect(Quote)(raw) catch () => undefined
+  const outAmount = quote === undefined || !digits.test(quote.outAmount) ? undefined : wholeText(quote.outAmount.replace(/^0+(?=\d)/u, ""))
+  const threshold = quote === undefined || !digits.test(quote.otherAmountThreshold) ? undefined : wholeText(quote.otherAmountThreshold.replace(/^0+(?=\d)/u, ""))
+  if (quote === undefined || outAmount === undefined || threshold === undefined || quote.inputMint !== inputMint || quote.outputMint !== settings.usdc
+    || quote.inAmount !== amount.toString() || quote.swapMode !== "ExactIn" || quote.slippageBps !== slippageBps || quote.platformFee !== null)
+    return try refuse("Jupiter quote does not match the request")
+  return { raw, inputMint, amountIn: amount, outAmount, threshold, slippageBps, priceImpactPct: quote.priceImpactPct, routePlan: quote.routePlan } satisfies JupiterQuote
+}
+
+export effect function signedMinimum(quote: JupiterQuote) {
+  const minimum = minimumOutput(quote.outAmount, wideOf(quote.slippageBps))
+  if (quote.threshold < minimum || quote.threshold > minimum + 1n) return try refuse("Jupiter threshold differs from its signed slippage bounds")
+  return minimum
+}
+
+export effect function quoteRead(settings: JupiterSettings, token: string, amount: bigint, slippageBps: number) {
+  const found = jupiterQuote(settings, token, amount, slippageBps) catch effect (error) => {
+    if (error._tag === "JupiterRefused") return error.message
+    throw error
+  }
+  if (typeof found === "string") return { kind: "noRoute", detail: found } satisfies QuoteRead
+  if (found.outAmount === 0n) return { kind: "noRoute", detail: "Jupiter quoted zero output" } satisfies QuoteRead
+  const summary = jsonText({
+    aggregator: "jupiter",
+    slippageBps: found.slippageBps,
+    priceImpactPct: found.priceImpactPct ?? null,
+    venues: venuesOf(found.routePlan),
+  })
+  return {
+    kind: "found",
+    route: "jupiter",
+    amountIn: amount,
+    output: found.outAmount,
+    minimumOutput: try signedMinimum(found),
+    gasValue: settings.feeMicro,
+    impactBps: decimalBps(found.priceImpactPct),
+    summary,
+  } satisfies QuoteRead
+}
+
+export interface SwapRequest {
+  readonly quote: JupiterQuote
+  readonly wallet: string
+  readonly sharedAccounts: boolean
+  readonly nativeInput: boolean
+}
+
+export effect function swapTransaction(settings: JupiterSettings, request: SwapRequest) {
+  const body = {
+    quoteResponse: request.quote.raw,
+    userPublicKey: request.wallet,
+    wrapAndUnwrapSol: false,
+    asLegacyTransaction: false,
+    ...request.sharedAccounts ? { useSharedAccounts: true } : {},
+    dynamicComputeUnitLimit: !request.nativeInput,
+    prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 200_000, priorityLevel: "high" } },
+  }
+  const answer = try jupiter(settings, "swap", body)
+  const swap = Schema.decodeUnknownEffect(Swap)(answer) catch () => undefined
+  const raw = swap === undefined ? undefined : base64Decode(swap.swapTransaction)
+  if (swap === undefined || raw === undefined) throw new JupiterUnavailable({ path: "swap", detail: "Jupiter swap transaction is malformed" })
+  if (!Number.isSafeInteger(swap.lastValidBlockHeight) || swap.lastValidBlockHeight <= 0) return try refuse("Jupiter returned an invalid block height")
+  return { raw, lastValidBlockHeight: swap.lastValidBlockHeight } satisfies SwapBuilt
+}

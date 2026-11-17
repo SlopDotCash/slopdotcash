@@ -1,0 +1,132 @@
+// spec/frontend/wallets.md, "A prompt uses the selected provider object and refuses after an account or chain change"; spec/frontend/walletConsent.md, "Discovery offers announced and legacy providers and refuses conflicting ones"
+import { walletRequestAllowed } from "../../../gen/frontend__wallets.effect.vibe"
+import { WalletChanged, WalletChoice, WalletDeclined, WalletFailed, WalletUntrusted, changedMessage, conflictMessage } from "./discovery.vibe"
+import { type Eip1193, failureOf, providerRequest, utf8Hex } from "./injected.ts"
+
+export interface EvmConnection {
+  readonly id: number
+  readonly address: string
+}
+
+export interface EvmTransaction {
+  readonly from: string
+  readonly to: string
+  readonly data?: string
+  readonly value?: string
+  readonly gas?: string
+}
+
+const declinedMessage = "You declined the wallet request."
+const hashPattern = /^0x[0-9a-fA-F]{64}$/u
+
+export function evmChain(chainId: bigint): string {
+  return `eip155:${chainId.toString()}`
+}
+
+effect function trustedProvider(id: number) {
+  const choice = try WalletChoice
+  const held = try choice.held(id)
+  if (held === undefined || (held.kind !== "announced" && held.kind !== "legacyEvm")) throw new WalletFailed({ message: "Choose an EVM wallet." })
+  if (!(try choice.trusted(id))) throw new WalletUntrusted({ message: conflictMessage })
+  return held.provider
+}
+
+effect function asked(provider: Eip1193, method: string, params: ReadonlyArray<unknown>) {
+  return try tryPromise({
+    try: () => providerRequest(provider, method, params),
+    catch: (caught) => {
+      const failure = failureOf(caught)
+      return failure.code === 4001 ? new WalletDeclined({ message: declinedMessage }) : new WalletFailed({ message: failure.message === "" ? "The wallet request failed." : failure.message })
+    },
+  })
+}
+
+export effect function evmRequest(connection: EvmConnection, method: string, params: ReadonlyArray<unknown>) {
+  return try asked(try trustedProvider(connection.id), method, params)
+}
+
+export effect function connectEvm(id: number, chooseAccount: boolean) {
+  const provider = try trustedProvider(id)
+  if (chooseAccount) {
+    asked(provider, "wallet_requestPermissions", [{ eth_accounts: {} }]) catch effect (error) => {
+      if (error._tag === "WalletDeclined") throw error
+    }
+    try trustedProvider(id)
+  }
+  const addresses = try asked(provider, "eth_requestAccounts", [])
+  try trustedProvider(id)
+  const first: unknown = Array.isArray(addresses) ? addresses[0] : undefined
+  if (typeof first !== "string") throw new WalletFailed({ message: "Your wallet did not return an address." })
+  return { id, address: first.toLowerCase() } satisfies EvmConnection
+}
+
+export effect function evmAccount(connection: EvmConnection) {
+  const accounts = try evmRequest(connection, "eth_accounts", [])
+  const first: unknown = Array.isArray(accounts) ? accounts[0] : undefined
+  return typeof first === "string" ? first.toLowerCase() : ""
+}
+
+export effect function evmChainId(connection: EvmConnection) {
+  const answer = try evmRequest(connection, "eth_chainId", [])
+  return try Effect.try({ try: () => BigInt(String(answer)), catch: () => new WalletFailed({ message: "Your wallet returned an invalid network." }) })
+}
+
+export effect function requireSelected(connection: EvmConnection, chainId: bigint) {
+  const choice = try WalletChoice
+  const account = try evmAccount(connection)
+  const chain = try evmChainId(connection)
+  const allowed = walletRequestAllowed(
+    { selectedProvider: connection.id, selectedAccount: connection.address, selectedChain: evmChain(chainId) },
+    { provider: connection.id, account, chain: evmChain(chain), registered: true, blocked: !(try choice.trusted(connection.id)), hasFeature: true },
+  )
+  if (!allowed) throw new WalletChanged({ message: changedMessage })
+}
+
+export effect function switchChain(connection: EvmConnection, chainId: bigint) {
+  try evmRequest(connection, "wallet_switchEthereumChain", [{ chainId: `0x${chainId.toString(16)}` }])
+}
+
+export effect function personalSign(connection: EvmConnection, message: string) {
+  const signature = try evmRequest(connection, "personal_sign", [utf8Hex(message), connection.address])
+  if (typeof signature !== "string") throw new WalletFailed({ message: "Your wallet did not return a signature." })
+  return signature
+}
+
+export effect function signTypedData(connection: EvmConnection, chainId: bigint, typedData: unknown) {
+  try requireSelected(connection, chainId)
+  const signature = try evmRequest(connection, "eth_signTypedData_v4", [connection.address, JSON.stringify(typedData)])
+  if (typeof signature !== "string") throw new WalletFailed({ message: "Your wallet did not return a signature." })
+  return signature
+}
+
+export effect function evmCall(connection: EvmConnection, transaction: EvmTransaction) {
+  const answer = try evmRequest(connection, "eth_call", [transaction, "latest"])
+  if (typeof answer !== "string") throw new WalletFailed({ message: "Your wallet returned an invalid call result." })
+  return answer
+}
+
+export effect function estimateGas(connection: EvmConnection, transaction: EvmTransaction) {
+  const answer = try evmRequest(connection, "eth_estimateGas", [transaction])
+  return try Effect.try({ try: () => BigInt(String(answer)), catch: () => new WalletFailed({ message: "Your wallet returned an invalid gas estimate." }) })
+}
+
+export effect function sendTransaction<E>(connection: EvmConnection, chainId: bigint, transaction: EvmTransaction, beforePrompt: void!E) {
+  try requireSelected(connection, chainId)
+  const provider = try trustedProvider(connection.id)
+  try beforePrompt
+  const hash = try asked(provider, "eth_sendTransaction", [transaction])
+  if (typeof hash !== "string" || !hashPattern.test(hash)) throw new WalletFailed({ message: "The wallet did not return a transaction hash. Check wallet activity before another attempt." })
+  return hash.toLowerCase()
+}
+
+export effect function transactionReceipt(connection: EvmConnection, hash: string) {
+  return try evmRequest(connection, "eth_getTransactionReceipt", [hash])
+}
+
+export effect function finalizedBlock(connection: EvmConnection) {
+  return try evmRequest(connection, "eth_getBlockByNumber", ["finalized", false])
+}
+
+export effect function walletCapabilities(connection: EvmConnection) {
+  return try evmRequest(connection, "wallet_getCapabilities", [connection.address])
+}

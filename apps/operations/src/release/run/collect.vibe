@@ -1,0 +1,194 @@
+// spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
+import { ProjectList, RevisionList } from "@repo/backend/client"
+import { boundedBytes } from "@repo/platform/browser"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { isoNow } from "@repo/platform/clock"
+import { BundleRefused, canonicalJson, inventory } from "../manifest/inventory.vibe"
+import { type Collection, type CollectionKind, type EnvironmentName, releaseBounds, writeCollection } from "../manifest/release.vibe"
+
+export error RegistryRefused { message: string }
+
+export const registrySnapshotPath = "registry/snapshot.json"
+export const githubDirectory = "github"
+
+const registryBytesLimit = 4 * 1024 * 1024
+const timeoutMs = 30_000
+const attempts = 3
+const contractHeader = "x-slop-project-api-contract"
+const origins: Readonly<Record<EnvironmentName, string>> = { production: "https://slop.cash", staging: "https://staging.slop.cash" }
+
+type Manifest = Readonly<Record<string, unknown>>
+type Revision = (typeof RevisionList.Type)["revisions"][number]
+
+export interface Snapshot {
+  readonly projects: ReadonlyArray<Manifest>
+  readonly revisions: ReadonlyArray<Revision>
+  readonly withheld: ReadonlyArray<string>
+}
+
+error SnapshotChanged
+
+export effect function originFor(environment: EnvironmentName) {
+  const override = try Config.withDefault(Config.String("SLOP_API_ORIGIN"), "")
+  if (override === "") return origins[environment]
+  const parsed = URL.parse(override)
+  if (parsed === null || !(parsed.protocol === "https:" || (parsed.protocol === "http:" && parsed.hostname === "127.0.0.1"))) {
+    throw new RegistryRefused({ message: "Project registry URL must use HTTPS" })
+  }
+  return parsed.origin
+}
+
+effect function fetched<S extends Schema.ConstraintDecoder<unknown>>(origin: string, path: string, key: string | undefined, schema: S) {
+  const url = new URL(path, origin)
+  if (key !== undefined) url.searchParams.set("snapshot", key)
+  const exchange = provideService(effect {
+    const response = HttpClient.execute(HttpClientRequest.get(url.toString(), { headers: { accept: "application/json" } })) catch effect () => {
+      throw new RegistryRefused({ message: `${path} is unreachable` })
+    }
+    if (response.status === 404 && response.headers[contractHeader] === undefined) {
+      throw new RegistryRefused({ message: `${origin} does not serve the project registry API` })
+    }
+    if (response.status < 200 || response.status > 299) throw new RegistryRefused({ message: `${path} returned HTTP ${response.status}` })
+    return boundedBytes(response, registryBytesLimit, path) catch effect () => {
+      throw new RegistryRefused({ message: `${path} exceeds the size limit or is unreadable` })
+    }
+  }, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" })
+  const bytes = try Effect.timeoutOrElse(exchange, { duration: timeoutMs, orElse: () => Effect.fail(new RegistryRefused({ message: `${path} timed out` })) })
+  const value = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: () => new RegistryRefused({ message: `${path} is not JSON` }) })
+  return Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new RegistryRefused({ message: "Project registry response has an unexpected shape" })
+  }
+}
+
+function restricted(project: Manifest): Manifest {
+  return { ...project, status: "paused", listingTier: "retired" }
+}
+
+function restrictionOf(manifest: Manifest | undefined, definition: Manifest) {
+  return manifest !== undefined && definition.status === "paused" && definition.listingTier === "retired"
+    && JSON.stringify(restricted(manifest)) === JSON.stringify(definition)
+}
+
+effect function boundRevisions(revisions: ReadonlyArray<Revision>, projects: ReadonlyArray<Manifest>) {
+  if (revisions.length > 10_000) throw new RegistryRefused({ message: "project revisions must be a bounded array" })
+  const latest = new Map<string, number>()
+  for (const entry of revisions) {
+    const previous = latest.get(entry.projectId) ?? 0
+    if (entry.manifest.id !== entry.projectId || entry.revision !== previous + 1 || (try sha256Hex(JSON.stringify(entry.manifest))) !== entry.manifestSha256) {
+      throw new RegistryRefused({ message: `project revision ${entry.projectId}@${entry.revision} is out of order or does not match its digest` })
+    }
+    latest.set(entry.projectId, entry.revision)
+  }
+  for (const definition of projects) {
+    const newest = revisions.findLast((row) => row.projectId === definition.id)
+    if (newest?.manifestSha256 !== (try sha256Hex(JSON.stringify(definition))) && !restrictionOf(newest?.manifest, definition)) throw new SnapshotChanged()
+  }
+  if (latest.size !== projects.length) throw new SnapshotChanged()
+}
+
+effect function pair(origin: string, key: string | undefined) {
+  const registry = try fetched(origin, "/api/v1/projects", key, ProjectList)
+  const history = try fetched(origin, "/api/v1/project-revisions", key, RevisionList)
+  const withheld: string[] = []
+  for (const restriction of registry.restrictions) {
+    const project = registry.projects.find((entry) => entry.id === restriction.projectId)
+    if (project === undefined) throw new RegistryRefused({ message: "Project restriction has an unexpected shape" })
+    if (project.status !== "paused" || project.listingTier !== "retired") withheld.push(String(project.id))
+  }
+  const projects = registry.projects.map((project) => withheld.includes(String(project.id)) ? restricted(project) : project)
+  return { projects, revisions: history.revisions, withheld } satisfies Snapshot
+}
+
+export effect function consistentRegistry(origin: string) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const snapshot = try pair(origin, attempt === 0 ? undefined : try randomId())
+    const bound = boundRevisions(snapshot.revisions, snapshot.projects) catch effect (error) => match (error) {
+      when SnapshotChanged: false;
+      default: throw error;
+    }
+    if (bound !== false) return snapshot
+  }
+  throw new RegistryRefused({ message: "project registry does not match its newest revisions after three reads" })
+}
+
+export function canonicalSnapshot(snapshot: Snapshot, syncedAt: string) {
+  const projects = [...snapshot.projects].sort((left, right) => String(left.id).localeCompare(String(right.id)))
+  const inactive = projects.find((project) => project.status === "active" && project.contribution === undefined)
+  return inactive === undefined ? canonicalJson({ schemaVersion: 1, syncedAt, projects, revisions: snapshot.revisions }) : undefined
+}
+
+export effect function githubDigest(bundle: string) {
+  const files = try Path.Path
+  const records = try inventory(files.join(bundle, githubDirectory), releaseBounds, new Set())
+  if (records.length === 0) throw new BundleRefused({ message: "the GitHub collection is empty" })
+  return try sha256Hex(canonicalJson(records))
+}
+
+export effect function registryDigest(bundle: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const bytes = fs.readFile(files.join(bundle, registrySnapshotPath)) catch effect () => {
+    throw new BundleRefused({ message: "the registry snapshot is unreadable" })
+  }
+  return try sha256Hex(bytes)
+}
+
+schema PublishedSnapshot {
+  readonly schemaVersion: number
+  readonly generatedAt: string
+}
+
+export const publishedSnapshotName = "leaderboard.json"
+
+const publishedBytesLimit = 25 * 1024 * 1024
+const futureSkewMs = 5 * 60 * 1000
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/u
+
+export effect function publishedAt(bundle: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.join(bundle, githubDirectory, publishedSnapshotName)
+  const size = fs.stat(path) catch effect () => {
+    throw new BundleRefused({ message: `the retained published snapshot ${githubDirectory}/${publishedSnapshotName} is missing` })
+  }
+  if (size.type !== "File" || Number(size.size) > publishedBytesLimit) throw new BundleRefused({ message: "the retained published snapshot must be a bounded regular file" })
+  const text = fs.readFileString(path) catch effect () => {
+    throw new BundleRefused({ message: "the retained published snapshot is unreadable" })
+  }
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new BundleRefused({ message: "the retained published snapshot is not JSON" }) })
+  const snapshot = Schema.decodeUnknownEffect(PublishedSnapshot)(value) catch effect () => {
+    throw new BundleRefused({ message: "the retained published snapshot has no schema version or generation time" })
+  }
+  const millis = isoInstant.test(snapshot.generatedAt) ? Date.parse(snapshot.generatedAt) : Number.NaN
+  if (!Number.isFinite(millis) || millis <= 0) throw new BundleRefused({ message: "the retained published snapshot has an invalid generation time" })
+  if (millis > (try Clock.currentTimeMillis) + futureSkewMs) throw new BundleRefused({ message: "the retained published snapshot was generated in the future" })
+  return snapshot.generatedAt
+}
+
+export effect function collect(environment: EnvironmentName, bundle: string, kind: CollectionKind) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const retainedAt = kind === "retained" ? try publishedAt(bundle) : undefined
+  const snapshot = try consistentRegistry(try originFor(environment))
+  const syncedAt = try isoNow()
+  const text = canonicalSnapshot(snapshot, syncedAt)
+  if (text === undefined) throw new RegistryRefused({ message: "An active project has no generated-skill content" })
+  const target = files.join(bundle, registrySnapshotPath)
+  fs.makeDirectory(files.dirname(target), { recursive: true }) catch effect () => {
+    throw new BundleRefused({ message: "the registry directory could not be created" })
+  }
+  fs.writeFileString(target, text, { mode: 0o644 }) catch effect () => {
+    throw new BundleRefused({ message: "the registry snapshot could not be written" })
+  }
+  const recordedAt = retainedAt ?? syncedAt
+  const collection = {
+    schemaVersion: 1,
+    environment,
+    kind,
+    registrySha256: try sha256Hex(text),
+    githubSha256: try githubDigest(bundle),
+    recordedAt,
+  } satisfies Collection
+  try writeCollection(bundle, collection)
+  return { collection, withheld: snapshot.withheld }
+}

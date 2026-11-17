@@ -1,0 +1,71 @@
+// spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { utf8 } from "@repo/platform/crypto"
+import { BundleRefused, FileRecord, type Bounds, canonicalJson, checkedRecords, inventory } from "./inventory.vibe"
+
+export const pagesManifestName = "deployment-manifest.json"
+
+export const pagesBounds: Bounds = { directories: 128, files: 512, fileBytes: 25 * 1024 * 1024, totalBytes: 128 * 1024 * 1024 }
+
+const manifestBytesLimit = 256 * 1024
+const reserved: ReadonlySet<string> = new Set(["_headers", "_redirects", "_routes.json", pagesManifestName])
+const requiredPaths = ["index.html", "skill-manifest.json"]
+
+export schema PagesManifest {
+  readonly schemaVersion: 1
+  readonly files: ReadonlyArray<FileRecord>
+}
+
+function shapeIssue(manifest: PagesManifest) {
+  const issue = checkedRecords(manifest.files, pagesBounds, reserved, "deployment manifest")
+  if (issue !== undefined) return issue
+  const paths = new Set(manifest.files.map((record) => record.path.toLowerCase()))
+  const missing = requiredPaths.find((path) => !paths.has(path))
+  return missing === undefined ? undefined : `deployment manifest is missing ${missing}`
+}
+
+effect function decoded(bytes: Uint8Array) {
+  if (bytes.length > manifestBytesLimit) throw new BundleRefused({ message: `deployment manifest exceeds the ${manifestBytesLimit}-byte bound` })
+  const text = new TextDecoder().decode(bytes)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new BundleRefused({ message: "deployment manifest is not JSON" }) })
+  const manifest = Schema.decodeUnknownEffect(PagesManifest)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new BundleRefused({ message: "deployment manifest has an invalid schema" })
+  }
+  const issue = shapeIssue(manifest)
+  if (issue !== undefined) throw new BundleRefused({ message: issue })
+  if (canonicalJson(manifest) !== text) throw new BundleRefused({ message: "deployment manifest is not canonical JSON" })
+  return manifest
+}
+
+export effect function createPagesManifest(site: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const manifest = { schemaVersion: 1, files: try inventory(site, pagesBounds, reserved) } satisfies PagesManifest
+  const issue = shapeIssue(manifest)
+  if (issue !== undefined) throw new BundleRefused({ message: issue })
+  const text = canonicalJson(manifest)
+  if (utf8(text).length > manifestBytesLimit) throw new BundleRefused({ message: `deployment manifest exceeds the ${manifestBytesLimit}-byte bound` })
+  fs.writeFileString(files.join(site, pagesManifestName), text, { mode: 0o644 }) catch effect () => {
+    throw new BundleRefused({ message: "deployment manifest could not be written" })
+  }
+  return manifest
+}
+
+export effect function verifyPagesManifest(site: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const bytes = fs.readFile(files.join(site, pagesManifestName)) catch effect () => {
+    throw new BundleRefused({ message: "deployment manifest is unreadable" })
+  }
+  const manifest = try decoded(bytes)
+  const current = try inventory(site, pagesBounds, reserved)
+  if (JSON.stringify(current) !== JSON.stringify(manifest.files)) throw new BundleRefused({ message: "deployment manifest does not match the local Pages bundle" })
+  return { manifest, bytes }
+}
+
+export effect function bundleSite(bundle: string) {
+  const fs = try FileSystem.FileSystem
+  const site = (try Path.Path).join(bundle, "site")
+  const present = fs.stat(site) catch () => undefined
+  if (present?.type !== "Directory") throw new BundleRefused({ message: "the bundle has no site/ directory" })
+  return site
+}

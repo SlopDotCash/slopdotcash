@@ -1,0 +1,180 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type Account, type Simulation, SolanaRpc, decodeTokenAccount } from "@repo/platform/chain/solana"
+import type { Mint } from "@repo/settlement/kernels/token2022"
+import { type AccountObservation, type AccountProof, type RouteExpectation, associatedCreations, isWritable } from "../solana/accounts.vibe"
+import { sha256Hex, u32At } from "../solana/bytes.ts"
+import { addressed, admittedHolding, mintOf } from "../solana/client.vibe"
+import { type ParsedTransaction, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, refuse } from "../solana/wire.vibe"
+import { boundRoute } from "./route.vibe"
+
+export const maximumAccountBytes = 1024 * 1024
+export const maximumRouteBytes = 4 * 1024 * 1024
+const accountBatch = 100
+
+export interface Holding {
+  readonly address: string
+  readonly account: Account
+  readonly mint: string
+  readonly wallet: string
+  readonly amount: bigint
+}
+
+export interface ReviewedRoute {
+  readonly source: Holding | undefined
+  readonly sourceAddress: string
+  readonly destination: Holding | undefined
+  readonly destinationAddress: string
+  readonly observations: ReadonlyArray<AccountObservation>
+  readonly minimumSlot: number
+  readonly expected: RouteExpectation
+}
+
+interface Reading {
+  readonly states: Map<string, Account | undefined>
+  readonly observations: AccountObservation[]
+  bytes: number
+}
+
+effect function holdingOf(address: string, account: Account) {
+  if (account.executable) return try refuse("A route holding cannot be executable")
+  const decoded = decodeTokenAccount(account.data)
+  if (decoded.kind === "malformed") return try refuse("Route token account is malformed")
+  return { address, account, mint: decoded.value.mint, wallet: decoded.value.owner, amount: decoded.value.amount } satisfies Holding
+}
+
+function initialized(holding: Holding) {
+  return holding.account.data[108] === 1
+}
+
+effect function readAccounts(reading: Reading, addresses: ReadonlyArray<string>, minimumSlot: number) {
+  for (let offset = 0; offset < addresses.length; offset += accountBatch) {
+    const batch = addresses.slice(offset, offset + accountBatch)
+    const keys = []
+    for (const text of batch) keys.push(try addressed(text))
+    const response = try (try SolanaRpc).accounts(keys, "finalized")
+    if (response.slot < minimumSlot || response.value.length !== batch.length) return try refuse("Complete finalized route account evidence is unavailable")
+    for (const [index, address] of batch.entries()) {
+      const account = response.value[index]
+      if (account !== undefined && account.data.length > maximumAccountBytes) return try refuse("Route account data exceeds the read bound")
+      reading.bytes += account?.data.length ?? 0
+      if (reading.bytes > maximumRouteBytes) return try refuse("Route account evidence exceeds the read bound")
+      reading.states.set(address, account)
+      reading.observations.push({
+        address,
+        owner: account?.owner ?? null,
+        executable: account?.executable ?? null,
+        lamports: account === undefined ? null : account.lamports.toString(),
+        dataLength: account?.data.length ?? 0,
+        dataSha256: account === undefined ? null : sha256Hex(account.data),
+        slot: response.slot,
+      })
+    }
+  }
+}
+
+function isMint(account: Account) {
+  return account.data.length === 82 || (account.owner === TOKEN_2022_PROGRAM && account.data[165] === 1)
+}
+
+export effect function reviewRouteAccounts(raw: Uint8Array, parsed: ParsedTransaction, proof: AccountProof, expected: RouteExpectation) {
+  const route = try boundRoute(raw, parsed, proof, expected)
+  const minimumSlot = Math.max(0, ...proof.tables.map((table) => table.contextSlot))
+  const reading: Reading = { states: new Map(), observations: [], bytes: 0 }
+  try readAccounts(reading, proof.keys, minimumSlot)
+  const creations = try associatedCreations(parsed, proof.keys, expected.wallet)
+  for (const entry of creations) {
+    const created = proof.keys[entry.index]
+    const output = created === route.destination && entry.mint === expected.outputMint && entry.tokenProgram === expected.outputProgram
+    const input = expected.nativeInput && created === route.source && entry.mint === expected.inputMint && entry.tokenProgram === expected.inputProgram
+    if (!output && !input) return try refuse("Route creates an unrelated associated token account")
+  }
+  const created = new Set(creations.map((entry) => proof.keys[entry.index] ?? ""))
+  const holdings = new Map<string, Holding>()
+  const mints = new Map<string, string>([[expected.inputMint, expected.inputProgram], [expected.outputMint, expected.outputProgram]])
+  for (const [index, address] of proof.keys.entries()) {
+    const state = reading.states.get(address)
+    if (state === undefined) {
+      if (isWritable(parsed, proof, index) && !created.has(address)) return try refuse("Route creates an unreviewed writable account")
+      continue
+    }
+    if (state.owner !== TOKEN_PROGRAM && state.owner !== TOKEN_2022_PROGRAM) continue
+    if (isMint(state)) {
+      if (state.executable) return try refuse("Route mint account cannot be executable")
+      try mintOf(address, state)
+      if (mints.has(address) && mints.get(address) !== state.owner) return try refuse("Route mints have inconsistent token programs")
+      mints.set(address, state.owner)
+      continue
+    }
+    const token = try holdingOf(address, state)
+    holdings.set(address, token)
+    if (mints.has(token.mint) && mints.get(token.mint) !== state.owner) return try refuse("Route mints have inconsistent token programs")
+    mints.set(token.mint, state.owner)
+    if (token.wallet === expected.wallet && isWritable(parsed, proof, index) && address !== route.source && address !== route.destination)
+      return try refuse("Route can write an unrelated fee-wallet token account")
+  }
+  try readAccounts(reading, [...mints.keys()].filter((address) => !reading.states.has(address)), minimumSlot)
+  const admitted = new Map<string, Mint>()
+  for (const [mint, program] of mints) {
+    const state = reading.states.get(mint)
+    if (state === undefined || state.executable) return try refuse("Route token holding has an unverified mint or token program")
+    const read = try mintOf(mint, state)
+    if (read.program !== program) return try refuse("Route token holding has an unverified mint or token program")
+    admitted.set(mint, read)
+  }
+  for (const holding of holdings.values()) {
+    const mint = admitted.get(holding.mint)
+    if (mint === undefined) return try refuse("Route token holding has an unverified mint or token program")
+    try admittedHolding(mint, holding.account.owner, holding.account.data)
+  }
+  for (const program of parsed.programs) if (reading.states.get(program)?.executable !== true) return try refuse("Route invokes an unverified program account")
+  const wallet = reading.states.get(expected.wallet)
+  if (wallet === undefined || wallet.owner !== SYSTEM_PROGRAM || wallet.executable || wallet.data.length !== 0) return try refuse("Route fee payer is not a system wallet")
+  const source = holdings.get(route.source)
+  const destination = holdings.get(route.destination)
+  const sourceCovers = source === undefined
+    ? expected.nativeInput && created.has(route.source)
+    : source.wallet === expected.wallet && source.mint === expected.inputMint && source.account.owner === expected.inputProgram
+      && (expected.nativeInput || source.amount >= expected.amountIn) && initialized(source)
+  if (!sourceCovers) return try refuse("Route input holding does not cover the reviewed swap")
+  const destinationOwned = destination === undefined
+    ? created.has(route.destination)
+    : destination.wallet === expected.wallet && destination.mint === expected.outputMint && destination.account.owner === expected.outputProgram && initialized(destination)
+  if (!destinationOwned) return try refuse("Route output is not the fee wallet's admitted token account")
+  return {
+    source,
+    sourceAddress: route.source,
+    destination,
+    destinationAddress: route.destination,
+    observations: reading.observations,
+    minimumSlot: Math.max(minimumSlot, ...reading.observations.map((entry) => entry.slot)),
+    expected,
+  } satisfies ReviewedRoute
+}
+
+function unchanged(before: Holding, after: Holding) {
+  const [old, next] = [before.account.data, after.account.data]
+  return before.account.owner === after.account.owner && old.length === next.length && old.every((byte, index) => (index >= 64 && index < 72) || byte === next[index])
+}
+
+function owns(holding: Holding, program: string, wallet: string, mint: string) {
+  return holding.account.owner === program && holding.wallet === wallet && holding.mint === mint && initialized(holding)
+}
+
+export effect function checkRouteSimulation(review: ReviewedRoute, simulation: Simulation) {
+  const { expected } = review
+  if (!Number.isSafeInteger(simulation.slot) || simulation.slot < review.minimumSlot || simulation.accounts.length !== 2) return try refuse("Route simulation account evidence is incomplete or stale")
+  const [sourceAccount, destinationAccount] = simulation.accounts
+  if (sourceAccount === undefined || destinationAccount === undefined) return try refuse("Route simulation removed a wallet token account")
+  const source = try holdingOf(review.sourceAddress, sourceAccount)
+  const destination = try holdingOf(review.destinationAddress, destinationAccount)
+  if ((review.source !== undefined && !unchanged(review.source, source)) || (review.destination !== undefined && !unchanged(review.destination, destination)))
+    return try refuse("Route simulation changes a wallet token account's authority or layout")
+  if (!owns(destination, expected.outputProgram, expected.wallet, expected.outputMint)) return try refuse("Route simulation redirected the output")
+  for (const created of [review.source === undefined ? source : undefined, review.destination === undefined ? destination : undefined]) {
+    if (created !== undefined && (u32At(created.account.data, 72) !== 0 || u32At(created.account.data, 129) !== 0)) return try refuse("Route simulation delegated a new token account")
+  }
+  if (!owns(source, expected.inputProgram, expected.wallet, expected.inputMint)) return try refuse("Route simulation redirected the input")
+  const debit = (review.source?.amount ?? 0n) - source.amount
+  const credit = destination.amount - (review.destination?.amount ?? 0n)
+  if (debit !== (expected.nativeInput ? 0n : expected.amountIn) || credit < expected.minimumOut) return try refuse("Route simulation does not match the exact input and minimum output")
+}

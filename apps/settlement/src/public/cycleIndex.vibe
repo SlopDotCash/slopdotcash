@@ -1,0 +1,141 @@
+// spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"
+import { CycleIndex } from "../client/public.vibe"
+
+export error CycleIndexRefused { message: string }
+export error PublicationLocked { lock: string; message: string }
+export error PublicationUnrecovered { lock: string; staging: string; message: string }
+export error CycleIndexStale { message: string }
+
+export const cycleIndexSchemaVersion = "1"
+export const maxCycles = 240
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const indexName = "index.json"
+
+effect function refused(message: string) {
+  throw new CycleIndexRefused({ message })
+}
+
+effect function attempt<A, E, R>(operation: A!E!R, message: string) {
+  const value = operation catch effect () => {
+    return try refused(message)
+  }
+  return value
+}
+
+effect function infoOf(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.lstat(path) catch effect (error) => {
+    if (error.reason._tag === "NotFound") return undefined
+    return try refused(`${path} could not be read`)
+  }
+  return info
+}
+
+export effect function refuseCycleHistory(cyclesRoot: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const root = try infoOf(cyclesRoot)
+  if (root === undefined) return
+  if (root.type !== "Directory") return try refused("cycles root must be a real directory")
+  for (const name of [...(try attempt(fs.readDirectory(cyclesRoot), `${cyclesRoot} could not be read`))].sort()) {
+    if (name === "README.md") continue
+    const entry = try infoOf(files.join(cyclesRoot, name))
+    if (entry === undefined || entry.type !== "Directory") return try refused(`cycles/${name} is not a registered project directory`)
+    return try refused(`cycles/${name} holds a historical cycle, and historical cycle validation is not available to this publisher, so nothing is published`)
+  }
+}
+
+effect function utcValid(text: string) {
+  if (!exactUtc.test(text) || !Number.isFinite(Date.parse(text))) return false
+  return (try Effect.try({ try: () => new Date(text).toISOString(), catch: () => new CycleIndexRefused({ message: "cycle index.generatedAt is not a UTC timestamp" }) })) === text
+}
+
+export effect function validIndex(value: unknown) {
+  const index = Schema.decodeUnknownEffect(CycleIndex)(value, { onExcessProperty: "error" }) catch effect () => {
+    return try refused("cycle index has unexpected or missing fields")
+  }
+  if (!(try utcValid(index.generatedAt))) return try refused("cycle index.generatedAt is not a UTC timestamp")
+  if (index.cycles.length > maxCycles) return try refused("cycle limit exceeded")
+  if (index.cycles.some((entry) => Date.parse(entry.generatedAt) > Date.parse(index.generatedAt))) return try refused("cycle index predates one of its cycle entries")
+  const keys = index.cycles.map((entry) => `${entry.projectId}\u0000${entry.cycleId}`)
+  if (new Set(keys).size !== keys.length) return try refused("cycle index repeats a project cycle")
+  for (let position = 1; position < index.cycles.length; position += 1) {
+    const previous = index.cycles[position - 1]
+    const current = index.cycles[position]
+    if (previous !== undefined && current !== undefined && (previous.cycleId < current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) > 0)))
+      return try refused("cycle index is not canonically ordered")
+  }
+  return index
+}
+
+export effect function buildIndex(generatedAt: string) {
+  const index = { schemaVersion: cycleIndexSchemaVersion, generatedAt, cycles: [] } satisfies CycleIndex
+  try validIndex(index)
+  return index
+}
+
+export function indexText(index: CycleIndex) {
+  return `${JSON.stringify(index, null, 2)}\n`
+}
+
+effect function written(path: string, bytes: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  try attempt(fs.writeFile(path, bytes, { flag: "wx" }), `${path} could not be written`)
+}
+
+effect function staged(staging: string, index: CycleIndex) {
+  const files = try Path.Path
+  try written(files.join(staging, indexName), new TextEncoder().encode(indexText(index)))
+}
+
+effect function swapped(out: string, staging: string, lock: string) {
+  const fs = try FileSystem.FileSystem
+  const previous = `${staging}.previous`
+  const kept = (try infoOf(out)) !== undefined
+  if (kept) try attempt(fs.rename(out, previous), `${out} could not be set aside`)
+  const moved = try exit(fs.rename(staging, out))
+  if (Exit.isFailure(moved)) {
+    if (kept) {
+      const restored = try exit(fs.rename(previous, out))
+      if (Exit.isFailure(restored)) throw new PublicationUnrecovered({ lock, staging, message: `Cycle publication failed and recovery is incomplete. Preserve ${lock}, ${staging} and ${previous} for operator recovery` })
+    }
+    return try refused(`${out} could not be published`)
+  }
+  if (kept) try attempt(fs.remove(previous, { recursive: true }), `${previous} could not be removed`)
+}
+
+export effect function publishCycleIndex(out: string, index: CycleIndex) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const parent = files.dirname(out)
+  try attempt(fs.makeDirectory(parent, { recursive: true }), `${parent} could not be created`)
+  const lock = `${out}.publication-lock`
+  fs.makeDirectory(lock) catch effect (error) => {
+    if (error.reason._tag === "AlreadyExists") throw new PublicationLocked({ lock, message: `Cycle publication could not acquire ${lock}; let another publisher finish, or stop all publishers before recovering a retained guard` })
+    return try refused(`${lock} could not be created`)
+  }
+  const outcome = try exit(effect {
+    const staging = try attempt(fs.makeTempDirectory({ directory: parent, prefix: `${files.basename(out)}.staging-` }), `${parent} has no room for a staging directory`)
+    const done = try exit(effect {
+      try staged(staging, index)
+      try swapped(out, staging, lock)
+    })
+    if (Exit.isFailure(done) && !(Cause.squash(done.cause) instanceof PublicationUnrecovered)) try Effect.ignore(fs.remove(staging, { recursive: true, force: true }))
+    return try done
+  })
+  if (Exit.isFailure(outcome) && Cause.squash(outcome.cause) instanceof PublicationUnrecovered) return try outcome
+  try attempt(fs.remove(lock), `${lock} could not be released`)
+  return try outcome
+}
+
+export effect function checkCycleIndex(out: string, index: CycleIndex) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const stale = (message: string) => new CycleIndexStale({ message: `${message}; run the cycle-index publication` })
+  const text = fs.readFileString(files.join(out, indexName)) catch effect () => {
+    throw stale(`${files.join(out, indexName)} is missing`)
+  }
+  const parsed: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => stale("the published cycle index is not JSON") })
+  const published = try validIndex(parsed)
+  if (indexText({ ...published, generatedAt: index.generatedAt }) !== indexText(index)) throw stale("the published cycle index differs from the cycle history")
+}

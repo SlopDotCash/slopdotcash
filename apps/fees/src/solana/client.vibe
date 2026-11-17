@@ -1,0 +1,166 @@
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership"
+import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { type Account, type Commitment, type Signature, type TransactionMeta, SolanaRpc, address, base58Encode, base64Decode, base64Encode, isSignature, solanaRpc } from "@repo/platform/chain/solana"
+import { normalizedNativeDelta } from "@repo/settlement/kernels/budget"
+import { type Mint, readMint, readRefusalMessage, readTokenAccount } from "@repo/settlement/kernels/token2022"
+import { u64At, wideOf } from "./bytes.ts"
+import { ata, keyBytes, refuse, solanaNativeAsset, wrappedSol } from "./wire.vibe"
+
+module verified {
+  import { rentIncrease as increase, solanaNativeFee as nativeFee, spendableNative as spendable } from "../kernels/arithmetic.ts"
+  /** @throws {never} */
+  export function spendableNative(balance: bigint, reserve: bigint): bigint { return spendable(balance, reserve) }
+  /** @throws {never} */
+  export function rentIncrease(before: bigint, after: bigint): bigint { return increase(before, after) }
+  /** @throws {never} */
+  export function solanaNativeFee(fee: bigint, rent: bigint, before: bigint, after: bigint, principal: bigint): bigint { return nativeFee(fee, rent, before, after, principal) }
+}
+import { rentIncrease, solanaNativeFee, spendableNative } from verified
+
+export service FeeSolana {
+  readonly wallet: string
+  readonly raw: JsonRpc
+}
+
+export interface FeeSolanaOptions {
+  readonly wallet: string
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly genesis: string
+  readonly timeoutMs?: number
+}
+
+export const accountReadBytes = 8 * 1024 * 1024
+
+const RawAccount = Schema.Struct({ owner: Schema.String, lamports: Schema.Number, data: Schema.Array(Schema.String), executable: Schema.Boolean })
+const OwnedAccounts = Schema.Struct({ value: Schema.Array(Schema.Struct({ pubkey: Schema.String, account: RawAccount })) })
+const FeeReply = Schema.Struct({ context: Schema.Struct({ slot: Schema.Number }), value: Schema.NullOr(Schema.Number) })
+const SignedBlock = Schema.NullOr(Schema.Struct({ blockhash: Schema.String, signatures: Schema.Array(Schema.String) }))
+
+export function feeSolana(options: FeeSolanaOptions) {
+  const timeoutMs = options.timeoutMs ?? 15_000
+  return Layer.mergeAll(
+    solanaRpc({ urls: options.urls, genesis: options.genesis, timeoutMs, maxBytes: accountReadBytes }),
+    Layer.effect(FeeSolana, effect {
+      if (options.genesis === "") return try refuse("the Solana genesis hash is not pinned")
+      const raw = try jsonRpc({
+        urls: options.urls,
+        timeoutMs,
+        maxBytes: accountReadBytes,
+        identity: { method: "getGenesisHash", expected: options.genesis, read: (answer) => typeof answer === "string" ? answer : undefined },
+      })
+      return { wallet: options.wallet, raw }
+    }),
+  )
+}
+
+export effect function addressed(text: string) {
+  const key = address(text)
+  if (key === undefined) return try refuse("Invalid resolved Solana public key")
+  return key
+}
+
+export effect function mintOf(mint: string, account: Account | undefined) {
+  if (account === undefined) return try refuse("Mint account is missing")
+  const admitted = readMint({ program: account.owner, bytes: account.data, mint: try keyBytes(mint) })
+  if (admitted.kind === "Refused") return try refuse(readRefusalMessage(admitted.refusal))
+  return admitted
+}
+
+export effect function admittedMint(mint: string) {
+  return try mintOf(mint, try (try SolanaRpc).account(try addressed(mint), "finalized"))
+}
+
+export effect function admittedHolding(mint: Mint, program: string, bytes: Uint8Array) {
+  const admitted = readTokenAccount({ mint, program, bytes })
+  if (admitted.kind === "Refused") return try refuse(readRefusalMessage(admitted.refusal))
+  return admitted
+}
+
+export effect function walletLamports(commitment: Commitment) {
+  const solana = try FeeSolana
+  return (try (try SolanaRpc).account(try addressed(solana.wallet), commitment))?.lamports ?? 0n
+}
+
+export effect function walletBalance(token: string, reserve: bigint) {
+  const solana = try FeeSolana
+  if (token === solanaNativeAsset) return spendableNative(try walletLamports("finalized"), reserve)
+  const mint = try admittedMint(token)
+  const holding = try ata(token, solana.wallet, mint.program)
+  const owned = try solana.raw.call("getTokenAccountsByOwner", [solana.wallet, { mint: token }, { encoding: "base64", commitment: "finalized" }], OwnedAccounts)
+  const seen = new Set<string>()
+  let sum = 0n
+  for (const entry of owned.value) {
+    if (seen.has(entry.pubkey)) try refuse("Duplicate fee token account")
+    seen.add(entry.pubkey)
+    const [encoded, encoding] = entry.account.data
+    const bytes = encoding === "base64" && encoded !== undefined ? base64Decode(encoded) : undefined
+    if (bytes === undefined) return try refuse("Fee token holding data is not base64")
+    try admittedHolding(mint, entry.account.owner, bytes)
+    if (base58Encode(bytes.slice(0, 32)) !== token || base58Encode(bytes.slice(32, 64)) !== solana.wallet) try refuse("Fee token holding differs from admitted mint or wallet")
+    if (entry.pubkey === holding) sum += u64At(bytes, 64) ?? 0n
+  }
+  return sum
+}
+
+export interface NetworkFee { readonly slot: number; readonly fee: bigint }
+
+export effect function networkFee(message: Uint8Array) {
+  const solana = try FeeSolana
+  const reply = try solana.raw.call("getFeeForMessage", [base64Encode(message), { commitment: "confirmed" }], FeeReply)
+  if (reply.value === null || !Number.isSafeInteger(reply.value) || reply.value < 0 || !Number.isSafeInteger(reply.context.slot) || reply.context.slot < 0)
+    return try refuse("Solana native cost evidence must be an exact safe integer")
+  return { slot: reply.context.slot, fee: wideOf(reply.value) } satisfies NetworkFee
+}
+
+export effect function blockhashAnchor(blockhash: string, contextSlot: number) {
+  const solana = try FeeSolana
+  const from = Math.max(0, contextSlot - 512)
+  const slots = try solana.raw.call("getBlocks", [from, contextSlot, { commitment: "confirmed" }], Schema.Array(Schema.Number))
+  if (slots.length > 513 || slots.some((slot) => !Number.isSafeInteger(slot) || slot < from || slot > contextSlot)) return try refuse("Solana blockhash history is unavailable")
+  for (const slot of [...new Set(slots)].sort((a, b) => b - a)) {
+    const block = try (try SolanaRpc).block(slot, "confirmed")
+    if (block?.blockhash === blockhash) return slot
+  }
+  return try refuse("Signed Solana blockhash has no retained slot anchor")
+}
+
+export effect function signatureOfText(txId: string) {
+  if (!isSignature(txId)) return try refuse("the transaction identifier is not a Solana signature")
+  return txId satisfies Signature
+}
+
+export effect function signatureStatus(txId: string) {
+  const [status] = try (try SolanaRpc).signatureStatuses([try signatureOfText(txId)])
+  return status
+}
+
+export effect function finalizedBlockSignatures(slot: number) {
+  const solana = try FeeSolana
+  return try solana.raw.call("getBlock", [slot, { commitment: "finalized", transactionDetails: "signatures", rewards: false, maxSupportedTransactionVersion: 0 }], SignedBlock)
+}
+
+export effect function broadcastSolana(raw: Uint8Array) {
+  return try (try SolanaRpc).sendRaw(raw, { skipPreflight: true, maxRetries: 5 })
+}
+
+export effect function lamportDeltas(meta: TransactionMeta, keys: ReadonlyArray<string>) {
+  if (meta.preBalances.length !== keys.length || meta.postBalances.length !== keys.length) return try refuse("Finalized SOL balances are unavailable.")
+  return new Map(keys.map((key, index) => [key, normalizedNativeDelta(meta.preBalances[index] ?? 0n, meta.postBalances[index] ?? 0n, meta.fee, index === 0)] as const))
+}
+
+function wrappedAt(balances: TransactionMeta["preTokenBalances"], index: number) {
+  return balances.find((balance) => balance.accountIndex === index && balance.mint === wrappedSol)?.amount ?? 0n
+}
+
+export effect function nativeCost(meta: TransactionMeta, accounts: ReadonlyArray<number>, principal: bigint) {
+  let rent = 0n
+  for (const index of accounts) {
+    const before = (meta.preBalances[index] ?? 0n) - wrappedAt(meta.preTokenBalances, index)
+    const after = (meta.postBalances[index] ?? 0n) - wrappedAt(meta.postTokenBalances, index)
+    if (index >= meta.preBalances.length || index >= meta.postBalances.length || before < 0n || after < 0n) return try refuse("Solana native rent receipt is inconsistent")
+    rent += rentIncrease(before, after)
+  }
+  const [first, last] = [meta.preBalances[0], meta.postBalances[0]]
+  if (first === undefined || last === undefined) return try refuse("Solana native cost evidence must be an exact safe integer")
+  return solanaNativeFee(meta.fee, rent, first, last, principal)
+}

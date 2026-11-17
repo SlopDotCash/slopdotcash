@@ -1,0 +1,49 @@
+// spec/operations/intakeHealth.md, "A usable answer replaces the observation; anything else leaves it to expire"
+import { GitHub, type GitHubFailure, type TokenRefusal, github } from "@repo/platform/github"
+import type { GitHubAnswer, Skip } from "../../gen/operations__intakeHealth.effect.vibe"
+
+const intakeStatusPath = "/repos/SlopDotCash/slopdotcash/private-vulnerability-reporting"
+
+const intakeUserAgent = "slop-identity"
+
+const intakeLimitBytes = 64 * 1024
+
+schema IntakeStatus { readonly enabled: boolean }
+
+interface Verdict {
+  readonly answer: GitHubAnswer
+  readonly httpStatus?: number
+}
+
+function unusable(reason: Skip, httpStatus?: number): Verdict {
+  return { answer: { tag: "Unusable", reason }, ...httpStatus === undefined ? {} : { httpStatus } }
+}
+
+function verdictOf(error: GitHubFailure, answeredStatus: number | undefined): Verdict {
+  switch (error._tag) {
+    case "GitHubUnavailable": return error.status === undefined ? unusable("Unreachable") : unusable("Rejected", error.status)
+    case "RateLimited": return unusable("RateLimited", answeredStatus)
+    case "GitHubRefused": return unusable(error.status === 401 || error.status === 403 ? "Unauthorized" : "Rejected", error.status)
+    case "NotFound": return unusable("Rejected", 404)
+    case "GitHubMalformed": return unusable("Malformed")
+    default: {
+      const _exhaustive: never = error
+      return _exhaustive
+    }
+  }
+}
+
+function verdictFor(status: IntakeStatus): Verdict {
+  return { answer: status.enabled ? { tag: "ReportingEnabled" } : { tag: "ReportingDisabled" } }
+}
+
+export effect function intakeVerdict(token: Redacted.Redacted<string> | undefined, anonymousRetry: (refusal: TokenRefusal) => void!!) {
+  const answered: { status?: number } = {}
+  const client = HttpClient.tap(try HttpClient.HttpClient, (response) => sync(() => {
+    answered.status = response.status
+  }))
+  provide Layer.provide(github({ token, userAgent: intakeUserAgent, anonymousRetry }), Layer.succeed(HttpClient.HttpClient, client)) {
+    const read = Effect.map((try GitHub).json(intakeStatusPath, IntakeStatus, { limitBytes: intakeLimitBytes, followRenamed: false }), verdictFor)
+    return read catch (error) => verdictOf(error, answered.status)
+  }
+}

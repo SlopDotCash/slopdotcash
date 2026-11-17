@@ -1,0 +1,330 @@
+// spec/points/quotaRecovery.md, "Each new request spends the invocation budget once and each response is retained"; spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"
+import { HttpClientError } from "effect/http"
+import { boundedBytes } from "@repo/platform/browser"
+import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
+import { quotaRefusal } from "../../../gen/points__quotaRecovery.effect.vibe"
+import { Graphql, GraphqlUpstream, type JsonRecord, type Variables, commitStatisticsFailure, narrowedPageSize } from "../../ingestion/graphql.vibe"
+import { historicalDiscussionHasRateLimit, historicalDiscussionQuery } from "../../ingestion/historicalDiscussion.vibe"
+import { outcomeCommitLinesQuery } from "../../collect/merged/wire.vibe"
+import { replayed } from "../../ingestion/replayed.ts"
+import { QuotaRun, beginRead, failAttempt, hintOf, interrupted, observeReply, reuseRetained } from "../../quotaRecovery/run.vibe"
+import { digestOf, encoded } from "./inventory.vibe"
+
+export const githubApiOrigin = "https://api.github.com"
+export const feedOrigins: ReadonlyArray<string> = ["https://slopbot.slop.cash", "https://slop.cash"]
+export const evidenceLimitBytes = 64 * 1024 * 1024
+export const stopMessage = "Historical collection is interrupted; the pass drains and checkpoints"
+export const valueReferenceQuery = "query SlopValuePublicReference($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}} rateLimit{cost limit remaining resetAt}}"
+
+const retainedHeaders: ReadonlyArray<string> = ["content-type", "x-github-request-id", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "retry-after"]
+const requestFile = /^[a-f0-9]{64}\.json$/u
+const repositoryNodeId = /^(?:R_[A-Za-z0-9_-]+|[A-Za-z0-9+/]+=*)$/u
+
+export error EvidenceIntegrity { message: string }
+
+schema CachedResponse { readonly status: number; readonly headers: Readonly<Record<string, string>>; readonly bodyDigest: string }
+
+export interface EvidenceOptions {
+  readonly directory: string
+  readonly githubOrigin?: string
+}
+
+export service EvidenceCache {
+  readonly directory: string
+  readonly githubOrigin: string
+  beginPass(): void!!
+  allowRequests(allowed: boolean): void!!
+  requestsAllowed(): boolean!!
+  hits(): number!!
+  counted(key: string): void!!
+}
+
+function integrity(message: string) {
+  return new EvidenceIntegrity({ message })
+}
+
+function transportError(request: HttpClientRequest.HttpClientRequest, description: string) {
+  return new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description }) })
+}
+
+function objectOf(value: unknown): JsonRecord | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonRecord : undefined
+}
+
+effect function parsedJson(bytes: Uint8Array) {
+  const text = new TextDecoder().decode(bytes)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return value
+}
+
+function requestBody(request: HttpClientRequest.HttpClientRequest) {
+  return request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : ""
+}
+
+export function requestPath(directory: string, key: string) {
+  return `${directory}/requests/${key}.json`
+}
+
+export function objectPath(directory: string, digest: string) {
+  return `${directory}/objects/${digest}`
+}
+
+export effect function requestKey(url: string, method: string, body: string) {
+  return try digestOf({ url, method, body })
+}
+
+export effect function graphqlRequestKey(origin: string, document: string, variables: Variables) {
+  return try requestKey(`${origin}/graphql`, "POST", encoded({ query: document, variables }))
+}
+
+effect function directoryOf(path: string) {
+  return path.slice(0, path.lastIndexOf("/"))
+}
+
+export effect function atomicText(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  try orDie(fs.makeDirectory(try directoryOf(path), { recursive: true }))
+  const temporary = `${path}.tmp`
+  try orDie(fs.writeFileString(temporary, text))
+  try orDie(fs.rename(temporary, path))
+}
+
+export effect function atomicJson(path: string, value: unknown) {
+  try atomicText(path, `${encoded(value)}\n`)
+}
+
+export effect function readJson(path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(path) catch effect (error) => {
+    if (error.reason._tag === "NotFound") return undefined
+    return try Effect.die(error)
+  }
+  if (text === undefined) return undefined
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => integrity(`Retained evidence at ${path} is not JSON`) })
+  return value
+}
+
+export effect function immutableBytes(path: string, bytes: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  try orDie(fs.makeDirectory(try directoryOf(path), { recursive: true }))
+  const temporary = `${path}.${try randomId()}.tmp`
+  try Effect.ensuring(effect {
+    try orDie(fs.writeFile(temporary, bytes, { flag: "wx" }))
+    fs.link(temporary, path) catch effect (error) => {
+      if (error.reason._tag !== "AlreadyExists") return try Effect.die(error)
+      const existing = try orDie(fs.readFile(path))
+      if ((try sha256Hex(existing)) !== (try sha256Hex(bytes))) throw integrity("Immutable cache bytes changed")
+    }
+  }, orDie(fs.remove(temporary, { force: true })))
+}
+
+export effect function retainedKeys(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const names = fs.readDirectory(`${directory}/requests`) catch effect (error) => {
+    if (error.reason._tag === "NotFound") return [] as ReadonlyArray<string>
+    return try Effect.die(error)
+  }
+  return names.filter((name) => requestFile.test(name)).map((name) => name.slice(0, -5)).sort()
+}
+
+export effect function cachedAnswer(directory: string, key: string) {
+  const value = try readJson(requestPath(directory, key))
+  if (value === undefined) return undefined
+  const cached = Schema.decodeUnknownEffect(CachedResponse)(value) catch effect () => {
+    throw integrity("Cached response record is malformed")
+  }
+  const fs = try FileSystem.FileSystem
+  const bytes = try orDie(fs.readFile(objectPath(directory, cached.bodyDigest)))
+  if ((try sha256Hex(bytes)) !== cached.bodyDigest) throw integrity("Cached response digest mismatch")
+  return { ...cached, bytes }
+}
+
+export function evidenceCache(options: EvidenceOptions) {
+  return Layer.effect(EvidenceCache, effect {
+    const run = try Effect.context<QuotaRun>()
+    let allowed = true
+    let hits = 0
+    return {
+      directory: options.directory,
+      githubOrigin: (options.githubOrigin ?? githubApiOrigin).replace(/\/+$/u, ""),
+      beginPass: () => effect {
+        allowed = true
+        hits = 0
+      },
+      allowRequests: (next) => effect {
+        allowed = next
+      },
+      requestsAllowed: () => effect {
+        return allowed
+      },
+      hits: () => effect {
+        return hits
+      },
+      counted: (key) => effect {
+        hits += 1
+        try orDie(Effect.provide(reuseRetained(key), run))
+      },
+    } satisfies EvidenceCache.Shape
+  })
+}
+
+effect function canonicalRead(cache: EvidenceCache.Shape, url: URL, method: string, body: string) {
+  if (url.username !== "" || url.password !== "" || url.hash !== "") return false
+  if (url.origin === cache.githubOrigin) {
+    if (method === "GET") return true
+    if (method !== "POST" || url.pathname !== "/graphql") return false
+    const query = objectOf(try parsedJson(utf8(body)))?.query
+    return typeof query === "string" && !/\bmutation\b/u.test(query)
+  }
+  return feedOrigins.includes(url.origin) && method === "GET"
+}
+
+function safeCount(value: unknown, positive: boolean) {
+  return typeof value === "number" && Number.isSafeInteger(value) && (positive ? value > 0 : value >= 0)
+}
+
+export function confirmedMissingPublicReference(document: string, variables: Variables, envelope: JsonRecord | undefined) {
+  const data = objectOf(envelope?.data)
+  const repository = objectOf(data?.repository)
+  const rateLimit = objectOf(data?.rateLimit)
+  const errors = envelope?.errors
+  const only = Array.isArray(errors) && errors.length === 1 ? objectOf(errors[0]) : undefined
+  return document === valueReferenceQuery && repository !== undefined && rateLimit !== undefined
+    && safeCount(rateLimit.cost, false) && safeCount(rateLimit.limit, true) && safeCount(rateLimit.remaining, false)
+    && typeof rateLimit.remaining === "number" && typeof rateLimit.limit === "number" && rateLimit.remaining <= rateLimit.limit
+    && typeof rateLimit.resetAt === "string" && Number.isFinite(Date.parse(rateLimit.resetAt))
+    && safeCount(variables.number, true) && typeof variables.owner === "string" && typeof variables.name === "string"
+    && repository.isPrivate === false && typeof repository.id === "string" && repositoryNodeId.test(repository.id)
+    && typeof repository.nameWithOwner === "string" && repository.nameWithOwner.toLowerCase() === `${variables.owner}/${variables.name}`.toLowerCase()
+    && repository.issueOrPullRequest === null
+    && only !== undefined && only.type === "NOT_FOUND" && JSON.stringify(only.path) === '["repository","issueOrPullRequest"]'
+}
+
+effect function graphqlRequest(url: URL, method: string, body: string) {
+  if (method !== "POST" || url.pathname !== "/graphql") return undefined
+  const value = objectOf(try parsedJson(utf8(body)))
+  return value === undefined || typeof value.query !== "string" ? undefined : { query: value.query, variables: objectOf(value.variables) ?? {} }
+}
+
+effect function acceptable(status: number, url: URL, method: string, body: string, payload: unknown) {
+  const envelope = objectOf(payload)
+  const graphql = url.pathname === "/graphql"
+  const data = objectOf(envelope?.data)
+  const request = try graphqlRequest(url, method, body)
+  const statistics = request === undefined || envelope === undefined || request.query !== outcomeCommitLinesQuery ? undefined : commitStatisticsFailure(envelope, request.variables)
+  const missing = request !== undefined && confirmedMissingPublicReference(request.query, request.variables, envelope)
+  const complete = status >= 200 && status < 300 && typeof payload === "object" && payload !== null && (!graphql || data !== undefined)
+    && (request?.query !== historicalDiscussionQuery || historicalDiscussionHasRateLimit(data))
+  return {
+    acceptableSuccess: complete && (!envelope?.errors || missing),
+    recoverableStatistics: complete && statistics !== undefined,
+  }
+}
+
+effect function liveRead(base: HttpClient.HttpClient, cache: EvidenceCache.Shape, request: HttpClientRequest.HttpClientRequest, url: URL, method: string, body: string, key: string) {
+  const attempt = try beginRead(key)
+  if (attempt === undefined) throw transportError(request, stopMessage)
+  const exchange = effect {
+    const response = try base.execute(request)
+    const bytes = boundedBytes(response, evidenceLimitBytes, "Historical evidence") catch effect () => {
+      throw transportError(request, `Historical evidence response exceeds ${evidenceLimitBytes} bytes or is unreadable`)
+    }
+    return { status: response.status, headers: Object.fromEntries(Object.entries(response.headers)) as Readonly<Record<string, string>>, bytes }
+  }
+  const answer = Effect.onInterrupt(exchange, () => orDie(failAttempt(attempt))) catch effect (error) => {
+    try orDie(failAttempt(attempt))
+    throw error
+  }
+  const bodyDigest = try sha256Hex(answer.bytes)
+  const headers = Object.fromEntries(retainedHeaders.flatMap((name) => {
+    const value = answer.headers[name]
+    return value === undefined ? [] : [[name, value]]
+  })) as Readonly<Record<string, string>>
+  const now = try Clock.currentTimeMillis
+  try orDie(immutableBytes(objectPath(cache.directory, bodyDigest), answer.bytes))
+  try orDie(immutableBytes(`${cache.directory}/attempts/${now}-${attempt.number}-${key}-${try randomId()}.json`, utf8(encoded({ url: url.href, method, body, status: answer.status, headers, bodyDigest }))))
+  const payload = try parsedJson(answer.bytes)
+  const graphql = url.pathname === "/graphql"
+  const rateLimit = objectOf(objectOf(objectOf(payload)?.data)?.rateLimit)
+  const cost = typeof rateLimit?.cost === "number" ? rateLimit.cost : 0
+  const hint = hintOf({ status: answer.status, headers: answer.headers, graphql, payload }, now)
+  const accepted = try acceptable(answer.status, url, method, body, payload)
+  const state = try observeReply({ attempt, bodyDigest, cost, hint, ...accepted })
+  if (state.passSaved.includes(attempt.key)) try atomicJson(requestPath(cache.directory, key), { status: answer.status, headers, bodyDigest })
+  if (quotaRefusal(hint, state.now).kind !== "None") throw transportError(request, stopMessage)
+  return try orDie(Effect.try(() => replayed(request, answer.status, answer.headers, answer.bytes)))
+}
+
+effect function evidenceRead(base: HttpClient.HttpClient, request: HttpClientRequest.HttpClientRequest) {
+  const cache = try EvidenceCache
+  if (try interrupted()) throw transportError(request, stopMessage)
+  const url = new URL(request.url)
+  const method = request.method.toUpperCase()
+  const body = requestBody(request)
+  if (!(try canonicalRead(cache, url, method, body))) return try Effect.die(integrity("Only canonical read-only source requests are permitted"))
+  const key = try requestKey(url.href, method, body)
+  const cached = try orDie(cachedAnswer(cache.directory, key))
+  if (cached !== undefined) {
+    try cache.counted(key)
+    return try orDie(Effect.try(() => replayed(request, cached.status, cached.headers, cached.bytes)))
+  }
+  if (!(try cache.requestsAllowed())) return try Effect.die(integrity("Cached census is missing raw request evidence"))
+  return try liveRead(base, cache, request, url, method, body, key)
+}
+
+export const evidenceClient = Layer.effect(HttpClient.HttpClient, effect {
+  const base = try HttpClient.HttpClient
+  const services = try Effect.context<EvidenceCache | QuotaRun | FileSystem.FileSystem | Experimental.Crypto.Crypto>()
+  return HttpClient.transform(base, (_sent, request) => Effect.provide(evidenceRead(base, request), services))
+})
+
+effect function hasNodePartition(cache: EvidenceCache.Shape, document: string, variables: Variables): boolean!never!(EvidenceCache | FileSystem.FileSystem | Experimental.Crypto.Crypto) {
+  if ((try orDie(cachedAnswer(cache.directory, try graphqlRequestKey(cache.githubOrigin, document, variables)))) !== undefined) return true
+  const ids = variables.ids
+  if (!Array.isArray(ids) || ids.length < 2) return false
+  const middle = Math.ceil(ids.length / 2)
+  return (try hasNodePartition(cache, document, { ...variables, ids: ids.slice(0, middle) })) && (try hasNodePartition(cache, document, { ...variables, ids: ids.slice(middle) }))
+}
+
+effect function replayedGraphql(live: Graphql.Shape, document: string, variables: Variables, options: { readonly commitStatistics?: boolean }) {
+  const cache = try EvidenceCache
+  let candidate: Variables = variables
+  let key = try graphqlRequestKey(cache.githubOrigin, document, candidate)
+  let cached = try orDie(cachedAnswer(cache.directory, key))
+  while (cached === undefined) {
+    const narrower = narrowedPageSize(candidate)
+    if (narrower === undefined) {
+      const ids = variables.ids
+      const splitNodeBatch = Array.isArray(ids) && ids.length > 1
+      if (!(try cache.requestsAllowed()) || (splitNodeBatch && (try hasNodePartition(cache, document, variables)))) {
+        if (splitNodeBatch) throw new GraphqlUpstream({ message: "Cached node batch requires reconstruction from retained smaller batches", status: 503 })
+        return try Effect.die(integrity("Cached census is missing raw request evidence"))
+      }
+      return try live.execute(document, variables, options)
+    }
+    candidate = narrower
+    key = try graphqlRequestKey(cache.githubOrigin, document, candidate)
+    cached = try orDie(cachedAnswer(cache.directory, key))
+  }
+  const envelope = objectOf(try parsedJson(cached.bytes))
+  const data = objectOf(envelope?.data)
+  const statistics = envelope === undefined || document !== outcomeCommitLinesQuery ? undefined : commitStatisticsFailure(envelope, candidate)
+  const complete = envelope !== undefined && data !== undefined && (!envelope.errors || statistics !== undefined || confirmedMissingPublicReference(document, candidate, envelope))
+    && (document !== historicalDiscussionQuery || historicalDiscussionHasRateLimit(data))
+  if (!complete || data === undefined) return try Effect.die(integrity("Cached GraphQL response is incomplete"))
+  try cache.counted(key)
+  if (statistics !== undefined) throw statistics
+  return data
+}
+
+export const cachedGraphql = Layer.effect(Graphql, effect {
+  const live = try Graphql
+  const services = try Effect.context<EvidenceCache | QuotaRun | FileSystem.FileSystem | Experimental.Crypto.Crypto>()
+  return {
+    execute: (document, variables = {}, options = {}) => Effect.provide(replayedGraphql(live, document, variables, options), services),
+    compareCommitPage: live.compareCommitPage,
+    ensureBudget: live.ensureBudget,
+    requestCount: live.requestCount,
+    rateLimit: live.rateLimit,
+  } satisfies Graphql.Shape
+})

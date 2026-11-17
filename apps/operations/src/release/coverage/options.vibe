@@ -1,0 +1,38 @@
+// spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Source-bound receipts satisfy only the lanes they actually ran"
+import { coverage } from "../../../gen/operations__releaseCoverage.effect.vibe"
+import { type Environment, coverageRequest } from "../../../gen/operations__release.effect.vibe"
+import type { RunFacts } from "../run/facts.vibe"
+import { type Run, startRun } from "../run/run.vibe"
+
+export error OutputUnwritable { path: string }
+
+export effect function writeOutputs(values: Readonly<Record<string, string | number | boolean>>) {
+  const lines = Object.entries(values).map(([key, value]) => `${key}=${String(value)}\n`).join("")
+  try Console.log(lines.trimEnd())
+  const path = try Config.withDefault(Config.String("GITHUB_OUTPUT"), "")
+  if (path === "") return
+  const fs = try FileSystem.FileSystem
+  fs.writeFileString(path, lines, { flag: "a" }) catch effect () => {
+    throw new OutputUnwritable({ path })
+  }
+}
+
+export effect function selectCoverage(run: Run, facts: RunFacts) {
+  if (facts.ref.kind !== "WorkflowDispatch") return
+  try run.send({ type: "selectManualCoverage", skipProofs: facts.options.skipProofs, skipBrowserTests: facts.options.skipBrowserTests })
+}
+
+export effect function releaseCoverage(facts: RunFacts, environment: Environment) {
+  const run = try startRun(environment, facts.by)
+  try run.send({ type: "configure", environment, ref: facts.ref })
+  try selectCoverage(run, facts)
+  const checks = coverage({ ...coverageRequest(try run.state()), usePublishedData: facts.options.usePublishedData })
+  return {
+    eligible: checks.eligible,
+    state_models: checks.stateModels,
+    static_proofs: checks.staticProofs,
+    browser_smoke: checks.browserSmoke,
+    browser_complete: checks.browserComplete,
+    common: checks.common,
+  }
+}

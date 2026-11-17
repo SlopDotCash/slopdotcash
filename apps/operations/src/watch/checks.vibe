@@ -1,0 +1,122 @@
+// spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { boundedBytes } from "@repo/platform/browser"
+import { millisOf } from "@repo/platform/clock"
+import { type Health, type Observation, initial } from "../../gen/operations__intakeHealth.effect.vibe"
+import { healthState, watchHealth } from "../intakeHealth/renewal.vibe"
+import { type CheckResult, type RegisteredVault, evaluateVault, fieldOf, registeredVaults, vaultLabel } from "./registry.vibe"
+
+export type { CheckResult } from "./registry.vibe"
+
+const siteOrigin = "https://slop.cash"
+const slopbotHealthUrl = "https://slopbot.slop.cash/health"
+const identityProbeUrl = "https://identity.slop.cash/v1/oauth/authorize"
+const intakeStatusUrl = "https://api.slop.cash/api/v1/private-request-intake"
+
+const productionTimeoutMs = 20_000
+const intakeTimeoutMs = 30_000
+const productionBodyBytes = 4 * 1024 * 1024
+const intakeBodyBytes = 64 * 1024
+
+type Failed = { readonly ok: false; readonly detail: string }
+
+type Reached = Failed | { readonly ok: true; readonly detail: string; readonly response: HttpClientResponse.HttpClientResponse }
+
+type Read = Failed | { readonly ok: true; readonly detail: string; readonly status: number; readonly body: unknown }
+
+function timedOut(timeoutMs: number): Failed {
+  return { ok: false, detail: `timed out after ${timeoutMs} ms` }
+}
+
+effect function contacted(url: string, expectedStatus?: number) {
+  const started = try Clock.currentTimeMillis
+  const client = try HttpClient.HttpClient
+  const sent = provideService(client.execute(HttpClientRequest.get(url)), FetchHttpClient.RequestInit, { redirect: "error" })
+  const response = sent catch () => undefined
+  if (response === undefined) return { ok: false, detail: "request failed" } satisfies Reached
+  const detail = `HTTP ${response.status} (${(try Clock.currentTimeMillis) - started} ms)`
+  const ok = expectedStatus === undefined ? response.status >= 200 && response.status <= 299 : response.status === expectedStatus
+  return (ok ? { ok: true, detail, response } : { ok: false, detail }) satisfies Reached
+}
+
+effect function reached(url: string, timeoutMs: number) {
+  return timeout(contacted(url), Duration.millis(timeoutMs)) catch () => timedOut(timeoutMs)
+}
+
+effect function answeredJson(url: string, limitBytes: number, expectedStatus?: number) {
+  const answer = try contacted(url, expectedStatus)
+  if (!answer.ok) return answer satisfies Read
+  const bytes = boundedBytes(answer.response, limitBytes, url) catch (error) => error._tag
+  if (bytes === "BodyTooLarge") return { ok: false, detail: `${answer.detail}, body exceeds ${limitBytes} bytes` } satisfies Read
+  const body: unknown = bytes === "BodyUnreadable" ? undefined : Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+  if (body === undefined) return { ok: false, detail: `${answer.detail}, invalid JSON` } satisfies Read
+  return { ok: true, detail: answer.detail, status: answer.response.status, body } satisfies Read
+}
+
+effect function readJson(url: string, timeoutMs: number, limitBytes: number, expectedStatus?: number) {
+  return timeout(answeredJson(url, limitBytes, expectedStatus), Duration.millis(timeoutMs)) catch () => timedOut(timeoutMs)
+}
+
+effect function vaultChecks(vaults: ReadonlyArray<RegisteredVault>) {
+  const answers = new Map<string, Read>()
+  const results: CheckResult[] = []
+  for (const expected of vaults) {
+    let answer = answers.get(expected.projectId)
+    if (answer === undefined) {
+      answer = try readJson(`${siteOrigin}/api/v1/payments/projects/${encodeURIComponent(expected.projectId)}/vault`, productionTimeoutMs, productionBodyBytes)
+      answers.set(expected.projectId, answer)
+    }
+    results.push(answer.ok ? evaluateVault(expected, answer.body, try Clock.currentTimeMillis) : { ok: false, check: vaultLabel(expected), detail: answer.detail })
+  }
+  return results
+}
+
+export effect function productionWatch() {
+  const results: CheckResult[] = []
+  const home = try reached(`${siteOrigin}/`, productionTimeoutMs)
+  results.push({ ok: home.ok, check: "site home", detail: home.detail })
+  const identity = try readJson(identityProbeUrl, productionTimeoutMs, productionBodyBytes, 400)
+  results.push(identity.ok && fieldOf(identity.body, "error") !== "invalid_request"
+    ? { ok: false, check: "identity sign-in", detail: "identity did not return its invalid-link refusal" }
+    : { ok: identity.ok, check: "identity sign-in", detail: identity.detail })
+  const slopbot = try readJson(slopbotHealthUrl, productionTimeoutMs, productionBodyBytes)
+  results.push(slopbot.ok && fieldOf(slopbot.body, "ok") !== true
+    ? { ok: false, check: "slopbot health", detail: "health body is not ok" }
+    : { ok: slopbot.ok, check: "slopbot health", detail: slopbot.detail })
+  const registry = try readJson(`${siteOrigin}/api/v1/projects`, productionTimeoutMs, productionBodyBytes)
+  if (!registry.ok) return [...results, { ok: false, check: "registry api", detail: registry.detail }]
+  const registered = registeredVaults(registry.body)
+  if ("error" in registered) return [...results, { ok: false, check: "registry api", detail: registered.error }]
+  results.push({ ok: true, check: "registry api", detail: `${registry.detail}, ${registered.vaults.length} registered vaults` })
+  return [...results, ...try vaultChecks(registered.vaults)]
+}
+
+function publishedObservation(body: unknown): Observation {
+  const enabled = fieldOf(body, "enabled")
+  const verifiedAt = fieldOf(body, "verifiedAt")
+  const millis = typeof verifiedAt === "string" ? millisOf(verifiedAt) : Number.NaN
+  if (typeof enabled !== "boolean" || !Number.isSafeInteger(millis)) return { tag: "NoObservation" }
+  return { tag: "Observed", enabled, verifiedAt: millis }
+}
+
+const intakeCheck = "private request intake"
+
+effect function watchedHealth(health: Health) {
+  provide healthState(health) {
+    return try watchHealth("HealthWatch")
+  }
+}
+
+export effect function intakeWatch() {
+  const answer = try readJson(intakeStatusUrl, intakeTimeoutMs, intakeBodyBytes, 200)
+  if (!answer.ok) {
+    return [{ ok: false, check: intakeCheck, detail: `Optional trace intake is unavailable (${answer.detail}). GitHub contribution remains open. The slop-identity Worker renews the observation hourly through slop-notify.` }] satisfies ReadonlyArray<CheckResult>
+  }
+  const observation = publishedObservation(answer.body)
+  const health: Health = { ...initial, clock: try Clock.currentTimeMillis, observation }
+  const watched = try watchedHealth(health)
+  if (watched.alerts === health.alerts) return [{ ok: true, check: intakeCheck, detail: answer.detail }] satisfies ReadonlyArray<CheckResult>
+  const detail = observation.tag === "Observed" && observation.enabled
+    ? "Optional trace intake observation is older than three hours; the hourly Worker renewal is not landing."
+    : "Optional trace intake is not enabled; GitHub contribution remains open."
+  return [{ ok: false, check: intakeCheck, detail }] satisfies ReadonlyArray<CheckResult>
+}

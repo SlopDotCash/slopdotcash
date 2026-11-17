@@ -1,0 +1,361 @@
+// spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"
+import { type AnyRoute, type Refusal, route } from "@repo/platform/route"
+import { getPaymentsMe } from "./refusals.vibe"
+import { PaymentChain } from "./vault.vibe"
+
+export schema PaymentAsset {
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+}
+
+export schema PublicVaultPayment {
+  readonly id: string
+  readonly projectId: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly contributionMonth: string | null
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly netBase: string
+  readonly transactionId: string
+  readonly indexedAt: string
+}
+
+export schema PublicVaultPaymentPage {
+  readonly payments: ReadonlyArray<PublicVaultPayment>
+  readonly through: number
+  readonly next: number | null
+  readonly total: number
+}
+
+export schema DirectTransfer {
+  readonly projectId: string
+  readonly contributionMonth: string
+  readonly githubUserId: string
+  readonly login: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly recipient: string
+  readonly amountMicro: string
+  readonly transactionId: string
+  readonly blockTime: string
+}
+
+export schema DirectTransferPage {
+  readonly transfers: ReadonlyArray<DirectTransfer>
+  readonly totalMicro: string
+  readonly through: number
+  readonly next: number | null
+  readonly total: number
+}
+
+export schema DirectTransferList {
+  readonly transfers: ReadonlyArray<DirectTransfer>
+  readonly totalMicro: string
+}
+
+export schema DirectTransfers = DirectTransferPage | DirectTransferList
+
+export schema ReceivedProject {
+  readonly projectId: string
+  readonly usdMicro: string
+}
+
+export schema OtherAsset {
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly netBase: string
+}
+
+export schema ReceivedContributor {
+  readonly githubUserId: string
+  readonly login: string | null
+  readonly usdMicro: string
+  readonly directMicro: string
+  readonly vaultUsdMicro: string
+  readonly directTransfers: number
+  readonly vaultPayments: number
+  readonly projects: ReadonlyArray<ReceivedProject>
+  readonly otherAssets: ReadonlyArray<OtherAsset>
+}
+
+export schema ReceivedSums {
+  readonly usdMicro: string
+  readonly directMicro: string
+  readonly vaultUsdMicro: string
+  readonly directTransfers: number
+  readonly vaultPayments: number
+  readonly contributors: number
+}
+
+export schema ReceivedTotals {
+  readonly schemaVersion: "1"
+  readonly contributors: ReadonlyArray<ReceivedContributor>
+  readonly totals: ReceivedSums
+  readonly generatedAt: string
+}
+
+export schema AccountWallet {
+  readonly chain: PaymentChain
+  readonly claimId: string
+  readonly address: string
+  readonly authorized: boolean
+  readonly firstAuthorizedAt: string | null
+}
+
+export schema DeliveryState = "needs_wallet" | "ready" | "submitted" | "held" | "paid"
+
+export schema AccountPayment {
+  readonly id: string
+  readonly vault: string
+  readonly projectId: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly state: "reserved" | "paid"
+  readonly transactionId: string | null
+  readonly submittedTransactionId: string | null
+  readonly deliveryState: DeliveryState
+  readonly netBase: string
+}
+
+export schema UnreservedAwardState = "underfunded" | "awaiting-reservation" | "conflict"
+
+export schema AccountMonthlyAward {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly state: UnreservedAwardState
+  readonly chain: PaymentChain
+}
+
+export schema AccountBalance {
+  readonly chain: PaymentChain
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly netBase: string
+}
+
+export schema WalletObservation {
+  readonly chain: PaymentChain
+  readonly address: string
+  readonly proofLevel: "profile_readme"
+  readonly sourceUrl: string
+  readonly observedAt: string
+}
+
+export schema PaymentsAccount {
+  readonly githubUserId: string
+  readonly wallets: ReadonlyArray<AccountWallet>
+  readonly payments: ReadonlyArray<AccountPayment>
+  readonly monthlyAwards: ReadonlyArray<AccountMonthlyAward>
+  readonly balances: ReadonlyArray<AccountBalance>
+  readonly directTransfers: ReadonlyArray<DirectTransfer>
+  readonly directTransfersPaged?: true
+  readonly walletObservations: ReadonlyArray<WalletObservation>
+}
+
+export schema MonthStart {
+  readonly period: string
+  readonly freeBalance: string
+  readonly totalGrossWithdrawn: string
+  readonly blockTime: string
+}
+
+export schema FundedVault {
+  readonly network: string
+  readonly vault: string
+  readonly freeBalance: string | null
+  readonly totalGrossWithdrawn: string
+  readonly blockTime: string
+  readonly observedAt: string
+  readonly monthStarts: ReadonlyArray<MonthStart>
+}
+
+export schema ProjectFunding {
+  readonly projectId: string
+  readonly vaults: ReadonlyArray<FundedVault>
+}
+
+export schema PoolFunding {
+  readonly schema: "slop-pool-funding-v1"
+  readonly projects: ReadonlyArray<ProjectFunding>
+}
+
+export schema CycleFileReference {
+  readonly sha256: string
+  readonly url: string
+}
+
+export schema CycleMoneyLine {
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+}
+
+export schema CycleMoneyLines {
+  readonly sharedPool: CycleMoneyLine
+  readonly reviewBudget: CycleMoneyLine
+}
+
+export schema FundingBasis {
+  readonly cycleId: string
+  readonly instrumentId: null
+  readonly fundingState: "committed" | "pledged"
+  readonly committedMinor: string
+  readonly monthlyCapMinor: string
+}
+
+export schema CycleReward {
+  readonly fundingBasis?: FundingBasis
+  readonly carriedMinor?: string
+  readonly reviewBudgetCapMinor?: string
+  readonly currency: "USDC" | null
+  readonly capMinor: string
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+  readonly feeMinor: string
+  readonly sharePartsPerMillion: number | null
+  readonly lines?: CycleMoneyLines
+}
+
+export schema ReadmeWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceCommit: string
+  readonly sourceUrl: string
+}
+
+export schema ClaimWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceActorId: string
+  readonly sourceClaimId: string
+  readonly sourceRecordSha256: string
+  readonly sourceUrl: string
+}
+
+export schema IssueWalletProof {
+  readonly address: string
+  readonly chain: "base" | "solana"
+  readonly observedAt: string
+  readonly sourceActorId: string
+  readonly sourceBodySha256: string
+  readonly sourceIssueId: string
+  readonly sourceIssueNumber: number
+  readonly sourceUpdatedAt: string
+  readonly sourceUrl: string
+}
+
+export schema CycleWalletProof = ReadmeWalletProof | ClaimWalletProof | IssueWalletProof
+
+export schema CycleActor {
+  readonly id: string
+  readonly login: string
+}
+
+export schema CycleContributorState = "approved" | "excluded" | "held" | "held-below-minimum" | "proposed" | "unclaimed" | "external-share" | "paid"
+
+export schema CycleContributor {
+  readonly actor: CycleActor
+  readonly score: number
+  readonly scoreThirds?: number
+  readonly state: CycleContributorState
+  readonly suggestedMinor: string
+  readonly approvedMinor: string
+  readonly paidMinor: string
+  readonly sharePartsPerMillion: number | null
+  readonly wallet: CycleWalletProof | null
+  readonly lines?: CycleMoneyLines
+}
+
+export schema CycleFiles {
+  readonly sourceSnapshot: CycleFileReference
+  readonly proposal: CycleFileReference
+  readonly allocation: CycleFileReference | null
+  readonly executionPlan: CycleFileReference | null
+  readonly settlement: CycleFileReference | null
+  readonly windup: CycleFileReference | null
+}
+
+export schema CycleWindow {
+  readonly from: string
+  readonly to: string
+}
+
+export schema CycleState = "closed-no-awards" | "external-provisional" | "paid" | "payment-ready" | "review" | "settlement-planned" | "wound-up"
+
+export schema CycleIndexEntry {
+  readonly projectId: string
+  readonly cycleId: string
+  readonly kind: "external-prize-share" | "monthly-pool"
+  readonly state: CycleState
+  readonly generatedAt: string
+  readonly contributionWindow: CycleWindow
+  readonly reviewEndsAt: string | null
+  readonly approvedAt: string | null
+  readonly settledAt: string | null
+  readonly reward: CycleReward
+  readonly contributors: ReadonlyArray<CycleContributor>
+  readonly files: CycleFiles
+}
+
+export schema CycleIndex {
+  readonly schemaVersion: "1"
+  readonly generatedAt: string
+  readonly cycles: ReadonlyArray<CycleIndexEntry>
+}
+
+export const cycleIndexUrl = "/data/cycles/index.json"
+
+function row(entry: { readonly status: number; readonly error: string; readonly message?: string }): Refusal {
+  return { status: entry.status, code: entry.error, message: entry.message ?? "" }
+}
+
+const session = getPaymentsMe
+
+export const paymentsMe = route({
+  method: "GET",
+  path: "/api/v1/payments/me",
+  access: "session",
+  limitKib: 1,
+  request: undefined,
+  answer: PaymentsAccount,
+  rejected: "rejected",
+  cache: "private",
+  unauthenticated: row(session.notSignedIn),
+  sessionExpired: row(session.sessionExpired),
+  actorMismatch: row(session.actorChangedYourAccountChangedReload),
+})
+
+export const receivedTotals = route({ method: "GET", path: "/api/v1/payments/received", access: "public", limitKib: 1, request: undefined, answer: ReceivedTotals, rejected: "rejected", cache: { browserSeconds: 60, edgeSeconds: 60, staleSeconds: 600 } })
+
+export const vaultPayments = route({ method: "GET", path: "/api/v1/payments/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+
+export const projectVaultPayments = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+
+export const actorVaultPayments = route({ method: "GET", path: "/api/v1/payments/actors/:id/vault-payments", access: "public", limitKib: 1, request: undefined, answer: PublicVaultPaymentPage, rejected: "rejected", cache: "private" })
+
+export const projectDirectTransfers = route({ method: "GET", path: "/api/v1/payments/projects/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private" })
+
+export const actorDirectTransfers = route({ method: "GET", path: "/api/v1/payments/actors/:id/direct-transfers", access: "public", limitKib: 1, request: undefined, answer: DirectTransfers, rejected: "rejected", cache: "private" })
+
+export const poolFunding = route({ method: "GET", path: "/api/v1/pool-funding", access: "public", limitKib: 1, request: undefined, answer: PoolFunding, rejected: "rejected", cache: { browserSeconds: 60, edgeSeconds: 60 } })
+
+export const directHistoryHeader = "x-slop-direct-history"
+
+export const publicApi: ReadonlyArray<AnyRoute> = [paymentsMe, receivedTotals, vaultPayments, projectVaultPayments, actorVaultPayments, projectDirectTransfers, actorDirectTransfers, poolFunding]

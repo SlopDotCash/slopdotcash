@@ -1,0 +1,68 @@
+// spec/points/journal.md, "One verified accepted source creates one first revision per key"; spec/points/journal.md, "A source re-scored by the ingestion producer appends a reassessment"
+import { sha256Hex } from "@repo/platform/crypto"
+import { millisOf } from "@repo/platform/clock"
+import { ScoreEvent, scoreV2EffectiveAt } from "../client/snapshot/schema.vibe"
+import type { Revision as Row } from "../kernels/records/canonical.ts"
+import { type Repositories, type Store, advanceTo, projectOf } from "./ledger.vibe"
+import { commit, flush, sameAward } from "./rows.vibe"
+import { type Credited, UnregisteredRepository, awardFor, creditAward } from "./snapshot.vibe"
+
+export error RetainedEventInvalid { position: number }
+
+const decodeEvent = Schema.decodeUnknownEffect(ScoreEvent)
+
+export function ledgerWorkUnitId(projectId: string, event: ScoreEvent) {
+  return event.workUnitId ?? `wu_${projectId}_${event.source.id.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`
+}
+
+export effect function retainedEvents(reviewed: ReadonlyArray<unknown>) {
+  const events: ScoreEvent[] = []
+  for (const [position, raw] of reviewed.entries()) {
+    const event = decodeEvent(raw, { onExcessProperty: "error" }) catch effect () => {
+      throw new RetainedEventInvalid({ position })
+    }
+    events.push(event)
+  }
+  return events
+}
+
+export effect function retainedAwards(repositories: Repositories, events: ReadonlyArray<ScoreEvent>) {
+  const awards: Credited[] = []
+  for (const event of events) {
+    const projectId = projectOf(repositories, event.repository)
+    if (projectId === undefined) throw new UnregisteredRepository({ repository: event.repository })
+    const workUnitId = millisOf(event.occurredAt) < millisOf(scoreV2EffectiveAt) ? event.workUnitId ?? event.id : ledgerWorkUnitId(projectId, event)
+    awards.push(try awardFor(event, repositories, workUnitId))
+  }
+  return awards
+}
+
+export effect function retainedDigest(reviewed: ReadonlyArray<unknown>) {
+  return try sha256Hex(JSON.stringify(reviewed))
+}
+
+export effect function applyRetainedReviews(store: Store, repositories: Repositories, reviewed: ReadonlyArray<unknown>, recordedAt: string) {
+  const digest = try retainedDigest(reviewed)
+  try advanceTo(store, recordedAt)
+  const events = try retainedEvents(reviewed)
+  const covered = new Set(store.coverage.map((entry) => entry.digest))
+  const changes: Row[] = []
+  const confirmations: Credited[] = []
+  const recorded = { digest, recordedAt, rule: "ScoreV2" as const, projectCollected: true }
+  for (const item of try retainedAwards(repositories, events.filter((event) => event.category !== "evaluated-contribution"))) {
+    const prior = store.latest.get(item.award.key)
+    if (prior !== undefined && sameAward(prior.award, item.award)) {
+      if (item.award.amount > 0 && item.award.category === "substantive-review" && covered.has(prior.sourceDigest)) confirmations.push(item)
+      continue
+    }
+    try commit(store, changes, try creditAward(store, repositories, item, { ...recorded, reason: "Retained review history records this award." }))
+  }
+  flush(store, changes)
+  const confirmed: Row[] = []
+  for (const item of [...confirmations].sort((left, right) => left.award.key.localeCompare(right.award.key))) {
+    try commit(store, confirmed, try creditAward(store, repositories, item, { ...recorded, reason: "Retained review history confirms this award.", confirmation: true }))
+  }
+  flush(store, confirmed)
+  store.generatedAt = recordedAt
+  return digest
+}

@@ -1,0 +1,97 @@
+// spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"
+import { sha256Hex } from "@repo/platform/crypto"
+import { BundleRefused, FileRecord, type Bounds, canonicalJson, checkedRecords, digestPattern, inventory } from "./inventory.vibe"
+
+export const releaseManifestName = "release-manifest.json"
+export const collectionName = "collection.json"
+
+export const releaseBounds: Bounds = { directories: 512, files: 2_048, fileBytes: 25 * 1024 * 1024, totalBytes: 512 * 1024 * 1024 }
+
+const reserved: ReadonlySet<string> = new Set([releaseManifestName])
+const revision = /^[0-9a-f]{40}$/u
+
+export schema EnvironmentName = "production" | "staging"
+
+export schema ReleaseManifest {
+  readonly schemaVersion: 1
+  readonly sourceSha: string
+  readonly environment: EnvironmentName
+  readonly files: ReadonlyArray<FileRecord>
+}
+
+export schema CollectionKind = "fresh" | "retained"
+
+export schema Collection {
+  readonly schemaVersion: 1
+  readonly environment: EnvironmentName
+  readonly kind: CollectionKind
+  readonly registrySha256: string
+  readonly githubSha256: string
+  readonly recordedAt: string
+}
+
+export interface VerifiedBundle {
+  readonly manifest: ReleaseManifest
+  readonly manifestSha256: string
+}
+
+effect function decodedJson<S extends Schema.Top>(schema: S, bytes: Uint8Array, label: string) {
+  const text = new TextDecoder().decode(bytes)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new BundleRefused({ message: `${label} is not JSON` }) })
+  const decoded = Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new BundleRefused({ message: `${label} has an invalid schema` })
+  }
+  if (canonicalJson(decoded) !== text) throw new BundleRefused({ message: `${label} is not canonical JSON` })
+  return decoded
+}
+
+effect function readBytes(path: string, label: string) {
+  const fs = try FileSystem.FileSystem
+  return fs.readFile(path) catch effect () => {
+    throw new BundleRefused({ message: `${label} is unreadable` })
+  }
+}
+
+effect function written(path: string, text: string, label: string) {
+  const fs = try FileSystem.FileSystem
+  fs.writeFileString(path, text, { mode: 0o644 }) catch effect () => {
+    throw new BundleRefused({ message: `${label} could not be written` })
+  }
+}
+
+export effect function createReleaseManifest(bundle: string, sourceSha: string, environment: EnvironmentName) {
+  const files = try Path.Path
+  if (!revision.test(sourceSha)) throw new BundleRefused({ message: "release manifest needs the full tested source SHA" })
+  const records = try inventory(bundle, releaseBounds, reserved)
+  if (!records.some((record) => record.path === collectionName)) throw new BundleRefused({ message: `the bundle has no ${collectionName}` })
+  const issue = checkedRecords(records, releaseBounds, reserved, "release manifest")
+  if (issue !== undefined) throw new BundleRefused({ message: issue })
+  const manifest = { schemaVersion: 1, sourceSha, environment, files: records } satisfies ReleaseManifest
+  const text = canonicalJson(manifest)
+  try written(files.join(bundle, releaseManifestName), text, "release manifest")
+  return { manifest, manifestSha256: try sha256Hex(text) } satisfies VerifiedBundle
+}
+
+export effect function verifyBundle(bundle: string) {
+  const files = try Path.Path
+  const bytes = try readBytes(files.join(bundle, releaseManifestName), "release manifest")
+  const manifest = try decodedJson(ReleaseManifest, bytes, "release manifest")
+  if (!revision.test(manifest.sourceSha)) throw new BundleRefused({ message: "release manifest names no full source SHA" })
+  const issue = checkedRecords(manifest.files, releaseBounds, reserved, "release manifest")
+  if (issue !== undefined) throw new BundleRefused({ message: issue })
+  const current = try inventory(bundle, releaseBounds, reserved)
+  if (JSON.stringify(current) !== JSON.stringify(manifest.files)) throw new BundleRefused({ message: "release manifest does not match the downloaded bundle" })
+  return { manifest, manifestSha256: try sha256Hex(bytes) } satisfies VerifiedBundle
+}
+
+export effect function readCollection(bundle: string) {
+  const files = try Path.Path
+  const collection = try decodedJson(Collection, try readBytes(files.join(bundle, collectionName), "collection record"), "collection record")
+  if (!digestPattern.test(collection.registrySha256) || !digestPattern.test(collection.githubSha256)) throw new BundleRefused({ message: "collection record has an invalid digest" })
+  return collection
+}
+
+export effect function writeCollection(bundle: string, collection: Collection) {
+  const files = try Path.Path
+  try written(files.join(bundle, collectionName), canonicalJson(collection), "collection record")
+}

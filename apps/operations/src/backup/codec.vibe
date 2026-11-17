@@ -1,0 +1,166 @@
+// spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+import { type Backup, type BackupPhase, type EvidenceObject, decodeState } from "../../gen/operations__backup.effect.vibe"
+import { dayNumber } from "./days.ts"
+
+export const sha256Pattern = /^[a-f0-9]{64}$/u
+export const pageObjects = 32
+export const cleanupRows = 16
+
+export schema StartReceipt { day: string; startedAt: string }
+export schema Copy { key: string; backupKey: string; sha256: string; sizeBytes: number }
+export schema PageReceipt { previous: string | null; cursor: string | null; next: string | null; objects: ReadonlyArray<Copy> }
+export schema CompleteReceipt { day: string; startedAt: string; pages: number; lastPageSha256: string; objects: number; bytes: number }
+export schema RetirementBackup {
+  schemaVersion: "slop-evidence-retirement-backup-v1"
+  day: string
+  snapshotSha256: string
+  generationId: string
+  targetKey: string
+  partIndex: number
+  sha256: string
+  sizeBytes: number
+  outcome: "backed" | "changed" | "missing"
+  backupKey: string | null
+  observedSha256: string | null
+  observedSizeBytes: number | null
+}
+export schema RestoreReceipt { day: string; checkId: string; key: string; sha256: string; sizeBytes: number; completeSha256: string }
+
+export schema PageJob { kind?: "backup"; day: string; page: number; cursor?: string; previous: string | null; objects: number; bytes: number }
+export schema CleanupJob { kind: "cleanup"; day: string; page: number; previous: string | null; objects: number; bytes: number }
+export schema RestoreJob { kind: "restore"; day: string; key: string; checkId: string }
+export schema Job = CleanupJob | RestoreJob | PageJob
+
+export schema CycleRow { day: string; started_at: string; phase: "backup" | "cleanup" | "complete"; finished_at: string | null; cleanup_after: string | null }
+
+export interface Recorded<A> {
+  readonly value: A
+  readonly sha256: string
+}
+
+export interface Digests {
+  readonly of: (text: string) => number
+}
+
+export function digests(): Digests {
+  const known = new Map<string, number>()
+  return {
+    of: (text) => {
+      const found = known.get(text)
+      if (found !== undefined) return found
+      const next = known.size + 1
+      known.set(text, next)
+      return next
+    },
+  }
+}
+
+export error ReceiptInvalid { key: string }
+
+export effect function encoded(value: unknown) {
+  return try orDie(Effect.try(() => new TextEncoder().encode(JSON.stringify(value))))
+}
+
+export effect function parsed<S extends Schema.Constraint>(schema: S, key: string, bytes: Uint8Array) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder().decode(bytes)), catch: () => new ReceiptInvalid({ key }) })
+  const decoded = Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new ReceiptInvalid({ key }) }
+  return decoded
+}
+
+export effect function startBytes(day: string, startedAt: string) {
+  const receipt: StartReceipt = { day, startedAt }
+  return try encoded(receipt)
+}
+
+export function cleanupJob(day: string): Job {
+  return { kind: "cleanup", day, page: 0, previous: null, objects: 0, bytes: 0 }
+}
+
+export function firstPage(day: string): Job {
+  return { day, page: 0, previous: null, objects: 0, bytes: 0 }
+}
+
+export function pageTokens(day: string, count: number, digests: Digests) {
+  return Array.from({ length: count }, (_, index) => digests.of(`page:${day}:${index}`))
+}
+
+export interface CycleFacts {
+  readonly rows: ReadonlyArray<CycleRow>
+  readonly waiting: ReadonlyArray<string>
+  readonly restored: ReadonlyArray<string>
+  readonly clock: number
+}
+
+export interface Chain {
+  readonly expectedPages: number
+  readonly pageDigests: ReadonlyArray<number>
+  readonly verifiedPages: number
+  readonly manifestDigest: number
+  readonly completeDigest: number
+}
+
+export error CycleUnreadable { issue: string }
+
+const phases: Readonly<Record<CycleRow["phase"], BackupPhase>> = { backup: "Copying", cleanup: "CleanupPending", complete: "BackupComplete" }
+
+export function currentCycle(rows: ReadonlyArray<CycleRow>) {
+  return rows.find((row) => row.phase !== "complete") ?? rows[rows.length - 1]
+}
+
+effect function dayOf(text: string) {
+  const day = dayNumber(text)
+  if (day === undefined) throw new CycleUnreadable({ issue: `invalid backup day ${text}` })
+  return day
+}
+
+effect function daysOf(texts: ReadonlyArray<string>) {
+  const days: number[] = []
+  for (const text of texts) days.push(try dayOf(text))
+  return days
+}
+
+function progressOf(phase: BackupPhase, token: number): Chain {
+  if (phase === "NotStarted") return { expectedPages: 0, pageDigests: [], verifiedPages: 0, manifestDigest: 0, completeDigest: 0 }
+  if (phase === "Copying") return { expectedPages: 1, pageDigests: [], verifiedPages: 0, manifestDigest: token, completeDigest: 0 }
+  return { expectedPages: 0, pageDigests: [], verifiedPages: 0, manifestDigest: token, completeDigest: token }
+}
+
+export effect function cycleState(facts: CycleFacts, digests: Digests, chain?: Chain, objects: ReadonlyArray<EvidenceObject> = []) {
+  const current = currentCycle(facts.rows)
+  const startedDays = try daysOf(facts.rows.map((row) => row.day))
+  const completedDays = try daysOf(facts.rows.filter((row) => row.phase !== "backup").map((row) => row.day))
+  const cycleDay = current === undefined ? 0 : try dayOf(current.day)
+  const phase: BackupPhase = current === undefined ? "NotStarted" : phases[current.phase]
+  const progress = chain ?? progressOf(phase, current === undefined ? 0 : digests.of(`manifest:${current.day}`))
+  const waitingDays = [...new Set(try daysOf(facts.waiting))].filter((day) => day > cycleDay && !startedDays.includes(day)).sort((a, b) => a - b)
+  const restoredCycles = [...new Set(try daysOf(facts.restored))]
+  const state: Backup = {
+    phase,
+    cycleDay,
+    clockDay: facts.clock,
+    expectedPages: progress.expectedPages,
+    pageDigests: [...progress.pageDigests],
+    verifiedPages: progress.verifiedPages,
+    failures: 0,
+    manifestDigest: progress.manifestDigest,
+    completeDigest: progress.completeDigest,
+    restore: "NoRestore",
+    restoreSource: 0,
+    destinationDigest: 0,
+    restorePrefix: "RestoreCheckPrefix",
+    chainChecked: false,
+    restoredCycles,
+    completedDays,
+    retentionEnabled: false,
+    objects: [...objects],
+    accessLog: [],
+    startedDays,
+    waitingDays,
+    generations: [],
+    targets: [],
+    retirementReleased: false,
+    deletionReceipts: [],
+    retentionMissingTargets: [],
+  }
+  return try decodeState(state)
+}

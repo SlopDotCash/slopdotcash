@@ -1,0 +1,132 @@
+// spec/settlement/keeperDiagnostics.md, "A failure projects to fixed operation, state, stage and cause labels"; spec/settlement/keeperDiagnostics.md, "Failed results aggregate into positive counts with no output for healthy work"; spec/settlement/keeperDiagnostics.md, "An invocation exception reports only a fixed failure response"
+import { type ClassifiedError, type DiagnosticCause, type DiagnosticOperation, type DiagnosticResult, type DiagnosticState, type KeeperStage, invocationStatus, summarize } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
+
+export const STAGE_LABELS = ["preflight", "authority-read", "signer-role", "gas-reconcile", "payment-scan", "payment-evidence", "payment-index", "monthly-state", "award-state", "other"] as const
+export const CAUSE_LABELS = ["rpc-unavailable", "rpc-error", "other"] as const
+
+export type StageLabel = typeof STAGE_LABELS[number]
+export type CauseLabel = typeof CAUSE_LABELS[number]
+
+export interface KeeperResult {
+  readonly projectId: string
+  readonly vault: string
+  readonly operation: string
+  readonly state: string
+  readonly transactionId?: string | null
+  readonly alreadyCommitted?: boolean
+  readonly complete?: boolean
+  readonly notAdmitted?: boolean
+  readonly committedSources?: ReadonlyArray<string>
+  readonly error?: string
+  readonly failureStage?: StageLabel
+  readonly failureCause?: CauseLabel
+}
+
+export const PROJECT_MISSING = "Project unavailable in current registry"
+export const DEPLOYMENT_MISSING = "No reviewed deployment for this network"
+
+const OPERATIONS: Readonly<Record<DiagnosticOperation, string>> = { RegistryOp: "registry", DeploymentOp: "deployment", MonthlyOp: "monthly", AwardOp: "award", OtherOp: "other" }
+const STATES: Readonly<Record<DiagnosticState, string>> = { UnavailableWork: "unavailable", PublicationUnavailable: "publication-unavailable", WaitingWork: "waiting", OtherWork: "other" }
+const STAGES: Readonly<Record<KeeperStage, StageLabel>> = {
+  Preflight: "preflight", AuthorityRead: "authority-read", SignerRole: "signer-role", GasReconcile: "gas-reconcile", PaymentScan: "payment-scan",
+  PaymentEvidence: "payment-evidence", PaymentIndex: "payment-index", MonthlyState: "monthly-state", AwardState: "award-state", OtherStage: "other",
+}
+const CAUSES: Readonly<Record<DiagnosticCause, string>> = { RpcUnavailable: "rpc-unavailable", RpcError: "rpc-error", ProjectUnavailable: "project-unavailable", DeploymentUnavailable: "deployment-unavailable", OtherCause: "other" }
+
+const CLASSIFIED: ReadonlyArray<ClassifiedError> = ["EvmUnavailable", "SolanaUnavailable", "EvmFailure", "RegistryProjectMissing", "RegistryDeploymentMissing", "UnrecognizedError"]
+
+function isClassified(value: unknown): value is ClassifiedError {
+  return CLASSIFIED.some((known) => known === value)
+}
+
+export function classifyFailure(error: unknown): ClassifiedError {
+  if (typeof error !== "object" || error === null) return "UnrecognizedError"
+  if ("classified" in error && isClassified(error.classified)) return error.classified
+  const tag = "_tag" in error ? error._tag : undefined
+  if (tag === "RpcUnavailable") return "EvmUnavailable"
+  if (tag === "RpcRefused" || tag === "RpcMalformed") return "EvmFailure"
+  return "UnrecognizedError"
+}
+
+export function stageLabel(stage: KeeperStage): StageLabel {
+  return STAGES[stage]
+}
+
+export function causeLabel(error: ClassifiedError): CauseLabel {
+  if (error === "EvmUnavailable" || error === "SolanaUnavailable") return "rpc-unavailable"
+  return error === "EvmFailure" ? "rpc-error" : "other"
+}
+
+function stageOf(label: StageLabel | undefined): KeeperStage {
+  const found = (Object.keys(STAGES) as KeeperStage[]).find((stage) => STAGES[stage] === label)
+  return found ?? "OtherStage"
+}
+
+function causeOf(label: CauseLabel | undefined): ClassifiedError {
+  return label === "rpc-unavailable" ? "EvmUnavailable" : label === "rpc-error" ? "EvmFailure" : "UnrecognizedError"
+}
+
+function operationOf(operation: string): DiagnosticOperation {
+  if (operation === "registry") return "RegistryOp"
+  if (operation === "deployment") return "DeploymentOp"
+  if (operation.startsWith("monthly:")) return "MonthlyOp"
+  if (operation.startsWith("award:")) return "AwardOp"
+  return "OtherOp"
+}
+
+function stateOf(state: string): DiagnosticState {
+  if (state === "unavailable") return "UnavailableWork"
+  if (state === "publication-unavailable") return "PublicationUnavailable"
+  if (state === "waiting") return "WaitingWork"
+  return "OtherWork"
+}
+
+function classifiedOf(result: KeeperResult): ClassifiedError {
+  if (result.operation === "registry" && result.error === PROJECT_MISSING) return "RegistryProjectMissing"
+  if (result.operation === "registry" && result.error === DEPLOYMENT_MISSING) return "RegistryDeploymentMissing"
+  return causeOf(result.failureCause)
+}
+
+export function diagnosticOf(result: KeeperResult): DiagnosticResult {
+  return {
+    operation: operationOf(result.operation),
+    outcome: stateOf(result.state),
+    observedStage: stageOf(result.failureStage),
+    hasError: result.error !== undefined,
+    classifiedError: classifiedOf(result),
+  }
+}
+
+export interface SummaryGroup {
+  readonly operation: string
+  readonly state: string
+  readonly stage: string
+  readonly cause: string
+  readonly count: number
+}
+
+export interface UnavailableSummary {
+  readonly event: string
+  readonly schemaVersion: number
+  readonly failedResults: number
+  readonly groups: ReadonlyArray<SummaryGroup>
+}
+
+export function unavailableWorkSummary(results: ReadonlyArray<KeeperResult>): UnavailableSummary | undefined {
+  const summary = summarize(results.map(diagnosticOf))
+  if (!summary.emitted) return undefined
+  const groups = summary.groups.map((group) => ({ operation: OPERATIONS[group.key.operation], state: STATES[group.key.outcome], stage: STAGES[group.key.stage], cause: CAUSES[group.key.cause], count: group.count }))
+  const label = (group: SummaryGroup) => `${group.operation}:${group.state}:${group.stage}:${group.cause}`
+  return {
+    event: summary.eventName,
+    schemaVersion: summary.schemaVersion,
+    failedResults: summary.failedResults,
+    groups: [...groups].sort((left, right) => label(left).localeCompare(label(right))),
+  }
+}
+
+export function hasFailures(results: ReadonlyArray<KeeperResult>) {
+  return summarize(results.map(diagnosticOf)).scheduledFailed
+}
+
+export const failedInvocation = invocationStatus(false)

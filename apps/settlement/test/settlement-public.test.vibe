@@ -1,0 +1,385 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { D1Database, ExecutionContext } from "@repo/platform/bindings"
+import { noEdgeCache } from "@repo/platform/cache"
+import { DeploymentTier, type Tier } from "@repo/platform/config"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { worker } from "@repo/platform/worker"
+import { Request as WebRequest } from "miniflare"
+import { contributorAllocation, recipientAllocation } from "../src/client/contributorAllocation.vibe"
+import { DisclosuresRefused } from "../src/directTransfers/disclosures.vibe"
+import { disclosures } from "../src/programs/disclosures.vibe"
+import { publicRoutes } from "../src/public/routes.vibe"
+
+const now = Date.parse("2026-11-17T12:00:00.000Z")
+const vault = `0x${"a".repeat(40)}`
+const testVault = `0x${"b".repeat(40)}`
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const sepoliaUsdc = "0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+const digest = (seed: string) => seed.repeat(64)
+const context: ExecutionContext = { waitUntil: () => undefined }
+
+interface Answer {
+  readonly status: number
+  readonly body: unknown
+  readonly cache: string | null
+}
+
+service Public {
+  readonly reads: D1Database
+  readonly imports: D1Database
+  readonly outbound: ReadonlyArray<string>
+  read(tier: Tier, path: string, headers?: Readonly<Record<string, string>>): Answer!!
+}
+
+function paidEvent(obligation: string, project: string, network: string, chain: string, vaultAddress: string, actor: string, gross: string, fee: string, net: string, transaction: string) {
+  return JSON.stringify({ kind: "paid", transactionId: transaction, eventIndex: 0, obligationId: obligation, projectId: project, network, chain, vault: vaultAddress, githubUserId: actor, sourceDigest: digest(obligation.slice(-1)), grossMicro: gross, feeMicro: fee, netMicro: net })
+}
+
+function obligation(id: string, project: string, network: string, vaultAddress: string, asset: string, actor: string, gross: string, fee: string, state: "paid" | "reserved", transaction: string | null): Statement {
+  return sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction)
+    VALUES (${id}, ${project}, ${actor}, ${network}, 'base', ${vaultAddress}, ${asset}, 6, ${gross}, ${fee}, ${digest(id.slice(-1))}, ${state}, '2026-11-01T00:00:00.000Z', ${transaction})`
+}
+
+function event(id: string, project: string, network: string, vaultAddress: string, actor: string, gross: string, fee: string, net: string, transaction: string): Statement {
+  return sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at)
+    VALUES (${network}, ${transaction}, 0, 'block', 'paid', ${id}, ${paidEvent(id, project, network, "base", vaultAddress, actor, gross, fee, net, transaction)}, '2026-11-10T00:00:00.000Z')`
+}
+
+function snapshot(project: string, network: string, vaultAddress: string, asset: string, free: string): Statement {
+  return sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at)
+    VALUES (${project}, ${network}, 'base', ${vaultAddress}, ${asset}, 6, '9000000', '2000000', '40000', '0', '0', '0', ${free}, '490000', '10000', NULL, NULL, '100', '2026-11-17T11:55:00.000Z', '2026-11-17T11:56:00.000Z')`
+}
+
+function monthStart(project: string, network: string, vaultAddress: string, period: string, free: string): Statement {
+  return sql`INSERT INTO vault_month_starts (project_id, network, vault, period, free_balance, total_gross_withdrawn, block_number, block_time, observed_at)
+    VALUES (${project}, ${network}, ${vaultAddress}, ${period}, ${free}, '0', '1', ${`${period}-01T00:10:00.000Z`}, ${`${period}-01T00:11:00.000Z`})`
+}
+
+const seed = [
+  obligation("o1", "eliza", "base-mainnet", vault, usdc, "101", "1000000", "20000", "paid", "0xt1"),
+  event("o1", "eliza", "base-mainnet", vault, "101", "1000000", "20000", "980000", "0xt1"),
+  obligation("o2", "eliza", "base-mainnet", vault, usdc, "102", "1000000", "20000", "paid", "0xt2"),
+  event("o2", "eliza", "base-mainnet", vault, "102", "1000000", "20000", "980000", "0xt2"),
+  obligation("o3", "eliza", "base-mainnet", vault, usdc, "101", "500000", "10000", "reserved", null),
+  obligation("o4", "demo", "base-sepolia", testVault, sepoliaUsdc, "101", "1000000", "20000", "paid", "0xt4"),
+  event("o4", "demo", "base-sepolia", testVault, "101", "1000000", "20000", "980000", "0xt4"),
+  sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES ('actor-102', '102', 'quiet', '2026-01-01T00:00:00.000Z', 0, 5)`,
+  sql`INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at)
+    VALUES ('solana-mainnet', 'sig1', 'eliza', '2026-09', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'solana', 'Recipient1', '3000000', '2026-09-30T00:00:00.000Z', '7', 'disclosures/2026-09-eliza.json', '2026-10-01T00:00:00.000Z')`,
+  snapshot("eliza", "base-mainnet", vault, usdc, "7000000"),
+  snapshot("demo", "base-sepolia", testVault, sepoliaUsdc, "5000000"),
+  monthStart("eliza", "base-mainnet", vault, "2026-10", "6000000"),
+  monthStart("eliza", "base-mainnet", vault, "2026-11", "7000000"),
+  monthStart("eliza", "base-mainnet", vault, "2026-09", "1000000"),
+  sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES ('eliza', 'base-mainnet', '12345', '2026-11-17T11:50:00.000Z')`,
+]
+
+const Started = Layer.effect(Public, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { READS_DB: "public-reads", IMPORT_DB: "disclosure-import" } })), (started) => promise(() => started.dispose()))
+  for (const binding of ["READS_DB", "IMPORT_DB"]) {
+    const failed = (try promise(() => migrate(mf, binding, migrationsDir))).find((applied) => applied.error !== undefined)
+    if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  }
+  const reads = try promise(() => database(mf, "READS_DB"))
+  const imports = try promise(() => database(mf, "IMPORT_DB"))
+  provide d1(reads) {
+    try (try D1).batch(seed)
+  }
+  const outbound: string[] = []
+  const clock = settableClock(now)
+  const site = (tier: Tier) => worker({
+    services: (_env: object) => Layer.mergeAll(
+      d1(reads),
+      noEdgeCache,
+      clock.layer,
+      Layer.succeed(DeploymentTier, { tier }),
+      Layer.succeed(Caller, { current: () => effect {
+        const request = try HttpServerRequest.HttpServerRequest
+        const githubId = request.headers["x-test-github-id"]
+        if (githubId === undefined) throw new Unauthenticated()
+        return { githubId, login: "alice", actorId: `actor-${githubId}` }
+      } }),
+      Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+        outbound.push(request.url)
+        return try die(new Error("a public read must never reach a chain RPC"))
+      })),
+    ),
+    routes: publicRoutes,
+  })
+  const sites = { production: site("production"), staging: site("staging"), local: site("local") }
+  return {
+    reads,
+    imports,
+    outbound,
+    read: (tier, path, headers = {}) => effect {
+      const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET", headers })))
+      const response = try promise(() => sites[tier].fetch(request as unknown as globalThis.Request, {}, context))
+      const text = try promise(() => response.text())
+      const body: unknown = try orDie(Effect.try(() => text === "" ? null : JSON.parse(text) as unknown))
+      return { status: response.status, body, cache: response.headers.get("cache-control") }
+    },
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const paidO1 = { id: "base-mainnet:0xt1:0", projectId: "eliza", network: "base-mainnet", chain: "base", contributionMonth: null, assetAddress: usdc, assetDecimals: 6, netBase: "980000", transactionId: "0xt1", indexedAt: "2026-11-10T00:00:00.000Z" }
+const paidO4 = { ...paidO1, id: "base-sepolia:0xt4:0", projectId: "demo", network: "base-sepolia", assetAddress: sepoliaUsdc, transactionId: "0xt4" }
+const direct = { projectId: "eliza", contributionMonth: "2026-09", githubUserId: "101", login: "alice", network: "solana-mainnet", chain: "solana", recipient: "Recipient1", amountMicro: "3000000", transactionId: "sig1", blockTime: "2026-09-30T00:00:00.000Z" }
+const elizaVault = { network: "base-mainnet", vault, freeBalance: "7000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [
+  { period: "2026-10", freeBalance: "6000000", totalGrossWithdrawn: "0", blockTime: "2026-10-01T00:10:00.000Z" },
+  { period: "2026-11", freeBalance: "7000000", totalGrossWithdrawn: "0", blockTime: "2026-11-01T00:10:00.000Z" },
+] }
+const demoVault = { network: "base-sepolia", vault: testVault, freeBalance: "5000000", totalGrossWithdrawn: "0", blockTime: "2026-11-17T11:55:00.000Z", observedAt: "2026-11-17T11:56:00.000Z", monthStarts: [] }
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Public payment reads serve only stored records and never reach a chain during an RPC outage (spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/publicRecords.md, "A paid row is published only with its finalized payment event"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts")', () => effect {
+    const site = try Public
+    const reads = {
+      all: try site.read("production", "/api/v1/payments/vault-payments"),
+      project: try site.read("production", "/api/v1/payments/projects/eliza/vault-payments"),
+      privateActor: try site.read("production", "/api/v1/payments/actors/102/vault-payments"),
+      badCursor: try site.read("production", "/api/v1/payments/vault-payments?after=1"),
+      pastBound: try site.read("production", "/api/v1/payments/vault-payments?after=0&through=99"),
+      badActor: try site.read("production", "/api/v1/payments/actors/0abc/vault-payments"),
+      directPaged: try site.read("production", "/api/v1/payments/actors/101/direct-transfers", { "x-slop-direct-history": "paged" }),
+      directList: try site.read("production", "/api/v1/payments/projects/eliza/direct-transfers"),
+      received: try site.read("production", "/api/v1/payments/received"),
+      totals: try site.read("production", "/api/v1/payments/projects/eliza/totals"),
+      unindexed: try site.read("production", "/api/v1/payments/projects/nothing-here/totals"),
+      vault: try site.read("production", "/api/v1/payments/projects/eliza/vault"),
+      funding: try site.read("production", "/api/v1/pool-funding"),
+      signedOut: try site.read("production", "/api/v1/payments/me"),
+      account: try site.read("production", "/api/v1/payments/me", { "x-test-github-id": "101", "x-slop-direct-history": "paged" }),
+    }
+    const account = reads.account.body as { readonly payments: ReadonlyArray<{ readonly id: string; readonly deliveryState: string; readonly netBase: string }>; readonly balances: unknown; readonly directTransfers: unknown; readonly directTransfersPaged?: boolean; readonly monthlyAwards: unknown; readonly wallets: unknown }
+    try same({
+      all: reads.all,
+      project: reads.project.body,
+      privateActor: reads.privateActor.body,
+      badCursor: [reads.badCursor.status, (reads.badCursor.body as { error: string }).error],
+      pastBound: [reads.pastBound.status, (reads.pastBound.body as { error: string }).error],
+      badActor: [reads.badActor.status, (reads.badActor.body as { error: string }).error],
+      directPaged: reads.directPaged.body,
+      directList: reads.directList.body,
+      totals: reads.totals.body,
+      unindexed: [reads.unindexed.status, (reads.unindexed.body as { error: string }).error],
+      vault: [reads.vault.status, reads.vault.cache, (reads.vault.body as { snapshots: ReadonlyArray<{ freeBalance: string | null }>; staleAfterMs: number; servedAt: string })],
+      funding: [reads.funding.cache, reads.funding.body],
+      signedOut: [reads.signedOut.status, (reads.signedOut.body as { error: string }).error],
+      account: {
+        payments: [...account.payments].sort((left, right) => left.id.localeCompare(right.id)).map((payment) => [payment.id, payment.deliveryState, payment.netBase]),
+        balances: account.balances,
+        directTransfers: account.directTransfers,
+        paged: account.directTransfersPaged,
+        monthlyAwards: account.monthlyAwards,
+        wallets: account.wallets,
+      },
+      outbound: site.outbound,
+    }, {
+      all: { status: 200, body: { payments: [paidO1], through: 3, next: null, total: 1 }, cache: "private, no-store" },
+      project: { payments: [paidO1], through: 3, next: null, total: 1 },
+      privateActor: { payments: [], through: 3, next: null, total: 0 },
+      badCursor: [400, "invalid_payment_cursor"],
+      pastBound: [400, "invalid_payment_cursor"],
+      badActor: [400, "invalid_actor"],
+      directPaged: { transfers: [direct], totalMicro: "3000000", through: 1, next: null, total: 1 },
+      directList: { transfers: [direct], totalMicro: "3000000" },
+      totals: {
+        projectId: "eliza",
+        network: "base-mainnet",
+        assets: [{ network: "base-mainnet", assetAddress: usdc, assetDecimals: 6, totalNetPaidBase: "1960000", payoutFeesPaidBase: "40000", reservedNetBase: "490000", reservedFeeBase: "10000" }],
+        coverage: { kind: "finalized-payment-events", completeThrough: "12345" },
+        syncedAt: "2026-11-17T11:50:00.000Z",
+      },
+      unindexed: [503, "project_payments_not_indexed"],
+      vault: [200, "public, max-age=60, s-maxage=60", (reads.vault.body as { snapshots: ReadonlyArray<{ freeBalance: string | null }>; staleAfterMs: number; servedAt: string })],
+      funding: ["public, max-age=60, s-maxage=60", { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }] }],
+      signedOut: [401, "not_signed_in"],
+      account: {
+        payments: [["o1", "paid", "980000"], ["o3", "needs_wallet", "490000"], ["o4", "paid", "980000"]],
+        balances: [
+          { chain: "base", network: "base-mainnet", assetAddress: usdc, assetDecimals: 6, netBase: "490000" },
+          { chain: "base", network: "base-sepolia", assetAddress: sepoliaUsdc, assetDecimals: 6, netBase: "0" },
+        ],
+        directTransfers: [],
+        paged: true,
+        monthlyAwards: [],
+        wallets: [],
+      },
+      outbound: [],
+    })
+    const shown = reads.vault.body as { snapshots: ReadonlyArray<{ network: string; freeBalance: string | null }>; staleAfterMs: number; servedAt: string }
+    try same([shown.snapshots.map((row) => [row.network, row.freeBalance]), shown.staleAfterMs, shown.servedAt], [[["base-mainnet", "7000000"]], 1_800_000, "2026-11-17T12:00:00.000Z"])
+    const received = reads.received.body as { contributors: unknown; totals: unknown; generatedAt: string }
+    try same([reads.received.cache, received.contributors, received.totals], [
+      "public, max-age=60, s-maxage=60, stale-while-revalidate=600",
+      [{ githubUserId: "101", login: "alice", usdMicro: "3980000", directMicro: "3000000", vaultUsdMicro: "980000", directTransfers: 1, vaultPayments: 1, projects: [{ projectId: "eliza", usdMicro: "3980000" }], otherAssets: [] }],
+      { usdMicro: "3980000", directMicro: "3000000", vaultUsdMicro: "980000", directTransfers: 1, vaultPayments: 1, contributors: 1 },
+    ])
+  })
+
+  it.effect('Testnet payments, totals and vaults appear only on the staging deployment (spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/publicRecords.md, "The received total sums only 6-decimal reference stablecoins in micro-dollars over at most 20,000 records and keeps other assets apart")', () => effect {
+    const site = try Public
+    const paths = ["/api/v1/payments/vault-payments", "/api/v1/payments/actors/101/vault-payments", "/api/v1/pool-funding", "/api/v1/payments/projects/demo/vault"]
+    const production: unknown[] = []
+    const staging: unknown[] = []
+    const local: unknown[] = []
+    for (const path of paths) {
+      production.push((try site.read("production", path)).body)
+      staging.push((try site.read("staging", path)).body)
+      local.push((try site.read("local", path)).body)
+    }
+    const received = (try site.read("staging", "/api/v1/payments/received")).body as { contributors: unknown; totals: unknown }
+    const vaultNetworks = (body: unknown) => (body as { snapshots: ReadonlyArray<{ network: string }> }).snapshots.map((row) => row.network)
+    try same({
+      production: [production[0], production[1], production[2], vaultNetworks(production[3])],
+      staging: [staging[0], staging[1], staging[2], vaultNetworks(staging[3])],
+      local: [local[0], vaultNetworks(local[3])],
+      received: [received.contributors, received.totals],
+    }, {
+      production: [
+        { payments: [paidO1], through: 3, next: null, total: 1 },
+        { payments: [paidO1], through: 3, next: null, total: 1 },
+        { schema: "slop-pool-funding-v1", projects: [{ projectId: "eliza", vaults: [elizaVault] }] },
+        [],
+      ],
+      staging: [
+        { payments: [paidO1, paidO4], through: 3, next: null, total: 2 },
+        { payments: [paidO1, paidO4], through: 3, next: null, total: 2 },
+        { schema: "slop-pool-funding-v1", projects: [{ projectId: "demo", vaults: [demoVault] }, { projectId: "eliza", vaults: [elizaVault] }] },
+        ["base-sepolia"],
+      ],
+      local: [{ payments: [paidO1], through: 3, next: null, total: 1 }, []],
+      received: [
+        [{ githubUserId: "101", login: "alice", usdMicro: "4960000", directMicro: "3000000", vaultUsdMicro: "1960000", directTransfers: 1, vaultPayments: 2, projects: [{ projectId: "eliza", usdMicro: "3980000" }, { projectId: "demo", usdMicro: "980000" }], otherAssets: [] }],
+        { usdMicro: "4960000", directMicro: "3000000", vaultUsdMicro: "1960000", directTransfers: 1, vaultPayments: 2, contributors: 1 },
+      ],
+    })
+  })
+
+  it.effect('A disclosure import is idempotent, and a contradicting disclosure or a README wallet observation it cannot write fails the whole import and writes nothing (spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import")', () => effect {
+    const site = try Public
+    provide Layer.mergeAll(NodeServices.layer, d1(site.imports), webCrypto, settableClock(now).layer) {
+      const fs = try FileSystem.FileSystem
+      const files = try Path.Path
+      const root = try fs.makeTempDirectoryScoped()
+      try fs.makeDirectory(files.join(root, "disclosures"))
+      try fs.makeDirectory(files.join(root, "funding", "preparations"), { recursive: true })
+      try fs.makeDirectory(files.join(root, "reviewed"))
+      try fs.makeDirectory(files.join(root, "cycles"))
+      const recipient = "7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV"
+      const signature = "5".repeat(88)
+      const preparation = JSON.stringify({ projectId: "eliza", cycleId: "2026-09", counts: { weight: "10" }, contributors: [{ actor: { id: "MDQ6VXNlcjEwMQ==", login: "alice" }, weight: "10", wallet: { address: recipient } }] })
+      try fs.writeFileString(files.join(root, "reviewed", "eliza-2026-09.json"), preparation)
+      const preparationSha = try sha256Hex(preparation)
+      const disclosure = (transaction: string, slot: number) => JSON.stringify({
+        schemaVersion: "1",
+        kind: "direct-payment-disclosure",
+        projectId: "eliza",
+        contributionMonth: "2026-09",
+        network: "solana-mainnet",
+        asset: "USDC",
+        preparation: { path: "reviewed/eliza-2026-09.json", sha256: "", totalWeight: "10" },
+        reconstructedBasis: { capMinor: "5000000", denominatorWeight: "10", rounding: "half-up", allocatedMinor: "5000000", overCapMinor: "0" },
+        totals: { rows: 1, observedTransfers: 1, observedAmountMinor: "5000000", allocatedMinor: "5000000", byState: { "paid-direct": { rows: 1, amountMinor: "5000000" } } },
+        rows: [{ actorId: "MDQ6VXNlcjEwMQ==", login: "alice", publishedWeight: "10", effectiveWeight: "10", entitlementMinor: "5000000", wallet: recipient, state: "paid-direct", observed: { signature: transaction, slot, blockTime: "2026-10-01T00:00:00.000Z", recipient, amountMinor: "5000000" } }],
+      }).replace('"sha256":""', `"sha256":"${preparationSha}"`)
+      try fs.writeFileString(files.join(root, "disclosures", "2026-09-eliza.json"), disclosure(signature, 123))
+      const run = (args: ReadonlyArray<string>) => effect {
+        const outcome = try exit(disclosures(["--root", root, ...args]))
+        return Exit.isSuccess(outcome) ? "imported" : String((Cause.squash(outcome.cause) as { _tag?: string })._tag)
+      }
+      const refusal = (args: ReadonlyArray<string>) => effect {
+        const outcome = try exit(disclosures(["--root", root, ...args]))
+        const error = Exit.isFailure(outcome) ? Cause.squash(outcome.cause) : undefined
+        return error instanceof DisclosuresRefused ? error.failures : []
+      }
+      const stored = () => effect {
+        return try (try D1).all(sql`SELECT network, transaction_id, project_id, contribution_month, github_user_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path FROM payment_direct_transfers ORDER BY rowid`)
+      }
+      const checked = try run(["--check"])
+      const afterCheck = try stored()
+      const first = try run([])
+      const afterFirst = try stored()
+      const replayed = try run([])
+      const afterReplay = try stored()
+      const readmeSource = files.join(root, "funding", "preparations", "eliza-2026-10.json")
+      const readmeWallet = (sourceCommit?: string) => JSON.stringify({ contributors: [{ actor: { id: "MDQ6VXNlcjEwMQ==", login: "alice" }, weight: "10", wallet: { address: recipient, sourceCommit } }] })
+      try fs.writeFileString(files.join(root, "disclosures", "2026-09-eliza-c.json"), disclosure("6".repeat(88), 125))
+      try fs.writeFileString(readmeSource, readmeWallet())
+      const unobserved = try refusal([])
+      try fs.writeFileString(readmeSource, readmeWallet("a".repeat(40)))
+      const unwritable = try refusal([])
+      const afterObservations = try stored()
+      try fs.remove(readmeSource)
+      try fs.writeFileString(files.join(root, "disclosures", "2026-09-eliza-b.json"), disclosure(signature, 124))
+      const contradicted = try run([])
+      const afterContradiction = try stored()
+      try fs.writeFileString(files.join(root, "reviewed", "eliza-2026-09.json"), preparation.replace('"weight":"10"}', '"weight":"11"}'))
+      const drifted = try run(["--check"])
+      const row = { network: "solana-mainnet", transaction_id: signature, project_id: "eliza", contribution_month: "2026-09", github_user_id: "101", github_login: "alice", chain: "solana", recipient, amount_micro: "5000000", block_time: "2026-10-01T00:00:00.000Z", block_id: "123", source_path: "disclosures/2026-09-eliza.json" }
+      try same({ checked, afterCheck, first, afterFirst, replayed, afterReplay, unobserved, unwritable, afterObservations, contradicted, afterContradiction, drifted }, {
+        checked: "imported",
+        afterCheck: [],
+        first: "imported",
+        afterFirst: [row],
+        replayed: "imported",
+        afterReplay: [row],
+        unobserved: ["no README wallet observations"],
+        unwritable: ["funding/preparations/eliza-2026-10.json: the README wallet of alice cannot be imported until the backend Wallets port writes wallet_observations, so nothing is imported"],
+        afterObservations: [row],
+        contradicted: "DisclosureContradiction",
+        afterContradiction: [row],
+        drifted: "DisclosuresRefused",
+      })
+    }
+  })
+
+  it.effect('A recipient sees the reviewed contributor allocation row only once it is published, and a timely first wallet schedules it (spec/settlement/contributorAllocation.md, "An unpublished distribution exposes no recipient row"; spec/settlement/contributorAllocation.md, "A timely first wallet confirmation survives replacement"; spec/settlement/contributorAllocation.md, "Only the owner sender records the single transaction")', () => effect {
+    provide NodeServices.layer {
+      const fs = try FileSystem.FileSystem
+      const text = try fs.readFileString(new URL("../../app/public/contributor-allocation.json", import.meta.url).pathname)
+      const allocation = try contributorAllocation(text)
+      if (allocation === undefined) return try die(new Error("the reviewed contributor allocation is published"))
+      const wallet = (firstAuthorizedAt: string) => ({ chain: "robinhood" as const, claimId: "claim-1", address: `0x${"c".repeat(40)}`, authorized: true, firstAuthorizedAt })
+      const afterDeadline = Date.parse("2027-03-01T00:00:00.000Z")
+      const stateOf = (viewer: string, wallets: ReadonlyArray<ReturnType<typeof wallet>>, at: number) => effect {
+        return (try recipientAllocation(allocation, viewer, wallets, at))?.state ?? "none"
+      }
+      const unpublished = try contributorAllocation(JSON.stringify({ distribution: null }))
+      const malformed = try exit(contributorAllocation(JSON.stringify({ distribution: { network: "solana-mainnet" } })))
+      try same({
+        network: [allocation.network, allocation.chain, allocation.recipients.length],
+        waiting: try stateOf("2183", [], now),
+        scheduled: try stateOf("2183", [wallet("2026-11-01T00:00:00.000Z")], now),
+        lateWallet: try stateOf("2183", [wallet("2027-02-09T00:00:00.000Z")], afterDeadline),
+        unclaimed: try stateOf("2183", [], afterDeadline),
+        sent: try stateOf("3224374", [wallet("2026-11-01T00:00:00.000Z")], now),
+        sentWithoutWallet: try stateOf("3224374", [], now),
+        stranger: try stateOf("999", [], now),
+        unpublished,
+        malformed: Exit.isFailure(malformed),
+      }, {
+        network: ["robinhood-mainnet", "robinhood", 214],
+        waiting: "awaiting-wallet",
+        scheduled: "scheduled",
+        lateWallet: "unclaimed",
+        unclaimed: "unclaimed",
+        sent: "sent",
+        sentWithoutWallet: "awaiting-wallet",
+        stranger: "none",
+        unpublished: undefined,
+        malformed: true,
+      })
+    }
+  })
+})

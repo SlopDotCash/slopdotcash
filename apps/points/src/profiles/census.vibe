@@ -1,0 +1,136 @@
+// spec/points/profiles.md, "A profile census carries the counts of removed repositories forward"; spec/points/profiles.md, "A renamed repository is followed by its permanent registry identity"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+import { isoNow } from "@repo/platform/clock"
+import { type Event, type Machine, type Profiles, canAbandon, decodeState, initial, machineOver } from "../../gen/points__profiles.effect.vibe"
+import type { CollectedTarget } from "../census/projects.vibe"
+import { type PersonTally, ProfileCensusFailed, personOf, pullRequestPage, userAuthorId } from "./github.vibe"
+import { type Numbering, type RepositoryIdentity, numbering } from "./identity.vibe"
+import { collectIssues } from "./issues.vibe"
+import { type CensusRepository, type ProfileIndex, ProfilesInvalid } from "./shape.vibe"
+import { assertProfiles } from "./validate.vibe"
+
+const pullRequestStates: ReadonlyArray<string> = ["OPEN", "CLOSED", "MERGED"]
+
+export interface ProfileCensusInput {
+  readonly previous: ProfileIndex
+  readonly targets: ReadonlyArray<CollectedTarget>
+  readonly identity: RepositoryIdentity
+}
+
+interface Names {
+  readonly repositories: Numbering
+  readonly identities: Numbering
+  readonly issueIds: Numbering
+  readonly identity: RepositoryIdentity
+}
+
+function canonicalOf(names: Names, repository: string) {
+  const identity = names.identity.canonical(repository)
+  return identity === undefined ? 0 : names.identities.of(identity)
+}
+
+export effect function profileRun(start: Profiles = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function publishedState(previous: ProfileIndex, names: Names) {
+  const issues = [...(previous.issues?.items ?? []), ...(previous.issues?.archived ?? [])]
+  return decodeState({
+    ...initial,
+    publishedRows: previous.repositories.map((row) => ({ repository: names.repositories.of(row.repository), canonical: canonicalOf(names, row.repository), pullRequests: row.count, excluded: row.excluded })),
+    publishedIssues: issues.map((issue) => ({ id: names.issueIds.of(issue.id), repository: names.repositories.of(issue.repository), unavailable: issue.unavailableSince !== null, historyIncomplete: (issue.historyIncompleteSince ?? null) !== null })),
+  }) catch effect () => {
+    throw new ProfilesInvalid({ message: "Invalid profile census" })
+  }
+}
+
+effect function sent(run: Machine.Shape, event: Event, message: string) {
+  return run.send(event) catch effect () => {
+    throw new ProfileCensusFailed({ message })
+  }
+}
+
+effect function pullRequests(target: CollectedTarget, people: Map<string, PersonTally>) {
+  let cursor: string | null = null
+  let reported: number | undefined = undefined
+  let excluded = 0
+  const ids = new Set<string>()
+  do {
+    const page = try pullRequestPage(target, cursor)
+    if (page === null) throw new ProfileCensusFailed({ message: "Profile repository is unavailable" })
+    if (target.expectedNodeId !== null && target.expectedNodeId !== page.id) throw new ProfileCensusFailed({ message: "Profile repository identity changed" })
+    const connection = page.pullRequests
+    if (reported !== undefined && connection.totalCount < reported) throw new ProfileCensusFailed({ message: "PR inventory shrank during census; retry without publishing partial counts" })
+    reported = connection.totalCount
+    for (const pull of connection.nodes) {
+      if (pull.id === "" || ids.has(pull.id) || !pullRequestStates.includes(pull.state)) throw new ProfileCensusFailed({ message: "Invalid or duplicate PR in census" })
+      ids.add(pull.id)
+      const authorId = userAuthorId(pull.author)
+      if (authorId === null || pull.author === null) {
+        excluded += 1
+        continue
+      }
+      const person = personOf(people, authorId, pull.author)
+      const found = person.repositories.find((row) => row.repository === target.id)
+      const row = found ?? { repository: target.id, merged: 0, open: 0, closed: 0 }
+      if (found === undefined) person.repositories.push(row)
+      if (pull.state === "MERGED") row.merged += 1
+      else if (pull.state === "OPEN") row.open += 1
+      else row.closed += 1
+    }
+    const next = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null
+    if (connection.pageInfo.hasNextPage && (next === null || next === "" || next === cursor)) throw new ProfileCensusFailed({ message: "Incomplete PR pagination" })
+    cursor = next
+  } while (cursor !== null)
+  return { crawled: ids.size, reported: reported ?? 0, excluded }
+}
+
+function carriedPeople(previous: ProfileIndex, carried: (repository: string) => boolean) {
+  const people = new Map<string, PersonTally>()
+  for (const person of previous.people) {
+    const rows = person.repositories.filter((row) => carried(row.repository))
+    if (rows.length === 0) continue
+    people.set(person.id, { id: person.id, login: person.login, avatarUrl: person.avatarUrl, repositories: rows.map((row) => ({ ...row })) })
+  }
+  return people
+}
+
+effect function abandoning<A, E, R>(run: Machine.Shape, work: A!E!R) {
+  return work catch effect (error) => {
+    if (canAbandon(try run.get())) try orDie(run.send({ type: "abandon" }))
+    throw error
+  }
+}
+
+export effect function collectProfileCensus(input: ProfileCensusInput) {
+  const startedAt = try isoNow()
+  const names: Names = { repositories: numbering(), identities: numbering(), issueIds: numbering(), identity: input.identity }
+  const run = try profileRun(try publishedState(input.previous, names))
+  return try abandoning(run, effect {
+    const targets = input.targets.map((target) => ({ repository: names.repositories.of(target.id), canonical: canonicalOf(names, target.id) }))
+    const begun = try sent(run, { type: "begin", targets }, "Every collected repository needs its own permanent registry identity")
+    const kept = new Set(begun.rows.map((row) => row.repository))
+    const carried = (repository: string) => kept.has(names.repositories.of(repository))
+    const repositories: CensusRepository[] = input.previous.repositories.filter((row) => carried(row.repository)).map((row) => ({ ...row }))
+    const people = carriedPeople(input.previous, carried)
+    for (const target of input.targets) {
+      const tally = try pullRequests(target, people)
+      const recorded = { repository: names.repositories.of(target.id), canonical: canonicalOf(names, target.id), ...tally }
+      try sent(run, { type: "recordRepository", tally: recorded }, `PR count reconciliation failed: crawled ${tally.crawled}, repository reports ${tally.reported}`)
+      repositories.push({ repository: target.id, count: tally.crawled, excluded: tally.excluded })
+      try logInfo(`${target.id}: ${tally.crawled} PRs reconciled`)
+    }
+    const issues = try collectIssues({ run, targets: input.targets, previous: input.previous, people, startedAt, repositories: names.repositories, issueIds: names.issueIds })
+    try sent(run, { type: "publish" }, "The profile census is not complete")
+    const result = {
+      schemaVersion: "2",
+      startedAt,
+      generatedAt: try isoNow(),
+      repositories,
+      people: [...people.values()].sort((left, right) => left.id.localeCompare(right.id)),
+      issues,
+    } satisfies ProfileIndex
+    try assertProfiles(result, input.targets.map((target) => target.id), input.identity)
+    return result
+  })
+}

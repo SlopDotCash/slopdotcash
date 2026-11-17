@@ -1,0 +1,688 @@
+// spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/payment.md, "A destination requires the current account and wallet consent"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { type Address, type Blockhash, type TokenBalance, SYSTEM_PROGRAM, SolanaRpc, address, base64Decode, base64Encode, decodeTokenAccount, isBlockhash, isSignature, publicKey, solanaRpc } from "@repo/platform/chain/solana"
+import { ConfigInvalid, jsonVar } from "@repo/platform/config"
+import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type DirectBounty, Rejected, authorizedWallets } from "../../gen/settlement__directBounty.effect.vibe"
+import { fullRailAdmission, validSplit } from "../../gen/settlement__payment.effect.vibe"
+import type { ConsentDetail, ConsentPaymentBody, DirectIntent, DirectRefusal, PaymentAsset, PaymentWallet, PrepareDetail, PreparePaymentBody, VerifyDetail, VerifyPaymentBody } from "../client/direct.vibe"
+import { createTokenAccount, meta } from "../chain/solana/instructions.ts"
+import { isTokenProgram, tokenAccountAddress } from "../chain/solana/pda.ts"
+import { REVIEWED_SOLANA_PROGRAMS } from "../chain/solana/programs.ts"
+import { type Instruction, compileLegacy, signedBy } from "../chain/solana/transactions.ts"
+import { normalizedNativeDelta } from "../kernels/budget.ts"
+import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
+import { NETWORKS, type NetworkKey, SOLANA_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
+import { type Mint, TOKEN_PROGRAM, readMint, readRefusalMessage, readTokenAccount } from "../kernels/token2022.ts"
+import { type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, intentModel, journalFor, snapshotOf, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
+import { type CaseContext, DirectRefused, receiptEvent } from "./routes.vibe"
+
+module limbs {
+  import { sha256 } from "@noble/hashes/sha2.js"
+  import { base58Encode, publicKey } from "@repo/platform/chain/solana"
+  const U64_MAX = (1n << 64n) - 1n
+  /** @throws {never} */
+  export function positiveU64(text: string): bigint | undefined {
+    return /^[1-9]\d{0,19}$/u.test(text) && BigInt(text) <= U64_MAX ? BigInt(text) : undefined
+  }
+  /** @throws {never} */
+  export function slotAfter(slot: number, after: string): boolean {
+    return /^(0|[1-9]\d{0,19})$/u.test(after) && Number.isSafeInteger(slot) && BigInt(slot) > BigInt(after)
+  }
+  /** @throws {never} */
+  export function withinU64(value: bigint): boolean {
+    return value >= 0n && value <= U64_MAX
+  }
+  /** @throws {never} */
+  export function u64Bytes(value: bigint): Uint8Array {
+    const bytes = new Uint8Array(8)
+    new DataView(bytes.buffer).setBigUint64(0, value, true)
+    return bytes
+  }
+  /** @throws {never} */
+  export function canonicalKey(text: string): boolean {
+    const key = publicKey(text)
+    return key !== undefined && base58Encode(key) === text
+  }
+  /** @throws {never} */
+  export function messageIdOf(message: Uint8Array): string {
+    return base58Encode(sha256(message))
+  }
+  /** @throws {never} */
+  export function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+    return left.length === right.length && left.every((byte, index) => byte === right[index])
+  }
+  /** @throws {never} */
+  export function joined(...parts: ReadonlyArray<Uint8Array>): Uint8Array {
+    const bytes = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
+    let at = 0
+    for (const part of parts) {
+      bytes.set(part, at)
+      at += part.length
+    }
+    return bytes
+  }
+}
+import { canonicalKey, joined, messageIdOf, positiveU64, sameBytes, slotAfter, u64Bytes, withinU64 } from limbs
+
+export error SolanaDirectInvalid { reason: string }
+export error SolanaPayerRefused { message: string }
+
+export type RecoveryRefusal =
+  | "paymentRecoveryRequired"
+  | "paymentRecoveryRequiredProveTheExpiredRequest"
+  | "paymentNotPreparedPrepareTheExactPayment"
+  | "paymentWalletRequiredConfirmAPayoutWallet"
+  | "paymentAlreadyVerifiedThisPaymentIsAlready"
+  | "paymentAlreadyVerifiedThisTransferIsAlready"
+  | "originalPayerRequired"
+  | "railUnavailablePaymentRecoveryIsUnavailable"
+  | "paymentConsentRequiredTheReporterMustConsent"
+  | "paymentWalletConflict"
+  | "paymentRecoveryChanged"
+  | "legacyPaymentReviewRequired"
+  | "legacyPaymentReviewRequiredThisLegacyRequestHas"
+  | "invalidRequestEachExpiredRequestNeeds"
+  | "invalidRequestSignTheExactExpired"
+  | "expiryProofRequired"
+  | "feePaymentPending"
+  | "cancellationRequired"
+  | "cancellationUnverified"
+  | "confirmationRequiredConfirmTheReviewedPayment"
+
+export error RecoveryRefused { reason: RecoveryRefusal }
+
+export schema IssuedPlan {
+  readonly transaction: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly afterSlot: string
+  readonly blockhashSlot?: number
+  readonly messageId?: string
+}
+
+export interface SolanaDirectRail {
+  readonly network: NetworkKey
+  readonly model: "Solana"
+  readonly chainId: bigint
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly recoveryUrl: Redacted.Redacted<string> | undefined
+  readonly genesis: string
+  readonly feeRecipient: string
+}
+
+export interface SolanaRailConfig {
+  readonly paymentRpcUrls: string | undefined
+  readonly localSolanaGenesis: string | undefined
+  readonly recoveryRpcUrl: string | undefined
+}
+
+export service SolanaDirectRails {
+  rail(network: string): (SolanaDirectRail | undefined)!ConfigInvalid
+}
+
+const TextTable = Schema.Record(Schema.String, Schema.String)
+const defaultRpcUrl = "https://api.mainnet-beta.solana.com"
+
+export function isSolanaNetwork(network: string) {
+  return isNetworkKey(network) && NETWORKS[network].family === "solana"
+}
+
+export function loopbackRpc(endpoint: string) {
+  const url = URL.parse(endpoint)
+  return url !== null && url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
+}
+
+const localGenesisName = "SLOP_LOCAL_SOLANA_GENESIS"
+
+effect function genesisOf(local: string, endpoints: ReadonlyArray<string>, mainnet: string) {
+  if (local === "") return mainnet
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(local)) throw new ConfigInvalid({ name: localGenesisName, issue: "is not a base58 genesis hash" })
+  if (!endpoints.every(loopbackRpc)) throw new ConfigInvalid({ name: localGenesisName, issue: "Local Solana configuration requires loopback endpoints" })
+  return local
+}
+
+export function solanaDirectRails(config: SolanaRailConfig) {
+  return Layer.succeed(SolanaDirectRails, {
+    rail: (network) => effect {
+      if (!isNetworkKey(network)) return undefined
+      const definition = NETWORKS[network]
+      if (definition.family !== "solana" || definition.testnet) return undefined
+      const recipients = [...new Set(REVIEWED_SOLANA_PROGRAMS.filter((program) => program.network === network).map((program) => program.feeRecipient))]
+      const [feeRecipient] = recipients
+      if (recipients.length !== 1 || feeRecipient === undefined) return undefined
+      const urls = try jsonVar("PAYMENT_RPC_URLS", config.paymentRpcUrls ?? "{}", TextTable)
+      const direct = urls[network]
+      const recovery = config.recoveryRpcUrl?.trim() ?? ""
+      const local = config.localSolanaGenesis?.trim() ?? ""
+      const genesis = try genesisOf(local, [direct ?? defaultRpcUrl, ...recovery === "" ? [] : [recovery]], definition.genesisHash)
+      return {
+        network,
+        model: "Solana",
+        chainId: 0n,
+        urls: Redacted.make([direct ?? defaultRpcUrl]),
+        recoveryUrl: recovery === "" ? undefined : Redacted.make(recovery),
+        genesis,
+        feeRecipient,
+      } satisfies SolanaDirectRail
+    },
+  })
+}
+
+export effect function rawSolana(urls: Redacted.Redacted<ReadonlyArray<string>>, genesis: string) {
+  return try jsonRpc({ urls, timeoutMs: 15000, maxBytes: 8388608, identity: { method: "getGenesisHash", expected: genesis, read: (answer) => typeof answer === "string" ? answer : undefined } })
+}
+
+const SignedBlock = Schema.NullOr(Schema.Struct({ blockhash: Schema.String, signatures: Schema.Array(Schema.String) }))
+const LatestReply = Schema.Struct({ context: Schema.Struct({ slot: Schema.Number }), value: Schema.Struct({ blockhash: Schema.String, lastValidBlockHeight: Schema.Number }) })
+
+export effect function finalizedBlockSignatures(raw: JsonRpc, slot: number) {
+  return try raw.call("getBlock", [slot, { commitment: "finalized", transactionDetails: "signatures", rewards: false, maxSupportedTransactionVersion: 0 }], SignedBlock)
+}
+
+effect function invalid(reason: string): never!SolanaDirectInvalid {
+  throw new SolanaDirectInvalid({ reason })
+}
+
+effect function payerRefused(message: string): never!SolanaPayerRefused {
+  throw new SolanaPayerRefused({ message })
+}
+
+function exactCount(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+export interface SolanaDirectInput {
+  readonly payer: string
+  readonly asset: { readonly address: string; readonly decimals: number }
+  readonly transfers: ReadonlyArray<{ readonly recipient: string; readonly amountBase: string }>
+}
+
+interface TransferPlan {
+  readonly native: boolean
+  readonly tokenProgram: Address | undefined
+  readonly admitted: Mint | undefined
+  readonly mint: Address
+  readonly payer: Address
+  readonly source: Address
+  readonly recipients: ReadonlyMap<Address, bigint>
+  readonly total: bigint
+  readonly instructions: ReadonlyArray<Instruction>
+}
+
+effect function keyOf(text: string) {
+  const key = address(text)
+  if (key === undefined || !canonicalKey(text)) return try invalid("Noncanonical Solana address")
+  return key
+}
+
+effect function amountOf(text: string) {
+  const value = positiveU64(text)
+  if (value === undefined) return try invalid("Direct SOL/SPL amounts must be positive u64 base units")
+  return value
+}
+
+effect function admittedMint(mint: Address) {
+  const account = try (try SolanaRpc).account(mint, "finalized")
+  const key = publicKey(mint)
+  if (account === undefined || key === undefined) return try invalid("Solana returned an invalid record")
+  const admitted = readMint({ program: account.owner, bytes: account.data, mint: key })
+  if (admitted.kind === "Refused") return try invalid(readRefusalMessage(admitted.refusal))
+  return admitted
+}
+
+effect function transferPlan(input: SolanaDirectInput) {
+  const payer = try keyOf(input.payer)
+  const mint = try keyOf(input.asset.address)
+  if (!Number.isInteger(input.asset.decimals) || input.asset.decimals < 0 || input.asset.decimals > 36) return try invalid("Invalid asset decimals")
+  if (input.transfers.length < 1 || input.transfers.length > 2) return try invalid("A direct award needs one or two transfers")
+  const recipients = new Map<Address, bigint>()
+  const legs: Array<readonly [Address, bigint]> = []
+  let total = 0n
+  for (const transfer of input.transfers) {
+    const recipient = try keyOf(transfer.recipient)
+    if (recipient === payer) return try invalid("A direct award must move funds to another wallet")
+    const value = try amountOf(transfer.amountBase)
+    total = total + value
+    recipients.set(recipient, (recipients.get(recipient) ?? 0n) + value)
+    legs.push([recipient, value])
+  }
+  if (!withinU64(total)) return try invalid("Direct award exceeds the Solana amount limit")
+  if (mint === SOLANA_NATIVE_ASSET) {
+    if (input.asset.decimals !== 9) return try invalid("Native SOL has nine decimals")
+    return {
+      native: true,
+      tokenProgram: undefined,
+      admitted: undefined,
+      mint,
+      payer,
+      source: payer,
+      recipients,
+      total,
+      instructions: legs.map(([recipient, value]) => ({ program: SYSTEM_PROGRAM, accounts: [meta(payer, true, true), meta(recipient, true)], data: joined(Uint8Array.of(2, 0, 0, 0), u64Bytes(value)) }) satisfies Instruction),
+    } satisfies TransferPlan
+  }
+  const admitted = try admittedMint(mint)
+  if (admitted.decimals !== input.asset.decimals) return try invalid("The mint decimals differ from the frozen award")
+  const program = admitted.program as Address
+  if (!isTokenProgram(program)) return try invalid("The mint is not an admissible token")
+  const source = tokenAccountAddress(payer, mint, program)
+  const instructions: Instruction[] = [...recipients.keys()].map((recipient) => createTokenAccount({ payer, owner: recipient, mint, tokenProgram: program }))
+  for (const [recipient, value] of legs) {
+    instructions.push({
+      program,
+      accounts: [meta(source, true), meta(mint, false), meta(tokenAccountAddress(recipient, mint, program), true), meta(payer, false, true)],
+      data: joined(Uint8Array.of(12), u64Bytes(value), Uint8Array.of(input.asset.decimals)),
+    })
+  }
+  return { native: false, tokenProgram: program, admitted, mint, payer, source, recipients, total, instructions } satisfies TransferPlan
+}
+
+effect function heldTokens(account: { readonly owner: Address; readonly data: Uint8Array } | undefined, plan: TransferPlan, owner: Address) {
+  if (account === undefined || plan.tokenProgram === undefined || plan.admitted === undefined || account.owner !== plan.tokenProgram) return try invalid("The direct-transfer token account has the wrong identity or state")
+  const admitted = readTokenAccount({ mint: plan.admitted, program: account.owner, bytes: account.data })
+  if (admitted.kind === "Refused") return try invalid(readRefusalMessage(admitted.refusal))
+  const decoded = decodeTokenAccount(account.data)
+  if (decoded.kind === "malformed" || decoded.value.mint !== plan.mint || decoded.value.owner !== owner || decoded.value.state !== 1) return try invalid("The direct-transfer token account has the wrong identity or state")
+  return decoded.value.amount
+}
+
+effect function compiledMessage(plan: TransferPlan, blockhash: Blockhash) {
+  const compiled = compileLegacy({ payer: plan.payer, blockhash, instructions: plan.instructions })
+  if (compiled.kind === "refused") return try invalid("The direct award does not fit one Solana transaction")
+  return compiled.bytes
+}
+
+export effect function prepareSolanaPlan(rail: SolanaDirectRail, input: SolanaDirectInput) {
+  provide solanaRpc({ urls: rail.urls, genesis: rail.genesis }) {
+    const solana = try SolanaRpc
+    const raw = try rawSolana(rail.urls, rail.genesis)
+    const plan = try transferPlan(input)
+    const afterSlot = try solana.slot("confirmed")
+    const latest = try raw.call("getLatestBlockhash", [{ commitment: "finalized" }], LatestReply)
+    const blockhashSlot = latest.context.slot
+    if (!exactCount(blockhashSlot) || !exactCount(latest.value.lastValidBlockHeight) || !isBlockhash(latest.value.blockhash)) return try invalid("Solana returned an inexact integer")
+    const anchor = try solana.block(blockhashSlot, "finalized")
+    if (anchor?.blockhash !== latest.value.blockhash) return try invalid("The payment blockhash has no canonical slot anchor")
+    const message = try compiledMessage(plan, latest.value.blockhash)
+    const fee = try solana.feeForMessage(message, "finalized")
+    if (fee === undefined) return try invalid("Solana returned an inexact integer")
+    const reserve = try solana.rentExemption(0, "finalized")
+    const payerAccount = try solana.account(plan.payer, "finalized")
+    if (payerAccount === undefined) return try invalid("Solana returned an invalid record")
+    if (payerAccount.owner !== SYSTEM_PROGRAM) return try payerRefused("The payer is not a native wallet account")
+    let required = fee + reserve + (plan.native ? plan.total : 0n)
+    if (!plan.native && plan.tokenProgram !== undefined) {
+      if ((try heldTokens(try solana.account(plan.source, "finalized"), plan, plan.payer)) < plan.total) return try payerRefused("The payer has insufficient tokens for this award")
+      for (const recipient of plan.recipients.keys()) {
+        const destination = try solana.account(tokenAccountAddress(recipient, plan.mint, plan.tokenProgram), "finalized")
+        if (destination === undefined) required = required + (try solana.rentExemption(plan.tokenProgram === TOKEN_PROGRAM ? 165 : 170, "finalized"))
+        else try heldTokens(destination, plan, recipient)
+      }
+    }
+    if (payerAccount.lamports < required) return try payerRefused("The payer needs the award, transaction fee and account rent")
+    const wire = joined(Uint8Array.of(1), new Uint8Array(64), message)
+    const simulation = try solana.simulate(wire, [], "finalized")
+    if (simulation.err) return try payerRefused("The direct award simulation failed. Check funds and recipient account rent, or retry if the RPC node is lagging")
+    return {
+      transaction: base64Encode(wire),
+      blockhash: latest.value.blockhash,
+      lastValidBlockHeight: latest.value.lastValidBlockHeight,
+      afterSlot: String(afterSlot),
+      blockhashSlot,
+      messageId: messageIdOf(message),
+    } satisfies IssuedPlan
+  }
+}
+
+export interface SolanaLegProof {
+  readonly legIndex: 0
+  readonly transactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+  readonly blockTime: number
+  readonly finalizedAt: string
+  readonly message: string
+}
+
+export interface SolanaVerification extends SolanaDirectInput {
+  readonly transactionId: string
+  readonly afterSlot: string
+  readonly allowedMessages: ReadonlyArray<string> | undefined
+}
+
+function tokenChanges(balances: ReadonlyArray<TokenBalance>, keys: ReadonlyArray<Address>, expected: ReadonlyMap<Address, { readonly owner: Address; readonly delta: bigint }>, plan: TransferPlan, decimals: number) {
+  const found = new Map<Address, bigint>()
+  for (const balance of balances) {
+    const holder = keys[balance.accountIndex]
+    const wanted = holder === undefined ? undefined : expected.get(holder)
+    if (holder === undefined || wanted === undefined || balance.owner !== wanted.owner || balance.mint !== plan.mint || balance.decimals !== decimals
+      || (balance.programId !== undefined && balance.programId !== plan.tokenProgram) || found.has(holder)) return undefined
+    found.set(holder, balance.amount)
+  }
+  return found
+}
+
+effect function expectedLamports(plan: TransferPlan, keys: ReadonlyArray<Address>, fetched: { readonly preBalances: ReadonlyArray<bigint>; readonly postBalances: ReadonlyArray<bigint>; readonly preTokenBalances: ReadonlyArray<TokenBalance>; readonly postTokenBalances: ReadonlyArray<TokenBalance> }, decimals: number) {
+  const lamports = new Map<Address, bigint>([[plan.payer, plan.native ? -plan.total : 0n]])
+  if (plan.native) {
+    for (const [recipient, value] of plan.recipients) lamports.set(recipient, value)
+    if (fetched.preTokenBalances.length > 0 || fetched.postTokenBalances.length > 0) return try invalid("Native award unexpectedly changed token accounts")
+    return lamports
+  }
+  const program = plan.tokenProgram
+  if (program === undefined) return try invalid("The token receipt has the wrong asset or owner")
+  const tokens = new Map<Address, { readonly owner: Address; readonly delta: bigint }>([[plan.source, { owner: plan.payer, delta: -plan.total }]])
+  for (const [recipient, value] of plan.recipients) tokens.set(tokenAccountAddress(recipient, plan.mint, program), { owner: recipient, delta: value })
+  const before = tokenChanges(fetched.preTokenBalances, keys, tokens, plan, decimals)
+  const after = tokenChanges(fetched.postTokenBalances, keys, tokens, plan, decimals)
+  if (before === undefined || after === undefined) return try invalid("The token receipt has the wrong asset or owner")
+  for (const [holder, wanted] of tokens) {
+    const ended = after.get(holder)
+    if (ended === undefined || ended - (before.get(holder) ?? 0n) !== wanted.delta || (holder === plan.source && !before.has(holder))) return try invalid("The token transfer balances differ from the award")
+    const index = keys.indexOf(holder)
+    const prior = fetched.preBalances[index]
+    const next = fetched.postBalances[index]
+    if (index < 0 || prior === undefined || next === undefined) return try invalid("Finalized SOL balances are unavailable.")
+    if (prior === 0n && holder !== plan.source) {
+      if (before.has(holder) || next === 0n) return try invalid("Invalid new token account rent")
+      lamports.set(holder, next)
+      lamports.set(plan.payer, (lamports.get(plan.payer) ?? 0n) - next)
+    } else if (prior !== next) return try invalid("Existing token account rent changed")
+  }
+  return lamports
+}
+
+export effect function verifySolanaDirect(rail: SolanaDirectRail, input: SolanaVerification) {
+  if (!/^(0|[1-9]\d{0,19})$/u.test(input.afterSlot)) return try invalid("Missing direct-payment intent slot")
+  if (!isSignature(input.transactionId)) return try invalid("The direct award is not finalized successfully")
+  provide solanaRpc({ urls: rail.urls, genesis: rail.genesis }) {
+    const solana = try SolanaRpc
+    const raw = try rawSolana(rail.urls, rail.genesis)
+    const plan = try transferPlan(input)
+    const [status] = try solana.signatureStatuses([input.transactionId])
+    if (status === undefined || status.err || status.confirmationStatus !== "finalized") return try invalid("The direct award is not finalized successfully")
+    const fetched = try solana.transaction(input.transactionId, "finalized")
+    if (fetched === undefined || fetched.meta.err || fetched.slot !== status.slot) return try invalid("The finalized receipt failed or its slot differs")
+    if (!slotAfter(fetched.slot, input.afterSlot)) return try invalid("The direct payment predates its intent slot")
+    const { wire, transaction } = fetched
+    if (wire[0] !== 1 || wire.length > 1232 || transaction.message.version !== "legacy") return try invalid("Unexpected direct transaction signatures")
+    const actual = wire.slice(65)
+    const issued = input.allowedMessages?.find((text) => sameBytes(actual, (base64Decode(text) ?? new Uint8Array()).slice(65)))
+    if (input.allowedMessages !== undefined && issued === undefined) return try invalid("The transaction is not a retained issued payment request")
+    const keys = transaction.message.accountKeys
+    const expected = try compiledMessage(plan, transaction.message.recentBlockhash)
+    const signature = transaction.signatures[0] ?? new Uint8Array()
+    if (!sameBytes(actual, expected) || !signedBy(actual, signature, plan.payer)) return try invalid("The signed direct transfer differs from the award")
+    if (fetched.meta.preBalances.length !== keys.length || fetched.meta.postBalances.length !== keys.length) return try invalid("Finalized SOL balances are unavailable.")
+    const lamports = try expectedLamports(plan, keys, fetched.meta, input.asset.decimals)
+    for (const [index, key] of keys.entries()) {
+      const delta = normalizedNativeDelta(fetched.meta.preBalances[index] ?? 0n, fetched.meta.postBalances[index] ?? 0n, fetched.meta.fee, index === 0)
+      if (delta !== (lamports.get(key) ?? 0n)) return try invalid("Unexpected native balance change in direct award")
+    }
+    const reserve = try solana.rentExemption(0, "finalized")
+    if ((fetched.meta.postBalances[0] ?? 0n) < reserve) return try invalid("Direct payment spent the payer's rent reserve")
+    const block = try finalizedBlockSignatures(raw, fetched.slot)
+    if (block === null || !block.signatures.includes(input.transactionId) || !isBlockhash(block.blockhash)) return try invalid("Direct transaction is absent from its finalized block")
+    if (fetched.blockTime === undefined) return try invalid("Solana returned an inexact integer")
+    return {
+      legIndex: 0,
+      transactionId: input.transactionId,
+      blockHash: block.blockhash,
+      blockNumber: String(fetched.slot),
+      blockTime: fetched.blockTime,
+      finalizedAt: try isoAt(fetched.blockTime * 1000),
+      message: issued ?? base64Encode(joined(Uint8Array.of(1), new Uint8Array(64), actual)),
+    } satisfies SolanaLegProof
+  }
+}
+
+schema IntentRow { intent: string; generation: number }
+schema PlanRow { plan: string }
+schema PlanHolder { solana?: IssuedPlan }
+
+export interface IssuedPlans {
+  readonly generation: number
+  readonly plans: ReadonlyArray<IssuedPlan>
+}
+
+effect function planOf(text: string) {
+  return Schema.decodeUnknownEffect(Schema.fromJsonString(IssuedPlan))(text) catch effect () => { throw new SolanaDirectInvalid({ reason: "A retained Solana request is malformed" }) }
+}
+
+export effect function issuedPlans(caseId: string) {
+  const [current] = try rows(IntentRow, sql`SELECT intent, generation FROM security_direct_current_payments WHERE case_id = ${caseId}`)
+  if (current === undefined) return { generation: 0, plans: [] } satisfies IssuedPlans
+  const holder = Schema.decodeUnknownEffect(Schema.fromJsonString(PlanHolder))(current.intent) catch effect () => { throw new SolanaDirectInvalid({ reason: "A retained Solana request is malformed" }) }
+  const listed: IssuedPlan[] = holder.solana === undefined ? [] : [holder.solana]
+  for (const row of try rows(PlanRow, sql`SELECT plan FROM security_direct_payment_plans WHERE case_id = ${caseId} AND generation = ${current.generation} ORDER BY case_revision`)) listed.push(try planOf(row.plan))
+  return { generation: current.generation, plans: [...new Map(listed.map((plan) => [plan.messageId ?? plan.transaction, plan])).values()] } satisfies IssuedPlans
+}
+
+effect function refuse(reason: DirectRefusal): never!DirectRefused {
+  throw new DirectRefused({ reason })
+}
+
+effect function recoveryRefused(reason: RecoveryRefusal): never!RecoveryRefused {
+  throw new RecoveryRefused({ reason })
+}
+
+const noRelease = { rail: "DirectFull", decision: "", reviewedRevision: 0, qualificationRun: "" } as const
+
+effect function directAward(caseId: string) {
+  const award: ApprovedAward | undefined = try (try ApprovedAwards).forCase(caseId)
+  if (award === undefined || !award.direct) return try refuse("railUnavailableTheProgramHasNo")
+  const full = award.split === "FullAward"
+  if (!fullRailAdmission(full ? "PrivateFull" : "PrivateStandard", full ? "DirectFull" : "DirectStandard", noRelease)) return try refuse("railUnavailableTheBountyVaultPays")
+  return award
+}
+
+export function solanaAssetFor(award: ApprovedAward, rail: SolanaDirectRail): PaymentAsset | undefined {
+  if (award.asset === SOLANA_NATIVE_ASSET) return { address: SOLANA_NATIVE_ASSET, decimals: 9, symbol: "SOL" }
+  const reference = NETWORKS[rail.network].assets.find((asset) => asset.address === award.asset)
+  return reference === undefined ? undefined : { address: reference.address, decimals: reference.decimals, symbol: reference.symbol }
+}
+
+export effect function solanaRail(award: ApprovedAward, network: string, missing: DirectRefusal) {
+  const rail = try (try SolanaDirectRails).rail(network)
+  if (rail === undefined || rail.model !== award.network) return try refuse(missing)
+  return rail
+}
+
+effect function payableWallet(githubId: string) {
+  return try (try Wallets).payable({ githubId, network: "Solana" })
+}
+
+export function sameWallet(left: EffectiveWallet | undefined, right: EffectiveWallet | undefined) {
+  return left !== undefined && right !== undefined && left.claimId === right.claimId && left.digest === right.digest && left.address === right.address
+}
+
+export function walletOfIntent(wallet: PaymentWallet): EffectiveWallet {
+  return { address: wallet.address, claimId: wallet.id, digest: wallet.digest }
+}
+
+export effect function walletFence(owners: ReadonlyArray<readonly [string, EffectiveWallet]>, network: "Base" | "Ethereum" | "Robinhood" | "Solana", changed: string) {
+  const wallets = try Wallets
+  let held = sql`1`
+  for (const [githubId, wallet] of owners) held = sql`${held} AND ${try wallets.fence({ githubId, network, claimId: wallet.claimId, digest: wallet.digest })}`
+  return sql`SELECT CASE WHEN ${held} THEN 1 ELSE json(${changed}) END AS wallets` satisfies Statement
+}
+
+function unassignedPayer(reporterGithubId: string) {
+  return reporterGithubId === "1" ? "2" : "1"
+}
+
+function consentDeployment(intent: DirectIntent | undefined, network: string, asset: PaymentAsset, recipient: PaymentWallet, generation: number) {
+  return intent === undefined
+    ? { rail: "direct", network, asset, recipient }
+    : { rail: "direct-recovery", network, asset: intent.asset, recipient, generation }
+}
+
+function consentedTo(journal: Journal, deployment: string) {
+  const latest = journal.consents.at(-1)
+  return latest !== undefined && JSON.stringify(latest.deployment) === deployment
+}
+
+function solanaFacts(award: ApprovedAward, rail: SolanaDirectRail, context: CaseContext, payerGithubId: string, payerWallet: EffectiveWallet | undefined, reporterWallet: EffectiveWallet | undefined, otherUses: Facts["otherUses"] = []): Facts {
+  return { approval: award, network: "Solana", rail, caseRevision: context.revision, reporterGithubId: context.reporterGithubId, payerGithubId, payerWallet, reporterWallet, otherUses }
+}
+
+export effect function consentSolanaPayment(context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
+  const award = try directAward(context.caseId)
+  const prepared = currentIntent(try journalFor(context.caseId))
+  if (prepared !== undefined && prepared.network !== body.network) return try refuse("invalidRequestUseThePaymentS")
+  const rail = try solanaRail(award, body.network, "railUnavailable")
+  const asset = solanaAssetFor(award, rail)
+  if (asset === undefined) return try refuse("railUnavailable")
+  const found = try payableWallet(context.reporterGithubId)
+  const recipient = storedWallet(found)
+  if (found === undefined || recipient === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const payerGithubId = prepared?.payerGithubId ?? unassignedPayer(context.reporterGithubId)
+  const payerWallet = prepared === undefined ? undefined : walletOfIntent(prepared.payer)
+  const now = try isoNow()
+  const actor = Number(context.actorGithubId)
+  const detail = { network: body.network, publicChainVisibilityAccepted: true } satisfies ConsentDetail
+  return try commit(context.caseId, (current) => effect {
+    const deployment = JSON.stringify(consentDeployment(currentIntent(current), body.network, asset, recipient, generationOf(current)))
+    const facts = solanaFacts(award, rail, context, payerGithubId, payerWallet, found)
+    if (consentedTo(current, deployment)) {
+      const blocked = consentBlocked((try snapshotOf(current, facts)).state, actor)
+      if (blocked !== undefined) return try refuse(blocked)
+      return { value: detail, writes: [] }
+    }
+    const { writes } = decided(current, facts, [], ({ state, claims }) => ({ type: "consent", wallet: walletModel(claims, recipient), observedRevision: state.caseRevision, chainVisibility: true }), actor, { kind: "consent", deployment, reporterGithubId: context.actorGithubId, acceptedAt: now }) catch effect (error) => match (error) {
+      when Rejected: throw consentRefusal(error.state, actor, recipient);
+      default: throw error;
+    }
+    return { value: detail, writes }
+  }, alongside)
+}
+
+function consentBlocked(state: DirectBounty, actor: number): DirectRefusal | undefined {
+  if (!state.admitted) return "railUnavailable"
+  if (actor !== state.terms.reporterActor) return "forbiddenOnlyTheReporterMay"
+  if (state.researcherReceipt.transaction !== "") return "paymentAlreadyVerified"
+  return undefined
+}
+
+function consentRefusal(state: DirectBounty, actor: number, recipient: PaymentWallet) {
+  const address = recipient.address.toLowerCase()
+  const conflict = state.intent.active && (address === state.intent.payer.address || address === state.terms.feeWallet)
+  return new DirectRefused({ reason: consentBlocked(state, actor) ?? (conflict ? "paymentWalletConflict" : "staleRevision") })
+}
+
+effect function blockhashStillValid(rail: SolanaDirectRail, blockhash: Blockhash) {
+  provide solanaRpc({ urls: rail.urls, genesis: rail.genesis }) {
+    return (try (try SolanaRpc).blockhashValid(blockhash, "finalized")).value
+  }
+}
+
+effect function refreshSolana(context: CaseContext, award: ApprovedAward, network: string, alongside: ReadonlyArray<Statement>) {
+  const existing = try journalFor(context.caseId)
+  const intent = currentIntent(existing)
+  if (intent === undefined || existing.paid) return try refuse("paymentNotPending")
+  const researcherPaid = existing.legs.some((leg) => leg.legIndex === 0)
+  const reporterWallet = try payableWallet(context.reporterGithubId)
+  if (!researcherPaid && (reporterWallet === undefined || reporterWallet.claimId !== intent.recipient.id || reporterWallet.digest !== intent.recipient.digest)) return try refuse("paymentWalletChanged")
+  if (intent.network !== network) return try refuse("paymentNetworkChanged")
+  const rail = try solanaRail(award, intent.network, "railUnavailableDirectPaymentIsUnavailable")
+  const { plans } = try issuedPlans(context.caseId)
+  const plan = plans.at(-1)
+  if (plan === undefined || !isBlockhash(plan.blockhash)) return try recoveryRefused("paymentRecoveryRequired")
+  if (!(try blockhashStillValid(rail, plan.blockhash))) return try recoveryRefused("paymentRecoveryRequiredProveTheExpiredRequest")
+  const generation = generationOf(existing)
+  return try commit(context.caseId, (current) => effect {
+    if (generationOf(current) !== generation || current.paid) return try refuse("paymentNotPending")
+    return { value: { network, rail: "direct", refreshed: true } satisfies PrepareDetail, writes: [] }
+  }, alongside)
+}
+
+export effect function prepareSolanaPayment(context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheExact75")
+  const award = try directAward(context.caseId)
+  const existing = try journalFor(context.caseId)
+  if (currentIntent(existing) !== undefined) return try refreshSolana(context, award, body.network, alongside)
+  const rail = try solanaRail(award, body.network, "railUnavailable")
+  const asset = solanaAssetFor(award, rail)
+  if (asset === undefined) return try refuse("railUnavailable")
+  const reporterWallet = try payableWallet(context.reporterGithubId)
+  const recipient = storedWallet(reporterWallet)
+  if (reporterWallet === undefined || recipient === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const deployment = JSON.stringify(consentDeployment(undefined, body.network, asset, recipient, 0))
+  if (!consentedTo(existing, deployment)) return try refuse("paymentConsentRequired")
+  const payerWallet = try payableWallet(context.actorGithubId)
+  const payer = storedWallet(payerWallet)
+  if (payerWallet === undefined || payer === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const gross = grossOf(award)
+  const feeBase = bountyFeeBase(gross)
+  const netBase = bountyResearcherBase(gross)
+  if (!validSplit("PrivateStandard", asAmount(gross), asAmount(netBase), asAmount(feeBase))) return try refuse("railUnavailableTheBountyVaultPays")
+  if (payer.address === recipient.address || payer.address === rail.feeRecipient || recipient.address === rail.feeRecipient) return try refuse("paymentWalletConflictPayerReporterAndPlatform")
+  const transfers = [{ recipient: recipient.address, amountBase: netBase.toString() }, { recipient: rail.feeRecipient, amountBase: feeBase.toString() }]
+  const plan = try prepareSolanaPlan(rail, { payer: payer.address, asset, transfers })
+  const intent: DirectIntent = {
+    protocolVersion: 2,
+    preparedAt: try isoNow(),
+    afterBlock: plan.afterSlot,
+    rail: "direct",
+    network: body.network,
+    chain: "solana",
+    asset,
+    payer,
+    recipient,
+    grossBase: gross.toString(),
+    feeBase: feeBase.toString(),
+    netBase: netBase.toString(),
+    transfers,
+    solana: plan,
+    payerGithubId: context.actorGithubId,
+  }
+  return try commit(context.caseId, (current) => effect {
+    if (!consentedTo(current, deployment)) return try refuse("paymentPreparationChanged")
+    if (!sameWallet(try payableWallet(context.reporterGithubId), reporterWallet) || !sameWallet(try payableWallet(context.actorGithubId), payerWallet)) return try refuse("paymentPreparationChanged")
+    const facts = solanaFacts(award, rail, context, context.actorGithubId, payerWallet, reporterWallet)
+    const { writes } = decided(current, facts, [payer, recipient], ({ state, claims }) => ({ type: "prepare", intent: intentModel(intent, 0, claims), observedRevision: state.caseRevision, proofAvailable: true, nonceReserved: true }), Number(context.actorGithubId), { kind: "intent", intent }) catch effect (error) => match (error) {
+      when Rejected: throw new DirectRefused({ reason: !error.state.admitted ? "railUnavailable" : error.event.type === "prepare" && !authorizedWallets(error.state, error.event.intent) ? "paymentConsentRequired" : "paymentPreparationChanged" });
+      default: throw error;
+    }
+    const fence = try walletFence([[context.reporterGithubId, reporterWallet], [context.actorGithubId, payerWallet]], "Solana", "payment wallet changed")
+    return { value: { network: body.network, rail: "direct" } satisfies PrepareDetail, writes: [fence, ...writes] }
+  }, alongside)
+}
+
+export effect function verifySolanaPayment(context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true || body.transactionIds.length < 1 || body.transactionIds.length > 2) return try refuse("invalidRequestConfirmOneOrTwo")
+  const existing = try journalFor(context.caseId)
+  const prepared = currentIntent(existing)
+  if (prepared === undefined) return try refuse("paymentNotPreparedPrepareTheExactPayment")
+  if (existing.paid) return try refuse("paymentAlreadyVerifiedThisPaymentIsAlready")
+  const award: ApprovedAward | undefined = try (try ApprovedAwards).forCase(context.caseId)
+  if (award === undefined) return try refuse("railUnavailableReceiptVerificationIsUnavailable")
+  const rail = try solanaRail(award, prepared.network, "railUnavailableReceiptVerificationIsUnavailable")
+  const [transactionId] = body.transactionIds
+  if (transactionId === undefined || body.transactionIds.length !== 1) return try refuse("paymentUnverified")
+  const issued = prepared.protocolVersion === 2 ? (try issuedPlans(context.caseId)).plans.map((plan) => plan.transaction) : undefined
+  const proof = verifySolanaDirect(rail, { payer: prepared.payer.address, asset: prepared.asset, transfers: prepared.transfers, transactionId, afterSlot: prepared.afterBlock, allowedMessages: issued }) catch effect () => {
+    throw new DirectRefused({ reason: "paymentUnverified" })
+  }
+  const uses = try usedElsewhere(context.caseId, prepared.network, [proof.transactionId])
+  if (uses.ordinary.length > 0) return try refuse("paymentReplay")
+  if (uses.recorded.length > 0 || existing.legs.some((leg) => leg.transactionId === proof.transactionId)) return try refuse("paymentReplayThisTransferIsAlready")
+  if (existing.legs.length > 0) return try refuse("paymentLegAlreadyVerified")
+  const reporterWallet = try payableWallet(context.reporterGithubId)
+  const now = try isoNow()
+  return try commit(context.caseId, (current) => effect {
+    const intent = currentIntent(current) ?? prepared
+    const facts = solanaFacts(award, rail, context, intent.payerGithubId ?? unassignedPayer(context.reporterGithubId), walletOfIntent(intent.payer), reporterWallet)
+    const evidence = { legIndex: 0, transactionId: proof.transactionId, blockHash: proof.blockHash, blockNumber: proof.blockNumber, finalizedAt: proof.finalizedAt, message: proof.message }
+    const { writes } = decided(current, facts, [], ({ state }) => receiptEvent(state, [transferModel("Solana", intent, state.intent, 0, evidence)]), Number(context.actorGithubId), { kind: "receipts", network: intent.network, verifiedAt: now, proofs: [evidence] }) catch effect (error) => match (error) {
+      when Rejected: throw new DirectRefused({ reason: error.state.admitted ? "paymentUnverified" : "railUnavailableReceiptVerificationIsUnavailable" });
+      default: throw error;
+    }
+    return { value: { verified: true, rail: "direct" } satisfies VerifyDetail, writes }
+  }, alongside)
+}

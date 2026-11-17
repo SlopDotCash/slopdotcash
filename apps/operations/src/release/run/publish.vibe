@@ -1,0 +1,242 @@
+// spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import type { WorkerConfig } from "../../../gen/fees__runtime.effect.vibe"
+import { type Environment, type ListedDeployment, type Service, canBeginPublication, canProveUnpublished, canPublishService, canReconcilePublication, canRefuseRewrite, canSupersede, serviceAt } from "../../../gen/operations__release.effect.vibe"
+import { observeLock } from "../../publicationLock/group.vibe"
+import { thisRun } from "../../publicationLock/lock.vibe"
+import { selectCoverage } from "../coverage/options.vibe"
+import { BundleRefused } from "../manifest/inventory.vibe"
+import { bundleSite, verifyPagesManifest } from "../manifest/pages.vibe"
+import { readCollection, verifyBundle } from "../manifest/release.vibe"
+import { githubDigest, registryDigest } from "./collect.vibe"
+import { type RunFacts, environmentOf } from "./facts.vibe"
+import { type Heads, branchHeads, isAncestor } from "./heads.vibe"
+import { stagingHistory } from "./history.vibe"
+import { Publisher, type Target } from "./publisher.vibe"
+import { type GateReceipts, readReceipts } from "./receipts.vibe"
+import { type Run, startRun } from "./run.vibe"
+
+export error ReleaseStopped { outcome: string; message: string }
+
+export interface ReleaseInput {
+  readonly environment: Environment
+  readonly facts: RunFacts
+  readonly bundle: string
+  readonly receipts: string
+  readonly root: string
+  readonly anchor: string
+}
+
+export interface Released {
+  readonly outcome: "Verified" | "Superseded"
+  readonly deployment: string
+  readonly sourceSha: string
+}
+
+type Settled = "Continue" | "Superseded"
+type LockStep = "abandon" | "refuseRewritten"
+
+const releaseVariables: ReadonlyArray<readonly [Service, string]> = [
+  ["FeeConverter", "SLOP_FEE_CONVERTER_RELEASE"],
+  ["Notify", "SLOP_NOTIFY_RELEASE"],
+  ["VettingBackup", "SLOP_VETTING_BACKUP_RELEASE"],
+  ["VettingRetention", "SLOP_VETTING_RETENTION_RELEASE"],
+  ["Slopbot", "SLOPBOT_RELEASE"],
+]
+
+const inertFee: WorkerConfig = { source: 0, converterMode: "Off", buybackMode: "Off", networks: [], keys: [], nativeLimits: [], evmWallet: 1, solanaWallet: 2 }
+const siteAttempts = 3
+const siteBackoffSeconds = 10
+
+export const historyAnchor = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/u
+
+function secondsOf(iso: string) {
+  const millis = isoInstant.test(iso) ? Date.parse(iso) : Number.NaN
+  return Number.isFinite(millis) && millis > 0 ? Math.floor(millis / 1000) : 0
+}
+
+effect function stop(run: Run, outcome: string, message: string, lockStep: LockStep | undefined) {
+  if (lockStep !== undefined) try run.lock.send({ type: lockStep, id: thisRun }, run.lockBy)
+  throw new ReleaseStopped({ outcome, message })
+}
+
+effect function recordCollection(run: Run, bundle: string, facts: RunFacts) {
+  const collection = try readCollection(bundle)
+  const environment: Environment = collection.environment === "production" ? "Production" : "Staging"
+  const registry = (try registryDigest(bundle)) === collection.registrySha256 ? try run.idOf("registry", collection.registrySha256) : 0
+  const github = (try githubDigest(bundle)) === collection.githubSha256 ? try run.idOf("github", collection.githubSha256) : 0
+  const recordedAt = secondsOf(collection.recordedAt)
+  if (collection.kind === "fresh") {
+    try run.send({ type: "collectData", environment, registryDigest: registry, githubDigest: github, recordedAt })
+    return
+  }
+  try run.send({ type: "retainSnapshot", environment, digest: github, originalRecordedAt: recordedAt, bootstrap: facts.options.bootstrap })
+}
+
+effect function recordReceipts(run: Run, receipts: ReadonlyArray<GateReceipts>, sha: string, manifestSha256: string, artifact: number) {
+  const source = (try run.state()).source
+  for (const receipt of receipts) {
+    try run.send({
+      type: "recordGates",
+      gates: [...new Set(receipt.gates)],
+      source: receipt.sourceSha === sha ? source : 0,
+      artifactDigest: receipt.manifestSha256 === manifestSha256 ? artifact : 0,
+    })
+  }
+}
+
+effect function readVariables(run: Run) {
+  for (const [service, name] of releaseVariables) {
+    const enabled = (try Config.withDefault(Config.String(name), "")) === "enabled"
+    if (enabled) try run.sendAs({ type: "setVariable", service, value: true }, "Owner")
+  }
+}
+
+effect function settle(run: Run, order: ReadonlyArray<Service>, branch: string, sha: string) {
+  const state = try run.state()
+  if (canRefuseRewrite(state)) {
+    try run.send({ type: "refuseRewrite" })
+    return try stop(run, "Refused", `Live ${branch} is not a fast-forward of tested ${sha}`, "refuseRewritten")
+  }
+  if (!canSupersede(state)) return "Continue" satisfies Settled
+  const bound = state.services.some((row) => row.phase === "ServiceBound")
+  const pending = order.find((service) => serviceAt(state, service).phase === "ServicePending")
+  if (bound && pending !== undefined) {
+    try run.send({ type: "failService", service: pending })
+    return try stop(run, "PartiallyPublished", `Partial publication: live ${branch} changed after Worker publication of ${sha}; the static site was not published`, "abandon")
+  }
+  try run.send({ type: "supersede" })
+  try run.lock.send({ type: "finish", id: thisRun }, run.lockBy)
+  if (bound) return try stop(run, "PartiallyPublished", `Partial publication: live ${branch} changed after Worker publication of ${sha}; the static site was not published`, undefined)
+  if (run.environment === "Staging") return try stop(run, "Superseded", `Refusing staging rollback: a newer release attempt than ${sha} owns publication`, undefined)
+  try Console.log(`Superseded: ${branch} advanced after testing; this run did not publish ${sha}`)
+  return "Superseded" satisfies Settled
+}
+
+effect function publishServices(run: Run, heads: Heads, target: Target, branch: string) {
+  const publisher = try Publisher
+  for (const service of publisher.order) {
+    const state = try run.state()
+    if (serviceAt(state, service).phase !== "ServicePending") continue
+    try heads.observe()
+    if ((try settle(run, publisher.order, branch, target.sourceSha)) === "Superseded") return "Superseded" satisfies Settled
+    const settings = service === "FeeConverter" ? (publisher.feeSettings(target) catch () => undefined) : undefined
+    const feeConfig: WorkerConfig = settings === undefined ? inertFee : { ...settings, source: state.source }
+    if (!canPublishService(state, service, feeConfig, state.source)) {
+      try run.send({ type: "failService", service })
+      return try stop(run, "PartiallyPublished", `${service} is not publishable: its reviewed configuration fails the runtime guard`, "abandon")
+    }
+    const tag = publisher.publish(service, target) catch effect (error) => {
+      try run.send({ type: "failService", service })
+      return try stop(run, "PartiallyPublished", `${service} publication failed: ${error.message}`, "abandon")
+    }
+    const accepted = run.send({ type: "publishService", service, feeConfig, taggedSource: tag === target.sourceSha ? state.source : 0 }) catch () => undefined
+    if (accepted === undefined) {
+      try run.send({ type: "failService", service })
+      return try stop(run, "PartiallyPublished", `${service} does not serve the tested source ${target.sourceSha} under its reviewed configuration`, "abandon")
+    }
+  }
+  const left = (try run.state()).services.find((row) => row.phase === "ServicePending")
+  if (left !== undefined) {
+    try run.send({ type: "failService", service: left.service })
+    return try stop(run, "PartiallyPublished", `No publication adapter publishes ${left.service}`, "abandon")
+  }
+  return "Continue" satisfies Settled
+}
+
+effect function publishSite(run: Run, target: Target) {
+  const publisher = try Publisher
+  const since = try Clock.currentTimeMillis
+  try run.send({ type: "publishSite" })
+  for (let attempt = 1; ; attempt += 1) {
+    const reported = publisher.site(target) catch (error) => error.message
+    if (typeof reported === "string") try Console.log(`::warning::Static site publication attempt ${attempt} reported: ${reported}; reconciling from the provider`)
+    const listed = publisher.deployments(target, since) catch effect (error) => {
+      return try stop(run, "PublicationUncertain", `The provider listing is unavailable: ${error.message}`, "abandon")
+    }
+    const entries: ListedDeployment[] = []
+    for (const entry of listed) entries.push({ deployment: try run.idOf("deployment", entry.deploymentId), digest: try run.idOf("artifact", entry.artifactSha256) })
+    const listing = { environment: run.environment, sinceAttempt: (try run.state()).attempt, entries }
+    if (canReconcilePublication(try run.state(), listing)) {
+      try run.send({ type: "reconcilePublication", listing })
+      try run.lock.send({ type: "finish", id: thisRun }, run.lockBy)
+      return listed.find((entry) => entry.artifactSha256 === target.manifestSha256)?.deploymentId ?? ""
+    }
+    if (attempt === siteAttempts) {
+      if (canProveUnpublished(try run.state(), listing)) {
+        try run.send({ type: "proveUnpublished", listing })
+        try run.lock.send({ type: "yieldLock", id: thisRun }, run.lockBy)
+        return try stop(run, "Unpublished", `The static site of ${target.sourceSha} was not published after ${siteAttempts} attempts`, undefined)
+      }
+      return try stop(run, "PublicationUncertain", "The provider listing neither shows nor excludes the tested artifact", "abandon")
+    }
+    try Console.log(`::warning::Static site attempt ${attempt} is not listed; retrying`)
+    try sleep(Duration.seconds(attempt * siteBackoffSeconds))
+  }
+}
+
+effect function verifyServed(run: Run, target: Target, deploymentId: string) {
+  const publisher = try Publisher
+  const served = publisher.served(target, deploymentId) catch effect (error) => {
+    return try stop(run, "Published", `The served bytes are unverified: ${error.message}`, undefined)
+  }
+  const observation = {
+    deployment: try run.idOf("deployment", served.deploymentId),
+    digest: try run.idOf("artifact", served.artifactSha256),
+    environment: served.environment,
+    dnsTlsHeaders: served.dnsTlsHeaders,
+  }
+  run.send({ type: "verifyServed", served: observation }) catch effect () => {
+    return try stop(run, "Published", "The deployment serves other bytes than the tested artifact or failed its DNS, TLS or header checks", undefined)
+  }
+}
+
+export effect function release(input: ReleaseInput) {
+  const { environment, facts } = input
+  if (environment === "Production" && !(try isAncestor(input.root, input.anchor, facts.sha))) {
+    throw new ReleaseStopped({ outcome: "Refused", message: `Main ${facts.sha} does not contain ${input.anchor}, the last commit of the previous application history` })
+  }
+  const run = try startRun(environment, facts.by)
+  try run.send({ type: "configure", environment, ref: facts.ref })
+  try run.lock.send({ type: "start", environment, kind: "CodeRelease" }, run.lockBy)
+  try selectCoverage(run, facts)
+  const verified = try verifyBundle(input.bundle)
+  if (verified.manifest.sourceSha !== facts.sha || environmentOf(verified.manifest.environment) !== environment) {
+    throw new BundleRefused({ message: "The bundle was not built from this run's source for this environment" })
+  }
+  try verifyPagesManifest(try bundleSite(input.bundle))
+  try recordCollection(run, input.bundle, facts)
+  const artifact = try run.idOf("artifact", verified.manifestSha256)
+  try run.send({ type: "build", artifactDigest: artifact })
+  try recordReceipts(run, try readReceipts(input.receipts), facts.sha, verified.manifestSha256, artifact)
+  try run.send({ type: "check" })
+  const publisher = try Publisher
+  const branch = facts.ref.branch
+  const done = { outcome: "Superseded", deployment: "", sourceSha: facts.sha } satisfies Released
+  const heads = try branchHeads(run, input.root, branch, facts.sha)
+  try heads.observe()
+  try settle(run, publisher.order, branch, facts.sha)
+  if (environment === "Staging") try stagingHistory(run, facts.ref.repository, input.root, facts.sha)
+  try observeLock(input.root, facts.workflowPath, facts.job, environment)
+  try readVariables(run)
+  const target = { environment, sourceSha: facts.sha, bundle: input.bundle, manifestSha256: verified.manifestSha256 } satisfies Target
+  try run.send({ type: "acquireLock" })
+  try run.lock.send({ type: "acquire", id: thisRun }, run.lockBy)
+  try heads.observe()
+  if ((try settle(run, publisher.order, branch, facts.sha)) === "Superseded") return done
+  if (!canBeginPublication(try run.state())) return try stop(run, "Refused", "Publication cannot begin with this run's data and receipts", "abandon")
+  try run.send({ type: "beginPublication" })
+  publisher.prepare(target) catch effect (error) => {
+    const state = try run.state()
+    const pending = publisher.order.find((service) => serviceAt(state, service).phase === "ServicePending")
+      ?? state.services.find((row) => row.phase === "ServicePending")?.service
+    if (pending !== undefined) try run.send({ type: "failService", service: pending })
+    return try stop(run, "PartiallyPublished", `Publication preparation failed: ${error.message}`, "abandon")
+  }
+  if ((try publishServices(run, heads, target, branch)) === "Superseded") return done
+  try heads.observe()
+  if ((try settle(run, publisher.order, branch, facts.sha)) === "Superseded") return done
+  const deployment = try publishSite(run, target)
+  try verifyServed(run, target, deployment)
+  return { outcome: "Verified", deployment, sourceSha: facts.sha } satisfies Released
+}

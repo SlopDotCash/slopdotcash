@@ -1,0 +1,56 @@
+// spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"; spec/operations/publicationLock.md, "At most one run of an environment holds the lock, and health jobs never take it"
+import { gitBytes } from "@repo/platform/git"
+import type { Run } from "./run.vibe"
+
+export error HeadUnreadable { message: string }
+
+export type HeadMove = "Same" | "Advanced" | "Rewritten"
+
+const revision = /^[0-9a-f]{40}$/u
+const gitSeconds = 120
+const lineLimit = 4 * 1024
+
+effect function gitLine(root: string, args: ReadonlyArray<string>, refusal: string) {
+  const bytes = gitBytes({ args: ["-C", root, ...args], limit: lineLimit, seconds: gitSeconds }, refusal) catch effect () => {
+    throw new HeadUnreadable({ message: refusal })
+  }
+  return new TextDecoder().decode(bytes).trim()
+}
+
+export effect function isAncestor(root: string, ancestor: string, descendant: string) {
+  if (!revision.test(ancestor) || !revision.test(descendant)) return false
+  const base = gitBytes({ args: ["-C", root, "merge-base", ancestor, descendant], limit: lineLimit, seconds: gitSeconds }, "no common history") catch () => undefined
+  return base !== undefined && new TextDecoder().decode(base).trim() === ancestor
+}
+
+export effect function branchHeads(run: Run, root: string, branch: string, tested: string) {
+  const current = try Ref.make(tested)
+  const fetched = `refs/remotes/origin/slop-live-${branch}`
+  effect function live() {
+    try gitLine(root, ["fetch", "--force", "--no-tags", "origin", `+refs/heads/${branch}:${fetched}`], `The live ${branch} head could not be fetched`)
+    const head = try gitLine(root, ["rev-parse", "--verify", `${fetched}^{commit}`], `The live ${branch} head is unreadable`)
+    if (!revision.test(head)) throw new HeadUnreadable({ message: `Git did not return a valid live ${branch} SHA` })
+    return head
+  }
+  effect function tree(sha: string) {
+    return try gitLine(root, ["rev-parse", "--verify", `${sha}^{tree}`], `The tree of ${sha} is unreadable`)
+  }
+  effect function equivalent(head: string) {
+    if (run.environment !== "Production" || (try tree(head)) !== (try tree(tested))) return false
+    return try isAncestor(root, tested, head)
+  }
+  effect function observe() {
+    const head = try live()
+    const before = try Ref.get(current)
+    if (head === before || (try equivalent(head))) return "Same" satisfies HeadMove
+    const moved: HeadMove = (try isAncestor(root, before, head)) ? "Advanced" : "Rewritten"
+    try Ref.set(current, head)
+    const environment = run.environment
+    try run.send(moved === "Advanced" ? { type: "advanceBranch" } : { type: "rewriteBranch" })
+    try run.lock.send(moved === "Advanced" ? { type: "advanceBranch", environment } : { type: "rewriteBranch", environment }, run.lockBy)
+    return moved
+  }
+  return { observe }
+}
+
+export type Heads = Effect.Success<ReturnType<typeof branchHeads>>

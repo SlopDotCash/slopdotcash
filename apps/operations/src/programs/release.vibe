@@ -1,0 +1,77 @@
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/release.md, "Normal releases need verified registry and GitHub collections for this environment"; spec/operations/release.md, "Every required check binds the same source and built artifact"; spec/operations/releaseCoverage.md, "Only a manual release on the target branch can request either option"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+import { systemGit } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { releaseCoverage, writeOutputs } from "../release/coverage/options.vibe"
+import { pullRequestScope } from "../release/coverage/scope.vibe"
+import { bundleSite, createPagesManifest, verifyPagesManifest } from "../release/manifest/pages.vibe"
+import { type EnvironmentName, createReleaseManifest, verifyBundle } from "../release/manifest/release.vibe"
+import { collect } from "../release/run/collect.vibe"
+import { environmentOf, runFacts } from "../release/run/facts.vibe"
+import { historyAnchor, release as publishRelease } from "../release/run/publish.vibe"
+
+export error ReleaseUsage { message: string }
+
+const usage = [
+  "release coverage production|staging",
+  "release scope [root]",
+  "release collect production|staging <bundle> [--retained]",
+  "release manifest production|staging <bundle>",
+  "release verify-bundle <bundle>",
+  "release publish production|staging <bundle> <receipts> [root]",
+].join(" | ")
+
+function nameOf(text: string | undefined): EnvironmentName | undefined {
+  return text === "production" || text === "staging" ? text : undefined
+}
+
+effect function githubAccess() {
+  const token = Option.getOrUndefined(try Config.option(Config.Redacted("GITHUB_TOKEN")))
+  return github({ token, userAgent: "slop-release" })
+}
+
+export effect function release(args: ReadonlyArray<string>) {
+  const [command, first, second, third, fourth, ...rest] = args
+  const environment = environmentOf(first ?? "")
+  const name = nameOf(first)
+  if (command === "coverage" && environment !== undefined && second === undefined) {
+    try writeOutputs(try releaseCoverage(try runFacts(), environment))
+    return
+  }
+  if (command === "scope" && second === undefined) {
+    provide systemGit {
+      try writeOutputs(try pullRequestScope(try runFacts(), first ?? "."))
+    }
+    return
+  }
+  if (command === "collect" && name !== undefined && second !== undefined && (third === undefined || third === "--retained") && fourth === undefined) {
+    const collected = try collect(name, second, third === undefined ? "fresh" : "retained")
+    for (const projectId of collected.withheld) try Console.log(`::warning::Project ${projectId} is restricted but its paused, retired revision is pending; the snapshot stores it paused and retired`)
+    try Console.log(`[Slop] collected the ${name} registry and GitHub data at ${collected.collection.recordedAt}`)
+    return
+  }
+  if (command === "manifest" && name !== undefined && second !== undefined && third === undefined) {
+    const sha = try Config.String("GITHUB_SHA")
+    try createPagesManifest(try bundleSite(second))
+    const created = try createReleaseManifest(second, sha, name)
+    try Console.log(`[Slop] release manifest ${created.manifestSha256} binds ${created.manifest.files.length} files of ${sha}`)
+    return
+  }
+  if (command === "verify-bundle" && first !== undefined && second === undefined) {
+    const verified = try verifyBundle(first)
+    const pages = (try verifyPagesManifest(try bundleSite(first))).manifest.files.length
+    try Console.log(`[Slop] verified ${verified.manifest.files.length} bundle files and ${pages} public files of ${verified.manifest.sourceSha}`)
+    return
+  }
+  if (command === "publish" && environment !== undefined && second !== undefined && third !== undefined && rest.length === 0) {
+    const facts = try runFacts()
+    const access = try githubAccess()
+    provide Layer.mergeAll(access, systemGit) {
+      const released = try publishRelease({ environment, facts, bundle: second, receipts: third, root: fourth ?? ".", anchor: historyAnchor })
+      try Console.log(released.outcome === "Verified"
+        ? `[Slop] published and verified ${released.sourceSha} as deployment ${released.deployment}`
+        : `[Slop] superseded: ${released.sourceSha} was not published`)
+    }
+    return
+  }
+  throw new ReleaseUsage({ message: `usage: ${usage}` })
+}

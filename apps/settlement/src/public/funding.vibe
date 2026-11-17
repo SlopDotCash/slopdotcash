@@ -1,0 +1,135 @@
+// spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/settlement/publicRecords.md, "Testnet rows appear only on staging"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+import { nowSeconds } from "@repo/platform/clock"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { Refused } from "@repo/platform/http"
+import type { AssetTotals, ProjectTotals } from "../client/vault.vibe"
+import type { FundedVault, MonthStart, PoolFunding } from "../client/public.vibe"
+import { getPaymentsProjectsByIdTotals } from "../client/refusals.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { formatPeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { includeTestnets, testnetFilter } from "./records.vibe"
+
+schema SnapshotRow {
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
+  readonly free_balance: string | null
+  readonly total_gross_withdrawn: string
+  readonly block_time: string
+  readonly observed_at: string
+}
+
+schema StartRow {
+  readonly project_id: string
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+  readonly free_balance: string
+  readonly total_gross_withdrawn: string
+  readonly block_time: string
+}
+
+schema ObligationRow {
+  readonly network: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly state: string
+}
+
+schema CursorRow {
+  readonly network: string
+  readonly position: string
+  readonly synced_at: string
+}
+
+effect function periodsNow() {
+  const now = try nowSeconds()
+  const current = try orDie(Effect.try(() => periodContaining(now)))
+  const previous = try orDie(Effect.try(() => shiftPeriod(current, -1)))
+  return [formatPeriod(previous), formatPeriod(current)] as const
+}
+
+function vaultKey(row: { readonly project_id: string; readonly network: string; readonly vault: string }) {
+  return `${row.project_id}\n${row.network}\n${row.vault}`
+}
+
+export effect function poolFunding() {
+  const shown = try includeTestnets()
+  const [previous, current] = try periodsNow()
+  const snapshots = try rows(SnapshotRow, sql`SELECT project_id, network, vault, free_balance, total_gross_withdrawn, block_time, observed_at FROM vault_snapshots WHERE 1 = 1${testnetFilter(sql`network`, shown)} ORDER BY project_id, network, vault`)
+  const starts = try rows(StartRow, sql`SELECT project_id, network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE period IN (${previous}, ${current}) ORDER BY period`)
+  const startsOf = new Map<string, MonthStart[]>()
+  for (const row of starts) {
+    const list = startsOf.get(vaultKey(row)) ?? []
+    list.push({ period: row.period, freeBalance: row.free_balance, totalGrossWithdrawn: row.total_gross_withdrawn, blockTime: row.block_time })
+    startsOf.set(vaultKey(row), list)
+  }
+  const projects = new Map<string, FundedVault[]>()
+  for (const row of snapshots) {
+    const list = projects.get(row.project_id) ?? []
+    list.push({
+      network: row.network,
+      vault: row.vault,
+      freeBalance: row.free_balance,
+      totalGrossWithdrawn: row.total_gross_withdrawn,
+      blockTime: row.block_time,
+      observedAt: row.observed_at,
+      monthStarts: startsOf.get(vaultKey(row)) ?? [],
+    })
+    projects.set(row.project_id, list)
+  }
+  return { schema: "slop-pool-funding-v1", projects: [...projects].map(([projectId, vaults]) => ({ projectId, vaults })) } satisfies PoolFunding
+}
+
+interface AssetSums {
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  paidNet: bigint
+  paidFee: bigint
+  reservedNet: bigint
+  reservedFee: bigint
+}
+
+const notIndexed = getPaymentsProjectsByIdTotals.projectPaymentsNotIndexed
+
+export effect function projectTotals(projectId: string) {
+  const shown = try includeTestnets()
+  const obligations = try rows(ObligationRow, sql`SELECT network, asset_address, asset_decimals, gross_base, fee_base, state FROM payment_obligations WHERE project_id = ${projectId}${testnetFilter(sql`network`, shown)} ORDER BY network, asset_address`)
+  const cursors = try rows(CursorRow, sql`SELECT network, position, synced_at FROM payment_chain_cursors WHERE project_id = ${projectId}${testnetFilter(sql`network`, shown)} ORDER BY network`)
+  const cursor = cursors[0]
+  if (obligations.length === 0 && cursor === undefined) throw new Refused({ status: notIndexed.status, code: notIndexed.error, message: "" })
+  const assets = new Map<string, AssetSums>()
+  for (const row of obligations) {
+    const gross = parseBaseUnits(row.gross_base)
+    const fee = parseBaseUnits(row.fee_base)
+    if (gross === undefined || fee === undefined || fee > gross) throw new RowMismatch({ text: "payment_obligations", issue: "invalid gross or fee" })
+    const key = `${row.network}\u0000${row.asset_address}`
+    const total = assets.get(key) ?? { network: row.network, assetAddress: row.asset_address, assetDecimals: row.asset_decimals, paidNet: 0n, paidFee: 0n, reservedNet: 0n, reservedFee: 0n }
+    if (row.state === "paid") {
+      total.paidNet += gross - fee
+      total.paidFee += fee
+    } else {
+      total.reservedNet += gross - fee
+      total.reservedFee += fee
+    }
+    assets.set(key, total)
+  }
+  return {
+    projectId,
+    network: cursor?.network ?? obligations[0]?.network ?? null,
+    assets: [...assets.values()].map((total) => ({
+      network: total.network,
+      assetAddress: total.assetAddress,
+      assetDecimals: total.assetDecimals,
+      totalNetPaidBase: total.paidNet.toString(),
+      payoutFeesPaidBase: total.paidFee.toString(),
+      reservedNetBase: total.reservedNet.toString(),
+      reservedFeeBase: total.reservedFee.toString(),
+    }) satisfies AssetTotals),
+    coverage: { kind: "finalized-payment-events", completeThrough: cursor?.position ?? null },
+    syncedAt: cursor?.synced_at ?? null,
+  } satisfies ProjectTotals
+}

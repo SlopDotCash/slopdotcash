@@ -1,0 +1,240 @@
+// spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/security/enforcement.md, "An independent moderator reinstates only after fresh clean scans of every repository"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/enforcement.md, "Journals only append and lifting a human restriction needs its decision"
+import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import type { EnforcementChange, RegistryMirror } from "@repo/ports/security"
+import type { Notice, NoticeKind } from "@repo/ports/operations"
+import { Notices } from "@repo/ports/operations"
+import { ContributorAudience } from "@repo/ports/points"
+import { Roles } from "@repo/platform/roles"
+import type { Enforcement, JournalEntry, RecordAction } from "../../gen/security__enforcement.ts"
+import { parseState } from "../../gen/security__enforcement.effect.vibe"
+
+export interface RecordedActor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export type DecisionRole = "project-moderator" | "project-steward" | "project-applicant"
+
+export interface ServiceIssuer {
+  readonly keySha256: string
+  readonly assessmentId: string
+  readonly policyVersion: string
+  readonly rule: string
+}
+
+export interface FlagFiling {
+  readonly id: string
+  readonly reporter: RecordedActor
+  readonly category: string
+  readonly evidence: string
+  readonly evidenceUrl: string | null
+  readonly unbanned: Statement
+}
+
+export interface ExemptionFiling {
+  readonly id: string
+  readonly repositoryId: string
+  readonly repositoryNodeId: string
+  readonly stewardId: string
+  readonly stewardNodeId: string
+  readonly approver: RecordedActor
+  readonly reason: string
+  readonly decisionReference: string
+}
+
+export interface RevocationFiling {
+  readonly exemptionId: string
+  readonly administrator: RecordedActor
+  readonly reason: string
+  readonly decisionReference: string
+}
+
+export type RecordDetails =
+  | { readonly kind: "decision"; readonly reason: string; readonly evidenceReference: string; readonly actor: RecordedActor; readonly role: DecisionRole }
+  | { readonly kind: "service"; readonly reason: string; readonly evidenceReference: string; readonly issuer: ServiceIssuer }
+  | { readonly kind: "flag"; readonly flag: FlagFiling }
+  | { readonly kind: "exemption"; readonly exemption: ExemptionFiling }
+  | { readonly kind: "revocation"; readonly revocation: RevocationFiling }
+
+export service EnforcementRecord {
+  readonly details: RecordDetails
+}
+
+export error DetailsMissing { event: string; needed: string }
+
+export const flagLifetimeMillis = 7_776_000_000
+const flagPauseReason = "Two distinct contributor flags paused the project. A clean fresh security scan reinstates it."
+
+const actions: Readonly<Record<RecordAction, string>> = { RecordQuarantine: "quarantine", RecordBan: "ban", RecordAppeal: "request_reinstatement", RecordReinstate: "reinstate", RecordDeny: "deny_reinstatement" }
+const results: Readonly<Record<JournalEntry["result"], string>> = { RevisionAppended: "revision_appended", RevisionNotNeeded: "no_revision_needed", RevisionPending: "revision_pending" }
+const states: Readonly<Record<Enforcement["restriction"], string>> = { Clear: "clear", FlagQuarantine: "quarantined", ModeratorQuarantine: "quarantined", ServiceBan: "banned", ModeratorBan: "banned" }
+const appeals: Readonly<Record<Enforcement["appeal"], string>> = { NoAppeal: "none", AppealRequested: "requested", AppealGranted: "granted", AppealDenied: "denied" }
+const noticeKinds: Readonly<Record<RecordAction, NoticeKind>> = { RecordQuarantine: "ProjectQuarantined", RecordBan: "ProjectBanned", RecordAppeal: "ReinstatementRequested", RecordReinstate: "ProjectReinstated", RecordDeny: "ReinstatementDenied" }
+
+effect function stateOf(value: unknown, label: string) {
+  const parsed = parseState(value)
+  if (parsed === undefined) throw new RowMismatch({ text: label, issue: "not an enforcement state" })
+  return parsed
+}
+
+function cutoff(at: string): Statement {
+  return sql`strftime('%Y-%m-%dT%H:%M:%fZ', ${at}, '-90 days')`
+}
+
+function expireStale(projectId: string, at: string): Statement {
+  return sql`UPDATE project_flags SET state = 'expired', closed_at = ${at}, closed_by = 'lifetime' WHERE project_id = ${projectId} AND state = 'active' AND created_at <= ${cutoff(at)}`
+}
+
+export function owners(projectId: string): Statement {
+  return sql`SELECT a.applicant_github_id AS recipient FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ${projectId}
+    UNION SELECT first.actor_github_id FROM projects p JOIN project_revisions first ON first.project_id = p.id AND first.revision = 1 WHERE p.id = ${projectId} AND p.source_application_id IS NULL AND first.actor_github_id IS NOT NULL
+    UNION SELECT json_extract(manifest, '$.steward.github.actorId') FROM projects WHERE id = ${projectId} AND json_type(manifest, '$.steward.github.actorId') = 'text'`
+}
+
+function repositoryOf(projectId: string, mirror: RegistryMirror): Statement {
+  return sql`COALESCE((SELECT latest.repository_github_id FROM project_enforcements latest WHERE latest.project_id = ${projectId} ORDER BY latest.sequence DESC LIMIT 1), ${mirror.repositoryGithubIds[0] ?? null})`
+}
+
+function keysOf(projectId: string, mirror: RegistryMirror): Statement {
+  return sql`(SELECT json_group_array(value) FROM (SELECT value FROM json_each(COALESCE((SELECT latest.repository_keys FROM project_enforcements latest WHERE latest.project_id = ${projectId} ORDER BY latest.sequence DESC LIMIT 1), '[]')) UNION SELECT value FROM json_each(${JSON.stringify(mirror.repositoryKeys)})))`
+}
+
+interface Authored {
+  readonly reason: Statement
+  readonly evidenceReference: Statement
+  readonly actor: RecordedActor | undefined
+  readonly issuer: Statement
+  readonly role: string
+  readonly source: string
+}
+
+effect function authoredBy(entry: JournalEntry, details: RecordDetails | undefined, projectId: string) {
+  if (entry.issuer === "ByContributorFlags") {
+    if (details?.kind !== "flag") throw new DetailsMissing({ event: "flag", needed: "the filed flag" })
+    const flagIds = sql`(SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ${projectId} AND state = 'active' ORDER BY created_at, id))`
+    return { reason: sql`${flagPauseReason}`, evidenceReference: sql`${`flag:${details.flag.id}`}`, actor: undefined, issuer: sql`json_object('kind', 'contributor-flags', 'threshold', 2, 'flagIds', json(${flagIds}))`, role: "contributor-flags", source: "standing-rule" } satisfies Authored
+  }
+  if (entry.issuer === "ByVettingService") {
+    if (details?.kind !== "service") throw new DetailsMissing({ event: actions[entry.kind], needed: "the signed vetting service issuer" })
+    const issuer = details.issuer
+    return { reason: sql`${details.reason}`, evidenceReference: sql`${details.evidenceReference}`, actor: undefined, issuer: sql`json_object('kind', 'vetting-service', 'keySha256', ${issuer.keySha256}, 'assessmentId', ${issuer.assessmentId}, 'policyVersion', ${issuer.policyVersion}, 'rule', ${issuer.rule})`, role: "vetting-service", source: "standing-rule" } satisfies Authored
+  }
+  if (details?.kind !== "decision") throw new DetailsMissing({ event: actions[entry.kind], needed: "the decision's reason, evidence and actor" })
+  return { reason: sql`${details.reason}`, evidenceReference: sql`${details.evidenceReference}`, actor: details.actor, issuer: sql`NULL`, role: details.role, source: details.role === "project-moderator" ? "admin-panel" : "owner-request" } satisfies Authored
+}
+
+interface Journaled {
+  readonly id: string
+  readonly entry: JournalEntry
+}
+
+function recordStatement(change: EnforcementChange, after: Enforcement, journaled: Journaled, authored: Authored): Statement {
+  const { entry, id } = journaled
+  const appended = entry.result === "RevisionAppended"
+  return sql`INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at)
+    VALUES (${id}, ${change.projectId}, ${entry.seq}, ${actions[entry.kind]}, ${states[after.restriction]}, ${appeals[after.appeal]}, ${authored.reason}, ${authored.evidenceReference}, ${repositoryOf(change.projectId, change.registryBefore)}, ${keysOf(change.projectId, change.registryBefore)}, ${authored.actor?.githubId ?? null}, ${authored.actor?.login ?? null}, ${authored.issuer}, ${authored.role}, ${authored.source}, ${change.registryBefore.revision}, ${change.registryBefore.manifestSha256}, ${appended ? change.registryAfter.revision : null}, ${appended ? change.registryAfter.manifestSha256 : null}, ${results[entry.result]}, ${change.at})`
+}
+
+function assessmentText(rowid: number): Statement {
+  return sql`(SELECT id FROM vetting_assessments WHERE rowid = ${rowid})`
+}
+
+function reviewStatement(id: string, after: Enforcement): ReadonlyArray<Statement> {
+  const first = after.repositories[0]
+  const clean = first === undefined ? undefined : after.latest[first]
+  if (clean === undefined) return []
+  const findings = after.reviewedFindings.length === 0 ? sql`'[]'` : sql`(SELECT json_group_array(id) FROM (SELECT id FROM vetting_assessments WHERE rowid IN (SELECT value FROM json_each(${JSON.stringify(after.reviewedFindings)})) ORDER BY rowid))`
+  return [sql`INSERT INTO project_vetting_reinstatements (enforcement_id, assessment_id, malicious_assessment_ids) VALUES (${id}, ${assessmentText(clean.id)}, ${findings})`]
+}
+
+function recorded(id: string): Statement {
+  return sql`EXISTS (SELECT 1 FROM project_enforcements WHERE id = ${id})`
+}
+
+effect function banAudience(change: EnforcementChange, id: string) {
+  const notices = try Notices
+  const roles = try Roles
+  const eventKey = `project-enforcement:${id}`
+  const operators = [...new Set([...(try roles.snapshot("administrator")), ...(try roles.snapshot("moderator"))])]
+  const toOperators = operators.map((recipient) => ({ eventKey, recipientGithubId: recipient, kind: "ProjectBanned", subject: change.projectId, actionPath: "/admin", sourceAt: change.at }) satisfies Notice)
+  const contributors = try (try ContributorAudience).affected(sql`${change.projectId}`)
+  return [
+    ...(toOperators.length === 0 ? [] : try notices.statements({ notices: toOperators, onlyIf: recorded(id) })),
+    ...(try notices.fanout({ eventKey, recipients: contributors, kind: "ProjectBanned", subject: change.projectId, actionPath: `/projects/${change.projectId}`, sourceAt: change.at, onlyIf: recorded(id) })),
+  ]
+}
+
+effect function noticesOf(change: EnforcementChange, after: Enforcement, journaled: Journaled, by: RecordedActor | undefined) {
+  const notices = try Notices
+  const { entry, id } = journaled
+  const owned = try notices.fanout({ eventKey: `project-enforcement:${id}`, recipients: owners(change.projectId), kind: noticeKinds[entry.kind], subject: change.projectId, actionPath: `/projects/${change.projectId}`, sourceAt: change.at, onlyIf: recorded(id) })
+  const reviewers = after.moderators.filter((moderator) => !after.restrictedBy.includes(moderator) && !after.appellants.includes(moderator)).map(String)
+  const toModerators = (kind: NoticeKind, key: string, recipients: ReadonlyArray<string>) =>
+    recipients.filter((recipient) => recipient !== by?.githubId).map((recipient) => ({ eventKey: `${key}${id}`, recipientGithubId: recipient, kind, subject: change.projectId, actionPath: "/admin", sourceAt: change.at }) satisfies Notice)
+  const moderated = entry.issuer === "ByContributorFlags" ? toModerators("ProjectQuarantined", "project-enforcement:", after.moderators.map(String))
+    : entry.kind === "RecordAppeal" ? toModerators("ReinstatementReview", "reinstatement-review:", reviewers) : []
+  const audience = entry.issuer === "ByVettingService" && entry.kind === "RecordBan" ? try banAudience(change, id) : []
+  return [...owned, ...(moderated.length === 0 ? [] : try notices.statements({ notices: moderated, onlyIf: recorded(id) })), ...audience]
+}
+
+export interface Writer {
+  readonly recordId: () => string!!
+}
+
+effect function journalWrites(change: EnforcementChange, before: Enforcement, after: Enforcement, details: RecordDetails | undefined, writer: Writer) {
+  const writes: Statement[] = []
+  for (const entry of after.journal.slice(before.journal.length)) {
+    const authored = try authoredBy(entry, details, change.projectId)
+    const id = entry.issuer === "ByContributorFlags" ? `enf_flags_${try writer.recordId()}` : `enf_${try writer.recordId()}`
+    const journaled = { id, entry }
+    writes.push(recordStatement(change, after, journaled, authored))
+    if (entry.kind === "RecordReinstate" && entry.issuer === "ByModerator") writes.push(...reviewStatement(id, after))
+    writes.push(...(try noticesOf(change, after, journaled, authored.actor)))
+  }
+  return writes
+}
+
+effect function flagWrites(change: EnforcementChange, before: Enforcement, after: Enforcement, details: RecordDetails | undefined) {
+  const filed = after.flags.filter((flag) => !before.flags.some((earlier) => earlier.receipt === flag.receipt))
+  const withdrawn = after.withdrawn.filter((receipt) => !before.withdrawn.includes(receipt))
+  if (filed.length === 0 && withdrawn.length === 0) return []
+  const writes: Statement[] = [expireStale(change.projectId, change.at)]
+  if (filed.length > 0) {
+    if (details?.kind !== "flag") throw new DetailsMissing({ event: "flag", needed: "the filed flag" })
+    const flag = details.flag
+    writes.push(sql`INSERT INTO project_flags (id, project_id, reporter_github_id, reporter_github_login, revision, manifest_sha256, category, evidence, evidence_url, created_at)
+      SELECT ${flag.id}, id, ${flag.reporter.githubId}, ${flag.reporter.login}, revision, manifest_sha256, ${flag.category}, ${flag.evidence}, ${flag.evidenceUrl}, ${change.at}
+      FROM projects WHERE id = ${change.projectId} AND revision = ${change.registryBefore.revision} AND manifest_sha256 = ${change.registryBefore.manifestSha256} AND ${flag.unbanned}`)
+    writes.push(sql`SELECT CASE WHEN EXISTS (SELECT 1 FROM project_flags WHERE id = ${flag.id}) THEN 1 ELSE json('stale aggregate version') END AS filed`)
+  }
+  for (const receipt of withdrawn) {
+    writes.push(sql`UPDATE project_flags SET state = 'withdrawn', closed_at = ${change.at}, closed_by = 'reporter' WHERE rowid = ${receipt} AND project_id = ${change.projectId} AND state = 'active'`)
+  }
+  return writes
+}
+
+effect function exemptionWrites(change: EnforcementChange, before: Enforcement, after: Enforcement, details: RecordDetails | undefined) {
+  const granted = after.grants.length > before.grants.length
+  const revoked = after.revocations.length > before.revocations.length
+  if (!granted && !revoked) return []
+  if (granted) {
+    if (details?.kind !== "exemption") throw new DetailsMissing({ event: "grantExemption", needed: "the exemption record" })
+    const grant = details.exemption
+    return [sql`INSERT INTO vetting_admission_exemptions (id, project_id, revision, manifest_sha256, repository_id, repository_node_id, steward_id, steward_node_id, granted_by_github_id, granted_by_github_login, granted_at, reason, decision_reference, covered_assessment_ids)
+      SELECT ${grant.id}, ${change.projectId}, ${change.registryBefore.revision}, ${change.registryBefore.manifestSha256}, ${grant.repositoryId}, ${grant.repositoryNodeId}, ${grant.stewardId}, ${grant.stewardNodeId}, ${grant.approver.githubId}, ${grant.approver.login}, ${change.at}, ${grant.reason}, ${grant.decisionReference}, (SELECT json_group_array(id) FROM vetting_assessments WHERE project_id = ${change.projectId})
+      WHERE NOT EXISTS (SELECT 1 FROM vetting_admission_exemptions g WHERE g.project_id = ${change.projectId} AND g.repository_id = ${grant.repositoryId} AND g.repository_node_id = ${grant.repositoryNodeId} AND g.steward_id = ${grant.stewardId} AND g.steward_node_id = ${grant.stewardNodeId} AND NOT EXISTS (SELECT 1 FROM vetting_admission_exemption_revocations r WHERE r.exemption_id = g.id))`]
+  }
+  if (details?.kind !== "revocation") throw new DetailsMissing({ event: "revokeExemption", needed: "the revocation record" })
+  const revocation = details.revocation
+  return [sql`INSERT INTO vetting_admission_exemption_revocations (exemption_id, revoked_by_github_id, revoked_by_github_login, revoked_at, reason, decision_reference) VALUES (${revocation.exemptionId}, ${revocation.administrator.githubId}, ${revocation.administrator.login}, ${change.at}, ${revocation.reason}, ${revocation.decisionReference})`]
+}
+
+export effect function changeWrites(change: EnforcementChange, details: RecordDetails | undefined, writer: Writer) {
+  const before = try stateOf(change.before, "enforcement before")
+  const after = try stateOf(change.after, "enforcement after")
+  return [
+    ...(try flagWrites(change, before, after, details)),
+    ...(try exemptionWrites(change, before, after, details)),
+    ...(try journalWrites(change, before, after, details, writer)),
+  ]
+}

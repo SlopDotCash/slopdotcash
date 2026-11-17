@@ -1,0 +1,127 @@
+// spec/slopbot/valueRequests.md, "A ten-minute claim needs a due row and no other live claim on the same pull request"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop"; spec/slopbot/assessmentInbox.md, "Only a matching accepted final outcome at or after the gap resolves it"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { type Delivery, type Outcome, type ProcState, leaseSeconds } from "../../../gen/slopbot__valueRequests.effect.vibe"
+
+export schema DeliveryRow {
+  delivery_id: string
+  installation_id: number
+  repository_id: number
+  owner: string
+  repo: string
+  pull_request_number: number
+  received_at: string
+  claim_token: string | null
+  lease_until: string | null
+  state: string | null
+  outcome: string | null
+  retry_at: string | null
+  updated_at: string | null
+  attempts: number | null
+  incomplete_since: string | null
+}
+
+export type Unit = "seconds" | "millis"
+
+export const outcomeNames: Readonly<Record<Exclude<Outcome, "NoOutcome">, string>> = {
+  Published: "published",
+  Current: "current",
+  StillOpen: "open",
+  Historical: "historical",
+  Missing: "missing",
+  AttemptsExhausted: "attempts-exhausted",
+  SourceIncomplete: "source-incomplete",
+  AuthorityWait: "authority",
+  Parked: "parked",
+  BudgetWait: "budget",
+  Retry: "retry",
+}
+
+export const stateNames: Readonly<Record<Exclude<ProcState, "Unread">, string>> = {
+  Running: "running",
+  Waiting: "waiting",
+  Completed: "completed",
+}
+
+const outcomeCodes = new Map(Object.entries(outcomeNames).map(([code, name]) => [name, code as Outcome]))
+const stateCodes = new Map(Object.entries(stateNames).map(([code, name]) => [name, code as ProcState]))
+
+export function deliveriesWhere(scope: Statement, processed: Statement = sql`LEFT JOIN`): Statement {
+  return sql`SELECT r.delivery_id, r.installation_id, r.repository_id, r.owner, r.repo, r.pull_request_number, r.received_at,
+      p.claim_token, p.lease_until, p.state, p.outcome, p.retry_at, p.updated_at, p.attempts, p.incomplete_since
+    FROM slopbot_value_requests r ${processed} slopbot_value_processing p ON p.delivery_id = r.delivery_id
+    WHERE ${scope} ORDER BY r.rowid`
+}
+
+export function deliveriesVersion(scope: Statement, processed: Statement = sql`LEFT JOIN`): Statement {
+  return sql`coalesce((SELECT group_concat(delivery_id || ':' || coalesce(claim_token, '-') || ':' || coalesce(lease_until, '-') || ':' || coalesce(state, '-') || ':' || coalesce(outcome, '-') || ':' || coalesce(retry_at, '-') || ':' || coalesce(updated_at, '-') || ':' || coalesce(attempts, '-') || ':' || coalesce(incomplete_since, '-'), ',') FROM (${deliveriesWhere(scope, processed)})), '')`
+}
+
+export effect function timeOf(iso: string | null, unit: Unit) {
+  if (iso === null || iso === "") return 0
+  const millis = millisOf(iso)
+  if (!Number.isFinite(millis)) throw new RowMismatch({ text: "value request time", issue: `not an instant: ${iso}` })
+  return unit === "seconds" ? Math.ceil(millis / 1000) : millis
+}
+
+effect function codeOf(row: DeliveryRow) {
+  if (row.outcome === null) return "NoOutcome" satisfies Outcome
+  const code = outcomeCodes.get(row.outcome)
+  if (code === undefined) throw new RowMismatch({ text: "value request outcome", issue: row.outcome })
+  return code
+}
+
+effect function stateOf(row: DeliveryRow) {
+  if (row.state === null) return "Unread" satisfies ProcState
+  const state = stateCodes.get(row.state)
+  if (state === undefined) throw new RowMismatch({ text: "value request state", issue: row.state })
+  return state
+}
+
+export interface Numbering {
+  readonly delivery: (deliveryId: string) => number
+  readonly token: (token: string) => number
+}
+
+export effect function deliveryFrom(row: DeliveryRow, numbering: Numbering, unit: Unit) {
+  const state = try stateOf(row)
+  const lease = try timeOf(row.lease_until, unit)
+  const token = row.claim_token === null || row.claim_token === "" ? 0 : numbering.token(row.claim_token)
+  const claimedAt = token === 0 || lease === 0 ? 0 : lease - (unit === "seconds" ? leaseSeconds : leaseSeconds * 1000)
+  return {
+    id: numbering.delivery(row.delivery_id),
+    key: { installation: row.installation_id, repository: row.repository_id, owner: row.owner, repo: row.repo, pull: row.pull_request_number },
+    receivedAt: try timeOf(row.received_at, unit),
+    state,
+    token,
+    claimedAt,
+    leaseUntil: state === "Running" ? lease : 0,
+    code: try codeOf(row),
+    retryAt: try timeOf(row.retry_at, unit),
+    attempts: row.attempts ?? 0,
+    incompleteSince: try timeOf(row.incomplete_since, unit),
+    updatedAt: try timeOf(row.updated_at, unit),
+  } satisfies Delivery
+}
+
+export function numbered(values: ReadonlyArray<string>): ReadonlyMap<string, number> {
+  return new Map([...new Set(values.filter((value) => value !== ""))].sort().map((value, index) => [value, index + 1]))
+}
+
+export interface Source {
+  readonly repositoryDatabaseId: number
+  readonly pullRequestNumber: number
+}
+
+export error InvalidSources { issue: string }
+
+function positiveId(value: number) {
+  return Number.isSafeInteger(value) && value > 0
+}
+
+export effect function scopeKeysOf(sources: ReadonlyArray<Source>) {
+  if (sources.some((source) => !positiveId(source.repositoryDatabaseId) || !positiveId(source.pullRequestNumber))) throw new InvalidSources({ issue: "Invalid valuation source identities" })
+  const keys = sources.map((source) => `${source.repositoryDatabaseId}:${source.pullRequestNumber}`)
+  if (new Set(keys).size !== keys.length) throw new InvalidSources({ issue: "Repeated valuation source identity" })
+  return keys.sort()
+}

@@ -1,0 +1,158 @@
+// spec/security/bounty.md, "A vault reservation needs a fresh finalized snapshot that still covers the award"; spec/security/program.md, "Funding state comes only from a fresh finalized bounty-vault snapshot"
+import { millisOf } from "@repo/platform/clock"
+import { type Statement, first, rows, sql } from "@repo/platform/d1"
+import { NETWORKS, defaultAsset, isNetworkKey } from "../kernels/networks.ts"
+
+module limbs {
+  /** @throws {never} */
+  export function baseUnits(text: string | null): bigint | undefined {
+    return text !== null && /^(?:0|[1-9]\d{0,77})$/u.test(text) ? BigInt(text) : undefined
+  }
+}
+import { baseUnits } from limbs
+
+export const snapshotMaxAgeMillis = 30 * 60_000
+
+export interface ProgramAsset {
+  readonly network: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
+}
+
+export interface AwardAssetTerms {
+  readonly currency: string
+  readonly decimals: number
+  readonly network: string | null
+  readonly asset?: ProgramAsset
+}
+
+export interface ProgramDeployment {
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+}
+
+export interface ProgramTerms {
+  readonly amount: AwardAssetTerms
+  readonly deployments: ReadonlyArray<ProgramDeployment>
+}
+
+export interface ProgramFunds {
+  readonly currency: string
+  readonly decimals: number
+  readonly network: string | null
+  readonly freeMinor: string
+  readonly snapshotAt: string
+  readonly availableMinor: string
+  readonly assetAddress: string
+  readonly deploymentNetwork: string
+}
+
+export interface FundsRead {
+  readonly funds: ProgramFunds | undefined
+  readonly guards: ReadonlyArray<Statement>
+}
+
+export function sameAssetAddress(network: string, left: string, right: string) {
+  return isNetworkKey(network) && NETWORKS[network].family === "solana" ? left === right : left.toLowerCase() === right.toLowerCase()
+}
+
+export function awardAsset(terms: AwardAssetTerms, network: string, legacyAddress?: string) {
+  if (!isNetworkKey(network)) return undefined
+  const chain = NETWORKS[network]
+  if (chain.chain !== terms.network) return undefined
+  if (terms.asset !== undefined) {
+    if (terms.asset.network !== chain.chain || terms.asset.symbol !== terms.currency || terms.asset.decimals !== terms.decimals) return undefined
+    return { address: terms.asset.address, decimals: terms.decimals, symbol: terms.currency }
+  }
+  if (legacyAddress !== undefined && terms.currency === "USDC" && terms.decimals === 6) return { address: legacyAddress, decimals: 6, symbol: "USDC" }
+  const reference = defaultAsset(chain)
+  if (terms.currency !== "USDC" || terms.decimals !== 6 || reference?.symbol !== "USDC") return undefined
+  return { address: reference.address, decimals: 6, symbol: "USDC" }
+}
+
+export function sameAwardAsset(left: AwardAssetTerms, right: AwardAssetTerms, network: string, legacyAddress?: string) {
+  const a = awardAsset(left, network, legacyAddress)
+  const b = awardAsset(right, network, legacyAddress)
+  return a !== undefined && b !== undefined && a.decimals === b.decimals && sameAssetAddress(network, a.address, b.address)
+}
+
+schema SnapshotRow {
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly observed_at: string
+  readonly free_balance: string | null
+}
+
+schema CountRow { readonly n: number }
+
+schema ReservationRow {
+  readonly gross_minor: string
+  readonly terms: string
+}
+
+schema ReservedProgramAsset {
+  readonly network: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly address: string
+}
+
+schema ReservedAsset {
+  readonly currency: string
+  readonly decimals: number
+  readonly network: string | null
+  readonly asset?: ReservedProgramAsset
+}
+
+export error ReservationsUnreadable { reason: string }
+
+interface Best {
+  readonly deployment: ProgramDeployment
+  readonly snapshot: SnapshotRow
+  readonly free: bigint
+}
+
+export effect function readSecurityProgramFunds(projectId: string, program: ProgramTerms, nowMillis: number) {
+  let best: Best | undefined = undefined
+  for (const deployment of program.deployments) {
+    const asset = awardAsset(program.amount, deployment.network, deployment.asset)
+    if (asset === undefined || !sameAssetAddress(deployment.network, asset.address, deployment.asset)) continue
+    const snapshot = try first(SnapshotRow, sql`SELECT asset_address, asset_decimals, observed_at, free_balance FROM security_vault_snapshots WHERE project_id = ${projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`)
+    const free = snapshot === undefined ? undefined : baseUnits(snapshot.free_balance)
+    if (snapshot === undefined || free === undefined || snapshot.asset_address !== deployment.asset || snapshot.asset_decimals !== program.amount.decimals
+      || !(nowMillis - millisOf(snapshot.observed_at) <= snapshotMaxAgeMillis)) continue
+    if (best === undefined || free > best.free) best = { deployment, snapshot, free }
+  }
+  if (best === undefined) return { funds: undefined, guards: [] } satisfies FundsRead
+  const { deployment, snapshot, free } = best
+  const count = try first(CountRow, sql`SELECT count(*) AS n FROM security_award_reservations WHERE project_id = ${projectId}`)
+  if (count === undefined) throw new ReservationsUnreadable({ reason: "Award reservation snapshot unavailable" })
+  const guards = [
+    sql`EXISTS (SELECT 1 FROM security_vault_snapshots WHERE project_id = ${projectId} AND network = ${deployment.network} AND vault = ${deployment.vault} AND asset_address = ${snapshot.asset_address} AND asset_decimals = ${snapshot.asset_decimals} AND free_balance = ${snapshot.free_balance} AND observed_at = ${snapshot.observed_at})`,
+    sql`(SELECT count(*) FROM security_award_reservations WHERE project_id = ${projectId}) = ${count.n}`,
+  ]
+  const reservations = try rows(ReservationRow, sql`SELECT r.gross_minor, c.terms FROM security_award_reservations r JOIN security_cases c ON c.id = r.case_id WHERE r.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ${snapshot.observed_at})`)
+  let outstanding = 0n
+  for (const row of reservations) {
+    const terms = Schema.decodeUnknownEffect(Schema.fromJsonString(ReservedAsset))(row.terms) catch effect () => { throw new ReservationsUnreadable({ reason: "Award reservation terms are malformed" }) }
+    const gross = baseUnits(row.gross_minor)
+    if (gross === undefined) throw new ReservationsUnreadable({ reason: "Award reservation amount is not exact base units" })
+    if (sameAwardAsset(terms, program.amount, deployment.network, snapshot.asset_address)) outstanding = outstanding + gross
+  }
+  const available = free - outstanding
+  return {
+    funds: {
+      currency: program.amount.currency,
+      decimals: program.amount.decimals,
+      network: program.amount.network,
+      freeMinor: free.toString(),
+      snapshotAt: snapshot.observed_at,
+      availableMinor: (available > 0n ? available : 0n).toString(),
+      assetAddress: snapshot.asset_address,
+      deploymentNetwork: deployment.network,
+    },
+    guards,
+  } satisfies FundsRead
+}

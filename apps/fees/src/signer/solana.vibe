@@ -1,0 +1,234 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
+import type { RpcFailure } from "@repo/platform/chain/rpc"
+import { SolanaRpc, base58Encode, base64Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import { type Runtime, conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import type { Facts } from "../journal/store.vibe"
+import { type JupiterRefused, type JupiterSettings, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
+import { checkRouteSimulation, reviewRouteAccounts } from "../jupiter/review.vibe"
+import { wrapNativeRoute } from "../jupiter/nativeWrap.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { jupiter } from "../runtime/pins.ts"
+import { type AccountProof, type RouteExpectation, associatedCreations, expectationJson, resolveAccounts, retainedExpectation, verifyAccountProof } from "../solana/accounts.vibe"
+import { digest58, jsonText, wideOf, withBytes } from "../solana/bytes.ts"
+import { FeeSolana, addressed, admittedMint, blockhashAnchor, networkFee, walletLamports } from "../solana/client.vibe"
+import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, type SolanaRefused, TOKEN_2022_PROGRAM, blockhashOf, computeBudgetProgram, messageOf, parsedTransaction, solanaNativeAsset, wrappedSol } from "../solana/wire.vibe"
+import { FeeWallet, KeyMismatch, type Prepared, SignRefused, type SolanaPrepared, type SolanaSigned } from "./feeWallet.vibe"
+import type { FeeIntent, JupiterSwap, SolanaIntent } from "./intents.ts"
+import { type SolanaKey, controlsWallet, feeWalletSolanaMarker, solanaKey } from "./solanaKey.ts"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+}
+import { errorText } from verified
+
+export interface SolanaWalletOptions {
+  readonly key: Redacted.Redacted<string> | undefined
+  readonly runtime: Runtime
+  readonly limits: NativeLimits
+  readonly gasMultiple: bigint
+  readonly maxSlippageBps: number
+  readonly jupiter: JupiterSettings
+}
+
+export interface SolanaReviewed extends SolanaPrepared {
+  readonly unsigned: Uint8Array
+  readonly messageOffset: number
+  readonly expiresAt: number
+  readonly minimumOutput: bigint
+}
+
+export interface SolanaSent extends SolanaSigned {
+  readonly prepared: SolanaReviewed
+}
+
+const allowedPrograms: ReadonlySet<string> = new Set([computeBudgetProgram, ASSOCIATED_TOKEN_PROGRAM, jupiter.program])
+
+type Unprepared = SignRefused | SolanaRefused | RpcFailure | JupiterUnavailable | JupiterRefused
+
+function refusalOf(error: Unprepared): SignRefused {
+  switch (error._tag) {
+    case "SignRefused": return error
+    case "SolanaRefused": return new SignRefused({ step: "review", issue: error.issue })
+    case "RpcUnavailable": return new SignRefused({ step: "chain", issue: errorText(error.message) })
+    case "RpcMalformed": return new SignRefused({ step: "chain", issue: errorText(error.issue) })
+    case "RpcRefused": return new SignRefused({ step: "chain", issue: errorText(error.message) })
+    case "WrongChain": return new SignRefused({ step: "chain", issue: `the RPC answered genesis ${error.actual}, not ${error.expected}` })
+    case "JupiterUnavailable": return new SignRefused({ step: "facts", issue: errorText(error.detail) })
+    case "JupiterRefused": return new SignRefused({ step: "facts", issue: errorText(error.message) })
+  }
+}
+
+effect function deny(step: string, issue: string) {
+  throw new SignRefused({ step, issue })
+}
+
+effect function nativeReview(options: SolanaWalletOptions, wallet: string, raw: Uint8Array, parsed: ParsedTransaction, proof: AccountProof, valueMicro: bigint) {
+  const rpc = try SolanaRpc
+  const keys = try verifyAccountProof(raw, parsed, proof)
+  if (parsed.programs.includes(jupiter.program) && proof.route === undefined) return try deny("review", "Jupiter signing lacks a complete retained account review")
+  const accounts = try associatedCreations(parsed, keys, wallet)
+  const fee = try networkFee(messageOf(raw, parsed))
+  const expectation = proof.route === undefined ? undefined : try retainedExpectation(proof.route)
+  const principal = expectation?.nativeInput === true ? expectation.amountIn : 0n
+  let rent = 0n
+  for (const account of accounts) {
+    if ((try admittedMint(account.mint)).program !== account.tokenProgram) return try deny("review", "Associated account token program differs from admitted mint")
+    rent += try rpc.rentExemption(account.size, "confirmed")
+  }
+  const maximum = fee.fee + rent
+  if (fee.fee === 0n) return try deny("facts", "Solana signature fee evidence is missing")
+  const before = try walletLamports("confirmed")
+  const simulation = try rpc.simulate(raw, [try addressed(wallet)], "confirmed")
+  const after = simulation.accounts[0]?.lamports
+  if (simulation.err || after === undefined || before - after - principal > maximum || (principal > 0n && before - after < principal))
+    return try deny("limits", "Solana simulation has unbounded native wallet debit")
+  if (maximum > options.limits.perTransaction || maximum > wideOf(transactionCeilingOf("Solana")))
+    return try deny("limits", "Solana native fee and account creation exceed the transaction budget")
+  const priced = try jupiterQuote(options.jupiter, wrappedSol, maximum, options.maxSlippageBps)
+  if (priced.outAmount <= 0n) return try deny("limits", "Final Solana native cost cannot be priced")
+  if (priced.outAmount * options.gasMultiple > valueMicro) return try deny("limits", "Final Solana native cost exceeds the gas-cost multiple")
+  return try blockhashAnchor(blockhashOf(raw, parsed), fee.slot)
+}
+
+effect function soleSigner(parsed: ParsedTransaction, wallet: string) {
+  if (parsed.signatureCount !== 1 || parsed.requiredSignatures !== 1 || parsed.staticKeys[0] !== wallet) return try deny("bytes", "Jupiter transaction must have the fee wallet as its only signer")
+  if (!parsed.programs.includes(jupiter.program)) return try deny("bytes", "Jupiter transaction does not call the Jupiter program")
+  const unexpected = parsed.programs.find((program) => !allowedPrograms.has(program))
+  if (unexpected !== undefined) return try deny("bytes", `Jupiter transaction calls ${unexpected}`)
+}
+
+effect function jupiterPrepared(options: SolanaWalletOptions, wallet: string, intent: JupiterSwap) {
+  if (!conversionSigns(options.runtime, "Solana")) return try deny("activation", "JupiterSwap is not activated on Solana")
+  const settings = options.jupiter
+  if (intent.outputMint !== settings.usdc) return try deny("bytes", "Jupiter swap target differs from the pinned USDC")
+  const nativeInput = intent.inputMint === solanaNativeAsset
+  const inputToken = inputMintOf(intent.inputMint)
+  const inputMint = try admittedMint(inputToken)
+  const outputMint = try admittedMint(settings.usdc)
+  const fresh = try jupiterQuote(settings, intent.inputMint, intent.amountIn, Math.max(1, Math.floor(options.maxSlippageBps / 2)))
+  const minimumOut = try signedMinimum(fresh)
+  if (minimumOut < intent.minimumOutput) return try deny("facts", "price moved below the recorded minimum")
+  const swap = try swapTransaction(settings, { quote: fresh, wallet, sharedAccounts: inputMint.program === TOKEN_2022_PROGRAM, nativeInput })
+  const built = try parsedTransaction(swap.raw)
+  try soleSigner(built, wallet)
+  const resolved = try resolveAccounts(swap.raw, built)
+  const raw = nativeInput ? try wrapNativeRoute(swap.raw, built, resolved, wallet, intent.amountIn) : swap.raw
+  const parsed = nativeInput ? try parsedTransaction(raw) : built
+  const proof = nativeInput ? try resolveAccounts(raw, parsed) : resolved
+  const expected: RouteExpectation = {
+    program: jupiter.program,
+    wallet,
+    inputMint: inputToken,
+    inputProgram: inputMint.program,
+    outputMint: settings.usdc,
+    outputProgram: outputMint.program,
+    amountIn: intent.amountIn,
+    quotedOut: fresh.outAmount,
+    minimumOut,
+    slippageBps: fresh.slippageBps,
+    nativeInput,
+  }
+  const review = try reviewRouteAccounts(raw, parsed, proof, expected)
+  const simulation = try (try SolanaRpc).simulate(raw, [try addressed(review.sourceAddress), try addressed(review.destinationAddress)], "confirmed")
+  if (simulation.err) return try deny("review", "Jupiter route simulation is unavailable or failed")
+  try checkRouteSimulation(review, simulation)
+  const reviewed: AccountProof = { ...proof, route: { expectation: expectationJson(expected), accounts: review.observations } }
+  const blockhashSlot = try nativeReview(options, wallet, raw, parsed, reviewed, intent.valueMicro)
+  return {
+    family: "solana",
+    intent,
+    intentHash: digest58(messageOf(raw, parsed)),
+    maximumUnits: transactionCeilingOf("Solana"),
+    blockhashSlot,
+    accountProof: jsonText(reviewed),
+    unsigned: raw,
+    messageOffset: parsed.messageOffset,
+    expiresAt: swap.lastValidBlockHeight,
+    minimumOutput: minimumOut,
+  } satisfies SolanaReviewed
+}
+
+effect function prepared(options: SolanaWalletOptions, wallet: string, intent: SolanaIntent) {
+  switch (intent.kind) {
+    case "JupiterSwap": return try jupiterPrepared(options, wallet, intent)
+    case "SolanaClaim":
+    case "SolanaDlnOrder": return try deny("activation", `${intent.kind} is not built by the Solana conversion signer`)
+  }
+}
+
+effect function signingKey(options: SolanaWalletOptions, wallet: string) {
+  if (options.key === undefined) return try deny("key", "Signing is disabled without a fee-wallet key")
+  const key = solanaKey(Redacted.value(options.key))
+  if (key === undefined) return try deny("key", "Fee-wallet keypair for solana is malformed")
+  if (key.address !== wallet || key.publicHalf !== wallet) return try deny("key", "Fee-wallet keypair for solana does not control the configured fee wallet")
+  return key
+}
+
+effect function signedBytes(ready: SolanaReviewed, key: SolanaKey, wallet: string) {
+  const message = ready.unsigned.slice(ready.messageOffset)
+  if (digest58(message) !== ready.intentHash) return try deny("sign", "the signed bytes differ from the prepared intent")
+  const signature = key.sign(message)
+  const verifier = publicKey(wallet)
+  if (verifier === undefined || !(try verifyMessageSignature(verifier, message, signature))) return try deny("sign", "the signed bytes differ from the prepared intent")
+  const raw = withBytes(ready.unsigned, signature, ready.messageOffset - 64)
+  try Effect.annotateLogs(Effect.logInfo("fee_wallet_signed"), { signer: feeWalletSolanaMarker, network: "Solana", kind: ready.intent.kind })
+  return { family: "solana", prepared: ready, rawTx: base64Encode(raw), txId: base58Encode(signature) } satisfies SolanaSent
+}
+
+type SolanaServices = FeeSolana | SolanaRpc | HttpClient.HttpClient | Experimental.Crypto.Crypto
+
+effect function signWith<E, R>(options: SolanaWalletOptions, wallet: string, services: Context.Context<SolanaServices>, intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): SolanaSent!(SignRefused | E)!R {
+  if (intent.network !== "Solana") return try deny("activation", "an EVM intent is signed by the EVM fee wallet")
+  const ready = try Effect.provideContext(Effect.mapError(prepared(options, wallet, intent), refusalOf), services)
+  const key = try signingKey(options, wallet)
+  try reserve(ready)
+  return try Effect.provideContext(signedBytes(ready, key, wallet), services)
+}
+
+export function solanaFeeWallet(options: SolanaWalletOptions) {
+  return Layer.effect(FeeWallet, effect {
+    const { wallet } = try FeeSolana
+    if (options.key !== undefined && !controlsWallet(Redacted.value(options.key), wallet)) throw new KeyMismatch({ network: "Solana" })
+    const services = try Effect.context<SolanaServices>()
+    const shape: FeeWallet.Shape = {
+      network: "Solana",
+      address: wallet,
+      sign: (intent, reserve) => signWith(options, wallet, services, intent, reserve),
+    }
+    return shape
+  })
+}
+
+export function isReviewed(prepared: SolanaPrepared): prepared is SolanaReviewed {
+  return "unsigned" in prepared && prepared.unsigned instanceof Uint8Array && "expiresAt" in prepared && typeof prepared.expiresAt === "number"
+    && "minimumOutput" in prepared && typeof prepared.minimumOutput === "bigint" && "messageOffset" in prepared && typeof prepared.messageOffset === "number"
+}
+
+export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number): SignedSend | undefined {
+  const ready = signed.prepared
+  if (!isReviewed(ready) || ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue)) return undefined
+  return {
+    kind: "Conversion",
+    tx,
+    nonce,
+    gasLimit: 1,
+    fees: { maxFee: ready.maximumUnits, priority: 0 },
+    inspection: "Inspected",
+    outputToFeeWallet: true,
+    minimumOutput: Number(ready.minimumOutput),
+    deadline: maximumSafeValue,
+    blockhashSlot: ready.blockhashSlot,
+  }
+}
+
+export function solanaReservationFacts(ready: SolanaPrepared): Facts {
+  return { intentHash: ready.intentHash, blockhashSlot: ready.blockhashSlot, ...ready.accountProof === undefined ? {} : { accountProof: ready.accountProof } }
+}
+
+export function solanaSignedFacts(signed: SolanaSigned): Facts {
+  const ready = signed.prepared
+  return { ...solanaReservationFacts(ready), txId: signed.txId, rawTx: signed.rawTx, ...isReviewed(ready) ? { expiresAt: ready.expiresAt } : {} }
+}

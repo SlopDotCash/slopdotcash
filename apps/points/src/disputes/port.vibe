@@ -1,0 +1,75 @@
+// spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import type { Fetcher } from "@repo/platform/bindings"
+import { serviceClient } from "@repo/platform/binding"
+import { D1, first, rows, sql } from "@repo/platform/d1"
+import { DisputeAudience } from "@repo/ports/points"
+import { slopbotWorker } from "../../gen/points__disputes.effect.vibe"
+import { disputeKeyPattern } from "../client/disputes.vibe"
+import { type Triage, retainedRevision, send, storedRow } from "./store.vibe"
+
+export { type Lease, type Triage } from "./store.vibe"
+
+export service DisputeTriage {
+  request(appealKey: string): void!!
+}
+
+export interface TriageOutcome {
+  readonly accepted: boolean
+  readonly token: string | undefined
+}
+
+export error SourceUnverified { appealKey: string }
+
+schema PendingRow { appeal_key: string }
+schema AudienceRow { appellant_github_id: string; escalated: number; resolved: number }
+
+const triageBinding = { binding: "SLOPBOT", origin: "https://slopbot.internal" }
+const triageAnswerBytes = 4096
+const pendingLimit = 5
+
+effect function requested(fetcher: Fetcher | undefined, appealKey: string) {
+  if (fetcher === undefined) {
+    try Effect.logError("Points dispute triage unavailable")
+    return
+  }
+  serviceClient(fetcher, triageBinding).call("POST", "/v1/points-disputes", { key: appealKey }, Schema.Unknown, triageAnswerBytes) catch effect () => {
+    try Effect.logError("Points dispute triage unavailable")
+    return undefined
+  }
+}
+
+export function disputeTriage(fetcher: Fetcher | undefined) {
+  return Layer.succeed(DisputeTriage, { request: (appealKey) => requested(fetcher, appealKey) } satisfies DisputeTriage.Shape)
+}
+
+export effect function triageDispute(appealKey: string, triage: Triage) {
+  const sent = send(appealKey, { kind: "triage", triage }, slopbotWorker) catch effect (error) => {
+    if (error._tag === "Rejected") return undefined
+    throw error
+  }
+  return { accepted: sent !== undefined, token: sent?.token } satisfies TriageOutcome
+}
+
+export effect function pendingDisputes() {
+  const found = try rows(PendingRow, sql`SELECT appeal_key FROM points_disputes WHERE resolved_at IS NULL AND escalated_at IS NULL ORDER BY opened_at LIMIT ${pendingLimit}`)
+  return found.map((row) => row.appeal_key)
+}
+
+export effect function disputeSource(appealKey: string) {
+  if (!disputeKeyPattern.test(appealKey)) return undefined
+  const row = try storedRow(appealKey)
+  if (row === undefined) return undefined
+  const record = try retainedRevision(row.revision_id)
+  if (record?.revision === undefined) throw new SourceUnverified({ appealKey })
+  return { revision: record.revision, statement: row.statement, appellantGithubId: row.appellant_github_id }
+}
+
+export const disputeAudience = Layer.effect(DisputeAudience, effect {
+  const db = try D1
+  return {
+    dispute: (appealKey) => provideService(effect {
+      const row = try first(AudienceRow, sql`SELECT appellant_github_id, escalated_at IS NOT NULL AS escalated, resolved_at IS NOT NULL AS resolved FROM points_disputes WHERE appeal_key = ${appealKey}`)
+      return row === undefined ? undefined : { appellantGithubId: row.appellant_github_id, escalated: row.escalated === 1, resolved: row.resolved === 1 }
+    }, D1, db),
+  } satisfies DisputeAudience.Shape
+})

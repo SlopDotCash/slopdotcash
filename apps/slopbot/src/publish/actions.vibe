@@ -1,0 +1,28 @@
+// spec/slopbot/review.md, "Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized"; spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type Statement, sql } from "@repo/platform/d1"
+
+export type ActionKind = "comment" | "label" | "close" | "appeal" | "human_reopen"
+
+export interface ActionRecord {
+  readonly reviewKey: string
+  readonly repositoryId: number
+  readonly itemNodeId: string
+  readonly action: ActionKind
+  readonly detail: string
+}
+
+export function actionStatement(record: ActionRecord, at: string): Statement {
+  return sql`INSERT OR IGNORE INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at)
+    VALUES (${record.reviewKey}, ${record.repositoryId}, ${record.itemNodeId}, ${record.action}, ${record.detail}, ${at})`
+}
+
+export effect function actionStatements(records: ReadonlyArray<ActionRecord>) {
+  const at = try isoNow()
+  return records.map((record) => actionStatement(record, at))
+}
+
+export effect function recordAction(record: ActionRecord) {
+  const at = try isoNow()
+  return (try (try D1).run(actionStatement(record, at))) === 1
+}

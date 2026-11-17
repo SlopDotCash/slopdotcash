@@ -1,0 +1,91 @@
+// spec/security/enforcement.md, "Flagger standing is read at filing time and bound to the current revision"
+import { millisOf } from "@repo/platform/clock"
+import { GitHub } from "@repo/platform/github"
+import { Authority, Registry, Restrictions } from "@repo/ports/backend"
+import type { FlagStanding, StandingRead } from "../../gen/security__enforcement.ts"
+import { dayMillis, idOf } from "./replay.vibe"
+
+export error StandingUnavailable { detail: string }
+
+schema GitHubAccount { id: number; login: string; type: string; created_at: string }
+schema ClosedItem { user?: { id?: number }; pull_request?: { merged_at?: string | null } }
+
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const maxPages = 10
+const pageSize = 100
+const listBytes = 4 * 1024 * 1024
+
+export interface Flagger {
+  readonly githubId: string
+  readonly primaryRepositoryId: string
+  readonly revision: number
+}
+
+function unavailable(detail: string) {
+  return new StandingUnavailable({ detail })
+}
+
+effect function account(githubId: string) {
+  const github = try GitHub
+  const user = github.json(`/user/${githubId}`, GitHubAccount) catch effect () => { throw unavailable("GitHub returned incomplete account facts.") }
+  const created = millisOf(user.created_at)
+  if (user.type !== "User" || String(user.id) !== githubId || !githubLogin.test(user.login) || !Number.isFinite(created)) throw unavailable("GitHub returned incomplete account facts.")
+  return { login: user.login, created }
+}
+
+effect function mergedIn(repository: string, login: string, githubId: string) {
+  const github = try GitHub
+  for (let page = 1; page <= maxPages; page += 1) {
+    const path = `/repos/${repository}/issues?creator=${encodeURIComponent(login)}&state=closed&per_page=${pageSize}&page=${page}`
+    const items = github.json(path, Schema.Array(ClosedItem), { limitBytes: listBytes }) catch effect (error) => {
+      if (error._tag === "NotFound") return undefined
+      throw unavailable("GitHub returned an unexpected issue list.")
+    }
+    if (items === undefined) return false
+    if (items.some((item) => String(item.user?.id) === githubId && typeof item.pull_request?.merged_at === "string")) return true
+    if (items.length < pageSize) return false
+    if (page === maxPages) throw unavailable("The member has too many closed items to read.")
+  }
+  return false
+}
+
+effect function acceptedContribution(githubId: string, login: string) {
+  const projects = (try Registry).active() catch effect () => { throw unavailable("The project registry could not be read.") }
+  const repositories = [...new Set(projects.flatMap((project) => project.repositories.map((repository) => repository.fullName)))]
+  for (const repository of repositories) {
+    if (!repositoryName.test(repository)) throw unavailable("A registered repository name is invalid.")
+    if (try mergedIn(repository, login, githubId)) return true
+  }
+  return false
+}
+
+effect function maintainerRead(githubId: string, repositoryId: string) {
+  const read = try (try Authority).repository({ actorGithubId: githubId, repositoryId })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return "ReadUnavailable" satisfies StandingRead
+  return (read.permission === "PermissionVerified" && read.installation === "Installed" ? "ReadYes" : "ReadNo") satisfies StandingRead
+}
+
+effect function banRead(githubId: string) {
+  const standing = (try Restrictions).account(githubId) catch () => undefined
+  if (standing === undefined) return "ReadUnavailable" satisfies StandingRead
+  return (standing.banned ? "ReadYes" : "ReadNo") satisfies StandingRead
+}
+
+export effect function maintainerOf(flagger: Flagger) {
+  return try maintainerRead(flagger.githubId, flagger.primaryRepositoryId)
+}
+
+export effect function flaggerStanding(flagger: Flagger, maintainer: StandingRead) {
+  const { login, created } = try account(flagger.githubId)
+  const accepted = try acceptedContribution(flagger.githubId, login)
+  const now = try Clock.currentTimeMillis
+  return {
+    actor: idOf(flagger.githubId),
+    revision: flagger.revision,
+    accountAgeDays: Math.max(0, Math.floor((now - created) / dayMillis)),
+    acceptedContributions: accepted ? 1 : 0,
+    maintainer,
+    banned: try banRead(flagger.githubId),
+  } satisfies FlagStanding
+}

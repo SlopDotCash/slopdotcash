@@ -1,0 +1,91 @@
+// spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+import { gitBytes } from "@repo/platform/git"
+import { type Affected, pullRequestChecks } from "../../../gen/operations__releaseCoverage.effect.vibe"
+import type { RunFacts } from "../run/facts.vibe"
+
+export error ScopeUnavailable { message: string }
+
+const workflowInputs = /^(\.github\/workflows\/|\.github\/actions\/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|turbo\.json$|tsconfig[^/]*\.json$)/u
+
+const affectedBy: Readonly<Record<keyof Affected, RegExp>> = {
+  browserUI: /^(packages\/(frontend|ui|design-system)\/|apps\/app\/)/u,
+  browserAPI: /^(apps\/(backend|operations|security|contributor|points|slopbot|settlement|fees)\/(src|wrangler)\/|migrations\/)/u,
+  rootSkill: /^skills\/slop\//u,
+  sandbox: /^apps\/security\/src\/(sandbox|scanner|evidence)\//u,
+  installer: /^(skills\/|apps\/contributor\/src\/(render|site|artifacts)\/|package\.json$|pnpm-lock\.yaml$)/u,
+  solanaFixture: /^(packages\/contracts\/solana\/|apps\/(settlement|fees)\/src\/|migrations\/)/u,
+  evmInputs: /^(packages\/contracts\/evm\/|apps\/(settlement|fees)\/src\/|migrations\/)/u,
+  modelInputs: /^(spec\/|apps\/[^/]+\/gen\/|packages\/[^/]+\/gen\/|gen\/)/u,
+  modelTooling: /^(vibestack\/|\.github\/workflows\/|package\.json$|pnpm-lock\.yaml$|turbo\.json$)/u,
+  proofInputs: /(\.proof\.dfy$|^spec\/|^(apps|packages)\/[^/]+\/src\/.*\.ts$)/u,
+}
+
+export function affectedOf(files: ReadonlyArray<string>): Affected {
+  const touched = (pattern: RegExp) => files.some((file) => pattern.test(file))
+  const workflow = touched(workflowInputs)
+  return {
+    browserUI: workflow || touched(affectedBy.browserUI),
+    browserAPI: workflow || touched(affectedBy.browserAPI),
+    rootSkill: touched(affectedBy.rootSkill),
+    sandbox: touched(affectedBy.sandbox),
+    installer: touched(affectedBy.installer),
+    solanaFixture: touched(affectedBy.solanaFixture),
+    evmInputs: touched(affectedBy.evmInputs),
+    modelInputs: touched(affectedBy.modelInputs),
+    modelTooling: touched(affectedBy.modelTooling),
+    proofInputs: touched(affectedBy.proofInputs),
+  }
+}
+
+const specModule = /^spec\/((?:[^/]+\/)*[^/]+)\.md$/u
+const generatedModule = /^(?:(?:apps|packages)\/[^/]+\/)?gen\/([A-Za-z][A-Za-z0-9]*(?:__[A-Za-z][A-Za-z0-9]*)*)\.[^/]+$/u
+
+function moduleOf(file: string): string | undefined {
+  const spec = specModule.exec(file)?.[1]
+  if (spec !== undefined) return spec.replace(/\/index$/u, "").split("/").join("__")
+  return generatedModule.exec(file)?.[1]
+}
+
+export function selectedModels(files: ReadonlyArray<string>, affectedModels: boolean, allModels: boolean) {
+  if (allModels) return "all"
+  if (!affectedModels) return "none"
+  const names = new Set<string>()
+  for (const file of files) {
+    if (!affectedBy.modelInputs.test(file)) continue
+    const name = moduleOf(file)
+    if (name === undefined || name === "index") return "all"
+    names.add(name)
+  }
+  return names.size === 0 ? "all" : [...names].sort().join(" ")
+}
+
+export effect function changedFiles(root: string, base: string, head: string) {
+  const bytes = gitBytes({ args: ["-C", root, "diff", "--name-only", "-z", `${base}...${head}`], limit: 16 * 1024 * 1024, seconds: 120 }, "changed files are unavailable") catch effect () => {
+    throw new ScopeUnavailable({ message: `git could not list the files changed between ${base} and ${head}` })
+  }
+  return new TextDecoder().decode(bytes).split("\0").filter((file) => file !== "")
+}
+
+export effect function pullRequestScope(facts: RunFacts, root: string) {
+  const pull = facts.pull
+  if (pull === undefined) throw new ScopeUnavailable({ message: "scope selects coverage for pull requests only" })
+  const files = try changedFiles(root, pull.baseSha, pull.headSha)
+  const checks = pullRequestChecks(affectedOf(files), pull.promotion)
+  return {
+    files: files.length,
+    promotion: pull.promotion,
+    ui: checks.ui,
+    api: checks.api,
+    pages: checks.pages,
+    smoke: checks.smoke,
+    sandbox: checks.sandbox,
+    installer: checks.installer,
+    solana: checks.solana,
+    evm: checks.evm,
+    affected_models: checks.affectedModels,
+    all_models: checks.allModels,
+    formal_models: selectedModels(files, checks.affectedModels, checks.allModels),
+    proofs: checks.proofs,
+    inventories: checks.inventories,
+  }
+}

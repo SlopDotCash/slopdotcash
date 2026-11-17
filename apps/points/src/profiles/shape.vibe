@@ -1,0 +1,85 @@
+// spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"
+
+export const issueEventKinds = ["closed", "reopened", "duplicate", "unmarked-duplicate", "transferred"] as const
+
+export schema ProfileRepositoryCount { readonly repository: string; readonly merged: number; readonly open: number; readonly closed: number }
+
+export schema ProfileRecord {
+  readonly id: string
+  readonly login: string
+  readonly avatarUrl: string
+  readonly repositories: ReadonlyArray<ProfileRepositoryCount>
+}
+
+export schema CensusRepository { readonly repository: string; readonly count: number; readonly excluded: number }
+
+export schema ProfileIssueEvent {
+  readonly id: string
+  readonly kind: "closed" | "reopened" | "duplicate" | "unmarked-duplicate" | "transferred"
+  readonly occurredAt: string
+  readonly reason: string | null
+  readonly relatedIssueId: string | null
+}
+
+export schema ProfileIssue {
+  readonly id: string
+  readonly repository: string
+  readonly number: number
+  readonly authorId: string | null
+  readonly createdAt: string
+  readonly observedAt: string
+  readonly state: "OPEN" | "CLOSED"
+  readonly reason: string | null
+  readonly unavailableSince: string | null
+  readonly correctedAt: string | null
+  readonly historyIncompleteSince?: string | null
+  readonly events: ReadonlyArray<ProfileIssueEvent>
+}
+
+export schema IssueRepositoryCount { readonly repository: string; readonly count: number }
+
+export schema ProfileIssueHistory {
+  readonly firstObservedAt: string
+  readonly repositories: ReadonlyArray<IssueRepositoryCount>
+  readonly items: ReadonlyArray<ProfileIssue>
+  readonly archived?: ReadonlyArray<ProfileIssue>
+}
+
+export schema ProfileIndex {
+  readonly schemaVersion: "1" | "2"
+  readonly startedAt: string
+  readonly generatedAt: string
+  readonly repositories: ReadonlyArray<CensusRepository>
+  readonly people: ReadonlyArray<ProfileRecord>
+  readonly issues?: ProfileIssueHistory
+}
+
+export error ProfilesInvalid { message: string }
+
+const decodeIndex = Schema.decodeUnknownEffect(ProfileIndex)
+
+export effect function profileIndexOf(value: unknown) {
+  return decodeIndex(value) catch effect () => {
+    throw new ProfilesInvalid({ message: "Invalid profile census" })
+  }
+}
+
+export function issueHistoryReconciles(issue: Pick<ProfileIssue, "state" | "reason" | "events">) {
+  let state = "OPEN"
+  let reason: string | null = null
+  for (const event of issue.events) {
+    if (event.kind === "closed" || event.kind === "reopened") {
+      state = event.kind === "closed" ? "CLOSED" : "OPEN"
+      reason = event.reason
+    }
+  }
+  return state === issue.state && reason === issue.reason
+}
+
+export function contributorPullSearchUrl(login: string, qualifier: string) {
+  return `https://github.com/search?q=${encodeURIComponent(`is:pr author:${login} ${qualifier}`)}&type=pullrequests`
+}
+
+export function profileCounts(person: ProfileRecord) {
+  return person.repositories.reduce((total, row) => ({ merged: total.merged + row.merged, open: total.open + row.open, closed: total.closed + row.closed }), { merged: 0, open: 0, closed: 0 })
+}

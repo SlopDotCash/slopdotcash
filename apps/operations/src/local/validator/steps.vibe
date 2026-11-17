@@ -1,0 +1,52 @@
+// spec/operations/localValidator.md, "Stage identity is fresh and readiness admits the correct next action"; spec/operations/localValidator.md, "The awaited stop and its exact receipt settle cleanup"
+import { type ValidatorMode, type ValidatorRun, Machine, initial, machineOver } from "../../../gen/operations__localValidator.effect.vibe"
+import { loopbackHttp } from "../command/steps.vibe"
+
+export type ValidatorMachine = Machine.Shape
+
+export interface StageStart {
+  readonly mode: ValidatorMode
+  readonly receipt: number
+  readonly mounts: ReadonlyArray<string>
+  readonly keypair: string
+  readonly endpoint: string
+}
+
+schema AccountFile { pubkey: string }
+
+const program = /\.so$/u
+const account = /\.json$/u
+
+export effect function validatorMachine(start: ValidatorRun = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function publicFile(mount: string, keypair: string) {
+  const path = try Path.Path
+  const fs = try FileSystem.FileSystem
+  if (!path.isAbsolute(mount) || mount === keypair || mount.includes(",")) return false
+  const info = fs.lstat(mount) catch () => undefined
+  if (info?.type !== "File") return false
+  if (program.test(mount)) return true
+  if (!account.test(mount)) return false
+  const text = fs.readFileString(mount) catch () => undefined
+  const parsed: unknown = text === undefined ? undefined : Effect.try((): unknown => JSON.parse(text)) catch () => undefined
+  const decoded = Schema.decodeUnknownEffect(AccountFile)(parsed) catch () => undefined
+  return decoded !== undefined && !Array.isArray(parsed)
+}
+
+export effect function publicReadOnlyMounts(mounts: ReadonlyArray<string>, keypair: string) {
+  for (const mount of mounts) if (!(try publicFile(mount, keypair))) return false
+  return true
+}
+
+export effect function startStage(machine: ValidatorMachine, start: StageStart) {
+  return try machine.send({
+    type: "startStage",
+    mode: start.mode,
+    receipt: start.receipt,
+    publicReadOnlyMounts: try publicReadOnlyMounts(start.mounts, start.keypair),
+    localEndpoint: try loopbackHttp(start.endpoint),
+  })
+}

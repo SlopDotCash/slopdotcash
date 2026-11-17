@@ -1,0 +1,179 @@
+// spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction"; spec/security/enforcement.md, "The second distinct active flag quarantines a clear project and later flags only record"; spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema PublicRestriction = "clear" | "quarantined" | "banned"
+
+export schema ReporterFlag {
+  id: string
+  category: string
+  evidence: string
+  evidenceUrl: string | null
+  revision: number
+  createdAt: string
+  expiresAt: string
+  state: "active" | "withdrawn" | "resolved" | "expired"
+}
+
+export schema FlagStatus {
+  projectId: string
+  flag: ReporterFlag | null
+  restriction: PublicRestriction
+  pausedByFlags: boolean
+}
+
+export schema FiledFlag {
+  projectId: string
+  flag: ReporterFlag | null
+  paused: boolean
+  freshScan: null
+  restriction: PublicRestriction
+  pausedByFlags: boolean
+}
+
+export schema ExemptionActor { githubId: string; githubLogin: string }
+
+export schema AdmissionExemption {
+  id: string
+  kind: "owner-approved-admission"
+  projectId: string
+  revision: number
+  manifestSha256: string
+  repositoryId: string
+  repositoryNodeId: string
+  stewardId: string
+  stewardNodeId: string
+  grantedBy: ExemptionActor
+  grantedAt: string
+  reason: string
+  decisionReference: string
+  revokedAt: string | null
+  revokedBy: ExemptionActor | null
+  revocationReason: string | null
+  revocationDecisionReference: string | null
+}
+
+export schema RepositoryClearance { repositoryId: string; state: string; basis: string }
+
+export schema ProjectClearance { state: string; repositories: ReadonlyArray<RepositoryClearance> }
+
+export schema ExemptionGranted { exemption: AdmissionExemption; replayed?: boolean; setup: null; clearance: ProjectClearance }
+
+export schema ExemptionRevoked { exemption: AdmissionExemption; replayed?: boolean; setup?: null }
+
+export const projectFlag = route({ method: "GET", path: "/api/v1/project-flags/:id", access: "session", limitKib: 1, request: undefined, answer: FlagStatus, rejected: "rejected", cache: "no-store" })
+export const fileFlag = route({ method: "POST", path: "/api/v1/project-flags/:id", access: "sessionWrite", limitKib: 64, request: undefined, answer: FiledFlag, rejected: "flag_retry", cache: "no-store", status: 201 })
+export const withdrawFlag = route({ method: "POST", path: "/api/v1/project-flags/:id/withdraw", access: "sessionWrite", limitKib: 64, request: undefined, answer: FlagStatus, rejected: "rejected", cache: "no-store" })
+export const grantExemption = route({ method: "POST", path: "/api/v1/admin/vetting/exemptions", access: "sessionWrite", limitKib: 64, request: undefined, answer: ExemptionGranted, rejected: "stale_revision", cache: "no-store", status: 201 })
+export const revokeExemption = route({ method: "POST", path: "/api/v1/admin/vetting/exemptions/:id/revoke", access: "sessionWrite", limitKib: 64, request: undefined, answer: ExemptionRevoked, rejected: "rejected", cache: "no-store" })
+
+export const enforcementApi: ReadonlyArray<AnyRoute> = [projectFlag, fileFlag, withdrawFlag, grantExemption, revokeExemption]
+
+export schema ScanReviewOutcome {
+  status: "completed" | "unavailable" | "failed" | "not-started"
+  verdict: "no-findings" | "findings" | "malicious-suspected" | null
+  risk: "low" | "ambiguous" | "high" | null
+}
+
+export schema IncompleteSurface { surface: string; state: "partial" | "unsupported" }
+
+export schema OpenFindingCount { category: string; count: number }
+
+export schema ScanReviews { primary: ScanReviewOutcome; specialist: ScanReviewOutcome | null; escalated: boolean }
+
+export schema ScanClearanceFacts {
+  flaggedChecks: ReadonlyArray<string>
+  checksNotRun: ReadonlyArray<string>
+  incompleteSurfaces: ReadonlyArray<IncompleteSurface>
+  visibilityGaps: ReadonlyArray<string>
+  openFindings: ReadonlyArray<OpenFindingCount>
+  review: ScanReviews
+}
+
+export schema FindingsLocation = "repository" | "template" | "both" | "unknown"
+
+export interface ScanClearanceInput {
+  readonly state: string
+  readonly scan?: ScanClearanceFacts
+  readonly heldArtifacts: number
+  readonly findingsLocation?: FindingsLocation
+}
+
+export type ScanClearanceTone = "success" | "warning" | "danger" | "info" | "neutral"
+
+export type ScanClearanceIcon = "pass" | "fail" | "skip" | "partial" | "held" | "note" | "review"
+
+export interface ScanClearanceBadge {
+  readonly tone: ScanClearanceTone
+  readonly icon: ScanClearanceIcon
+  readonly label: string
+}
+
+export interface ScanClearanceView {
+  readonly checks: ReadonlyArray<ScanClearanceBadge>
+  readonly coverage: ReadonlyArray<ScanClearanceBadge>
+  readonly review: ReadonlyArray<ScanClearanceBadge>
+}
+
+function words(value: string): string {
+  return value.replace(/([a-z])([A-Z])/gu, (_match, before: string, after: string) => `${before} ${after.toLowerCase()}`).replaceAll("-", " ")
+}
+
+function reviewBadge(name: "Primary" | "Specialist", review: ScanReviewOutcome): ScanClearanceBadge {
+  if (review.status !== "completed") return { tone: "neutral", icon: "skip", label: `${name} ${review.status === "not-started" ? "not run" : review.status}` }
+  if (review.verdict === "malicious-suspected") return { tone: "danger", icon: "fail", label: `${name}: suspected malicious` }
+  if (review.risk === "high") return { tone: "danger", icon: "fail", label: `${name}: high risk` }
+  if (review.risk === "ambiguous") return { tone: "warning", icon: "review", label: `${name}: ambiguous` }
+  if (review.verdict === "findings") return { tone: "warning", icon: "review", label: `${name}: findings` }
+  return { tone: "success", icon: "pass", label: `${name}: clear` }
+}
+
+const reviewAreaGap = /^(primary|specialist):([A-Za-z]+):partial$/u
+
+function unique(badges: ReadonlyArray<ScanClearanceBadge>): ReadonlyArray<ScanClearanceBadge> {
+  const seen = new Set<string>()
+  return badges.filter((badge) => {
+    if (seen.has(badge.label)) return false
+    seen.add(badge.label)
+    return true
+  })
+}
+
+function gapBadge(gap: string): ScanClearanceBadge {
+  const area = reviewAreaGap.exec(gap)
+  return area === null ? { tone: "neutral", icon: "note", label: gap } : { tone: "warning", icon: "partial", label: `${area[1] === "primary" ? "Primary" : "Specialist"}: ${words(area[2] ?? "")} partial` }
+}
+
+export function scanClearanceView(assessment: ScanClearanceInput): ScanClearanceView | null {
+  const facts = assessment.scan
+  if (facts === undefined || assessment.state !== "incomplete") return null
+  const location = assessment.findingsLocation
+  const repositoryClear = facts.flaggedChecks.length === 0 && facts.checksNotRun.length === 0 && facts.incompleteSurfaces.length === 0 && facts.openFindings.length === 0 && assessment.heldArtifacts === 0
+  const passed: ScanClearanceBadge = { tone: "success", icon: "pass", label: "No check flagged" }
+  const slopSide = repositoryClear && (location === undefined || location === "template")
+  const located: ReadonlyArray<ScanClearanceBadge> = !repositoryClear || location === "unknown" ? []
+    : slopSide ? [passed]
+    : [passed, { tone: "warning", icon: "note", label: location === "both" ? "Findings: repository + template" : "Findings: repository" }]
+  const checks: ReadonlyArray<ScanClearanceBadge> = [
+    ...located,
+    ...facts.flaggedChecks.map((threat) => {
+      const open = facts.openFindings.find((finding) => finding.category === threat)?.count ?? 0
+      return { tone: "danger", icon: "fail", label: `${words(threat)} flagged${open > 0 ? ` · ${open} high` : ""}` } satisfies ScanClearanceBadge
+    }),
+    ...facts.openFindings.filter((finding) => !facts.flaggedChecks.includes(finding.category)).map((finding) => ({ tone: "danger", icon: "fail", label: `${words(finding.category)} · ${finding.count} high` }) satisfies ScanClearanceBadge),
+    ...facts.checksNotRun.map((threat) => ({ tone: "neutral", icon: "skip", label: `${words(threat)} not run` }) satisfies ScanClearanceBadge),
+  ]
+  const coverage: ReadonlyArray<ScanClearanceBadge> = [
+    ...facts.incompleteSurfaces.map((each) => (each.state === "partial"
+      ? { tone: "warning", icon: "partial", label: `${words(each.surface)} partial` }
+      : { tone: "neutral", icon: "skip", label: `${words(each.surface)} unsupported` }) satisfies ScanClearanceBadge),
+    ...(assessment.heldArtifacts > 0 ? [{ tone: "warning", icon: "held", label: `${assessment.heldArtifacts} artifact${assessment.heldArtifacts === 1 ? "" : "s"} held` } satisfies ScanClearanceBadge] : []),
+    ...facts.visibilityGaps.map(gapBadge),
+  ]
+  const specialist = facts.review.specialist
+  const review: ReadonlyArray<ScanClearanceBadge> = [
+    reviewBadge("Primary", facts.review.primary),
+    ...(specialist !== null ? [reviewBadge("Specialist", specialist)] : facts.review.escalated ? [{ tone: "danger", icon: "skip", label: "Specialist not run" } satisfies ScanClearanceBadge] : []),
+    ...(slopSide ? [{ tone: "info", icon: "note", label: "Slop-side block" } satisfies ScanClearanceBadge] : []),
+  ]
+  return { checks: unique(checks), coverage: unique(coverage), review: unique(review) }
+}

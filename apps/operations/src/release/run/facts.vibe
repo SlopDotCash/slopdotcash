@@ -1,0 +1,127 @@
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"
+import type { Actor, Environment, RefKind, RunRef } from "../../../gen/operations__release.effect.vibe"
+
+export error RunFactsInvalid { message: string }
+
+schema EventRepository { readonly full_name: string }
+schema PullSide { readonly ref: string; readonly sha: string; readonly repo: EventRepository | null }
+schema PullRequest { readonly head: PullSide; readonly base: PullSide }
+schema RunEvent {
+  readonly repository: EventRepository
+  readonly inputs?: Record<string, string | number | boolean | null> | null
+  readonly pull_request?: PullRequest
+}
+
+export interface ManualOptions {
+  readonly skipProofs: boolean
+  readonly skipBrowserTests: boolean
+  readonly usePublishedData: boolean
+  readonly bootstrap: boolean
+}
+
+export interface PullFacts {
+  readonly baseSha: string
+  readonly headSha: string
+  readonly promotion: boolean
+}
+
+export interface RunFacts {
+  readonly ref: RunRef
+  readonly by: Actor
+  readonly sha: string
+  readonly runId: string
+  readonly workflowPath: string
+  readonly job: string
+  readonly options: ManualOptions
+  readonly pull: PullFacts | undefined
+}
+
+const deployWorkflow = ".github/workflows/deploy.yml"
+const revision = /^[0-9a-f]{40}$/u
+
+export function environmentOf(name: string): Environment | undefined {
+  if (name === "production") return "Production"
+  if (name === "staging") return "Staging"
+  return undefined
+}
+
+effect function variable(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+function chosen(inputs: Readonly<Record<string, string | number | boolean | null>> | null | undefined, name: string) {
+  const value = inputs?.[name]
+  return value === true || value === "true"
+}
+
+function refKind(eventName: string, ref: string, actions: boolean, pull: PullRequest | undefined): RefKind | undefined {
+  if (!actions) return "LocalTree"
+  if (ref.startsWith("refs/tags/")) return "TagRef"
+  if (eventName === "push") return "BranchPush"
+  if (eventName === "workflow_dispatch") return "WorkflowDispatch"
+  if (eventName === "schedule") return "ScheduledRef"
+  if (eventName === "pull_request" || eventName === "pull_request_target") {
+    return pull !== undefined && pull.head.repo?.full_name === pull.base.repo?.full_name ? "PullRequestRef" : "ForkHead"
+  }
+  return undefined
+}
+
+function workflowPathOf(workflowRef: string, repository: string) {
+  const prefix = `${repository}/`
+  const at = workflowRef.lastIndexOf("@")
+  return workflowRef.startsWith(prefix) && at > prefix.length ? workflowRef.slice(prefix.length, at) : ""
+}
+
+effect function event(path: string) {
+  if (path === "") throw new RunFactsInvalid({ message: "GITHUB_EVENT_PATH is not set" })
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(path) catch effect () => {
+    throw new RunFactsInvalid({ message: "The run's event description is unreadable" })
+  }
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RunFactsInvalid({ message: "The run's event description is not JSON" }) })
+  return Schema.decodeUnknownEffect(RunEvent)(parsed) catch effect () => {
+    throw new RunFactsInvalid({ message: "The run's event description has an unexpected shape" })
+  }
+}
+
+export effect function runFacts() {
+  const actions = (try variable("GITHUB_ACTIONS")) === "true"
+  const eventName = try variable("GITHUB_EVENT_NAME")
+  const ref = try variable("GITHUB_REF")
+  const repository = try variable("GITHUB_REPOSITORY")
+  const sha = try variable("GITHUB_SHA")
+  const workflowRef = try variable("GITHUB_WORKFLOW_REF")
+  const described = actions ? try event(try variable("GITHUB_EVENT_PATH")) : { repository: { full_name: repository } }
+  if (actions && described.repository.full_name !== repository) throw new RunFactsInvalid({ message: "The run's event names another repository" })
+  if (!revision.test(sha)) throw new RunFactsInvalid({ message: "GITHUB_SHA is not a full commit SHA" })
+  const pull = "pull_request" in described ? described.pull_request : undefined
+  const kind = refKind(eventName, ref, actions, pull)
+  if (kind === undefined) throw new RunFactsInvalid({ message: `${eventName} is not a release, pull request or scheduled event` })
+  const workflowPath = workflowPathOf(workflowRef, repository)
+  const trusted = actions && workflowPath === deployWorkflow && workflowRef.endsWith(`@${ref}`)
+  const inputs = kind === "WorkflowDispatch" && "inputs" in described ? described.inputs : undefined
+  return {
+    ref: {
+      kind,
+      branch: ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "",
+      repository,
+      githubEnvironment: try variable("SLOP_GITHUB_ENVIRONMENT"),
+    },
+    by: trusted ? "TrustedWorkflow" : "Contributor",
+    sha,
+    runId: try variable("GITHUB_RUN_ID"),
+    workflowPath,
+    job: try variable("GITHUB_JOB"),
+    options: {
+      skipProofs: chosen(inputs, "skip_proofs"),
+      skipBrowserTests: chosen(inputs, "skip_browser_tests"),
+      usePublishedData: chosen(inputs, "use_published_data"),
+      bootstrap: chosen(inputs, "bootstrap_staging_profiles"),
+    },
+    pull: pull === undefined ? undefined : {
+      baseSha: pull.base.sha,
+      headSha: pull.head.sha,
+      promotion: pull.base.ref === "main" && pull.head.ref === "development" && pull.head.repo?.full_name === pull.base.repo?.full_name,
+    },
+  } satisfies RunFacts
+}
