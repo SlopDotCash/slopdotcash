@@ -20,6 +20,7 @@ import { formatAssetSymbol } from "./lib/reward-asset.mjs";
 import { sendSolanaWalletTransaction } from "./lib/solana-vault-actions";
 import { useAction } from "./lib/use-action";
 import { type PayoutWallet, usePayoutWallets } from "./lib/use-payout-wallets";
+import { autoRegisterTurn } from "./lib/vault-auto-register";
 import {
   checkedVaultSetupReview,
   isVaultCreationId,
@@ -27,7 +28,6 @@ import {
   type VaultSetupInput,
   type VaultSetupReview,
 } from "./lib/vault-setup";
-import { autoRegisterTurn } from "./lib/vault-auto-register";
 import { vaultSetupAttempt } from "./lib/vault-setup-attempt";
 import { sameWalletAddress } from "./lib/wallets";
 import { UnsentTransactionRecovery } from "./OwnerPresentation";

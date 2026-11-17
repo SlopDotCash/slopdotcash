@@ -7436,7 +7436,7 @@
 {"name":"<ArrowFunction@240>","kind":"ArrowFunction","line":240,"sha256":"ca68018332097d2ce55079fa7d4c18031dbc3378eb968178ffbb4c5fcd05ad24","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
 {"name":"<ArrowFunction@249>","kind":"ArrowFunction","line":249,"sha256":"24e4f16fc0b4966e7a12ee3fbc9121369e6881f0b98008286f1a4d3995cf0413","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]}
 ]},
-{"path":"src/OwnerVaultSetup.tsx","sha256":"21d21818ba9a2ffb22464ebae29080d5fdff6007c4d9ad88dd04816b61726668","language":"tsx","disposition":"callables-inventoried","functions":[
+{"path":"src/OwnerVaultSetup.tsx","sha256":"f43b462d7757b73d0e8c235f21e43c0c0d451a69e01bb35a06e8fd8e18d06546","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"request","kind":"FunctionDeclaration","line":50,"sha256":"375fb73576150d27d09e69db5f73ad7a84a3373190e2d5d3b4b1ac5f8c5ae353","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"restore","kind":"FunctionDeclaration","line":69,"sha256":"4d1cbffebb9de320732e2be1ce992c692b938f651b0e93d3fb7fa85b836ea9a6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"provisionalDeployment","kind":"FunctionDeclaration","line":109,"sha256":"729158725b15e2cb0e9a9642d7cc144073bf9473e2f255bdb87944f3ec4082cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
@@ -8567,7 +8567,7 @@
 {"name":"<ArrowFunction@106>","kind":"ArrowFunction","line":106,"sha256":"95a00a5bebfcc30b0446697d132a08cdd23c823d2a3fb8b044bea1cc523123ae","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"checkAuthority","kind":"ArrowFunction","line":112,"sha256":"1f60229aa40a0d19b73c91ae86666d4e657d16ed5a4c2f6edd8f67c43bac828b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
-{"path":"src/VaultActions.tsx","sha256":"ed2e21136348e5c8371b0e3c104c35ee83f04b35d513131969d38fa9383dd351","language":"tsx","disposition":"callables-inventoried","functions":[
+{"path":"src/VaultActions.tsx","sha256":"8f92729c32984e3b427e157521f445744a5b6deb8ffc1b44a67dadea853167c3","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"readPending","kind":"FunctionDeclaration","line":80,"sha256":"c96fa7291183752ab283574f7dd40e42817db0aaa0f0dc187a0274823cb501bf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"VaultActions","kind":"FunctionDeclaration","line":118,"sha256":"1e6bdeb50fe05a23b6cc67b0533ecc3704f0995df05a032875415450e648524b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","jsx","runtime-effect","throw-unreachable-model"]},
 {"name":"sameWallet","kind":"ArrowFunction","line":157,"sha256":"d41cef68a17ed6db5543c12d7fffe6a5d6c78ad57b45985232f1fd27c46a152d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
