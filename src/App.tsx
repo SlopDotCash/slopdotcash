@@ -1366,7 +1366,9 @@ function ProjectRewardSummary({
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
         ) : null}
-        {!promise && index !== null && !listedThisMonth(registered, index, now) ? (
+        {!promise &&
+        index !== null &&
+        !listedThisMonth(registered, index, now) ? (
           <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
         ) : null}
         {projectRewardSummaries(project, promise !== null).map((summary) => (
