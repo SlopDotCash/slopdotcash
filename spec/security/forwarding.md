@@ -32,6 +32,7 @@ seconds. A confirmed closed submission clears the cookie in the response.
 
 ```quint
 import screening as S from "./screening"
+import reportingReadiness as R from "./reportingReadiness"
 type ForwardingPhase = Draft | Submitting | Uncertain | Submitted | ReceiptVerified | Failed
 type Failure = None | Retryable | Terminal | AlreadyRecorded | Unverifiable | ReceiptMismatch
 type Operation = SendReport | ListCopies | ReadAdvisory
@@ -71,6 +72,10 @@ pure def lawNoInstallationUse(f: Forwarding, request: Request, operation: Operat
 
 A saved report uses its exact retained bytes. The atomic row transition
 rechecks the reporter's participation and the approved intake revision.
+`reportingReady` is the cached [reporting readiness](./reportingReadiness.md)
+of the registered project revision and repository at the check
+(`withReadiness`): fresh, enabled and verified for the same repository
+identity. A stale, failed, disabled or mismatched observation refuses the send.
 A duplicate caller receives the recorded result through the existing replay
 lookup. A missing change count, a lost commit response or a missing/changed
 readback cannot lend a send claim. The external call has no lease against
@@ -78,12 +83,17 @@ later D1 updates. A request that already read back its own claim may start
 late, but its response cannot write a different current claim.
 
 ```quint
+pure def withReadiness(gate: SendGate, cache: R::Readiness, target: R::Target, checkedAtMs: int): SendGate =
+  { ...gate, reportingReady: R::readyFor(cache, target, checkedAtMs) }
 pure def gateMatches(gate: SendGate): bool = gate.wonClaim and gate.bytesVerified and gate.intakeCurrent and gate.reportingReady
   and gate.allowedToParticipate and gate.seenScreeningRevision == gate.screening.revision
   and gate.reportVersion > 0 and gate.reportVersion == gate.screening.version and gate.digest != ""
   and gate.digest == gate.screening.digest and S::qualified(gate.screening)
 pure def canClaimSend(f: Forwarding, request: Request, gate: SendGate, startedAtMs: int): bool = mayOperate(f, request, SendReport)
   and gateMatches(gate) and startedAtMs > 0 and startedAtMs >= f.activeClaim.atMs
+pure def lawUnreadyCacheRefusesSend(f: Forwarding, request: Request, gate: SendGate, cache: R::Readiness, target: R::Target,
+  checkedAtMs: int, startedAtMs: int): bool =
+  not(R::readyFor(cache, target, checkedAtMs)) implies not(canClaimSend(f, request, withReadiness(gate, cache, target, checkedAtMs), startedAtMs))
 pure def claimSend(f: Forwarding, request: Request, gate: SendGate, startedAtMs: int): Forwarding =
   { ...f, phase: Submitting, failure: None, revision: f.revision + 1, attempt: f.attempt + 1,
     firstAtMs: if (f.attempt == 0) startedAtMs else f.firstAtMs, retryWithoutCopy: false,
@@ -279,7 +289,12 @@ pure val readbackValues = revisionsToTry.fold(Set(), (reads, revision) => reads.
   { requestId: 2, changedOne: true, rowPresent: true, observedRevision: revision, observedPhase: Submitting })))
 pure val approvedReport = { ...S::initial, phase: S::Legitimate }
 pure val gateValues = Set({ seenScreeningRevision: 1, reportVersion: 1, digest: "original", screening: approvedReport,
-  bytesVerified: true, intakeCurrent: true, reportingReady: true, allowedToParticipate: true, wonClaim: true })
+  bytesVerified: true, intakeCurrent: true, reportingReady: true, allowedToParticipate: true, wonClaim: true },
+  { seenScreeningRevision: 1, reportVersion: 1, digest: "original", screening: approvedReport,
+  bytesVerified: true, intakeCurrent: true, reportingReady: false, allowedToParticipate: true, wonClaim: true })
+pure val cacheValues = Set(R::initial, { observations: List({ revision: 1, repository: 1, repositoryId: 11, repositoryNodeId: 21,
+  enabled: true, verifiedAt: 1000, attemptedAt: 1000, failure: R::NoFailure }) })
+pure val checkedAtMsValues = Set(2000, 4000000)
 pure val claimValues = revisionsToTry.fold(Set(), (claims, revision) => claims.union(Set(
   { revision: revision, requestId: 1, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" },
   { revision: revision, requestId: 2, attempt: 1, atMs: 1000000, reportVersion: 1, digest: "original" },
@@ -297,13 +312,13 @@ pure val earlyReceipt: AdvisoryRead = { status: Found, facts: earlyCopy, current
   currentContacts: true, competingCase: false, writeCommitted: true, privateReport: true, githubState: Triage }
 pure val advisoryReadValues = Set(earlyReceipt, { ...earlyReceipt, currentContacts: false }, { ...earlyReceipt, facts: lateCopy },
   { ...earlyReceipt, status: NotFound }, { ...earlyReceipt, competingCase: true })
-pure val weight_holdLateCopy = 45
-pure val weight_claimSend = 22
-pure val weight_recordClaimRead = 35
-pure val weight_startPost = 60
-pure val weight_recordPostResult = 70
-pure val weight_recordCreated = 64
-pure val weight_reconcile = 35
-pure val weight_readReceipt = 50
-pure val weight_loseReceiptReply = 60
+pure val weight_holdLateCopy = 3
+pure val weight_claimSend = 2
+pure val weight_recordClaimRead = 3
+pure val weight_startPost = 4
+pure val weight_recordPostResult = 4
+pure val weight_recordCreated = 4
+pure val weight_reconcile = 3
+pure val weight_readReceipt = 3
+pure val weight_loseReceiptReply = 4
 ```

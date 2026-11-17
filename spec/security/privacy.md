@@ -72,35 +72,15 @@ financial amounts unless the receiving view has case authority; that
 omission is a shell and frontend obligation verified by conformance, not by
 this machine.
 
-## Story: Retain private records permanently and scanner evidence by policy
-
-### Only ordinary scanner evidence and scanner access logs ever become deletable
-
-Report bodies, case audit records and contributor traces are permanent.
-Successful admission evidence and any object still referenced are retained.
-Other scanner evidence becomes deletable 90 days after closure. Scanner
-recovery access logs are retained for one year. Private backups are daily and
-retained for 30 days, and restoration requires a verified complete chain
-before activation; the [shared evidence store](./evidence.md) owns those
-steps.
-
-```quint
-type ObjectKind = ReportBodyObject | CaseAuditRecord | TraceObject | ScannerObject | ScannerAccessLog
-type RetainedObject = { kind: ObjectKind, references: int, successfulAdmission: bool, caseOpen: bool, daysAfterClose: int, ageDays: int }
-pure def mayDeleteObject(o: RetainedObject): bool =
-  if (o.kind == ScannerObject) o.references == 0 and not(o.successfulAdmission) and not(o.caseOpen) and o.daysAfterClose >= 90
-  else if (o.kind == ScannerAccessLog) o.ageDays >= 365
-  else false
-pure def lawPrivateRecordsPermanent(o: RetainedObject): bool =
-  (o.kind == ReportBodyObject or o.kind == CaseAuditRecord or o.kind == TraceObject) implies not(mayDeleteObject(o))
-pure def lawSuccessfulAdmissionPermanent(o: RetainedObject): bool = o.successfulAdmission and o.kind == ScannerObject implies not(mayDeleteObject(o))
-pure def lawSharedObjectsRetained(o: RetainedObject): bool = o.references > 0 and o.kind == ScannerObject implies not(mayDeleteObject(o))
-pure def lawAccessLogsKeptOneYear(o: RetainedObject): bool = o.kind == ScannerAccessLog and o.ageDays < 365 implies not(mayDeleteObject(o))
-```
-
-Contributor trace bodies remain permanent private R2 objects. The uploader
-stores the exact contributor-reviewed bytes and never performs automatic
-redaction.
+Report bodies, case audit records and contributor traces are permanent
+private records: no machine has a deletion path for them. Contributor trace
+bodies are permanent private R2 objects; the uploader stores the exact
+contributor-reviewed bytes and never performs automatic redaction. Scanner
+evidence retention, permanent successful admission evidence and
+reference-aware cleanup belong to the [shared evidence store](./evidence.md),
+and daily private backups, one-year access-log retention and verified
+restoration to
+[backup](../operations/backup.md).
 
 ### Simulation samples
 
@@ -110,10 +90,4 @@ pure val actorValues = Set(6)
 pure val checkedEpochValues = Set(1, 2)
 pure val minutesValues = Set(1, 15)
 pure val snapshotValues = Set({ ...C::staff, epoch: 2 }, { ...C::staff, epoch: 3, technical: List(3) })
-pure val oValues = Set(
-  { kind: ScannerObject, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 90, ageDays: 400 },
-  { kind: ScannerObject, references: 1, successfulAdmission: false, caseOpen: false, daysAfterClose: 91, ageDays: 400 },
-  { kind: ScannerObject, references: 0, successfulAdmission: true, caseOpen: false, daysAfterClose: 100, ageDays: 400 },
-  { kind: ReportBodyObject, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 1000, ageDays: 4000 },
-  { kind: ScannerAccessLog, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 0, ageDays: 364 })
 ```
