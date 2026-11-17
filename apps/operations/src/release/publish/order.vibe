@@ -1,0 +1,287 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+import type { Network } from "../../../gen/fees__runtime.effect.vibe"
+import type { Environment, Service } from "../../../gen/operations__release.effect.vibe"
+import type { FeeSettings } from "../run/publisher.vibe"
+import { Cloudflare, ToolFailed } from "../wrangler/cloudflare.vibe"
+import { checkedSchedules } from "../verify/probes.vibe"
+import { type ExpectedBindings, activeTag, checkedVersion, releaseMessage, secretNames, uploadedVersionId } from "../wrangler/outputs.vibe"
+import { ConfigRefused, type Reviewed, driftMessage, reviewOnlyKeys, secretDrift, tierName } from "./config.vibe"
+
+export const publicationOrder: ReadonlyArray<Service> = ["PaymentAttesters", "FeeConverter", "VettingSandbox", "Notify", "Slopbot", "RepositoryAccess", "IdentityWorker", "VettingBackup", "VettingRetention", "Referral"]
+
+interface Home {
+  readonly app: string
+  readonly worker: string
+  readonly only?: Environment
+  readonly stacks?: true
+}
+
+const homes: { readonly [S in Service]: Home } = {
+  PaymentAttesters: { app: "settlement", worker: "attester", stacks: true },
+  FeeConverter: { app: "fees", worker: "feeConverter" },
+  VettingSandbox: { app: "security", worker: "sandbox" },
+  Notify: { app: "operations", worker: "notify" },
+  Slopbot: { app: "slopbot", worker: "slopbot", only: "Production" },
+  RepositoryAccess: { app: "slopbot", worker: "slopbot", only: "Staging" },
+  IdentityWorker: { app: "backend", worker: "identity" },
+  VettingBackup: { app: "operations", worker: "backup" },
+  VettingRetention: { app: "operations", worker: "backup" },
+  Referral: { app: "settlement", worker: "referralAccrual", only: "Production" },
+}
+
+export interface Publication {
+  readonly root: string
+  readonly bundle: string
+  readonly workspace: string
+  readonly sourceSha: string
+  readonly environment: Environment
+}
+
+export interface Overrides {
+  readonly vars: Readonly<Record<string, string>>
+  readonly withoutBindings: ReadonlyArray<string>
+}
+
+export const noOverrides: Overrides = { vars: {}, withoutBindings: [] }
+
+const modes: ReadonlyMap<string, FeeSettings["converterMode"]> = new Map([["off", "Off"], ["dry_run", "DryRun"], ["live", "Live"]])
+const feeNetworks: ReadonlyMap<string, Network> = new Map([["base", "Base"], ["ethereum", "Ethereum"], ["robinhood", "Robinhood"], ["solana", "Solana"]])
+const networkOrder: ReadonlyArray<Network> = ["Base", "Ethereum", "Robinhood", "Solana"]
+const imageDigest = /^sha256:[a-f0-9]{64}$/u
+const deploySeconds = 600
+const containerSeconds = 1800
+
+function refused(message: string) {
+  return new ConfigRefused({ message })
+}
+
+export function configsFor(reviewed: ReadonlyArray<Reviewed>, service: Service, environment: Environment) {
+  const home = homes[service]
+  if (home.only !== undefined && home.only !== environment) return `${service} is not published in ${tierName(environment)}`
+  const found = reviewed.filter((entry) => !entry.template && entry.app === home.app && entry.worker === home.worker && entry.environment === environment)
+  if (found.length === 0) return `no reviewed ${tierName(environment)} configuration publishes ${service} (apps/${home.app}/wrangler/${home.worker}.*.jsonc)`
+  if (found.length > 1 && home.stacks !== true) return `${service} has more than one reviewed ${tierName(environment)} configuration`
+  return found
+}
+
+export type SecretValues = Readonly<Record<string, Redacted.Redacted<string>>>
+
+export effect function checkedSecrets(reviewed: Reviewed, provided: ReadonlyArray<string> = []) {
+  const cloudflare = try Cloudflare
+  const step = `${reviewed.file.name} secrets`
+  const names = try secretNames(try cloudflare.wrangler(step, { args: ["secret", "list", "--name", reviewed.file.name, "--format=json"] }), step)
+  const drift = driftMessage(reviewed.file.name, secretDrift(reviewed, names, provided))
+  if (drift !== undefined) throw new ToolFailed({ tool: "release", step, message: drift })
+  return names
+}
+
+export effect function releaseSecrets(names: ReadonlyArray<string>) {
+  const values: Record<string, Redacted.Redacted<string>> = {}
+  for (const name of names) {
+    const value = Option.getOrUndefined(try Config.option(Config.Redacted(name)))
+    if (value === undefined || Redacted.value(value).trim() === "") throw refused(`the release environment lacks ${name}`)
+    values[name] = value
+  }
+  return values satisfies SecretValues
+}
+
+export effect function withSecretsFile<A, E, R>(workspace: string, label: string, values: SecretValues, use: (path: string) => A!E!R) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.join(workspace, `${label}.secrets.json`)
+  const text = JSON.stringify(Object.fromEntries(Object.entries(values).map(([name, value]) => [name, Redacted.value(value)])))
+  fs.writeFileString(path, text, { mode: 0o600 }) catch effect () => {
+    throw refused(`the secrets of ${label} could not be staged`)
+  }
+  return try Effect.ensuring(use(path), Effect.ignore(fs.remove(path, { force: true })))
+}
+
+effect function bundledMain(reviewed: Reviewed, publication: Publication) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const main = reviewed.file.main
+  if (main === undefined) throw refused(`${reviewed.path} names no built entry`)
+  const relative = files.normalize(files.join("apps", reviewed.app, "wrangler", main))
+  if (!relative.startsWith(`apps/${reviewed.app}/`)) throw refused(`${reviewed.path} names an entry outside its app`)
+  const built = files.join(publication.bundle, relative)
+  const info = fs.stat(built) catch () => undefined
+  if (info?.type !== "File") throw refused(`the release bundle has no built ${relative} for ${reviewed.file.name}`)
+  return built
+}
+
+effect function generatedConfig(reviewed: Reviewed, publication: Publication, overrides: Overrides, extra: { readonly [key: string]: unknown }) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const kept = Object.fromEntries(Object.entries(reviewed.raw).filter(([key]) => !reviewOnlyKeys.has(key)))
+  const vars = { ...reviewed.file.vars ?? {}, ...overrides.vars }
+  const services = (reviewed.file.services ?? []).filter((binding) => !overrides.withoutBindings.includes(binding.binding))
+  const config = {
+    ...kept,
+    main: try bundledMain(reviewed, publication),
+    vars,
+    ...reviewed.file.d1_databases === undefined ? {} : { d1_databases: reviewed.file.d1_databases.map((database) => ({ ...database, migrations_dir: files.join(publication.root, "migrations") })) },
+    ...reviewed.file.services === undefined ? {} : { services },
+    ...extra,
+  }
+  const path = files.join(publication.workspace, `${reviewed.file.name}.json`)
+  fs.writeFileString(path, `${JSON.stringify(config, null, 2)}\n`) catch effect () => {
+    throw refused(`the release configuration of ${reviewed.file.name} could not be written`)
+  }
+  const bindings = { vars, services, databases: reviewed.file.d1_databases ?? [], emails: reviewed.file.send_email ?? [] }
+  return { path, bindings }
+}
+
+effect function viewedVersion(name: string, versionId: string, sha: string, expected: ExpectedBindings) {
+  const cloudflare = try Cloudflare
+  const step = `${name} version`
+  const text = try cloudflare.wrangler(step, { args: ["versions", "view", versionId, "--name", name, "--json"] })
+  try checkedVersion(text, versionId, sha, expected, step)
+}
+
+effect function readBack(name: string, versionId: string | undefined) {
+  const cloudflare = try Cloudflare
+  const step = `${name} read-back`
+  const status = try cloudflare.wrangler(step, { args: ["deployments", "status", "--name", name, "--json"] })
+  const versions = try cloudflare.wrangler(step, { args: ["versions", "list", "--name", name, "--json"] })
+  return try activeTag(status, versions, versionId, step)
+}
+
+export effect function servingTag(name: string) {
+  return try readBack(name, undefined)
+}
+
+schema ServiceEnvironment { readonly environment: string }
+
+schema WorkerService { readonly default_environment: ServiceEnvironment }
+
+schema WorkerSubdomain {
+  readonly enabled: boolean
+  readonly previews_enabled: boolean
+}
+
+const environmentPattern = /^[a-zA-Z0-9_-]+$/u
+
+export effect function privateBoundary(name: string) {
+  const cloudflare = try Cloudflare
+  const step = `${name} boundary`
+  const unverified = () => refused(`${name} must already have no public routes, domains, workers.dev or preview URLs`)
+  const service = Schema.decodeUnknownEffect(WorkerService)(try cloudflare.read(step, `/workers/services/${name}`)) catch effect () => {
+    throw refused(`the service environment of ${name} could not be verified`)
+  }
+  const environment = service.default_environment.environment
+  if (!environmentPattern.test(environment)) throw refused(`the service environment of ${name} could not be verified`)
+  const boundary = `/workers/services/${name}/environments/${environment}`
+  const [subdomain, routes, domains] = try.all [
+    cloudflare.read(step, `${boundary}/subdomain`),
+    cloudflare.read(step, `${boundary}/routes?show_zonename=true`),
+    cloudflare.read(step, `/workers/domains/records?page=0&per_page=5&service=${name}&environment=${environment}`),
+  ]
+  const exposure = Schema.decodeUnknownEffect(WorkerSubdomain)(subdomain) catch effect () => {
+    throw unverified()
+  }
+  if (exposure.enabled || exposure.previews_enabled || !Array.isArray(routes) || routes.length !== 0 || !Array.isArray(domains) || domains.length !== 0) throw unverified()
+}
+
+export interface WorkerRelease {
+  readonly overrides: Overrides
+  readonly triggers: boolean
+  readonly secrets: SecretValues
+}
+
+export const plainRelease: WorkerRelease = { overrides: noOverrides, triggers: true, secrets: {} }
+
+export effect function publishWorker(reviewed: Reviewed, publication: Publication, release: WorkerRelease) {
+  const cloudflare = try Cloudflare
+  const name = reviewed.file.name
+  const sha = publication.sourceSha
+  const provided = Object.keys(release.secrets)
+  const listed = try checkedSecrets(reviewed, provided)
+  const generated = try generatedConfig(reviewed, publication, release.overrides, {})
+  const config = generated.path
+  const uploadArgs = ["versions", "upload", "--config", config, `--tag=${sha}`, `--message=${releaseMessage(sha)}`]
+  const upload = provided.length === 0
+    ? try cloudflare.wrangler(`${name} upload`, { args: uploadArgs, seconds: deploySeconds })
+    : try withSecretsFile(publication.workspace, name, release.secrets, (path) => cloudflare.wrangler(`${name} upload`, { args: [...uploadArgs, `--secrets-file=${path}`], seconds: deploySeconds }))
+  const versionId = try uploadedVersionId(upload, `${name} upload`)
+  try viewedVersion(name, versionId, sha, { ...generated.bindings, secrets: [...new Set([...listed, ...provided])] })
+  try cloudflare.wrangler(`${name} deploy`, { args: ["versions", "deploy", "--name", name, `--version-id=${versionId}`, "--percentage=100", `--message=${releaseMessage(sha)}`, "--yes"], seconds: deploySeconds })
+  if (release.triggers) {
+    try cloudflare.wrangler(`${name} triggers`, { args: ["triggers", "deploy", "--config", config], seconds: deploySeconds })
+    const crons = reviewed.file.triggers?.crons
+    if (crons !== undefined) try checkedSchedules(name, crons)
+  }
+  return { tag: try readBack(name, versionId), config }
+}
+
+export effect function publishContainerWorker(reviewed: Reviewed, publication: Publication) {
+  const cloudflare = try Cloudflare
+  const files = try Path.Path
+  const name = reviewed.file.name
+  const [container, ...others] = reviewed.file.containers ?? []
+  if (container === undefined || others.length > 0) throw refused(`${reviewed.path} must declare exactly one container`)
+  const listed = try checkedSecrets(reviewed)
+  const context = files.dirname(files.join(publication.root, "apps", reviewed.app, "wrangler", container.image))
+  const tag = `${name}:${publication.sourceSha}`
+  const repository = `registry.cloudflare.com/${cloudflare.accountId}/${name}`
+  const base = (try generatedConfig(reviewed, publication, noOverrides, {})).path
+  try cloudflare.wrangler(`${name} container build`, { args: ["containers", "build", context, "--tag", tag, "--config", base], seconds: containerSeconds })
+  try cloudflare.wrangler(`${name} container push`, { args: ["containers", "push", tag, "--config", base], seconds: containerSeconds })
+  const inspected = try cloudflare.docker(`${name} container digest`, { args: ["image", "inspect", `${repository}:${publication.sourceSha}`, "--format", "{{json .RepoDigests}}"] })
+  const digests = Effect.try(() => JSON.parse(inspected) as unknown) catch () => undefined
+  const matching = Array.isArray(digests) ? digests.filter((value): value is string => typeof value === "string" && value.startsWith(`${repository}@`)) : []
+  const [image, ...more] = matching
+  const digest = image?.slice(repository.length + 1)
+  if (image === undefined || more.length > 0 || digest === undefined || !imageDigest.test(digest)) throw new ToolFailed({ tool: "docker", step: `${name} container digest`, message: "the uploaded container has no unique immutable digest" })
+  const overrides = { vars: { SLOP_RELEASE_SHA: publication.sourceSha, RUNNER_IMAGE_SHA256: digest.slice("sha256:".length) }, withoutBindings: [] } satisfies Overrides
+  const generated = try generatedConfig(reviewed, publication, overrides, { containers: (reviewed.file.containers ?? []).map((entry) => ({ ...entry, image })) })
+  const deployed = try cloudflare.wrangler(`${name} deploy`, { args: ["deploy", "--config", generated.path, `--tag=${publication.sourceSha}`, `--message=${releaseMessage(publication.sourceSha)}`], seconds: containerSeconds })
+  const versionId = try uploadedVersionId(deployed, `${name} deploy`)
+  try viewedVersion(name, versionId, publication.sourceSha, { ...generated.bindings, secrets: listed })
+  return try readBack(name, versionId)
+}
+
+function listed(text: string | undefined) {
+  return (text ?? "").split(",").map((part) => part.trim()).filter((part) => part !== "")
+}
+
+effect function networksOf(text: string | undefined, label: string) {
+  const networks: Network[] = []
+  for (const name of listed(text)) {
+    const network = feeNetworks.get(name)
+    if (network === undefined || networks.includes(network)) throw refused(`${label} names an unknown or repeated network: ${name}`)
+    networks.push(network)
+  }
+  return networks
+}
+
+effect function budgetNetworks(text: string | undefined) {
+  if (text === undefined || text.trim() === "") return []
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw refused("FEE_CONVERTER_NATIVE_BUDGETS is not JSON")
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw refused("FEE_CONVERTER_NATIVE_BUDGETS must be an object of networks")
+  return try networksOf(Object.keys(parsed).join(","), "FEE_CONVERTER_NATIVE_BUDGETS")
+}
+
+effect function modeOf(name: string, text: string | undefined) {
+  const mode = modes.get(text ?? "")
+  if (mode === undefined) throw refused(`${name} must be off, dry_run or live`)
+  return mode
+}
+
+export effect function feeSettingsOf(reviewed: Reviewed, secrets: ReadonlyArray<string>) {
+  const vars = reviewed.file.vars ?? {}
+  const networks = try networksOf(vars.FEE_CONVERTER_NETWORKS, "FEE_CONVERTER_NETWORKS")
+  const budgets = try budgetNetworks(vars.FEE_CONVERTER_NATIVE_BUDGETS)
+  const evm = [vars.FEE_WALLET_BASE, vars.FEE_WALLET_ETHEREUM, vars.FEE_WALLET_ROBINHOOD].map((address) => (address ?? "").trim().toLowerCase())
+  const sharedEvm = evm[0] !== "" && evm.every((address) => address === evm[0])
+  return {
+    converterMode: try modeOf("FEE_CONVERTER_MODE", vars.FEE_CONVERTER_MODE),
+    buybackMode: try modeOf("BUYBACK_MODE", vars.BUYBACK_MODE),
+    networks,
+    keys: networkOrder.filter((network) => secrets.includes(`FEE_WALLET_KEY_${network.toUpperCase()}`)),
+    nativeLimits: networkOrder.filter((network) => budgets.includes(network)),
+    evmWallet: sharedEvm ? 1 : 0,
+    solanaWallet: (vars.FEE_WALLET_SOLANA ?? "").trim() === "" ? 0 : 2,
+  } satisfies FeeSettings
+}

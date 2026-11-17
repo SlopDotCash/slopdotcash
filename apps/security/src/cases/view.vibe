@@ -1,0 +1,189 @@
+// spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { first, sql } from "@repo/platform/d1"
+import type { Json } from "@repo/ports/backend"
+import type { PrivateCase } from "../../gen/security__cases.ts"
+import { awardOpen, canAppeal, canRejectLink, receiptOpen } from "../../gen/security__cases.effect.vibe"
+import { assessmentRead } from "../assessment/routes.vibe"
+import { reporterView, storedIntake, submission } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import type { CaseRole } from "../receipt/statements.vibe"
+import { sharesOf } from "../terms/receipt.vibe"
+import { type CaseRecord, type EventRow, detailOf } from "./rows.vibe"
+import { type Observed, reporterKinds } from "./store.vibe"
+import { triageMayStart, triageView } from "./triage.vibe"
+
+export interface NextStep {
+  readonly text: string
+  readonly dueAt: string | null
+}
+
+export interface PaymentView {
+  readonly nextStep?: NextStep
+  readonly paymentState?: string
+  readonly paymentRail?: "direct" | "escrow" | "unavailable"
+  readonly settlement?: Json
+  readonly paymentNetworks?: ReadonlyArray<string>
+}
+
+export interface ExtraActions {
+  readonly allowed: ReadonlyArray<string>
+  readonly view: PaymentView
+}
+
+export const noExtraActions: ExtraActions = { allowed: [], view: {} }
+
+schema Reservation { root_cause_key: string; policy_revision: number; gross_minor: string; currency: string; reserved_at: string }
+schema Forwarded { repository: string; advisory_ghsa: string }
+schema IntakeLink { submission_id: string }
+
+const receivedAtSource = "maintainer-attested"
+
+function has(roles: ReadonlySet<CaseRole>, role: CaseRole) {
+  return roles.has(role)
+}
+
+export function caseActions(observed: Observed, viewer: number): ReadonlyArray<string> {
+  const { model, roles, epoch } = observed
+  const maintainer = has(roles, "security-maintainer")
+  if (model.submission !== "Verified") return model.submission === "Claimed" && maintainer && canRejectLink(model, viewer, epoch) ? ["verify-link", "reject-link"] : []
+  const actions: string[] = []
+  const open = receiptOpen(model)
+  if (has(roles, "reporter") && canAppeal(model, viewer)) actions.push("appeal")
+  if (maintainer) {
+    if (open) actions.push("request-information", "decide")
+    if (model.terms.paidTerms && (awardOpen(model) || (model.award === "Reserved" && model.appeal !== "AppealOpen"))) actions.push("award")
+    actions.push("assign-triager", "revoke-triager")
+  } else if (has(roles, "triager") && open) actions.push("request-information")
+  if (has(roles, "dispute") && model.appeal === "AppealOpen") actions.push("decide-appeal")
+  if (has(roles, "dispute") && model.relatedReview === "ReviewPending" && model.receipt === "Confirmed" && model.award === "Pending") actions.push("decide-related-party")
+  return actions
+}
+
+effect function dueAt(row: CaseRecord["row"], acknowledgeHours: number | undefined) {
+  if (row.receipt_state !== "received" || row.received_at === null || acknowledgeHours === undefined) return null
+  return try isoAt(millisOf(row.received_at) + acknowledgeHours * 3600000)
+}
+
+effect function nextStep(observed: Observed): NextStep!! {
+  const { row } = observed.record
+  const roles = observed.roles
+  const owner = has(roles, "security-maintainer") || has(roles, "triager")
+  const reporter = has(roles, "reporter")
+  const dispute = has(roles, "dispute")
+  if (row.submission_state === "claimed") return { text: "Slop is confirming this report with GitHub.", dueAt: null }
+  if (row.submission_state === "link-rejected") return { text: "GitHub does not show this report as a private report from this account.", dueAt: null }
+  if (row.appeal_state === "open") return { text: dispute ? "Decide the appeal." : "An independent reviewer is deciding the appeal.", dueAt: null }
+  if (row.receipt_state === "received" || row.receipt_state === "triaging") {
+    return {
+      text: owner ? "Review the report and the AI summary, then decide or ask the reporter for information." : "Waiting for the project owner's response.",
+      dueAt: try dueAt(row, observed.program === undefined ? undefined : observed.program.acknowledgeHours),
+    }
+  }
+  if (row.receipt_state === "needs-information") {
+    const text = reporter ? row.received_at_source === "slop-received" ? "Add the requested evidence to your saved report in Inbox." : "Answer the owner's question in the GitHub advisory." : "Waiting for the reporter's answer; decide when ready."
+    return { text, dueAt: null }
+  }
+  if (row.related_party_review === "pending" && row.award_state === "pending") return { text: dispute ? "Review the proposed related-party award." : "An independent reviewer is reviewing the proposed award.", dueAt: null }
+  if (row.award_state === "pending" && row.award_gross_minor !== null) return { text: owner ? "The award amount is chosen. Arrange funding to pay the award." : "The owner chose an award amount. It is awaiting verified funding.", dueAt: row.payment_deadline }
+  if (awardOpen(observed.model)) return { text: has(roles, "security-maintainer") ? "Choose an award amount or no award." : "Waiting for the owner's award decision.", dueAt: null }
+  if (row.award_state === "approved") return { text: "The award is approved and reserved. Payment is not available yet.", dueAt: row.payment_deadline }
+  if (owner && row.receipt_state === "confirmed" && row.remediation_state !== "resolved" && row.remediation_state !== "mitigation-verified") return { text: "Fix the issue and record remediation.", dueAt: null }
+  return { text: "No action needed.", dueAt: null }
+}
+
+effect function intakeOf(record: CaseRecord, model: PrivateCase) {
+  const link = try first(IntakeLink, sql`SELECT submission_id FROM security_submission_intake WHERE case_id = ${record.row.id}`)
+  if (link === undefined) return null
+  const saved = try submission(link.submission_id)
+  const stored = try storedIntake(link.submission_id)
+  if (saved === undefined || stored === undefined || model.submission !== "Verified") return null
+  return reporterView(saved, stored, record.row, try Clock.currentTimeMillis).intake
+}
+
+function eventView(event: EventRow) {
+  return { revision: event.case_revision, kind: event.kind, actorGithubId: event.actor_github_id, actorRole: event.actor_role, at: event.at, reason: event.reason, evidenceReference: event.evidence_reference, detail: detailOf(event) }
+}
+
+export effect function caseView(observed: Observed, viewerGithubId: string, includeHistory: boolean, extra: ExtraActions = noExtraActions) {
+  const { record, roles } = observed
+  const { row } = record
+  const viewer = githubNumber(viewerGithubId)
+  const reservation = try first(Reservation, sql`SELECT root_cause_key, policy_revision, gross_minor, currency, reserved_at FROM security_award_reservations WHERE case_id = ${row.id}`)
+  const step = extra.view.nextStep === undefined ? try nextStep(observed) : extra.view.nextStep
+  const base = {
+    id: row.id,
+    projectId: row.project_id,
+    revision: row.revision,
+    viewerRoles: [...roles].sort(),
+    allowedActions: [...caseActions(observed, viewer), ...extra.allowed],
+    nextStep: step.text,
+    nextStepDueAt: step.dueAt,
+    submissionState: row.submission_state,
+    receivedAt: row.received_at,
+    receivedAtSource: row.received_at === null ? null : row.received_at_source ?? receivedAtSource,
+    policyRevision: row.policy_revision,
+    terms: record.frozen ?? null,
+    awardState: row.award_state,
+    award: sharesOf(record.frozen, reservation?.gross_minor ?? row.award_gross_minor),
+    relatedParty: row.related_party,
+    relatedPartyReview: row.related_party_review,
+    paymentState: extra.view.paymentState ?? row.payment_state,
+    paymentRail: extra.view.paymentRail ?? "unavailable",
+    settlement: extra.view.settlement ?? null,
+    paymentNetworks: extra.view.paymentNetworks ?? [],
+    paymentDeadline: row.payment_deadline,
+  }
+  const full = has(roles, "security-maintainer") || has(roles, "triager") || has(roles, "dispute")
+  if (!full && !has(roles, "reporter")) {
+    return {
+      ...base,
+      view: "financial",
+      payee: { githubLogin: row.reporter_github_login },
+      technicalDeciderGithubId: row.technical_decider_github_id,
+      reservation: reservation === undefined ? null : { grossMinor: reservation.gross_minor, currency: reservation.currency, policyRevision: reservation.policy_revision, reservedAt: reservation.reserved_at },
+    }
+  }
+  const forwarded = row.advisory_ghsa !== null ? undefined : try first(Forwarded, sql`SELECT repository, advisory_ghsa FROM security_submissions WHERE case_id = ${row.id} AND state = 'receipt-verified' AND advisory_ghsa IS NOT NULL`)
+  const advisory = row.advisory_ghsa !== null
+    ? { repository: row.advisory_repository, ghsa: row.advisory_ghsa, url: `https://github.com/${row.advisory_repository}/security/advisories/${row.advisory_ghsa}` }
+    : forwarded === undefined ? null : { repository: forwarded.repository, ghsa: forwarded.advisory_ghsa, url: `https://github.com/${forwarded.repository}/security/advisories/${forwarded.advisory_ghsa}` }
+  const shared = {
+    ...base,
+    advisory,
+    intake: try intakeOf(record, observed.model),
+    receiptState: row.receipt_state,
+    remediationState: row.remediation_state,
+    disclosureState: row.disclosure_state,
+    recognition: row.recognition,
+    severity: row.severity,
+    lossFinding: row.loss_finding,
+    appealState: row.appeal_state,
+  }
+  const events = includeHistory ? record.events : []
+  if (!full) return { ...shared, view: "reporter", events: events.filter((event) => reporterKinds.has(event.kind)).map((event) => ({ revision: event.case_revision, kind: event.kind, at: event.at, reason: event.reason })) }
+  const nowMs = try Clock.currentTimeMillis
+  const assessed = includeHistory && row.submission_state === "verified" ? try assessmentRead({ record: row, roles: observed.snapshot, viewerGithubId }) : undefined
+  const triage = includeHistory ? triageView(record, nowMs) : null
+  const retriable = includeHistory && has(roles, "dispute") && triageMayStart(observed.model, viewer, observed.epoch, nowMs)
+  return {
+    ...shared,
+    allowedActions: [...shared.allowedActions, ...assessed?.analyze === true ? ["analyze"] : [], ...retriable ? ["triage-appeal"] : []],
+    appealTriage: triage,
+    view: "restricted",
+    reporter: { githubId: row.reporter_github_id, githubLogin: row.reporter_github_login },
+    analysis: assessed?.analysis ?? null,
+    verifiedAt: row.verified_at,
+    evidenceDigest: row.evidence_digest,
+    receiptEvidenceDigest: row.receipt_evidence_digest,
+    rootCauseKey: row.root_cause_key,
+    duplicateOf: row.duplicate_of,
+    technicalDeciderGithubId: row.technical_decider_github_id,
+    appealFromState: row.appeal_from_state,
+    relatedPartyReviewerGithubId: row.related_party_reviewer_github_id,
+    ownerGithubId: row.owner_github_id,
+    reservation: reservation === undefined ? null : { rootCauseKey: reservation.root_cause_key, grossMinor: reservation.gross_minor, currency: reservation.currency, policyRevision: reservation.policy_revision, reservedAt: reservation.reserved_at },
+    triagers: includeHistory ? record.members.map((member) => ({ githubId: member.github_id, githubLogin: member.github_login, addedAt: member.added_at, revokedAt: member.revoked_at })) : [],
+    events: events.map(eventView),
+  }
+}

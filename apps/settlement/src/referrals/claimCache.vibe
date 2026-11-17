@@ -1,0 +1,203 @@
+// spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded"
+import { isoAt } from "@repo/platform/clock"
+import { D1, first, sql } from "@repo/platform/d1"
+import { EvmRpc, type Log, decodeEvents, decodeResult, encodeCall } from "@repo/platform/chain/evm"
+import { ReferralProgram } from "./config.vibe"
+import { activeEpochIndex } from "./claimsView.ts"
+import { type Deployment, DistributorMismatch, ReferralDeployment, distributorAbi, eventTopics, onDistributor, readDistributor, wide } from "./distributor.vibe"
+import { claimCacheWrite } from "./publication.vibe"
+import { scanPageBlocks } from "./reconcile.vibe"
+
+export schema CachedProgram {
+  readonly network: "robinhood-testnet" | "robinhood-mainnet"
+  readonly chainId: number
+  readonly distributor: string
+  readonly token: string
+  readonly decimals: number
+  readonly codeHash: string
+}
+
+export schema CachedEpoch {
+  readonly epoch: number
+  readonly period: string
+  readonly root: string
+  readonly totalBase: string
+  readonly claimableAt: number
+  readonly voided: boolean
+}
+
+export schema CachedBlock {
+  readonly number: string
+  readonly hash: string
+  readonly timestamp: number
+}
+
+export schema ClaimSnapshot {
+  readonly program: CachedProgram
+  readonly deploymentBlock: string
+  readonly block: CachedBlock
+  readonly observedAt: string
+  readonly paused: boolean
+  readonly pauseAt: number | null
+  readonly latestPaused: boolean
+  readonly ended: boolean
+  readonly epochs: ReadonlyArray<CachedEpoch>
+  readonly claimed: Readonly<Record<string, string>>
+  readonly claimedEpochs?: ReadonlyArray<number>
+}
+
+schema PriorRow {
+  readonly body: string | null
+}
+
+schema JournalRow {
+  readonly period: string
+}
+
+export type CacheRefresh = { readonly status: "off" | "unconfigured" } | { readonly status: "refreshed"; readonly block: string; readonly epochs: number }
+
+const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+const encodeSnapshot = Schema.encodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+const noIndex = (1n << 256n) - 1n
+
+function differs(reason: string) {
+  return new DistributorMismatch({ reason })
+}
+
+effect function canonicalLogs(deployment: Deployment, from: bigint, to: bigint) {
+  const rpc = try EvmRpc
+  const topics = [eventTopics.RootPosted, eventTopics.RootVoided, eventTopics.Claimed, eventTopics.Paused, eventTopics.Unpaused, eventTopics.Rescued]
+  const logs: Log[] = []
+  for (let start = from; start <= to; start += scanPageBlocks) {
+    const end = start + scanPageBlocks - 1n < to ? start + scanPageBlocks - 1n : to
+    logs.push(...(try rpc.logs({ address: deployment.distributor, topics: [topics], fromBlock: start, toBlock: end })))
+  }
+  for (const log of logs) {
+    const receipt = try rpc.finalizedReceipt(log.transactionHash)
+    if (log.removed || log.blockNumber > to || receipt === undefined || receipt.status !== "success" || receipt.blockHash !== log.blockHash || !receipt.logs.some((item) => item.logIndex === log.logIndex && item.address.toLowerCase() === deployment.distributor && item.data === log.data && item.topics.join() === log.topics.join())) throw differs("a referral event is not canonical")
+  }
+  return logs
+}
+
+effect function journalPeriod(deployment: Deployment, epoch: number, txId: string, root: string, total: string) {
+  const found = try first(JournalRow, sql`SELECT p.period FROM referral_root_posts p JOIN referral_accrual_files f ON f.period = p.period WHERE p.network = ${deployment.networkKey} AND p.distributor = ${deployment.distributor} AND p.token = ${deployment.token} AND p.epoch = ${epoch} AND p.tx_id = ${txId} AND p.merkle_root = ${root} AND p.total_base = ${total} AND f.merkle_root = ${root} AND f.tree_total_base = ${total} AND p.state IN ('submitted', 'unknown', 'finalized', 'voided')`)
+  if (found === undefined) throw differs("a posted root does not match its filed journal")
+  return found.period
+}
+
+effect function project(deployment: Deployment, prior: ClaimSnapshot, logs: ReadonlyArray<Log>) {
+  const rpc = try EvmRpc
+  const epochs = prior.epochs.map((epoch) => ({ ...epoch }))
+  const claimed: Record<string, string> = { ...prior.claimed }
+  const claimedEpochs = new Set(prior.claimedEpochs ?? [])
+  let { paused, pauseAt, ended } = prior
+  for (const decoded of decodeEvents(distributorAbi, logs)) {
+    if (decoded.kind !== "event") throw differs("a referral event is malformed")
+    const args = decoded.args as Readonly<Record<string, unknown>>
+    const big = (name: string) => typeof args[name] === "bigint" ? args[name] as bigint : -1n
+    if (decoded.name === "RootPosted") {
+      const epoch = Number(big("epoch"))
+      const root = String(args.root).toLowerCase()
+      if (epoch !== epochs.length) throw differs("a posted root is out of order")
+      const period = try journalPeriod(deployment, epoch, decoded.log.transactionHash.toLowerCase(), root, big("total").toString())
+      epochs.push({ epoch, period, root, totalBase: big("total").toString(), claimableAt: Number(big("claimableAt")), voided: false })
+    } else if (decoded.name === "RootVoided") {
+      const index = Number(big("epoch"))
+      const found = epochs[index]
+      if (found === undefined || found.root !== String(args.root).toLowerCase()) throw differs("an unknown root was voided")
+      epochs[index] = { ...found, voided: true }
+    } else if (decoded.name === "Claimed") {
+      const wallet = String(args.account).toLowerCase()
+      const previous = try wide(claimed[wallet] ?? "0")
+      const epoch = Number(big("epoch"))
+      if (epochs[epoch] === undefined || big("cumulative") - previous !== big("amount") || big("amount") <= 0n) throw differs("a referral claim counter differs")
+      claimed[wallet] = big("cumulative").toString()
+      claimedEpochs.add(epoch)
+    } else if (decoded.name === "Paused") {
+      const block = try rpc.blockByNumber(decoded.log.blockNumber)
+      if (block === undefined) throw differs("a pause block is missing")
+      paused = true
+      pauseAt = block.timestamp
+    } else if (decoded.name === "Unpaused") {
+      const extended = big("extendedEpoch")
+      if (extended !== noIndex) {
+        const found = epochs[Number(extended)]
+        if (found === undefined) throw differs("an unknown root was extended")
+        epochs[Number(extended)] = { ...found, claimableAt: Number(big("newClaimableAt")) }
+      }
+      paused = false
+      pauseAt = null
+    } else if (decoded.name === "Rescued") ended = true
+  }
+  return { ...prior, epochs, claimed, claimedEpochs: [...claimedEpochs].sort((left, right) => left - right), paused, pauseAt, ended } satisfies ClaimSnapshot
+}
+
+effect function covered(deployment: Deployment, snapshot: ClaimSnapshot) {
+  const chain = try readDistributor(deployment)
+  const rpc = try EvmRpc
+  const current = Schema.decodeUnknownEffect(Schema.Tuple([Schema.String, Schema.BigInt, Schema.BigInt]))(try decodeResult(distributorAbi, "currentRoot", try rpc.call({ to: deployment.distributor, data: try encodeCall(distributorAbi, "currentRoot", []), block: "finalized" }))) catch effect () => { throw differs("currentRoot is malformed") }
+  let claimed = 0n
+  for (const value of Object.values(snapshot.claimed)) claimed += try wide(value)
+  const index = activeEpochIndex(snapshot.epochs.map((epoch) => ({ voided: epoch.voided, claimableAt: epoch.claimableAt })), snapshot.block.timestamp, snapshot.paused && snapshot.pauseAt !== null, snapshot.pauseAt ?? 0)
+  const active = index < 0 ? undefined : snapshot.epochs[index]
+  let maximum = 0n
+  for (const epoch of snapshot.epochs) {
+    const total = try wide(epoch.totalBase)
+    if (!epoch.voided && total > maximum) maximum = total
+  }
+  const activeEpoch = active === undefined ? -1n : try wide(active.epoch)
+  const currentRoot = try wide(current[0])
+  const last = snapshot.epochs.at(-1)
+  const lastOnChain = chain.epochs.at(-1)
+  const disagrees = chain.epochs.length !== snapshot.epochs.length || chain.totalClaimed !== claimed || chain.paused !== snapshot.paused
+    || (last !== undefined && (lastOnChain === undefined || lastOnChain.root !== last.root || lastOnChain.total.toString() !== last.totalBase || lastOnChain.voided !== last.voided || lastOnChain.postedAt !== last.claimableAt))
+    || (active === undefined ? currentRoot !== 0n || current[1] !== 0n || current[2] !== noIndex : current[0].toLowerCase() !== active.root || current[1].toString() !== active.totalBase || current[2] !== activeEpoch)
+    || (!snapshot.ended && chain.balance + claimed < maximum)
+  if (disagrees) throw differs("the referral event projection is incomplete or awaits finality")
+  return { ...snapshot, latestPaused: chain.paused }
+}
+
+effect function refreshed(deployment: Deployment, decimals: number, priorBody: string | null) {
+  const rpc = try EvmRpc
+  const finalized = try rpc.head("finalized")
+  if (finalized.number < deployment.deploymentBlock) throw differs("referral finality unavailable")
+  const chain = try readDistributor(deployment)
+  if (chain.decimals !== decimals) throw differs("the referral token decimals differ")
+  const program = { network: deployment.networkKey, chainId: Number(deployment.chainId), distributor: deployment.distributor, token: deployment.token, decimals, codeHash: deployment.codeHash } satisfies CachedProgram
+  const block = { number: finalized.number.toString(), hash: finalized.hash, timestamp: finalized.timestamp }
+  const now = try isoAt(try Clock.currentTimeMillis)
+  const stored = priorBody === null ? undefined : try decodeSnapshot(priorBody)
+  const prior = stored?.claimedEpochs === undefined ? undefined : stored
+  if (prior !== undefined && (JSON.stringify(prior.program) !== JSON.stringify(program) || prior.deploymentBlock !== deployment.deploymentBlock.toString())) throw differs("the cached referral deployment differs")
+  if (prior !== undefined) {
+    const priorNumber = try wide(prior.block.number)
+    const previous = try rpc.blockByNumber(priorNumber)
+    if (previous === undefined || previous.hash !== prior.block.hash || finalized.number < priorNumber) throw differs("the finalized referral history differs")
+  }
+  const start = prior ?? { program, deploymentBlock: deployment.deploymentBlock.toString(), block, observedAt: now, paused: false, pauseAt: null, latestPaused: false, ended: false, epochs: [], claimed: {}, claimedEpochs: [] }
+  const from = prior === undefined ? deployment.deploymentBlock : (try wide(prior.block.number)) + 1n
+  const projected = try project(deployment, start, try canonicalLogs(deployment, from, finalized.number))
+  const checked = try covered(deployment, { ...projected, block })
+  const again = try rpc.blockByNumber(finalized.number)
+  if (again === undefined || again.hash !== finalized.hash) throw differs("referral finality changed during the refresh")
+  return { ...checked, observedAt: now } satisfies ClaimSnapshot
+}
+
+export effect function refreshClaimCache() {
+  const { program } = try ReferralProgram
+  if (program.mode === "Off") return { status: "off" } satisfies CacheRefresh
+  const { deployment } = try ReferralDeployment
+  if (deployment === undefined) return { status: "unconfigured" } satisfies CacheRefresh
+  const db = try D1
+  const prior = try first(PriorRow, sql`SELECT body FROM referral_claim_cache WHERE id = 'program'`)
+  const snapshot = onDistributor(deployment, refreshed(deployment, program.ledger.tokenDecimals, prior?.body ?? null)) catch effect (error) => {
+    const failedAt = try isoAt(try Clock.currentTimeMillis)
+    try db.run(sql`INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', NULL, NULL, ${failedAt}) ON CONFLICT(id) DO UPDATE SET error_at = excluded.error_at WHERE referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at <= excluded.error_at`)
+    try Effect.logWarning("referral_claim_refresh_failed", { reason: error instanceof Error ? error.message.slice(0, 200) : "refresh failed" })
+    throw error
+  }
+  const body = try encodeSnapshot(snapshot)
+  try db.run(claimCacheWrite(body, snapshot.observedAt))
+  return { status: "refreshed", block: snapshot.block.number, epochs: snapshot.epochs.length } satisfies CacheRefresh
+}
+

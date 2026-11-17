@@ -1,0 +1,12 @@
+// spec/frontend/presentation.md, "The campaign keeps one stable accessible heading and respects reduced motion"
+import { type CampaignFrame, campaignTick, firstFrame } from "./campaign.ts"
+
+export effect function typeCampaign(show: (frame: CampaignFrame) => void!!) {
+  let frame = firstFrame
+  while (true) {
+    try show(frame)
+    const tick = campaignTick(frame)
+    try sleep(tick.delayMs)
+    frame = tick.next
+  }
+}

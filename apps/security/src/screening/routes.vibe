@@ -1,0 +1,134 @@
+// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+import { randomId } from "@repo/platform/crypto"
+import { type Actor, Refused, handleRaw, json, jsonBody, sameOriginWrite } from "@repo/platform/http"
+import { Conflict } from "@repo/platform/stored"
+import { later } from "@repo/platform/worker"
+import type { Review, Screening } from "../../gen/security__screening.ts"
+import { mayReadBody, technicalNow } from "../../gen/security__cases.effect.vibe"
+import { Rejected, qualified, recoverable } from "../../gen/security__screening.effect.vibe"
+import { assessQualified } from "../assessment/routes.vibe"
+import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
+import { retryScreening, reviewRouting } from "../client/screening.vibe"
+import { postSecuritySubmissionsByIdReview as reviewRows, postSecuritySubmissionsByIdScreen as screenRows } from "../client/refusals.vibe"
+import { RateLimited, admit } from "../intake/attempt.vibe"
+import { ReceiptMissing, type SubmissionRow, caseOf, caseStanding, decorated, storedIntake, submission } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { routeQualified } from "./notify.vibe"
+import { scheduleScreening } from "./run.vibe"
+import { reviewed, screeningAt } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+interface Located {
+  readonly row: SubmissionRow
+  readonly reporter: boolean
+  readonly maintainer: boolean
+}
+
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const reviewDecisions: Readonly<Record<string, Exclude<Review, "PendingReview">>> = { forward: "Forward", "request-information": "RequestInformation" }
+const maxReasonLength = 2000
+const viewerEpoch = 1
+
+function refused(row: Row) {
+  return new Refused({ status: row.status, code: row.error, message: row.message, headers: row.headers })
+}
+
+function exactKeys(body: Readonly<Record<string, unknown>>, keys: ReadonlyArray<string>) {
+  return keys.every((key) => Object.hasOwn(body, key)) && Object.keys(body).every((key) => keys.includes(key))
+}
+
+effect function located(actor: Actor, id: string) {
+  const notFound = screenRows.notFoundReportNotFound
+  const stored = try storedIntake(id)
+  const row = stored === undefined ? undefined : try submission(id)
+  const record = stored === undefined ? undefined : try caseStanding(stored.case_id)
+  if (stored === undefined || row === undefined || record === undefined) throw refused(notFound)
+  const program = try (try ReportingPrograms).current(record.project_id)
+  const scope = { caseId: record.id, projectId: record.project_id, reporterGithubId: row.reporter_github_id, viewerGithubId: actor.githubId, program: program?.approvers }
+  const roles = caseAuthority(scope, viewerEpoch) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(screenRows.githubUnavailable);
+    default: throw error;
+  }
+  const current = caseOf(record, stored.report_version, roles)
+  const viewer = githubNumber(actor.githubId)
+  const reporter = row.reporter_github_id === actor.githubId
+  if (!reporter && !mayReadBody(current, viewer, viewerEpoch)) throw refused(notFound)
+  return { row, reporter, maintainer: technicalNow(current, viewer, viewerEpoch) } satisfies Located
+}
+
+effect function requestBody() {
+  if (!(try sameOriginWrite())) throw refused(screenRows.originForbidden)
+  const value = jsonBody(retryScreening.limitKib) catch effect () => { throw refused(screenRows.invalidRequestProvideAValidPrivate) }
+  return value as Readonly<Record<string, unknown>>
+}
+
+effect function viewed(found: Located) {
+  const view = decorated(found.row) catch effect (error) => match (error) {
+    when ReceiptMissing: throw refused(screenRows.notFoundReportNotFound);
+    default: throw error;
+  }
+  const intake = view.intake === null ? null : { ...view.intake, canReview: found.maintainer, canAuthorize: found.reporter && view.intake.canAuthorize, canRevise: found.reporter && view.intake.canRevise }
+  return json({ submission: { ...view, intake } }, 200, privateHeaders)
+}
+
+function waiting(screening: Screening) {
+  return screening.review === "PendingReview" && (screening.phase === "Queued" || screening.phase === "Unavailable" || screening.phase === "Running")
+}
+
+effect function retry(actor: Actor, id: string) {
+  const found = try located(actor, id)
+  const body = try requestBody()
+  const { screening } = try screeningAt(id)
+  if (body.expectedRevision !== screening.revision) throw refused(screenRows.staleRevisionTheReportChangedReload)
+  if (!exactKeys(body, ["expectedRevision"])) throw refused(screenRows.invalidRequestRequestBodyHasUnexpected)
+  const ready = qualified(screening)
+  if (!ready && !waiting(screening)) throw refused(screenRows.screeningNotRetryable)
+  const nowMs = try Clock.currentTimeMillis
+  const admitted = !ready && recoverable(screening, { tag: "ExactClock", nowMs })
+  if (admitted) {
+    admit(actor.githubId, `iw_${(try randomId()).replaceAll("-", "")}`, nowMs) catch effect (error) => match (error) {
+      when RateLimited: throw refused(screenRows.intakeRateLimited);
+      default: throw error;
+    }
+  }
+  try scheduleScreening(id, admitted)
+  return try viewed(found)
+}
+
+effect function review(actor: Actor, id: string) {
+  const found = try located(actor, id)
+  const body = try requestBody()
+  const current = try screeningAt(id)
+  if (body.expectedRevision !== current.screening.revision) throw refused(reviewRows.staleRevisionTheReportChangedReload)
+  if (!exactKeys(body, ["expectedRevision", "decision", "reason"])) throw refused(reviewRows.invalidRequestRequestBodyHasUnexpected)
+  if (!found.maintainer) throw refused(reviewRows.forbiddenOnlyACurrentSecurity)
+  const decision = typeof body.decision === "string" && Object.hasOwn(reviewDecisions, body.decision) ? reviewDecisions[body.decision] : undefined
+  const reason = typeof body.reason === "string" ? body.reason : ""
+  const checkedReason = reason.trim() !== "" && reason.length <= maxReasonLength
+  if (decision === undefined || !checkedReason) throw refused(reviewRows.invalidRequestProvideARoutingDecision)
+  const after = reviewed(id, { seenRevision: current.screening.revision, decision, currentMaintainer: found.maintainer, checkedReason }, actor.githubId, reason.trim()) catch effect (error) => {
+    if (error instanceof Rejected || error instanceof Conflict) throw refused(reviewRows.staleRevisionTheReportChangedReload)
+    throw error
+  }
+  if (qualified(after)) {
+    try later(effect {
+      assessQualified({ caseId: current.row.case_id, version: after.version }) catch effect () => {
+        try Effect.logError("security assessment after routing review failed", { submissionId: id })
+      }
+    })
+    try routeQualified(id, found.row.project_id, actor.githubId)
+  }
+  return try viewed(found)
+}
+
+export const screeningRoutes = Layer.mergeAll(
+  handleRaw(retryScreening, (input) => retry(input.actor, input.params.id ?? "")),
+  handleRaw(reviewRouting, (input) => review(input.actor, input.params.id ?? "")),
+)

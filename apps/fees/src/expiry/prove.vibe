@@ -1,0 +1,170 @@
+// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
+import { base58Encode, base64Decode } from "@repo/platform/chain/solana"
+import { type Coverage, type ExpiryProof, type ExpiryScan, type ProviderFinding, signedSlot } from "../../gen/fees__conversion.effect.vibe"
+import { type Session, renewed, step } from "../conversion/session.vibe"
+import { type Journal, type Names, ScanJson } from "../journal/codec.vibe"
+import { journaledAttempts } from "../journal/queries.vibe"
+import { journal } from "../journal/store.vibe"
+import { jsonText, jsonValue } from "../solana/bytes.ts"
+import { blockhashOf, firstSignature, parsedTransaction } from "../solana/wire.vibe"
+import { type ExpiryProvider, ExpiryOperators } from "./operators.vibe"
+import { type CoverageBlock, type Cursor, type Target, historyBlock, initialCursor, scanned, slotNumber } from "./scan.vibe"
+
+module verified {
+  import { matchingExpiryCoverage } from "../kernels/expiryCoverage.ts"
+  import type { Cursor } from "./scan.vibe"
+  /** @throws {never} */
+  export function matchingCoverage(a: Cursor, b: Cursor): boolean {
+    return matchingExpiryCoverage({ kind: "present", history: a }, { kind: "present", history: b })
+  }
+}
+import { matchingCoverage } from verified
+
+schema Context { slot: number }
+schema Anchor { blockhash: string }
+schema Validity { context: Context; value: boolean }
+const Statuses = Schema.Struct({ context: Context, value: Schema.Array(Schema.Unknown) })
+
+const anchorOptions = { commitment: "finalized", transactionDetails: "none", rewards: false, maxSupportedTransactionVersion: 0 }
+const transactionOptions = { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }
+
+export interface Observation {
+  readonly operator: string
+  readonly firstAvailableSlot: number
+  readonly finalizedContextSlot: number
+  readonly signatureContextSlot: number
+  readonly coverage: Cursor
+}
+
+export interface Proven {
+  readonly target: Target
+  readonly providers: readonly [Observation, Observation]
+}
+
+export interface CoverageStore<E, R> {
+  read(operator: string): Cursor | undefined
+  save(previous: Cursor | undefined, next: Cursor, page: ReadonlyArray<CoverageBlock>): boolean!E!R
+}
+
+interface Horizon { slot: number | undefined; hash: string | undefined }
+
+effect function observed<E, R>(provider: ExpiryProvider, target: Target, genesis: string, horizon: Horizon, store: CoverageStore<E, R>) {
+  const rpc = provider.rpc
+  if ((try rpc.call("getGenesisHash", [], Schema.String)) !== genesis) return undefined
+  const firstAvailableSlot = try rpc.call("getFirstAvailableBlock", [], Schema.Number)
+  if (!slotNumber(firstAvailableSlot) || firstAvailableSlot > target.blockhashSlot) return undefined
+  const anchor = try rpc.call("getBlock", [target.blockhashSlot, anchorOptions], Schema.NullOr(Anchor))
+  if (anchor?.blockhash !== target.blockhash) return undefined
+  const expired = try rpc.call("isBlockhashValid", [target.blockhash, { commitment: "finalized", minContextSlot: target.blockhashSlot }], Validity)
+  if (expired.value !== false || !slotNumber(expired.context.slot) || expired.context.slot < target.blockhashSlot) return undefined
+  const signature = try rpc.call("getSignatureStatuses", [[target.txId], { searchTransactionHistory: true }], Statuses)
+  if (!slotNumber(signature.context.slot) || signature.context.slot < expired.context.slot || signature.value.length !== 1 || signature.value[0] !== null) return undefined
+  if ((try rpc.call("getTransaction", [target.txId, transactionOptions], Schema.Unknown)) !== null) return undefined
+  const previous = store.read(provider.operator)
+  if (previous !== undefined && (previous.txId !== target.txId || previous.operator !== provider.operator || previous.blockhash !== target.blockhash || previous.blockhashSlot !== target.blockhashSlot)) return undefined
+  const horizonSlot = horizon.slot ?? previous?.tipSlot ?? expired.context.slot
+  horizon.slot = horizonSlot
+  if (expired.context.slot < horizonSlot || (previous !== undefined && previous.tipSlot !== horizonSlot)) return undefined
+  const tip = try historyBlock(rpc, horizonSlot)
+  if (tip === undefined) return undefined
+  const horizonHash = horizon.hash ?? previous?.tipHash ?? tip.blockhash
+  horizon.hash = horizonHash
+  if (tip.blockhash !== horizonHash || (previous !== undefined && previous.tipHash !== horizonHash)) return undefined
+  const scan = try scanned(rpc, target, previous ?? initialCursor(target, provider.operator, horizonSlot, horizonHash))
+  if (scan === undefined) return undefined
+  if (scan.page.length > 0 && !(try store.save(previous, scan.cursor, scan.page))) return undefined
+  return { operator: provider.operator, firstAvailableSlot, finalizedContextSlot: expired.context.slot, signatureContextSlot: signature.context.slot, coverage: scan.cursor } satisfies Observation
+}
+
+export effect function proveExpiry<E, R>(target: Target, providers: ReadonlyArray<ExpiryProvider>, genesis: string, store: CoverageStore<E, R>) {
+  const [first, second] = providers
+  if (!slotNumber(target.blockhashSlot) || first === undefined || second === undefined || providers.length !== 2 || first.operator === second.operator) return undefined
+  const horizon: Horizon = { slot: undefined, hash: undefined }
+  const a = try observed(first, target, genesis, horizon, store)
+  if (a === undefined) return undefined
+  const b = try observed(second, target, genesis, horizon, store)
+  if (b === undefined || !a.coverage.complete || !b.coverage.complete || !matchingCoverage(a.coverage, b.coverage)) return undefined
+  return { target, providers: [a, b] } satisfies Proven
+}
+
+export type ExpiryOutcome = "expired" | "held"
+
+function coverageOf(names: Names, cursor: Cursor): Coverage {
+  return { fromSlot: cursor.nextSlot, tipSlot: cursor.tipSlot, tipHash: names.number("hash", cursor.tipHash), blocks: cursor.blocks, digest: names.number("hash", cursor.digest) }
+}
+
+function findingOf(names: Names, observation: Observation): ProviderFinding {
+  return { operator: names.number("operator", observation.operator), invalidBlockhash: true, signatureFound: false, transactionFound: false }
+}
+
+function contextOf(observation: Observation) {
+  return { firstAvailableSlot: observation.firstAvailableSlot, finalizedContextSlot: observation.finalizedContextSlot, signatureContextSlot: observation.signatureContextSlot }
+}
+
+effect function retainedScans(book: Journal, txId: string, providers: ReadonlyArray<ExpiryProvider>) {
+  const retained = new Map<string, Cursor>()
+  for (const provider of providers) {
+    const text = book.scans.get(`${txId}\u0000${provider.operator}`)
+    if (text !== undefined) retained.set(provider.operator, try Schema.decodeUnknownEffect(ScanJson)(jsonValue(text)))
+  }
+  return retained
+}
+
+effect function recorded(session: Session, target: Target, next: Cursor, page: ReadonlyArray<CoverageBlock>) {
+  if (!(try renewed(session, false))) return false
+  const scan = {
+    tx: session.names.number("tx", target.txId),
+    operator: session.names.number("operator", next.operator),
+    revision: next.revision,
+    coverage: coverageOf(session.names, next),
+    complete: next.complete,
+    blockhashSlot: next.blockhashSlot,
+    runId: session.runId,
+  } satisfies ExpiryScan
+  const kept = try step(session, { type: "recordScan", runId: session.runId, scan }, { blockhash: next.blockhash, nextSlot: next.nextSlot, expectedHash: next.expectedHash, page: jsonText(page) })
+  return kept !== undefined
+}
+
+function journalStore(session: Session, retained: ReadonlyMap<string, Cursor>, target: Target) {
+  return {
+    read: (operator: string) => retained.get(operator),
+    save: (_previous: Cursor | undefined, next: Cursor, page: ReadonlyArray<CoverageBlock>) => recorded(session, target, next, page),
+  }
+}
+
+effect function targetOf(session: Session, id: number) {
+  const row = session.state.rows[id - 1]
+  const attempt = row?.attempts[0]
+  if (session.state.network !== "Solana" || row === undefined || attempt === undefined || row.attempts.length !== 1 || (row.state !== "Submitted" && row.state !== "Unknown")) return undefined
+  const txId = session.names.text("tx", attempt.tx)
+  const blockhashSlot = signedSlot(session.state, attempt.tx)
+  if (txId === undefined || blockhashSlot <= 0) return undefined
+  const rawTx = (try journaledAttempts("solana")).find((entry) => entry.txId === txId)?.rawTx
+  const raw = rawTx === undefined ? undefined : base64Decode(rawTx)
+  if (raw === undefined) return undefined
+  const parsed = try parsedTransaction(raw)
+  if (base58Encode(firstSignature(raw, parsed)) !== txId) return undefined
+  return { tx: attempt.tx, target: { txId, blockhash: blockhashOf(raw, parsed), blockhashSlot } satisfies Target }
+}
+
+effect function attempted(session: Session, id: number) {
+  const found = try targetOf(session, id)
+  if (found === undefined) return "held" satisfies ExpiryOutcome
+  const operators = try ExpiryOperators
+  const retained = try retainedScans(try journal(session.instance, session.names), found.target.txId, operators.providers)
+  const proven = try proveExpiry(found.target, operators.providers, operators.genesis, journalStore(session, retained, found.target))
+  if (proven === undefined || !(try renewed(session, false))) return "held" satisfies ExpiryOutcome
+  const [a, b] = proven.providers
+  const proof = { tx: found.tx, a: findingOf(session.names, a), b: findingOf(session.names, b), blockhashSlot: found.target.blockhashSlot, coverage: coverageOf(session.names, a.coverage) } satisfies ExpiryProof
+  const expired = try step(session, { type: "expireSolana", runId: session.runId, id, proof }, { blockhash: found.target.blockhash, providers: [contextOf(a), contextOf(b)] })
+  if (expired === undefined) return "held" satisfies ExpiryOutcome
+  try Effect.logInfo("fee_solana_expiry_proven", { row: id, txId: found.target.txId, blockhashSlot: found.target.blockhashSlot, operators: [a.operator, b.operator], blocks: a.coverage.blocks })
+  return "expired" satisfies ExpiryOutcome
+}
+
+export effect function expireUnlanded(session: Session, id: number) {
+  return attempted(session, id) catch effect (error) => {
+    try Effect.logWarning("fee_solana_expiry_held", { network: session.state.network, row: id, error: error._tag })
+    return "held" satisfies ExpiryOutcome
+  }
+}

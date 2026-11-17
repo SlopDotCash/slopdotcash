@@ -1,0 +1,486 @@
+import { assert, layer } from "@effect/vitest"
+import type { ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { type ProviderAnswer, type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Execution } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { noticePorts } from "@repo/operations/live"
+import { Request as WorkerRequest } from "miniflare"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { analysisPrompt, jsonValue, screeningPrompt } from "../src/analysis/prompts.ts"
+import { privateModel, privateProvider, privateRoute } from "../src/analysis/route.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { recoverRouting } from "../src/screening/jobs.vibe"
+import { screeningRoutes } from "../src/screening/routes.vibe"
+import { type World, digest, maintainer, origin, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+
+type WebHandler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+interface Answer {
+  readonly status: number
+  readonly cache: string | null
+  readonly robots: string | null
+  readonly body: unknown
+}
+
+service Screened {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly clock: SettableClock
+  readonly beforeReply: Array<() => Promise<unknown>>
+  readonly pending: Array<Promise<unknown>>
+  readonly keyed: WebHandler
+  readonly keyless: WebHandler
+  readonly retired: WebHandler
+}
+
+const surplusKey = "surplus-screening-key"
+const project = "intake-fixture"
+const triager = "703"
+const stranger = "49999"
+
+const unavailableReason = "Automatic screening is unavailable. Your report is saved for retry or private human review."
+const duplicateReason = "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report."
+const overlapReason = "This report may overlap an earlier report. Provide distinct evidence, or request private maintainer review."
+const evidenceReason = "Provide the affected component, impact and safe reproduction for private human review."
+
+const fixture: ProjectView = {
+  projectId: project,
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+const retiredFixture: ProjectView = { ...fixture, listingTier: "Retired", retirement: "OwnerRemoved" }
+
+const portsOf = (view: ProjectView) => Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => succeed(projectId === project ? view : undefined),
+    byRepository: () => succeed(undefined),
+    byPath: () => succeed(undefined),
+    active: () => succeed([view]),
+    fence: () => succeed(sql`1`),
+  } satisfies Registry.Shape),
+  Layer.succeed(Authority, {
+    repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+  } satisfies Authority.Shape),
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: () => succeed({ restricted: false }),
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+)
+
+function shellOf(world: World, fake: ProviderFake, clock: SettableClock, beforeReply: Array<() => Promise<unknown>>, apiKey: string | undefined, view: ProjectView = fixture) {
+  const viaFake: Fetcher = {
+    fetch: (sent) => (beforeReply.shift()?.() ?? Promise.resolve()).then(() => fake.handler(sent as unknown as Parameters<Handler>[0])) as unknown as ReturnType<Fetcher["fetch"]>,
+  }
+  const base = Layer.mergeAll(
+    d1(world.db),
+    webCrypto,
+    clock.layer,
+    reportBucket(world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: "801", PROJECT_MODERATOR_GITHUB_IDS: "801" }),
+    portsOf(view),
+  )
+  const route = Layer.provide(privateRoute({ apiKey }), Layer.merge(outboundVia(viaFake), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route, noticePorts, CallerLive), base)
+}
+
+effect function webHandler(world: World, fake: ProviderFake, clock: SettableClock, beforeReply: Array<() => Promise<unknown>>, apiKey: string | undefined, view: ProjectView = fixture) {
+  const web = try acquireRelease(sync(() => HttpRouter.toWebHandler(Layer.provideMerge(screeningRoutes as Layer.Layer<never, never, HttpRouter.HttpRouter>, shellOf(world, fake, clock, beforeReply, apiKey, view)), { disableLogger: true })), (made) => promise(() => made.dispose()))
+  return web.handler as WebHandler
+}
+
+const Started = Layer.effect(Screened, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  const fake = providerFake({ holdMs: 10 })
+  const clock = settableClock(Date.now())
+  const beforeReply: Array<() => Promise<unknown>> = []
+  return {
+    world,
+    fake,
+    clock,
+    beforeReply,
+    pending: [],
+    keyed: try webHandler(world, fake, clock, beforeReply, surplusKey),
+    keyless: try webHandler(world, fake, clock, beforeReply, undefined),
+    retired: try webHandler(world, fake, clock, beforeReply, surplusKey, retiredFixture),
+  }
+})
+
+const cookies = new Map<string, string>()
+
+async function sessionCookie(world: World, githubId: string): Promise<string> {
+  const known = cookies.get(githubId)
+  if (known !== undefined) return known
+  const token = `s${githubId.padStart(20, "0")}${String(cookies.size + 1).padStart(8, "0")}${"z".repeat(35)}`
+  await world.db.batch([
+    world.db.prepare("INSERT OR IGNORE INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,0)").bind(`actor-${githubId}`, githubId, `member-${githubId}`, new Date().toISOString()),
+    world.db.prepare("INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,?)").bind(await digest(token), `actor-${githubId}`, new Date(Date.now() + 86_400_000).toISOString()),
+  ])
+  const cookie = `__Host-slop_points=${token}`
+  cookies.set(githubId, cookie)
+  return cookie
+}
+
+async function posted(screened: Screened.Shape, handler: WebHandler, path: string, as: string, body: unknown): Promise<Answer> {
+  const cookie = await sessionCookie(screened.world, as)
+  const execution: ExecutionContext = { waitUntil: (work) => { screened.pending.push(work) } }
+  const headers = { cookie, "x-slop-expected-github-id": as, "content-type": "application/json", origin }
+  const response = await handler(new WorkerRequest(`${origin}${path}`, { method: "POST", headers, body: JSON.stringify(body) }) as unknown as globalThis.Request, Context.make(Execution, { context: execution }))
+  return { status: response.status, cache: response.headers.get("cache-control"), robots: response.headers.get("x-robots-tag"), body: await response.json() as unknown }
+}
+
+async function drained(pending: Array<Promise<unknown>>): Promise<void> {
+  for (let work = pending.shift(); work !== undefined; work = pending.shift()) await work
+}
+
+effect function post(screened: Screened.Shape, handler: WebHandler, path: string, as: string, body: unknown) {
+  const answer = try promise(() => posted(screened, handler, path, as, body))
+  try promise(() => drained(screened.pending))
+  return answer
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function said(call: ProviderCall | undefined) {
+  return call?.messages[0]?.content ?? ""
+}
+
+function screeningOf(summary: string) {
+  return (call: ProviderCall) => call.system === screeningPrompt && said(call).includes(summary)
+}
+
+function analysisOf(summary: string) {
+  return (call: ProviderCall) => call.system === analysisPrompt && said(call).includes(summary)
+}
+
+function decided(decision: string, reason: string, duplicateCaseIds: ReadonlyArray<string> = []): ProviderAnswer {
+  return { text: JSON.stringify({ decision, reason, duplicateCaseIds }) }
+}
+
+function assessed(summary: string): ProviderAnswer {
+  return { text: JSON.stringify({ summary, severity: "high", potentialLoss: "likely", duplicateCaseIds: [], rootCauseKey: null, remediation: "Fix the reported path." }) }
+}
+
+function refusal(answer: Answer) {
+  return [answer.status, (answer.body as { readonly error?: unknown }).error]
+}
+
+interface Report {
+  readonly summary: string
+  readonly description: string
+  readonly severity: string
+}
+
+function reportOf(summary: string, description: string): Report {
+  return { summary, description, severity: "high" }
+}
+
+effect function submit(world: World, as: string, key: string, report: Report) {
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string } }).submission
+}
+
+effect function screen(screened: Screened.Shape, as: string, id: string, expectedRevision: number, handler: WebHandler = screened.keyed) {
+  return try post(screened, handler, `/api/v1/security-submissions/${id}/screen`, as, { expectedRevision })
+}
+
+async function intakeRow(world: World, id: string): Promise<Record<string, unknown> | undefined> {
+  const [found] = await rows(world, "SELECT report_version AS version, screening_state AS state, screening_reason AS reason, screening_provider AS provider, screening_model AS model, review_decision AS review, routed_at IS NOT NULL AS routed, revision FROM security_submission_intake WHERE submission_id=?", id)
+  return found
+}
+
+effect function intakeOf(world: World, id: string) {
+  return try promise(() => intakeRow(world, id))
+}
+
+effect function eventsOf(world: World, id: string) {
+  return (try promise(() => rows(world, "SELECT kind FROM security_intake_events WHERE submission_id=? ORDER BY revision", id))).map((row) => row.kind)
+}
+
+effect function noticesOf(world: World, id: string) {
+  return try promise(() => rows(world, "SELECT event_key AS key, recipient_github_id AS recipient, kind, subject, action_path AS path FROM notifications WHERE instr(event_key, ?) > 0 ORDER BY event_key, recipient_github_id", `:${id}:`))
+}
+
+function routeNotice(id: string, caseId: string, version: number, recipient: string) {
+  return { key: `security-route:${id}:${version}`, recipient, kind: "security_case", subject: caseId, path: `/inbox?submission=${id}` }
+}
+
+function intake(version: number, state: string, reason: string | null, revision: number, extra: { readonly provider?: string | null; readonly model?: string | null; readonly review?: string | null; readonly routed?: number } = {}) {
+  return { version, state, reason, provider: privateProvider, model: privateModel, review: null, routed: 0, revision, ...extra }
+}
+
+const reportA = reportOf("Stale oracle price drains the lending pool", "A stale oracle read lets any borrower withdraw more than their collateral allows.")
+const reportB = reportOf("Possible issue in the vault module", "Something in the vault might be wrong when amounts are large enough.")
+const reportC = reportOf("Generic scanner output pasted in full", "The scanner says there may be vulnerabilities somewhere in the code base.")
+const reportD = reportOf("Oracle staleness lets borrowers overdraw", "The same stale price read lets a borrower overdraw collateral in the pool.")
+const reportE = reportOf("Reentrancy in the claim path pays twice", "The claim function pays out before it marks the claim as spent in storage.")
+const reportF = reportOf("Signature replay across deployments", "The permit signature has no domain separator, so it replays on another deployment.")
+const reportG = reportOf("Unbounded mint through a missing cap", "The mint function never checks the supply cap, so any minter can inflate supply.")
+const reportH = reportOf("Fee bypass through rounding to zero", "Rounding the fee down to zero lets small transfers skip the protocol fee entirely.")
+const reportI = reportOf("Admin key rotation skips the timelock", "Rotating the admin key bypasses the timelock that guards every other admin action.")
+
+effect function outcomes(screened: Screened.Shape) {
+  const { world, fake } = screened
+  const a = try submit(world, "41001", "screening-case-a-0001", reportA)
+  fake.reply(screeningOf(reportA.summary), decided("legitimate", "The report names the oracle module and gives a safe reproduction."))
+  fake.reply(analysisOf(reportA.summary), assessed("Stale oracle reads let borrowers over-withdraw."))
+  const screenedA = try screen(screened, "41001", a.id, 1)
+  const sentA = fake.calls.find(screeningOf(reportA.summary))
+
+  const b = try submit(world, "41002", "screening-case-b-0001", reportB)
+  fake.reply(screeningOf(reportB.summary), decided("needs-information", "Name the affected vault function."))
+  try screen(screened, "41002", b.id, 1)
+  const sentB = fake.calls.find(screeningOf(reportB.summary))
+
+  const c = try submit(world, "41003", "screening-case-c-0001", reportC)
+  fake.reply(screeningOf(reportC.summary), decided("spam", "Generic scanner output with no concrete target."))
+  try screen(screened, "41003", c.id, 1)
+  const d = try submit(world, "41004", "screening-case-d-0001", reportD)
+  fake.reply(screeningOf(reportD.summary), decided("legitimate", "Looks like the earlier oracle report.", [a.caseId, "sc_not_supplied"]))
+  try screen(screened, "41004", d.id, 1)
+  const e = try submit(world, "41005", "screening-case-e-0001", reportE)
+  fake.reply(screeningOf(reportE.summary), { text: JSON.stringify({ decision: "legitimate", reason: "Cut short.", duplicateCaseIds: [] }), truncated: true })
+  try screen(screened, "41005", e.id, 1)
+  const f = try submit(world, "41006", "screening-case-f-0001", reportF)
+  fake.reply(screeningOf(reportF.summary), { text: "I will not assess this report.", stopReason: "refusal" })
+  try screen(screened, "41006", f.id, 1)
+  const g = try submit(world, "41007", "screening-case-g-0001", reportG)
+  fake.reply(screeningOf(reportG.summary), { failure: "timeout" })
+  try screen(screened, "41007", g.id, 1)
+  const h = try submit(world, "41008", "screening-case-h-0001", reportH)
+  fake.reply(screeningOf(reportH.summary), { text: "The report looks legitimate to me." })
+  try screen(screened, "41008", h.id, 1)
+  const callsBeforeKeyless = fake.calls.length
+  const i = try submit(world, "41009", "screening-case-i-0001", reportI)
+  try screen(screened, "41009", i.id, 1, screened.keyless)
+  const j = try submit(world, "41010", "screening-case-j-0001", reportA)
+  try screen(screened, "41010", j.id, 1)
+  const callsWithoutSpend = fake.calls.length - callsBeforeKeyless
+
+  fake.reply(screeningOf(reportE.summary), decided("legitimate", "Concrete reentrancy with a safe reproduction."))
+  fake.reply(analysisOf(reportE.summary), assessed("Claims pay before they are marked spent."))
+  const retriedE = try screen(screened, "41005", e.id, 3)
+
+  const priorSummary = { id: a.caseId, rootCauseKey: null, summary: "Stale oracle reads let borrowers over-withdraw." }
+  try same({
+    screenedA: screenedA.status,
+    sentA: { route: sentA?.route, model: sentA?.model, key: sentA?.key, maxTokens: sentA?.maxTokens, message: jsonValue(said(sentA)) },
+    earlierForB: (jsonValue(said(sentB)) as { readonly earlierReports: unknown }).earlierReports,
+    a: try intakeOf(world, a.id),
+    eventsA: try eventsOf(world, a.id),
+    noticesA: try noticesOf(world, a.id),
+    b: try intakeOf(world, b.id),
+    c: try intakeOf(world, c.id),
+    d: try intakeOf(world, d.id),
+    e: try intakeOf(world, e.id),
+    f: try intakeOf(world, f.id),
+    g: try intakeOf(world, g.id),
+    h: try intakeOf(world, h.id),
+    i: try intakeOf(world, i.id),
+    j: try intakeOf(world, j.id),
+    callsWithoutSpend,
+    retriedE: retriedE.status,
+    unanswered: fake.unanswered.length,
+  }, {
+    screenedA: 200,
+    sentA: {
+      route: "surplus-anthropic",
+      model: privateModel,
+      key: surplusKey,
+      maxTokens: 16000,
+      message: { report: { summary: reportA.summary, description: reportA.description, reporterSeverity: "high", cvss: null, cweIds: [], packages: [] }, programScope: null, earlierReports: [] },
+    },
+    earlierForB: [priorSummary],
+    a: intake(1, "legitimate", "The report names the oracle module and gives a safe reproduction.", 4, { routed: 1 }),
+    eventsA: ["receive", "screen-start", "screen-finish", "routed"],
+    noticesA: [routeNotice(a.id, a.caseId, 1, maintainer)],
+    b: intake(1, "needs-information", evidenceReason, 3),
+    c: intake(1, "spam", evidenceReason, 3),
+    d: intake(1, "needs-information", overlapReason, 3),
+    e: intake(1, "legitimate", "Concrete security evidence merits private human review.", 6, { routed: 1 }),
+    f: intake(1, "unavailable", unavailableReason, 3),
+    g: intake(1, "unavailable", unavailableReason, 3),
+    h: intake(1, "unavailable", unavailableReason, 3),
+    i: intake(1, "unavailable", unavailableReason, 3, { provider: null, model: null }),
+    j: intake(1, "needs-information", duplicateReason, 3),
+    callsWithoutSpend: 0,
+    retriedE: 200,
+    unanswered: 0,
+  })
+}
+
+effect function lateResults(screened: Screened.Shape) {
+  const { world, fake, clock } = screened
+  const reportK = reportOf("Lost screening claim on a price feed", "A price feed fallback returns zero when the primary feed reverts.")
+  const k = try submit(world, "42001", "screening-case-k-0001", reportK)
+  const callsBeforeK = fake.calls.length
+  const screenK = `/api/v1/security-submissions/${k.id}/screen`
+  const whileLost: Array<unknown> = []
+  screened.beforeReply.push(async () => {
+    clock.advance(899_999)
+    const early = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 2 })
+    await drained(screened.pending)
+    whileLost.push(early.status, await intakeRow(world, k.id))
+    clock.advance(1)
+    const recovered = await posted(screened, screened.keyed, screenK, "42001", { expectedRevision: 2 })
+    await drained(screened.pending)
+    whileLost.push(recovered.status, await intakeRow(world, k.id))
+  })
+  fake.reply(screeningOf(reportK.summary), decided("legitimate", "Concrete fallback flaw."))
+  fake.reply(analysisOf(reportK.summary), assessed("The fallback feed returns zero on revert."))
+  fake.reply(screeningOf(reportK.summary), decided("spam", "Late answer to the lost claim."))
+  const lost = try screen(screened, "42001", k.id, 1)
+
+  const reportL = reportOf("Withdrawal queue skips the pause flag", "Queued withdrawals still settle while the protocol is paused by the guardian.")
+  const revisedL = reportOf("Withdrawal queue skips the pause flag, revised", "Queued withdrawals still settle while paused; the attached test drains 10 percent of the pool.")
+  const l = try submit(world, "42002", "screening-case-l-0001", reportL)
+  const duringCall: Array<number> = []
+  screened.beforeReply.push(async () => {
+    const asked = await posted(screened, screened.keyed, `/api/v1/security-submissions/${l.id}/review`, maintainer, { expectedRevision: 2, decision: "request-information", reason: "Attach the failing test." })
+    const revised = await request(world, `/api/v1/security-submissions/${l.id}/report`, { as: "42002", json: { expectedRevision: 3, report: revisedL } })
+    duringCall.push(asked.status, revised.status)
+  })
+  fake.reply(screeningOf(reportL.summary), decided("legitimate", "Late legitimate result."))
+  try screen(screened, "42002", l.id, 1)
+  const afterLate = try intakeOf(world, l.id)
+  const eventsAfterLate = try eventsOf(world, l.id)
+  const noticesAfterLate = try noticesOf(world, l.id)
+  fake.reply(screeningOf(revisedL.summary), decided("legitimate", "The revised report attaches a failing test."))
+  fake.reply(analysisOf(revisedL.summary), assessed("Queued withdrawals ignore the pause flag."))
+  try screen(screened, "42002", l.id, 4)
+
+  try same({
+    lost: lost.status,
+    whileLost,
+    k: try intakeOf(world, k.id),
+    eventsK: try eventsOf(world, k.id),
+    callsK: fake.calls.length - callsBeforeK,
+    duringCall,
+    afterLate,
+    eventsAfterLate,
+    noticesAfterLate,
+    l: try intakeOf(world, l.id),
+    noticesL: try noticesOf(world, l.id),
+  }, {
+    lost: 200,
+    whileLost: [200, intake(1, "running", null, 2), 200, intake(1, "legitimate", "Concrete security evidence merits private human review.", 5, { routed: 1 })],
+    k: intake(1, "legitimate", "Concrete security evidence merits private human review.", 5, { routed: 1 }),
+    eventsK: ["receive", "screen-start", "screen-start", "screen-finish", "routed"],
+    callsK: 3,
+    duringCall: [200, 200],
+    afterLate: intake(2, "queued", null, 4, { provider: privateProvider, model: privateModel }),
+    eventsAfterLate: ["receive", "screen-start", "review", "report-revised"],
+    noticesAfterLate: [{ key: `security-information:${l.id}:3`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }],
+    l: intake(2, "legitimate", "Concrete security evidence merits private human review.", 7, { routed: 1 }),
+    noticesL: [{ key: `security-information:${l.id}:3`, recipient: "42002", kind: "security_case", subject: l.caseId, path: `/inbox?submission=${l.id}` }, routeNotice(l.id, l.caseId, 2, maintainer)],
+  })
+}
+
+effect function routing(screened: Screened.Shape) {
+  const { world, fake } = screened
+  const reportM = reportOf("Bridge accepts a forged deposit proof", "The bridge verifies the proof root but not the leaf index, so a forged deposit mints.")
+  const m = try submit(world, "43001", "screening-case-m-0001", reportM)
+  const now = new Date().toISOString()
+  try promise(() => rows(world, "INSERT INTO security_case_members(case_id, github_id, github_login, role, added_by_github_id, added_at) VALUES(?, ?, 'triager', 'triager', ?, ?), (?, ?, 'reporter', 'triager', ?, ?)", m.caseId, triager, maintainer, now, m.caseId, "43001", maintainer, now))
+  fake.reply(screeningOf(reportM.summary), decided("legitimate", "Concrete forged-proof path."))
+  fake.reply(analysisOf(reportM.summary), assessed("Forged deposit proofs mint on the bridge."))
+  try screen(screened, "43001", m.id, 1)
+  const routedOnce = try noticesOf(world, m.id)
+  const callsBeforeRepeat = fake.calls.length
+  const repeated = try screen(screened, "43001", m.id, 4)
+  const repeatCalls = fake.calls.length - callsBeforeRepeat
+
+  const reportO = reportOf("Heartbeat check skipped after a retired listing", "The keeper stops checking the oracle heartbeat, so stale prices settle positions.")
+  const o = try submit(world, "43003", "screening-case-o-0001", reportO)
+  fake.reply(screeningOf(reportO.summary), decided("legitimate", "Concrete stale heartbeat path."))
+  fake.reply(analysisOf(reportO.summary), assessed("Stale heartbeats settle positions."))
+  try screen(screened, "43003", o.id, 1, screened.retired)
+  const pendingO = try intakeOf(world, o.id)
+  const callsBeforeJob = fake.calls.length
+  provide shellOf(world, fake, screened.clock, screened.beforeReply, surplusKey) {
+    try recoverRouting()
+    try recoverRouting()
+  }
+  const jobCalls = fake.calls.length - callsBeforeJob
+
+  const reportN = reportOf("Liquidation bonus exceeds the seized collateral", "A rounding error pays the liquidator a bonus larger than the collateral it seizes.")
+  const n = try submit(world, "43002", "screening-case-n-0001", reportN)
+  fake.reply(screeningOf(reportN.summary), { failure: "unavailable" })
+  try screen(screened, "43002", n.id, 1)
+  const reviewPath = `/api/v1/security-submissions/${n.id}/review`
+  const forward = { expectedRevision: 3, decision: "forward", reason: "Reviewed privately; route it to the owners." }
+  const byReporter = try post(screened, screened.keyed, reviewPath, "43002", forward)
+  const byStranger = try post(screened, screened.keyed, reviewPath, stranger, forward)
+  const stale = try post(screened, screened.keyed, reviewPath, maintainer, { ...forward, expectedRevision: 1 })
+  const unknownDecision = try post(screened, screened.keyed, reviewPath, maintainer, { ...forward, decision: "approve" })
+  const extraKey = try post(screened, screened.keyed, reviewPath, maintainer, { ...forward, note: "extra" })
+  fake.reply(analysisOf(reportN.summary), assessed("Liquidations overpay the bonus."))
+  const forwarded = try post(screened, screened.keyed, reviewPath, maintainer, forward)
+
+  try same({
+    routedOnce,
+    repeated: repeated.status,
+    repeatCalls,
+    pendingO,
+    o: try intakeOf(world, o.id),
+    noticesO: try noticesOf(world, o.id),
+    jobCalls,
+    m: try intakeOf(world, m.id),
+    noticesM: try noticesOf(world, m.id),
+    refusals: [refusal(byReporter), refusal(byStranger), refusal(stale), refusal(unknownDecision), refusal(extraKey)],
+    refusalHeaders: [byStranger.cache, byStranger.robots],
+    forwarded: forwarded.status,
+    n: try intakeOf(world, n.id),
+    eventsN: try eventsOf(world, n.id),
+    noticesN: try noticesOf(world, n.id),
+  }, {
+    routedOnce: [routeNotice(m.id, m.caseId, 1, maintainer), routeNotice(m.id, m.caseId, 1, triager)],
+    repeated: 200,
+    repeatCalls: 0,
+    pendingO: intake(1, "legitimate", "Concrete security evidence merits private human review.", 3),
+    o: intake(1, "legitimate", "Concrete security evidence merits private human review.", 4, { routed: 1 }),
+    noticesO: [routeNotice(o.id, o.caseId, 1, maintainer)],
+    jobCalls: 0,
+    m: intake(1, "legitimate", "Concrete security evidence merits private human review.", 4, { routed: 1 }),
+    noticesM: [routeNotice(m.id, m.caseId, 1, maintainer), routeNotice(m.id, m.caseId, 1, triager)],
+    refusals: [[403, "forbidden"], [404, "not_found"], [409, "stale_revision"], [400, "invalid_request"], [400, "invalid_request"]],
+    refusalHeaders: ["private, no-store", "noindex"],
+    forwarded: 200,
+    n: intake(1, "unavailable", unavailableReason, 5, { review: "forward", routed: 1 }),
+    eventsN: ["receive", "screen-start", "screen-finish", "review", "routed"],
+    noticesN: [],
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Screen the exact saved version privately: legitimate, needs-information, spam, overlap, duplicate evidence and every unavailable answer (spec/security/screening.md, "Story: Screen the exact saved version privately before owner routing"; spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
+    try outcomes(try Screened)
+  })
+
+  it.effect('An expired claim is recovered after 15 minutes, and a late result never replaces human review or a newly saved version (spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together")', () => effect {
+    try lateResults(try Screened)
+  })
+
+  it.effect('Routing notifies the current owners and triagers once per qualified version, never the reporter or the acting maintainer, and a scheduled repeat retries routing a pending intake (spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records")', () => effect {
+    try routing(try Screened)
+  })
+})

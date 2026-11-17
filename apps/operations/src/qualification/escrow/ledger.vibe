@@ -1,0 +1,140 @@
+// spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"; spec/operations/escrowQualification.md, "Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation"; spec/operations/escrowQualification.md, "Missing or mismatched evidence holds the attempt, and finalized failure stops further actions"
+import { recoverPersonalSign } from "@repo/platform/chain/evm"
+import { base58Decode, publicKey } from "@repo/platform/chain/solana"
+import { isoNow } from "@repo/platform/clock"
+import { ed25519Verify, utf8 } from "@repo/platform/crypto"
+import { type Approver, type Event, type Qualification, apply, decodeEvent, decodeSender, decodeState, initial } from "../../../gen/operations__escrowQualification.effect.vibe"
+import { type Registry, approvalKeys } from "./registry.ts"
+
+export error LedgerInvalid { message: string }
+
+const ApprovalRecord = Schema.Struct({ scheme: Schema.Literals(["evm", "solana"]), signer: Schema.String, signature: Schema.String })
+
+const LedgerFile = Schema.Struct({
+  schema: Schema.Literal("slop-escrow-qualification:v1"),
+  entries: Schema.Array(Schema.Struct({
+    at: Schema.String,
+    by: Schema.String,
+    event: Schema.Unknown,
+    raw: Schema.optional(Schema.String),
+    approval: Schema.optional(ApprovalRecord),
+  })),
+})
+
+export type Approval = typeof ApprovalRecord.Type
+
+export interface Entry {
+  readonly at: string
+  readonly by: Approver
+  readonly event: Event
+  readonly raw?: string
+  readonly approval?: Approval
+}
+
+export interface Extra {
+  readonly raw?: string
+  readonly approval?: Approval
+}
+
+export interface Loaded {
+  readonly path: string
+  readonly text: string
+  readonly registry: Registry
+  readonly entries: ReadonlyArray<Entry>
+  readonly state: Qualification
+}
+
+const ledgerBytesLimit = 8 * 1024 * 1024
+
+export function approvalMessage(review: string) {
+  return `slop-escrow-qualification:v1:approve:${review}`
+}
+
+function serialized(entries: ReadonlyArray<Entry>) {
+  return `${JSON.stringify({ schema: "slop-escrow-qualification:v1", entries }, null, 2)}\n`
+}
+
+export effect function ownerSigned(registry: Registry, review: string, approval: Approval) {
+  const keys = approvalKeys(registry)
+  const message = approvalMessage(review)
+  if (approval.scheme === "evm") {
+    const signer = approval.signer.toLowerCase()
+    return keys.evm.includes(signer) && recoverPersonalSign(message, approval.signature)?.toLowerCase() === signer
+  }
+  const key = publicKey(approval.signer)
+  const signature = base58Decode(approval.signature)
+  if (!keys.solana.includes(approval.signer) || key === undefined || signature === undefined) return false
+  return try ed25519Verify(key, utf8(message), signature)
+}
+
+effect function approvalHolds(registry: Registry, event: Event, by: Approver, approval: Approval | undefined) {
+  if (event.type !== "approve") return approval === undefined
+  return by === "RepositoryOwner" && approval !== undefined && (try ownerSigned(registry, event.review, approval))
+}
+
+effect function readText(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${path} is unreadable` })
+  }
+  if (info.type !== "File" || Number(info.size) > ledgerBytesLimit) throw new LedgerInvalid({ message: `the ledger ${path} must be a regular file of at most ${ledgerBytesLimit} bytes` })
+  return fs.readFileString(path) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${path} is unreadable` })
+  }
+}
+
+export effect function createLedger(path: string) {
+  const fs = try FileSystem.FileSystem
+  fs.writeFileString(path, serialized([]), { flag: "wx", mode: 0o600 }) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${path} already exists or cannot be created` })
+  }
+}
+
+export effect function loadLedger(path: string, registry: Registry) {
+  const text = try readText(path)
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new LedgerInvalid({ message: `the ledger ${path} is not JSON` }) })
+  const file = Schema.decodeUnknownEffect(LedgerFile)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${path} is not an escrow qualification ledger` })
+  }
+  const entries: Entry[] = []
+  let state = initial
+  for (const [index, entry] of file.entries.entries()) {
+    const refusedAt = (why: string) => new LedgerInvalid({ message: `ledger entry ${index} ${why}` })
+    const event = decodeEvent(entry.event) catch effect () => {
+      throw refusedAt("is not a qualification event")
+    }
+    const by = decodeSender(entry.by) catch effect () => {
+      throw refusedAt("has no known sender")
+    }
+    if ((event.type === "retainAttempt") !== (entry.raw !== undefined)) throw refusedAt("must retain its signed bytes exactly when it retains an attempt")
+    if (!(try approvalHolds(registry, event, by, entry.approval))) throw refusedAt("must carry a reviewed owner key's signature exactly when it approves")
+    state = apply(state, event, by) catch effect () => {
+      throw refusedAt("is not allowed by the qualification rules from the entries before it")
+    }
+    entries.push({ at: entry.at, by, event, ...(entry.raw === undefined ? {} : { raw: entry.raw }), ...(entry.approval === undefined ? {} : { approval: entry.approval }) })
+  }
+  const checked = decodeState(state) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${path} replays to a state that breaks a qualification rule` })
+  }
+  return { path, text, registry, entries, state: checked } satisfies Loaded
+}
+
+export effect function recordEntry(loaded: Loaded, event: Event, by: Approver, extra: Extra = {}) {
+  const fs = try FileSystem.FileSystem
+  const next = try apply(loaded.state, event, by)
+  if (!(try approvalHolds(loaded.registry, event, by, extra.approval))) throw new LedgerInvalid({ message: "an approval needs a reviewed owner key's signature over its review" })
+  const entry: Entry = { at: try isoNow(), by, event, ...(extra.raw === undefined ? {} : { raw: extra.raw }), ...(extra.approval === undefined ? {} : { approval: extra.approval }) }
+  if ((try readText(loaded.path)) !== loaded.text) throw new LedgerInvalid({ message: `the ledger ${loaded.path} changed while this run read the chain; run again` })
+  const staged = `${loaded.path}.next`
+  fs.writeFileString(staged, serialized([...loaded.entries, entry]), { flag: "w", mode: 0o600 }) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${staged} could not be written` })
+  }
+  fs.rename(staged, loaded.path) catch effect () => {
+    throw new LedgerInvalid({ message: `the ledger ${loaded.path} could not be replaced` })
+  }
+  return next
+}
+
+export function retainedRaw(loaded: Loaded, transaction: string) {
+  return loaded.entries.find((entry) => entry.event.type === "retainAttempt" && entry.event.operation.transaction === transaction)?.raw
+}

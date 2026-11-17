@@ -1,0 +1,404 @@
+// spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"; spec/operations/escrowQualification.md, "Completed lanes do not repeat, and Ethereum requires both shared EVM qualifications and its own evidence"; spec/operations/escrowQualification.md, "Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization"
+import { EvmRpc, type Hex, decodeResult, encodeCall, evmRpc } from "@repo/platform/chain/evm"
+import { boundedMessage } from "@repo/platform/chain/rpc"
+import { SYSTEM_PROGRAM } from "@repo/platform/chain/solana"
+import { type ActivationEvidence, type Approver, type Event, type ExistingSolanaStep, type FreshChecks, type Qualification, excludedTransactions, liveAttempt } from "../../../gen/operations__escrowQualification.effect.vibe"
+import { chainIdOf, vaultAbi } from "./contracts.ts"
+import { bytesHex } from "./envelope.ts"
+import { type Extra, type Loaded, createLedger, loadLedger, ownerSigned, recordEntry, retainedRaw } from "./ledger.vibe"
+import { type EscrowPlan, EvmPins, PlanRefused, type Reviewed, SolanaPins, buildEvmPlan, buildSolanaPlan, fileDigest, modelPlan, networks, operationOf, pinsNetwork, readReviewed, stepOf, u64le } from "./plan.vibe"
+import { QualificationChain, qualificationChain } from "./receipts.vibe"
+import { type Registry, reviewedSolanaOf } from "./registry.ts"
+
+export error QualificationRefused { message: string }
+
+schema TestnetEvidence {
+  readonly schema: string
+  readonly network: string
+  readonly mode: string
+  readonly status: string
+}
+
+schema ApprovalFile {
+  readonly scheme: "evm" | "solana"
+  readonly signer: string
+  readonly signature: string
+}
+
+schema HistoryRecord {
+  readonly schema: "slop-solana-history:v1"
+  readonly prior: "ControlsRelease" | "ProgramUpgrade" | "GasTopUp"
+  readonly signature: string
+  readonly program: string
+  readonly data: string
+  readonly accounts: ReadonlyArray<string>
+}
+
+schema BuildRecord {
+  readonly schema: "slop-solana-build:v1"
+  readonly program: string
+  readonly sourceCommit: string
+  readonly toolchain: { readonly solana: string; readonly anchor: string; readonly rust: string }
+  readonly sha256: string
+  readonly length: number
+}
+
+export interface Access {
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly registry: Registry
+}
+
+const upgradeableLoader = "BPFLoaderUpgradeab1e11111111111111111111111"
+const gasTopUpLamports = 50_000_000n
+
+const usage = [
+  "qualify escrow init <ledger>",
+  "qualify escrow status <ledger>",
+  "qualify escrow plan <pins.json> <plan.json>",
+  "qualify escrow approve <ledger> <reviewed-file> <owner-signature.json>",
+  "qualify escrow admit <ledger> <plan.json> <launch-evidence> <testnet-evidence>",
+  "qualify escrow attempt <ledger> <plan.json> <step> <signed-transaction>",
+  "qualify escrow retransmit <ledger> <plan.json>",
+  "qualify escrow reconcile <ledger> <plan.json>",
+  "qualify escrow historical <ledger> <plan.json> <step> <transaction>",
+  "qualify escrow resume <ledger> <plan.json> <step> <signed-transaction>",
+  "qualify escrow complete <ledger> <plan.json>",
+  "qualify escrow activate <ledger> <plan.json> <transaction>",
+  "qualify escrow solana-history <ledger> <plan.json> <history.json> [<testnet-evidence> <program.so> <build.json>]",
+].join(" | ")
+
+effect function send(loaded: Loaded, event: Event, by: Approver, extra: Extra = {}) {
+  return recordEntry(loaded, event, by, extra) catch effect (error) => {
+    if (error._tag === "Rejected") throw new QualificationRefused({ message: `the qualification rules refuse ${event.type} from ${by} in phase ${error.state.phase}` })
+    throw error
+  }
+}
+
+function summary(state: Qualification) {
+  return {
+    phase: state.phase,
+    network: state.phase === "AwaitingPlan" ? undefined : state.plan.network,
+    completed: state.completed,
+    activated: state.activated,
+    ethereumActive: state.ethereumActive,
+    spentGas: state.spent,
+    deposited: state.deposited,
+    paid: state.paid,
+    pending: liveAttempt(state) ? { key: state.pending.key, transaction: state.pending.transaction } : undefined,
+    retransmissions: state.retransmissions,
+    historicalSolana: state.historicalSolana,
+    excludedTransactions: excludedTransactions(state),
+  }
+}
+
+effect function report(state: Qualification) {
+  try Console.log(JSON.stringify(summary(state)))
+}
+
+effect function readSigned(path: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(path) catch effect () => {
+    throw new QualificationRefused({ message: `the signed transaction ${path} is unreadable` })
+  }
+  const raw = text.trim()
+  if (raw.length === 0 || raw.length > 4 * 1232 + 2) throw new QualificationRefused({ message: `the signed transaction ${path} is empty or too large` })
+  return raw
+}
+
+effect function readJson<A, E>(path: string, decode: (value: unknown) => A!E) {
+  const evidence = try fileDigest(path)
+  const value = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(evidence.bytes)) as unknown, catch: () => new QualificationRefused({ message: `${path} is not JSON` }) })
+  const record = decode(value) catch effect () => {
+    throw new QualificationRefused({ message: `${path} is not the expected record` })
+  }
+  return { record, sha256: evidence.sha256 }
+}
+
+effect function currentPlan(loaded: Loaded, path: string) {
+  const reviewed = try readReviewed(path, loaded.registry)
+  if (loaded.state.phase === "AwaitingPlan" || loaded.state.plan.review !== reviewed.review) {
+    throw new QualificationRefused({ message: `${path} is not the plan this ledger admitted` })
+  }
+  return reviewed
+}
+
+effect function planStep(plan: EscrowPlan, key: string) {
+  const step = stepOf(plan, key)
+  if (step === undefined) throw new QualificationRefused({ message: `the plan has no step ${key}` })
+  return step
+}
+
+effect function historyReconciled(loaded: Loaded, reviewed: Reviewed) {
+  const chain = try QualificationChain
+  for (const recorded of loaded.state.history) {
+    if (recorded.plan.review !== reviewed.review) continue
+    const step = stepOf(reviewed.plan, recorded.operation.key)
+    const again = step === undefined ? undefined : try chain.result(reviewed.plan, step, recorded.result.transaction)
+    if (again === undefined || again.succeeded !== recorded.result.succeeded || again.exactOperation !== recorded.result.exactOperation || again.actualGas !== recorded.result.actualGas) return false
+  }
+  return true
+}
+
+effect function freshChecks(loaded: Loaded, reviewed: Reviewed, raw: string) {
+  const chain = try QualificationChain
+  const deployment = try chain.deployment(reviewed.plan)
+  return {
+    currentAuthority: deployment.currentAuthority,
+    exactPlanAuthorized: loaded.state.plan.review === reviewed.review && loaded.state.ownerApprovals.includes(reviewed.review),
+    eligible: deployment.exactDeployment && deployment.exactAsset,
+    simulationPassed: try chain.simulate(reviewed.plan, raw),
+    reconciled: !liveAttempt(loaded.state) && (try historyReconciled(loaded, reviewed)),
+  } satisfies FreshChecks
+}
+
+effect function testnetPassed(plan: EscrowPlan, path: string) {
+  const evidence = try fileDigest(path)
+  if (evidence.sha256 !== plan.testnet) return false
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(evidence.bytes)) as unknown) catch () => undefined
+  const record = Schema.decodeUnknownEffect(TestnetEvidence)(value) catch () => undefined
+  return record !== undefined && record.schema === "slop-escrow-acceptance:v1" && record.mode === "public-testnet"
+    && record.status === "passed" && record.network === networks[plan.network].testnet
+}
+
+effect function withChain<A, E, R>(plan: EscrowPlan, access: Access, program: A!E!R) {
+  provide qualificationChain(plan, access.urls, access.registry) {
+    return try program
+  }
+}
+
+effect function approve(loaded: Loaded, reviewedPath: string, signaturePath: string) {
+  const reviewed = try fileDigest(reviewedPath)
+  const { record } = try readJson(signaturePath, Schema.decodeUnknownEffect(ApprovalFile))
+  if (!(try ownerSigned(loaded.registry, reviewed.sha256, record))) {
+    throw new QualificationRefused({ message: `${signaturePath} is not a reviewed owner key's signature over the review ${reviewed.sha256}` })
+  }
+  return try send(loaded, { type: "approve", review: reviewed.sha256 }, "RepositoryOwner", { approval: record })
+}
+
+effect function admit(loaded: Loaded, access: Access, planPath: string, launchPath: string, testnetPath: string) {
+  const reviewed = try readReviewed(planPath, access.registry)
+  const launch = try fileDigest(launchPath)
+  const applicableTestnet = try testnetPassed(reviewed.plan, testnetPath)
+  const deployment = try withChain(reviewed.plan, access, effect {
+    return try (try QualificationChain).deployment(reviewed.plan)
+  })
+  const evidence = {
+    nonMoneyLive: launch.sha256 === reviewed.plan.launch,
+    exactAssetAndVault: deployment.exactAsset,
+    currentAuthority: deployment.currentAuthority,
+    exactDeployment: deployment.exactDeployment,
+    applicableTestnet,
+  }
+  try Console.log(JSON.stringify({ review: reviewed.review, evidence }))
+  return try send(loaded, { type: "admitPlan", plan: modelPlan(reviewed), evidence }, "Operator")
+}
+
+effect function attempt(loaded: Loaded, access: Access, planPath: string, stepKey: string, signedPath: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const raw = try readSigned(signedPath)
+  const step = try planStep(reviewed.plan, stepKey)
+  return try withChain(reviewed.plan, access, effect {
+    const chain = try QualificationChain
+    const transaction = try chain.inspect(reviewed.plan, step, raw)
+    const checks = try freshChecks(loaded, reviewed, raw)
+    if (Object.values(checks).some((check) => !check)) {
+      try Console.log(JSON.stringify({ stopped: stepKey, checks }))
+      return try send(loaded, { type: "stopBeforeAttempt", checks }, "Operator")
+    }
+    const retained = try send(loaded, { type: "retainAttempt", operation: operationOf(step, transaction), checks }, "Operator", { raw })
+    chain.send(transaction, raw) catch effect (error) => {
+      try Console.log(JSON.stringify({ retained: transaction, dispatch: error.message }))
+    }
+    return retained
+  })
+}
+
+effect function retransmit(loaded: Loaded, access: Access, planPath: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const transaction = loaded.state.pending.transaction
+  const raw = retainedRaw(loaded, transaction)
+  if (!liveAttempt(loaded.state) || raw === undefined) throw new QualificationRefused({ message: "no retained attempt waits for a receipt" })
+  const next = try send(loaded, { type: "retransmit", transaction }, "Operator")
+  try withChain(reviewed.plan, access, effect {
+    (try QualificationChain).send(transaction, raw) catch effect (error) => {
+      try Console.log(JSON.stringify({ retransmitted: transaction, dispatch: error.message }))
+    }
+  })
+  return next
+}
+
+effect function reconcile(loaded: Loaded, access: Access, planPath: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const pending = loaded.state.pending
+  if (!liveAttempt(loaded.state)) throw new QualificationRefused({ message: "no attempt waits for a receipt" })
+  const step = try planStep(reviewed.plan, pending.key)
+  const result = try withChain(reviewed.plan, access, effect {
+    return try (try QualificationChain).result(reviewed.plan, step, pending.transaction)
+  })
+  const held = effect (why: string) => {
+    try Console.log(JSON.stringify({ held: pending.transaction, why }))
+    return loaded.state.phase === "AwaitingReceipt" ? try send(loaded, { type: "missReceipt" }, "Operator") : loaded.state
+  }
+  if (result === undefined) return try held("no finalized receipt yet")
+  return send(loaded, { type: "reconcileAttempt", result }, "Operator") catch effect (error) => {
+    if (error._tag !== "QualificationRefused") throw error
+    return try held(`the finalized receipt does not match the exact operation: ${JSON.stringify(result)}`)
+  }
+}
+
+effect function historical(loaded: Loaded, access: Access, planPath: string, stepKey: string, transaction: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const step = try planStep(reviewed.plan, stepKey)
+  const result = try withChain(reviewed.plan, access, effect {
+    return try (try QualificationChain).result(reviewed.plan, step, transaction)
+  })
+  if (result === undefined) throw new QualificationRefused({ message: `${transaction} has no finalized receipt` })
+  return try send(loaded, { type: "retainHistorical", operation: operationOf(step, transaction), result }, "Operator")
+}
+
+effect function resume(loaded: Loaded, access: Access, planPath: string, stepKey: string, signedPath: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const raw = try readSigned(signedPath)
+  const step = try planStep(reviewed.plan, stepKey)
+  const checks = try withChain(reviewed.plan, access, effect {
+    try (try QualificationChain).inspect(reviewed.plan, step, raw)
+    return try freshChecks(loaded, reviewed, raw)
+  })
+  return try send(loaded, { type: "resume", checks }, "Operator")
+}
+
+effect function complete(loaded: Loaded, access: Access, planPath: string) {
+  const reviewed = try currentPlan(loaded, planPath)
+  const reconciled = try withChain(reviewed.plan, access, historyReconciled(loaded, reviewed))
+  return try send(loaded, { type: "completeLane", reconciled }, "Operator")
+}
+
+effect function activate(loaded: Loaded, access: Access, planPath: string, transaction: string) {
+  const reviewed = try readReviewed(planPath, access.registry)
+  const { plan } = reviewed
+  const facts = try withChain(plan, access, effect {
+    const chain = try QualificationChain
+    return { deployment: try chain.deployment(plan), finalized: try chain.executed(plan.activation, transaction, plan.authority) }
+  })
+  const activation = {
+    network: plan.network,
+    vault: plan.vault,
+    review: reviewed.review,
+    currentAuthority: facts.deployment.currentAuthority,
+    exactDeployment: facts.deployment.exactDeployment,
+    exactAsset: facts.deployment.exactAsset,
+    finalized: facts.finalized,
+  } satisfies ActivationEvidence
+  try Console.log(JSON.stringify({ activation }))
+  return try send(loaded, plan.network === "Ethereum" ? { type: "activateEthereum", activation } : { type: "activateLane", activation }, "Operator")
+}
+
+function reviewedInstruction(record: HistoryRecord, program: string) {
+  if (record.prior === "GasTopUp") return record.program === SYSTEM_PROGRAM && record.accounts.length === 2 && record.data === `0x02000000${bytesHex(u64le(gasTopUpLamports)).slice(2)}`
+  if (record.prior === "ProgramUpgrade") return record.program === upgradeableLoader && record.accounts[1] === program && record.data === "0x03000000"
+  return /^0x(?:[0-9a-f]{2})+$/u.test(record.data)
+}
+
+effect function deterministicBuild(loaded: Loaded, program: string, pin: { readonly sha256: string; readonly length: number }, buildPath: string, recordPath: string) {
+  const binary = try fileDigest(buildPath)
+  const build = try readJson(recordPath, Schema.decodeUnknownEffect(BuildRecord))
+  const { record } = build
+  return loaded.state.ownerApprovals.includes(build.sha256) && record.program === program && /^[0-9a-f]{40}$/u.test(record.sourceCommit)
+    && [record.toolchain.solana, record.toolchain.anchor, record.toolchain.rust].every((version) => version !== "")
+    && record.sha256 === pin.sha256 && record.length === pin.length && binary.sha256 === pin.sha256 && binary.bytes.length === pin.length
+}
+
+effect function solanaHistory(loaded: Loaded, access: Access, planPath: string, historyPath: string, upgradePaths: ReadonlyArray<string>) {
+  const reviewed = try readReviewed(planPath, access.registry)
+  const pin = reviewedSolanaOf(access.registry, reviewed.plan.network)
+  if (pin === undefined) throw new QualificationRefused({ message: "Solana history needs a reviewed Solana plan and a reviewed Solana registry deployment" })
+  const history = try readJson(historyPath, Schema.decodeUnknownEffect(HistoryRecord))
+  const { record } = history
+  const prior: ExistingSolanaStep = record.prior
+  const ownerAuthorized = loaded.state.ownerApprovals.includes(history.sha256)
+  if (!ownerAuthorized || !reviewedInstruction(record, pin.program)) throw new QualificationRefused({ message: `${historyPath} is not an owner-approved record of the reviewed ${prior} instruction` })
+  if ((prior === "ProgramUpgrade") !== (upgradePaths.length === 3)) throw new QualificationRefused({ message: "a ProgramUpgrade record takes the testnet evidence, the program binary and its build record; other records take none" })
+  const [testnetPath = "", buildPath = "", buildRecordPath = ""] = upgradePaths
+  const observed = try withChain(reviewed.plan, access, effect {
+    const chain = try QualificationChain
+    return {
+      executed: try chain.executed({ to: record.program, data: record.data, accounts: record.accounts }, record.signature, undefined),
+      exactOnChainBytes: prior === "ProgramUpgrade" && (try chain.deployment(reviewed.plan)).exactDeployment,
+    }
+  })
+  if (!observed.executed) throw new QualificationRefused({ message: `${record.signature} is not a finalized, successful execution of exactly the reviewed ${prior} instruction` })
+  const upgrade = prior === "ProgramUpgrade"
+    ? { deterministicPinnedBuild: try deterministicBuild(loaded, pin.program, { sha256: pin.programSha256, length: pin.programLength }, buildPath, buildRecordPath), exactOnChainBytes: observed.exactOnChainBytes, publicTestnet: try testnetPassed(reviewed.plan, testnetPath), ownerAuthorized }
+    : { deterministicPinnedBuild: false, exactOnChainBytes: false, publicTestnet: false, ownerAuthorized }
+  try Console.log(JSON.stringify({ prior, signature: record.signature, upgrade }))
+  return try send(loaded, { type: "recordHistoricalSolana", prior, upgrade }, "Operator")
+}
+
+effect function readAwardId(access: Access, pins: EvmPins) {
+  const data = try encodeCall(vaultAbi, "awardId", [pins.sourceDigest.toLowerCase()])
+  const reading = Effect.provide(effect {
+    const answer = try (try EvmRpc).call({ to: pins.vault.toLowerCase() as Hex, data, block: "finalized" })
+    return try decodeResult(vaultAbi, "awardId", answer)
+  }, evmRpc({ urls: access.urls, chainId: chainIdOf(networks[pins.network].identity) }))
+  const id = reading catch effect (error) => {
+    throw new PlanRefused({ message: `the award id could not be read from the vault: ${boundedMessage(error)}` })
+  }
+  if (typeof id !== "string" || !/^0x[0-9a-f]{64}$/iu.test(id)) throw new PlanRefused({ message: "the vault answered no award id" })
+  return id.toLowerCase() as Hex
+}
+
+function pinsRefused(pinsPath: string) {
+  return new PlanRefused({ message: `the registry pins ${pinsPath} do not describe a Base, Robinhood or Solana qualification` })
+}
+
+effect function solanaPlanFrom(access: Access, pinsPath: string, value: unknown) {
+  const pins = Schema.decodeUnknownEffect(SolanaPins)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw pinsRefused(pinsPath)
+  }
+  return try buildSolanaPlan(pins, access.registry)
+}
+
+effect function evmPlanFrom(access: Access, pinsPath: string, value: unknown) {
+  const pins = Schema.decodeUnknownEffect(EvmPins)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw pinsRefused(pinsPath)
+  }
+  return try buildEvmPlan(pins, try readAwardId(access, pins), access.registry)
+}
+
+effect function plan(access: Access, pinsPath: string, outPath: string) {
+  const fs = try FileSystem.FileSystem
+  const text = fs.readFileString(pinsPath) catch effect () => {
+    throw new PlanRefused({ message: `the registry pins ${pinsPath} are unreadable` })
+  }
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new PlanRefused({ message: `the registry pins ${pinsPath} are not JSON` }) })
+  const built = (try pinsNetwork(value)) === "Solana" ? try solanaPlanFrom(access, pinsPath, value) : try evmPlanFrom(access, pinsPath, value)
+  fs.writeFileString(outPath, `${JSON.stringify(built, null, 2)}\n`, { flag: "wx", mode: 0o644 }) catch effect () => {
+    throw new PlanRefused({ message: `${outPath} already exists or cannot be written` })
+  }
+  try Console.log(JSON.stringify({ plan: outPath, review: (try fileDigest(outPath)).sha256, steps: built.steps.map((step) => step.key) }))
+}
+
+export effect function escrow(args: ReadonlyArray<string>, access: Access) {
+  const [command, ledger = "", ...rest] = args
+  const at = (count: number) => rest.length === count
+  if (command === "init" && at(0) && ledger !== "") {
+    try createLedger(ledger)
+    return try report((try loadLedger(ledger, access.registry)).state)
+  }
+  if (command === "plan" && at(1) && ledger !== "") return try plan(access, ledger, rest[0] ?? "")
+  if (ledger === "") throw new QualificationRefused({ message: `usage: ${usage}` })
+  const loaded = try loadLedger(ledger, access.registry)
+  const [first = "", second = "", third = "", ...more] = rest
+  if (command === "status" && at(0)) return try report(loaded.state)
+  if (command === "approve" && at(2)) return try report(try approve(loaded, first, second))
+  if (command === "admit" && at(3)) return try report(try admit(loaded, access, first, second, third))
+  if (command === "attempt" && at(3)) return try report(try attempt(loaded, access, first, second, third))
+  if (command === "retransmit" && at(1)) return try report(try retransmit(loaded, access, first))
+  if (command === "reconcile" && at(1)) return try report(try reconcile(loaded, access, first))
+  if (command === "historical" && at(3)) return try report(try historical(loaded, access, first, second, third))
+  if (command === "resume" && at(3)) return try report(try resume(loaded, access, first, second, third))
+  if (command === "complete" && at(1)) return try report(try complete(loaded, access, first))
+  if (command === "activate" && at(2)) return try report(try activate(loaded, access, first, second))
+  if (command === "solana-history" && (at(2) || at(5))) return try report(try solanaHistory(loaded, access, first, second, [third, ...more].filter((path) => path !== "")))
+  throw new QualificationRefused({ message: `usage: ${usage}` })
+}

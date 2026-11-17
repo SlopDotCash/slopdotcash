@@ -1,0 +1,289 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+import type { Environment } from "../../../gen/operations__release.effect.vibe"
+import { byteOrder } from "../manifest/inventory.vibe"
+
+export error ConfigRefused { message: string }
+
+schema D1Binding {
+  readonly binding: string
+  readonly database_name: string
+  readonly database_id: string
+  readonly migrations_dir?: string
+}
+
+schema BucketBinding { readonly bucket_name: string }
+
+schema QueueProducer { readonly queue: string }
+
+schema QueueConsumer {
+  readonly queue: string
+  readonly dead_letter_queue?: string
+}
+
+schema QueueBindings {
+  readonly producers?: ReadonlyArray<QueueProducer>
+  readonly consumers?: ReadonlyArray<QueueConsumer>
+}
+
+schema ServiceBinding {
+  readonly binding: string
+  readonly service: string
+  readonly entrypoint?: string
+  readonly environment?: string
+}
+
+schema ObjectBinding { readonly script_name?: string }
+
+schema ObjectBindings { readonly bindings?: ReadonlyArray<ObjectBinding> }
+
+schema RouteEntry {
+  readonly pattern: string
+  readonly custom_domain?: boolean
+}
+
+schema Triggers { readonly crons?: ReadonlyArray<string> }
+
+schema EmailEntry {
+  readonly name: string
+  readonly destination_address?: string
+  readonly allowed_destination_addresses?: ReadonlyArray<string>
+}
+
+schema ContainerEntry {
+  readonly class_name: string
+  readonly image: string
+}
+
+export schema WorkerFile {
+  readonly name: string
+  readonly main?: string
+  readonly compatibility_date?: string
+  readonly pages_build_output_dir?: string
+  readonly workers_dev?: boolean
+  readonly preview_urls?: boolean
+  readonly routes?: ReadonlyArray<RouteEntry>
+  readonly triggers?: Triggers
+  readonly d1_databases?: ReadonlyArray<D1Binding>
+  readonly r2_buckets?: ReadonlyArray<BucketBinding>
+  readonly queues?: QueueBindings
+  readonly services?: ReadonlyArray<ServiceBinding>
+  readonly durable_objects?: ObjectBindings
+  readonly containers?: ReadonlyArray<ContainerEntry>
+  readonly send_email?: ReadonlyArray<EmailEntry>
+  readonly vars?: Record<string, string>
+  readonly expectedSecrets?: ReadonlyArray<string>
+  readonly optionalSecrets?: ReadonlyArray<string>
+}
+
+const RawFile = Schema.Record(Schema.String, Schema.Unknown)
+
+export interface Reviewed {
+  readonly path: string
+  readonly app: string
+  readonly worker: string
+  readonly template: boolean
+  readonly environment: Environment | undefined
+  readonly file: WorkerFile
+  readonly raw: { readonly [key: string]: unknown }
+}
+
+export const siteOrigins: { readonly [E in Environment]: string } = { Production: "https://slop.cash", Staging: "https://staging.slop.cash" }
+
+const fileBytesLimit = 256 * 1024
+const tiers: ReadonlyMap<string, Environment> = new Map([["production", "Production"], ["staging", "Staging"]])
+const mainnetMarkers = ["base-mainnet", "ethereum-mainnet", "robinhood-mainnet", "solana-mainnet", "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"]
+const mainnetChainIds: ReadonlySet<string> = new Set(["1", "8453", "4663"])
+
+function refused(message: string) {
+  return new ConfigRefused({ message })
+}
+
+function withoutComments(text: string) {
+  let out = ""
+  let index = 0
+  let quoted = false
+  while (index < text.length) {
+    const char = text[index] ?? ""
+    const next = text[index + 1] ?? ""
+    if (quoted) {
+      out += char === "\\" ? char + next : char
+      if (char === "\"") quoted = false
+      index += char === "\\" ? 2 : 1
+      continue
+    }
+    if (char === "/" && next === "/") {
+      const end = text.indexOf("\n", index)
+      index = end === -1 ? text.length : end
+      continue
+    }
+    if (char === "/" && next === "*") {
+      const end = text.indexOf("*/", index + 2)
+      index = end === -1 ? text.length : end + 2
+      continue
+    }
+    if (char === "\"") quoted = true
+    out += char
+    index += 1
+  }
+  return out
+}
+
+export function isPages(reviewed: Reviewed) {
+  return reviewed.file.pages_build_output_dir !== undefined
+}
+
+export function tierName(environment: Environment) {
+  return environment === "Production" ? "production" : "staging"
+}
+
+effect function reviewedFile(root: string, app: string, name: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = `apps/${app}/wrangler/${name}`
+  const bytes = fs.readFile(files.join(root, path)) catch effect () => {
+    throw refused(`${path} is unreadable`)
+  }
+  if (bytes.length > fileBytesLimit) throw refused(`${path} exceeds the ${fileBytesLimit}-byte bound`)
+  const text = withoutComments(new TextDecoder().decode(bytes))
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw refused(`${path} is not JSON with comments`)
+  }
+  const file = Schema.decodeUnknownEffect(WorkerFile)(value) catch effect () => {
+    throw refused(`${path} is not a Worker configuration this release understands`)
+  }
+  const raw = Schema.decodeUnknownEffect(RawFile)(value) catch effect () => {
+    throw refused(`${path} is not a JSON object`)
+  }
+  const parts = name.slice(0, -".jsonc".length).split(".")
+  const worker = parts[0] ?? ""
+  const suffix = parts.length > 1 ? parts.at(-1) ?? "" : ""
+  const named = tiers.get(suffix)
+  const declared = file.vars?.SLOP_ENVIRONMENT
+  const stated = declared === undefined ? undefined : tiers.get(declared)
+  if (declared !== undefined && stated === undefined) throw refused(`${path} declares an unknown SLOP_ENVIRONMENT`)
+  if (named !== undefined && stated !== undefined && named !== stated) throw refused(`${path} is named for ${suffix} but declares SLOP_ENVIRONMENT ${declared ?? ""}`)
+  return { path, app, worker, template: suffix === "template", environment: named ?? stated, file, raw } satisfies Reviewed
+}
+
+export effect function readReviewed(root: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const apps = fs.readDirectory(files.join(root, "apps")) catch effect () => {
+    throw refused("the apps directory is unreadable")
+  }
+  const found: Reviewed[] = []
+  for (const app of [...apps].sort(byteOrder)) {
+    const directory = files.join(root, "apps", app, "wrangler")
+    const info = fs.stat(directory) catch () => undefined
+    if (info?.type !== "Directory") continue
+    const names = fs.readDirectory(directory) catch effect () => {
+      throw refused(`apps/${app}/wrangler is unreadable`)
+    }
+    for (const name of [...names].sort(byteOrder)) {
+      if (name.endsWith(".jsonc")) found.push(try reviewedFile(root, app, name))
+    }
+  }
+  if (found.length === 0) throw refused("no reviewed Worker configuration was found under apps/*/wrangler")
+  return found
+}
+
+function resourceKeys(file: WorkerFile): ReadonlyArray<string> {
+  return [
+    `worker:${file.name}`,
+    ...(file.d1_databases ?? []).flatMap((database) => [`d1:${database.database_id}`, `d1:${database.database_name}`]),
+    ...(file.r2_buckets ?? []).map((bucket) => `r2:${bucket.bucket_name}`),
+    ...(file.queues?.producers ?? []).map((producer) => `queue:${producer.queue}`),
+    ...(file.queues?.consumers ?? []).flatMap((consumer) => [`queue:${consumer.queue}`, ...consumer.dead_letter_queue === undefined ? [] : [`queue:${consumer.dead_letter_queue}`]]),
+    ...(file.services ?? []).map((binding) => `worker:${binding.service}`),
+    ...(file.durable_objects?.bindings ?? []).flatMap((binding) => binding.script_name === undefined ? [] : [`worker:${binding.script_name}`]),
+    ...(file.routes ?? []).map((route) => `route:${route.pattern}`),
+  ]
+}
+
+function stagingIssue(reviewed: Reviewed) {
+  const vars = reviewed.file.vars ?? {}
+  const converter = reviewed.app === "fees" || vars.FEE_CONVERTER_MODE !== undefined
+  if (converter && vars.FEE_CONVERTER_MODE !== "dry_run") return `${reviewed.path} runs the staging fee converter in a mode other than dry run`
+  if ((converter || vars.BUYBACK_MODE !== undefined) && vars.BUYBACK_MODE !== "off") return `${reviewed.path} enables a staging buyback`
+  const texts = [reviewed.file.name, ...Object.keys(vars), ...Object.values(vars)]
+  const marker = mainnetMarkers.find((name) => texts.some((text) => text.includes(name)))
+  if (marker !== undefined) return `${reviewed.path} names the mainnet ${marker}`
+  const chain = Object.entries(vars).find(([name, value]) => name.endsWith("_CHAIN_ID") && mainnetChainIds.has(value.trim()))
+  return chain === undefined ? undefined : `${reviewed.path} names mainnet chain ${chain[1]}`
+}
+
+export function isolationIssue(reviewed: ReadonlyArray<Reviewed>) {
+  const deployable = reviewed.filter((entry) => !entry.template)
+  const homeless = deployable.find((entry) => entry.environment === undefined)
+  if (homeless !== undefined) return `${homeless.path} names no environment`
+  const owners = new Map<string, Reviewed>()
+  for (const entry of deployable.filter((candidate) => candidate.environment === "Production")) {
+    for (const key of resourceKeys(entry.file)) owners.set(key, entry)
+  }
+  for (const entry of deployable.filter((candidate) => candidate.environment === "Staging")) {
+    for (const key of resourceKeys(entry.file)) {
+      const owner = owners.get(key)
+      if (owner !== undefined) return `${entry.path} and ${owner.path} both name ${key}: staging and production must never share a resource`
+    }
+    const issue = stagingIssue(entry)
+    if (issue !== undefined) return issue
+  }
+  for (const environment of ["Production", "Staging"] as const) {
+    const databases = new Set(deployable.filter((entry) => entry.environment === environment).flatMap((entry) => (entry.file.d1_databases ?? []).map((database) => database.database_id)))
+    if (databases.size > 1) return `${tierName(environment)} configurations bind more than one D1 database`
+  }
+  const exposed = deployable.find((entry) => !isPages(entry) && (entry.file.workers_dev !== false || entry.file.preview_urls !== false))
+  return exposed === undefined ? undefined : `${exposed.path} must disable workers.dev and preview URLs`
+}
+
+export function pagesOf(reviewed: ReadonlyArray<Reviewed>, environment: Environment) {
+  const sites = reviewed.filter((entry) => !entry.template && entry.environment === environment && isPages(entry))
+  const [site, ...others] = sites
+  if (site === undefined || others.length > 0) return `${tierName(environment)} needs exactly one reviewed Pages configuration`
+  if (site.app !== "app") return `${site.path} is a Pages configuration outside apps/app`
+  if (site.file.vars?.PUBLIC_SITE_URL !== siteOrigins[environment]) return `${site.path} must publish to ${siteOrigins[environment]}`
+  return site
+}
+
+export function databaseOf(reviewed: ReadonlyArray<Reviewed>, environment: Environment) {
+  for (const entry of reviewed) {
+    if (entry.template || entry.environment !== environment) continue
+    const [database] = entry.file.d1_databases ?? []
+    if (database !== undefined) return { config: entry, database }
+  }
+  return undefined
+}
+
+export function mappedScripts(reviewed: ReadonlyArray<Reviewed>): ReadonlySet<string> {
+  return new Set(reviewed.filter((entry) => !isPages(entry)).map((entry) => entry.file.name))
+}
+
+export interface SecretDrift {
+  readonly missing: ReadonlyArray<string>
+  readonly unexpected: ReadonlyArray<string>
+}
+
+export const reviewOnlyKeys: ReadonlySet<string> = new Set(["expectedSecrets", "optionalSecrets", "build"])
+
+const pairedSecrets: ReadonlyArray<readonly [string, string]> = [["X_CLIENT_ID", "X_CLIENT_SECRET"]]
+
+export function secretDrift(reviewed: Reviewed, listed: ReadonlyArray<string>, provided: ReadonlyArray<string> = []): SecretDrift {
+  const expected = reviewed.file.expectedSecrets ?? []
+  const allowed = new Set([...expected, ...reviewed.file.optionalSecrets ?? [], ...provided])
+  const present = new Set([...listed, ...provided])
+  const duplicate = listed.find((name, index) => listed.indexOf(name) !== index)
+  const unpaired = pairedSecrets.flatMap((pair) => pair.filter((name) => present.has(name)).length === 1 ? pair.filter((name) => !present.has(name)) : [])
+  return {
+    missing: [...expected.filter((name) => !present.has(name)), ...unpaired].sort(),
+    unexpected: [...duplicate === undefined ? [] : [duplicate], ...listed.filter((name) => !allowed.has(name))].sort(),
+  }
+}
+
+export function driftMessage(holder: string, drift: SecretDrift) {
+  if (drift.missing.length === 0 && drift.unexpected.length === 0) return undefined
+  const parts = [
+    ...drift.missing.length === 0 ? [] : [`lacks ${drift.missing.join(", ")}`],
+    ...drift.unexpected.length === 0 ? [] : [`holds secrets its reviewed configuration does not list: ${drift.unexpected.join(", ")}`],
+  ]
+  return `${holder} ${parts.join("; ")}`
+}

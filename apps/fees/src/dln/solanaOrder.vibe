@@ -1,0 +1,174 @@
+// spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"
+import type { Address as EvmAddress, Hex } from "@repo/platform/chain/evm"
+import { type Address, SolanaRpc, address, associatedTokenAddress, base58Decode, findPda } from "@repo/platform/chain/solana"
+import { chainIds, circleUsdc, dln, robinhoodUsdg } from "../runtime/pins.ts"
+import { wholeBig } from "../evm/abi.ts"
+import { FeeSolana } from "../solana/client.vibe"
+import { ASSOCIATED_TOKEN_PROGRAM, type ParsedTransaction, SYSTEM_PROGRAM, TOKEN_PROGRAM, computeBudgetProgram, messageOf, parsedTransaction } from "../solana/wire.vibe"
+import { DlnRefused, proposeDlnOrder } from "./api.vibe"
+import { hexBytes } from "./evmCalldata.ts"
+import { chainSeed, computeBudgetWithin, orderArgs, tokenAmountOf } from "./solanaArgs.ts"
+
+export interface SolanaDlnIntent {
+  readonly wallet: string
+  readonly mint: string
+  readonly giveAmount: bigint
+  readonly takeToken: string
+  readonly takeChainId: bigint
+  readonly receiver: string
+  readonly orderId: Hex
+}
+
+export interface CheckedSolanaOrder {
+  readonly takeAmount: bigint
+  readonly nonce: bigint
+  readonly makerWallet: string
+  readonly giveOrderWallet: string
+}
+
+export interface SolanaOrderDraft {
+  readonly raw: Uint8Array
+  readonly intent: SolanaDlnIntent
+  readonly order: CheckedSolanaOrder
+  readonly lastValidBlockHeight: number
+  readonly nativeFee: bigint
+  readonly estimatedTakeAmount: bigint
+}
+
+export type SolanaProposed = { readonly kind: "Proposed"; readonly draft: SolanaOrderDraft } | { readonly kind: "NoRoute"; readonly detail: string }
+
+const takeChainId = wholeBig(chainIds.robinhood) ?? 0n
+const encoder = new TextEncoder()
+const program = dln.solanaProgram as Address
+
+effect function refuse(issue: string) {
+  throw new DlnRefused({ issue })
+}
+
+effect function pda(...seeds: Uint8Array[]) {
+  const found = findPda(seeds, program)
+  if (found === undefined) return try refuse("DLN order accounts cannot be derived")
+  return found.address as string
+}
+
+effect function keyOf(text: string) {
+  const bytes = base58Decode(text)
+  if (bytes === undefined || bytes.length !== 32) return try refuse("DLN order names a malformed Solana key")
+  return bytes
+}
+
+export effect function dlnGiveOrderWallet(orderId: Hex) {
+  const id = hexBytes(orderId)
+  if (id === undefined || id.length !== 32) return try refuse("DLN order id is malformed")
+  return try pda(encoder.encode("GIVE_ORDER_WALLET"), id)
+}
+
+effect function expectedAccounts(intent: SolanaDlnIntent) {
+  const id = hexBytes(intent.orderId)
+  if (id === undefined || id.length !== 32) return try refuse("DLN order id is malformed")
+  const [wallet, mint] = [address(intent.wallet), address(intent.mint)]
+  const makerWallet = wallet === undefined || mint === undefined ? undefined : associatedTokenAddress(wallet, mint, TOKEN_PROGRAM)
+  if (makerWallet === undefined) return try refuse("DLN order accounts cannot be derived")
+  const giveOrderWallet = try dlnGiveOrderWallet(intent.orderId)
+  const accounts = [
+    intent.wallet,
+    try pda(encoder.encode("STATE")),
+    intent.mint,
+    try pda(encoder.encode("GIVE_ORDER_STATE"), id),
+    try pda(encoder.encode("AUTHORIZED_NATIVE_SENDER"), chainSeed(intent.takeChainId)),
+    makerWallet as string,
+    giveOrderWallet,
+    try pda(encoder.encode("NONCE"), try keyOf(intent.wallet)),
+    try pda(encoder.encode("FEE_LEDGER_WALLET"), try keyOf(intent.mint)),
+    SYSTEM_PROGRAM as string,
+    TOKEN_PROGRAM as string,
+    ASSOCIATED_TOKEN_PROGRAM as string,
+  ]
+  return { accounts, makerWallet: makerWallet as string, giveOrderWallet }
+}
+
+function bare(value: string) {
+  return value.toLowerCase().replace(/^0x/u, "")
+}
+
+export effect function checkedSolanaOrder(parsed: ParsedTransaction, intent: SolanaDlnIntent) {
+  if (parsed.signatureCount !== 1 || parsed.requiredSignatures !== 1 || parsed.readonlySigned !== 0 || parsed.staticKeys[0] !== intent.wallet)
+    return try refuse("DLN order must have the fee wallet as its only signer")
+  if (parsed.lookups.length !== 0) return try refuse("DLN order must not load address lookup tables")
+  const order = parsed.instructions[parsed.instructions.length - 1]
+  if (order === undefined || order.program !== dln.solanaProgram) return try refuse("DLN order must end with the pinned DLN program call")
+  const budget = computeBudgetWithin(parsed.instructions.slice(0, -1), computeBudgetProgram)
+  if (budget.kind === "Refused") return try refuse(budget.issue)
+  const read = orderArgs(order.data)
+  if (read.kind === "Refused") return try refuse(read.issue)
+  const { args } = read
+  if (args.giveAmount !== intent.giveAmount || args.takeChainId !== intent.takeChainId || args.takeToken !== bare(intent.takeToken)
+    || args.receiver !== bare(intent.receiver) || args.orderAuthority !== bare(intent.receiver) || args.patchAuthority !== intent.wallet
+    || args.cancelBeneficiary !== intent.wallet || args.externalCall || args.affiliate !== 0 || (args.referral !== undefined && args.referral !== 0n))
+    return try refuse("DLN order differs from the fee-wallet intent")
+  if (args.allowedTaker !== undefined && !dln.allowedTakers.some((taker) => taker === `0x${args.allowedTaker}`))
+    return try refuse("DLN order reserves its fill for an unknown taker")
+  if (args.takeAmount <= 0n || args.nonce <= 0n) return try refuse("DLN order has no arrival amount or nonce")
+  const expected = try expectedAccounts(intent)
+  const accounts = order.accounts.map((index) => parsed.staticKeys[index])
+  if (accounts.length !== expected.accounts.length || accounts.some((account, index) => account !== expected.accounts[index]))
+    return try refuse("DLN order accounts differ from the derived order")
+  return { takeAmount: args.takeAmount, nonce: args.nonce, makerWallet: expected.makerWallet, giveOrderWallet: expected.giveOrderWallet } satisfies CheckedSolanaOrder
+}
+
+effect function heldTokens(account: { readonly data: Uint8Array } | undefined) {
+  const amount = account === undefined ? undefined : tokenAmountOf(account.data)
+  if (amount === undefined) return try refuse("Token account data is unavailable")
+  return amount
+}
+
+export effect function proposeSolanaOrder(giveAmount: bigint, receiver: EvmAddress) {
+  const { wallet } = try FeeSolana
+  const rpc = try SolanaRpc
+  const proposed = try proposeDlnOrder({
+    srcChainId: dln.solanaChainId,
+    giveToken: circleUsdc.solana,
+    giveAmount,
+    takeChainId: takeChainId.toString(),
+    takeToken: robinhoodUsdg,
+    wallet,
+    receiver,
+  })
+  if (proposed.kind === "NoRoute") return { kind: "NoRoute", detail: proposed.detail } satisfies SolanaProposed
+  const { proposal } = proposed
+  const proposedBytes = hexBytes(proposal.data)
+  if (proposedBytes === undefined) return try refuse("DLN order response is malformed")
+  const latest = try rpc.blockhash("confirmed")
+  const parsedProposal = try parsedTransaction(proposedBytes)
+  const raw = proposedBytes.slice()
+  raw.set(try keyOf(latest.blockhash), parsedProposal.blockhashOffset)
+  const parsed = try parsedTransaction(raw)
+  const intent: SolanaDlnIntent = { wallet, mint: circleUsdc.solana, giveAmount, takeToken: robinhoodUsdg, takeChainId, receiver: receiver.toLowerCase(), orderId: proposal.orderId }
+  const order = try checkedSolanaOrder(parsed, intent)
+  if (order.takeAmount > giveAmount) return try refuse("DLN proposal delivers more than its input")
+  const [walletKey, makerKey] = [address(wallet), address(order.makerWallet)]
+  if (walletKey === undefined || makerKey === undefined) return try refuse("DLN order names a malformed Solana key")
+  const before = (try rpc.account(walletKey, "confirmed"))?.lamports ?? 0n
+  const held = try heldTokens(try rpc.account(makerKey, "confirmed"))
+  const simulation = try rpc.simulate(raw, [walletKey, makerKey], "confirmed")
+  const [after, source] = simulation.accounts
+  if (simulation.err || after === undefined || source === undefined) return try refuse("DLN order simulation is unavailable or failed")
+  if (held - (try heldTokens(source)) !== giveAmount) return try refuse("DLN order simulation debits a different amount")
+  const fee = try rpc.feeForMessage(messageOf(raw, parsed), "confirmed")
+  const debit = before - after.lamports
+  if (debit < 0n) return try refuse("DLN order simulation credits SOL")
+  if (fee === undefined) return try refuse("Solana native cost evidence must be an exact safe integer")
+  return {
+    kind: "Proposed",
+    draft: { raw, intent, order, lastValidBlockHeight: latest.lastValidBlockHeight, nativeFee: debit + fee, estimatedTakeAmount: proposal.estimatedTakeAmount },
+  } satisfies SolanaProposed
+}
+
+export effect function recheckedSolanaOrder(draft: SolanaOrderDraft) {
+  const { wallet } = try FeeSolana
+  if (draft.intent.wallet !== wallet || draft.intent.mint !== circleUsdc.solana || draft.intent.takeToken !== robinhoodUsdg || draft.intent.takeChainId !== takeChainId)
+    return try refuse("Bridge proposal differs from its quote")
+  const order = try checkedSolanaOrder(try parsedTransaction(draft.raw), draft.intent)
+  if (order.takeAmount !== draft.order.takeAmount || order.nonce !== draft.order.nonce) return try refuse("Bridge proposal differs from its quote")
+  return order
+}

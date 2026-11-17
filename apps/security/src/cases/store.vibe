@@ -1,0 +1,239 @@
+// spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { isoNow } from "@repo/platform/clock"
+import type { SqlValue } from "@repo/platform/bindings"
+import { ConstraintViolation, D1, type Statement, sql } from "@repo/platform/d1"
+import { type Actor, refuse } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import type { Json } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import type { Event, PrivateCase } from "../../gen/security__cases.ts"
+import { apply, moderatorNow, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
+import { AuthorityUnavailable, type CaseAuthority, caseAuthority } from "../caseAuthority/snapshot.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { type ReportingProgram, ReportingPrograms } from "../receipt/program.vibe"
+import { type CaseRole, caseEvent } from "../receipt/statements.vibe"
+import { type CaseRecord, appealColumns, awardColumns, caseRecord, receiptColumns, relatedColumns, reviewColumns } from "./rows.vibe"
+
+export interface Refusal {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+export interface Observed {
+  readonly record: CaseRecord
+  readonly model: PrivateCase
+  readonly epoch: number
+  readonly roles: ReadonlySet<CaseRole>
+  readonly program: ReportingProgram | undefined
+  readonly snapshot: CaseAuthority
+}
+
+export type Column =
+  | "submission_state" | "received_at" | "verified_at" | "verified_by_github_id" | "policy_revision" | "terms" | "owner_github_id"
+  | "receipt_state" | "severity" | "loss_finding" | "root_cause_key" | "duplicate_of" | "evidence_digest" | "technical_decider_github_id"
+  | "related_party" | "related_party_review" | "related_party_reviewer_github_id" | "award_state" | "award_gross_minor" | "award_gross_base"
+  | "payment_state" | "payment_deadline" | "appeal_state" | "appeal_from_state"
+
+export type Assignments = Partial<Readonly<Record<Column, SqlValue>>>
+
+export interface Change {
+  readonly kind: string
+  readonly role: CaseRole
+  readonly reason: string | null
+  readonly evidenceReference: string | null
+  readonly detail: { readonly [key: string]: Json }
+  readonly event: Event
+  readonly set: Assignments
+  readonly before?: ReadonlyArray<Statement>
+  readonly after?: ReadonlyArray<Statement>
+  readonly require?: Statement
+  readonly unmet?: Refusal
+  readonly relatedReview?: boolean
+}
+
+export const reporterKinds: ReadonlySet<string> = new Set(["claim", "submit", "submit-direct", "record", "verify-link", "reject-link", "triage", "reserve-award", "approve-award", "receive", "receipt-mismatch", "request-information", "decide", "award", "remediation", "consent-payment", "prepare-payment", "verify-payment", "recover-payment", "appeal", "decide-appeal", "decide-related-party", "disclosure", "recognition"])
+const technicalKinds: ReadonlySet<string> = new Set(["receive", "claim", "submit", "submit-direct", "verify-payment", "recover-payment"])
+const awardingKinds: ReadonlySet<string> = new Set(["decide", "award", "decide-related-party"])
+const githubId = /^[1-9][0-9]*$/u
+
+export function refused(row: Refusal) {
+  return refuse(row.status, row.error, row.message)
+}
+
+export function notAllowed(action: string) {
+  return refuse(actionRows.actionNotAllowed.status, actionRows.actionNotAllowed.error, `The case does not allow ${action} in its current state`)
+}
+
+function rolesOf(model: PrivateCase, viewer: number, epoch: number): ReadonlySet<CaseRole> {
+  if (viewer > 0 && viewer === model.reporter) return new Set(["reporter"])
+  const roles = new Set<CaseRole>()
+  if (technicalNow(model, viewer, epoch)) roles.add("security-maintainer")
+  if (triagerNow(model, viewer, epoch)) roles.add("triager")
+  if (model.authority.financial.includes(viewer) && (model.award === "Approved" || model.award === "Reserved")) roles.add("financial")
+  if (moderatorNow(model, viewer, epoch) && (model.appeal === "AppealOpen" || model.relatedReview === "ReviewPending")) roles.add("dispute")
+  return roles
+}
+
+export effect function observedAs(record: CaseRecord, viewerGithubId: string, unavailable: Refusal) {
+  const program = try (try ReportingPrograms).current(record.row.project_id)
+  const scope = { caseId: record.row.id, projectId: record.row.project_id, reporterGithubId: record.row.reporter_github_id, viewerGithubId, program: program?.approvers }
+  const snapshot = caseAuthority(scope, record.model.authority.epoch + 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(unavailable);
+    default: throw error;
+  }
+  const model = try orDie(apply(record.model, { type: "observeAuthority", snapshot: snapshot.authority }, 0))
+  const epoch = model.authority.epoch
+  return { record, model, epoch, roles: rolesOf(model, githubNumber(viewerGithubId), epoch), program, snapshot } satisfies Observed
+}
+
+export effect function observedCase(id: string, viewerGithubId: string, missing: Refusal, unavailable: Refusal) {
+  const record = try caseRecord(id)
+  if (record === undefined) throw refused(missing)
+  const observed = try observedAs(record, viewerGithubId, unavailable)
+  if (observed.roles.size === 0) throw refused(missing)
+  return observed
+}
+
+export function roleText(roles: ReadonlySet<CaseRole>) {
+  return [...roles].sort().join(",")
+}
+
+export function accessLog(caseId: string, actorGithubId: string, roles: ReadonlySet<CaseRole>, action: "read" | "write", at: string): Statement {
+  return sql`INSERT INTO security_case_access_log (case_id, actor_github_id, actor_role, action, at) VALUES (${caseId}, ${actorGithubId}, ${roleText(roles)}, ${action}, ${at})`
+}
+
+export effect function audited(caseId: string, actorGithubId: string, roles: ReadonlySet<CaseRole>) {
+  try (try D1).run(accessLog(caseId, actorGithubId, roles, "read", try isoNow()))
+}
+
+export interface CaseNotice {
+  readonly caseId: string
+  readonly revision: number
+  readonly kind: string
+  readonly idempotencyKey: string
+  readonly actorGithubId: string
+  readonly reporterGithubId: string
+  readonly detail: { readonly [key: string]: Json }
+  readonly program: ReportingProgram | undefined
+  readonly relatedReview: boolean
+  readonly at: string
+}
+
+export effect function caseNotices(input: CaseNotice) {
+  if (input.kind === "recover-payment" && typeof input.detail.state === "string") return []
+  const moderators = try (try Roles).snapshot("moderator")
+  const ids = (role: "technical" | "financial") => input.program?.approvers?.[role] ?? []
+  const recipients = [
+    ...reporterKinds.has(input.kind) ? [input.reporterGithubId] : [],
+    ...technicalKinds.has(input.kind) ? ids("technical") : [],
+    ...input.kind === "verify-payment" || input.kind === "recover-payment" ? ids("financial") : [],
+    ...input.kind === "appeal" || input.relatedReview ? moderators : [],
+    ...input.kind === "assign-triager" && typeof input.detail.githubId === "string" ? [input.detail.githubId] : [],
+  ]
+  const landed = sql`EXISTS (SELECT 1 FROM security_case_events WHERE case_id = ${input.caseId} AND case_revision = ${input.revision} AND idempotency_key = ${input.idempotencyKey})`
+  const notice = (recipientGithubId: string) => ({
+    eventKey: `security-case:${input.caseId}:${input.revision}`,
+    recipientGithubId,
+    kind: "SecurityCase" as const,
+    subject: input.caseId,
+    actionPath: `/security?case=${input.caseId}`,
+    sourceAt: input.at,
+  })
+  const addressed = (list: ReadonlyArray<string>) => [...new Set(list)].filter((id) => id !== input.actorGithubId && githubId.test(id)).map(notice)
+  const notices = try Notices
+  const everyone = try notices.statements({ notices: addressed(recipients), onlyIf: landed })
+  if (!awardingKinds.has(input.kind)) return everyone
+  const finance = try notices.statements({ notices: addressed(ids("financial")), onlyIf: sql`${landed} AND (SELECT award_state FROM security_cases WHERE id = ${input.caseId}) = 'approved'` })
+  return [...everyone, ...finance]
+}
+
+const assignments: Readonly<Record<Column, (value: SqlValue) => Statement>> = {
+  submission_state: (value) => sql`submission_state = ${value}`,
+  received_at: (value) => sql`received_at = ${value}`,
+  verified_at: (value) => sql`verified_at = ${value}`,
+  verified_by_github_id: (value) => sql`verified_by_github_id = ${value}`,
+  policy_revision: (value) => sql`policy_revision = ${value}`,
+  terms: (value) => sql`terms = ${value}`,
+  owner_github_id: (value) => sql`owner_github_id = ${value}`,
+  receipt_state: (value) => sql`receipt_state = ${value}`,
+  severity: (value) => sql`severity = ${value}`,
+  loss_finding: (value) => sql`loss_finding = ${value}`,
+  root_cause_key: (value) => sql`root_cause_key = ${value}`,
+  duplicate_of: (value) => sql`duplicate_of = ${value}`,
+  evidence_digest: (value) => sql`evidence_digest = ${value}`,
+  technical_decider_github_id: (value) => sql`technical_decider_github_id = ${value}`,
+  related_party: (value) => sql`related_party = ${value}`,
+  related_party_review: (value) => sql`related_party_review = ${value}`,
+  related_party_reviewer_github_id: (value) => sql`related_party_reviewer_github_id = ${value}`,
+  award_state: (value) => sql`award_state = ${value}`,
+  award_gross_minor: (value) => sql`award_gross_minor = ${value}`,
+  award_gross_base: (value) => sql`award_gross_base = ${value}`,
+  payment_state: (value) => sql`payment_state = ${value}`,
+  payment_deadline: (value) => sql`payment_deadline = ${value}`,
+  appeal_state: (value) => sql`appeal_state = ${value}`,
+  appeal_from_state: (value) => sql`appeal_from_state = ${value}`,
+}
+
+export function modelColumns(before: PrivateCase, next: PrivateCase): Assignments {
+  return {
+    ...before.receipt === next.receipt ? {} : { receipt_state: receiptColumns[next.receipt] },
+    ...before.award === next.award ? {} : { award_state: awardColumns[next.award] },
+    ...before.appeal === next.appeal ? {} : { appeal_state: appealColumns[next.appeal] },
+    ...before.related === next.related ? {} : { related_party: relatedColumns[next.related] },
+    ...before.relatedReview === next.relatedReview ? {} : { related_party_review: reviewColumns[next.relatedReview] },
+    ...before.payment === next.payment ? {} : { payment_state: next.payment === "RailUnavailable" ? "rail-unavailable" : "not-applicable" },
+  }
+}
+
+function setList(set: Assignments, at: string): Statement {
+  const parts = (Object.keys(set) as Column[]).map((column) => assignments[column](set[column] ?? null))
+  return [...parts, sql`revision = revision + 1`, sql`updated_at = ${at}`].reduce((left, right) => sql`${left}, ${right}`)
+}
+
+export interface Commit {
+  readonly observed: Observed
+  readonly actor: Actor
+  readonly change: Change
+  readonly idempotencyKey: string
+  readonly at: string
+}
+
+effect function violated(error: ConstraintViolation) {
+  const text = error.message
+  if (/security_award_reservations/iu.test(text)) throw refused(actionRows.rootCauseReservedThisRootCauseAlready)
+  if (/security_case_members/iu.test(text)) throw refused(actionRows.alreadyAssigned)
+  if (/security_cases\.advisory_ghsa/iu.test(text)) throw refused(actionRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  if (/UNIQUE/iu.test(text)) throw refused(actionRows.staleRevision)
+  throw error
+}
+
+export effect function committed(input: Commit) {
+  const { observed, actor, change } = input
+  const { row } = observed.record
+  const { at } = input
+  const revision = row.revision + 1
+  const frozenAsset = observed.record.frozen?.asset !== undefined && observed.record.frozen.asset !== null
+  const set: Assignments = frozenAsset && change.set.award_gross_minor !== undefined
+    ? { ...Object.fromEntries(Object.entries(change.set).filter(([column]) => column !== "award_gross_minor")), award_gross_base: change.set.award_gross_minor }
+    : change.set
+  const where = change.require === undefined ? sql`` : sql` AND ${change.require}`
+  const before = change.before ?? []
+  const statements = [
+    ...before,
+    sql`UPDATE security_cases SET ${setList(set, at)} WHERE id = ${row.id} AND revision = ${row.revision}${where}`,
+    caseEvent({ caseId: row.id, revision, kind: change.kind, actorGithubId: actor.githubId, role: change.role, idempotencyKey: input.idempotencyKey, reason: change.reason, evidenceReference: change.evidenceReference, detail: change.detail, at, guard: true }),
+    ...change.after ?? [],
+    accessLog(row.id, actor.githubId, observed.roles, "write", at),
+    ...(try caseNotices({ caseId: row.id, revision, kind: change.kind, idempotencyKey: input.idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: row.reporter_github_id, detail: change.detail, program: observed.program, relatedReview: change.relatedReview === true, at })),
+  ]
+  const results = (try D1).batch(statements) catch effect (error) => {
+    if (error instanceof ConstraintViolation) return try violated(error)
+    throw error
+  }
+  if (results[before.length]?.changes === 1) return revision
+  const current = try caseRecord(row.id)
+  if (change.unmet !== undefined && current?.row.revision === row.revision) throw refused(change.unmet)
+  throw refused(actionRows.staleRevision)
+}

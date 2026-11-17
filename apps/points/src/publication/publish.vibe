@@ -1,0 +1,66 @@
+// spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Journal, type Revision, coverageText, revisionText } from "../kernels/records/canonical.ts"
+import type { CensusPhase } from "../../gen/points__census.ts"
+import { type Event, type Publication, type PublishedRecord, Machine, initial, machineOver } from "../../gen/points__publication.effect.vibe"
+
+export error PublicationRefused { message: string }
+
+export interface StageFacts {
+  readonly censusPhase: CensusPhase
+  readonly historicalHold: boolean
+}
+
+export effect function publicationRun(start: Publication = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function publicationLayer(start: Publication = initial) {
+  return Layer.effect(Machine, publicationRun(start))
+}
+
+export effect function publicationSend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function publicationReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function publicationState() {
+  return try (try Machine).get()
+}
+
+effect function recordsOf(revisions: ReadonlyArray<Revision>, ids: Map<string, number>) {
+  const records: PublishedRecord[] = []
+  for (const revision of revisions) {
+    const id = ids.get(revision.id) ?? ids.size + 1
+    ids.set(revision.id, id)
+    records.push({ id, digest: try sha256Hex(revisionText(revision)) })
+  }
+  return records
+}
+
+function refused(message: string) {
+  return new PublicationRefused({ message })
+}
+
+export effect function publishable(current: Journal | null, candidate: Journal, facts: StageFacts) {
+  const ids = new Map<string, number>()
+  const visible = try recordsOf(current?.revisions ?? [], ids)
+  const staged = try recordsOf(candidate.revisions, ids)
+  const run = try publicationRun({ ...initial, canonical: visible, visible })
+  run.send({ type: "observeCanonical", snapshot: staged, verified: true }) catch effect () => {
+    throw refused("Points publication does not contain the complete journal prefix")
+  }
+  run.send({ type: "stage", candidate: staged, censusPhase: facts.censusPhase, historicalHold: facts.historicalHold }) catch effect () => {
+    throw refused("Points publication is not ready: the census is incomplete or a historical import holds publication")
+  }
+  run.send({ type: "publish" }) catch effect () => {
+    throw refused("Points publication does not contain the complete journal prefix")
+  }
+  const covered = new Set(candidate.coverage.map(coverageText))
+  if ((current?.coverage ?? []).some((entry) => !covered.has(coverageText(entry)))) throw refused("Points publication lost source coverage")
+  return try run.get()
+}

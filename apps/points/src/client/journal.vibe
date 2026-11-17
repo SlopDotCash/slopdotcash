@@ -1,0 +1,56 @@
+// spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { Coverage, PointRevision } from "../kernels/records/records.schema.ts"
+
+export const pointsRule = "slop-points-v1"
+export const shardCount = 16
+export const maxShardBytes = 8 * 1024 * 1024
+export const maxIndexBytes = 1024 * 1024
+export const maxPageBytes = 8 * 1024 * 1024
+export const maxRevisions = 250_000
+export const journalPageSize = 500
+
+export function shardPath(position: number) {
+  return `/data/points/${position.toString(16)}.json`
+}
+
+export const JournalPage = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  ruleVersion: Schema.Literal(pointsRule),
+  generatedAt: Schema.String,
+  coverage: Schema.Array(Coverage),
+  revisions: Schema.Array(PointRevision),
+  batch: Schema.String,
+  next: Schema.NullOr(Schema.Number),
+  total: Schema.Number,
+})
+
+export schema ShardEntry { readonly path: string; readonly sha256: string; readonly count: number }
+
+export const PointsIndex = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  ruleVersion: Schema.Literal(pointsRule),
+  generatedAt: Schema.String,
+  coverage: Schema.Array(Coverage),
+  revisionCount: Schema.Number,
+  shards: Schema.Array(ShardEntry),
+})
+
+export const ShardRow = Schema.Struct({ sequence: Schema.Number, revision: PointRevision })
+
+export schema SummaryActor { readonly id: string; readonly login: string }
+export schema SummaryContributor { readonly actor: SummaryActor; readonly total: number }
+export schema SummaryTotals { readonly contributors: number; readonly points: number }
+
+export schema PointsSummary {
+  readonly schemaVersion: "1"
+  readonly ruleVersion: string
+  readonly generatedAt: string
+  readonly indexDigest: string
+  readonly totals: SummaryTotals
+  readonly contributors: ReadonlyArray<SummaryContributor>
+}
+
+export const pointsJournal = route({ method: "GET", path: "/api/v1/points/journal", access: "public", limitKib: 1, request: undefined, answer: JournalPage, rejected: "points_unavailable", cache: "no-store" })
+
+export const api: ReadonlyArray<AnyRoute> = [pointsJournal]

@@ -1,0 +1,90 @@
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/frontend/walletAttempt.md, "A late wallet reply changes only the slot that still holds its own attempt"
+import type { Attempt } from "../../../gen/frontend__walletAttempt.ts"
+import { type SlotStorage, slotWritable } from "../core/slots.ts"
+import { type SlotRead, compareAndWrite, readText, slotOfText, textOfSlot } from "./flowSlots.ts"
+
+export error SlotChanged { message: string }
+
+export const slotChangedMessage = "The saved request changed. Reload before continuing."
+export const storageBlockedMessage = "Your browser could not save this request, so nothing was sent to your wallet. Allow site storage and try again."
+export const unreadableMessage = "The saved transaction cannot be read. Check your wallet activity before starting a new action."
+
+export interface FlowSlot {
+  readonly slot: Attempt
+  readonly slotOwner: number
+}
+
+export interface SlotKeeper<T extends string> {
+  read(target: T): SlotRead
+  write(target: T, flow: FlowSlot): void!!
+  plan(target: T): string
+  propose(target: T, plan: string): void
+  annotate(target: T, identity: string, plan: string): boolean
+  writable(): boolean
+  unreadable(target: T): boolean
+  clearUnreadable(target: T): boolean
+}
+
+function empty(flow: FlowSlot): boolean {
+  return flow.slot.identity === "" && flow.slot.bytesId === "" && flow.slot.hash === "" && flow.slot.candidate === ""
+}
+
+export function sameSlot(left: FlowSlot, right: FlowSlot): boolean {
+  if (empty(left) && empty(right)) return true
+  return left.slotOwner === right.slotOwner && left.slot.identity === right.slot.identity && left.slot.bytesId === right.slot.bytesId
+    && left.slot.hash === right.slot.hash && left.slot.candidate === right.slot.candidate
+}
+
+export function slotKeeper<T extends string>(storage: SlotStorage | undefined, keys: Readonly<Record<T, string>>): SlotKeeper<T> {
+  const seen = new Map<T, string | null>()
+  const plans = new Map<T, string>()
+  const proposed = new Map<T, string>()
+  return {
+    read: (target) => {
+      const text = readText(storage, keys[target])
+      seen.set(target, text)
+      const found = slotOfText(text)
+      if (found.kind === "owned") plans.set(target, found.slot.plan)
+      return found
+    },
+    write: effect (target, flow) => {
+      const before = slotOfText(seen.get(target) ?? null)
+      if (before.kind === "unreadable") try die(new SlotChanged({ message: unreadableMessage }))
+      const fresh = flow.slot.identity !== "" && (before.kind !== "owned" || before.slot.attempt.identity !== flow.slot.identity)
+      if (fresh && before.kind === "owned") try die(new SlotChanged({ message: slotChangedMessage }))
+      const plan = fresh ? proposed.get(target) ?? "" : plans.get(target) ?? ""
+      const text = textOfSlot({ account: flow.slotOwner, attempt: flow.slot, plan })
+      if (!compareAndWrite(storage, keys[target], seen.get(target) ?? null, text)) try die(new SlotChanged({ message: slotChangedMessage }))
+      seen.set(target, text)
+      if (text === null) plans.delete(target)
+      else plans.set(target, plan)
+      proposed.delete(target)
+    },
+    plan: (target) => plans.get(target) ?? "",
+    propose: (target, plan) => { proposed.set(target, plan) },
+    annotate: (target, identity, plan) => {
+      const text = readText(storage, keys[target])
+      const found = slotOfText(text)
+      if (found.kind !== "owned" || found.slot.attempt.identity !== identity) return false
+      const next = textOfSlot({ ...found.slot, plan })
+      if (!compareAndWrite(storage, keys[target], text, next)) return false
+      seen.set(target, next)
+      plans.set(target, plan)
+      return true
+    },
+    writable: () => slotWritable(storage),
+    unreadable: (target) => slotOfText(readText(storage, keys[target])).kind === "unreadable",
+    clearUnreadable: (target) => {
+      const text = readText(storage, keys[target])
+      const found = slotOfText(text)
+      if (found.kind !== "unreadable" || !compareAndWrite(storage, keys[target], found.text, null)) return false
+      seen.set(target, null)
+      return true
+    },
+  }
+}
+
+export effect function keptOrChanged<A, E, R>(sent: A!E!R) {
+  const kept: boolean = try catchDefect(Effect.as(sent, true), (defect) => defect instanceof SlotChanged ? Effect.succeed(false) : Effect.die(defect))
+  return kept
+}

@@ -1,0 +1,89 @@
+// spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
+import { d1Http } from "@repo/platform/d1Http"
+import { RegistryManifestsLive } from "@repo/backend/ports"
+import { RepositoryRegistry } from "../client/snapshot/schema.vibe"
+import { evaluatedContributions, maximumEvaluatorAwardFileBytes } from "../collect/feeds/history.vibe"
+import { repositoriesOf } from "../journal/build.vibe"
+import type { Repositories } from "../journal/ledger.vibe"
+import { attempt } from "../snapshot/files.vibe"
+import { EvaluationRefused, type ManifestInput, admitManifests } from "./manifests.vibe"
+
+export error EvaluationsUsage { message: string }
+
+const usage = "evaluations check <repository registry JSON> production|staging"
+const databases = {
+  production: "1b453124-2709-45af-8389-151a8105c461",
+  staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
+} as const
+const awardFile = /^award-[a-z0-9][a-z0-9-]*\.json$/u
+const unavailable = "Evaluator award file is unavailable"
+
+effect function entryOf(path: string) {
+  const fs = try FileSystem.FileSystem
+  return try attempt(fs.lstat(path), path, unavailable)
+}
+
+effect function awardText(path: string, shown: string) {
+  const fs = try FileSystem.FileSystem
+  const info = try entryOf(path)
+  if (info.type !== "File") throw new EvaluationRefused({ path: shown, reason: `${shown} is not a canonical award file` })
+  if (Number(info.size) <= 0 || Number(info.size) > maximumEvaluatorAwardFileBytes) throw new EvaluationRefused({ path: shown, reason: `${shown} has invalid size` })
+  return try attempt(fs.readFileString(path), path, unavailable)
+}
+
+export effect function evaluationInputs(root: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const inputs: ManifestInput[] = []
+  const directory = files.join(root, "evaluations")
+  if (try attempt(fs.exists(directory), directory, unavailable)) {
+    if ((try entryOf(directory)).type !== "Directory") throw new EvaluationRefused({ path: "evaluations", reason: "evaluations root must be a real directory" })
+    for (const project of (try attempt(fs.readDirectory(directory), directory, unavailable)).sort()) {
+      if (project === "README.md") continue
+      const folder = files.join(directory, project)
+      if ((try entryOf(folder)).type !== "Directory") throw new EvaluationRefused({ path: `evaluations/${project}`, reason: `evaluations/${project} must be a project directory` })
+      for (const name of (try attempt(fs.readDirectory(folder), folder, unavailable)).sort()) {
+        const path = `evaluations/${project}/${name}`
+        if (!awardFile.test(name)) throw new EvaluationRefused({ path, reason: `${path} is not a canonical award file` })
+        inputs.push({ path, text: try awardText(files.join(folder, name), path) })
+      }
+    }
+  }
+  const retained = try evaluatedContributions(root)
+  const decoder = new TextDecoder("utf-8", { fatal: true })
+  for (const award of retained?.value.awards ?? []) inputs.push({ path: award.path, text: decoder.decode(award.bytes) })
+  return inputs
+}
+
+export type RegistryEnvironment = keyof typeof databases
+
+function isEnvironment(text: string | undefined): text is RegistryEnvironment {
+  return text === "production" || text === "staging"
+}
+
+effect function repositoriesFrom(registryPath: string) {
+  const fs = try FileSystem.FileSystem
+  const text = try attempt(fs.readFileString(registryPath), registryPath, "Repository registry is unavailable")
+  const raw = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new EvaluationsUsage({ message: `${registryPath} is not valid JSON` }) })
+  const registry = Schema.decodeUnknownEffect(RepositoryRegistry)(raw) catch effect () => {
+    throw new EvaluationsUsage({ message: `${registryPath} is not a repository registry` })
+  }
+  return repositoriesOf(registry, {})
+}
+
+export effect function admittedFrom(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories, environment: RegistryEnvironment) {
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  provide Layer.provide(RegistryManifestsLive, d1Http({ accountId, databaseId: databases[environment], token })) {
+    return try admitManifests(inputs, repositories)
+  }
+}
+
+export effect function evaluations(args: ReadonlyArray<string>) {
+  const [command, registryPath, environment, ...rest] = args
+  if (command !== "check" || registryPath === undefined || !isEnvironment(environment) || rest.length > 0) throw new EvaluationsUsage({ message: `Usage: ${usage}` })
+  const repositories = try repositoriesFrom(registryPath)
+  const inputs = try evaluationInputs((try Path.Path).resolve("."))
+  const admitted = try admittedFrom(inputs, repositories, environment)
+  try Console.log(`[Slop] validated ${admitted.length} evaluated contribution award${admitted.length === 1 ? "" : "s"}`)
+}

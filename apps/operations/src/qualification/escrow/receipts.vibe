@@ -1,0 +1,390 @@
+// spec/operations/escrowQualification.md, "Missing or mismatched evidence holds the attempt, and finalized failure stops further actions"; spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"; spec/operations/escrowQualification.md, "Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation"
+import { type Abi, EvmRpc, type Hex, type Log, type Receipt, decodeEvents, decodeResult, encodeCall, evmRpc, keccak, recoverDigest } from "@repo/platform/chain/evm"
+import { type RpcFailure, boundedMessage } from "@repo/platform/chain/rpc"
+import { type DecodedTransaction, type FetchedTransaction, SolanaRpc, type TokenBalance, address, addressOf, base64Decode, decodeTokenAccount, decodeTransaction, findPda, isSignature, publicKey, signatureOf, solanaRpc, verifyTransactionSignatures } from "@repo/platform/chain/solana"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Result } from "../../../gen/operations__escrowQualification.effect.vibe"
+import { chainIdOf, factoryAbi, implementationSlot, tokenAbi, units, vaultAbi } from "./contracts.ts"
+import { type SignedEvmTransaction, bytesHex, decodeSignedEvm, hexBytes } from "./envelope.ts"
+import { type EscrowPlan, type Family, type PlanCall, type PlanStep, depositUnits, networks, sameAddress } from "./plan.vibe"
+import { type Registry, type ReviewedEvm, reviewedEvmOf, reviewedSolanaOf } from "./registry.ts"
+
+export error ChainRefused { message: string }
+
+export interface Deployment {
+  readonly exactDeployment: boolean
+  readonly exactAsset: boolean
+  readonly currentAuthority: boolean
+}
+
+export service QualificationChain {
+  readonly family: Family
+  deployment(plan: EscrowPlan): Deployment!ChainRefused
+  inspect(plan: EscrowPlan, step: PlanStep, raw: string): string!ChainRefused
+  simulate(plan: EscrowPlan, raw: string): boolean!ChainRefused
+  send(transaction: string, raw: string): void!ChainRefused
+  result(plan: EscrowPlan, step: PlanStep, transaction: string): (Result | undefined)!ChainRefused
+  executed(call: PlanCall, transaction: string, signer: string | undefined): boolean!ChainRefused
+}
+
+const upgradeableLoader = "BPFLoaderUpgradeab1e11111111111111111111111"
+const computeBudget = "ComputeBudget111111111111111111111111111111"
+const programDataHeader = 45
+const baseFeeLamports = 5_000n
+const defaultComputeUnits = 200_000n
+const evmHash = /^0x[0-9a-f]{64}$/u
+
+function refusedBy(error: RpcFailure) {
+  return new ChainRefused({ message: `${error._tag}: ${boundedMessage(error)}` })
+}
+
+function field(args: unknown, name: string): unknown {
+  return typeof args === "object" && args !== null ? (args as Readonly<Record<string, unknown>>)[name] : undefined
+}
+
+function sameField(args: unknown, name: string, expected: string) {
+  const value = field(args, name)
+  return typeof value === "string" && sameAddress("evm", value, expected)
+}
+
+function gweiCeiling(wei: bigint) {
+  return Number((wei + 999_999_999n) / 1_000_000_000n)
+}
+
+type Digest = (bytes: Uint8Array) => string!!
+
+effect function digester() {
+  const crypto = try Experimental.Crypto.Crypto
+  return ((bytes: Uint8Array) => provideService(sha256Hex(bytes), Experimental.Crypto.Crypto, crypto)) satisfies Digest
+}
+
+effect function evmRead(rpc: EvmRpc.Shape, to: string, abi: Abi, name: string) {
+  const data = encodeCall(abi, name, []) catch effect (error) => {
+    throw new ChainRefused({ message: `${name}: ${error.issue}` })
+  }
+  const answer = rpc.call({ to: to as Hex, data, block: "finalized" }) catch effect (error) => {
+    throw refusedBy(error)
+  }
+  const decoded = decodeResult(abi, name, answer) catch effect () => {
+    throw new ChainRefused({ message: `${name} of ${to} answered no address` })
+  }
+  return typeof decoded === "string" ? decoded.toLowerCase() : ""
+}
+
+effect function codeSha(rpc: EvmRpc.Shape, sha: Digest, at: string) {
+  const code = rpc.code(at as Hex, "finalized") catch effect (error) => {
+    throw refusedBy(error)
+  }
+  const bytes = hexBytes(code.toLowerCase())
+  return bytes === undefined ? "" : try sha(bytes)
+}
+
+effect function reviewedProxy(rpc: EvmRpc.Shape, sha: Digest, reviewed: ReviewedEvm, proxy: string, implementation: string, implementationSha: string) {
+  const slot = rpc.storageAt(proxy as Hex, implementationSlot as Hex, "finalized") catch effect (error) => {
+    throw refusedBy(error)
+  }
+  const current = `0x${slot.toLowerCase().slice(-40)}`
+  return (try codeSha(rpc, sha, proxy)) === reviewed.proxyCodeSha256 && sameAddress("evm", current, implementation)
+    && (try codeSha(rpc, sha, implementation)) === implementationSha
+}
+
+function tokenMatches(plan: EscrowPlan, step: PlanStep, logs: ReadonlyArray<Log>) {
+  const events = decodeEvents(tokenAbi, logs.filter((log) => sameAddress("evm", log.address, plan.asset)))
+  if (events.some((event) => event.kind === "malformed")) return false
+  const named = (name: string) => events.flatMap((event) => event.kind === "event" && event.name === name ? [event.args] : [])
+  const transfers = named("Transfer")
+  const approvals = named("Approval")
+  const allowanceToVault = (args: unknown) => sameField(args, "owner", plan.authority) && sameField(args, "spender", plan.vault)
+  if (step.kind === "Deposit") {
+    return transfers.length === 1 && sameField(transfers[0], "from", plan.authority) && sameField(transfers[0], "to", plan.vault)
+      && field(transfers[0], "value") === units(step.gross) && approvals.every(allowanceToVault)
+  }
+  if (step.kind === "Payout") return transfers.length === 1 && sameField(transfers[0], "from", plan.vault) && field(transfers[0], "value") === units(step.net) && approvals.length === 0
+  if (transfers.length !== 0) return false
+  if (!sameAddress("evm", step.to, plan.asset)) return approvals.length === 0
+  return approvals.length === 1 && allowanceToVault(approvals[0]) && field(approvals[0], "value") === units(depositUnits)
+}
+
+function moneyMatches(plan: EscrowPlan, step: PlanStep, logs: ReadonlyArray<Log>) {
+  const events = decodeEvents(vaultAbi, logs.filter((log) => sameAddress("evm", log.address, plan.vault)))
+  const named = (name: string) => events.flatMap((event) => event.kind === "event" && event.name === name ? [event.args] : [])
+  const moved = ["Deposited", "Paid", "UnusedWithdrawn", "FeesClaimed"].flatMap(named)
+  if (events.some((event) => event.kind === "malformed") || !tokenMatches(plan, step, logs)) return false
+  if (step.kind === "Deposit") {
+    const deposits = named("Deposited")
+    return moved.length === 1 && deposits.length === 1 && field(deposits[0], "amount") === units(step.gross)
+  }
+  if (step.kind === "Payout") {
+    const paid = named("Paid")
+    const award = paid[0]
+    return moved.length === 1 && paid.length === 1 && field(award, "actorId") === units(step.actor) && field(award, "gross") === units(step.gross)
+      && field(award, "net") === units(step.net) && field(award, "fee") === units(step.fee)
+  }
+  return moved.length === 0
+}
+
+effect function signedEvm(raw: string) {
+  const envelope = decodeSignedEvm(raw)
+  if (envelope.kind === "malformed") throw new ChainRefused({ message: envelope.issue })
+  const sender = recoverDigest(keccak(envelope.value.signingPayload), envelope.value.signature)
+  if (sender === undefined) throw new ChainRefused({ message: "the signed EVM transaction has no recoverable sender" })
+  return { transaction: envelope.value, sender: sender.toLowerCase(), hash: keccak(raw as Hex).toLowerCase() }
+}
+
+function evmMismatch(plan: EscrowPlan, step: PlanStep, signed: SignedEvmTransaction, sender: string) {
+  if (signed.chainId !== chainIdOf(networks[plan.network].identity)) return `it is signed for chain ${signed.chainId}, not ${plan.network}`
+  if (!sameAddress("evm", signed.to, step.to) || signed.input !== step.data) return `it does not call step ${step.key} exactly`
+  if (signed.value !== 0n || !signed.accessListEmpty) return "it carries native value or an access list"
+  if (sender !== plan.authority.toLowerCase()) return `it is signed by ${sender}, not the plan authority`
+  if (gweiCeiling(signed.gas * signed.maxFeePerGas) > step.gasLimit) return `its gas times its maximum fee exceeds the step's ${step.gasLimit} gwei`
+  return undefined
+}
+
+effect function evmSpend(rpc: EvmRpc.Shape, receipt: Receipt, sender: string) {
+  const execution = receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n)
+  const before = rpc.balance(sender as Hex, receipt.blockNumber - 1n) catch effect (error) => {
+    throw refusedBy(error)
+  }
+  const after = rpc.balance(sender as Hex, receipt.blockNumber) catch effect (error) => {
+    throw refusedBy(error)
+  }
+  if (before - after < execution) throw new ChainRefused({ message: `the authority received native money in block ${receipt.blockNumber}, so the fee including the L1 data fee cannot be measured` })
+  return before - after
+}
+
+effect function evmChain(registry: Registry) {
+  const rpc = try EvmRpc
+  const sha = try digester()
+  const finalized = effect (transaction: string) => {
+    if (!evmHash.test(transaction)) return undefined
+    const receipt = rpc.finalizedReceipt(transaction as Hex) catch effect (error) => {
+      throw refusedBy(error)
+    }
+    if (receipt === undefined) return undefined
+    const sent = rpc.transaction(transaction as Hex) catch effect (error) => {
+      throw refusedBy(error)
+    }
+    return sent === undefined ? undefined : { receipt, sent }
+  }
+  return {
+    family: "evm",
+    deployment: (plan) => effect {
+      const facts = networks[plan.network]
+      const reviewed = reviewedEvmOf(registry, plan.network)
+      if (reviewed === undefined) return { exactDeployment: false, exactAsset: false, currentAuthority: false }
+      const factory = (try reviewedProxy(rpc, sha, reviewed, reviewed.factory, reviewed.factoryImplementation, reviewed.factoryImplementationCodeSha256))
+        && sameAddress("evm", try evmRead(rpc, reviewed.factory, factoryAbi, "upgradeAuthority"), reviewed.authority)
+      const vault = plan.vault === "" || ((try reviewedProxy(rpc, sha, reviewed, plan.vault, reviewed.vaultImplementation, reviewed.vaultImplementationCodeSha256))
+        && sameAddress("evm", try evmRead(rpc, plan.vault, vaultAbi, "factory"), reviewed.factory))
+      const token = plan.vault === "" ? plan.asset : try evmRead(rpc, plan.vault, vaultAbi, "token")
+      const authority = plan.vault === "" ? try evmRead(rpc, reviewed.factory, factoryAbi, "upgradeAuthority") : try evmRead(rpc, plan.vault, vaultAbi, "owner")
+      return {
+        exactDeployment: factory && vault,
+        exactAsset: sameAddress("evm", plan.asset, facts.stablecoin) && sameAddress("evm", token, facts.stablecoin),
+        currentAuthority: sameAddress("evm", authority, plan.authority),
+      }
+    },
+    inspect: (plan, step, raw) => effect {
+      const signed = try signedEvm(raw)
+      const mismatch = evmMismatch(plan, step, signed.transaction, signed.sender)
+      if (mismatch !== undefined) throw new ChainRefused({ message: `the signed transaction is refused: ${mismatch}` })
+      return signed.hash
+    },
+    simulate: (_plan, raw) => effect {
+      const signed = try signedEvm(raw)
+      const outcome = rpc.call({ to: signed.transaction.to as Hex, data: signed.transaction.input as Hex, from: signed.sender as Hex, block: "latest" }) catch effect (error) => {
+        if (error._tag === "RpcRefused") return undefined
+        throw refusedBy(error)
+      }
+      return outcome !== undefined
+    },
+    send: (transaction, raw) => effect {
+      const sent = rpc.sendRaw(raw as Hex) catch effect (error) => {
+        throw refusedBy(error)
+      }
+      if (sent.toLowerCase() !== transaction) throw new ChainRefused({ message: `the RPC answered ${sent}, not the retained transaction ${transaction}` })
+    },
+    result: (plan, step, transaction) => effect {
+      const found = try finalized(transaction)
+      if (found === undefined) return undefined
+      const { receipt, sent } = found
+      const succeeded = receipt.status === "success"
+      const targeted = sent.to !== undefined && sameAddress("evm", sent.to, step.to) && sent.input.toLowerCase() === step.data
+        && sameAddress("evm", sent.from, plan.authority) && sent.value === 0n
+      const exactOperation = targeted && (!succeeded || moneyMatches(plan, step, receipt.logs))
+      return {
+        network: plan.network,
+        vault: exactOperation ? plan.vault : (sent.to ?? "").toLowerCase(),
+        transaction,
+        finalized: true,
+        exactOperation,
+        succeeded,
+        actualGas: gweiCeiling(try evmSpend(rpc, receipt, sent.from.toLowerCase())),
+      } satisfies Result
+    },
+    executed: (call, transaction, signer) => effect {
+      const found = try finalized(transaction)
+      return found !== undefined && found.receipt.status === "success" && found.sent.to !== undefined && sameAddress("evm", found.sent.to, call.to)
+        && found.sent.input.toLowerCase() === call.data && found.sent.value === 0n && (signer === undefined || sameAddress("evm", found.sent.from, signer))
+    },
+  } satisfies QualificationChain.Shape
+}
+
+function readLittle(bytes: Uint8Array, at: number, size: number) {
+  let value = 0n
+  for (let index = size - 1; index >= 0; index -= 1) value = value * 256n + units(bytes[at + index] ?? 0)
+  return value
+}
+
+interface Fit {
+  readonly exact: boolean
+  readonly maxFee: bigint
+}
+
+function solanaFit(transaction: DecodedTransaction, call: PlanCall, signer: string | undefined): Fit {
+  const message = transaction.message
+  const keys = message.accountKeys
+  const refused = { exact: false, maxFee: 0n }
+  if (message.version !== "legacy" && message.lookups.length !== 0) return refused
+  if (signer !== undefined && (message.header.requiredSignatures !== 1 || keys[0] !== signer)) return refused
+  const budget = message.instructions.filter((instruction) => keys[instruction.programIndex] === computeBudget)
+  const rest = message.instructions.filter((instruction) => keys[instruction.programIndex] !== computeBudget)
+  const limits = budget.filter((instruction) => instruction.data[0] === 2 && instruction.data.length === 5)
+  const prices = budget.filter((instruction) => instruction.data[0] === 3 && instruction.data.length === 9)
+  const only = rest[0]
+  if (rest.length !== 1 || only === undefined || limits.length > 1 || prices.length > 1 || limits.length + prices.length !== budget.length) return refused
+  if (budget.some((instruction) => instruction.accounts.length !== 0)) return refused
+  const accounts = only.accounts.map((index) => keys[index] ?? "")
+  const exact = keys[only.programIndex] === call.to && bytesHex(only.data) === call.data
+    && accounts.length === call.accounts.length && accounts.every((key, index) => key === call.accounts[index])
+  const limit = limits[0] === undefined ? defaultComputeUnits : readLittle(limits[0].data, 1, 4)
+  const price = prices[0] === undefined ? 0n : readLittle(prices[0].data, 1, 8)
+  return { exact, maxFee: baseFeeLamports * units(message.header.requiredSignatures) + (price * limit + 999_999n) / 1_000_000n }
+}
+
+function solanaMoneyMatches(plan: EscrowPlan, step: PlanStep, fetched: FetchedTransaction) {
+  const keys = fetched.transaction.message.accountKeys
+  const deltas = new Map<string, bigint>()
+  const add = (sign: bigint) => (balance: TokenBalance) => {
+    const slot = `${balance.mint} ${keys[balance.accountIndex] ?? ""}`
+    deltas.set(slot, (deltas.get(slot) ?? 0n) + sign * balance.amount)
+  }
+  fetched.meta.preTokenBalances.forEach(add(-1n))
+  fetched.meta.postTokenBalances.forEach(add(1n))
+  const moved = [...deltas.entries()].filter(([, delta]) => delta !== 0n)
+  if (moved.some(([slot]) => !slot.startsWith(`${plan.asset} `))) return false
+  const vault = moved.find(([slot]) => slot === `${plan.asset} ${plan.vault}`)?.[1]
+  const other = moved.filter(([slot]) => slot !== `${plan.asset} ${plan.vault}`)
+  if (step.kind === "Deposit") return moved.length === 2 && vault === units(step.gross) && other[0]?.[1] === -units(step.gross)
+  if (step.kind === "Payout") return moved.length === 2 && vault === -units(step.net) && other[0]?.[1] === units(step.net)
+  return moved.length === 0
+}
+
+effect function decodedRaw(raw: string) {
+  const bytes = base64Decode(raw)
+  const decoded = bytes === undefined ? undefined : decodeTransaction(bytes)
+  if (bytes === undefined || decoded === undefined || decoded.kind === "malformed") throw new ChainRefused({ message: "the signed Solana transaction is not base64 wire bytes" })
+  return { bytes, transaction: decoded.value }
+}
+
+effect function solanaChain(registry: Registry) {
+  const rpc = try SolanaRpc
+  const sha = try digester()
+  const crypto = try Experimental.Crypto.Crypto
+  const signedBySigners = (transaction: DecodedTransaction) => provideService(verifyTransactionSignatures(transaction), Experimental.Crypto.Crypto, crypto)
+  const fetchedAt = effect (transaction: string) => {
+    if (!isSignature(transaction)) return undefined
+    return rpc.transaction(transaction, "finalized") catch effect (error) => {
+      throw refusedBy(error)
+    }
+  }
+  return {
+    family: "solana",
+    deployment: (plan) => effect {
+      const facts = networks[plan.network]
+      const reviewed = reviewedSolanaOf(registry, plan.network)
+      const program = reviewed === undefined ? undefined : publicKey(reviewed.program)
+      const loader = address(upgradeableLoader)
+      const data = program === undefined || loader === undefined ? undefined : findPda([program], loader)
+      const account = data === undefined ? undefined : rpc.account(data.address, "finalized") catch effect (error) => {
+        throw refusedBy(error)
+      }
+      const bytes = account?.data ?? new Uint8Array()
+      const length = reviewed?.programLength ?? 0
+      const code = bytes.slice(programDataHeader, programDataHeader + length)
+      const padding = bytes.slice(programDataHeader + length)
+      const exactDeployment = reviewed !== undefined && length > 0 && code.length === length && padding.every((byte) => byte === 0) && (try sha(code)) === reviewed.programSha256
+      const authority = bytes[12] === 1 ? addressOf(bytes.slice(13, programDataHeader)) : undefined
+      const vaultKey = address(plan.vault)
+      const vault = vaultKey === undefined ? undefined : rpc.account(vaultKey, "finalized") catch effect (error) => {
+        throw refusedBy(error)
+      }
+      const token = vault === undefined ? undefined : decodeTokenAccount(vault.data)
+      const mint = token?.kind === "decoded" ? token.value.mint : undefined
+      return {
+        exactDeployment,
+        exactAsset: plan.asset === facts.stablecoin && mint === facts.stablecoin,
+        currentAuthority: authority !== undefined && authority === plan.authority && authority === reviewed?.authority,
+      }
+    },
+    inspect: (plan, step, raw) => effect {
+      const { transaction } = try decodedRaw(raw)
+      const signature = transaction.signatures[0] === undefined ? undefined : signatureOf(transaction.signatures[0])
+      if (signature === undefined || !(try signedBySigners(transaction))) throw new ChainRefused({ message: "the Solana transaction is not validly signed" })
+      const fit = solanaFit(transaction, step, plan.authority)
+      if (!fit.exact) throw new ChainRefused({ message: `the signed Solana transaction is not exactly step ${step.key} from the plan authority, with at most compute-budget instructions beside it` })
+      if (fit.maxFee > units(step.gasLimit)) throw new ChainRefused({ message: `its fee of up to ${fit.maxFee} lamports exceeds the step's ${step.gasLimit} lamports` })
+      return signature
+    },
+    simulate: (_plan, raw) => effect {
+      const { bytes } = try decodedRaw(raw)
+      return !(rpc.simulate(bytes, [], "confirmed") catch effect (error) => {
+        throw refusedBy(error)
+      }).err
+    },
+    send: (transaction, raw) => effect {
+      const { bytes } = try decodedRaw(raw)
+      const sent = rpc.sendRaw(bytes, { skipPreflight: false, maxRetries: 0 }) catch effect (error) => {
+        throw refusedBy(error)
+      }
+      if (sent !== transaction) throw new ChainRefused({ message: `the RPC answered ${sent}, not the retained transaction ${transaction}` })
+    },
+    result: (plan, step, transaction) => effect {
+      const fetched = try fetchedAt(transaction)
+      if (fetched === undefined) return undefined
+      const fit = solanaFit(fetched.transaction, step, plan.authority)
+      const succeeded = !fetched.meta.err
+      const exactOperation = fit.exact && fit.maxFee <= units(step.gasLimit) && (!succeeded || solanaMoneyMatches(plan, step, fetched))
+      return {
+        network: plan.network,
+        vault: exactOperation ? plan.vault : "",
+        transaction,
+        finalized: true,
+        exactOperation,
+        succeeded,
+        actualGas: Number(fetched.meta.fee),
+      } satisfies Result
+    },
+    executed: (call, transaction, signer) => effect {
+      const fetched = try fetchedAt(transaction)
+      return fetched !== undefined && !fetched.meta.err && solanaFit(fetched.transaction, call, signer).exact
+    },
+  } satisfies QualificationChain.Shape
+}
+
+export function qualificationChain(plan: EscrowPlan, urls: Redacted.Redacted<ReadonlyArray<string>>, registry: Registry) {
+  const facts = networks[plan.network]
+  const refused = (error: unknown) => new ChainRefused({ message: `the ${plan.network} RPC is not the pinned network: ${boundedMessage(error)}` })
+  return Layer.effect(QualificationChain, effect {
+    if (facts.family === "evm") {
+      const chain: QualificationChain.Shape = Effect.provide(evmChain(registry), evmRpc({ urls, chainId: chainIdOf(facts.identity) })) catch effect (error) => {
+        throw refused(error)
+      }
+      return chain
+    }
+    const chain: QualificationChain.Shape = Effect.provide(solanaChain(registry), solanaRpc({ urls, genesis: facts.identity })) catch effect (error) => {
+      throw refused(error)
+    }
+    return chain
+  })
+}

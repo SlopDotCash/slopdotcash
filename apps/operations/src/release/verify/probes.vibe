@@ -1,0 +1,210 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { boundedBytes } from "@repo/platform/browser"
+import { Cloudflare, ToolFailed } from "../wrangler/cloudflare.vibe"
+import { queryRows } from "../wrangler/outputs.vibe"
+
+schema Schedule { readonly cron: string }
+
+schema Schedules { readonly schedules: ReadonlyArray<Schedule> }
+
+schema Health {
+  readonly service: string
+  readonly ok: boolean
+}
+
+schema FlowStart {
+  readonly authorizationUrl: string
+  readonly expiresAt: string
+  readonly flowId: string
+  readonly pollAfterSeconds: number
+  readonly pollCapability: string
+}
+
+schema Limited {
+  readonly error: string
+  readonly message: string
+}
+
+schema Unauthorized { readonly error: string }
+
+schema AppOwner { readonly login: string }
+
+schema PublicApp {
+  readonly slug: string
+  readonly name: string
+  readonly client_id: string
+  readonly owner: AppOwner
+  readonly permissions: Record<string, string>
+  readonly events: ReadonlyArray<string>
+}
+
+schema Bucket {
+  readonly request_count: number
+  readonly window_started_at: number
+  readonly expires_at: number
+}
+
+const probeSeconds = 30
+const bodyLimit = 64 * 1024
+const healthLimit = 4096
+const startsBeforeLimit = 12
+const flowPattern = /^flow_[A-Za-z0-9_-]{24}$/u
+const capabilityPattern = /^[A-Za-z0-9_-]{43}$/u
+const clientPattern = /^[A-Za-z0-9._-]{1,128}$/u
+const startKeys = "authorizationUrl,expiresAt,flowId,pollAfterSeconds,pollCapability"
+const traceContract = "private-trace-v1-opaque-hmac-v1"
+const identityAppUrl = "https://api.github.com/apps/slop-identity"
+
+export const traceApiOrigin = "https://api.slop.cash"
+export const tracePatience = { rounds: 18, delaySeconds: 5 } as const
+
+function probeFailed(step: string, message: string) {
+  return new ToolFailed({ tool: "probe", step, message })
+}
+
+effect function exchanged(step: string, request: HttpClientRequest.HttpClientRequest, limit: number) {
+  const response = timeout(provideService(HttpClient.execute(request), FetchHttpClient.RequestInit, { redirect: "manual", cache: "no-store" }), Duration.seconds(probeSeconds)) catch effect () => {
+    throw probeFailed(step, `${request.url} did not answer`)
+  }
+  const bytes = boundedBytes(response, limit, step) catch effect () => {
+    throw probeFailed(step, `${request.url} answered an unreadable or oversized body`)
+  }
+  return { status: response.status, headers: response.headers, bytes }
+}
+
+effect function decodedBody<S extends Schema.Top>(schema: S, step: string, bytes: Uint8Array) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw probeFailed(step, "the answer is not JSON")
+  }
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw probeFailed(step, "the answer has an unexpected shape")
+  }
+}
+
+effect function readSchedules(name: string, step: string) {
+  const cloudflare = try Cloudflare
+  const answer = try cloudflare.read(step, `/workers/scripts/${name}/schedules`)
+  const read = Schema.decodeUnknownEffect(Schedules)(answer) catch effect () => {
+    throw probeFailed(step, "the schedule read-back has an unexpected shape")
+  }
+  return read.schedules.map((schedule) => schedule.cron)
+}
+
+function sameSchedules(actual: ReadonlyArray<string>, crons: ReadonlyArray<string>) {
+  return JSON.stringify([...actual].sort()) === JSON.stringify([...crons].sort())
+}
+
+export effect function checkedSchedules(name: string, crons: ReadonlyArray<string>) {
+  const step = `${name} schedules`
+  if (!sameSchedules(try readSchedules(name, step), crons)) throw probeFailed(step, "the Worker schedules differ from the reviewed configuration")
+}
+
+export effect function verifySchedules(name: string, crons: ReadonlyArray<string>, restoreMissing: boolean) {
+  const cloudflare = try Cloudflare
+  const step = `${name} schedules`
+  if (crons.length !== 1 || (crons[0] ?? "").trim() === "") throw probeFailed(step, "the reviewed configuration must declare exactly one cleanup schedule")
+  const current = try readSchedules(name, step)
+  const restore = restoreMissing && current.length === 0
+  if (restore) try cloudflare.write(step, "PUT", `/workers/scripts/${name}/schedules`, crons.map((cron) => ({ cron })))
+  const confirmed = restore ? try readSchedules(name, step) : current
+  if (!sameSchedules(confirmed, crons)) throw probeFailed(step, "the cleanup schedule differs from the reviewed configuration")
+}
+
+export effect function slopbotHealth(origin: string) {
+  const step = "slopbot health"
+  const answer = try exchanged(step, HttpClientRequest.get(`${origin}/health`), healthLimit)
+  if (answer.status !== 200) throw probeFailed(step, `Slopbot health returned HTTP ${answer.status}; expected 200`)
+  const health = try decodedBody(Health, step, answer.bytes)
+  if (health.service !== "slopbot" || !health.ok) throw probeFailed(step, "unexpected Slopbot health body")
+}
+
+effect function startFlow(origin: string, step: string) {
+  return try exchanged(step, HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${origin}/v1/oauth/start`), { audience: "private-trace-api" }), bodyLimit)
+}
+
+effect function checkedStart(origin: string) {
+  const step = "identity start"
+  const started = try startFlow(origin, step)
+  if (started.status !== 201) throw probeFailed(step, `identity start returned HTTP ${started.status}; expected 201`)
+  const raw = Effect.try(() => Object.keys(JSON.parse(new TextDecoder().decode(started.bytes)) as object).sort().join(",")) catch () => ""
+  if (raw !== startKeys) throw probeFailed(step, "identity start response has an unexpected shape")
+  const flow = try decodedBody(FlowStart, step, started.bytes)
+  if (!flowPattern.test(flow.flowId) || !capabilityPattern.test(flow.pollCapability) || flow.pollAfterSeconds !== 2 || !Number.isFinite(Date.parse(flow.expiresAt))) throw probeFailed(step, "identity start broke its flow contract")
+  const authorization = Effect.try(() => new URL(flow.authorizationUrl)) catch () => undefined
+  if (authorization === undefined || authorization.origin !== origin || authorization.pathname !== "/v1/oauth/authorize") throw probeFailed(step, "invalid identity authorization URL")
+  return authorization.href
+}
+
+effect function checkedAuthorization(origin: string, url: string) {
+  const step = "identity authorization"
+  const answer = try exchanged(step, HttpClientRequest.get(url), bodyLimit)
+  if (answer.status !== 302) throw probeFailed(step, `identity authorization returned HTTP ${answer.status}; expected 302`)
+  const location = Effect.try(() => new URL(answer.headers.location ?? "")) catch () => undefined
+  if (location === undefined || location.origin !== "https://github.com" || location.pathname !== "/login/oauth/authorize") throw probeFailed(step, "identity authorization did not target GitHub")
+  if (location.searchParams.get("redirect_uri") !== `${origin}/v1/oauth/callback`) throw probeFailed(step, "identity authorization callback drifted")
+  if (location.searchParams.get("code_challenge_method") !== "S256") throw probeFailed(step, "identity authorization did not require PKCE S256")
+  const clientId = location.searchParams.get("client_id") ?? ""
+  if (!clientPattern.test(clientId)) throw probeFailed(step, "identity authorization omitted the GitHub App client id")
+  return clientId
+}
+
+export effect function identityClientId(origin: string) {
+  return try checkedAuthorization(origin, try checkedStart(origin))
+}
+
+effect function checkedLimit(origin: string) {
+  const step = "identity rate limit"
+  for (let request = 2; request <= startsBeforeLimit; request += 1) {
+    const repeated = try startFlow(origin, step)
+    if (repeated.status !== 201) throw probeFailed(step, `identity start request ${request} returned HTTP ${repeated.status}; expected 201`)
+  }
+  const limited = try startFlow(origin, step)
+  if (limited.status !== 429) throw probeFailed(step, `identity start request ${startsBeforeLimit + 1} returned HTTP ${limited.status}; expected 429`)
+  const body = try decodedBody(Limited, step, limited.bytes)
+  if (body.error !== "rate_limited" || body.message !== "Too many requests. Try again later.") throw probeFailed(step, "identity rate-limit response has an unexpected shape")
+  const retryAfter = Number(limited.headers["retry-after"] ?? "")
+  if (!Number.isSafeInteger(retryAfter) || retryAfter < 1 || retryAfter > 60) throw probeFailed(step, "identity rate-limit response omitted a bounded retry-after")
+}
+
+export effect function identityProbes(origin: string, database: string, config: string) {
+  const cloudflare = try Cloudflare
+  const startedAt = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const clientId = try identityClientId(origin)
+  try checkedLimit(origin)
+  const step = "identity rate-limit bucket"
+  const text = try cloudflare.wrangler(step, { args: ["d1", "execute", database, "--remote", "--json", "--config", config, "--command", `SELECT request_count, window_started_at, expires_at FROM identity_rate_limits WHERE window_started_at >= ${startedAt} AND request_count = ${startsBeforeLimit + 1} ORDER BY window_started_at DESC`] })
+  const rows = try queryRows(Bucket, text, step)
+  const [row, ...others] = rows
+  if (row === undefined || others.length > 0 || !Number.isSafeInteger(row.window_started_at) || row.window_started_at < startedAt || !Number.isSafeInteger(row.expires_at) || row.expires_at <= row.window_started_at) {
+    throw probeFailed(step, "the identity rate-limit probe did not produce one authoritative bucket")
+  }
+  return clientId
+}
+
+effect function traceRefused(origin: string, token: string, round: number) {
+  const step = "private trace boundary"
+  const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${origin}/api/v1/runs?verify=${token}-active-${round}`, { headers: { "cache-control": "no-cache" } }), {})
+  const answer = exchanged(step, request, bodyLimit) catch () => undefined
+  if (answer?.status !== 401 || answer.headers["x-slop-trace-api-contract"]?.trim() !== traceContract) return false
+  const body = decodedBody(Unauthorized, step, answer.bytes) catch () => undefined
+  return body?.error === "unauthorized"
+}
+
+export effect function traceBoundary(origin: string, token: string, patience: { readonly rounds: number; readonly delaySeconds: number }) {
+  for (let round = 1; round <= patience.rounds; round += 1) {
+    if (try traceRefused(origin, token, round)) return
+    if (round < patience.rounds) try sleep(Duration.seconds(patience.delaySeconds))
+  }
+  throw probeFailed("private trace boundary", "the active private trace API did not reach its fail-closed unauthenticated boundary")
+}
+
+export effect function identityApp(clientId: string) {
+  const step = "identity app"
+  const request = HttpClientRequest.get(identityAppUrl, { headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" } })
+  const answer = try exchanged(step, request, bodyLimit)
+  if (answer.status !== 200) throw probeFailed(step, `the Slop Identity GitHub App is not publicly discoverable (HTTP ${answer.status})`)
+  const app = try decodedBody(PublicApp, step, answer.bytes)
+  if (app.slug !== "slop-identity" || app.name !== "Slop Identity" || app.client_id !== clientId || app.owner.login !== "elizaOS" || Object.keys(app.permissions).length !== 0 || app.events.length !== 0) {
+    throw probeFailed(step, "the public Slop Identity GitHub App contract drifted")
+  }
+}

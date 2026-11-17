@@ -1,0 +1,507 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { type Hex, decodeFunctionData, encodeFunctionData } from "viem"
+import type { EvmRpc } from "@repo/platform/chain/evm"
+import { SYSTEM_PROGRAM, type SolanaRpc, base58Encode, base64Encode } from "@repo/platform/chain/solana"
+import type { Handler } from "@repo/platform/testing"
+import { type Anvil, anvil, forward, refuseMainnet, serve } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { type QuotesFake, asFetch, dlnSourceAbi, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
+import orders from "./fixtures/dln-orders.json" with { type: "json" }
+import { type FeeChain, feeChain } from "../src/evm/client.vibe"
+import { type FeeSolana, feeSolana } from "../src/solana/client.vibe"
+import { TOKEN_PROGRAM, parsedTransaction } from "../src/solana/wire.vibe"
+import type { EvmNetwork } from "../src/signer/intents.ts"
+import { circleUsdc, dln, robinhoodUsdg } from "../src/runtime/pins.ts"
+import { hexBytes } from "../src/dln/evmCalldata.ts"
+import { type EvmOrderProposal, proposeEvmOrder, recheckedEvmOrder } from "../src/dln/evmOrder.vibe"
+import { proposeSolanaOrder, recheckedSolanaOrder } from "../src/dln/solanaOrder.vibe"
+import { evmRefund, fill, solanaRefund, takeOrderStatus } from "../src/dln/evidence.vibe"
+
+type Tamper = "none" | "receiver" | "orderAuthority" | "beneficiary" | "patchAuthority" | "externalCall" | "affiliateFee" | "referral" | "permit"
+  | "unknownTaker" | "openTaker" | "trailing" | "notAnOrder" | "contract" | "value" | "overdelivery" | "malformed" | "orderId"
+type Bytes = "none" | "giveAmount" | "discriminator" | "extraArgs" | "lookup" | "priority" | "taker" | "trailing"
+type Simulated = "debits" | "otherDebit" | "failed" | "credits"
+type Escrow = "held" | "empty" | "absent"
+
+interface Scenario {
+  readonly tamper: Tamper
+  readonly bytes: Bytes
+  readonly simulated: Simulated
+  readonly escrow: Escrow
+}
+
+interface EscrowRead { readonly address: unknown; readonly commitment: unknown; readonly minContextSlot: unknown }
+
+service Bridges {
+  readonly base: Anvil
+  readonly robinhood: Anvil
+  readonly solanaRpc: string
+  readonly fetch: typeof globalThis.fetch
+  readonly quotes: QuotesFake
+  readonly maker: string
+  readonly escrow: string
+  readonly escrowReads: ReadonlyArray<EscrowRead>
+  set(next: Partial<Scenario>): void!!
+}
+
+const plain: Scenario = { tamper: "none", bytes: "none", simulated: "debits", escrow: "held" }
+
+const evmWallet = orders.evm.wallet as Hex
+const evmOrderId = orders.evm.orderId as Hex
+const solanaOrderId = orders.solana.orderId as Hex
+const unlockOrderId = `0x${"22".repeat(32)}` as Hex
+const solanaWallet = orders.solana.wallet
+const solanaReceiver = orders.solana.receiver as Hex
+const giveAmount = 500_000_000n
+const evmTake = 498_895_199n
+const solanaTake = 498_367_106n
+const fixedFee = 1_000_000_000_000_000n
+const attacker: Hex = "0x000000000000000000000000000000000000a77a"
+const stranger: Hex = "0x00000000000000000000000000000000000000bb"
+const keyOf = (fill: number) => base58Encode(new Uint8Array(32).fill(fill))
+const genesis = keyOf(77)
+const confirmedHash = keyOf(11)
+const finalizedHash = keyOf(12)
+const walletLamports = 1_000_000_000
+const orderLamports = 15_000_000
+const makerHeld = 600_000_000n
+
+function push(value: number) {
+  const digits = value.toString(16)
+  const even = digits.length % 2 === 0 ? digits : `0${digits}`
+  return `${(0x5f + even.length / 2).toString(16)}${even}`
+}
+
+function words(count: number) {
+  const loads = Array.from({ length: count }, (_, index) => `600435${index === 0 ? "" : `${push(index)}01`}54${push(index * 32)}52`).join("")
+  return `${loads}${push(count * 32)}${push(0)}f3`
+}
+
+function sourceStub() {
+  const give = words(8)
+  return `0x3660041461${(8 + give.length / 2).toString(16).padStart(4, "0")}57${give}5b${words(1)}`
+}
+
+function word(value: bigint) {
+  return `0x${value.toString(16).padStart(64, "0")}`
+}
+
+async function store(chain: Anvil, contract: string, orderId: string, values: ReadonlyArray<readonly [number, bigint]>) {
+  for (const [offset, value] of values) await chain.rpc("anvil_setStorageAt", [contract, word(BigInt(orderId) + BigInt(offset)), word(value)])
+}
+
+async function install(base: Anvil, robinhood: Anvil) {
+  await refuseMainnet({ url: base.url, family: "evm" })
+  await refuseMainnet({ url: robinhood.url, family: "evm" })
+  await base.rpc("anvil_setCode", [dln.source, sourceStub()])
+  await base.rpc("anvil_setStorageAt", [dln.source, word(0n), word(fixedFee)])
+  await robinhood.rpc("anvil_setCode", [dln.destination, `0x${words(4)}`])
+  await base.mine(3)
+  await robinhood.mine(3)
+}
+
+async function blockHash(chain: Anvil, height: bigint) {
+  const block = await chain.rpc("eth_getBlockByNumber", [`0x${height.toString(16)}`, false]) as { hash: string }
+  return block.hash
+}
+
+function changedOrder(body: { readonly tx: { readonly data: Hex } }, mode: Tamper) {
+  const decoded = decodeFunctionData({ abi: dlnSourceAbi, data: body.tx.data })
+  if (decoded.functionName !== "createSaltedOrder") return body.tx.data
+  const [order, salt, affiliate, referral, permit, metadata] = decoded.args
+  return encodeFunctionData({
+    abi: dlnSourceAbi,
+    functionName: "createSaltedOrder",
+    args: [
+      {
+        ...order,
+        receiverDst: mode === "receiver" ? attacker : order.receiverDst,
+        orderAuthorityAddressDst: mode === "orderAuthority" ? attacker : order.orderAuthorityAddressDst,
+        allowedCancelBeneficiarySrc: mode === "beneficiary" ? attacker : order.allowedCancelBeneficiarySrc,
+        givePatchAuthoritySrc: mode === "patchAuthority" ? attacker : order.givePatchAuthoritySrc,
+        externalCall: mode === "externalCall" ? "0x01" : order.externalCall,
+        allowedTakerDst: mode === "unknownTaker" ? stranger : mode === "openTaker" ? "0x" : order.allowedTakerDst,
+        takeAmount: mode === "overdelivery" ? giveAmount + 1n : order.takeAmount,
+      },
+      salt,
+      mode === "affiliateFee" ? `0x${"11".repeat(52)}` : affiliate,
+      mode === "referral" ? 7 : referral,
+      mode === "permit" ? "0x01" : permit,
+      metadata,
+    ],
+  })
+}
+
+async function tampered(text: string, mode: Tamper) {
+  const body = parsedJson(text) as { readonly orderId: string; readonly tx: { readonly to?: string; readonly data: Hex; readonly value?: string } }
+  switch (mode) {
+    case "malformed": return { ...body, orderId: undefined }
+    case "orderId": return { ...body, orderId: `0x${"11".repeat(32)}` }
+    case "contract": return { ...body, tx: { ...body.tx, to: attacker } }
+    case "value": return { ...body, tx: { ...body.tx, value: (BigInt(body.tx.value ?? "0") + 1n).toString() } }
+    case "trailing": return { ...body, tx: { ...body.tx, data: `${body.tx.data}${"00".repeat(32)}` } }
+    case "notAnOrder": return { ...body, tx: { ...body.tx, data: "0x095ea7b3" } }
+    default: return { ...body, tx: { ...body.tx, data: changedOrder(body, mode) } }
+  }
+}
+
+function adapted(handler: Handler, mode: () => Tamper): Handler {
+  return async (request) => {
+    const answer = await handler(request)
+    const tamper = mode()
+    if (tamper === "none" || answer.status !== 200 || !new URL(request.url).pathname.endsWith("/dln/order/create-tx")) return answer
+    return Response.json(await tampered(await answer.text(), tamper))
+  }
+}
+
+function solanaBytes(mode: Bytes, captured: Uint8Array) {
+  const bytes = captured.slice()
+  switch (mode) {
+    case "none": return bytes
+    case "giveAmount": {
+      bytes[595] = (bytes[595] ?? 0) + 1
+      return bytes
+    }
+    case "discriminator": {
+      bytes[587] = (bytes[587] ?? 0) ^ 0xff
+      return bytes
+    }
+    case "taker": {
+      bytes[810] = (bytes[810] ?? 0) ^ 0x01
+      return bytes
+    }
+    case "priority": {
+      bytes.set([0x80, 0x96, 0x98, 0, 0, 0, 0, 0], 563)
+      return bytes
+    }
+    case "extraArgs": {
+      bytes[585] = 0xc8
+      return Uint8Array.from([...bytes.slice(0, 914), 0, ...bytes.slice(914)])
+    }
+    case "lookup": return Uint8Array.from([...bytes.slice(0, 914), 1, ...new Uint8Array(32).fill(9), 1, 0, 0])
+    case "trailing": return Uint8Array.from([...bytes, 0])
+  }
+}
+
+function account(owner: string, data: Uint8Array, lamports: number) {
+  return { owner, lamports, data: [base64Encode(data), "base64"], executable: false }
+}
+
+function holding(amount: bigint) {
+  const data = new Uint8Array(165)
+  new DataView(data.buffer).setBigUint64(64, amount, true)
+  data[108] = 1
+  return account(TOKEN_PROGRAM, data, 2_039_280)
+}
+
+function answered(result: unknown) {
+  return Response.json({ jsonrpc: "2.0", id: 1, result })
+}
+
+function simulation(simulated: Simulated) {
+  const spent = simulated === "credits" ? -1 : orderLamports
+  const left = simulated === "otherDebit" ? makerHeld - giveAmount + 1n : makerHeld - giveAmount
+  return { err: simulated === "failed" ? { InstructionError: [2, { Custom: 1 }] } : null, accounts: [account(SYSTEM_PROGRAM, new Uint8Array(), walletLamports - spent), holding(left)] }
+}
+
+function escrowOf(escrow: Escrow) {
+  return escrow === "absent" ? null : holding(escrow === "held" ? giveAmount : 0n)
+}
+
+function solanaRpc(current: () => Scenario, maker: string, reads: EscrowRead[]): Handler {
+  return async (request) => {
+    const call = JSON.parse(await request.text()) as { readonly method: string; readonly params: ReadonlyArray<unknown> }
+    const scenario = current()
+    const context = { slot: 100 }
+    const config = (call.params[1] ?? call.params[0]) as { readonly commitment?: unknown; readonly minContextSlot?: unknown } | undefined
+    switch (call.method) {
+      case "getGenesisHash": return answered(genesis)
+      case "getLatestBlockhash": return config?.commitment === "finalized"
+        ? answered({ context: { slot: 90 }, value: { blockhash: finalizedHash, lastValidBlockHeight: 950 } })
+        : answered({ context, value: { blockhash: confirmedHash, lastValidBlockHeight: 1000 } })
+      case "getAccountInfo": {
+        const [address] = call.params
+        if (address === solanaWallet) return answered({ context, value: account(SYSTEM_PROGRAM, new Uint8Array(), walletLamports) })
+        if (address === maker) return answered({ context, value: holding(makerHeld) })
+        reads.push({ address, commitment: config?.commitment, minContextSlot: config?.minContextSlot })
+        return answered({ context: { slot: 90 }, value: escrowOf(scenario.escrow) })
+      }
+      case "simulateTransaction": return answered({ context: { slot: 101 }, value: simulation(scenario.simulated) })
+      case "getFeeForMessage": return answered({ context, value: 5000 })
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${call.method}` } })
+    }
+  }
+}
+
+const Started = Layer.effect(Bridges, effect {
+  const base = try acquireRelease(promise(() => anvil({ chainId: 8453, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  const robinhood = try acquireRelease(promise(() => anvil({ chainId: 4663, finalityDepth: 2 })), (chain) => promise(() => chain.close()))
+  try promise(() => install(base, robinhood))
+  const captured = hexBytes(orders.solana.data)
+  if (captured === undefined) return try die(new Error("the captured Solana proposal is not hex"))
+  const parsed = try orDie(parsedTransaction(captured))
+  const placed = parsed.instructions[parsed.instructions.length - 1]?.accounts ?? []
+  const keyAt = (position: number) => parsed.staticKeys[placed[position] ?? parsed.staticKeys.length] ?? ""
+  const [maker, escrow] = [keyAt(5), keyAt(6)]
+  let scenario = plain
+  const reads: EscrowRead[] = []
+  const rpc = solanaRpc(() => scenario, maker, reads)
+  const served = try acquireRelease(promise(() => serve(rpc)), (server) => promise(() => server.close()))
+  const quotes = quotesFake({ chains: { solana: served.url } })
+  const decoded = try orDie(Effect.try(() => decodeFunctionData({ abi: dlnSourceAbi, data: orders.evm.data as Hex })))
+  if (decoded.functionName !== "createSaltedOrder") return try die(new Error("the captured EVM proposal is not a salted order"))
+  const [order, salt, , , , metadata] = decoded.args
+  try orDie(Effect.try(() => quotes.dln.order({
+    family: "evm", srcChainId: 8453n, source: dln.source, giveToken: circleUsdc.base, giveAmount, takeChainId: 4663n, takeToken: robinhoodUsdg,
+    takeAmount: order.takeAmount, orderId: evmOrderId, salt, nativeFee: fixedFee, allowedTaker: order.allowedTakerDst, metadata,
+  })))
+  try orDie(Effect.try(() => quotes.dln.order({
+    family: "solana", giveToken: circleUsdc.solana, giveAmount, takeChainId: 4663n, takeToken: robinhoodUsdg, takeAmount: solanaTake, orderId: solanaOrderId,
+    build: () => solanaBytes(scenario.bytes, captured),
+  })))
+  const net = try orDie(Effect.try(() => internet({
+    quotes: adapted(quotes.handler, () => scenario.tamper),
+    rpc: { [base.url]: forward(base.url), [robinhood.url]: forward(robinhood.url), [served.url]: rpc },
+  })))
+  return {
+    base,
+    robinhood,
+    solanaRpc: served.url,
+    fetch: asFetch(net.handler),
+    quotes,
+    maker,
+    escrow,
+    escrowReads: reads,
+    set: (next) => sync(() => { scenario = { ...plain, ...next } }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function onEvm<A, E>(network: EvmNetwork, program: A!E!(FeeChain | EvmRpc | HttpClient.HttpClient)) {
+  const bridges = try Bridges
+  const chain = network === "Robinhood" ? bridges.robinhood : bridges.base
+  const layer = feeChain({ network, wallet: evmWallet, urls: Redacted.make([chain.url]), timeoutMs: 10_000 })
+  return try Effect.provideService(Effect.provide(Effect.provide(program, layer), FetchHttpClient.layer), FetchHttpClient.Fetch, bridges.fetch)
+}
+
+effect function onSolana<A, E>(program: A!E!(FeeSolana | SolanaRpc | HttpClient.HttpClient)) {
+  const bridges = try Bridges
+  const layer = feeSolana({ wallet: solanaWallet, urls: Redacted.make([bridges.solanaRpc]), genesis, timeoutMs: 10_000 })
+  return try Effect.provideService(Effect.provide(Effect.provide(program, layer), FetchHttpClient.layer), FetchHttpClient.Fetch, bridges.fetch)
+}
+
+function outcomeOf(error: unknown) {
+  if (typeof error !== "object" || error === null || !("_tag" in error)) return String(error)
+  const tagged = error as { readonly _tag: string; readonly issue?: string; readonly detail?: string }
+  return `${tagged._tag}: ${tagged.issue ?? tagged.detail ?? ""}`
+}
+
+function kindOf(result: { readonly kind: string } | string) {
+  return typeof result === "string" ? result : result.kind
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A deBridge proposal on an EVM network becomes order terms only when every byte is the fee wallet\'s exact order: tampered receivers, authorities, beneficiaries, external calls, affiliate fees, referrals, permits, unknown takers, trailing bytes, foreign contracts and a wrong fixed fee are refused, and no route is recorded as such (spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once")', () => effect {
+    const bridges = try Bridges
+    const proposed = try onEvm("Base", proposeEvmOrder(giveAmount, evmWallet))
+    if (proposed.kind !== "Proposed") return try die(new Error("the captured proposal found no route"))
+    const asked = bridges.quotes.calls.filter((call) => call.service === "dln").map((call) => [...new URL(call.url).searchParams.entries()])
+    try same({ proposal: proposed.proposal, captured: proposed.proposal.data.toLowerCase() === orders.evm.data.toLowerCase(), asked }, {
+      proposal: {
+        data: proposed.proposal.data,
+        giveToken: circleUsdc.base,
+        order: {
+          giveAmount,
+          takeAmount: evmTake,
+          salt: 1_794_341_272_064n,
+          receiver: evmWallet,
+          allowedTaker: dln.allowedTakers[0],
+          metadata: "0x010100000055e40300000000000000000000000000000000005f89bc1d00000000000000000000000000000000000000000000000000000000000000000000000000",
+          nativeFee: fixedFee,
+          orderId: evmOrderId,
+        },
+        estimatedTakeAmount: evmTake,
+      },
+      captured: true,
+      asked: [[
+        ["srcChainId", "8453"], ["srcChainTokenIn", circleUsdc.base], ["srcChainTokenInAmount", "500000000"], ["dstChainId", "4663"],
+        ["dstChainTokenOut", robinhoodUsdg], ["dstChainTokenOutAmount", "auto"], ["dstChainTokenOutRecipient", evmWallet],
+        ["srcChainOrderAuthorityAddress", evmWallet], ["dstChainOrderAuthorityAddress", evmWallet], ["srcAllowedCancelBeneficiary", evmWallet],
+        ["prependOperatingExpenses", "false"], ["referralCode", "0"],
+      ]],
+    })
+    const rechecked = try onEvm("Base", recheckedEvmOrder(proposed.proposal))
+    const changed: EvmOrderProposal = { ...proposed.proposal, order: { ...proposed.proposal.order, receiver: attacker } }
+    const recheckRefused = onEvm("Base", recheckedEvmOrder(changed)) catch (error) => outcomeOf(error)
+    const modes: ReadonlyArray<Tamper> = ["receiver", "orderAuthority", "beneficiary", "patchAuthority", "externalCall", "affiliateFee", "referral", "permit",
+      "unknownTaker", "trailing", "notAnOrder", "contract", "value", "overdelivery", "malformed"]
+    const refused: Array<readonly [Tamper, string]> = []
+    for (const mode of modes) {
+      try bridges.set({ tamper: mode })
+      refused.push([mode, kindOf(onEvm("Base", proposeEvmOrder(giveAmount, evmWallet)) catch (error) => outcomeOf(error))])
+    }
+    try bridges.set({ tamper: "openTaker" })
+    const open = try onEvm("Base", proposeEvmOrder(giveAmount, evmWallet))
+    try bridges.set({})
+    const failures: Array<readonly [string, unknown]> = []
+    for (const mode of ["noRoute", "unavailable", "tooLarge", "malformed"] as const) {
+      bridges.quotes.fail("dln", mode)
+      const result = onEvm("Base", proposeEvmOrder(giveAmount, evmWallet)) catch (error) => outcomeOf(error)
+      failures.push([mode, result])
+    }
+    const unscripted = try onEvm("Base", proposeEvmOrder(giveAmount + 1n, evmWallet))
+    const fromRobinhood = onEvm("Robinhood", proposeEvmOrder(giveAmount, evmWallet)) catch (error) => outcomeOf(error)
+    const refusedOrder = "DlnRefused: Bridge order differs from the fee-wallet intent"
+    try same({ rechecked, recheckRefused, refused, open: open.kind === "Proposed" ? open.proposal.order.allowedTaker : open.kind, failures, unscripted, fromRobinhood }, {
+      rechecked: proposed.proposal.order,
+      recheckRefused: refusedOrder,
+      refused: [
+        ["receiver", refusedOrder], ["orderAuthority", refusedOrder], ["beneficiary", refusedOrder], ["patchAuthority", refusedOrder],
+        ["externalCall", refusedOrder], ["affiliateFee", refusedOrder], ["referral", refusedOrder], ["permit", refusedOrder],
+        ["unknownTaker", "DlnRefused: Bridge order reserves its fill for an unknown taker"],
+        ["trailing", "DlnRefused: Bridge calldata has bytes outside the checked order"],
+        ["notAnOrder", "DlnRefused: Bridge calldata is not a salted DLN order"],
+        ["contract", "DlnRefused: DLN proposal names an unexpected contract"],
+        ["value", "DlnRefused: DLN proposal value differs from the fixed fee"],
+        ["overdelivery", "DlnRefused: DLN proposal delivers more than its input"],
+        ["malformed", "DlnUnavailable: DLN order response is malformed"],
+      ],
+      open: undefined,
+      failures: [
+        ["noRoute", { kind: "NoRoute", detail: "DLN ERROR_LOW_GIVE_AMOUNT: Order amount is too small to be filled" }],
+        ["unavailable", "DlnUnavailable: DLN INTERNAL_SERVER_ERROR: Service unavailable"],
+        ["tooLarge", "DlnUnavailable: DLN response too large"],
+        ["malformed", "DlnUnavailable: DLN returned HTTP 200"],
+      ],
+      unscripted: { kind: "NoRoute", detail: "DLN ERROR_LOW_GIVE_AMOUNT: Order amount is too small to be filled" },
+      fromRobinhood: "DlnRefused: Robinhood Chain is the bridge destination, never a source",
+    })
+  })
+
+  it.effect('A Solana deBridge proposal becomes an order only as the fee wallet\'s single create_order_with_nonce over derived accounts that debits exactly the decided USDC: changed arguments, extra bytes, lookup tables, high priority bids, unknown takers, another order id and a different simulated debit are refused (spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once")', () => effect {
+    const bridges = try Bridges
+    const proposed = try onSolana(proposeSolanaOrder(giveAmount, solanaReceiver))
+    if (proposed.kind !== "Proposed") return try die(new Error("the captured Solana proposal found no route"))
+    const { draft } = proposed
+    const stamped = try orDie(parsedTransaction(draft.raw))
+    try same({
+      order: { ...draft.order, nonce: draft.order.nonce > 0n },
+      intent: draft.intent,
+      nativeFee: draft.nativeFee,
+      lastValidBlockHeight: draft.lastValidBlockHeight,
+      estimatedTakeAmount: draft.estimatedTakeAmount,
+      blockhash: base58Encode(draft.raw.slice(stamped.blockhashOffset, stamped.blockhashOffset + 32)),
+    }, {
+      order: { takeAmount: solanaTake, nonce: true, makerWallet: bridges.maker, giveOrderWallet: bridges.escrow },
+      intent: { wallet: solanaWallet, mint: circleUsdc.solana, giveAmount, takeToken: robinhoodUsdg, takeChainId: 4663n, receiver: solanaReceiver, orderId: solanaOrderId },
+      nativeFee: 15_005_000n,
+      lastValidBlockHeight: 1000,
+      estimatedTakeAmount: solanaTake,
+      blockhash: confirmedHash,
+    })
+    const rechecked = try onSolana(recheckedSolanaOrder(draft))
+    const recheckRefused = onSolana(recheckedSolanaOrder({ ...draft, intent: { ...draft.intent, giveAmount: giveAmount + 1n } })) catch (error) => outcomeOf(error)
+    const foreignReceiver = onSolana(proposeSolanaOrder(giveAmount, attacker)) catch (error) => outcomeOf(error)
+    const cases: ReadonlyArray<Partial<Scenario>> = [
+      { bytes: "giveAmount" }, { bytes: "discriminator" }, { bytes: "extraArgs" }, { bytes: "lookup" }, { bytes: "priority" }, { bytes: "taker" },
+      { bytes: "trailing" }, { tamper: "orderId" }, { simulated: "otherDebit" }, { simulated: "failed" }, { simulated: "credits" },
+    ]
+    const refused: string[] = []
+    for (const scenario of cases) {
+      try bridges.set(scenario)
+      refused.push(kindOf(onSolana(proposeSolanaOrder(giveAmount, solanaReceiver)) catch (error) => outcomeOf(error)))
+    }
+    try bridges.set({})
+    bridges.quotes.fail("dln", "noRoute")
+    const noRoute = try onSolana(proposeSolanaOrder(giveAmount, solanaReceiver))
+    try same({ rechecked, recheckRefused, foreignReceiver, refused, noRoute }, {
+      rechecked: draft.order,
+      recheckRefused: "DlnRefused: DLN order differs from the fee-wallet intent",
+      foreignReceiver: "DlnRefused: DLN order differs from the fee-wallet intent",
+      refused: [
+        "DlnRefused: DLN order differs from the fee-wallet intent",
+        "DlnRefused: DLN call is not create_order_with_nonce",
+        "DlnRefused: DLN order data has extra bytes",
+        "DlnRefused: DLN order must not load address lookup tables",
+        "DlnRefused: DLN order bids above the priority-fee limit",
+        "DlnRefused: DLN order reserves its fill for an unknown taker",
+        "SolanaRefused: invalid transaction account indexes or trailing bytes",
+        "DlnRefused: DLN order accounts differ from the derived order",
+        "DlnRefused: DLN order simulation debits a different amount",
+        "DlnRefused: DLN order simulation is unavailable or failed",
+        "DlnRefused: DLN order simulation credits SOL",
+      ],
+      noRoute: { kind: "NoRoute", detail: "DLN ERROR_LOW_GIVE_AMOUNT: Order amount is too small to be filled" },
+    })
+  })
+
+  it.effect('An order arrives, is cancelled or is refunded only on evidence at a finalized block: the exact take amount on Robinhood Chain, the source refund of the whole deposit, and an emptied Solana escrow after a cancellation (spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven")', () => effect {
+    const bridges = try Bridges
+    const { base, robinhood } = bridges
+    const source = { orderId: evmOrderId, giveAmount }
+    const notYet = try onEvm("Base", evmRefund(source))
+    try promise(() => store(base, dln.source, evmOrderId, [[0, 3n], [4, 400_000n], [5, 499_600_000n]]))
+    try promise(() => base.mine(1))
+    const unfinalized = try onEvm("Base", evmRefund(source))
+    try promise(() => base.mine(2))
+    const refundedAt = try promise(() => base.finalized())
+    const refunded = try onEvm("Base", evmRefund(source))
+    const refundedHash = try promise(() => blockHash(base, refundedAt))
+
+    const arriving = { orderId: evmOrderId, takeAmount: evmTake, receiver: evmWallet }
+    const unlocking = { ...arriving, orderId: unlockOrderId }
+    const cancelled = { orderId: solanaOrderId, takeAmount: solanaTake, receiver: solanaReceiver }
+    const open = try onEvm("Robinhood", fill(arriving))
+    try promise(() => store(robinhood, dln.destination, evmOrderId, [[0, 1n]]))
+    try promise(() => store(robinhood, dln.destination, unlockOrderId, [[0, 2n]]))
+    try promise(() => store(robinhood, dln.destination, solanaOrderId, [[0, 3n]]))
+    try promise(() => robinhood.mine(1))
+    const stillOpen = [try onEvm("Robinhood", fill(arriving)), try onEvm("Robinhood", fill(unlocking)), try onEvm("Robinhood", fill(cancelled))]
+    try promise(() => robinhood.mine(2))
+    const filledAt = try promise(() => robinhood.finalized())
+    const filledHash = try promise(() => blockHash(robinhood, filledAt))
+    const arrived = try onEvm("Robinhood", fill(arriving))
+    const unlocked = try onEvm("Robinhood", fill(unlocking))
+    const cancelling = try onEvm("Robinhood", fill(cancelled))
+    const foreign = onEvm("Robinhood", fill({ ...arriving, receiver: attacker })) catch (error) => outcomeOf(error)
+    const onSource = onEvm("Base", fill(arriving)) catch (error) => outcomeOf(error)
+    const otherChain = onEvm("Base", takeOrderStatus(evmOrderId)) catch (error) => outcomeOf(error)
+    try same({ notYet, unfinalized, refunded, open, stillOpen, arrived, unlocked, cancelling, foreign, onSource, otherChain }, {
+      notYet: { kind: "NotRefunded" },
+      unfinalized: { kind: "NotRefunded" },
+      refunded: { kind: "Refunded", orderId: evmOrderId, amount: giveAmount, beneficiary: evmWallet, height: refundedAt, blockHash: refundedHash },
+      open: { kind: "Open" },
+      stillOpen: [{ kind: "Open" }, { kind: "Open" }, { kind: "Open" }],
+      arrived: { kind: "Arrived", orderId: evmOrderId, amount: evmTake, receiver: evmWallet, height: filledAt, blockHash: filledHash },
+      unlocked: { kind: "Arrived", orderId: unlockOrderId, amount: evmTake, receiver: evmWallet, height: filledAt, blockHash: filledHash },
+      cancelling: { kind: "Cancelling", orderId: solanaOrderId, height: filledAt, blockHash: filledHash },
+      foreign: "DlnRefused: Bridge order does not deliver to this fee wallet",
+      onSource: "DlnRefused: Bridge order does not deliver to this fee wallet",
+      otherChain: "DlnRefused: Robinhood Chain order status is read from another chain",
+    })
+
+    if (cancelling.kind !== "Cancelling") return try die(new Error("the cancellation was not observed"))
+    const solanaSource = { orderId: solanaOrderId, giveAmount }
+    try bridges.set({ escrow: "held" })
+    const held = try onSolana(solanaRefund(solanaSource, cancelling))
+    try bridges.set({ escrow: "empty" })
+    const emptied = try onSolana(solanaRefund(solanaSource, cancelling))
+    try bridges.set({ escrow: "absent" })
+    const closed = try onSolana(solanaRefund(solanaSource, cancelling))
+    const mismatched = onSolana(solanaRefund({ orderId: evmOrderId, giveAmount }, cancelling)) catch (error) => outcomeOf(error)
+    try bridges.set({})
+    const solanaRefunded = { kind: "Refunded", orderId: solanaOrderId, amount: giveAmount, beneficiary: solanaWallet, height: 90n, blockHash: finalizedHash }
+    const read = { address: bridges.escrow, commitment: "finalized", minContextSlot: 90 }
+    try same({ held, emptied, closed, mismatched, reads: bridges.escrowReads }, {
+      held: { kind: "NotRefunded" },
+      emptied: solanaRefunded,
+      closed: solanaRefunded,
+      mismatched: "DlnRefused: the cancellation names another bridge order",
+      reads: [read, read, read],
+    })
+  })
+})

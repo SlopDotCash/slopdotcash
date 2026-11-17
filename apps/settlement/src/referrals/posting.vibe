@@ -1,0 +1,145 @@
+// spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Poster gas has transaction and UTC-day ceilings"
+import { randomId } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import { RpcRefused, WrongChain } from "@repo/platform/chain/rpc"
+import { ReferralAttributions } from "@repo/ports/backend"
+import type { Event } from "../../gen/settlement__referralPublication.ts"
+import { Rejected, nextFiling, priorFinalizedTotal } from "../../gen/settlement__referralPublication.effect.vibe"
+import { fromAmount } from "../kernels/amounts.ts"
+import { PosterRefused, posterMarker, signPostRoot } from "../signer/rootPoster.vibe"
+import { ReferralProgram } from "./config.vibe"
+import { openBook, programSetup } from "./accrual.vibe"
+import { DistributorMismatch, ReferralDeployment, onDistributor, postRootCalldata, readDistributor } from "./distributor.vibe"
+import { gasLimitWithMargin, maxFeePerGasFor, reservedWei, withinTransactionCeiling } from "./gas.ts"
+import { buildTree } from "./merkle.ts"
+import { type Session, applyInSession, commit, openLedger, rootIdOf, sessionOf } from "./publication.vibe"
+import { reconcile } from "./reconcile.vibe"
+
+export type PostStatus = "off" | "unconfigured" | "posted" | "nothing_to_post" | "in_flight" | "halted_after_void" | "chain_mismatch" | "paused" | "gas_budget" | "precheck_failed" | "refused"
+
+export interface PostResult {
+  readonly status: PostStatus
+  readonly reason?: string
+}
+
+schema HighestRow {
+  readonly highest: number
+}
+
+function result(status: PostStatus, reason?: string) {
+  return (reason === undefined ? { status } : { status, reason }) satisfies PostResult
+}
+
+effect function nextAttempt() {
+  const found = try first(HighestRow, sql`SELECT coalesce(max(rowid), 0) AS highest FROM referral_root_posts`)
+  return (found?.highest ?? 0) + 1
+}
+
+effect function signAndSend(session: Session, control: Parameters<typeof signPostRoot>[0]) {
+  const { deployment, accrual } = session.ledger
+  const chain = try readDistributor(deployment)
+  if (chain.paused) return result("paused")
+  const filing = nextFiling(session.state, accrual)
+  if (filing.entries.length === 0) return result("nothing_to_post")
+  const file = session.ledger.files.get(filing.period)
+  const tree = Effect.try(() => buildTree(filing.entries.map((entry) => ({ address: entry.wallet as Hex, cumulativeBase: fromAmount(entry.amount) })))) catch () => null
+  const merkleRoot = file?.merkleRoot ?? ""
+  const rootVerified = file !== undefined && tree !== null && tree.root === merkleRoot
+  const prepare = { type: "prepare", control, a: accrual, rootId: rootIdOf(file?.fileEpoch ?? -1), chain: chain.model, merkleRoot, rootVerified, signer: deployment.poster, network: deployment.network } satisfies Event
+  const prepared = applyInSession(session, prepare, "poster") catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (prepared === undefined) {
+    try Effect.logWarning("referral_post_precheck_failed", { period: filing.period, epoch: chain.epochs.length })
+    return result("precheck_failed", "the next filed root does not meet the publication rules against the finalized distributor")
+  }
+  const rpc = try EvmRpc
+  const total = fromAmount(filing.total)
+  const data = try postRootCalldata(chain.epochs.length, merkleRoot as Hex, total)
+  const simulated = rpc.call({ to: deployment.distributor, data, from: deployment.poster, block: "latest" }) catch effect (error) => match (error) {
+    when RpcRefused: error.message;
+    default: throw error;
+  }
+  if (!simulated.startsWith("0x")) return result("precheck_failed", simulated)
+  const nonce = try rpc.nonce(deployment.poster, "pending")
+  const gas = gasLimitWithMargin(try rpc.estimateGas({ from: deployment.poster, to: deployment.distributor, data, value: 0n }))
+  const latest = try rpc.head("latest")
+  if (latest.baseFeePerGas === undefined) return result("precheck_failed", "the referral network reports no EIP-1559 base fee")
+  const priority = try rpc.maxPriorityFee()
+  const maxFeePerGas = maxFeePerGasFor(latest.baseFeePerGas, priority)
+  const reserved = reservedWei(gas, maxFeePerGas)
+  if (!withinTransactionCeiling(reserved)) {
+    try Effect.logWarning("referral_post_gas_budget", { reservedWei: reserved.toString() })
+    return result("gas_budget", "the transaction exceeds the 0.0002 ETH native fee limit")
+  }
+  const attempt = try nextAttempt()
+  const journal = { type: "journal", control, attempt, gas: Number(reserved), chain: chain.model, signer: deployment.poster } satisfies Event
+  const journaled = applyInSession(prepared, journal, "poster") catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (journaled === undefined) {
+    try Effect.logWarning("referral_post_gas_budget", { reservedWei: reserved.toString() })
+    return result("gas_budget", "referral native fee budget reached; unknown sends stay reserved")
+  }
+  const signed = signPostRoot(control, journaled.state, deployment, { kind: "PostRoot", nonce: Number(nonce), gas, maxFeePerGas, maxPriorityFeePerGas: priority, previousTotal: fromAmount(priorFinalizedTotal(session.state)), tokenUnit: chain.tokenUnit }) catch effect (error) => match (error) {
+    when PosterRefused: error.reason;
+    default: throw error;
+  }
+  if (typeof signed === "string") {
+    try Effect.logWarning("referral_post_refused", { reason: signed, signer: posterMarker })
+    return result("refused", signed)
+  }
+  const evidence = { signed: { id: `rpost_${try randomId()}`, runId: `rrun_${try randomId()}`, raw: signed.raw, txId: signed.txId, nonce: Number(nonce), poster: signed.poster } }
+  const recorded = try commit(session, [{ event: prepare, by: "poster" }, { event: journal, by: "poster", evidence }])
+  const sent = { period: file?.period ?? "", epoch: chain.epochs.length, merkleRoot, totalBase: total.toString(), txId: signed.txId }
+  const after = try reconcile(recorded, control)
+  if (after.state.phase === "Uncertain") {
+    try Effect.logWarning("referral_post_unknown", sent)
+    return result("in_flight")
+  }
+  try Effect.logInfo("referral_post_submitted", sent)
+  return result("posted")
+}
+
+export effect function postNextRoot() {
+  const { program } = try ReferralProgram
+  if (program.mode === "Off") return result("off")
+  const { deployment } = try ReferralDeployment
+  if (deployment === undefined) return result("unconfigured")
+  const attributions = try (try ReferralAttributions).referred()
+  const book = try openBook(try programSetup(program.ledger, program.mode, attributions))
+  const posted = onDistributor(deployment, effect {
+    const reconciled = try reconcile(sessionOf(try openLedger(deployment, book.state)), program.control)
+    const session = reconciled.state.phase === "Prepared" ? try applyInSession(reconciled, { type: "discardPrepared" }, "poster") : reconciled
+    if (session.state.phase !== "Idle") return result("in_flight")
+    const voided = session.state.roots.find((root) => root.voided && !root.voidAcknowledged)
+    if (voided !== undefined) {
+      try Effect.logWarning("referral_post_halted_after_void", { epoch: voided.epoch })
+      return result("halted_after_void", `epoch ${voided.epoch} was voided and is not acknowledged`)
+    }
+    return try signAndSend(session, program.control)
+  }) catch effect (error) => match (error) {
+    when DistributorMismatch: result("chain_mismatch", error.reason);
+    when WrongChain: result("chain_mismatch", `chain id ${error.actual} is not ${error.expected}`);
+    default: throw error;
+  }
+  if (posted.status === "chain_mismatch") try Effect.logWarning("referral_post_chain_mismatch", { reason: posted.reason ?? "" })
+  return posted
+}
+
+export effect function reconcilePosts() {
+  const { program } = try ReferralProgram
+  if (program.mode === "Off") return result("off")
+  const { deployment } = try ReferralDeployment
+  if (deployment === undefined) return result("unconfigured")
+  const attributions = try (try ReferralAttributions).referred()
+  const book = try openBook(try programSetup(program.ledger, program.mode, attributions))
+  const session = try onDistributor(deployment, effect {
+    return try reconcile(sessionOf(try openLedger(deployment, book.state)), program.control)
+  })
+  return result(session.state.phase === "Idle" || session.state.phase === "Prepared" ? "nothing_to_post" : "in_flight")
+}
+

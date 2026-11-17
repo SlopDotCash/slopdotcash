@@ -1,0 +1,29 @@
+// spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import type { RpcFailure } from "@repo/platform/chain/rpc"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+
+export error DeploymentRefused { message: string }
+
+export interface EvmVaultDeployment {
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly registrar: string
+  readonly factory: string
+  readonly feeRecipient: string
+  readonly upgradeAuthority: string | undefined
+}
+
+export interface SolanaVaultDeployment {
+  readonly program: string
+  readonly project: string
+  readonly vault: string
+  readonly mint: string
+  readonly feeRecipient: string
+  readonly upgradeAuthority: string | null
+}
+
+export service VaultDeployments {
+  evm(vault: VaultFact, block: bigint): EvmVaultDeployment!(DeploymentRefused | RpcFailure)
+  solana(vault: VaultFact, executedAtSlot: number | undefined): SolanaVaultDeployment!(DeploymentRefused | RpcFailure)
+}

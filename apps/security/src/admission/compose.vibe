@@ -1,0 +1,43 @@
+// spec/backend/projectComposition.md, "Scans are queued and recorded against the project's current repositories"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"
+import type { Statement } from "@repo/platform/d1"
+import { ServiceAuth, admission } from "@repo/platform/http"
+import { Registry, RegistryManifests } from "@repo/ports/backend"
+import { type ProjectEvent, ProjectEvents } from "../enforcement/port.vibe"
+import { EnforcementRecord, type RecordDetails } from "../enforcement/statements.vibe"
+
+export interface RecordedRevision {
+  readonly manifestText: string
+  readonly reason: string
+  readonly actor: undefined
+}
+
+export interface ComposedEvent extends ProjectEvent {
+  readonly revision?: RecordedRevision
+  readonly alongside?: ReadonlyArray<Statement>
+}
+
+export const vettingService = 0
+
+export effect function compose(action: ComposedEvent, details?: RecordDetails) {
+  const sent = (try ProjectEvents).send(action)
+  try (details === undefined ? sent : provideService(sent, EnforcementRecord, { details }))
+}
+
+export effect function serviceAvailable() {
+  const probed = (try ServiceAuth).verify({ method: "GET", path: "/api/v1/vetting/requests", headers: {}, body: new Uint8Array() }) catch effect (error) => {
+    return error._tag === "Refused" && error.code === admission.signersUnconfigured.code ? "unconfigured" : "configured"
+  }
+  return probed !== "unconfigured"
+}
+
+export effect function manifestText(projectId: string) {
+  return (try (try RegistryManifests).project(projectId))?.manifest
+}
+
+export effect function policyCheck(projectId: string, revision: number) {
+  const view = (try Registry).project(projectId) catch effect (error) => {
+    if (error._tag === "RowMismatch") return undefined
+    throw error
+  }
+  return { revision, result: view === undefined ? "PolicyRefuses" as const : "PolicyAccepts" as const }
+}

@@ -1,0 +1,126 @@
+// spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"
+import { type Address, EvmRpc, type Hex, type Receipt } from "@repo/platform/chain/evm"
+import { RpcMalformed } from "@repo/platform/chain/rpc"
+import { type TransactionMeta, base64Decode } from "@repo/platform/chain/solana"
+import { chainIds, dln, robinhoodUsdg } from "../runtime/pins.ts"
+import { wholeBig } from "../evm/abi.ts"
+import { FeeChain } from "../evm/client.vibe"
+import { FeeSolana } from "../solana/client.vibe"
+import type { DlnOrderTerms } from "../signer/intents.ts"
+import { DlnRefused } from "./api.vibe"
+import { createdOrderMatches, giveOrderOf, giveOrdersCalldata, giveStatus, takeOrdersCalldata, takeStatus, takeStatusOf, walletDebit } from "./evmCalldata.ts"
+import { dlnGiveOrderWallet } from "./solanaOrder.vibe"
+import { tokenAmountOf } from "./solanaArgs.ts"
+
+export interface FinalizedBlock {
+  readonly height: bigint
+  readonly blockHash: string
+}
+
+export interface Arrived extends FinalizedBlock {
+  readonly kind: "Arrived"
+  readonly orderId: Hex
+  readonly amount: bigint
+  readonly receiver: Address
+}
+
+export interface Cancelling extends FinalizedBlock {
+  readonly kind: "Cancelling"
+  readonly orderId: Hex
+}
+
+export type Fill = Arrived | Cancelling | { readonly kind: "Open" }
+
+export interface Refunded extends FinalizedBlock {
+  readonly kind: "Refunded"
+  readonly orderId: Hex
+  readonly amount: bigint
+  readonly beneficiary: string
+}
+
+export type Refund = Refunded | { readonly kind: "NotRefunded" }
+
+export interface SourceOrder {
+  readonly orderId: Hex
+  readonly giveAmount: bigint
+}
+
+const robinhoodChainId = wholeBig(chainIds.robinhood) ?? 0n
+
+const LatestFinalized = Schema.Struct({ context: Schema.Struct({ slot: Schema.Number }), value: Schema.Struct({ blockhash: Schema.String }) })
+const EscrowAccount = Schema.Struct({
+  context: Schema.Struct({ slot: Schema.Number }),
+  value: Schema.NullOr(Schema.Struct({ data: Schema.Array(Schema.String) })),
+})
+
+effect function finalizedCall(to: Address, data: Hex) {
+  const evm = try EvmRpc
+  const head = try evm.head("finalized")
+  const answer = try evm.call({ to, data, block: head.number })
+  return { head, answer }
+}
+
+export effect function takeOrderStatus(orderId: Hex) {
+  if ((try (try EvmRpc).chainId()) !== robinhoodChainId) throw new DlnRefused({ issue: "Robinhood Chain order status is read from another chain" })
+  const { head, answer } = try finalizedCall(dln.destination as Address, takeOrdersCalldata(orderId))
+  const status = takeStatusOf(answer)
+  if (status === undefined) throw new RpcMalformed({ method: "eth_call", issue: "Robinhood Chain order status is unavailable" })
+  return { status, height: head.number, blockHash: head.hash }
+}
+
+export effect function fill(order: Pick<DlnOrderTerms, "orderId" | "takeAmount" | "receiver">) {
+  const chain = try FeeChain
+  if (chain.network !== "Robinhood" || order.receiver.toLowerCase() !== chain.wallet) throw new DlnRefused({ issue: "Bridge order does not deliver to this fee wallet" })
+  const observed = try takeOrderStatus(order.orderId)
+  if (observed.status === takeStatus.fulfilled || observed.status === takeStatus.sentUnlock)
+    return { kind: "Arrived", orderId: order.orderId, amount: order.takeAmount, receiver: chain.wallet, height: observed.height, blockHash: observed.blockHash } satisfies Fill
+  if (observed.status === takeStatus.sentCancel)
+    return { kind: "Cancelling", orderId: order.orderId, height: observed.height, blockHash: observed.blockHash } satisfies Fill
+  return { kind: "Open" } satisfies Fill
+}
+
+export effect function evmRefund(order: SourceOrder) {
+  const chain = try FeeChain
+  if (chain.network === "Robinhood") throw new DlnRefused({ issue: "Robinhood Chain is the bridge destination, never a source" })
+  const { head, answer } = try finalizedCall(dln.source as Address, giveOrdersCalldata(order.orderId))
+  const given = giveOrderOf(answer)
+  if (given === undefined) throw new RpcMalformed({ method: "eth_call", issue: "the bridge order status is unavailable" })
+  if (given.status !== giveStatus.claimedCancel) return { kind: "NotRefunded" } satisfies Refund
+  return { kind: "Refunded", orderId: order.orderId, amount: given.refundable, beneficiary: chain.wallet, height: head.number, blockHash: head.hash } satisfies Refund
+}
+
+export effect function solanaRefund(order: SourceOrder, cancellation: Cancelling) {
+  const solana = try FeeSolana
+  if (cancellation.orderId !== order.orderId) throw new DlnRefused({ issue: "the cancellation names another bridge order" })
+  const escrow = try dlnGiveOrderWallet(order.orderId)
+  const latest = try solana.raw.call("getLatestBlockhash", [{ commitment: "finalized" }], LatestFinalized)
+  const held = try solana.raw.call("getAccountInfo", [escrow, { encoding: "base64", commitment: "finalized", minContextSlot: latest.context.slot }], EscrowAccount)
+  if (held.value !== null) {
+    const [encoded, encoding] = held.value.data
+    const bytes = encoding === "base64" ? base64Decode(encoded) : undefined
+    const amount = bytes === undefined ? undefined : tokenAmountOf(bytes)
+    if (amount === undefined) throw new RpcMalformed({ method: "getAccountInfo", issue: "Token account is malformed" })
+    if (amount !== 0n) return { kind: "NotRefunded" } satisfies Refund
+  }
+  const height = wholeBig(latest.context.slot)
+  if (height === undefined || height < 0n) throw new RpcMalformed({ method: "getLatestBlockhash", issue: "slot is not an exact integer" })
+  return { kind: "Refunded", orderId: order.orderId, amount: order.giveAmount, beneficiary: solana.wallet, height, blockHash: latest.value.blockhash } satisfies Refund
+}
+
+export effect function createdOrder(receipt: Receipt, order: DlnOrderTerms, giveToken: Address) {
+  const chain = try FeeChain
+  if (receipt.status !== "success") throw new DlnRefused({ issue: "the bridge order transaction failed" })
+  const terms = { orderId: order.orderId, takeToken: robinhoodUsdg, takeAmount: order.takeAmount, takeChainId: robinhoodChainId, receiver: order.receiver }
+  if (!createdOrderMatches(receipt.logs, dln.source, terms)) throw new DlnRefused({ issue: "Bridge receipt lacks the recorded order" })
+  const paid = walletDebit(receipt.logs, giveToken, chain.wallet)
+  if (paid !== order.giveAmount) throw new DlnRefused({ issue: "Bridge receipt debit differs from the recorded amount" })
+  return paid
+}
+
+export effect function solanaOrderDebit(meta: TransactionMeta, mint: string, giveAmount: bigint) {
+  const { wallet } = try FeeSolana
+  const total = (balances: TransactionMeta["preTokenBalances"]) => balances.filter((balance) => balance.owner === wallet && balance.mint === mint).reduce((sum, balance) => sum + balance.amount, 0n)
+  const paid = total(meta.preTokenBalances) - total(meta.postTokenBalances)
+  if (meta.err || paid !== giveAmount) throw new DlnRefused({ issue: "Bridge receipt debit differs from the recorded amount" })
+  return paid
+}

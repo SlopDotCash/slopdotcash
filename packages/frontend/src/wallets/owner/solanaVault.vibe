@@ -1,0 +1,98 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { base58Encode, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import { type FundingAction, type FundingPlan, paymentsSolanaFunding } from "@repo/settlement/client"
+import { parseDecimalAmount } from "@repo/settlement/kernels/amounts"
+import { ordinaryFeeBase } from "@repo/settlement/kernels/fees"
+import { call } from "../../platform/api.vibe"
+import { WalletFailed } from "../core/discovery.vibe"
+import { type SolanaConnection, solanaSignAndSend } from "../core/solana.vibe"
+import type { Operation } from "./evmCalls.ts"
+import type { OwnerPlan, SolanaFundingPlan } from "./ownerPlans.schema.ts"
+import { type ReviewedWire, type SolanaVaultTerms, fundingWire, solanaChainOf } from "./solanaPlans.ts"
+
+export type { FundingPlan, SolanaVaultTerms }
+
+export interface SolanaVault {
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+  readonly terms: SolanaVaultTerms
+}
+
+export interface ReviewedFunding {
+  readonly plan: FundingPlan
+  readonly wire: ReviewedWire
+}
+
+export error FundingRefused { message: string }
+
+export const solanaFundingMessages = {
+  invalid: "The funding review response is invalid.",
+  differs: "The funding review amount differs from your request.",
+  wire: "The prepared transaction differs from the reviewed vault action.",
+  program: "Unsupported mint token program.",
+  network: "Unsupported Solana network.",
+  unavailable: "Solana funding could not be verified. Retry the review or transaction check.",
+  reconnect: "Connect and review the intended wallet again.",
+  status: "The transaction status could not be verified.",
+  signature: "The wallet did not return a signature for this action. Check wallet activity before another attempt.",
+  planUnreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
+} as const
+
+const limitBytes = 16_384
+const deadlineMs = 90_000
+const canonical = /^(0|[1-9][0-9]*)$/u
+
+function refused(message: string) {
+  return new FundingRefused({ message })
+}
+
+effect function asked(vault: SolanaVault, body: FundingAction) {
+  const answer = call(paymentsSolanaFunding, { params: { id: vault.projectId }, body }, { limitBytes, deadlineMs }) catch effect (failure) => {
+    throw refused(failure._tag === "Refused" && failure.status === 422 && failure.message !== "" ? failure.message : solanaFundingMessages.unavailable)
+  }
+  return answer
+}
+
+export effect function signAndVerify<P, E>(network: string, connection: SolanaConnection, reviewed: ReviewedWire, plan: P, beforePrompt: (plan: P) => void!E) {
+  const chain = solanaChainOf(network)
+  if (chain === undefined) throw refused(solanaFundingMessages.network)
+  const key = publicKey(connection.address)
+  if (key === undefined) throw refused(solanaFundingMessages.reconnect)
+  const signature = try solanaSignAndSend(connection, chain, reviewed.wire, beforePrompt(plan))
+  if (!(try verifyMessageSignature(key, reviewed.message, signature))) throw new WalletFailed({ message: solanaFundingMessages.signature })
+  return base58Encode(signature)
+}
+
+export effect function reviewFunding(vault: SolanaVault, connection: SolanaConnection, operation: Operation, amount: string) {
+  if (solanaChainOf(vault.network) === undefined) throw refused(solanaFundingMessages.network)
+  const answer = try asked(vault, { step: "review", operation, network: vault.network, vault: vault.vault, wallet: connection.address, amount })
+  if (!("plan" in answer)) throw refused(solanaFundingMessages.invalid)
+  const plan = answer.plan
+  if (plan.operation !== operation || plan.wallet !== connection.address || !Number.isSafeInteger(plan.lastValidBlockHeight) || plan.lastValidBlockHeight < 0
+    || !/^[1-9][0-9]{0,19}$/u.test(plan.gross) || (plan.freeBalance !== null && !canonical.test(plan.freeBalance)) || !canonical.test(plan.networkFeeLamports)) throw refused(solanaFundingMessages.invalid)
+  const parsed = parseDecimalAmount({ text: amount, decimals: plan.decimals })
+  if (parsed.kind === "Refused") throw refused(solanaFundingMessages.differs)
+  const fee = operation === "withdraw" ? ordinaryFeeBase(parsed.amount) : 0n
+  if (plan.gross !== parsed.amount.toString() || plan.fee !== fee.toString() || plan.net !== (parsed.amount - fee).toString()) throw refused(solanaFundingMessages.differs)
+  const wire = fundingWire(vault.terms, operation, parsed.amount, plan.tokenProgram, { payer: connection.address, blockhash: plan.blockhash, transaction: plan.transaction })
+  if (wire === "unsupportedProgram") throw refused(solanaFundingMessages.program)
+  if (wire === undefined) throw refused(solanaFundingMessages.wire)
+  return { plan, wire } satisfies ReviewedFunding
+}
+
+export function fundingPlanOf(plan: FundingPlan): SolanaFundingPlan {
+  return { kind: "solanaFunding", operation: plan.operation, gross: plan.gross, blockhash: plan.blockhash }
+}
+
+export effect function sendFunding<E>(vault: SolanaVault, connection: SolanaConnection, reviewed: ReviewedFunding, beforePrompt: (plan: SolanaFundingPlan) => void!E) {
+  if (reviewed.plan.wallet !== connection.address) throw refused(solanaFundingMessages.reconnect)
+  return try signAndVerify(vault.network, connection, reviewed.wire, fundingPlanOf(reviewed.plan), beforePrompt)
+}
+
+export effect function checkFunding(vault: SolanaVault, connection: SolanaConnection, plan: OwnerPlan | undefined, transactionId: string) {
+  if (plan?.kind !== "solanaFunding") throw refused(solanaFundingMessages.planUnreadable)
+  const answer = try asked(vault, { step: "check", operation: plan.operation, network: vault.network, vault: vault.vault, wallet: connection.address, gross: plan.gross, blockhash: plan.blockhash, transactionId })
+  if (!("status" in answer)) throw new WalletFailed({ message: solanaFundingMessages.status })
+  return answer.status
+}

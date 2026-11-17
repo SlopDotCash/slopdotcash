@@ -1,0 +1,107 @@
+// spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type Address, EvmRpc, type Receipt, type Transaction, checksum } from "@repo/platform/chain/evm"
+import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
+import { accruedFeesCalldata, claimFeesCalldata, word } from "../evm/abi.ts"
+import { FeeChain } from "../evm/client.vibe"
+import { definitions } from "../runtime/networks.vibe"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import { DeploymentRefused, type EvmVaultDeployment, VaultDeployments } from "./deployments.vibe"
+import { type RoleGetter, feesClaimedLogs, roleAddress, roleCalldata, transferLogs } from "./escrowAbi.ts"
+
+export error ClaimRefused { issue: string }
+
+export interface EvmVaultState {
+  readonly deployment: EvmVaultDeployment
+  readonly vault: Address
+  readonly block: bigint
+  readonly accrued: bigint
+}
+
+export interface ClaimEvidence {
+  readonly succeeded: boolean
+  readonly feesClaimed: bigint
+  readonly vaultDebit: bigint
+  readonly walletCredit: bigint
+  readonly roleFree: boolean
+}
+
+export const failedClaim: ClaimEvidence = { succeeded: false, feesClaimed: 0n, vaultDebit: 0n, walletCredit: 0n, roleFree: false }
+
+export function failureText(error: unknown) {
+  if (error instanceof ClaimRefused) return error.issue
+  if (error instanceof DeploymentRefused) return error.message
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown"
+}
+
+effect function addressOf(text: string, what: string) {
+  const parsed = checksum(text)
+  if (parsed === undefined) throw new ClaimRefused({ issue: `the reviewed ${what} is not an EVM address` })
+  return parsed
+}
+
+function same(left: string | undefined, right: string) {
+  return left !== undefined && left.toLowerCase() === right.toLowerCase()
+}
+
+effect function roleHeld(deployment: EvmVaultDeployment, block: bigint, wallet: string) {
+  const rpc = try EvmRpc
+  const factory = try addressOf(deployment.factory, "factory")
+  const getters: ReadonlyArray<RoleGetter> = deployment.upgradeAuthority === undefined ? ["identityAuthority", "pendingIdentityAuthority"] : ["identityAuthority", "pendingIdentityAuthority", "pendingUpgradeAuthority"]
+  const roles: Array<string | undefined> = [deployment.owner, deployment.registrar, deployment.upgradeAuthority]
+  for (const getter of getters) {
+    const holder = roleAddress(try rpc.call({ to: factory, data: roleCalldata(getter), block }))
+    if (holder === undefined) throw new ClaimRefused({ issue: `the factory answered a malformed ${getter}` })
+    roles.push(holder)
+  }
+  return roles.some((role) => same(role, wallet))
+}
+
+export effect function evmVault(fact: VaultFact, block: bigint) {
+  const chain = try FeeChain
+  const deployment = try (try VaultDeployments).evm(fact, block)
+  if (!same(deployment.vault, fact.vault)) throw new DeploymentRefused({ message: "Vault differs from its reviewed network or deployment" })
+  if (!same(deployment.feeRecipient, chain.wallet)) return undefined
+  if (try roleHeld(deployment, block, chain.wallet)) throw new ClaimRefused({ issue: "The fee wallet holds or is proposed for a vault role" })
+  const vault = try addressOf(deployment.vault, "vault")
+  const accrued = word(try (try EvmRpc).call({ to: vault, data: accruedFeesCalldata, block }))
+  if (accrued === undefined) throw new ClaimRefused({ issue: "the vault answered a malformed accrued fee" })
+  return { deployment, vault, block, accrued } satisfies EvmVaultState
+}
+
+export effect function verifyEvmClaim(vaults: ReadonlyArray<VaultFact>, vault: Address) {
+  const fact = vaults.find((entry) => same(entry.vault, vault))
+  if (fact === undefined) throw new ClaimRefused({ issue: "Recorded claim names no reviewed vault" })
+  const head = try (try EvmRpc).head("latest")
+  if ((try evmVault(fact, head.number)) === undefined) throw new ClaimRefused({ issue: "Recorded claim pays another fee wallet" })
+}
+
+effect function nativeEvidence(receipt: Receipt, transaction: Transaction, vault: Address, wallet: string, amount: bigint, roleFree: boolean) {
+  if (!same(transaction.hash, receipt.transactionHash) || !same(transaction.from, wallet) || !same(transaction.to, vault) || transaction.blockHash !== receipt.blockHash
+    || transaction.blockNumber !== receipt.blockNumber || transaction.input.toLowerCase() !== claimFeesCalldata.toLowerCase() || transaction.value !== 0n)
+    throw new ClaimRefused({ issue: "Native claim transaction differs from its intent" })
+  return { succeeded: true, feesClaimed: amount, vaultDebit: amount, walletCredit: amount, roleFree } satisfies ClaimEvidence
+}
+
+export effect function evmClaimEvidence(fact: VaultFact, receipt: Receipt, transaction: Transaction) {
+  if (receipt.status !== "success") return failedClaim
+  const chain = try FeeChain
+  const deployment = try (try VaultDeployments).evm(fact, receipt.blockNumber)
+  const vault = try addressOf(deployment.vault, "vault")
+  if (!same(deployment.vault, fact.vault) || !same(deployment.feeRecipient, chain.wallet) || !same(receipt.from, chain.wallet) || !same(receipt.to, vault))
+    throw new ClaimRefused({ issue: "Claim receipt does not match the reviewed vault or fee wallet" })
+  const roleFree = !(try roleHeld(deployment, receipt.blockNumber, chain.wallet))
+  const claims = feesClaimedLogs(receipt.logs, vault)
+  const [only] = claims
+  if (claims.length !== 1 || only === undefined || !same(only.recipient, chain.wallet) || only.amount <= 0n)
+    throw new ClaimRefused({ issue: "Claim receipt lacks the reviewed vault fee event" })
+  if (isNativeAssetAddress(definitions[chain.network].name, deployment.asset.toLowerCase())) return try nativeEvidence(receipt, transaction, vault, chain.wallet, only.amount, roleFree)
+  let walletCredit = 0n
+  let vaultDebit = 0n
+  for (const transfer of transferLogs(receipt.logs, deployment.asset)) {
+    if (same(transfer.to, chain.wallet)) walletCredit += transfer.value
+    if (same(transfer.from, chain.wallet)) walletCredit -= transfer.value
+    if (same(transfer.from, vault)) vaultDebit += transfer.value
+    if (same(transfer.to, vault)) vaultDebit -= transfer.value
+  }
+  return { succeeded: true, feesClaimed: only.amount, vaultDebit, walletCredit, roleFree } satisfies ClaimEvidence
+}

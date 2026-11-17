@@ -1,0 +1,63 @@
+// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { solanaGenesis } from "../runtime/pins.ts"
+
+export const publicNodeRpc = "https://solana-rpc.publicnode.com"
+export const expiryTimeoutMs = 15_000
+export const expiryReadBytes = 8 * 1024 * 1024
+
+const loopback: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"])
+
+function hostedOperator(host: string) {
+  if (host === "api.mainnet-beta.solana.com") return "solana-public"
+  if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode"
+  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station"
+  if (host.endsWith(".alchemy.com")) return "alchemy"
+  if (host.endsWith(".helius-rpc.com")) return "helius"
+  return undefined
+}
+
+export function recoveryOperator(endpoint: string, genesis: string): string | undefined {
+  const url = URL.parse(endpoint)
+  if (url === null) return undefined
+  if (url.protocol === "https:") return hostedOperator(url.hostname.toLowerCase())
+  if (genesis !== solanaGenesis && url.protocol === "http:" && loopback.has(url.hostname)) return `local-validator:${url.host}`
+  return undefined
+}
+
+export interface ExpiryProvider {
+  readonly operator: string
+  readonly rpc: JsonRpc
+}
+
+export service ExpiryOperators {
+  readonly genesis: string
+  readonly providers: ReadonlyArray<ExpiryProvider>
+}
+
+export interface ExpiryEndpoints {
+  readonly primary: Redacted.Redacted<string>
+  readonly recovery: Redacted.Redacted<string> | undefined
+  readonly genesis: string
+}
+
+export effect function expiryProvider(url: string, operator: string) {
+  const rpc = try jsonRpc({ urls: Redacted.make([url]), timeoutMs: expiryTimeoutMs, maxBytes: expiryReadBytes })
+  return { operator, rpc } satisfies ExpiryProvider
+}
+
+effect function labelled(url: Redacted.Redacted<string>, genesis: string) {
+  const text = Redacted.value(url)
+  const operator = recoveryOperator(text, genesis)
+  return operator === undefined ? undefined : try expiryProvider(text, operator)
+}
+
+export function expiryOperators(endpoints: ExpiryEndpoints) {
+  return Layer.effect(ExpiryOperators, effect {
+    const primary = try labelled(endpoints.primary, endpoints.genesis)
+    const recovery = try labelled(endpoints.recovery ?? Redacted.make(publicNodeRpc), endpoints.genesis)
+    const providers: ReadonlyArray<ExpiryProvider> = primary !== undefined && recovery !== undefined && primary.operator !== recovery.operator ? [primary, recovery] : []
+    if (providers.length === 0) try Effect.logWarning("fee_solana_expiry_operators_held", { primary: primary?.operator ?? "unrecognized", recovery: recovery?.operator ?? "unrecognized" })
+    return { genesis: endpoints.genesis, providers }
+  })
+}

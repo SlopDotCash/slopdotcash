@@ -1,0 +1,32 @@
+{
+  "name": "slop-referral-accrual",
+  "main": "../dist/referralAccrual.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    "crons": ["23 1 * * *", "*/15 * * * *"]
+  },
+  "d1_databases": [
+    { "binding": "REFERRAL_DB", "database_name": "slop-private", "database_id": "1b453124-2709-45af-8389-151a8105c461", "migrations_dir": "../../../migrations" }
+  ],
+  "vars": {
+    "REFERRAL_ACCRUAL_MODE": "Off",
+    "REFERRAL_FIRST_PERIOD": "2026-11",
+    "REFERRAL_RATE_BASE_PER_MICRO": "3000000000000",
+    "REFERRAL_TOKEN_DECIMALS": "18",
+    "REFERRAL_POOL_BASE": "2000000000000000000000000",
+    "REFERRAL_PROJECT_CAP_BASE": "250000000000000000000000",
+    "REFERRAL_WINDOW_MONTHS": "12",
+    "REFERRAL_EXCLUDED_GITHUB_IDS": "18633264,202660855",
+    "ADMIN_GITHUB_IDS": "18633264,202660855",
+    "PROJECT_MODERATOR_GITHUB_IDS": "18633264,202660855",
+    "REFERRAL_POST_NETWORK": "robinhood-testnet"
+  },
+  "expectedSecrets": [],
+  "observability": {
+    "enabled": true,
+    "logs": { "invocation_logs": false }
+  }
+}

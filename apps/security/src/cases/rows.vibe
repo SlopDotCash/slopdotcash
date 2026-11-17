@@ -1,0 +1,245 @@
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, load } from "@repo/platform/stored"
+import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
+import { type NotAState, decodeState, initial, noTriage } from "../../gen/security__cases.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import { jsonValue } from "../analysis/prompts.ts"
+import { githubNumber } from "../privacy/reads.vibe"
+import type { FrozenTerms } from "../receipt/program.vibe"
+import { amountOf, caseTerms, frozenOf, fullAward, losses, severities } from "../terms/receipt.vibe"
+
+export schema CaseRow {
+  id: string
+  project_id: string
+  advisory_repository: string
+  advisory_ghsa: string | null
+  reporter_github_id: string
+  reporter_github_login: string
+  submission_state: "claimed" | "verified" | "link-rejected"
+  received_at: string | null
+  verified_at: string | null
+  verified_by_github_id: string | null
+  policy_revision: number | null
+  terms: string | null
+  evidence_digest: string | null
+  receipt_state: "received" | "needs-information" | "triaging" | "confirmed" | "duplicate" | "out-of-scope" | "rejected" | "disputed"
+  remediation_state: string
+  award_state: "not-applicable" | "pending" | "ineligible" | "reserved" | "capacity-exhausted" | "approved"
+  payment_state: string
+  disclosure_state: string
+  recognition: string
+  severity: string | null
+  loss_finding: string | null
+  root_cause_key: string | null
+  duplicate_of: string | null
+  technical_decider_github_id: string | null
+  appeal_state: "none" | "open" | "upheld" | "returned"
+  appeal_from_state: string | null
+  owner_github_id: string | null
+  payment_deadline: string | null
+  related_party: "not-assessed" | "unrelated" | "related"
+  related_party_review: "not-applicable" | "pending" | "approved" | "refused"
+  related_party_reviewer_github_id: string | null
+  received_at_source: string | null
+  receipt_evidence_digest: string | null
+  award_gross_minor: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+  published_at: string | null
+  report_version: number | null
+  reserved: number
+  direct: number
+}
+
+export schema EventRow {
+  case_revision: number
+  kind: string
+  actor_github_id: string
+  actor_role: string
+  reason: string | null
+  evidence_reference: string | null
+  detail: string
+  at: string
+  idempotency_key: string
+}
+
+export schema MemberRow { github_id: string; github_login: string; added_at: string; revoked_at: string | null }
+
+export schema TriageRow {
+  appeal_revision: number
+  attempt: number
+  state: "running" | "complete" | "failed" | "unavailable"
+  provider: string | null
+  model: string | null
+  prompt_revision: string
+  proposed_outcome: "uphold" | "return" | null
+  rationale: string | null
+  confidence: number | null
+  escalation_reasons: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface CaseRecord {
+  readonly row: CaseRow
+  readonly frozen: FrozenTerms | undefined
+  readonly events: ReadonlyArray<EventRow>
+  readonly members: ReadonlyArray<MemberRow>
+  readonly triages: ReadonlyArray<TriageRow>
+  readonly model: PrivateCase
+}
+
+export const caseId = /^sc_[A-Za-z0-9_-]{8,72}$/u
+
+export const caseColumns = sql`c.id, c.project_id, c.advisory_repository, c.advisory_ghsa, c.reporter_github_id, c.reporter_github_login, c.submission_state, c.received_at, c.verified_at, c.verified_by_github_id, c.policy_revision, c.terms, c.evidence_digest, c.receipt_state, c.remediation_state, c.award_state, c.payment_state, c.disclosure_state, c.recognition, c.severity, c.loss_finding, c.root_cause_key, c.duplicate_of, c.technical_decider_github_id, c.appeal_state, c.appeal_from_state, c.owner_github_id, c.payment_deadline, c.related_party, c.related_party_review, c.related_party_reviewer_github_id, c.received_at_source, c.receipt_evidence_digest, COALESCE(c.award_gross_base, c.award_gross_minor, (SELECT r.gross_minor FROM security_award_reservations r WHERE r.case_id = c.id)) AS award_gross_minor, c.revision, c.created_at, c.updated_at,
+  (SELECT p.created_at FROM project_revisions p WHERE p.project_id = c.project_id AND p.revision = c.policy_revision) AS published_at,
+  (SELECT i.report_version FROM security_submission_intake i WHERE i.case_id = c.id) AS report_version,
+  EXISTS (SELECT 1 FROM security_award_reservations r WHERE r.case_id = c.id) AS reserved,
+  EXISTS (SELECT 1 FROM security_direct_awards d WHERE d.case_id = c.id) AS direct`
+
+const submissions: Readonly<Record<CaseRow["submission_state"], Submission>> = { claimed: "Claimed", verified: "Verified", "link-rejected": "LinkRejected" }
+export const receipts: Readonly<Record<CaseRow["receipt_state"], Receipt>> = { received: "Received", "needs-information": "NeedsInformation", triaging: "Triaging", confirmed: "Confirmed", duplicate: "Duplicate", "out-of-scope": "OutOfScope", rejected: "Rejected", disputed: "Disputed" }
+const awards: Readonly<Record<CaseRow["award_state"], Award>> = { "not-applicable": "NotApplicable", pending: "Pending", ineligible: "Ineligible", reserved: "Reserved", "capacity-exhausted": "CapacityExhausted", approved: "Approved" }
+const appeals: Readonly<Record<CaseRow["appeal_state"], AppealState>> = { none: "NoAppeal", open: "AppealOpen", upheld: "Upheld", returned: "Returned" }
+const relations: Readonly<Record<CaseRow["related_party"], Related>> = { "not-assessed": "NotAssessed", unrelated: "Unrelated", related: "RelatedParty" }
+const reviews: Readonly<Record<CaseRow["related_party_review"], RelatedReview>> = { "not-applicable": "ReviewNotApplicable", pending: "ReviewPending", approved: "ReviewApproved", refused: "ReviewRefused" }
+const triageStates: Readonly<Record<TriageRow["state"], TriageState>> = { running: "TriageRunning", complete: "TriageComplete", failed: "TriageFailed", unavailable: "TriageUnavailable" }
+
+export const receiptColumns = { Received: "received", NeedsInformation: "needs-information", Triaging: "triaging", Confirmed: "confirmed", Duplicate: "duplicate", OutOfScope: "out-of-scope", Rejected: "rejected", Disputed: "disputed" } as const satisfies Readonly<Record<Receipt, CaseRow["receipt_state"]>>
+export const awardColumns = { NotApplicable: "not-applicable", Pending: "pending", Ineligible: "ineligible", Reserved: "reserved", CapacityExhausted: "capacity-exhausted", Approved: "approved" } as const satisfies Readonly<Record<Award, CaseRow["award_state"]>>
+export const appealColumns = { NoAppeal: "none", AppealOpen: "open", Upheld: "upheld", Returned: "returned" } as const satisfies Readonly<Record<AppealState, CaseRow["appeal_state"]>>
+export const relatedColumns = { NotAssessed: "not-assessed", Unrelated: "unrelated", RelatedParty: "related" } as const satisfies Readonly<Record<Related, CaseRow["related_party"]>>
+export const reviewColumns = { ReviewNotApplicable: "not-applicable", ReviewPending: "pending", ReviewApproved: "approved", ReviewRefused: "refused" } as const satisfies Readonly<Record<RelatedReview, CaseRow["related_party_review"]>>
+
+const deciding = new Set(["decide", "award", "decide-related-party", "decide-appeal"])
+const membership = new Set(["assign-triager", "revoke-triager"])
+
+function sourceOf(row: CaseRow): ReceiptSource {
+  if (row.submission_state !== "verified") return "NoSource"
+  if (row.received_at_source === "slop-received") return "SlopReceived"
+  if (row.received_at_source === "github-verified") return "GithubVerified"
+  return "MaintainerAttested"
+}
+
+function receiptOf(state: string | null): Receipt {
+  return state !== null && Object.hasOwn(receipts, state) ? receipts[state as CaseRow["receipt_state"]] : "Received"
+}
+
+export function detailOf(event: EventRow): Readonly<Record<string, unknown>> {
+  const parsed = jsonValue(event.detail)
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Readonly<Record<string, unknown>>) : {}
+}
+
+function commitmentOf(row: CaseRow, frozen: FrozenTerms | undefined): Commitment {
+  if (row.award_state === "reserved") return "VaultReservation"
+  if (row.award_state !== "approved") return "NoCommitment"
+  if (fullAward(frozen)) return "FullAwardHeld"
+  return row.reserved === 1 ? "VaultReservation" : row.direct === 1 ? "DirectAward" : "VaultReservation"
+}
+
+function appealHistoryOf(events: ReadonlyArray<EventRow>): ReadonlyArray<AppealRecord> {
+  const history: AppealRecord[] = []
+  let from: Receipt = "Received"
+  for (const event of events) {
+    const detail = detailOf(event)
+    if (event.kind === "appeal") from = receiptOf(typeof detail.from === "string" ? detail.from : null)
+    if (event.kind === "decide-appeal") history.push({ from, resolution: detail.outcome === "uphold" ? "Upheld" : "Returned", by: githubNumber(event.actor_github_id) })
+  }
+  return history
+}
+
+export function appealRevisionOf(events: ReadonlyArray<EventRow>) {
+  return events.filter((event) => event.kind === "appeal").at(-1)?.case_revision ?? 0
+}
+
+function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<TriageRow>): Triage {
+  const appealRevision = appealRevisionOf(events)
+  if (appealRevision === 0) return noTriage
+  const latest = triages.filter((row) => row.appeal_revision === appealRevision).at(-1)
+  if (latest === undefined) return { ...noTriage, state: "TriageQueued", appealRevision }
+  const reasons = latest.escalation_reasons ?? "[]"
+  return {
+    state: triageStates[latest.state],
+    appealRevision,
+    attempt: latest.attempt,
+    startedAt: millisOf(latest.started_at),
+    escalated: latest.state === "complete",
+    belowFloor: reasons.includes("confidence-below-floor"),
+    returnDraft: latest.proposed_outcome === "return",
+  }
+}
+
+function latestDecision(events: ReadonlyArray<EventRow>) {
+  const decision = events.filter((event) => event.kind === "decide").at(-1)
+  return decision === undefined ? {} : detailOf(decision)
+}
+
+function numbers(ids: ReadonlyArray<string | null>) {
+  return ids.flatMap((id) => id === null ? [] : [githubNumber(id)]).filter((id) => id > 0)
+}
+
+effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: ReadonlyArray<EventRow>, members: ReadonlyArray<MemberRow>, triages: ReadonlyArray<TriageRow>) {
+  const verified = row.submission_state === "verified"
+  const reporter = githubNumber(row.reporter_github_id)
+  const deciders = numbers([...events.filter((event) => deciding.has(event.kind)).map((event) => event.actor_github_id), row.technical_decider_github_id, row.related_party_reviewer_github_id])
+  const committed = row.award_state === "approved" || row.award_state === "reserved"
+  return try decodeState({
+    ...initial,
+    reporter,
+    submission: submissions[row.submission_state],
+    source: sourceOf(row),
+    terms: verified ? try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }) : initial.terms,
+    revision: row.revision,
+    reportVersion: verified ? row.report_version ?? 1 : 0,
+    triagers: numbers(members.filter((member) => member.revoked_at === null).map((member) => member.github_id)).filter((id) => id !== reporter),
+    revokedTriagers: numbers([...members].filter((member) => member.revoked_at !== null).sort((left, right) => (left.revoked_at ?? "").localeCompare(right.revoked_at ?? "")).map((member) => member.github_id)),
+    memberEvents: events.filter((event) => membership.has(event.kind)).length,
+    receipt: receipts[row.receipt_state],
+    severity: row.severity !== null && Object.hasOwn(severities, row.severity) ? severities[row.severity as keyof typeof severities] : "SeverityUnset",
+    loss: row.loss_finding !== null && Object.hasOwn(losses, row.loss_finding) ? losses[row.loss_finding as keyof typeof losses] : "LossUnset",
+    inScope: latestDecision(events).inScope === true,
+    rootCause: row.root_cause_key === null ? 0 : 1,
+    duplicateOf: row.duplicate_of === null ? 0 : 1,
+    award: awards[row.award_state],
+    grossChosen: row.award_gross_minor === null ? zero : amountOf(row.award_gross_minor),
+    commitment: commitmentOf(row, frozen),
+    payment: committed && fullAward(frozen) ? "RailUnavailable" : "PaymentNotApplicable",
+    related: relations[row.related_party],
+    relatedReview: reviews[row.related_party_review],
+    deciders: deciders.filter((id) => id !== reporter),
+    appeal: appeals[row.appeal_state],
+    appealFrom: receiptOf(row.appeal_from_state),
+    appealHistory: [...appealHistoryOf(events)],
+    triage: triageOf(events, triages),
+  } satisfies PrivateCase)
+}
+
+export function caseAggregate(id: string): Aggregate<CaseRecord | undefined, RowMismatch | NotAState, never> {
+  return {
+    name: `security case ${id}`,
+    version: sql`SELECT coalesce((SELECT revision FROM security_cases WHERE id=${id}), 0) || '|' || coalesce((SELECT group_concat(appeal_revision || ':' || attempt || ':' || state, ',') FROM (SELECT appeal_revision, attempt, state FROM security_appeal_triages WHERE case_id=${id} ORDER BY appeal_revision, attempt)), '') AS version`,
+    reads: [
+      sql`SELECT ${caseColumns} FROM security_cases c WHERE c.id = ${id}`,
+      sql`SELECT case_revision, kind, actor_github_id, actor_role, reason, evidence_reference, detail, at, idempotency_key FROM security_case_events WHERE case_id = ${id} ORDER BY case_revision`,
+      sql`SELECT github_id, github_login, added_at, revoked_at FROM security_case_members WHERE case_id = ${id} ORDER BY added_at, github_id`,
+      sql`SELECT appeal_revision, attempt, state, provider, model, prompt_revision, proposed_outcome, rationale, confidence, escalation_reasons, started_at, finished_at FROM security_appeal_triages WHERE case_id = ${id} ORDER BY appeal_revision, attempt`,
+    ],
+    decode: ([cases, events, members, triages]: ReadonlyArray<Rows>) => effect {
+      const [row] = try decoded(CaseRow, cases ?? [], "security case")
+      if (row === undefined) return undefined
+      const journal = try decoded(EventRow, events ?? [], "security case events")
+      const people = try decoded(MemberRow, members ?? [], "security case members")
+      const attempts = try decoded(TriageRow, triages ?? [], "security appeal triages")
+      const frozen = try frozenOf(row.terms)
+      return { row, frozen, events: journal, members: people, triages: attempts, model: try modelOf(row, frozen, journal, people, attempts) } satisfies CaseRecord
+    },
+  }
+}
+
+export effect function caseRecord(id: string) {
+  if (!caseId.test(id)) return undefined
+  return (try load(caseAggregate(id))).state
+}

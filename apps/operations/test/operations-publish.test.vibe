@@ -1,0 +1,253 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import type { Handler } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { cloudflareApi as cloudflareFake } from "@repo/platform/testing/cloudflare"
+import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { Response } from "miniflare"
+import { createPagesManifest } from "../src/release/manifest/pages.vibe"
+import { publisher } from "../src/release/publish/publisher.vibe"
+import { PublicationFailed, Publisher, type Target } from "../src/release/run/publisher.vibe"
+import { pinnedWrangler } from "../src/release/wrangler/cloudflare.vibe"
+
+const accountId = "0123456789abcdef0123456789abcdef"
+const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
+const productionDatabase = "1b453124-2709-45af-8389-151a8105c461"
+const stagingDatabase = "4f7d2c1e-8a90-4b3c-9d5e-6f7a8b9c0d1e"
+const siteProject = "slop-cash"
+const securityHeader = "nosniff"
+const identityOrigin = "https://identity.slop.cash"
+const clientId = "Iv1.journeyclient"
+
+const identityConfig = {
+  name: "slop-identity",
+  main: "../dist/identity.js",
+  compatibility_date: "2026-07-30",
+  workers_dev: false,
+  preview_urls: false,
+  routes: [{ pattern: "identity.slop.cash", custom_domain: true }],
+  vars: { SLOP_ENVIRONMENT: "production" },
+  expectedSecrets: [],
+}
+
+const siteConfig = {
+  name: siteProject,
+  pages_build_output_dir: "./dist",
+  compatibility_date: "2026-07-30",
+  vars: { SLOP_ENVIRONMENT: "production", PUBLIC_SITE_URL: "https://slop.cash" },
+  expectedSecrets: [],
+}
+
+function notifyConfig(name: string, environment: string, databaseId: string) {
+  return {
+    name,
+    main: "../dist/notify.js",
+    no_bundle: true,
+    compatibility_date: "2026-07-30",
+    workers_dev: false,
+    preview_urls: false,
+    triggers: { crons: [] },
+    d1_databases: [{ binding: "SLOP_DB", database_name: `slop-${environment}`, database_id: databaseId, migrations_dir: "../../../migrations" }],
+    vars: { SLOP_ENVIRONMENT: environment },
+    expectedSecrets: ["NOTIFY_UNSUBSCRIBE_KEY"],
+  }
+}
+
+interface Site {
+  readonly files: ReadonlyMap<string, Uint8Array>
+  tampered: boolean
+}
+
+function siteHost(site: Site): Handler {
+  return (request) => {
+    const url = new URL(request.url)
+    if (url.pathname === "/old") return new Response(null, { status: 301, headers: { location: "/new" } })
+    const path = url.pathname === "/" ? "index.html" : url.pathname.slice(1)
+    const bytes = site.files.get(path)
+    if (bytes === undefined) return new Response("not found", { status: 404 })
+    const served = site.tampered && path === "index.html" ? new TextEncoder().encode("<!doctype html><title>other</title>\n") : bytes
+    return new Response(served, { status: 200, headers: { "x-content-type-options": securityHeader } })
+  }
+}
+
+function json(value: unknown, status: number, headers: Readonly<Record<string, string>> = {}) {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...headers } })
+}
+
+const productionEdges: Handler = (request) => {
+  const url = new URL(request.url)
+  if (url.origin === identityOrigin && url.pathname === "/v1/oauth/start") {
+    return json({ authorizationUrl: `${identityOrigin}/v1/oauth/authorize?flow=journey`, expiresAt: "2026-11-17T01:00:00.000Z", flowId: `flow_${"a".repeat(24)}`, pollAfterSeconds: 2, pollCapability: "b".repeat(43) }, 201)
+  }
+  if (url.origin === identityOrigin && url.pathname === "/v1/oauth/authorize") {
+    const github = new URL("https://github.com/login/oauth/authorize")
+    github.search = new URLSearchParams({ client_id: clientId, redirect_uri: `${identityOrigin}/v1/oauth/callback`, code_challenge_method: "S256" }).toString()
+    return new Response(null, { status: 302, headers: { location: github.href } })
+  }
+  if (url.host === "api.slop.cash" && url.pathname === "/api/v1/runs" && request.method === "POST") {
+    return json({ error: "unauthorized" }, 401, { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" })
+  }
+  if (url.href === "https://api.github.com/apps/slop-identity") {
+    return json({ slug: "slop-identity", name: "Slop Identity", client_id: clientId, owner: { login: "elizaOS" }, permissions: {}, events: [] }, 200)
+  }
+  return new Response(`no fake answers ${url.host}`, { status: 599 })
+}
+
+const scannerJwk = JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" })
+
+function described(error: unknown) {
+  if (error instanceof PublicationFailed) return `${error.stage}: ${error.message}`
+  return error instanceof Error ? error.name : String(error)
+}
+
+effect function written(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.makeDirectory(files.dirname(path), { recursive: true })
+  try fs.writeFileString(path, text)
+}
+
+effect function settled<A, E, R>(program: A!E!R) {
+  const ended = try exit(program)
+  return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
+}
+
+effect function routed<A, E, R>(program: A!E!R, fetch: typeof globalThis.fetch) {
+  provide FetchHttpClient.Fetch = fetch {
+    return try program
+  }
+}
+
+effect function secret(served: Served, method: "PUT" | "DELETE", name: string) {
+  const base = `${served.url}/client/v4/accounts/${accountId}/workers/scripts/slop-notify/secrets`
+  const authorized = { authorization: "Bearer journey" }
+  const request = method === "PUT"
+    ? HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.put(base, { headers: authorized }), { name, text: "stray", type: "secret_text" })
+    : HttpClientRequest.delete(`${base}/${name}`, { headers: authorized })
+  const answer = try HttpClient.execute(request)
+  try Effect.try(() => assert.strictEqual(answer.status, 200))
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Publish Workers then the site and verify served bytes (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const api = cloudflareFake({ accountId })
+    const served: Served = try acquireRelease(promise(() => serve(api.handler)), (server) => promise(() => server.close()))
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-publish-" })
+    const root = files.join(directory, "checkout")
+    const bundle = files.join(directory, "bundle")
+    const site = files.join(bundle, "site")
+    try fs.makeDirectory(root, { recursive: true })
+    try fs.symlink(migrationsDir, files.join(root, "migrations"))
+    try written(files.join(root, "apps/app/wrangler/site.production.jsonc"), `${JSON.stringify(siteConfig, null, 2)}\n`)
+    try written(files.join(root, "apps/backend/wrangler/identity.production.jsonc"), `${JSON.stringify(identityConfig, null, 2)}\n`)
+    try written(files.join(root, "apps/operations/wrangler/notify.production.jsonc"), `// reviewed production notify Worker\n${JSON.stringify(notifyConfig("slop-notify", "production", productionDatabase), null, 2)}\n`)
+    try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", productionDatabase), null, 2)}\n`)
+    try written(files.join(root, "apps/operations/src/tables.ts"), "export const writes = [\"security_notification_outbox\"]\n")
+    try written(files.join(bundle, "apps/operations/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
+    try written(files.join(bundle, "apps/app/dist/_worker.js"), "export default { fetch: (request, env) => env.ASSETS.fetch(request) }\n")
+    try written(files.join(site, "index.html"), "<!doctype html><title>slop.cash</title>\n")
+    try written(files.join(site, "skill-manifest.json"), "{}\n")
+    try written(files.join(site, "_headers"), `/*\n  X-Content-Type-Options: ${securityHeader}\n`)
+    try written(files.join(site, "_redirects"), "/old /new 301\n")
+    try createPagesManifest(site)
+    const pagesManifest = try fs.readFile(files.join(site, "deployment-manifest.json"))
+    const hosted = new Map<string, Uint8Array>()
+    for (const name of ["index.html", "skill-manifest.json", "deployment-manifest.json"]) hosted.set(name, try fs.readFile(files.join(site, name)))
+    const canonical: Site = { files: hosted, tampered: false }
+    const host = siteHost(canonical)
+    const outbound: Handler = (request) => {
+      const url = new URL(request.url)
+      if (url.origin === served.url) return api.handler(request)
+      if (url.host === "slop.cash" || url.host.endsWith(`.${siteProject}.pages.dev`)) return host(request)
+      return productionEdges(request)
+    }
+    const searchPath = try Config.withDefault(Config.String("PATH"), "")
+    const config = ConfigProvider.layer(ConfigProvider.fromUnknown({
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: "journey-token",
+      CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
+      HOME: directory,
+      PATH: searchPath,
+      TMPDIR: directory,
+      SLOPBOT_RELEASE: "",
+      SLOP_VETTING_RETENTION_RELEASE: "off",
+      SLOP_VETTING_SIGNING_JWK: scannerJwk,
+    }))
+    const target = { environment: "Production", sourceSha, bundle, manifestSha256: try sha256Hex(pagesManifest) } satisfies Target
+
+    const journey = effect {
+      const publishing = try Publisher
+      const isolationCalls = api.calls.length
+      const isolation = try settled(publishing.prepare(target))
+      const isolationAsked = api.calls.length - isolationCalls
+      try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", stagingDatabase), null, 2)}\n`)
+      const prepared = try settled(publishing.prepare(target))
+      const migrated = [...api.state.d1Migrations[productionDatabase] ?? []]
+      const missingBefore = (api.state.versions["slop-notify"] ?? []).length
+      const missing = try settled(publishing.publish("Notify", target))
+      const missingUploads = (api.state.versions["slop-notify"] ?? []).length - missingBefore
+      try secret(served, "PUT", "NOTIFY_UNSUBSCRIBE_KEY")
+      try secret(served, "PUT", "STRAY_SECRET")
+      const versionsBefore = (api.state.versions["slop-notify"] ?? []).length
+      const strayed = try settled(publishing.publish("Notify", target))
+      const strayUploads = (api.state.versions["slop-notify"] ?? []).length - versionsBefore
+      try secret(served, "DELETE", "STRAY_SECRET")
+      const tag = publishing.publish("Notify", target) catch (error) => described(error)
+      const [serving] = api.state.deployments["slop-notify"]?.at(-1)?.versions ?? []
+      const version = (api.state.versions["slop-notify"] ?? []).find((candidate) => candidate.id === serving?.versionId)
+      const since = (try Clock.currentTimeMillis) - 60_000
+      api.loseNext({ method: "POST", path: `/accounts/${accountId}/pages/projects/${siteProject}/deployments` })
+      try settled(publishing.site(target))
+      const lost = api.calls.filter((call) => call.lost).map((call) => `${call.method} ${call.path}`)
+      const pages = api.state.pagesDeployments[siteProject] ?? []
+      const listed = publishing.deployments(target, since) catch () => []
+      const reconciled = listed.filter((entry) => entry.artifactSha256 === target.manifestSha256)
+      const deploymentId = reconciled[0]?.deploymentId ?? "unlisted"
+      const honest = publishing.served(target, deploymentId) catch (error) => described(error)
+      canonical.tampered = true
+      const tampered = publishing.served(target, deploymentId) catch (error) => described(error)
+      return {
+        isolation,
+        isolationAsked,
+        prepared,
+        migrated: migrated.length,
+        missing,
+        missingUploads,
+        strayed,
+        strayUploads,
+        tag,
+        serving: { percentage: serving?.percentage, tag: version?.tag },
+        lost,
+        published: pages.map((entry) => ({ branch: entry.branch, commitHash: entry.commitHash, commitDirty: entry.commitDirty, worker: entry.worker !== undefined })),
+        reconciled: reconciled.length,
+        honest: typeof honest === "object" ? { matches: honest.artifactSha256 === target.manifestSha256, environment: honest.environment, dnsTlsHeaders: honest.dnsTlsHeaders } : honest,
+        tampered: typeof tampered === "object" ? { matches: tampered.artifactSha256 === target.manifestSha256, served: tampered.artifactSha256.startsWith("served:") } : tampered,
+      }
+    }
+    const live = Layer.provideMerge(publisher({ root, wrangler: pinnedWrangler(repoRoot), patience: { rounds: 1, delaySeconds: 0 } }), config)
+    const observed = try routed(Effect.provide(journey, live), asFetch(outbound))
+    const migrations = (try fs.readDirectory(migrationsDir)).length
+
+    try Effect.try(() => assert.deepStrictEqual(observed, {
+      isolation: "isolation: apps/operations/wrangler/notify.staging.jsonc and apps/operations/wrangler/notify.production.jsonc both name d1:1b453124-2709-45af-8389-151a8105c461: staging and production must never share a resource",
+      isolationAsked: 0,
+      prepared: "ok",
+      migrated: migrations,
+      missing: "publish Notify: slop-notify lacks NOTIFY_UNSUBSCRIBE_KEY",
+      missingUploads: 0,
+      strayed: "publish Notify: slop-notify holds secrets its reviewed configuration does not list: STRAY_SECRET",
+      strayUploads: 0,
+      tag: sourceSha,
+      serving: { percentage: 100, tag: sourceSha },
+      lost: [`POST /accounts/${accountId}/pages/projects/${siteProject}/deployments`],
+      published: [{ branch: "main", commitHash: sourceSha, commitDirty: false, worker: true }],
+      reconciled: 1,
+      honest: { matches: true, environment: "Production", dnsTlsHeaders: true },
+      tampered: { matches: false, served: true },
+    }))
+  }))
+})

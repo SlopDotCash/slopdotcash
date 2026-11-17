@@ -1,0 +1,181 @@
+// spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
+import { pointKey } from "../kernels/records/ids.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { type Store, advanceTo, command, hold } from "../journal/ledger.vibe"
+import { appended, commit, flush, rowsOf, sameAward, sendAll } from "../journal/rows.vibe"
+import type { CycleKind, CycleState, PaidRecipient, RecipientState } from "../../gen/points__payoutRecognition.ts"
+import { eligible, recognitionAmount } from "../../gen/points__payoutRecognition.effect.vibe"
+
+export error CycleIndexInvalid { reason: string }
+
+schema CycleActorRef { readonly id: string; readonly login: string }
+schema CycleContributorState = "approved" | "excluded" | "held" | "held-below-minimum" | "proposed" | "unclaimed" | "external-share" | "paid"
+schema PaidContributor { readonly actor: CycleActorRef; readonly state: CycleContributorState; readonly paidMinor: string }
+schema SettlementFile { readonly sha256: string; readonly url: string }
+schema PaidCycleFiles { readonly settlement: SettlementFile | null }
+schema CycleIndexState = "closed-no-awards" | "external-provisional" | "paid" | "payment-ready" | "review" | "settlement-planned" | "wound-up"
+schema PaidCycle {
+  readonly projectId: string
+  readonly cycleId: string
+  readonly kind: "monthly-pool" | "external-prize-share"
+  readonly state: CycleIndexState
+  readonly settledAt: string | null
+  readonly contributors: ReadonlyArray<PaidContributor>
+  readonly files: PaidCycleFiles
+}
+export schema PaidCycleIndex { readonly schemaVersion: "1"; readonly generatedAt: string; readonly cycles: ReadonlyArray<PaidCycle> }
+
+export interface Recognition { readonly paid: PaidRecipient; readonly award: Award }
+
+const projectPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const cyclePattern = /^([0-9]{4})-(0[1-9]|1[0-2])$/u
+const minorPattern = /^(?:0|[1-9][0-9]*)$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const digestPattern = /^[0-9a-f]{64}$/u
+const exactUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const cycleStates: Readonly<Record<CycleIndexState, CycleState>> = {
+  paid: "CyclePaid",
+  review: "CycleProposed",
+  "payment-ready": "CycleProposed",
+  "settlement-planned": "CycleProposed",
+  "closed-no-awards": "CycleHeld",
+  "external-provisional": "CycleHeld",
+  "wound-up": "CycleHeld",
+}
+const recipientStates: Readonly<Record<CycleContributorState, RecipientState>> = {
+  paid: "RecipientPaid",
+  unclaimed: "RecipientUnclaimed",
+  excluded: "RecipientExcluded",
+  approved: "RecipientHeld",
+  held: "RecipientHeld",
+  "held-below-minimum": "RecipientHeld",
+  proposed: "RecipientHeld",
+  "external-share": "RecipientHeld",
+}
+
+function bounded(text: string, pattern?: RegExp) {
+  return text.length >= 1 && text.length <= 512 && (pattern === undefined || pattern.test(text))
+}
+
+function exactUtc(text: string) {
+  return exactUtcPattern.test(text) && instantOf(text) !== null
+}
+
+function contributorProblem(contributor: PaidContributor) {
+  if (!bounded(contributor.actor.id) || !bounded(contributor.actor.login, loginPattern)) return "a contributor's actor is invalid"
+  if (!bounded(contributor.paidMinor, minorPattern)) return "a contributor's paidMinor is not canonical minor units"
+  return undefined
+}
+
+function cycleProblem(cycle: PaidCycle) {
+  if (!bounded(cycle.projectId, projectPattern)) return "a cycle's projectId is invalid"
+  if (!bounded(cycle.cycleId, cyclePattern)) return "a cycle's cycleId is invalid"
+  if (cycle.settledAt !== null && !exactUtc(cycle.settledAt)) return "a cycle's settledAt is not a UTC timestamp"
+  const settlement = cycle.files.settlement
+  if (settlement !== null && (!digestPattern.test(settlement.sha256) || settlement.url !== `/data/cycles/${cycle.projectId}/${cycle.cycleId}/settlement.json`)) return "a cycle's settlement file is not the canonical cycle artifact"
+  if ((settlement === null) !== (cycle.settledAt === null) || (settlement !== null && cycle.state !== "paid")) return "a cycle's settlement contradicts its state"
+  if (new Set(cycle.contributors.map((contributor) => contributor.actor.id)).size !== cycle.contributors.length) return "a cycle repeats a contributor"
+  return cycle.contributors.map(contributorProblem).find((problem) => problem !== undefined)
+}
+
+function indexProblem(index: PaidCycleIndex) {
+  if (!exactUtc(index.generatedAt)) return "the cycle index generatedAt is not a UTC timestamp"
+  const keys = index.cycles.map((cycle) => `${cycle.projectId}\u0000${cycle.cycleId}`)
+  if (new Set(keys).size !== keys.length) return "the cycle index repeats a project cycle"
+  for (let position = 1; position < index.cycles.length; position += 1) {
+    const previous = index.cycles[position - 1]
+    const current = index.cycles[position]
+    if (previous !== undefined && current !== undefined && (previous.cycleId < current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) > 0))) return "the cycle index is not canonically ordered"
+  }
+  return index.cycles.map(cycleProblem).find((problem) => problem !== undefined)
+}
+
+function periodOfCycle(cycleId: string) {
+  const [year, month] = cycleId.split("-").map(Number)
+  return (year ?? 0) * 12 + (month ?? 0) - 1
+}
+
+function paidOf(cycle: PaidCycle, contributor: PaidContributor, actor: number): PaidRecipient {
+  return {
+    project: cycle.projectId,
+    cycle: periodOfCycle(cycle.cycleId),
+    actor,
+    kind: (cycle.kind === "monthly-pool" ? "MonthlyPool" : "LegacyCycle") satisfies CycleKind,
+    state: cycleStates[cycle.state],
+    settledAt: cycle.settledAt === null ? 0 : instantOf(cycle.settledAt) ?? 0,
+    settlementDigest: cycle.files.settlement?.sha256 ?? "",
+    recipientState: recipientStates[contributor.state],
+    paidMinor: contributor.paidMinor === "0" ? 0 : Math.min(Number(contributor.paidMinor), Number.MAX_SAFE_INTEGER),
+    transfers: 0,
+  }
+}
+
+export effect function decodeCycleIndex(text: string) {
+  const raw = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new CycleIndexInvalid({ reason: "the cycle index is not valid JSON" }) })
+  const index = Schema.decodeUnknownEffect(PaidCycleIndex)(raw) catch effect () => {
+    throw new CycleIndexInvalid({ reason: "the cycle index does not have the published shape" })
+  }
+  const problem = indexProblem(index)
+  if (problem !== undefined) throw new CycleIndexInvalid({ reason: problem })
+  return { index, digest: try sha256Hex(JSON.stringify(raw)) }
+}
+
+export effect function recognitions(index: PaidCycleIndex) {
+  const found: Recognition[] = []
+  for (const cycle of index.cycles) {
+    for (const contributor of cycle.contributors) {
+      const paid = paidOf(cycle, contributor, 1)
+      if (!eligible(paid) || cycle.settledAt === null) continue
+      const sourceId = `payout:${cycle.cycleId}:${contributor.actor.id}`
+      found.push({
+        paid,
+        award: {
+          key: try pointKey({ projectId: cycle.projectId, actorId: contributor.actor.id, category: "payout-received", sourceId }),
+          actor: { id: contributor.actor.id, login: contributor.actor.login },
+          projectId: cycle.projectId,
+          category: "payout-received",
+          amount: recognitionAmount(paid),
+          occurredAt: cycle.settledAt,
+          sourceId,
+          sourceUrl: `https://slop.cash/cycles/${cycle.projectId}/${cycle.cycleId}`,
+          workUnitId: sourceId,
+          provisional: false,
+        },
+      })
+    }
+  }
+  return found
+}
+
+effect function recognized(store: Store, item: Recognition, digest: string, recordedAt: string) {
+  const { award } = item
+  const prior = store.latest.get(award.key)
+  if (prior !== undefined && sameAward(prior.award, award)) return []
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const key = opened.names.keys.get(award.key)
+  if (key === undefined || key.source !== key.workUnit || opened.names.opaque.has(award.key)) {
+    hold(store, { subject: award.key, reason: "the recorded payout recognition is outside the journal model", digest })
+    return []
+  }
+  const refused = try sendAll(opened, [{ type: "recognize", paid: { ...item.paid, actor: key.actor, cycle: key.source } }])
+  if (refused !== "") {
+    hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  const rows: Row[] = []
+  const provenance = { recordedAt, sourceDigest: digest, decisionSourceId: "", effectiveAt: recordedAt }
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, new Map([[award.actor.id, award]]), provenance)))
+  return rows
+}
+
+export effect function recognizePayouts(store: Store, indexText: string, recordedAt: string) {
+  const { index, digest } = try decodeCycleIndex(indexText)
+  try advanceTo(store, recordedAt)
+  const buffer: Row[] = []
+  for (const item of try recognitions(index)) try commit(store, buffer, try recognized(store, item, digest, recordedAt))
+  flush(store, buffer)
+  store.generatedAt = recordedAt
+  return buffer.length
+}

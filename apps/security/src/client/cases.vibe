@@ -1,0 +1,27 @@
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema Viewer { githubId: string; githubLogin: string }
+
+export schema ProgramRoles { projectId: string; roles: ReadonlyArray<string> }
+
+export const CaseList = Schema.Struct({
+  viewer: Viewer,
+  programs: Schema.Array(ProgramRoles),
+  cases: Schema.Array(Schema.Unknown),
+  authorityUnavailable: Schema.Boolean,
+})
+
+export const CaseAnswer = Schema.Struct({
+  replayed: Schema.optional(Schema.Boolean),
+  case: Schema.Unknown,
+})
+
+export const caseRequestKib = 64
+
+export const listCases = route({ method: "GET", path: "/api/v1/security-cases", access: "session", limitKib: 1, request: undefined, answer: CaseList, rejected: "not_found", cache: "private" })
+export const readCase = route({ method: "GET", path: "/api/v1/security-cases/:id", access: "session", limitKib: 1, request: undefined, answer: CaseAnswer, rejected: "not_found", cache: "private" })
+export const claimCase = route({ method: "POST", path: "/api/v1/security-cases", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: CaseAnswer, rejected: "invalid_request", cache: "private", status: 201 })
+export const actOnCase = route({ method: "POST", path: "/api/v1/security-cases/:id/actions", access: "sessionWrite", limitKib: caseRequestKib, request: undefined, answer: CaseAnswer, rejected: "action_not_allowed", cache: "private" })
+
+export const casesApi: ReadonlyArray<AnyRoute> = [listCases, readCase, claimCase, actOnCase]

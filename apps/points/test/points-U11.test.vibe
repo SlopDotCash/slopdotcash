@@ -1,0 +1,289 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Answer, Area, areaLayer } from "@repo/platform/testing/area"
+import { type Coverage, type Journal, type Revision, type RevisionBody, journalText } from "../src/kernels/records/canonical.ts"
+import { batchDigest, journalFile, pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { projectionFiles } from "../src/publication/projections.vibe"
+import { type StageFacts, publishable } from "../src/publication/publish.vibe"
+import { recoverPublished } from "../src/recovery/published.vibe"
+import type { Environment } from "../gen/points__recovery.ts"
+import { type Site, absentService, areaApi, site } from "./support/u11/pages.ts"
+
+type Body = Readonly<Record<string, unknown>>
+
+interface Fixture {
+  readonly text: string
+  readonly journal: Journal
+}
+
+interface Award {
+  readonly project: string
+  readonly actor: string
+  readonly login: string
+  readonly source: string
+  readonly amount: number
+  readonly occurredAt: string
+  readonly recordedAt: string
+  readonly previous: Revision | null
+}
+
+const root = new URL("..", import.meta.url).pathname
+const ready: StageFacts = { censusPhase: "ReadyForPublication", historicalHold: false }
+
+const Published = areaLayer({
+  root,
+  config: "test/support/u11/vite.config.ts",
+  entry: "journal",
+  d1: { SLOP_DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local" },
+  services: { SLOP_IDENTITY: absentService() },
+})
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null && !Array.isArray(answer.body) ? answer.body as Body : {}
+}
+
+function shown(answer: Answer) {
+  return [answer.status, fields(answer).error ?? null] as const
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function revision(award: Award) {
+  const key = try pointKey({ projectId: award.project, actorId: award.actor, category: "resolved-issue", sourceId: award.source })
+  const body: RevisionBody = {
+    previous: award.previous?.id ?? null,
+    recordedAt: award.recordedAt,
+    sourceDigest: "a".repeat(64),
+    sourceRule: "slop-score-v2",
+    award: {
+      key,
+      actor: { id: award.actor, login: award.login },
+      projectId: award.project,
+      category: "resolved-issue",
+      amount: award.amount,
+      occurredAt: award.occurredAt,
+      sourceId: award.source,
+      sourceUrl: `https://github.com/acme/${award.project}/issues/${award.source.slice(6)}`,
+      workUnitId: award.source,
+      provisional: false,
+    },
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+effect function fixture(generatedAt: string, coverage: ReadonlyArray<Coverage>, revisions: ReadonlyArray<Revision>) {
+  const text = `${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt, coverage, revisions })}\n`
+  return { text, journal: try journalFile(text) } satisfies Fixture
+}
+
+function covering(repository: string, to: string, digest: string): Coverage {
+  return { repository, from: "2026-09-15T00:00:00.000Z", to, digest: digest.repeat(64) }
+}
+
+effect function imported(text: string) {
+  return fields(try (try Area).post("/api/v1/test/points/import", { journal: text }))
+}
+
+effect function published(query: string = "") {
+  return try (try Area).get(`/api/v1/points/journal${query}`)
+}
+
+effect function decided(current: Journal, candidate: Journal, facts: StageFacts) {
+  const outcome = publishable(current, candidate, facts) catch effect (error) => {
+    return error._tag === "PublicationRefused" ? error.message : error._tag
+  }
+  return typeof outcome === "string" ? outcome : "published"
+}
+
+effect function served() {
+  const pages: Body[] = []
+  let after = 0
+  while (true) {
+    const page = fields(try published(`?after=${after}`))
+    pages.push(page)
+    if (typeof page.next !== "number") break
+    after = page.next
+  }
+  const [head] = pages
+  if (head === undefined || head.batch === undefined) return undefined
+  const revisions = pages.flatMap((page) => Array.isArray(page.revisions) ? page.revisions : [])
+  return try journalFile(`${JSON.stringify({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: head.generatedAt, coverage: head.coverage, revisions })}\n`)
+}
+
+effect function pagesOf(journal: Journal) {
+  const files = try projectionFiles(journal)
+  const entries: [string, string][] = [["/data/points.json", files.index]]
+  for (const [position, text] of files.shards.entries()) entries.push([`/data/points/${position.toString(16)}.json`, text])
+  return Object.fromEntries(entries)
+}
+
+effect function recoveredBy(fake: Site, environment: Environment, bootstrap: boolean) {
+  const waits: number[] = []
+  const outcome = provideService(recoverPublished({ environment, bootstrap, wait: (millis) => sync(() => { waits.push(millis) }) }), FetchHttpClient.Fetch, fake.fetch) catch effect (error) => {
+    return error._tag === "RecoveryRefused" ? error.outcome : error._tag
+  }
+  if (typeof outcome === "string") return { outcome, waits }
+  return { outcome: outcome === null ? "Bootstrapped" : journalText(outcome), waits }
+}
+
+layer(Layer.mergeAll(Published, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Import on real migrations: a racing import or a protected change refuses the whole batch and readers see the previous history (spec/points/publication.md, "Story: Keep published history stable when imports race or fail"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/periods.md, "A period freezes only when settlement has frozen, reserved or completed it, or an obligation exists"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months")', () => effect {
+    const area = try Area
+    const at = (day: string) => `2026-10-${day}T00:00:00.000Z`
+    const alice = try revision({ project: "alpha", actor: "MDQ6VXNlcjEwMQ==", login: "alice", source: "issue-101", amount: 30, occurredAt: at("05"), recordedAt: at("20"), previous: null })
+    const bob = try revision({ project: "beta", actor: "MDQ6VXNlcjEwMg==", login: "bob", source: "issue-102", amount: 10, occurredAt: at("07"), recordedAt: at("20"), previous: null })
+    const carol = try revision({ project: "gamma", actor: "MDQ6VXNlcjEwMw==", login: "carol", source: "issue-103", amount: 20, occurredAt: at("09"), recordedAt: at("20"), previous: null })
+    const dave = try revision({ project: "gamma", actor: "MDQ6VXNlcjEwNA==", login: "dave", source: "issue-104", amount: 20, occurredAt: at("09"), recordedAt: at("20"), previous: null })
+    const aliceChanged = try revision({ project: "alpha", actor: "MDQ6VXNlcjEwMQ==", login: "alice", source: "issue-101", amount: 60, occurredAt: at("05"), recordedAt: at("21"), previous: alice })
+    const bobChanged = try revision({ project: "beta", actor: "MDQ6VXNlcjEwMg==", login: "bob", source: "issue-102", amount: 40, occurredAt: at("07"), recordedAt: at("21"), previous: bob })
+    const first = covering("acme/alpha", at("20"), "b")
+    const second = covering("acme/gamma", at("20"), "c")
+    const opening = try fixture(at("20"), [first], [alice, bob])
+    const extended = try fixture("2026-10-20T01:00:00.000Z", [first, second], [alice, bob, carol])
+    const racing = try fixture("2026-10-20T02:00:00.000Z", [first, second], [alice, bob, dave])
+    const protectedChange = try fixture(at("22"), [first, second], [alice, bob, carol, aliceChanged])
+    const openChange = try fixture(at("22"), [first, second], [alice, bob, carol, bobChanged])
+    const unpublished = shown(try published())
+    const opened = try imported(opening.text)
+    const replayed = try imported(opening.text)
+    const page = fields(try published())
+    const tail = fields(try published("?after=1"))
+    const badCursor = shown(try published("?after=-1"))
+    const changed = shown(try published(`?batch=${"f".repeat(64)}`))
+    const grown = try imported(extended.text)
+    const raced = try imported(racing.text)
+    const afterRace = fields(try published())
+    try area.sql("INSERT INTO payment_direct_transfers (network, transaction_id, project_id, contribution_month, github_user_id, github_node_id, github_login, chain, recipient, amount_micro, block_time, block_id, source_path, imported_at) VALUES ('base-mainnet', '0x01', 'alpha', '2026-10', '101', 'MDQ6VXNlcjEwMQ==', 'alice', 'base', '0x0000000000000000000000000000000000000001', '1000000', '2026-10-25T00:00:00.000Z', '1', 'direct/alpha.json', '2026-10-25T00:00:00.000Z')")
+    const freezes = fields(try area.post("/api/v1/test/points/protection", { scopes: [{ projectId: "beta", period: "2026-10" }, { projectId: "alpha", period: "2026-10" }, { projectId: "alpha", period: "2026-09" }] })).evidence
+    const refusedChange = try imported(protectedChange.text)
+    const afterProtected = fields(try published())
+    const allowedChange = try imported(openChange.text)
+    const afterAllowed = fields(try published())
+    const rows = try area.sql("SELECT COUNT(*) AS revisions FROM points_revisions")
+    const model = [
+      try decided(extended.journal, opening.journal, ready),
+      try decided(opening.journal, racing.journal, ready),
+      try decided(extended.journal, racing.journal, ready),
+      try decided(extended.journal, extended.journal, ready),
+      try decided(opening.journal, extended.journal, { censusPhase: "Collecting", historicalHold: false }),
+      try decided(opening.journal, extended.journal, { censusPhase: "ReadyForPublication", historicalHold: true }),
+      try decided(extended.journal, (try fixture(at("22"), [second], [alice, bob, carol])).journal, ready),
+    ]
+    try same({
+      unpublished,
+      imports: [opened, replayed, grown, raced, refusedChange, allowedChange],
+      page: [page.total, page.next, page.batch === (try batchDigest(opening.journal)), Array.isArray(page.revisions) ? page.revisions.length : -1, page.coverage],
+      tail: [Array.isArray(tail.revisions) ? tail.revisions.map((row) => (row as Body).id) : [], tail.next],
+      refusals: { badCursor, changed },
+      afterRace: [afterRace.total, afterRace.batch === (try batchDigest(extended.journal))],
+      freezes,
+      afterProtected: [afterProtected.total, afterProtected.batch === (try batchDigest(extended.journal))],
+      afterAllowed: [afterAllowed.total, afterAllowed.batch === (try batchDigest(openChange.journal))],
+      rows,
+      model,
+    }, {
+      unpublished: [503, "points_not_published"],
+      imports: [
+        { outcome: "imported", attempt: 1 },
+        { outcome: "imported", attempt: 1 },
+        { outcome: "imported", attempt: 1 },
+        { outcome: "failed", attempt: 3 },
+        { outcome: "failed", attempt: 3 },
+        { outcome: "imported", attempt: 1 },
+      ],
+      page: [2, null, true, 2, [first]],
+      tail: [[bob.id], null],
+      refusals: { badCursor: [400, "invalid_cursor"], changed: [409, "journal_changed"] },
+      afterRace: [3, true],
+      freezes: [
+        { project: "alpha", period: 24320, frozen: false },
+        { project: "alpha", period: 24321, frozen: true },
+        { project: "beta", period: 24321, frozen: false },
+      ],
+      afterProtected: [3, true],
+      afterAllowed: [4, true],
+      rows: [{ revisions: 4 }],
+      model: [
+        "Points publication does not contain the complete journal prefix",
+        "published",
+        "Points publication does not contain the complete journal prefix",
+        "published",
+        "Points publication is not ready: the census is incomplete or a historical import holds publication",
+        "Points publication is not ready: the census is incomplete or a historical import holds publication",
+        "Points publication lost source coverage",
+      ],
+    })
+  })
+
+  it.effect(`Recovery from API + shards, 503 retried three times (spec/points/recovery.md, "Story: Resume generation from the complete published journal"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"; spec/points/journal.md, "Public totals are views of the latest revisions, with penalties bounded by the month's credit")`, () => effect {
+    const area = try Area
+    const api = areaApi(area)
+    const at = (day: string) => `2026-11-${day}T00:00:00.000Z`
+    const seed = try revision({ project: "delta", actor: "MDQ6VXNlcjEwNQ==", login: "erin", source: "issue-105", amount: 30, occurredAt: "2026-10-12T00:00:00.000Z", recordedAt: at("01"), previous: null })
+    const base = try served()
+    const earlier = base ?? (try fixture(at("01"), [], [seed])).journal
+    if (base === undefined) try imported((try fixture(at("01"), [], [seed])).text)
+    const added = try revision({ project: "delta", actor: "MDQ6VXNlcjEwNg==", login: "frank", source: "issue-106", amount: 10, occurredAt: "2026-10-14T00:00:00.000Z", recordedAt: at("02"), previous: null })
+    const checkpoint = try fixture(at("02"), earlier.coverage, [...earlier.revisions, added])
+    const landed = try imported(checkpoint.text)
+    const refreshed = covering("acme/delta", at("03"), "d")
+    const pagesJournal = try fixture(at("03"), [...earlier.coverage, refreshed], earlier.revisions)
+    const pages = try pagesOf(pagesJournal.journal)
+    const expected = try fixture(at("03"), [...earlier.coverage, refreshed], checkpoint.journal.revisions)
+    const forked = try pagesOf((try fixture(at("03"), [], [added])).journal)
+    const torn = { ...pages, "/data/points/0.json": `${pages["/data/points/0.json"] ?? "[]"} ` }
+    const staging = try pagesOf((try fixture(at("03"), [refreshed], [seed])).journal)
+    const retried = try recoveredBy(site({ api, apiUnavailable: 2, files: pages }), "Production", false)
+    const exhausted = try recoveredBy(site({ api, apiUnavailable: 3, files: pages }), "Production", false)
+    const stagingOnly = try recoveredBy(site({ api, apiAbsent: true, files: staging }), "Staging", false)
+    const bootstrapped = try recoveredBy(site({ api, apiAbsent: true, files: {} }), "Production", true)
+    const bootstrapOverExisting = try recoveredBy(site({ api, apiAbsent: true, files: pages }), "Production", true)
+    const missing = try recoveredBy(site({ api, apiAbsent: true, files: pages }), "Production", false)
+    const diverged = try recoveredBy(site({ api, files: forked }), "Production", false)
+    const unverified = try recoveredBy(site({ api, files: torn }), "Production", false)
+    const alice = try revision({ project: "delta", actor: "MDQ6VXNlcjEwMQ==", login: "alice", source: "issue-107", amount: 30, occurredAt: "2026-10-15T00:00:00.000Z", recordedAt: at("02"), previous: null })
+    const dave = try revision({ project: "delta", actor: "MDQ6VXNlcjEwNA==", login: "dave", source: "issue-108", amount: 30, occurredAt: "2026-10-16T00:00:00.000Z", recordedAt: at("02"), previous: null })
+    const bob = try revision({ project: "delta", actor: "MDQ6VXNlcjEwMg==", login: "bob", source: "issue-109", amount: 10, occurredAt: "2026-10-17T00:00:00.000Z", recordedAt: at("02"), previous: null })
+    const ranked = try projectionFiles((try fixture(at("03"), [], [bob, dave, alice])).journal)
+    const summary: unknown = try Effect.try(() => JSON.parse(ranked.summary) as unknown)
+    try same({
+      landed,
+      retried,
+      exhausted: exhausted.outcome,
+      stagingOnly: stagingOnly.outcome,
+      bootstrapped: bootstrapped.outcome,
+      bootstrapOverExisting: bootstrapOverExisting.outcome,
+      missing: missing.outcome,
+      diverged: diverged.outcome,
+      unverified: unverified.outcome,
+      summary,
+      indexDigest: try sha256Hex(ranked.index.slice(0, -1)),
+    }, {
+      landed: { outcome: "imported", attempt: 1 },
+      retried: { outcome: journalText(expected.journal), waits: [15_000, 15_000] },
+      exhausted: "SourceUnavailable",
+      stagingOnly: journalText((try fixture(at("03"), [refreshed], [seed])).journal),
+      bootstrapped: "Bootstrapped",
+      bootstrapOverExisting: "BootstrapRefused",
+      missing: "MissingHistory",
+      diverged: "DivergingHistory",
+      unverified: "UnverifiedCopy",
+      summary: {
+        schemaVersion: "1",
+        ruleVersion: "slop-points-v1",
+        generatedAt: at("03"),
+        indexDigest: ranked.indexDigest,
+        totals: { contributors: 3, points: 70 },
+        contributors: [
+          { actor: { id: "MDQ6VXNlcjEwMQ==", login: "alice" }, total: 30 },
+          { actor: { id: "MDQ6VXNlcjEwNA==", login: "dave" }, total: 30 },
+          { actor: { id: "MDQ6VXNlcjEwMg==", login: "bob" }, total: 10 },
+        ],
+      },
+      indexDigest: ranked.indexDigest,
+    })
+  })
+})

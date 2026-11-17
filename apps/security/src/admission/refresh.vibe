@@ -1,0 +1,141 @@
+// spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/admission.md, "A replaced template requeues the pending assessment with its original commit"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"
+import { Registry, RegistryManifests } from "@repo/ports/backend"
+import type { Enforcement, RequestOrigin } from "../../gen/security__enforcement.ts"
+import { canRequestAssessment, clearanceState, latestOf } from "../../gen/security__enforcement.effect.vibe"
+import { withRetainedEvidence } from "../enforcement/retained.vibe"
+import { loadEnforcement } from "../enforcement/store.vibe"
+import { serviceAvailable, vettingService } from "./compose.vibe"
+import { idOf } from "../enforcement/replay.vibe"
+import { type Pin, pinOrUndefined } from "./livePin.vibe"
+import { type Plan, type Requester, queueRepositories, requeueTemplate } from "./queue.vibe"
+import { reinstateFromScan } from "./record.vibe"
+import { type Assessment, nextAssessmentNumber, projectAssessments } from "./store.vibe"
+
+const maxAutomaticScans = 25
+const freshScanReason = "Automatic fresh scan after two contributor flags paused the project"
+const setupScanReason = "Automatic scan of new project content"
+
+schema StewardManifest { steward: { github: { actorId: string; login: string } } }
+
+interface Skipped {
+  readonly projectId: string
+  readonly reason: string
+}
+
+effect function stewardOf(text: string) {
+  const parsed: unknown = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined })
+  const manifest = Schema.decodeUnknownEffect(StewardManifest)(parsed) catch effect () => undefined
+  return manifest === undefined ? undefined : { githubId: manifest.steward.github.actorId, githubLogin: manifest.steward.github.login } satisfies Requester
+}
+
+function pathOf(view: { readonly repositories: ReadonlyArray<{ readonly id: string; readonly fullName: string }> }, repository: number) {
+  return view.repositories.find((entry) => entry.id === String(repository))?.fullName
+}
+
+effect function plansFor(state: Enforcement, origin: RequestOrigin, reason: string, paths: (repository: number) => string | undefined, by = vettingService) {
+  const next = try nextAssessmentNumber()
+  const plans: Plan[] = []
+  for (const repository of state.repositories) {
+    const path = paths(repository)
+    if (path !== undefined && canRequestAssessment(state, by, repository, origin, next)) plans.push({ repositoryPath: path, reason, origin, by })
+  }
+  return plans
+}
+
+function codeOf(error: { readonly _tag: string }) {
+  if (error._tag === "PinUnavailable") return "pin_unavailable"
+  if (error._tag === "Refused" && "code" in error && typeof error.code === "string") return error.code
+  return "queue_failed"
+}
+
+export interface ScanAsk {
+  readonly projectId: string
+  readonly origin: RequestOrigin
+  readonly reason: string
+  readonly requester?: Requester
+}
+
+export effect function automaticScan(ask: ScanAsk) {
+  if (!(try serviceAvailable())) return "unavailable" as const
+  const view = try (try Registry).project(ask.projectId)
+  const current = try (try RegistryManifests).project(ask.projectId)
+  const requester = ask.requester ?? (current === undefined ? undefined : try stewardOf(current.manifest))
+  if (view === undefined || requester === undefined) return "unavailable" as const
+  const state = try withRetainedEvidence((try loadEnforcement(ask.projectId)).state)
+  const by = ask.requester === undefined ? vettingService : idOf(ask.requester.githubId)
+  const plans = try plansFor(state, ask.origin, ask.reason, (repository) => pathOf(view, repository), by)
+  const created = queueRepositories(view, requester, plans) catch effect (error) => {
+    if (error._tag === "PinUnavailable" || error._tag === "ContentUnreadable") return undefined
+    throw error
+  }
+  if (created === undefined) return "unavailable" as const
+  return created.length === 0 ? "already_queued" as const : "queued" as const
+}
+
+export effect function refreshQueue() {
+  const queued: string[] = []
+  const reinstated: string[] = []
+  const skipped: Skipped[] = []
+  for (const current of try (try RegistryManifests).current()) {
+    if (queued.length >= maxAutomaticScans) break
+    const projectId = current.projectId
+    const view = (try Registry).project(projectId) catch effect () => undefined
+    const steward = try stewardOf(current.manifest)
+    if (view === undefined || steward === undefined) continue
+    const loaded = try loadEnforcement(projectId)
+    const flagPaused = loaded.state.restriction === "FlagQuarantine"
+    if (loaded.state.restriction !== "Clear" && !flagPaused) continue
+    if (!flagPaused && view.listingTier === "Retired") continue
+    const state = try withRetainedEvidence(loaded.state)
+    const paths = (repository: number) => pathOf(view, repository)
+    const assessments = try projectAssessments(projectId)
+    const byRow = (row: number) => assessments.find((each) => each.row === row)
+    let plans: Plan[] = []
+    const retries: { readonly pending: Assessment; readonly pin: Pin }[] = []
+    if (flagPaused) {
+      const latestClean = state.repositories.map((repository) => byRow(latestOf(state, repository).id)).filter((each) => each?.state === "clean").at(-1)
+      if (latestClean !== undefined && (try reinstateFromScan(projectId, latestClean))) {
+        reinstated.push(latestClean.id)
+        continue
+      }
+      plans = try plansFor(state, "FlagRecovery", freshScanReason, paths)
+    } else {
+      if (state.repositories.some((repository) => clearanceState(state, repository) === "Banned")) continue
+      plans = try plansFor(state, "SetupCheck", setupScanReason, paths)
+      let unreadable = false
+      for (const repository of state.repositories) {
+        const latest = latestOf(state, repository)
+        const pending = byRow(latest.id)
+        if (latest.state !== "APending" || pending === undefined || pending.state !== "pending") continue
+        const path = paths(repository)
+        const pin = path === undefined ? undefined : try pinOrUndefined(view, path)
+        if (pin === undefined) {
+          unreadable = true
+          break
+        }
+        if (pin.templateSha256 !== pending.templateSha256) retries.push({ pending, pin })
+      }
+      if (unreadable) {
+        skipped.push({ projectId, reason: "pin_unavailable" })
+        continue
+      }
+    }
+    const room = plans.slice(0, Math.max(0, maxAutomaticScans - queued.length))
+    if (room.length > 0) {
+      const created = queueRepositories(view, steward, room) catch effect (error) => {
+        skipped.push({ projectId, reason: codeOf(error) })
+        return [] satisfies ReadonlyArray<Assessment>
+      }
+      for (const assessment of created) queued.push(assessment.id)
+    }
+    for (const retry of retries) {
+      if (queued.length >= maxAutomaticScans) break
+      const replaced = requeueTemplate(view, steward, retry.pending, retry.pin) catch effect (error) => {
+        skipped.push({ projectId, reason: codeOf(error) })
+        return undefined
+      }
+      if (replaced !== undefined) queued.push(replaced.id)
+    }
+  }
+  return { queued, reinstated, skipped }
+}

@@ -1,0 +1,34 @@
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { serviceAuth } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { RegistryLive, RegistryManifestsLive } from "@repo/backend/ports"
+import { admissionServiceRoutes, overviewRoutes, vettingSandbox } from "../../../src/admission/routes.vibe"
+import { evidenceBucket } from "../../../src/evidence/objects.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly VETTING_EVIDENCE: R2Bucket
+  readonly SANDBOX: Fetcher
+  readonly VETTING_RESULT_PUBLIC_KEYS: string
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.SLOP_DB),
+    webCrypto,
+    evidenceBucket(env.VETTING_EVIDENCE),
+    vettingSandbox(env.SANDBOX),
+    rolesFrom(env),
+    Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
+    Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+    Layer.provide(Layer.merge(RegistryLive, RegistryManifestsLive), d1(env.SLOP_DB)),
+  ),
+  routes: Layer.mergeAll(admissionServiceRoutes, overviewRoutes),
+})

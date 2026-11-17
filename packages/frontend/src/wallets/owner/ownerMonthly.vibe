@@ -1,0 +1,285 @@
+// spec/frontend/ownerMonthly.md, "Only a current manager edits, and the editor closes at the cutoff"; spec/frontend/ownerMonthly.md, "A cut needs a 20 to 500 character public reason, and a save names the sequence it read"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"; spec/frontend/ownerMonthly.md, "The funds view is loading, error or ready for the current owner only"; spec/settlement/monthly.md, "Only a current owner, steward or repository administrator changes another recipient's amount"
+import { type AllocationChange, type MonthlyOwnerView, monthlyAllocations, monthlyFinalize, monthlySettings, monthlyView } from "@repo/settlement/client"
+import { type ChainResult, type Event, type Flow, Machine, type MonthView, type Notice, type OwnerMonthly, type SaveResult, type Target, adapter, canCheck, canConfirmUnsent, canEditDraft, canEnterCandidate, canFinalize, canFinalizeReply, canFundsReply, canObserveApproval, canObserveClock, canObserveMonth, canOpenFunds, canRecheckAuthority, canReview, canSave, canSaveReply, canSend, canSignIn, canSignOut, canWalletReply, clock, flowOf, initial, machineOver, server, withFlow } from "../../../gen/frontend__ownerMonthly.effect.vibe"
+import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { WalletDeclined } from "../core/discovery.vibe"
+import type { SlotStorage } from "../core/slots.ts"
+import { type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
+import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+
+export type { ChainResult, MonthView, Notice, OwnerMonthly, Target }
+
+export interface MonthlySlotKeys {
+  readonly commitment: string
+  readonly setting: string
+  readonly release: string
+}
+
+export interface Saved {
+  readonly attempt: Attempt
+  readonly plan: OwnerPlan | undefined
+}
+
+export interface MonthRead {
+  readonly view: MonthlyOwnerView
+  readonly state: OwnerMonthly
+}
+
+export error MonthlyRefused { notice: Notice; message: string }
+export error MonthlyUncertain { message: string }
+
+export const monthlyMessages = {
+  signIn: "Sign in as a project owner or repository administrator first.",
+  readOnly: "Only a project owner or repository administrator can change this month.",
+  closed: "The editor is closed for this month.",
+  reason: "An amount below the proposed amount needs a reason of 20 to 500 characters. The reason is public and sent to the contributor.",
+  unavailable: "The monthly awards could not load. Retry.",
+  declined: "You declined the wallet request. Nothing was sent.",
+  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  approvalNeeded: "The reserve release needs the attester's approval from fresh finalized evidence first.",
+} as const
+
+const noticeMessages: Readonly<Record<Notice, string>> = {
+  Quiet: "",
+  AllocationSaved: "Allocation saved.",
+  CutSaved: "Cut saved. The reason is public and the contributor was notified.",
+  Conflict: "The allocations changed. Reload them before saving.",
+  Closed: "The cutoff for this month has passed. The automatic process pays the current allocations.",
+  Failed: "The change could not be saved. Retry.",
+  Finalized: "This month is finalized. Its allocations can no longer change.",
+  StorageBlocked: storageBlockedMessage,
+  Occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+}
+
+export function monthlyNotice(notice: Notice): string {
+  return noticeMessages[notice]
+}
+
+const viewLimitBytes = 1_048_576
+const targets: ReadonlyArray<Target> = ["Commitment", "Setting", "Release"]
+const windowCodes: ReadonlySet<string> = new Set(["cut_notice_window", "cutoff_passed", "month_frozen"])
+
+function slotTarget(target: Target): "commitment" | "setting" | "release" {
+  return target === "Commitment" ? "commitment" : target === "Setting" ? "setting" : "release"
+}
+
+function live(flow: Flow): boolean {
+  return flow.phase === "Awaiting" || flow.phase === "Sent" || flow.phase === "Unclear"
+}
+
+function seconds(iso: string | null): number {
+  if (iso === null) return 0
+  const millis = Date.parse(iso)
+  return Number.isFinite(millis) ? Math.floor(millis / 1000) : 0
+}
+
+export function monthOf(view: MonthlyOwnerView): MonthView {
+  return { sequence: view.proposal?.allocationSequence ?? 0, automatic: view.automatic, cutoffAt: seconds(view.cutoffAt), latestCutAt: seconds(view.proposal?.latestCutAt ?? null), frozen: view.run !== null }
+}
+
+export function saveResultOf(failure: CallFailure): SaveResult {
+  if (failure._tag !== "Refused") return "SaveFailed"
+  if (failure.error === "allocations_changed") return "SaveConflict"
+  return windowCodes.has(failure.error) ? "WindowClosed" : "SaveFailed"
+}
+
+export function trimmedLength(reason: string): number {
+  return reason.trim().length
+}
+
+export effect function ownerMonthlyPage(storage: SlotStorage | undefined, keys: MonthlySlotKeys, projectId: string, period: string) {
+  const crypto = try Experimental.Crypto.Crypto
+  const held = try Ref.make<OwnerMonthly>(initial)
+  const keeper: SlotKeeper<"commitment" | "setting" | "release"> = slotKeeper(storage, keys)
+  let actor = ""
+
+  effect function load() {
+    let state = try Ref.get(held)
+    for (const target of targets) {
+      const flow = flowOf(state, target)
+      if (live(flow)) continue
+      const read = keeper.read(slotTarget(target))
+      const found = read.kind === "owned" ? { slot: read.slot.attempt, slotOwner: read.slot.account } : { slot: noAttempt, slotOwner: 0 }
+      if (sameSlot(flow, found)) continue
+      state = withFlow(target, { ...flow, ...found }, state)
+      const identity = found.slot.identity
+      if (identity !== "" && !state.used.includes(identity)) state = { ...state, used: [...state.used, identity] }
+    }
+    return state
+  }
+
+  effect function keep(next: OwnerMonthly) {
+    const before = try Ref.get(held)
+    for (const target of targets) {
+      const flow = flowOf(next, target)
+      if (!sameSlot(flowOf(before, target), flow)) try keeper.write(slotTarget(target), flow)
+    }
+    try Ref.set(held, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function sent(event: Event, by: number) {
+    return try keptOrChanged(Effect.ignore(machine.send(event, by)))
+  }
+
+  effect function tick() {
+    const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+    const state = try machine.get()
+    if (canObserveClock(state, now, clock)) try sent({ type: "observeClock", now }, clock)
+  }
+
+  effect function observed(lifetime: number, view: MonthlyOwnerView) {
+    try tick()
+    const state = try machine.get()
+    if (canRecheckAuthority(state, lifetime, view.canManage, server)) try sent({ type: "recheckAuthority", lifetime, manages: view.canManage }, server)
+    const month = monthOf(view)
+    if (canObserveMonth(try machine.get(), lifetime, month, server)) try sent({ type: "observeMonth", lifetime, month }, server)
+    return { view, state: try machine.get() } satisfies MonthRead
+  }
+
+  effect function refuse(state: OwnerMonthly, message: string) {
+    throw new MonthlyRefused({ notice: state.notice, message: state.owner === 0 ? monthlyMessages.signIn : message })
+  }
+
+  effect function reply(target: Target, identity: string, outcome: "Signed" | "Declined" | "Uncertain", hash: string) {
+    const state = try machine.get()
+    if (canWalletReply(state, target, identity, outcome, hash, adapter)) try sent({ type: "walletReply", target, identity, reply: outcome, hash }, adapter)
+  }
+
+  effect function readMonth() {
+    const state = try machine.get()
+    const lifetime = state.lifetime
+    const view = call(monthlyView, { params: { id: projectId, period } }, { limitBytes: viewLimitBytes, expectedActor: actor }) catch effect (failure) => {
+      throw new MonthlyRefused({ notice: state.notice, message: failure.message === "" ? monthlyMessages.unavailable : failure.message })
+    }
+    return try observed(lifetime, view)
+  }
+
+  effect function save(githubUserId: string, grossBase: string, reason: string) {
+    try tick()
+    const state = try machine.get()
+    if (!canSave(state, state.owner)) try refuse(state, state.draftCut ? monthlyMessages.reason : monthlyMessages.closed)
+    try sent({ type: "save" }, state.owner)
+    const saving = try machine.get()
+    const body: AllocationChange = { githubUserId, grossBase, expectedSequence: saving.expected, ...(saving.savingCut ? { reason: reason.trim() } : {}) }
+    const answer = call(monthlyAllocations, { params: { id: projectId, period }, body }, { limitBytes: viewLimitBytes, expectedActor: actor }) catch (failure) => ({ failure })
+    const result: SaveResult = "failure" in answer ? saveResultOf(answer.failure) : "SaveAccepted"
+    try tick()
+    const now = try machine.get()
+    if (canSaveReply(now, saving.lifetime, saving.saving, result, server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result }, server)
+    else if (result !== "SaveAccepted" && canSaveReply(now, saving.lifetime, saving.saving, "SaveFailed", server)) try sent({ type: "saveReply", lifetime: saving.lifetime, request: saving.saving, result: "SaveFailed" }, server)
+    if (!("failure" in answer)) {
+      const read = try observed(saving.lifetime, answer)
+      return { view: read.view, state: read.state, message: noticeMessages[saving.savingCut ? "CutSaved" : "AllocationSaved"] }
+    }
+    return { view: undefined, state: try machine.get(), message: answer.failure.message }
+  }
+
+  effect function finalizeMonth() {
+    try tick()
+    const state = try machine.get()
+    if (!canFinalize(state, state.owner)) try refuse(state, monthlyMessages.readOnly)
+    try sent({ type: "finalize" }, state.owner)
+    const answer = call(monthlyFinalize, { params: { id: projectId, period }, body: { expectedSequence: state.month.sequence } }, { limitBytes: viewLimitBytes, expectedActor: actor }) catch (failure) => ({ failure })
+    const accepted = !("failure" in answer)
+    const now = try machine.get()
+    if (canFinalizeReply(now, state.lifetime, accepted, server)) try sent({ type: "finalizeReply", lifetime: state.lifetime, accepted }, server)
+    else if (canFinalizeReply(now, state.lifetime, false, server)) try sent({ type: "finalizeReply", lifetime: state.lifetime, accepted: false }, server)
+    if (!("failure" in answer)) return try observed(state.lifetime, answer)
+    return { view: undefined, state: try machine.get(), message: answer.failure.message }
+  }
+
+  effect function submit<E extends { readonly _tag: string }, R>(target: Target, prompt: (beforePrompt: (plan: OwnerPlan) => void!MonthlyRefused) => string!E!R) {
+    const identity = try orDie(crypto.randomUUIDv4())
+    let asked = false
+    const beforePrompt = effect (plan: OwnerPlan) => {
+      const state = try machine.get()
+      if (!canSend(state, target, identity, true, state.owner)) try refuse(state, slotChangedMessage)
+      if (keeper.unreadable(slotTarget(target))) throw new MonthlyRefused({ notice: "Occupied", message: unreadableMessage })
+      if (!keeper.writable()) {
+        try sent({ type: "send", target, identity, stored: false }, state.owner)
+        throw new MonthlyRefused({ notice: "StorageBlocked", message: storageBlockedMessage })
+      }
+      keeper.propose(slotTarget(target), planText(plan))
+      if (!(try sent({ type: "send", target, identity, stored: true }, state.owner))) throw new MonthlyRefused({ notice: "Occupied", message: slotChangedMessage })
+      const after = try machine.get()
+      if (flowOf(after, target).awaiting !== identity) throw new MonthlyRefused({ notice: after.notice, message: noticeMessages[after.notice] })
+      asked = true
+    }
+    const hash: string = prompt(beforePrompt) catch effect (error) => {
+      if (!asked) throw error
+      if (error._tag === "WalletDeclined") {
+        try reply(target, identity, "Declined", "")
+        throw new WalletDeclined({ message: monthlyMessages.declined })
+      }
+      try reply(target, identity, "Uncertain", "")
+      throw new MonthlyUncertain({ message: monthlyMessages.unclear })
+    }
+    try reply(target, identity, "Signed", hash)
+    return hash
+  }
+
+  effect function asOwner(allowed: (state: OwnerMonthly) => boolean, event: Event, message: string) {
+    const state = try machine.get()
+    if (!allowed(state)) try refuse(state, message)
+    try sent(event, state.owner)
+    return try machine.get()
+  }
+
+  return {
+    machine,
+    follow: effect (account: number, githubId: string, manages: boolean) => {
+      const state = try machine.get()
+      actor = githubId
+      if (account === 0 && canSignOut(state, state.owner)) try sent({ type: "signOut" }, state.owner)
+      else if (account > 0 && canSignIn(state, account, manages, account)) try sent({ type: "signIn", account, manages }, account)
+      return try machine.get()
+    },
+    readMonth,
+    editDraft: (cut: boolean, reason: string) => asOwner((state) => canEditDraft(state, cut, cut ? trimmedLength(reason) : 0, state.owner), { type: "editDraft", cut, reasonLength: cut ? trimmedLength(reason) : 0 }, monthlyMessages.closed),
+    save,
+    finalize: finalizeMonth,
+    observeApproval: effect (approved: boolean) => {
+      const state = try machine.get()
+      if (canObserveApproval(state, state.lifetime, approved, server)) try sent({ type: "observeApproval", lifetime: state.lifetime, approved }, server)
+      return try machine.get()
+    },
+    review: (target: Target) => asOwner((state) => canReview(state, target, state.owner), { type: "review", target }, target === "Release" ? monthlyMessages.approvalNeeded : monthlyMessages.readOnly),
+    saved: effect (target: Target) => {
+      const state = try machine.get()
+      return { attempt: flowOf(state, target).slot, plan: planOf(keeper.plan(slotTarget(target))) } satisfies Saved
+    },
+    submit,
+    confirmUnsent: (target: Target) => asOwner((state) => canConfirmUnsent(state, target, state.owner), { type: "confirmUnsent", target }, slotChangedMessage),
+    enterCandidate: (target: Target, candidate: string) => asOwner((state) => canEnterCandidate(state, target, candidate, state.owner), { type: "enterCandidate", target, candidate }, slotChangedMessage),
+    check: effect <R>(target: Target, read: (saved: Saved) => ChainResult!!R) => {
+      const state = try machine.get()
+      if (flowOf(state, target).phase !== "Sent") return state
+      const result = try read({ attempt: flowOf(state, target).slot, plan: planOf(keeper.plan(slotTarget(target))) })
+      if (canCheck(try machine.get(), target, result, adapter)) try sent({ type: "check", target, result }, adapter)
+      return try machine.get()
+    },
+    funds: effect <A, R>(read: A!CallFailure!R) => {
+      const state = try machine.get()
+      if (!canOpenFunds(state, state.owner)) try refuse(state, monthlyMessages.readOnly)
+      try sent({ type: "openFunds" }, state.owner)
+      const opened = try machine.get()
+      const outcome = Effect.map(read, (value) => ({ ok: true as const, value })) catch () => ({ ok: false as const })
+      const now = try machine.get()
+      if (canFundsReply(now, opened.lifetime, opened.fundsRequest, outcome.ok, server)) try sent({ type: "fundsReply", lifetime: opened.lifetime, request: opened.fundsRequest, ok: outcome.ok }, server)
+      const after = try machine.get()
+      return { state: after, funds: after.funds === "FundsReady" && outcome.ok ? outcome.value : undefined }
+    },
+    saveSetting: effect (automatic: boolean) => {
+      const state = try machine.get()
+      if (state.owner === 0 || !state.manages) try refuse(state, monthlyMessages.readOnly)
+      const answer = call(monthlySettings, { params: { id: projectId }, body: { automatic } }, { limitBytes: viewLimitBytes, expectedActor: actor }) catch effect (failure) => {
+        throw new MonthlyRefused({ notice: state.notice, message: failure.message === "" ? monthlyNotice("Failed") : failure.message })
+      }
+      return answer.automatic
+    },
+    clearUnreadable: effect (target: Target) => keeper.clearUnreadable(slotTarget(target)),
+  }
+}

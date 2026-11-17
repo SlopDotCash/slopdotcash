@@ -1,0 +1,52 @@
+// spec/contributor/traceServer.md, "The run, its intents, reservation, objects and events are separate records"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"
+import { DeploymentTier } from "@repo/platform/config"
+import { Refused, json } from "@repo/platform/http"
+import { getPrivateRequestIntake } from "../client/refusals.vibe"
+import { traceApiContract, traceApiOrigins } from "../client/traces.vibe"
+
+export interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+export interface Stated extends Row {
+  readonly message: string
+}
+
+export function traceJson(body: unknown, status = 200) {
+  return json(body, status, traceApiContract)
+}
+
+export function bare(row: Row) {
+  return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { ...row.headers, ...traceApiContract })
+}
+
+export function refused(row: Stated) {
+  return new Refused({ status: row.status, code: row.error, message: row.message, headers: { ...row.headers, ...traceApiContract } })
+}
+
+function tagOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? error._tag : undefined
+}
+
+export effect function settledOr<A, E, R>(program: A!E!R, conflict: Stated) {
+  return program catch effect (error) => {
+    const tag = tagOf(error)
+    if (tag === "Conflict" || tag === "ConstraintViolation") throw refused(conflict)
+    throw error
+  }
+}
+
+export effect function offHost() {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  const local = url.hostname === "localhost"
+  if (url.protocol !== "https:" && !local) return bare(getPrivateRequestIntake.httpsRequired)
+  if (url.origin !== traceApiOrigins[(try DeploymentTier).tier] && !local) return bare(getPrivateRequestIntake.notFound)
+  return undefined
+}
+
+export effect function header(name: string) {
+  return (try HttpServerRequest.HttpServerRequest).headers[name]
+}

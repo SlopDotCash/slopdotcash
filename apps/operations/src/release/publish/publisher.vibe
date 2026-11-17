@@ -1,0 +1,505 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+import { ed25519KeyPair, sha256Hex } from "@repo/platform/crypto"
+import type { Environment, Service } from "../../../gen/operations__release.effect.vibe"
+import { bundleSite, pagesManifestName, verifyPagesManifest } from "../manifest/pages.vibe"
+import { retiredScripts } from "../retired.ts"
+import { type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
+import { identityApp, identityClientId, identityProbes, slopbotHealth, traceApiOrigin, traceBoundary, tracePatience, verifySchedules } from "../verify/probes.vibe"
+import { type Patience, propagation, providerChecks, servedMismatches } from "../verify/served.vibe"
+import { Cloudflare, cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+import { pagesSecretNames, tableNames } from "../wrangler/outputs.vibe"
+import { ConfigRefused, type Reviewed, databaseOf, driftMessage, isolationIssue, mappedScripts, pagesOf, readReviewed, reviewOnlyKeys, secretDrift, siteOrigins } from "./config.vibe"
+import { migrationLedger } from "./migrations.vibe"
+import { type Overrides, type Publication, type SecretValues, checkedSecrets, configsFor, feeSettingsOf, plainRelease, privateBoundary, publicationOrder, publishContainerWorker, publishWorker, releaseSecrets, servingTag, withSecretsFile } from "./order.vibe"
+import { tableOwners, undeclaredTable } from "./tables.vibe"
+
+export interface PublisherOptions {
+  readonly root: string
+  readonly wrangler?: string
+  readonly patience?: Patience
+}
+
+type Store = NonNullable<ReturnType<typeof databaseOf>>
+
+interface Prepared {
+  readonly target: Target
+  readonly reviewed: ReadonlyArray<Reviewed>
+  readonly site: Reviewed
+  readonly store: Store
+  readonly storeConfig: string
+  readonly slopbot: boolean
+  readonly retention: boolean
+  readonly scannerKey: string
+}
+
+interface SiteBinding {
+  readonly binding: string
+  readonly service: string
+  readonly entrypoint?: string
+  readonly environment?: string
+}
+
+interface Published {
+  readonly stacks: ReadonlyArray<string>
+  readonly notify: string | undefined
+  readonly clientId: string | undefined
+}
+
+schema ScriptEntry { readonly id: string }
+
+schema EnvVar {
+  readonly type: string
+  readonly value?: string
+}
+
+schema ProductionConfig { readonly env_vars?: Record<string, EnvVar> }
+
+schema DeploymentConfigs { readonly production: ProductionConfig }
+
+schema PagesProject {
+  readonly name: string
+  readonly production_branch: string
+  readonly deployment_configs: DeploymentConfigs
+}
+
+schema PagesMetadata {
+  readonly branch?: string
+  readonly commit_hash?: string
+  readonly commit_dirty?: boolean
+}
+
+schema PagesTrigger { readonly metadata?: PagesMetadata }
+
+schema PagesStage {
+  readonly name?: string
+  readonly status?: string
+}
+
+schema PagesDeployment {
+  readonly id: string
+  readonly url: string
+  readonly created_on: string
+  readonly environment?: string
+  readonly project_name?: string
+  readonly is_skipped?: boolean
+  readonly latest_stage?: PagesStage
+  readonly deployment_trigger?: PagesTrigger
+}
+
+const branches = { Production: "main", Staging: "development" } as const
+const listingPageSize = 25
+const listingPages = 8
+const migrationSeconds = 900
+const siteSeconds = 600
+const deploymentIdPattern = /^[0-9a-f-]{20,}$/iu
+const retentionValues: ReadonlySet<string> = new Set(["", "off", "enabled"])
+const finishedStages: ReadonlySet<string> = new Set(["failure", "canceled"])
+const scannerKeyName = "VETTING_RESULT_PUBLIC_KEYS"
+const notifyBinding = "SLOP_NOTIFY"
+const xCredentials = ["X_CLIENT_ID", "X_CLIENT_SECRET"] as const
+
+const workerUploads: { readonly [E in Environment]: { readonly [S in Service]?: ReadonlyArray<string> } } = {
+  Production: { Slopbot: ["ORBIO_API_KEY"] },
+  Staging: { IdentityWorker: ["GITHUB_APP_CLIENT_ID", "GITHUB_APP_CLIENT_SECRET", "IDENTITY_STATE_KEY", "IDENTITY_ASSERTION_KEY"], RepositoryAccess: ["SLOPBOT_APP_ID", "SLOPBOT_APP_PRIVATE_KEY"] },
+}
+
+const attesterBindings: { readonly [E in Environment]: { readonly pattern: RegExp; readonly networks: { readonly [network: string]: ReadonlyArray<readonly [string, string]> } } } = {
+  Production: {
+    pattern: /^slop-payments-(.+)-attester$/u,
+    networks: {
+      "base-mainnet": [["BINDING_RECOVERY", "BindingRecovery"], ["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
+      ethereum: [["BINDING_RECOVERY_ETHEREUM", "BindingRecovery"], ["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
+      "robinhood-mainnet": [["BINDING_RECOVERY_ROBINHOOD", "BindingRecovery"], ["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
+      "solana-mainnet": [["SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["SECURITY_SOLANA_IDENTITY_ATTESTER", "SolanaBinding"], ["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
+    },
+  },
+  Staging: {
+    pattern: /^slop-payments-(.+)-staging-attester$/u,
+    networks: {
+      "base-sepolia": [["MONTHLY_RELEASE_BASE", "MonthlyReserveRelease"]],
+      "ethereum-sepolia": [["MONTHLY_RELEASE_ETHEREUM", "MonthlyReserveRelease"]],
+      "robinhood-testnet": [["MONTHLY_RELEASE_ROBINHOOD", "MonthlyReserveRelease"]],
+      "solana-devnet": [["MONTHLY_RELEASE_SOLANA", "MonthlyReserveRelease"]],
+    },
+  },
+}
+
+const reservedBindings: ReadonlySet<string> = new Set(Object.values(attesterBindings).flatMap((tier) => Object.values(tier.networks).flatMap((pairs) => pairs.map(([binding]) => binding))))
+
+function refused(message: string) {
+  return new ConfigRefused({ message })
+}
+
+function messageOf(error: unknown) {
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" && error.message !== "") return error.message
+  return "an unexpected failure"
+}
+
+effect function staged<A, E, R>(stage: string, work: A!E!R) {
+  return work catch effect (error) => {
+    if (error instanceof PublicationFailed) throw error
+    throw new PublicationFailed({ stage, message: messageOf(error) })
+  }
+}
+
+effect function written(path: string, value: unknown) {
+  const fs = try FileSystem.FileSystem
+  fs.writeFileString(path, `${JSON.stringify(value, null, 2)}\n`) catch effect () => {
+    throw refused(`${path} could not be written`)
+  }
+}
+
+effect function scriptsMapped(reviewed: ReadonlyArray<Reviewed>) {
+  const cloudflare = try Cloudflare
+  const answer = try cloudflare.read("scripts", "/workers/scripts")
+  const scripts = Schema.decodeUnknownEffect(Schema.Array(ScriptEntry))(answer) catch effect () => {
+    throw refused("the account's Worker script listing has an unexpected shape")
+  }
+  const mapped = mappedScripts(reviewed)
+  const retired = retiredScripts()
+  const unmapped = scripts.map((script) => script.id).filter((name) => !mapped.has(name) && !retired.has(name)).sort()
+  if (unmapped.length > 0) throw refused(`the account holds Worker scripts that no reviewed configuration or decommission entry maps: ${unmapped.join(", ")}`)
+}
+
+effect function pagesProject(site: Reviewed, target: Target) {
+  const cloudflare = try Cloudflare
+  const project = Schema.decodeUnknownEffect(PagesProject)(try cloudflare.read("pages project", `/pages/projects/${site.file.name}`)) catch effect () => {
+    throw refused(`the Pages project ${site.file.name} has an unexpected shape`)
+  }
+  if (project.name !== site.file.name || project.production_branch !== branches[target.environment]) throw refused(`the Pages project ${site.file.name} must publish from ${branches[target.environment]}`)
+  return project
+}
+
+effect function pagesSecrets(environment: Environment) {
+  if (environment === "Staging") return try releaseSecrets(["TRACE_AUTH_SECRET"])
+  const given: string[] = []
+  for (const name of xCredentials) {
+    const value = Option.getOrUndefined(try Config.option(Config.Redacted(name)))
+    if (value !== undefined && Redacted.value(value).trim() !== "") given.push(name)
+  }
+  if (given.length === 1) throw refused("X OAuth credentials must be configured together")
+  return given.length === 0 ? {} : try releaseSecrets(xCredentials)
+}
+
+effect function pagesReady(site: Reviewed, target: Target, workspace: string) {
+  const cloudflare = try Cloudflare
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try pagesProject(site, target)
+  const uploads: SecretValues = try pagesSecrets(target.environment)
+  if (Object.keys(uploads).length > 0) {
+    try withSecretsFile(workspace, site.file.name, uploads, (path) => cloudflare.wrangler("pages secrets upload", { args: ["pages", "secret", "bulk", path, "--project-name", site.file.name] }))
+  }
+  const listed = pagesSecretNames(try cloudflare.wrangler("pages secrets", { args: ["pages", "secret", "list", "--project-name", site.file.name] }))
+  const drift = driftMessage(`the Pages project ${site.file.name}`, secretDrift(site, listed))
+  if (drift !== undefined) throw refused(drift)
+  try bundleSite(target.bundle)
+  const worker = fs.stat(files.join(target.bundle, "apps", "app", "dist", "_worker.js")) catch () => undefined
+  if (worker?.type !== "File") throw refused("the release bundle has no built apps/app/dist/_worker.js")
+}
+
+effect function scannerPublicKey() {
+  const jwk = try Config.Redacted("SLOP_VETTING_SIGNING_JWK")
+  const pair = ed25519KeyPair(jwk) catch effect () => {
+    throw refused("the scanner signing key is invalid")
+  }
+  return btoa(String.fromCharCode(...pair.publicKey))
+}
+
+function siteVars(project: PagesProject, site: Reviewed, scannerKey: string) {
+  const remote = project.deployment_configs.production.env_vars ?? {}
+  const existing = remote[scannerKeyName]
+  if (existing !== undefined && (existing.type !== "plain_text" || existing.value !== scannerKey)) return "the Pages project holds other scanner public keys; rotation is not authorized"
+  const declared = site.file.vars?.[scannerKeyName]
+  if (declared !== undefined && declared !== scannerKey) return "the reviewed Pages configuration names other scanner public keys"
+  const preview = site.raw.env
+  if (typeof preview === "object" && preview !== null && JSON.stringify(preview).includes(scannerKeyName)) return "the scanner public key must not enter the preview configuration"
+  const plain: Record<string, string> = {}
+  for (const [name, variable] of Object.entries(remote)) {
+    if (variable.type !== "plain_text") continue
+    if (variable.value === undefined) return "the Pages plaintext configuration is invalid"
+    plain[name] = variable.value
+  }
+  return { ...plain, ...site.file.vars ?? {}, [scannerKeyName]: scannerKey }
+}
+
+function siteServices(site: Reviewed, environment: Environment, published: Published) {
+  const tier = attesterBindings[environment]
+  const kept: SiteBinding[] = (site.file.services ?? []).filter((binding) => !reservedBindings.has(binding.binding))
+  const attesters = published.stacks.flatMap((name) => {
+    const network = tier.pattern.exec(name)?.[1]
+    const pairs = network === undefined ? undefined : tier.networks[network]
+    return (pairs ?? []).map(([binding, entrypoint]) => ({ binding, service: name, entrypoint }))
+  })
+  if (environment === "Production" || published.notify === undefined) return [...kept, ...attesters]
+  if (kept.some((binding) => binding.binding === notifyBinding)) return `the reviewed staging Pages configuration already binds ${notifyBinding}`
+  return [...kept, ...attesters, { binding: notifyBinding, service: published.notify }]
+}
+
+effect function storeConfig(store: Store, root: string, workspace: string) {
+  const files = try Path.Path
+  const path = files.join(workspace, `${store.database.database_name}.d1.json`)
+  try written(path, {
+    name: store.config.file.name,
+    compatibility_date: store.config.file.compatibility_date,
+    d1_databases: [{ ...store.database, migrations_dir: files.join(root, "migrations") }],
+  })
+  return path
+}
+
+effect function migrated(store: Store, config: string, root: string) {
+  const cloudflare = try Cloudflare
+  try migrationLedger(root)
+  try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds })
+}
+
+effect function tablesOwned(store: Store, config: string, root: string) {
+  const cloudflare = try Cloudflare
+  const text = try cloudflare.wrangler("tables", { args: ["d1", "execute", store.database.database_name, "--remote", "--json", "--config", config, "--command", "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"] })
+  const owners = try tableOwners(root)
+  const stray = undeclaredTable(owners, try tableNames(text, "tables"))
+  if (stray !== undefined) throw refused(`table ${stray} is declared by no apps/*/src/tables.ts`)
+}
+
+effect function releaseVariables() {
+  const slopbot = (try Config.withDefault(Config.String("SLOPBOT_RELEASE"), "")) === "enabled"
+  const retention = try Config.withDefault(Config.String("SLOP_VETTING_RETENTION_RELEASE"), "")
+  if (!retentionValues.has(retention)) throw refused("SLOP_VETTING_RETENTION_RELEASE must be off or enabled")
+  return { slopbot, retention: retention === "enabled" }
+}
+
+function customDomain(reviewed: Reviewed) {
+  const route = (reviewed.file.routes ?? []).find((entry) => entry.custom_domain === true)
+  return route === undefined ? undefined : `https://${route.pattern}`
+}
+
+function onlyConfig(found: ReadonlyArray<Reviewed> | string) {
+  if (typeof found === "string") return found
+  const [only] = found
+  return only ?? "no reviewed configuration"
+}
+
+export function publisher(options: PublisherOptions) {
+  const patience = options.patience ?? propagation
+  const live = Layer.effect(Publisher, effect {
+    const services = try Effect.context<Cloudflare | FileSystem.FileSystem | Path.Path | HttpClient.HttpClient | Experimental.Crypto.Crypto>()
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const workspace = try fs.makeTempDirectoryScoped({ prefix: "slop-release-" })
+    const prepared = try Ref.make<Prepared | undefined>(undefined)
+    const published = try Ref.make<Published>({ stacks: [], notify: undefined, clientId: undefined })
+    const writtenVars = try Ref.make<Readonly<Record<string, string>> | undefined>(undefined)
+    const backupRetention = try Ref.make<boolean | undefined>(undefined)
+    const listedUrls = try Ref.make(new Map<string, string>())
+    const siteAttempts = try Ref.make(0)
+
+    effect function preparedFor(target: Target) {
+      const ready = try Ref.get(prepared)
+      if (ready === undefined || ready.target.sourceSha !== target.sourceSha || ready.target.environment !== target.environment || ready.target.manifestSha256 !== target.manifestSha256) {
+        throw new PublicationFailed({ stage: "prepare", message: "publication was not prepared for this source and artifact" })
+      }
+      return ready
+    }
+
+    effect function prepare(target: Target) {
+      const reviewed = try staged("configuration", readReviewed(options.root))
+      const issue = isolationIssue(reviewed)
+      if (issue !== undefined) throw new PublicationFailed({ stage: "isolation", message: issue })
+      const site = pagesOf(reviewed, target.environment)
+      if (typeof site === "string") throw new PublicationFailed({ stage: "isolation", message: site })
+      const store = databaseOf(reviewed, target.environment)
+      if (store === undefined) throw new PublicationFailed({ stage: "migrations", message: "no reviewed configuration binds this environment's D1 database" })
+      try staged("scripts", scriptsMapped(reviewed))
+      const scannerKey = try staged("scanner key", scannerPublicKey())
+      try staged("pages", pagesReady(site, target, workspace))
+      const config = try staged("migrations", storeConfig(store, options.root, workspace))
+      try staged("migrations", migrated(store, config, options.root))
+      try staged("tables", tablesOwned(store, config, options.root))
+      const variables = try staged("variables", releaseVariables())
+      try Ref.set(published, { stacks: [], notify: undefined, clientId: undefined })
+      try Ref.set(prepared, { target, reviewed, site, store, storeConfig: config, scannerKey, ...variables })
+    }
+
+    effect function publishService(service: Service, target: Target) {
+      const ready = try preparedFor(target)
+      const found = configsFor(ready.reviewed, service, target.environment)
+      const publication = { root: options.root, bundle: target.bundle, workspace, sourceSha: target.sourceSha, environment: target.environment } satisfies Publication
+      if (typeof found === "string") throw refused(found)
+      if (service === "PaymentAttesters") {
+        const tags: string[] = []
+        for (const stack of found) {
+          tags.push((try publishWorker(stack, publication, plainRelease)).tag)
+          try Ref.update(published, (current) => ({ ...current, stacks: [...current.stacks, stack.file.name] }))
+        }
+        return tags.every((tag) => tag === tags[0]) ? tags[0] ?? "" : `mixed:${tags.join(",")}`
+      }
+      const reviewed = onlyConfig(found)
+      if (typeof reviewed === "string") throw refused(reviewed)
+      if (service === "VettingSandbox") return try publishContainerWorker(reviewed, publication)
+      if (service === "VettingRetention") {
+        if ((try Ref.get(backupRetention)) !== true) throw refused("the backup Worker was not published with retention enabled in this run")
+        return try servingTag(reviewed.file.name)
+      }
+      const secrets = try releaseSecrets(workerUploads[target.environment][service] ?? [])
+      if (service === "VettingBackup") {
+        const overrides = { vars: { EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: ready.retention ? "enabled" : "off" }, withoutBindings: [] } satisfies Overrides
+        const backup = try publishWorker(reviewed, publication, { overrides, triggers: true, secrets })
+        try Ref.set(backupRetention, ready.retention)
+        return backup.tag
+      }
+      if (service === "IdentityWorker") {
+        const origin = customDomain(reviewed)
+        if (origin === undefined) throw refused(`${reviewed.path} names no custom domain`)
+        const overrides = { vars: {}, withoutBindings: target.environment === "Production" && !ready.slopbot ? ["REPORTING_READINESS"] : [] } satisfies Overrides
+        const identity = try publishWorker(reviewed, publication, { overrides, triggers: false, secrets })
+        try verifySchedules(reviewed.file.name, reviewed.file.triggers?.crons ?? [], true)
+        if (target.environment === "Production") {
+          const clientId = try identityProbes(origin, ready.store.database.database_name, identity.config)
+          try Ref.update(published, (current) => ({ ...current, clientId }))
+        }
+        return identity.tag
+      }
+      if (service === "Slopbot" || service === "RepositoryAccess") {
+        const overrides = { vars: { SLOPBOT_PRODUCER_REVISION: target.sourceSha }, withoutBindings: [] } satisfies Overrides
+        const slopbot = try publishWorker(reviewed, publication, { overrides, triggers: true, secrets })
+        const origin = customDomain(reviewed)
+        if (service === "Slopbot") {
+          if (origin === undefined) throw refused(`${reviewed.path} names no custom domain`)
+          try slopbotHealth(origin)
+        }
+        return slopbot.tag
+      }
+      if (service === "Notify") {
+        try privateBoundary(reviewed.file.name)
+        const notify = try publishWorker(reviewed, publication, { ...plainRelease, secrets })
+        try Ref.update(published, (current) => ({ ...current, notify: reviewed.file.name }))
+        return notify.tag
+      }
+      return (try publishWorker(reviewed, publication, { ...plainRelease, secrets })).tag
+    }
+
+    effect function feeSettings(target: Target) {
+      const ready = try preparedFor(target)
+      const reviewed = onlyConfig(configsFor(ready.reviewed, "FeeConverter", target.environment))
+      if (typeof reviewed === "string") throw refused(reviewed)
+      return try feeSettingsOf(reviewed, try checkedSecrets(reviewed))
+    }
+
+    effect function site(target: Target) {
+      const cloudflare = try Cloudflare
+      const ready = try preparedFor(target)
+      const attempt = try Ref.updateAndGet(siteAttempts, (count) => count + 1)
+      const directory = files.join(workspace, `pages-${attempt}`)
+      const output = files.join(directory, "site")
+      fs.makeDirectory(directory, { recursive: true }) catch effect () => {
+        throw refused("the Pages publication directory could not be created")
+      }
+      fs.copy(try bundleSite(target.bundle), output) catch effect () => {
+        throw refused("the verified site could not be staged for publication")
+      }
+      fs.copyFile(files.join(target.bundle, "apps", "app", "dist", "_worker.js"), files.join(output, "_worker.js")) catch effect () => {
+        throw refused("the Pages Worker could not be staged for publication")
+      }
+      const vars = siteVars(try pagesProject(ready.site, target), ready.site, ready.scannerKey)
+      if (typeof vars === "string") throw refused(vars)
+      const services = siteServices(ready.site, target.environment, try Ref.get(published))
+      if (typeof services === "string") throw refused(services)
+      const kept = Object.fromEntries(Object.entries(ready.site.raw).filter(([key]) => !reviewOnlyKeys.has(key)))
+      try written(files.join(directory, "wrangler.json"), { ...kept, vars, services, pages_build_output_dir: "./site" })
+      try Ref.set(writtenVars, vars)
+      try cloudflare.wrangler("pages deploy", {
+        args: ["pages", "deploy", "--cwd", directory, `--project-name=${ready.site.file.name}`, `--branch=${branches[target.environment]}`, `--commit-hash=${target.sourceSha}`, "--commit-dirty=false", "--no-bundle"],
+        cwd: directory,
+        seconds: siteSeconds,
+      })
+    }
+
+    effect function deployments(target: Target, sinceMillis: number) {
+      const cloudflare = try Cloudflare
+      const ready = try preparedFor(target)
+      const project = ready.site.file.name
+      const branch = branches[target.environment]
+      const entries: ListedSite[] = []
+      const urls = new Map<string, string>()
+      for (let page = 1; page <= listingPages; page += 1) {
+        const answer = try cloudflare.read("pages deployments", `/pages/projects/${project}/deployments?env=production&per_page=${listingPageSize}&page=${page}`)
+        const listed = Schema.decodeUnknownEffect(Schema.Array(PagesDeployment))(answer) catch effect () => {
+          throw refused("the Pages deployment listing has an unexpected shape")
+        }
+        if (listed.some((deployment) => !Number.isFinite(Date.parse(deployment.created_on)))) throw refused("a Pages deployment in the listing has no readable creation time")
+        const recent = listed.filter((deployment) => Date.parse(deployment.created_on) >= sinceMillis)
+        for (const deployment of recent) {
+          const metadata = deployment.deployment_trigger?.metadata
+          const stage = deployment.latest_stage
+          const finished = stage !== undefined && (finishedStages.has(stage.status ?? "") || (stage.name === "deploy" && stage.status === "success"))
+          if (metadata?.commit_hash === target.sourceSha && metadata.branch === branch && deployment.is_skipped !== true && !finished) {
+            throw refused(`Pages deployment ${deployment.id} of the tested source has not finished; the listing cannot prove absence`)
+          }
+          const exact = deployment.environment === "production" && deployment.project_name === project && deployment.is_skipped === false
+            && deployment.latest_stage?.name === "deploy" && deployment.latest_stage.status === "success" && metadata?.branch === branch
+            && metadata.commit_dirty === false && metadata.commit_hash === target.sourceSha
+          const https = Effect.try(() => new URL(deployment.url).protocol === "https:") catch () => false
+          if (exact && (!deploymentIdPattern.test(deployment.id) || !https)) throw refused("a matching Pages deployment has no valid id or HTTPS URL")
+          urls.set(deployment.id, deployment.url)
+          entries.push({ deploymentId: deployment.id, artifactSha256: exact ? target.manifestSha256 : `deployment:${deployment.id}` })
+        }
+        if (listed.length < listingPageSize || recent.length < listed.length) {
+          try Ref.set(listedUrls, urls)
+          return entries
+        }
+      }
+      throw refused(`the Pages deployment listing has more than ${listingPages * listingPageSize} deployments since this attempt`)
+    }
+
+    effect function siteConfigServed(ready: Prepared, target: Target) {
+      const vars = try Ref.get(writtenVars)
+      if (vars === undefined) throw refused("this run wrote no Pages configuration to verify")
+      const remote = (try pagesProject(ready.site, target)).deployment_configs.production.env_vars ?? {}
+      const drifted = Object.entries(vars).find(([name, value]) => remote[name]?.type !== "plain_text" || remote[name]?.value !== value)
+      if (drifted !== undefined) throw refused(`the Pages plaintext configuration read-back differs at ${drifted[0]}`)
+    }
+
+    effect function clientIdFor(ready: Prepared) {
+      const recorded = (try Ref.get(published)).clientId
+      if (recorded !== undefined) return recorded
+      const identity = onlyConfig(configsFor(ready.reviewed, "IdentityWorker", ready.target.environment))
+      if (typeof identity === "string") throw refused(identity)
+      const origin = customDomain(identity)
+      if (origin === undefined) throw refused(`${identity.path} names no custom domain`)
+      return try identityClientId(origin)
+    }
+
+    effect function served(target: Target, deploymentId: string) {
+      const ready = try preparedFor(target)
+      const url = (try Ref.get(listedUrls)).get(deploymentId)
+      if (url === undefined) throw refused(`deployment ${deploymentId} is not in this attempt's provider listing`)
+      const siteDirectory = try bundleSite(target.bundle)
+      const local = try verifyPagesManifest(siteDirectory)
+      const records = [...local.manifest.files, { path: pagesManifestName, bytes: local.bytes.length, sha256: try sha256Hex(local.bytes) }]
+      const deploymentOrigin = new URL(url).origin
+      const canonical = siteOrigins[target.environment]
+      const mismatched = [...try servedMismatches(deploymentOrigin, records, target.sourceSha, patience), ...try servedMismatches(canonical, records, target.sourceSha, patience)]
+      const artifactSha256 = mismatched.length === 0 ? target.manifestSha256 : `served:${try sha256Hex(mismatched.join("\n"))}`
+      const dnsTlsHeaders = try providerChecks(canonical, ready.site.file.name, siteDirectory)
+      const result = { deploymentId, artifactSha256, environment: target.environment, dnsTlsHeaders } satisfies ServedSite
+      if (mismatched.length > 0 || !dnsTlsHeaders) return result
+      try siteConfigServed(ready, target)
+      if (target.environment === "Production") {
+        try traceBoundary(traceApiOrigin, target.sourceSha, { rounds: Math.min(tracePatience.rounds, patience.rounds), delaySeconds: Math.min(tracePatience.delaySeconds, patience.delaySeconds) })
+        try identityApp(try clientIdFor(ready))
+      }
+      return result
+    }
+
+    return {
+      order: publicationOrder,
+      prepare: (target: Target) => staged("prepare", Effect.provide(prepare(target), services)),
+      publish: (service: Service, target: Target) => staged(`publish ${service}`, Effect.provide(publishService(service, target), services)),
+      feeSettings: (target: Target) => staged("fee settings", Effect.provide(feeSettings(target), services)),
+      site: (target: Target) => staged("site", Effect.provide(site(target), services)),
+      deployments: (target: Target, sinceMillis: number) => staged("deployments", Effect.provide(deployments(target, sinceMillis), services)),
+      served: (target: Target, deploymentId: string) => staged("served", Effect.provide(served(target, deploymentId), services)),
+    } satisfies Publisher.Shape
+  })
+  return Layer.provide(live, cloudflare({ root: options.root, wrangler: options.wrangler ?? pinnedWrangler(options.root) }))
+}

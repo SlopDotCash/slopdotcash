@@ -1,0 +1,75 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { type Hex, keccak } from "@repo/platform/chain/evm"
+import type { Publication } from "../../gen/settlement__referralPublication.ts"
+import type { Referral } from "../../gen/settlement__referrals.ts"
+import { alwaysActivationReady, mayPostOn } from "../../gen/settlement__referrals.effect.vibe"
+import { permittedOperation } from "../../gen/settlement__signer.effect.vibe"
+import { evmAddress } from "../chain/evm/abi.ts"
+import { type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
+import { fromAmount } from "../kernels/amounts.ts"
+import { type Deployment, postRootCalldata } from "../referrals/distributor.vibe"
+import { chainAllowed, envelopeAllowed, growthAllowed } from "./rootPosterLimits.ts"
+
+export const posterMarker = "slop-signer:referral-poster"
+
+export error PosterRefused { reason: string }
+
+export interface PostRoot {
+  readonly kind: "PostRoot"
+  readonly nonce: number
+  readonly gas: bigint
+  readonly maxFeePerGas: bigint
+  readonly maxPriorityFeePerGas: bigint
+  readonly previousTotal: bigint
+  readonly tokenUnit: bigint
+}
+
+export interface SignedRoot {
+  readonly raw: Hex
+  readonly txId: Hex
+  readonly poster: Hex
+}
+
+export service RootPosterKey {
+  readonly key: Redacted.Redacted<string> | undefined
+}
+
+export function rootPosterKey(secret: string | undefined) {
+  return Layer.succeed(RootPosterKey, { key: secret === undefined || secret.trim() === "" ? undefined : Redacted.make(secret.trim()) })
+}
+
+function refused(reason: string) {
+  return new PosterRefused({ reason })
+}
+
+export effect function signPostRoot(control: Referral, journaled: Publication, deployment: Deployment, intent: PostRoot) {
+  if (!permittedOperation("ReferralPoster", "ReferralRoot")) throw refused("the referral poster may not post roots")
+  if (!mayPostOn(control, deployment.network) || !alwaysActivationReady(control)) throw refused("posting is not activated for this network")
+  if (!chainAllowed(deployment.chainId, deployment.network === "RobinhoodMainnet")) throw refused("the chain is not a referral posting network")
+  if (journaled.phase !== "Journaled" || journaled.network !== deployment.network || journaled.token !== deployment.token) throw refused("the root has no journaled attempt")
+  const { prepared } = journaled
+  const total = fromAmount(prepared.total)
+  if (!growthAllowed(total, intent.previousTotal, intent.tokenUnit)) throw refused("the root grows by more than 2,000,000 tokens")
+  if (!envelopeAllowed(intent.gas, intent.maxFeePerGas, intent.maxPriorityFeePerGas, 0n) || (try orDie(Effect.try(() => BigInt(journaled.nativeHold)))) !== intent.gas * intent.maxFeePerGas) throw refused("the transaction exceeds its journaled native reservation")
+  const to = evmAddress(deployment.distributor)
+  if (to === undefined) throw refused("the distributor address is malformed")
+  const data = try postRootCalldata(prepared.epoch, prepared.merkleRoot as Hex, total)
+  const request = { chainId: Number(deployment.chainId), nonce: intent.nonce, gas: intent.gas, maxFeePerGas: intent.maxFeePerGas, maxPriorityFeePerGas: intent.maxPriorityFeePerGas, to, value: 0n, data } satisfies Type2Request
+  const hash = try Effect.try({ try: () => signingHash(request), catch: () => refused("the transaction cannot be signed") })
+  const configured = (try RootPosterKey).key
+  if (configured === undefined) throw refused("no poster key is loaded")
+  const text = Redacted.value(configured)
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(text)) throw refused("the poster key is malformed")
+  const key = try Effect.try({ try: () => hexToBytes(text.slice(2)), catch: () => refused("the poster key is malformed") })
+  const poster = try Effect.try({ try: () => evmAddress(`0x${keccak(secp256k1.getPublicKey(key, false).slice(1)).slice(-40)}`), catch: () => refused("the poster key is malformed") })
+  if (poster === undefined || poster !== deployment.poster) throw refused("the key is not the configured poster")
+  const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => refused("signing failed") })
+  const recovery = signature[0]
+  if (recovery !== 0 && recovery !== 1) throw refused("signing failed")
+  const raw = try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => refused("signing failed") })
+  const signed = readSignedType2(raw)
+  if (signed === undefined || signed.sender !== deployment.poster || signed.request.to !== to || signed.request.data !== data) throw refused("the signed transaction differs from its intent")
+  return { raw, txId: signed.id, poster: signed.sender } satisfies SignedRoot
+}

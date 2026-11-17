@@ -1,0 +1,38 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"
+import { sha256Hex } from "@repo/platform/crypto"
+import { byteOrder } from "../manifest/inventory.vibe"
+import { ConfigRefused } from "./config.vibe"
+
+export const pinnedMigrations = 136
+
+export const pinnedLedgerSha256 = "77a119abc90103253f006a3269bf70df6dc9f7760c2eb9ab4d0cb072cde23e9e"
+
+const appended = /^(?:0[2-9][0-9]{2}|[1-9][0-9]{3})_[a-z0-9_]+\.sql$/u
+const fileBytesLimit = 4 * 1024 * 1024
+
+export effect function migrationLedger(root: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const directory = files.join(root, "migrations")
+  const names = fs.readDirectory(directory) catch effect () => {
+    throw new ConfigRefused({ message: "the migrations directory is unreadable" })
+  }
+  const sorted = [...names].sort(byteOrder)
+  if (sorted.length < pinnedMigrations) throw new ConfigRefused({ message: `the migration ledger has ${sorted.length} files; the first ${pinnedMigrations} are pinned` })
+  const lines: string[] = []
+  for (const [index, name] of sorted.entries()) {
+    const path = files.join(directory, name)
+    const info = fs.stat(path) catch () => undefined
+    if (info?.type !== "File" || Number(info.size) > fileBytesLimit) throw new ConfigRefused({ message: `migrations/${name} is not a bounded regular file` })
+    if (index >= pinnedMigrations) {
+      if (!appended.test(name)) throw new ConfigRefused({ message: `migrations/${name} is not an appended 0200_* migration` })
+      continue
+    }
+    const bytes = fs.readFile(path) catch effect () => {
+      throw new ConfigRefused({ message: `migrations/${name} is unreadable` })
+    }
+    lines.push(`${name}\t${try sha256Hex(bytes)}`)
+  }
+  if ((try sha256Hex(`${lines.join("\n")}\n`)) !== pinnedLedgerSha256) throw new ConfigRefused({ message: `the first ${pinnedMigrations} migrations differ from the pinned production ledger` })
+  return sorted
+}

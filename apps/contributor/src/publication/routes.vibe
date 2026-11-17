@@ -1,0 +1,230 @@
+// spec/contributor/publication.md, "Every artifact response is uncached, cross-origin readable, framed nowhere and has no body on HEAD"; spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project"
+import { RowMismatch } from "@repo/platform/d1"
+import { type Answer, type ArtifactFacts, type HttpMethod, type RouteKind, artifactAnswer, canonicalArtifact, discoverable, discoveryRows, handled, respond } from "../../gen/contributor__publication.effect.vibe"
+import { type DiscoveryRow, artifactNames, discoveryPath } from "../client/publication.vibe"
+import { getProjectsByIdByArtifact as rows } from "../client/refusals.vibe"
+import { publicSiteOrigin } from "../render/fields.ts"
+import { buildProjectPublication } from "../render/publication.ts"
+import { type RestrictionState, clearanceOf, gateOf, manifestOf, optimistic, publicReadOf, restrictionStateOf } from "./gate.vibe"
+import { PublishedProjects } from "./projects.vibe"
+import { passThrough, templateBytes, templateIndex } from "./templates.vibe"
+
+schema ListedRepository { readonly id: string; readonly aliases?: ReadonlyArray<string> }
+schema GeneratedSkill { readonly id: string; readonly sourcePath: string }
+schema ReviewSkill { readonly id: string }
+schema DiscoveryFields { readonly repositories: ReadonlyArray<ListedRepository>; readonly skill: GeneratedSkill; readonly reviewSkill: ReviewSkill }
+
+type Target =
+  | { readonly kind: "discovery" }
+  | { readonly kind: "artifact"; readonly projectId: string; readonly path: string }
+  | { readonly kind: "elsewhere" }
+
+interface Reply {
+  readonly answer: Answer
+  readonly contentType: string
+  readonly headers: Readonly<Record<string, string>>
+  readonly bytes: Uint8Array
+}
+
+interface TextRefusal {
+  readonly headers: Readonly<Record<string, string>>
+}
+
+const artifactPath = /^(?:(?:review-)?(?:skill|mission|codex|claude|claude-code|manual)\.md|(?:review-)?skill-manifest\.json|downloads\/[a-z0-9-]{1,96}\.skill(?:\.sha256)?|terms\.json|SKILL\.md|review\/SKILL\.md)$/u
+const projectPath = /^\/projects\/([^/]+)\/(.+)$/u
+const projectId = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+const plainText = "text/plain; charset=utf-8"
+const jsonType = "application/json; charset=utf-8"
+const encoder = new TextEncoder()
+const decodeFields = Schema.decodeUnknownEffect(DiscoveryFields)
+
+const artifactHeaders = {
+  "access-control-allow-origin": "*",
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+  "referrer-policy": "no-referrer",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "x-content-type-options": "nosniff",
+}
+
+function targetOf(pathname: string): Target {
+  if (pathname === discoveryPath) return { kind: "discovery" }
+  const match = projectPath.exec(pathname)
+  const id = match?.[1]
+  const name = match?.[2]
+  if (id === undefined || name === undefined || !projectId.test(id) || !artifactPath.test(name)) return { kind: "elsewhere" }
+  return { kind: "artifact", projectId: id, path: canonicalArtifact(name) }
+}
+
+function routeOf(target: Target): RouteKind {
+  if (target.kind === "discovery") return "DiscoveryRoute"
+  if (target.kind === "elsewhere") return "NotArtifactRoute"
+  return target.path === "terms.json" ? "TermsRoute" : "SkillArtifactRoute"
+}
+
+function methodOf(method: string): HttpMethod {
+  if (method === "GET") return "GetMethod"
+  return method === "HEAD" ? "HeadMethod" : "OtherMethod"
+}
+
+function contentTypeOf(path: string): string {
+  if (path.endsWith(".md")) return "text/markdown; charset=utf-8"
+  if (path.endsWith(".json")) return jsonType
+  if (path.endsWith(".sha256")) return plainText
+  return "application/octet-stream"
+}
+
+function served(path: string, bytes: Uint8Array): Reply {
+  const download = path.startsWith("downloads/") && path.endsWith(".skill")
+  return { answer: "Served", contentType: contentTypeOf(path), headers: download ? { ...artifactHeaders, "content-disposition": "attachment" } : artifactHeaders, bytes }
+}
+
+function servedJson(value: unknown): Reply {
+  return served("value.json", encoder.encode(`${JSON.stringify(value, null, 2)}\n`))
+}
+
+function text(answer: Answer, refusal: TextRefusal, body: string): Reply {
+  const { "content-type": contentType, ...headers } = refusal.headers
+  return { answer, contentType, headers, bytes: encoder.encode(body) }
+}
+
+function gone(state: RestrictionState): Reply {
+  return text("GoneRestricted", rows.thisProjectIsIts, `This project is ${state}. Its skills, guides and archives are not available.\n`)
+}
+
+const unavailable = text("RetryLater", rows.projectArtifactsAreUnavailable, rows.projectArtifactsAreUnavailable.text)
+
+effect function refused(answer: Answer, facts: ArtifactFacts, projectId: string) {
+  switch (answer) {
+    case "GoneRestricted": return gone(try restrictionStateOf(projectId))
+    case "ProjectNotFound": return text(answer, rows.projectNotFound, rows.projectNotFound.text)
+    case "SkillsNotPublished": return text(answer, rows.thisProjectHasNot, rows.thisProjectHasNot.text)
+    case "NoUsableClearance": return text(answer, rows.thisRepositoryHasNo, rows.thisRepositoryHasNo.text)
+    case "ArtifactNotFound": return text(answer, rows.artifactNotFound, rows.artifactNotFound.text)
+    case "RetryLater": return facts.clearance === "ClearanceUnverified" ? text(answer, rows.slopCannotConfirmThis, rows.slopCannotConfirmThis.text) : unavailable
+    case "Served": return unavailable
+    case "PassThrough": return unavailable
+  }
+}
+
+function fieldOf(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>)[key] : undefined
+}
+
+function termsOf(manifest: unknown) {
+  return {
+    schemaVersion: "1",
+    projectId: fieldOf(manifest, "id"),
+    status: fieldOf(manifest, "status"),
+    steward: fieldOf(manifest, "steward"),
+    authority: fieldOf(manifest, "authority"),
+    terms: fieldOf(manifest, "terms"),
+    securityBounty: fieldOf(manifest, "securityBounty") ?? null,
+  }
+}
+
+effect function artifactReply(id: string, path: string, origin: string) {
+  const route: RouteKind = path === "terms.json" ? "TermsRoute" : "SkillArtifactRoute"
+  const project = try (try PublishedProjects).project(id)
+  if (project === undefined) return text("ProjectNotFound", rows.projectNotFound, rows.projectNotFound.text)
+  const gate = try gateOf(project)
+  const opened = artifactAnswer(route, gate.facts)
+  if (opened !== "Served") return try refused(opened, gate.facts, id)
+  if (route === "TermsRoute") return servedJson(termsOf(gate.manifest))
+  const index = templateIndex(origin) catch effect (failure) => {
+    try Effect.logError("project artifact template index unavailable", { reason: failure.reason })
+    return undefined
+  }
+  if (index === undefined) {
+    const unloaded = { ...gate.facts, templateLoaded: false }
+    return try refused(artifactAnswer(route, unloaded), unloaded, id)
+  }
+  const cleared = { ...gate.facts, clearance: try clearanceOf(project, index.templateSha256) }
+  const admitted = artifactAnswer(route, cleared)
+  if (admitted !== "Served") return try refused(admitted, cleared, id)
+  const publication = buildProjectPublication({
+    index,
+    fetched: try templateBytes(origin, index),
+    manifest: gate.manifest,
+    revision: project.revision,
+    manifestSha256: project.manifestSha256,
+    generatedAt: project.updatedAt,
+  })
+  if (publication.kind === "unavailable") try Effect.logError("project artifact publication unavailable", { reason: publication.problem.reason })
+  const bytes = publication.kind === "published" ? publication.files.get(path) : undefined
+  const known = { ...cleared, templateVerified: publication.kind === "published", artifactExists: bytes !== undefined }
+  const answer = artifactAnswer(route, known)
+  if (answer === "Served") return bytes === undefined ? unavailable : served(path, bytes)
+  return try refused(answer, known, id)
+}
+
+effect function discoveryFieldsOf(projectId: string, manifest: unknown) {
+  return decodeFields(manifest) catch effect (error) => { throw new RowMismatch({ text: `project ${projectId}`, issue: error.message }) }
+}
+
+effect function discoveryReply(origin: string) {
+  const projects = try (try PublishedProjects).all()
+  const index = try templateIndex(origin)
+  const listed: DiscoveryRow[] = []
+  for (const project of projects) {
+    const manifest = try manifestOf(project)
+    const hopeful = optimistic(project, manifest, "Listed")
+    if (!discoverable(hopeful)) continue
+    const read = try publicReadOf(project, manifest)
+    if (!discoverable({ ...hopeful, read })) continue
+    const known = { ...hopeful, read, clearance: try clearanceOf(project, index.templateSha256) }
+    if (!discoverable(known)) continue
+    const fields = try discoveryFieldsOf(project.projectId, manifest)
+    const repositories = fields.repositories.map((repository) => ({ id: repository.id, lastAlias: repository.aliases?.at(-1) ?? "" }))
+    for (const row of discoveryRows(known, project.projectId, repositories)) {
+      listed.push({
+        project_id: row.projectId,
+        project_url: `${publicSiteOrigin}/projects/${row.projectId}/`,
+        repository: row.repositoryName,
+        review_skill: fields.reviewSkill.id,
+        review_skill_manifest: `${publicSiteOrigin}/projects/${row.projectId}/review-skill-manifest.json`,
+        skill: fields.skill.id,
+        skill_source: fields.skill.sourcePath,
+      })
+    }
+  }
+  return servedJson({ schemaVersion: "1", projects: listed })
+}
+
+effect function replyTo(target: Target, origin: string) {
+  switch (target.kind) {
+    case "discovery": return try discoveryReply(origin)
+    case "artifact": return try artifactReply(target.projectId, target.path, origin)
+    case "elsewhere": return unavailable
+  }
+}
+
+function sent(method: HttpMethod, route: RouteKind, reply: Reply) {
+  const shape = respond(method, route, reply.answer)
+  if (!shape.withBody) return HttpServerResponse.empty({ status: shape.status, headers: { ...reply.headers, "content-type": reply.contentType } })
+  return HttpServerResponse.uint8Array(reply.bytes, { status: shape.status, headers: reply.headers, contentType: reply.contentType })
+}
+
+effect function answerRequest() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const url = new URL(request.originalUrl)
+  const target = targetOf(url.pathname)
+  const method = methodOf(request.method)
+  const route = routeOf(target)
+  if (!handled(method, route)) return try passThrough()
+  const outcome = try exit(replyTo(target, url.origin))
+  if (Exit.isSuccess(outcome)) return sent(method, route, outcome.value)
+  try Effect.logError("project artifact failure", { path: url.pathname })
+  return sent(method, route, unavailable)
+}
+
+const artifactRoutes = artifactNames.flatMap((name) => [
+  HttpRouter.route("GET", `/projects/:id/${name}`, answerRequest()),
+  HttpRouter.route("HEAD", `/projects/:id/${name}`, answerRequest()),
+])
+
+export const publicationRoutes = HttpRouter.addAll([
+  ...artifactRoutes,
+  HttpRouter.route("GET", discoveryPath, answerRequest()),
+  HttpRouter.route("HEAD", discoveryPath, answerRequest()),
+])

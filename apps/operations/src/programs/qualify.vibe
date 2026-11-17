@@ -1,0 +1,24 @@
+// spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"; spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"
+import { escrow } from "../qualification/escrow/escrow.vibe"
+import { type Registry, reviewedRegistry } from "../qualification/escrow/registry.ts"
+import { checkTestFunding } from "../qualification/escrow/testFunding.vibe"
+
+export error QualifyUsage { message: string }
+
+const usage = "usage: qualify escrow <command> … | qualify funding <network> <address> [https-rpc-url]"
+
+export effect function qualify(args: ReadonlyArray<string>, registry: Registry = reviewedRegistry) {
+  const [scope, ...rest] = args
+  if (scope === "funding" && (rest.length === 2 || rest.length === 3)) {
+    const [network = "", holder = "", endpoint] = rest
+    try Console.log(JSON.stringify(try checkTestFunding(network, holder, endpoint), null, 2))
+    return
+  }
+  if (scope === "escrow") {
+    const endpoints = Redacted.value(try Config.withDefault(Config.Redacted("QUALIFICATION_RPC_URLS"), Redacted.make("")))
+    const urls = Redacted.make(endpoints.split(",").map((url) => url.trim()).filter((url) => url !== "") as ReadonlyArray<string>)
+    try escrow(rest, { urls, registry })
+    return
+  }
+  throw new QualifyUsage({ message: usage })
+}

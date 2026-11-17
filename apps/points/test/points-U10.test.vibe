@@ -1,0 +1,303 @@
+import { assert, it, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+import { RegistryManifestsLive } from "@repo/backend/ports"
+import { ClosedMonth, type ProjectMonth } from "@repo/ports/points"
+import { type Penalty, type Revision, type RevisionBody, journalText, revisionText } from "../src/kernels/records/canonical.ts"
+import { pointKey, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { repositoriesOf } from "../src/journal/build.vibe"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import { type Repositories, type Store, openStore } from "../src/journal/ledger.vibe"
+import { retainedAwards } from "../src/journal/retained.vibe"
+import { evaluationInputs } from "../src/evaluations/check.vibe"
+import { applyEvaluations } from "../src/evaluations/journal.vibe"
+import { type Admitted, type ManifestInput, admitManifests } from "../src/evaluations/manifests.vibe"
+import { recoveryDigest, retiredAwards } from "../src/evaluations/retired.vibe"
+import { retirementZeroDigest, retirementZeroRule } from "../gen/points__evaluations.effect.vibe"
+import { recognizePayouts } from "../src/payoutRecognition/awards.vibe"
+import { ClosedMonthLive } from "../src/rewardWeights/live.vibe"
+import { registry, userNodeId } from "./support/u10/actors.ts"
+
+interface Seed {
+  readonly actor: number
+  readonly login: string
+  readonly category: string
+  readonly source: string
+  readonly amount: number
+  readonly occurredAt: string
+  readonly recordedAt: string
+  readonly project?: string
+  readonly previous?: Revision
+  readonly rule?: string
+  readonly penalty?: Penalty
+}
+
+service Bench { readonly db: D1Database }
+
+const widgets = "widgets"
+const october = "2026-10-31T23:00:00.000Z"
+const november = "2026-11-01T05:00:00.000Z"
+const recordedAt = "2026-11-17T06:00:00.000Z"
+const repeated = "evaluator award repeats an admitted identity, source, work, content or reviewer pull request"
+
+const Started = Layer.effect(Bench, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "points-closed-month" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function revision(seed: Seed) {
+  const projectId = seed.project ?? widgets
+  const actorId = userNodeId(seed.actor)
+  const key = try pointKey({ projectId, actorId, category: seed.category, sourceId: seed.source })
+  const body: RevisionBody = {
+    previous: seed.previous?.id ?? null,
+    recordedAt: seed.recordedAt,
+    sourceDigest: "b".repeat(64),
+    sourceRule: seed.rule ?? "slop-score-v2",
+    award: {
+      key,
+      actor: { id: actorId, login: seed.login },
+      projectId,
+      category: seed.category,
+      amount: seed.amount,
+      occurredAt: seed.occurredAt,
+      sourceId: seed.source,
+      sourceUrl: `https://github.com/acme/${projectId}/pull/${seed.source}`,
+      workUnitId: seed.source,
+      provisional: false,
+    },
+    ...(seed.penalty === undefined ? {} : { penalty: seed.penalty }),
+  }
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+effect function imported(digest: string, generatedAt: string, revisions: ReadonlyArray<Revision>) {
+  const { db } = try Bench
+  provide d1(db) {
+    try (try D1).batch([
+      ...revisions.map((row, sequence) => sql`INSERT INTO points_staging (batch_id, sequence, payload) VALUES (${digest}, ${sequence}, ${revisionText(row)})`),
+      sql`INSERT INTO points_batches (digest, generated_at, coverage, revision_count) VALUES (${digest}, ${generatedAt}, '[]', ${revisions.length})`,
+    ])
+  }
+}
+
+effect function registered(projectId: string, revision: number, reward: object) {
+  const { db } = try Bench
+  const manifest = JSON.stringify({ id: projectId, status: "active", reward })
+  const digest = try sha256Hex(manifest)
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, ${revision}, ${manifest}, ${digest}, 'seed', '2026-08-01T00:00:00.000Z')`,
+      revision === 1
+        ? sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'active', 1, ${manifest}, ${digest}, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`
+        : sql`UPDATE projects SET revision = ${revision}, manifest = ${manifest}, manifest_sha256 = ${digest}, updated_at = '2026-08-02T00:00:00.000Z' WHERE id = ${projectId}`,
+    ])
+  }
+}
+
+effect function participation(githubId: number, login: string) {
+  const { db } = try Bench
+  const actor = userNodeId(githubId)
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${actor}, ${String(githubId)}, ${login}, '2026-10-01T00:00:00.000Z', 1, 5)`,
+      sql`INSERT INTO points_x_claims (x_id, actor_id, claimed_at) VALUES ('7700', ${actor}, '2026-10-02T00:00:00.000Z')`,
+      sql`INSERT INTO points_x_awards (actor_id, x_id, awarded_at, points) VALUES (${actor}, '7700', '2026-10-02T00:00:00.000Z', 10)`,
+    ])
+  }
+}
+
+effect function closedMonth(month: ProjectMonth) {
+  const { db } = try Bench
+  const clock = settableClock(Date.parse("2026-11-05T00:00:00.000Z"))
+  const services = Layer.provide(ClosedMonthLive, Layer.mergeAll(d1(db), Layer.provide(RegistryManifestsLive, d1(db)), webCrypto))
+  provide services, clock.layer {
+    const ledger = try (try ClosedMonth).ledger(month)
+    return ledger === undefined ? undefined : { sha256: ledger.sha256, weights: [...ledger.weights].sort((left, right) => left.githubId.localeCompare(right.githubId)) }
+  }
+}
+
+effect function refusal(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories) {
+  const outcome = Effect.as(admitManifests(inputs, repositories), "admitted") catch (error) => error._tag === "EvaluationRefused" ? error.reason : error._tag
+  return outcome
+}
+
+effect function indexRefusal(store: Store, indexText: string) {
+  const outcome = Effect.as(recognizePayouts(store, indexText, recordedAt), "recognized") catch (error) => error._tag === "CycleIndexInvalid" ? error.reason : error._tag
+  return outcome
+}
+
+effect function storeOf(revisions: ReadonlyArray<Revision>) {
+  return try openStore(`${journalText({ schemaVersion: "1", ruleVersion: "slop-points-v1", generatedAt: "2026-11-01T00:00:00.000Z", coverage: [], revisions })}\n`, null, [])
+}
+
+effect function chained(body: RevisionBody) {
+  return { id: try pointRevisionId(body), ...body } satisfies Revision
+}
+
+function reworded(item: Admitted, points: number): Admitted {
+  const occurredAt = "2026-10-15T10:00:00.000Z"
+  return {
+    ...item,
+    manifest: { ...item.manifest, occurredAt, points },
+    event: { ...item.event, occurredAt, points },
+    model: { ...item.model, occurredAt: instantOf(occurredAt) ?? -1, points },
+  }
+}
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect(`Closed month: a settlement request gets accepted-work weights net of penalties, without participation, recognition, evidence or excluded actors (spec/points/rewardWeights.md, "Story: Derive each month's reward weights from accepted work only"; spec/points/rewardWeights.md, "A month's net weight is its accepted-work credit less its applied debits"; spec/points/rewardWeights.md, "Penalty requests consume a month's accepted-work credit in recorded order"; spec/points/rewardWeights.md, "Payout exclusions cover whole months and leave every other weight unchanged"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them")`, () => effect {
+    const ada = 1101
+    const grace = 1102
+    const owner = 1103
+    const idle = 1104
+    const visitor = 1105
+    const issue = try revision({ actor: ada, login: "ada", category: "resolved-issue", source: "105", amount: 30, occurredAt: "2026-10-08T09:00:00.000Z", recordedAt: october })
+    const first = [
+      try revision({ actor: ada, login: "ada", category: "merged-pull-request", source: "101", amount: 30, occurredAt: "2026-10-03T10:00:00.000Z", recordedAt: october }),
+      try revision({ actor: grace, login: "grace", category: "substantive-review", source: "102", amount: 90, occurredAt: "2026-10-05T10:00:00.000Z", recordedAt: october }),
+      try revision({ actor: ada, login: "ada", category: "payout-received", source: "payout:2026-09:ada", amount: 25, occurredAt: "2026-10-04T10:00:00.000Z", recordedAt: october, rule: "verified-payout-v1" }),
+      try revision({ actor: owner, login: "owner", category: "merged-pull-request", source: "103", amount: 40, occurredAt: "2026-10-06T10:00:00.000Z", recordedAt: october }),
+      try revision({ actor: visitor, login: "visitor", category: "evidence", source: "104", amount: 5, occurredAt: "2026-10-07T10:00:00.000Z", recordedAt: october }),
+      issue,
+      try revision({ actor: ada, login: "ada", category: "merged-pull-request", source: "99", amount: 30, occurredAt: "2026-09-28T10:00:00.000Z", recordedAt: october }),
+      try revision({ actor: ada, login: "ada", category: "merged-pull-request", source: "106", amount: 30, occurredAt: "2026-10-09T10:00:00.000Z", recordedAt: october, project: "gadgets" }),
+    ]
+    const later = [
+      try revision({ actor: ada, login: "ada", category: "resolved-issue", source: "105", amount: 10, occurredAt: "2026-10-08T09:00:00.000Z", recordedAt: november, previous: issue }),
+      try revision({ actor: grace, login: "grace", category: "slopbot-penalty", source: "penalty-1", amount: -30, occurredAt: "2026-10-20T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
+      try revision({ actor: idle, login: "idle", category: "slopbot-penalty", source: "penalty-2", amount: -30, occurredAt: "2026-10-21T10:00:00.000Z", recordedAt: november, rule: "slopbot-penalties-v1", penalty: { category: "spam", debit: 3, reversedAt: null, reversal: null } }),
+    ]
+    try registered(widgets, 1, { payoutExclusions: [{ actorId: String(owner), relationship: "owner", fromCycle: "2026-09", untilCycle: null }] })
+    try imported("1".repeat(64), "2026-10-31T23:30:00.000Z", first)
+    const beforeClose = try closedMonth({ projectId: widgets, period: "2026-10" })
+    try imported("2".repeat(64), "2026-11-01T06:00:00.000Z", [...first, ...later])
+    try participation(ada, "ada")
+    const closed = try closedMonth({ projectId: widgets, period: "2026-10" })
+    const again = try closedMonth({ projectId: widgets, period: "2026-10" })
+    const open = try closedMonth({ projectId: widgets, period: "2026-11" })
+    const unregistered = try closedMonth({ projectId: "nobody", period: "2026-10" })
+    try same({
+      beforeClose,
+      weights: closed?.weights,
+      digest: /^[a-f0-9]{64}$/u.test(closed?.sha256 ?? ""),
+      stable: again?.sha256 === closed?.sha256 && JSON.stringify(again?.weights) === JSON.stringify(closed?.weights),
+      open,
+      unregistered: unregistered?.weights,
+    }, {
+      beforeClose: undefined,
+      weights: [{ githubId: "1101", login: "ada", points: 40 }, { githubId: "1102", login: "grace", points: 60 }],
+      digest: true,
+      stable: true,
+      open: undefined,
+      unregistered: [],
+    })
+  })
+  it.effect(`Import reviewed evaluation awards once, recover the retirement incident once and recognize a paid monthly-pool recipient once (spec/points/evaluations.md, "Story: Import reviewed evaluation awards once and recover the retirement incident"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"; spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision or the incident recovery"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/points/journal.md, "Payout recognition is appended once per recipient, project and cycle")`, () => effect {
+    const { db } = try Bench
+    provide NodeServices.layer, Layer.provide(RegistryManifestsLive, d1(db)) {
+      const fs = try FileSystem.FileSystem
+      const files = try Path.Path
+      const repositories = repositoriesOf(registry, {})
+      const inputs = try evaluationInputs(repoRoot)
+      try registered("slopdotcash", 1, {})
+      const closed = try refusal(inputs, repositories)
+      try registered("slopdotcash", 2, { externalEvaluations: { enabled: true } })
+      const admitted = try admitManifests(inputs, repositories)
+      const retainedText = try fs.readFileString(files.join(repoRoot, "data", "evaluated-contributions.json"))
+      const retained: { readonly awards: ReadonlyArray<{ readonly path: string; readonly sha256: string; readonly manifest: unknown }> } = try Effect.try(() => JSON.parse(retainedText))
+      const scratch = try fs.makeTempDirectory()
+      try fs.makeDirectory(files.join(scratch, "data"), { recursive: true })
+      try fs.makeDirectory(files.join(scratch, "evaluations", "slopdotcash"), { recursive: true })
+      try fs.writeFileString(files.join(scratch, "data", "evaluated-contributions.json"), retainedText)
+      try fs.writeFileString(files.join(scratch, "evaluations", "slopdotcash", "award-copy.json"), `${JSON.stringify(retained.awards[0]?.manifest, null, 2)}\n`)
+      const twice = try refusal(try evaluationInputs(scratch), repositories)
+      try fs.remove(scratch, { recursive: true })
+
+      const store = try storeOf([])
+      const digest = "d".repeat(64)
+      try applyEvaluations(store, repositories, admitted, digest, recordedAt)
+      const credited = store.revisions.length
+      try applyEvaluations(store, repositories, admitted, digest, recordedAt)
+      const evaluated = store.revisions.map((row) => [row.award.category, row.award.actor.login, row.award.amount, row.sourceDigest === digest, row.previous])
+
+      const [first] = admitted
+      const original = first === undefined ? [] : [reworded(first, 2)]
+      const [award] = (try retainedAwards(repositories, original.map((item) => item.event))).map((item) => item.award)
+      const kept = award === undefined ? undefined : try chained({ previous: null, recordedAt: "2026-10-18T12:00:00.000Z", sourceDigest: "e".repeat(64), sourceRule: "slop-score-v2", award })
+      const zeroed = kept === undefined ? [] : [kept, try chained({ previous: kept.id, recordedAt: "2026-10-20T05:30:25.870Z", sourceDigest: retirementZeroDigest, sourceRule: retirementZeroRule, award: { ...kept.award, amount: 0 } })]
+      const incident = try storeOf(zeroed)
+      try applyEvaluations(incident, repositories, [], digest, recordedAt)
+      const recovered = incident.revisions.slice(zeroed.length).map((row) => [row.award.amount, row.previous === zeroed[1]?.id, row.sourceDigest, row.sourceRule])
+      try applyEvaluations(incident, repositories, [], digest, recordedAt)
+      const recoveredOnce = incident.revisions.length
+      const protectedPhase = (try retiredAwards(incident.revisions)).get(award?.key ?? "")?.phase
+      const recovery = incident.revisions[zeroed.length]
+      try applyEvaluations(incident, repositories, first === undefined ? [] : [reworded(first, 3)], digest, recordedAt)
+      const decided = incident.revisions.slice(zeroed.length + 1).map((row) => [row.award.amount, row.previous === recovery?.id, row.decision?.sourceId === first?.manifest.id])
+      const endedPhase = (try retiredAwards(incident.revisions)).get(award?.key ?? "")?.phase
+
+      const ada = userNodeId(2201)
+      const paid = (state: string, paidMinor: string) => ({ actor: { id: ada, login: "ada" }, state, paidMinor })
+      const settlement = (projectId: string, cycleId: string) => ({ sha256: "c".repeat(64), url: `/data/cycles/${projectId}/${cycleId}/settlement.json` })
+      const index = {
+        schemaVersion: "1",
+        generatedAt: "2026-11-05T00:00:00.000Z",
+        cycles: [
+          { projectId: "prizes", cycleId: "2026-10", kind: "external-prize-share", state: "paid", settledAt: "2026-11-03T00:00:00.000Z", files: { settlement: settlement("prizes", "2026-10") }, contributors: [paid("external-share", "0")] },
+          { projectId: "slopdotcash", cycleId: "2026-10", kind: "monthly-pool", state: "paid", settledAt: "2026-11-04T12:00:00.000Z", files: { settlement: settlement("slopdotcash", "2026-10") },
+            contributors: [paid("paid", "5000000"), { actor: { id: userNodeId(2202), login: "grace" }, state: "unclaimed", paidMinor: "0" }, { actor: { id: userNodeId(2203), login: "lin" }, state: "paid", paidMinor: "0" }] },
+          { projectId: "slopdotcash", cycleId: "2026-09", kind: "monthly-pool", state: "review", settledAt: null, files: { settlement: null }, contributors: [paid("proposed", "0")] },
+        ],
+      }
+      const before = store.revisions.length
+      const recognized = try recognizePayouts(store, JSON.stringify(index), recordedAt)
+      const replayed = try recognizePayouts(store, JSON.stringify(index), recordedAt)
+      const payout = store.revisions.slice(before).map((row) => [row.award.category, row.award.actor.login, row.award.amount, row.award.occurredAt, row.award.sourceId, row.sourceRule])
+      const [, monthly] = index.cycles
+      const malformed = []
+      for (const cycle of [
+        { ...monthly, settledAt: "2026-11-04T12:00:00Z" },
+        { ...monthly, cycleId: "2026-13" },
+        { ...monthly, contributors: [paid("paid", "05")] },
+        { ...monthly, contributors: [paid("paid", "100"), paid("unclaimed", "0")] },
+        { ...monthly, contributors: [paid("settled", "100")] },
+      ]) malformed.push(try indexRefusal(store, JSON.stringify({ ...index, cycles: [cycle] })))
+
+      try same({ closed, admitted: admitted.map((item) => [item.path, item.sha256]), twice, credited, evaluated, recovered, recoveredOnce, protectedPhase, decided, endedPhase, held: incident.held.length, recognized, replayed, payout, malformed }, {
+        closed: "project slopdotcash has not opted in to external evaluated contributions",
+        admitted: retained.awards.map((item) => [item.path, item.sha256]).sort(([left], [right]) => (left ?? "").localeCompare(right ?? "")),
+        twice: repeated,
+        credited: 3,
+        evaluated: [0, 1, 2].map(() => ["evaluated-contribution", "arnold6444", 60, true, null]),
+        recovered: [[60, true, try recoveryDigest(), "slop-score-v2"]],
+        recoveredOnce: zeroed.length + 1,
+        protectedPhase: "Recovered",
+        decided: [[90, true, true]],
+        endedPhase: "Ended",
+        held: 0,
+        recognized: 1,
+        replayed: 0,
+        payout: [["payout-received", "ada", 25, "2026-11-04T12:00:00.000Z", `payout:2026-10:${ada}`, "verified-payout-v1"]],
+        malformed: [
+          "a cycle's settledAt is not a UTC timestamp",
+          "a cycle's cycleId is invalid",
+          "a contributor's paidMinor is not canonical minor units",
+          "a cycle repeats a contributor",
+          "the cycle index does not have the published shape",
+        ],
+      })
+    }
+  })
+})

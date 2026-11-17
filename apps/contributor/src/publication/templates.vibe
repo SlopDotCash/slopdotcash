@@ -1,0 +1,53 @@
+// spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"
+import type { Fetcher } from "@repo/platform/bindings"
+import { boundedBytes } from "@repo/platform/browser"
+import { outboundVia } from "@repo/platform/http"
+import { type TemplateIndex, decodeTemplateIndex, maxTemplateFileBytes, templateFilePath } from "../render/templateIndex.ts"
+
+export service SiteAssets {
+  readonly fetcher: Fetcher
+}
+
+export function siteAssets(fetcher: Fetcher) {
+  return Layer.succeed(SiteAssets, { fetcher })
+}
+
+export error TemplateUnavailable { path: string; reason: string }
+
+const decoder = new TextDecoder("utf-8", { fatal: true })
+
+effect function assetBytes(origin: string, path: string) {
+  const { fetcher } = try SiteAssets
+  const url = `${origin}/skill-templates/${path}`
+  provide outboundVia(fetcher) {
+    const client = try HttpClient.HttpClient
+    const response = client.get(url) catch effect () => { throw new TemplateUnavailable({ path, reason: "unreachable" }) }
+    if (response.status < 200 || response.status > 299) throw new TemplateUnavailable({ path, reason: `status ${response.status}` })
+    return boundedBytes(response, maxTemplateFileBytes, path) catch effect (failure) => { throw new TemplateUnavailable({ path, reason: failure._tag }) }
+  }
+}
+
+export effect function templateIndex(origin: string) {
+  const bytes = try assetBytes(origin, "index.json")
+  const text = try Effect.try({ try: () => decoder.decode(bytes), catch: () => new TemplateUnavailable({ path: "index.json", reason: "notUtf8" }) })
+  const decoded = decodeTemplateIndex(text)
+  if (decoded.kind !== "decoded") throw new TemplateUnavailable({ path: "index.json", reason: decoded.kind })
+  return decoded.index
+}
+
+export effect function templateBytes(origin: string, index: TemplateIndex) {
+  const fetched = new Map<string, Uint8Array>()
+  const paths = [index.contributor, index.reviewer].flatMap((group) => group.files.map((file) => templateFilePath(group, file)))
+  for concurrent(8) (const path of paths) {
+    const bytes = assetBytes(origin, path) catch () => undefined
+    if (bytes !== undefined) fetched.set(path, bytes)
+  }
+  return fetched
+}
+
+export effect function passThrough() {
+  const { fetcher } = try SiteAssets
+  const web = try orDie(HttpServerRequest.toWeb(try HttpServerRequest.HttpServerRequest))
+  const response = try orDie(tryPromise(() => fetcher.fetch(web)))
+  return HttpServerResponse.fromWeb(response)
+}

@@ -1,7 +1,5 @@
 // spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"
-import type { ClassifiedError } from "../../gen/settlement__keeperDiagnostics.effect.vibe"
-
-export error KeeperRefused { message: string; classified?: ClassifiedError }
+export error KeeperRefused { message: string }
 
 const PUBLIC_TIMEOUT = Duration.seconds(20)
 const PUBLIC_BYTES = 16 * 1024 * 1024

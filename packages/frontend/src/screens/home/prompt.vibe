@@ -1,0 +1,6 @@
+// spec/frontend/presentation.md, "Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt"; spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"
+import { Clipboard } from "../../platform/clipboard.vibe"
+
+export effect function copyText(text: string) {
+  try (try Clipboard).write(text)
+}

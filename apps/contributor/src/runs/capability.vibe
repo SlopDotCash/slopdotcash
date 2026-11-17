@@ -1,0 +1,14 @@
+// spec/contributor/traceServer.md, "An upload intent is a five-minute one-time capability that only its exact retry renews"
+import { base64url, hmacSha256 } from "@repo/platform/crypto"
+import { traceKey } from "../session/tokens.vibe"
+
+export interface CapabilityScope {
+  readonly actor: string
+  readonly runId: string
+  readonly key: string
+  readonly digest: string
+}
+
+export effect function uploadCapability(scope: CapabilityScope) {
+  return base64url(try hmacSha256(try traceKey(), `trace-upload:v1:${scope.actor}:${scope.runId}:${scope.key}:${scope.digest}`))
+}

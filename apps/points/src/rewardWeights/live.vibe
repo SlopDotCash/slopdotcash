@@ -1,0 +1,58 @@
+// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/rewardWeights.md, "A month's net weight is its accepted-work credit less its applied debits"; spec/points/rewardWeights.md, "Payout exclusions cover whole months and leave every other weight unchanged"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import { RegistryManifests } from "@repo/ports/backend"
+import { ClosedMonth, type PointWeight, type ProjectMonth } from "@repo/ports/points"
+import { revisionText } from "../kernels/records/canonical.ts"
+import { instantOf } from "../kernels/records/instants.ts"
+import { PointRevision } from "../kernels/records/records.schema.ts"
+import { periodOf } from "../../gen/points__periods.effect.vibe"
+import { exclusionsOf, monthWeights, periodOfCycle, projectionOf } from "./weights.vibe"
+
+schema PayloadRow { readonly payload: string }
+schema BatchRow { readonly generated_at: string | null }
+
+const decodePayload = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
+
+function monthStart(period: number) {
+  return `${String(Math.floor(period / 12)).padStart(4, "0")}-${String(period % 12 + 1).padStart(2, "0")}-01T00:00:00.000Z`
+}
+
+effect function revisionOf(payload: string) {
+  const revision = decodePayload(payload, { onExcessProperty: "error" }) catch effect () => {
+    throw new RowMismatch({ text: "points_revisions", issue: "a payload is not a Points revision" })
+  }
+  if (revisionText(revision) !== payload) throw new RowMismatch({ text: "points_revisions", issue: `revision ${revision.id} is not stored in its canonical bytes` })
+  return revision
+}
+
+export effect function closedLedger(month: ProjectMonth) {
+  const period = periodOfCycle(month.period)
+  const today = instantOf(try isoNow())
+  if (period === undefined || today === null || period >= periodOf(today)) return undefined
+  const from = monthStart(period)
+  const until = monthStart(period + 1)
+  const batch = try first(BatchRow, sql`SELECT max(generated_at) AS generated_at FROM points_batches`)
+  if (batch === undefined || batch.generated_at === null || batch.generated_at < until) return undefined
+  const stored = try rows(PayloadRow, sql`SELECT r.payload FROM points_revisions r WHERE json_extract(r.payload, '$.award.projectId') = ${month.projectId} AND json_extract(r.payload, '$.award.occurredAt') >= ${from} AND json_extract(r.payload, '$.award.occurredAt') < ${until} AND NOT EXISTS (SELECT 1 FROM points_revisions s WHERE s.previous = r.id) ORDER BY r.source_key`)
+  const revisions = []
+  for (const row of stored) revisions.push(try revisionOf(row.payload))
+  const registered = try (try RegistryManifests).project(month.projectId)
+  const exclusions = registered === undefined ? [] : try exclusionsOf(month.projectId, registered.manifest)
+  const { ledger, logins } = try projectionOf(month.projectId, revisions, today)
+  const weighted = try monthWeights(month.projectId, period, periodOf(today), exclusions, ledger)
+  return {
+    sha256: try sha256Hex(stored.map((row) => row.payload).join("\n")),
+    weights: weighted.map((weight) => ({ githubId: String(weight.actor), login: logins.get(weight.actor) ?? "", points: weight.weight }) satisfies PointWeight),
+  }
+}
+
+export const ClosedMonthLive = Layer.effect(ClosedMonth, effect {
+  const db = try D1
+  const manifests = try RegistryManifests
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    ledger: (month) => provideService(provideService(provideService(closedLedger(month), D1, db), RegistryManifests, manifests), Experimental.Crypto.Crypto, crypto),
+  } satisfies ClosedMonth.Shape
+})

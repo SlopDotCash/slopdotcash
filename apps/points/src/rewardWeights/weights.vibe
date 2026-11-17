@@ -1,0 +1,121 @@
+// spec/points/rewardWeights.md, "A month's net weight is its accepted-work credit less its applied debits"; spec/points/rewardWeights.md, "Penalty requests consume a month's accepted-work credit in recorded order"; spec/points/rewardWeights.md, "Payout exclusions cover whole months and leave every other weight unchanged"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"
+import { RowMismatch } from "@repo/platform/d1"
+import type { Revision as Row } from "../kernels/records/canonical.ts"
+import { instantOf } from "../kernels/records/instants.ts"
+import { categoryOf, ruleOf } from "../journal/ledger.vibe"
+import { type Ledger, type Revision, initial as emptyLedger, noRevision } from "../../gen/points__journal.effect.vibe"
+import { type Event, type Exclusion, type MonthlyWeights, type Relationship, Machine, decodeState, initial, machineOver, weights } from "../../gen/points__rewardWeights.effect.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export schema ManifestExclusion {
+  readonly actorId: string
+  readonly relationship: "owner" | "funded-employee" | "related-party"
+  readonly fromCycle: string
+  readonly untilCycle: string | null
+}
+schema ExclusionReward { readonly payoutExclusions?: ReadonlyArray<ManifestExclusion> }
+schema ExclusionManifest { readonly reward: ExclusionReward }
+
+export interface MonthProjection { readonly ledger: Ledger; readonly logins: ReadonlyMap<number, string> }
+
+const cyclePattern = /^([0-9]{4})-(0[1-9]|1[0-2])$/u
+const relationships: Readonly<Record<ManifestExclusion["relationship"], Relationship>> = {
+  owner: "Owner",
+  "funded-employee": "FundedEmployee",
+  "related-party": "RelatedParty",
+}
+
+export function periodOfCycle(cycle: string): number | undefined {
+  const match = cyclePattern.exec(cycle)
+  return match === null ? undefined : Number(match[1]) * 12 + Number(match[2]) - 1
+}
+
+export effect function heldWeights(start: MonthlyWeights) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function weightsLayer(start: MonthlyWeights = initial) {
+  return Layer.effect(Machine, heldWeights(start))
+}
+
+export effect function weightsSend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function weightsReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function weightsState() {
+  return try (try Machine).get()
+}
+
+export effect function exclusionsOf(projectId: string, manifest: string) {
+  const raw = try Effect.try({ try: () => JSON.parse(manifest) as unknown, catch: () => new RowMismatch({ text: `project ${projectId} manifest`, issue: "not JSON" }) })
+  const decodedManifest = Schema.decodeUnknownEffect(ExclusionManifest)(raw) catch effect () => {
+    throw new RowMismatch({ text: `project ${projectId} manifest`, issue: "its payout exclusions are not readable" })
+  }
+  const exclusions: Exclusion[] = []
+  for (const entry of decodedManifest.reward.payoutExclusions ?? []) {
+    const actor = Number(entry.actorId)
+    const fromPeriod = periodOfCycle(entry.fromCycle)
+    const untilPeriod = entry.untilCycle === null ? 0 : periodOfCycle(entry.untilCycle)
+    if (!/^[1-9][0-9]{0,15}$/u.test(entry.actorId) || !Number.isSafeInteger(actor) || fromPeriod === undefined || untilPeriod === undefined) {
+      throw new RowMismatch({ text: `project ${projectId} manifest`, issue: "a payout exclusion names no numeric GitHub account or month" })
+    }
+    exclusions.push({ actor, relationship: relationships[entry.relationship], fromPeriod, untilPeriod })
+  }
+  return exclusions
+}
+
+export effect function projectionOf(project: string, rows: ReadonlyArray<Row>, now: number) {
+  const revisions: Revision[] = []
+  const logins = new Map<number, { readonly login: string; readonly recordedAt: string }>()
+  for (const [position, row] of rows.entries()) {
+    const actor = Number(githubUserIdFromNodeId(row.award.actor.id))
+    if (!Number.isSafeInteger(actor) || actor <= 0) throw new RowMismatch({ text: `points revision ${row.id}`, issue: "its recipient has no numeric GitHub account" })
+    const id = position + 1
+    const category = categoryOf(row.award.category)
+    const { rule, tableVersion } = ruleOf(row.sourceRule)
+    const merged = category === "MergedWork"
+    revisions.push({
+      ...noRevision,
+      id,
+      key: { project, actor: merged ? 0 : actor, category, source: id, workUnit: id },
+      amount: row.award.amount,
+      occurredAt: instantOf(row.award.occurredAt) ?? -1,
+      recordedAt: instantOf(row.recordedAt) ?? -1,
+      rule,
+      tableVersion,
+      sourceDigest: row.sourceDigest,
+      provisional: row.award.provisional,
+      recipients: merged ? [{ actor, lines: row.award.amount }] : [],
+      completeLines: merged,
+      shares: merged ? [{ actor, points: row.award.amount }] : [],
+    })
+    const known = logins.get(actor)
+    if (known === undefined || known.recordedAt <= row.recordedAt) logins.set(actor, { login: row.award.actor.login, recordedAt: row.recordedAt })
+  }
+  return {
+    ledger: { ...emptyLedger, now, revisions, nextId: revisions.length + 1 },
+    logins: new Map([...logins].map(([actor, found]) => [actor, found.login] as const)),
+  } satisfies MonthProjection
+}
+
+export effect function monthWeights(project: string, period: number, openPeriod: number, exclusions: ReadonlyArray<Exclusion>, ledger: Ledger) {
+  const start = decodeState({ ...initial, project, period, openPeriod, phase: "Live", exclusions: [...exclusions], entries: [], banned: [], snapshot: [] }) catch effect () => {
+    throw new RowMismatch({ text: `project ${project} payout exclusions`, issue: "they break a reward-weight rule" })
+  }
+  const machine = try heldWeights(start)
+  const observed = machine.send({ type: "observe", l: ledger }) catch effect () => {
+    throw new RowMismatch({ text: `project ${project} month ${period}`, issue: "the month's weights are already fixed" })
+  }
+  return weights(observed)
+}

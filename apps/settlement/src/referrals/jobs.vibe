@@ -1,0 +1,36 @@
+// spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
+import type { Job } from "@repo/platform/worker"
+import { refreshClaimCache } from "./claimCache.vibe"
+import { postNextRoot, reconcilePosts } from "./posting.vibe"
+
+export const postingJob: Job = {
+  name: "referral-root-posting",
+  run: () => effect {
+    const posted = try postNextRoot()
+    try Effect.logInfo("referral_post_run", posted)
+  },
+}
+
+export const reconcileJob: Job = {
+  name: "referral-root-reconciliation",
+  run: () => effect {
+    const reconciled = try reconcilePosts()
+    try Effect.logInfo("referral_reconcile_run", reconciled)
+  },
+}
+
+export const claimCacheJob: Job = {
+  name: "referral-claim-cache",
+  run: () => effect {
+    const refreshed = try refreshClaimCache()
+    try Effect.logInfo("referral_claim_cache_run", refreshed)
+  },
+}
+
+export const dailyCron = "23 1 * * *"
+export const quarterHourCron = "*/15 * * * *"
+
+export const referralCrons = {
+  [dailyCron]: [postingJob],
+  [quarterHourCron]: [reconcileJob, claimCacheJob],
+}

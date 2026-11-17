@@ -1,0 +1,39 @@
+// spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"
+import { pointsAnswer } from "@repo/backend/points"
+import { first, sql } from "@repo/platform/d1"
+import { handleRaw, json } from "@repo/platform/http"
+import { getPointsJournal } from "../client/refusals.vibe"
+import { journalPageSize, pointsJournal, pointsRule } from "../client/journal.vibe"
+
+schema PublishedBatch { generated_at: string; coverage: string; revision_count: number; digest: string }
+schema PageRows { rows: string }
+
+function refused(row: { readonly status: number; readonly error: string }) {
+  return json({ error: row.error }, row.status)
+}
+
+effect function journalPage(query: URLSearchParams) {
+  const after = Number(query.get("after") ?? 0)
+  if (!Number.isSafeInteger(after) || after < 0) return refused(getPointsJournal.invalidCursorNoStore)
+  const batch = try first(PublishedBatch, sql`SELECT generated_at, coverage, revision_count, digest FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
+  if (batch === undefined) return refused(getPointsJournal.pointsNotPublished)
+  const pinned = query.get("batch")
+  if (pinned !== null && pinned !== "" && pinned !== batch.digest) return refused(getPointsJournal.journalChanged)
+  const limit = Math.min(journalPageSize, Math.max(0, batch.revision_count - after))
+  const page = try first(PageRows, sql`SELECT json_group_array(json(payload)) AS rows FROM (SELECT payload FROM points_revisions ORDER BY rowid LIMIT ${limit} OFFSET ${after})`)
+  const revisions: unknown = try Effect.try(() => JSON.parse(page?.rows ?? "[]") as unknown)
+  const coverage: unknown = try Effect.try(() => JSON.parse(batch.coverage) as unknown)
+  const count = Array.isArray(revisions) ? revisions.length : 0
+  return json({
+    schemaVersion: "1",
+    ruleVersion: pointsRule,
+    generatedAt: batch.generated_at,
+    coverage,
+    revisions,
+    batch: batch.digest,
+    next: after + count < batch.revision_count ? after + count : null,
+    total: batch.revision_count,
+  })
+}
+
+export const journalRoutes = handleRaw(pointsJournal, (input) => pointsAnswer(journalPage(input.query)))

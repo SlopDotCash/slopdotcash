@@ -1,0 +1,202 @@
+// spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/security/enforcement.md, "A recorded acquisition refusal notifies the listing account once with a scan-failed notice"
+import { type Statement, first, rows, sql } from "@repo/platform/d1"
+import { Notices } from "@repo/ports/operations"
+import { owners } from "../enforcement/statements.vibe"
+import { type RecordedResult, storedResult } from "./result.ts"
+import { type AssessmentFacts, type Summary, findingsLocationOf, quarantinedScanMessage, summarize } from "./summary.ts"
+
+export schema AssessmentRow {
+  row: number
+  id: string
+  project_id: string
+  revision: number
+  manifest_sha256: string
+  content_sha256: string
+  commit_sha: string
+  template_sha256: string
+  requested_by_github_id: string
+  requested_by_github_login: string
+  requested_at: string
+  request_reason: string
+  state: "pending" | "clean" | "incomplete" | "malicious"
+  policy_version: string | null
+  result: string | null
+  result_sha256: string | null
+  signing_key_sha256: string | null
+  completed_at: string | null
+  repository_id: string | null
+}
+
+export interface Assessment extends AssessmentFacts {
+  readonly row: number
+  readonly projectId: string
+  readonly manifestSha256: string
+  readonly contentSha256: string
+  readonly repositoryId: string
+  readonly requestedBy: { readonly githubId: string; readonly githubLogin: string }
+  readonly requestReason: string
+  readonly resultSha256: string | null
+  readonly signingKeySha256: string | null
+}
+
+export const templateReplacementReason = "Automatic replacement of an unavailable queued template"
+
+function scannedRepository(alias: string): Statement {
+  return alias === "current"
+    ? sql`COALESCE(current.repository_id, (SELECT json_extract(r.manifest, '$.repositories[0].id') FROM project_revisions r WHERE r.project_id = current.project_id AND r.revision = current.revision))`
+    : alias === "previous"
+      ? sql`COALESCE(previous.repository_id, (SELECT json_extract(r.manifest, '$.repositories[0].id') FROM project_revisions r WHERE r.project_id = previous.project_id AND r.revision = previous.revision))`
+      : sql`COALESCE(a.repository_id, (SELECT json_extract(r.manifest, '$.repositories[0].id') FROM project_revisions r WHERE r.project_id = a.project_id AND r.revision = a.revision))`
+}
+
+const columns = sql`a.rowid AS row, a.id, a.project_id, a.revision, a.manifest_sha256, a.content_sha256, a.commit_sha, a.template_sha256, a.requested_by_github_id, a.requested_by_github_login, a.requested_at, a.request_reason, a.state, a.policy_version, a.result, a.result_sha256, a.signing_key_sha256, a.completed_at, ${scannedRepository("a")} AS repository_id`
+
+function assessmentOf(row: AssessmentRow): Assessment {
+  return {
+    row: row.row,
+    id: row.id,
+    projectId: row.project_id,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    contentSha256: row.content_sha256,
+    commitSha: row.commit_sha,
+    templateSha256: row.template_sha256,
+    repositoryId: row.repository_id ?? "",
+    requestedBy: { githubId: row.requested_by_github_id, githubLogin: row.requested_by_github_login },
+    requestedAt: row.requested_at,
+    requestReason: row.request_reason,
+    state: row.state,
+    policyVersion: row.policy_version,
+    result: row.result === null ? undefined : storedResult(row.result),
+    resultSha256: row.result_sha256,
+    signingKeySha256: row.signing_key_sha256,
+    completedAt: row.completed_at,
+  }
+}
+
+export effect function assessment(id: string) {
+  const found = try first(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.id = ${id}`)
+  return found === undefined ? undefined : assessmentOf(found)
+}
+
+export effect function projectAssessments(projectId: string) {
+  return (try rows(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.project_id = ${projectId} ORDER BY a.requested_at, a.rowid`)).map(assessmentOf)
+}
+
+export effect function recentAssessments() {
+  return (try rows(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a ORDER BY a.requested_at DESC, a.rowid DESC LIMIT 500`)).map(assessmentOf)
+}
+
+export effect function pendingAssessments() {
+  return (try rows(AssessmentRow, sql`SELECT ${columns} FROM vetting_assessments a WHERE a.state = 'pending' AND a.rowid = (SELECT MAX(current.rowid) FROM vetting_assessments current WHERE current.project_id = a.project_id AND ${scannedRepository("current")} = ${scannedRepository("a")}) ORDER BY a.requested_at, a.rowid LIMIT 100`)).map(assessmentOf)
+}
+
+schema Covered { covered: number }
+
+export effect function coversActiveFlags(id: string) {
+  const found = try first(Covered, sql`SELECT NOT EXISTS (SELECT 1 FROM project_flags f WHERE f.project_id = a.project_id AND f.state = 'active' AND f.id NOT IN (SELECT value FROM json_each(a.flag_ids))) AS covered FROM vetting_assessments a WHERE a.id = ${id}`)
+  return found?.covered === 1
+}
+
+schema NextRow { next: number }
+
+export effect function nextAssessmentNumber() {
+  return (try first(NextRow, sql`SELECT COALESCE(MAX(rowid), 0) + 1 AS next FROM vetting_assessments`))?.next ?? 1
+}
+
+export function summaryOf(found: Assessment): Summary {
+  return summarize(found)
+}
+
+export function adminView(found: Assessment) {
+  return {
+    ...summarize(found),
+    projectId: found.projectId,
+    manifestSha256: found.manifestSha256,
+    requestedBy: found.requestedBy,
+    requestReason: found.requestReason,
+    resultSha256: found.resultSha256,
+    signingKeySha256: found.signingKeySha256,
+    result: found.result ?? null,
+  }
+}
+
+export interface Queued {
+  readonly id: string
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly contentSha256: string
+  readonly commitSha: string
+  readonly templateSha256: string
+  readonly repositoryId: string
+  readonly requestedBy: { readonly githubId: string; readonly githubLogin: string }
+  readonly requestedAt: string
+  readonly requestReason: string
+  readonly replaces: string | null
+}
+
+export function queueStatement(queued: Queued): Statement {
+  const replaced = queued.replaces === null
+    ? sql`1`
+    : sql`EXISTS (SELECT 1 FROM vetting_assessments previous WHERE previous.id = ${queued.replaces} AND previous.project_id = ${queued.projectId} AND previous.state = 'pending' AND ${scannedRepository("previous")} = ${queued.repositoryId} AND previous.rowid = (SELECT MAX(current.rowid) FROM vetting_assessments current WHERE current.project_id = previous.project_id AND ${scannedRepository("current")} = ${queued.repositoryId}))`
+  return sql`INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, repository_id, flag_ids)
+    SELECT ${queued.id}, ${queued.projectId}, ${queued.revision}, ${queued.manifestSha256}, ${queued.contentSha256}, ${queued.commitSha}, ${queued.templateSha256}, ${queued.requestedBy.githubId}, ${queued.requestedBy.githubLogin}, ${queued.requestedAt}, ${queued.requestReason.slice(0, 1000)}, 'pending', ${queued.replaces}, ${queued.repositoryId},
+      (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ${queued.projectId} AND state = 'active' ORDER BY id))
+    WHERE ${replaced}`
+}
+
+export interface Recording {
+  readonly result: RecordedResult
+  readonly text: string
+  readonly sha256: string
+  readonly keySha256: string
+  readonly at: string
+}
+
+export effect function resultWrites(recording: Recording) {
+  const { result } = recording
+  const recorded = sql`EXISTS (SELECT 1 FROM vetting_assessments WHERE id = ${result.assessmentId} AND state = 'incomplete' AND completed_at = ${recording.at})`
+  const scanFailed = result.disposition !== "incomplete" ? [] : try (try Notices).fanout({
+    eventKey: `project-scan:${result.assessmentId}`,
+    recipients: owners(result.projectId),
+    kind: "ProjectScanFailed",
+    subject: result.projectId,
+    detail: quarantinedScanMessage(recording.at, findingsLocationOf(result)),
+    actionPath: `/projects/${result.projectId}`,
+    sourceAt: recording.at,
+    onlyIf: recorded,
+  })
+  return [
+    sql`UPDATE vetting_assessments SET state = ${result.disposition}, policy_version = ${result.policyVersion}, result = ${recording.text}, result_sha256 = ${recording.sha256}, signing_key_sha256 = ${recording.keySha256}, completed_at = ${recording.at} WHERE id = ${result.assessmentId}`,
+    ...scanFailed,
+    ...result.artifacts.map((artifact, ordinal) => sql`INSERT INTO vetting_artifacts (assessment_id, ordinal, sha256, parent_sha256, origin, path, artifact_type, state, analysis, requested_execution) VALUES (${result.assessmentId}, ${ordinal}, ${artifact.sha256}, ${artifact.parentSha256}, ${artifact.origin}, ${artifact.path}, ${artifact.type}, ${artifact.state}, ${artifact.analysis}, ${artifact.requestedExecution ? 1 : 0})`),
+  ] satisfies ReadonlyArray<Statement>
+}
+
+schema IntentRow { assessment_id: string }
+
+export effect function hasIntent(assessmentId: string) {
+  return (try first(IntentRow, sql`SELECT assessment_id FROM vetting_publication_intents WHERE assessment_id = ${assessmentId}`)) !== undefined
+}
+
+export interface Intent {
+  readonly assessmentId: string
+  readonly resultSha256: string
+  readonly origin: string
+  readonly disposition: string
+}
+
+export effect function reserveIntent(intent: Intent) {
+  const reserved = try first(IntentRow, sql`INSERT INTO vetting_publication_intents(assessment_id, result_sha256, origin, disposition) VALUES(${intent.assessmentId}, ${intent.resultSha256}, ${intent.origin}, ${intent.disposition}) ON CONFLICT(assessment_id) DO NOTHING RETURNING assessment_id`)
+  return reserved !== undefined
+}
+
+export effect function completeReceipt(intent: Intent, outcome: string, httpStatus: number | null) {
+  const recorded = first(IntentRow, sql`INSERT INTO vetting_publication_receipts(assessment_id, outcome, http_status) SELECT assessment_id, ${outcome}, ${httpStatus} FROM vetting_publication_intents WHERE assessment_id = ${intent.assessmentId} AND result_sha256 = ${intent.resultSha256} AND origin = ${intent.origin} AND disposition = ${intent.disposition} RETURNING assessment_id`) catch effect (error) => {
+    if (error._tag === "ConstraintViolation") return "duplicate" as const
+    throw error
+  }
+  if (recorded === "duplicate") return "duplicate" as const
+  return recorded === undefined ? "missing" as const : "recorded" as const
+}

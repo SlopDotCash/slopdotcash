@@ -1,0 +1,68 @@
+// spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"
+import type { Fetcher } from "@repo/platform/bindings"
+import { GitHub } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import type { ProjectRepository, ProjectView } from "@repo/ports/backend"
+
+export error PinUnavailable { reason: string }
+
+export interface Pin {
+  readonly commitSha: string
+  readonly templateSha256: string
+}
+
+export service SkillTemplate {
+  current(): string!PinUnavailable
+}
+
+schema TemplateIndex { templateSha256: string }
+schema Branch { commit: { sha: string } }
+
+const digest = /^[a-f0-9]{64}$/u
+const commit = /^[0-9a-f]{40}$/u
+const templateLimitBytes = 1024 * 1024
+
+effect function templateIndex() {
+  const unavailable = new PinUnavailable({ reason: "The skill template digest is not a SHA-256." })
+  const response = HttpClient.get("https://assets.invalid/skill-templates/index.json") catch effect () => { throw new PinUnavailable({ reason: "Skill template index.json is missing" }) }
+  if (response.status !== 200) throw new PinUnavailable({ reason: "Skill template index.json is missing" })
+  const buffer = response.arrayBuffer catch effect () => { throw unavailable }
+  if (buffer.byteLength > templateLimitBytes) throw new PinUnavailable({ reason: "Skill template index.json is too large" })
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(buffer))), catch: () => unavailable })
+  const index = Schema.decodeUnknownEffect(TemplateIndex)(value) catch effect () => { throw unavailable }
+  if (!digest.test(index.templateSha256)) throw unavailable
+  return index.templateSha256
+}
+
+export function skillTemplateFrom(assets: Fetcher) {
+  const client = outboundVia(assets)
+  return Layer.succeed(SkillTemplate, { current: () => Effect.provide(templateIndex(), client) } satisfies SkillTemplate.Shape)
+}
+
+export function listedRepository(view: ProjectView, value: string): ProjectRepository | undefined {
+  const wanted = value.toLowerCase()
+  return view.repositories.find((repository) => repository.fullName.toLowerCase() === wanted)
+    ?? view.repositories.find((repository) => repository.aliases.some((alias) => alias.toLowerCase() === wanted))
+}
+
+function branchPath(branch: string) {
+  return encodeURIComponent(branch).replace(/[!'()]/gu, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+export effect function livePin(view: ProjectView, repositoryPath: string) {
+  const repository = listedRepository(view, repositoryPath)
+  if (repository === undefined) throw new PinUnavailable({ reason: `The manifest does not list repository ${repositoryPath}.` })
+  const templateSha256 = try (try SkillTemplate).current()
+  const branch = (try GitHub).json(`/repos/${repository.fullName}/branches/${branchPath(repository.integrationBranch)}`, Branch) catch effect () => {
+    throw new PinUnavailable({ reason: `GitHub returned no head commit for ${repository.fullName} ${repository.integrationBranch}.` })
+  }
+  if (!commit.test(branch.commit.sha)) throw new PinUnavailable({ reason: `GitHub returned no head commit for ${repository.fullName} ${repository.integrationBranch}.` })
+  return { commitSha: branch.commit.sha, templateSha256 } satisfies Pin
+}
+
+export effect function pinOrUndefined(view: ProjectView, repositoryPath: string) {
+  return livePin(view, repositoryPath) catch effect (error) => {
+    if (error._tag === "PinUnavailable") return undefined
+    throw error
+  }
+}

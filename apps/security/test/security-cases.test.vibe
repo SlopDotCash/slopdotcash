@@ -1,0 +1,291 @@
+import { assert, layer } from "@effect/vitest"
+import type { Fetcher } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { Refused, outboundVia } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import type { Handler } from "@repo/platform/testing"
+import { type ProviderCall, type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { privateRoute } from "../src/analysis/route.vibe"
+import { planned } from "../src/cases/actions.vibe"
+import { AwardClearances } from "../src/cases/clearance.vibe"
+import { caseRecord } from "../src/cases/rows.vibe"
+import { acted, opened } from "../src/cases/routes.vibe"
+import { committed, observedCase } from "../src/cases/store.vibe"
+import { postSecurityCasesByIdActions as actionRows } from "../src/client/refusals.vibe"
+import { reportBucket } from "../src/privacy/reads.vibe"
+import { reportingProgramsLive } from "../src/receipt/program.vibe"
+import { type World, maintainer, reporter, request, rows, started as startedWorld } from "./support/intake/harness.ts"
+import { receiptNotices } from "./support/intake/notices.vibe"
+
+service Cases {
+  readonly world: World
+  readonly fake: ProviderFake
+  readonly bans: Set<string>
+}
+
+const surplusKey = "surplus-cases-key"
+const finance = "702"
+const triager = "703"
+const moderator = "801"
+const secondModerator = "804"
+const paid = "intake-fixture"
+const unpaid = "intake-unpaid"
+let keys = 0
+
+const Started = Layer.effect(Cases, effect {
+  const world = try acquireRelease(promise(() => startedWorld()), (running) => promise(() => running.mf.dispose()))
+  return { world, fake: providerFake(), bans: new Set<string>() }
+})
+
+function fixture(projectId: string): ProjectView {
+  return {
+    projectId,
+    revision: 1,
+    manifestSha256: "a".repeat(64),
+    rowStatus: "Active",
+    manifestStatus: "Active",
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: "900",
+    repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function portsOf(bans: ReadonlySet<string>) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(fixture(projectId)),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixture(paid), fixture(unpaid)]),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: (id) => succeed({ banned: bans.has(id) }),
+      project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: (id) => succeed(bans.has(id) ? sql`0` : sql`1`),
+    } satisfies Restrictions.Shape),
+  )
+}
+
+const directClearances = Layer.succeed(AwardClearances, {
+  commitment: (request) => succeed({
+    clearance: { caseRevision: request.modelRevision, firstQualifying: true, rootCauseFree: true, rail: "DirectRail" as const },
+    before: request.proposal ? [] : [sql`INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) SELECT ${request.caseId}, ${request.projectId}, ${request.rootCauseKey}, ${JSON.stringify(request.terms)}, ${request.grossMinor}, ${request.at} WHERE (SELECT revision FROM security_cases WHERE id = ${request.caseId}) = ${request.caseRevision}`],
+    require: request.proposal ? sql`1` : sql`EXISTS (SELECT 1 FROM security_direct_awards WHERE case_id = security_cases.id)`,
+    unmet: { status: 409, error: "award_changed", message: "The award can no longer be approved. Reload the case." },
+  }),
+} satisfies AwardClearances.Shape)
+
+function shellOf(cases: Cases.Shape) {
+  const viaFake: Fetcher = {
+    fetch: (sent) => cases.fake.handler(sent as unknown as Parameters<Handler>[0]) as unknown as ReturnType<Fetcher["fetch"]>,
+  }
+  const base = Layer.mergeAll(
+    d1(cases.world.db),
+    webCrypto,
+    reportBucket(cases.world.reports),
+    rolesFrom({ ADMIN_GITHUB_IDS: `${moderator},${secondModerator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${secondModerator}` }),
+    portsOf(cases.bans),
+    receiptNotices,
+    directClearances,
+  )
+  const route = Layer.provide(privateRoute({ apiKey: surplusKey }), Layer.merge(outboundVia(viaFake), webCrypto))
+  return Layer.provideMerge(Layer.mergeAll(reportingProgramsLive, route), base)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function actor(githubId: string) {
+  return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+}
+
+interface Outcome<A> {
+  readonly value?: A
+  readonly refused?: ReadonlyArray<string | number>
+}
+
+effect function outcome<A, E, R>(program: A!E!R) {
+  return Effect.map(program, (value): Outcome<A> => ({ value })) catch effect (error) => {
+    if (error instanceof Refused) return { refused: [error.status, error.code, error.message] } satisfies Outcome<A>
+    throw error
+  }
+}
+
+effect function submit(world: World, as: string, project: string, summary: string) {
+  keys += 1
+  const answer = try promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: `cases-journey-key-${keys}`.padEnd(20, "0"), origin: "slop", report: { summary, description: `${summary}, described with enough detail to reproduce it safely.`, severity: "high" } } }))
+  if (answer.status !== 201) return try die(new Error(`report not received: ${answer.status}`))
+  return (answer.body as { readonly submission: { readonly caseId: string } }).submission.caseId
+}
+
+effect function revisionOf(caseId: string) {
+  const record = try caseRecord(caseId)
+  return record?.row.revision ?? 0
+}
+
+effect function act(as: string, caseId: string, action: string, fields: Readonly<Record<string, unknown>> = {}) {
+  keys += 1
+  const body = { action, expectedRevision: try revisionOf(caseId), idempotencyKey: `cases-action-key-${keys}`.padEnd(20, "0"), ...fields }
+  return try outcome(acted(actor(as), caseId, body))
+}
+
+function stateOf(result: { readonly value?: unknown; readonly refused?: unknown }) {
+  if (result.refused !== undefined) return { refused: result.refused }
+  const shown = (result.value as { readonly case: Readonly<Record<string, unknown>> }).case
+  return { receipt: shown.receiptState, award: shown.awardState, appeal: shown.appealState, review: shown.relatedPartyReview, related: shown.relatedParty }
+}
+
+effect function read(as: string, caseId: string) {
+  return (try outcome(opened(actor(as), caseId))) as Outcome<{ readonly case: unknown }>
+}
+
+function decision(rootCauseKey: string, outcomeText = "confirmed") {
+  return { outcome: outcomeText, severity: "high", loss: "not-verified", inScope: true, reason: "Reproduced against the deployed vault.", relatedParty: false, ...outcomeText === "rejected" ? {} : { rootCauseKey } }
+}
+
+function amount(grossMinor: string) {
+  return { decision: "amount", reason: "The finding matches the published offer.", grossMinor, paymentDeadline: "2099-01-01T00:00:00.000Z", confirmation: true }
+}
+
+effect function receiptTerms(cases: Cases.Shape) {
+  const { world } = cases
+  const paidCase = try submit(world, reporter, paid, "Vault drain through a stale price")
+  const unpaidCase = try submit(world, reporter, unpaid, "Fee bypass through rounding")
+  try promise(() => world.db.prepare("UPDATE projects SET revision = 2, manifest = (SELECT manifest FROM project_revisions WHERE project_id = ?1 AND revision = 2), manifest_sha256 = ?2, updated_at = ?3 WHERE id = ?1").bind(paid, "b".repeat(64), new Date().toISOString()).run())
+  const edited = try promise(() => rows(world, "SELECT revision, json_extract(manifest, '$.securityBounty.amount.grossMinor') AS gross FROM projects WHERE id=?", paid))
+  const terms = (try read(maintainer, paidCase)).value?.case as Readonly<Record<string, unknown>> | undefined
+  const decided = stateOf(try act(maintainer, paidCase, "decide", decision("stale-oracle-price")))
+  const later = try act(maintainer, paidCase, "award", amount("2000000"))
+  const awarded = stateOf(try act(maintainer, paidCase, "award", amount("1000000")))
+  const direct = try promise(() => rows(world, "SELECT gross_base, root_cause_key FROM security_direct_awards WHERE case_id=?", paidCase))
+  const unpaidDecided = stateOf(try act(maintainer, unpaidCase, "decide", decision("fee-rounding-bypass")))
+  const unpaidAward = try act(maintainer, unpaidCase, "award", amount("1000000"))
+  const unpaidRow = try promise(() => rows(world, "SELECT award_state, terms, policy_revision FROM security_cases WHERE id=?", unpaidCase))
+  try same({
+    edited,
+    terms: { gross: (terms?.terms as Readonly<Record<string, unknown>> | undefined)?.grossMinor, revision: terms?.policyRevision, award: terms?.awardState },
+    decided, later: later.refused, awarded, direct, unpaidDecided, unpaidAward: unpaidAward.refused, unpaidRow,
+  }, {
+    edited: [{ revision: 2, gross: "2000000" }],
+    terms: { gross: "1000000", revision: 1, award: "pending" },
+    decided: { receipt: "confirmed", award: "pending", appeal: "none", review: "not-applicable", related: "unrelated" },
+    later: [409, "award_amount_mismatch", "Choose the published award amount or no award for this program."],
+    awarded: { receipt: "confirmed", award: "approved", appeal: "none", review: "not-applicable", related: "unrelated" },
+    direct: [{ gross_base: "1000000", root_cause_key: "stale-oracle-price" }],
+    unpaidDecided: { receipt: "confirmed", award: "not-applicable", appeal: "none", review: "not-applicable", related: "unrelated" },
+    unpaidAward: [409, "action_not_allowed", "The case does not allow award in its current state"],
+    unpaidRow: [{ award_state: "not-applicable", terms: null, policy_revision: 1 }],
+  })
+}
+
+function draftAbout(text: string) {
+  return (call: ProviderCall) => (call.messages[0]?.content ?? "").includes(text)
+}
+
+effect function independentDecisions(cases: Cases.Shape) {
+  const { world, fake } = cases
+  const related = try submit(world, finance, paid, "Signature replay across chains")
+  try act(maintainer, related, "decide", decision("signature-replay"))
+  const selfAward = try act(finance, related, "award", amount("1000000"))
+  const proposed = stateOf(try act(maintainer, related, "award", amount("1000000")))
+  const heldBack = try promise(() => rows(world, "SELECT COUNT(*) AS count FROM security_direct_awards WHERE case_id=?", related))
+  const deciderReview = try act(maintainer, related, "decide-related-party", { outcome: "approve", reason: "I proposed this award myself." })
+  const approved = stateOf(try act(moderator, related, "decide-related-party", { outcome: "approve", reason: "Independent review of the proposal." }))
+  const committedAward = try promise(() => rows(world, "SELECT gross_base FROM security_direct_awards WHERE case_id=?", related))
+
+  const appealed = try submit(world, reporter, paid, "Reentrancy in the claim path")
+  try act(maintainer, appealed, "decide", decision("claim-reentrancy", "rejected"))
+  fake.reply(draftAbout("pays out twice"), { text: JSON.stringify({ proposedOutcome: "uphold", rationale: "The decision matches the evidence.", confidence: 0.95 }) })
+  const opening = stateOf(try act(reporter, appealed, "appeal", { reason: "The claim function pays out twice before it marks the claim spent." }))
+  const triage = try promise(() => rows(world, "SELECT state, proposed_outcome, escalation_reasons FROM security_appeal_triages WHERE case_id=?", appealed))
+  const reporterView = (try read(reporter, appealed)).value?.case as Readonly<Record<string, unknown>> | undefined
+  const moderatorView = (try read(moderator, appealed)).value?.case as Readonly<Record<string, unknown>> | undefined
+  const upheld = stateOf(try act(moderator, appealed, "decide-appeal", { outcome: "uphold", reason: "The rejection stands on the evidence." }))
+  try same({
+    selfAward: selfAward.refused, proposed, heldBack, deciderReview: deciderReview.refused, approved, committedAward, opening, triage,
+    reporterSeesDraft: reporterView === undefined ? undefined : Object.hasOwn(reporterView, "appealTriage"),
+    moderatorDraft: (moderatorView?.appealTriage as Readonly<Record<string, unknown>> | undefined)?.escalationReasons,
+    upheld,
+  }, {
+    selfAward: [403, "forbidden", "The project owner decides"],
+    proposed: { receipt: "confirmed", award: "pending", appeal: "none", review: "pending", related: "related" },
+    heldBack: [{ count: 0 }],
+    deciderReview: [409, "action_not_allowed", "The case does not allow decide-related-party in its current state"],
+    approved: { receipt: "confirmed", award: "approved", appeal: "none", review: "approved", related: "related" },
+    committedAward: [{ gross_base: "1000000" }],
+    opening: { receipt: "disputed", award: "pending", appeal: "open", review: "not-applicable", related: "unrelated" },
+    triage: [{ state: "complete", proposed_outcome: "uphold", escalation_reasons: "[\"private-security-case\"]" }],
+    reporterSeesDraft: false,
+    moderatorDraft: ["private-security-case"],
+    upheld: { receipt: "rejected", award: "pending", appeal: "upheld", review: "not-applicable", related: "unrelated" },
+  })
+}
+
+effect function revokedAndBanned(cases: Cases.Shape) {
+  const { world, bans } = cases
+  const banned = try submit(world, reporter, paid, "Unbounded mint through a missing cap")
+  try act(maintainer, banned, "decide", decision("unbounded-mint"))
+  bans.add(reporter)
+  const bannedReporter = try act(maintainer, banned, "award", amount("1000000"))
+  bans.delete(reporter)
+  bans.add(maintainer)
+  const bannedDecider = try act(maintainer, banned, "award", amount("1000000"))
+  bans.delete(maintainer)
+  const noCommitment = try promise(() => rows(world, "SELECT award_state FROM security_cases WHERE id=?", banned))
+
+  const revoked = try submit(world, reporter, paid, "Oracle update skips the heartbeat check")
+  const assigned = stateOf(try act(maintainer, revoked, "assign-triager", { githubId: triager, githubLogin: "triager" }))
+  const triagerRead = (try read(triager, revoked)).value?.case as Readonly<Record<string, unknown>> | undefined
+  const observed = try observedCase(revoked, triager, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  const at = try isoNow()
+  keys += 1
+  const prepared = try planned("request-information", { observed, actor: actor(triager), body: { action: "request-information", expectedRevision: observed.record.row.revision, idempotencyKey: `cases-action-key-${keys}`.padEnd(20, "0"), reason: "Show the minted amount." }, at, nowMs: try Clock.currentTimeMillis }, `cases-action-key-${keys}`.padEnd(20, "0"))
+  try act(maintainer, revoked, "revoke-triager", { githubId: triager })
+  const late: Outcome<number> = prepared === undefined ? { refused: ["unplanned"] } : try outcome(committed({ observed, actor: actor(triager), change: prepared.change, idempotencyKey: `cases-action-key-${keys}`.padEnd(20, "0"), at }))
+  const afterRevocation = try read(triager, revoked)
+  const members = try promise(() => rows(world, "SELECT github_id, revoked_at IS NOT NULL AS revoked FROM security_case_members WHERE case_id=?", revoked))
+  try same({ bannedReporter: bannedReporter.refused, bannedDecider: bannedDecider.refused, noCommitment, assigned: assigned.receipt, triagerRoles: triagerRead?.viewerRoles, late: late.refused ?? "committed", afterRevocation: afterRevocation.refused, members }, {
+    bannedReporter: [403, "participation_banned", "A banned account cannot approve or receive a new Slop award. Funded awards and appeals remain available."],
+    bannedDecider: [403, "participation_banned", "A banned account cannot approve or receive a new Slop award. Funded awards and appeals remain available."],
+    noCommitment: [{ award_state: "pending" }],
+    assigned: "received",
+    triagerRoles: ["triager"],
+    late: [409, "stale_revision", "The case changed since you loaded it"],
+    afterRevocation: [404, "not_found", "Case not found"],
+    members: [{ github_id: triager, revoked: 1 }],
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Receipt-time terms stay frozen and an unpaid receipt creates no award (spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance")', () => effect {
+    const cases = try Cases
+    provide shellOf(cases) {
+      try receiptTerms(cases)
+    }
+  })
+
+  it.effect('Self-approval is refused, a related-party award waits for an independent moderator and an upheld appeal restores the finding (spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/cases.md, "An independent moderator upholds or returns the appeal")', () => effect {
+    const cases = try Cases
+    provide shellOf(cases) {
+      try independentDecisions(cases)
+    }
+  })
+
+  it.effect('A banned reporter or decider starts no commitment and a revoked triager cannot finish a request (spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version")', () => effect {
+    const cases = try Cases
+    provide shellOf(cases) {
+      try revokedAndBanned(cases)
+    }
+  })
+})

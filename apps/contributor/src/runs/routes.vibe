@@ -1,0 +1,287 @@
+// spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "An upload intent is a five-minute one-time capability that only its exact retry renews"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "Progress events are the owner's agent-source records, idempotent by key and refused once finalized"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"; spec/contributor/runEvidence.md, "The same local run resumes its own server record and bounded exact upload"; spec/contributor/runEvidence.md, "A retained digest can be finalized again while changed local bytes fail"; spec/contributor/evidence.md, "The server's retained digest is learned once and never replaced"; spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { millisOf } from "@repo/platform/clock"
+import { DeploymentTier } from "@repo/platform/config"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Admission, type Bearer, admission, bytesBody, handleRaw, strictBody } from "@repo/platform/http"
+import { IntakeHealth } from "@repo/ports/operations"
+import { traceCollectionReadyAt } from "../../gen/operations__intakeHealth.effect.vibe"
+import { type Reply, beginPut as probedPut, maxTraceBytes, serverRuntime } from "../../gen/contributor__traceServer.effect.vibe"
+import { getPrivateRequestIntake, postRuns, postRunsByIdEvents, postRunsByIdFinalize, postRunsByIdTraceIntents, putTraceUploadsByCapability } from "../client/refusals.vibe"
+import { createRunRoute, eventRoute, finalizeRoute, privateIntakeRoute, traceApiOrigins, traceIntentRoute, traceUploadRoute } from "../client/traces.vibe"
+import { writerRole } from "../session/bearer.ts"
+import { type RunRow, StoredEventKind, StoredSource, contentTypeOf } from "../traces/codec.vibe"
+import { bannedOf } from "../traces/facts.vibe"
+import { type Settled, appendEvent, attachPut, beginPut, capability, createIntent, createRun, finalize, inspect, writeBytes } from "../traces/store.vibe"
+import { type Row, type Stated, bare, header, offHost, refused, settledOr, traceJson } from "./answers.vibe"
+import { uploadCapability } from "./capability.vibe"
+import { declaredDigest, exactClient, exactClientVersion, exactModel, exactProvider, traceContentType, validCapability, validGitSha, validGithubUrl, validIdempotencyKey, validIdentifier, validIsoTimestamp, validRepository, validSha256 } from "./validation.ts"
+
+type Fields = Readonly<Record<string, unknown>>
+
+const jsonLimitBytes = 65536
+const runKeys: ReadonlyArray<string> = ["clientRunId", "projectId", "repository", "projectPolicyRevision", "provider", "model", "client", "clientVersion"]
+const intentKeys: ReadonlyArray<string> = ["sha256", "sizeBytes", "contentType"]
+const eventKeys: ReadonlyArray<string> = ["kind", "occurredAt", "source", "githubObjectId", "githubUrl", "headSha"]
+const isEventKind = Schema.is(StoredEventKind)
+const isSource = Schema.is(StoredSource)
+
+effect function fieldsOf(allowed: ReadonlyArray<string>) {
+  const fields: Fields = try strictBody(Schema.Record(Schema.String, Schema.Unknown), jsonLimitBytes)
+  if (Object.keys(fields).some((key) => !allowed.includes(key))) throw refused({ status: admission.unexpectedFields.status, error: admission.unexpectedFields.code, message: admission.unexpectedFields.message })
+  return fields
+}
+
+effect function required(fields: Fields, name: string, valid: (value: unknown) => value is string, row: Stated) {
+  const value = fields[name]
+  if (!valid(value)) throw refused(row)
+  return value
+}
+
+effect function optional(fields: Fields, name: string, valid: (value: unknown) => value is string, row: Stated) {
+  const value = fields[name]
+  if (value === undefined || value === null) return undefined
+  if (!valid(value)) throw refused(row)
+  return value
+}
+
+effect function idempotencyKey(row: Stated) {
+  const value = try header("idempotency-key")
+  if (!validIdempotencyKey(value)) throw refused(row)
+  return value
+}
+
+effect function writer(actor: Bearer, rows: { readonly forbiddenWriteAccessIsNot: Stated; readonly participationBanned: Stated }) {
+  if (!actor.roles.some(writerRole)) throw refused(rows.forbiddenWriteAccessIsNot)
+  if (try bannedOf(actor.githubId)) throw refused(rows.participationBanned)
+  return Number(actor.githubId)
+}
+
+effect function runOf(input: Admission<"bearer">, row: Stated) {
+  const runId = input.params.runId
+  if (!validIdentifier(runId)) throw refused(row)
+  return runId
+}
+
+function ownedBy(settled: Settled, actor: Bearer) {
+  return settled.run?.github_user_id === actor.githubId
+}
+
+function refusalOf(replies: Partial<Record<Reply, Stated>>, settled: Settled, actor: Bearer, notFound: Stated, banned: Stated) {
+  const reply = settled.state.reply
+  if (reply === "ReplyBanned") return refused(ownedBy(settled, actor) ? banned : notFound)
+  if (reply === "ReplyNotFound") return refused(notFound)
+  const row = replies[reply]
+  return row === undefined ? undefined : refused(row)
+}
+
+effect function recorded(run: RunRow | undefined) {
+  if (run === undefined) return try die(new Error("an accepted trace reply needs its run row"))
+  return run
+}
+
+effect function unexpected(reply: Reply) {
+  return try die(new Error(`the trace store answered ${reply} where no refusal is mapped`))
+}
+
+effect function created(input: Admission<"bearer">) {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const rows = postRuns
+  try writer(input.actor, rows)
+  const fields = try fieldsOf(runKeys)
+  const request = {
+    clientRunId: try required(fields, "clientRunId", validIdentifier, rows.invalidRequestInvalidClientRunId),
+    projectId: try required(fields, "projectId", validIdentifier, rows.invalidRequestInvalidProjectId),
+    repository: try required(fields, "repository", validRepository, rows.invalidRequestInvalidRepository),
+    policyRevision: try required(fields, "projectPolicyRevision", validGitSha, rows.invalidRequestInvalidProjectPolicyRevision),
+    provider: try required(fields, "provider", exactProvider, rows.invalidRequestInvalidProvider),
+    model: try required(fields, "model", exactModel, rows.invalidRequestInvalidModel),
+    client: try required(fields, "client", exactClient, rows.invalidRequestInvalidClient),
+    clientVersion: try required(fields, "clientVersion", exactClientVersion, rows.invalidRequestInvalidClientVersion),
+  }
+  const key = try idempotencyKey(rows.invalidIdempotencyKey)
+  const actor = input.actor
+  const settled = try settledOr(createRun({ run: { owner: actor.githubId, createKey: key }, owner: actor.githubId, login: actor.login, key, request }), rows.idempotencyConflictIdempotencyKeyWasReused)
+  const reply = settled.state.reply
+  if (reply === "ReplyBanned") throw refused(rows.participationBanned)
+  if (reply === "ReplyConflict") throw refused(rows.idempotencyConflictIdempotencyKeyWasReused)
+  if (reply !== "ReplyCreated" && reply !== "ReplyExisting") return try unexpected(reply)
+  const run = try recorded(settled.run)
+  return traceJson({ serverRunId: run.id, clientRunId: run.client_run_id, state: run.state }, reply === "ReplyCreated" ? 201 : 200)
+}
+
+effect function intended(input: Admission<"bearer">) {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const rows = postRunsByIdTraceIntents
+  const runId = try runOf(input, rows.invalidRequestInvalidRunId)
+  const actor = input.actor
+  const by = try writer(actor, rows)
+  const key = try idempotencyKey(rows.invalidIdempotencyKey)
+  const fields = try fieldsOf(intentKeys)
+  const digest = try required(fields, "sha256", validSha256, rows.invalidRequestInvalidSha256)
+  const byteCount = fields.sizeBytes
+  if (typeof byteCount !== "number" || !Number.isSafeInteger(byteCount) || byteCount < 1 || byteCount > maxTraceBytes) throw refused(rows.invalidRequestSizeBytesMustBe1)
+  const declared = fields.contentType
+  if (typeof declared !== "string") throw refused(rows.invalidRequestInvalidContentType)
+  const contentType = traceContentType(declared)
+  if (contentType === undefined) throw refused(rows.unsupportedMediaType)
+  const capabilityText = try uploadCapability({ actor: actor.githubId, runId, key, digest })
+  const settled = try settledOr(createIntent({ run: { runId }, by, key, digest, byteCount, contentType, tokenHash: try sha256Hex(capabilityText) }), rows.idempotencyConflictIdempotencyKeyWasReused)
+  const refusal = refusalOf({
+    ReplyConflict: rows.idempotencyConflictIdempotencyKeyWasReused,
+    ReplyFinalized: rows.runFinalized,
+    ReplyTraceConflict: rows.traceConflict,
+    ReplyInvalid: rows.invalidRequestSizeBytesMustBe1,
+  }, settled, actor, rows.notFoundRunNotFound, rows.participationBanned)
+  if (refusal !== undefined) throw refusal
+  const reply = settled.state.reply
+  const intent = settled.intent
+  if ((reply !== "ReplyCreated" && reply !== "ReplyRenewed" && reply !== "ReplyExisting") || intent === undefined) return try unexpected(reply)
+  return traceJson({
+    serverRunId: runId,
+    uploadUrl: `${traceApiOrigins[(try DeploymentTier).tier]}/api/v1/trace-uploads/${capabilityText}`,
+    expiresAt: intent.expires_at,
+    sha256: intent.trace_sha256,
+    sizeBytes: intent.size_bytes,
+    contentType: intent.content_type,
+  }, reply === "ReplyCreated" ? 201 : 200)
+}
+
+effect function finalized(input: Admission<"bearer">) {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const rows = postRunsByIdFinalize
+  const runId = try runOf(input, rows.invalidRequestInvalidRunId)
+  const actor = input.actor
+  const by = try writer(actor, rows)
+  const key = try idempotencyKey(rows.invalidIdempotencyKey)
+  const settled = try settledOr(finalize({ run: { runId }, by, key }), rows.finalizeConflict)
+  const refusal = refusalOf({ ReplyTraceRequired: rows.traceRequired }, settled, actor, rows.notFoundRunNotFound, rows.participationBanned)
+  if (refusal !== undefined) throw refusal
+  const reply = settled.state.reply
+  if (reply !== "ReplyCreated" && reply !== "ReplyExisting") return try unexpected(reply)
+  const run = try recorded(settled.run)
+  const digest = run.trace_sha256 ?? ""
+  return traceJson({ serverRunId: run.id, clientRunId: run.client_run_id, traceObjectId: `sha256:${digest}`, traceSha256: digest, state: run.state })
+}
+
+effect function appended(input: Admission<"bearer">) {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const rows = postRunsByIdEvents
+  const runId = try runOf(input, rows.invalidRequestInvalidRunId)
+  const actor = input.actor
+  const by = try writer(actor, rows)
+  const fields = try fieldsOf(eventKeys)
+  const kind = fields.kind
+  if (!isEventKind(kind)) throw refused(rows.invalidRequestInvalidEventKind)
+  const occurredAt = try required(fields, "occurredAt", validIsoTimestamp, rows.invalidRequestInvalidOccurredAt)
+  const source = fields.source
+  if (!isSource(source)) throw refused(rows.invalidRequestInvalidEventSource)
+  const githubObject = try optional(fields, "githubObjectId", validIdentifier, rows.invalidRequestInvalidGithubObjectId)
+  const githubUrl = try optional(fields, "githubUrl", validGithubUrl, rows.invalidRequestInvalidGithubUrl)
+  const headSha = try optional(fields, "headSha", validGitSha, rows.invalidRequestInvalidHeadSha)
+  const key = try idempotencyKey(rows.invalidIdempotencyKey)
+  const settled = try settledOr(appendEvent({ run: { runId }, by, key, kind, source, occurredAt, githubObject, githubUrl, headSha }), rows.idempotencyConflictIdempotencyKeyWasReused)
+  const refusal = refusalOf({
+    ReplyConflict: rows.idempotencyConflictIdempotencyKeyWasReused,
+    ReplyFinalized: rows.runFinalizedRunIsFinalized,
+    ReplyInvalid: source === "agent" ? rows.invalidRequestEventTimeIsToo : rows.invalidRequestInvalidEventSource,
+  }, settled, actor, rows.notFoundRunNotFound, rows.participationBanned)
+  if (refusal !== undefined) throw refusal
+  const reply = settled.state.reply
+  const event = settled.event
+  if ((reply !== "ReplyCreated" && reply !== "ReplyExisting") || event === undefined) return try unexpected(reply)
+  return traceJson({ eventId: event.id, runId, kind: event.kind }, reply === "ReplyCreated" ? 201 : 200)
+}
+
+const uploadRows = putTraceUploadsByCapability
+
+const putRefusals: Partial<Record<Reply, Stated>> = {
+  ReplyCapabilityGone: uploadRows.uploadCapabilityInvalid,
+  ReplyBanned: uploadRows.participationBanned,
+  ReplyIntentMismatch: uploadRows.intentMismatch,
+  ReplyObjectConflict: uploadRows.objectIntegrityConflict,
+  ReplyFinalized: uploadRows.runFinalized,
+  ReplyConflict: uploadRows.idempotencyConflict,
+}
+
+function putRefusal(state: Settled["state"], digest: string): Row | undefined {
+  const reply = state.reply
+  if (reply === "ReplyIntakeUnavailable") return uploadRows.privateIntakeUnavailable
+  if (reply === "ReplyTraceConflict") return state.attached !== "" && state.attached !== digest ? uploadRows.traceConflict : uploadRows.traceConflictTheRunCannotReserve
+  return putRefusals[reply]
+}
+
+effect function refusedPut(row: Row) {
+  if (row.message === undefined) return bare(row)
+  throw refused({ ...row, message: row.message })
+}
+
+effect function traceBytes() {
+  const bytes = try bytesBody(maxTraceBytes, ["text/plain", "application/x-ndjson"])
+  if (bytes.length === 0) throw refused(uploadRows.invalidRequest)
+  Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => { throw refused(uploadRows.invalidRequestTraceBodyMustBe) }
+  return bytes
+}
+
+effect function uploaded(capabilityText: string) {
+  const off = try offHost()
+  if (off !== undefined) return off
+  if (!validCapability(capabilityText)) throw refused(uploadRows.notFoundUploadCapabilityNotFound)
+  const found = try capability(try sha256Hex(capabilityText))
+  if (found === undefined) throw refused(uploadRows.uploadCapabilityInvalid)
+  const run = { runId: found.runId }
+  const key = found.key
+  const loaded = try inspect({ run, owner: "", digests: [], puts: [] })
+  const intent = loaded.rows.intents.find((row) => row.idempotency_key === key)
+  if (intent === undefined) throw refused(uploadRows.uploadCapabilityInvalid)
+  const probe = probedPut(loaded.model, key, intent.trace_sha256, intent.size_bytes, contentTypeOf[intent.content_type])
+  if (probe.reply === "ReplyCapabilityGone" || probe.reply === "ReplyBanned" || probe.reply === "ReplyIntakeUnavailable") return try refusedPut(putRefusal(probe, intent.trace_sha256) ?? uploadRows.uploadCapabilityInvalid)
+  const contentType = traceContentType((try header("content-type")) ?? "")
+  if (contentType === undefined) throw refused(uploadRows.unsupportedMediaType)
+  if (contentType !== intent.content_type) throw refused(uploadRows.intentMismatch)
+  const bytes = try traceBytes()
+  if (bytes.length !== intent.size_bytes) throw refused(uploadRows.intentMismatchTraceSizeDoesNot)
+  const expected = declaredDigest(try header("digest"))
+  if (expected === undefined) throw refused(uploadRows.invalidDigest)
+  const digest = try sha256Hex(bytes)
+  if (digest !== expected || digest !== intent.trace_sha256) throw refused(uploadRows.digestMismatch)
+  const begun = try settledOr(beginPut({ run, key, digest, byteCount: bytes.length, contentType, puts: [] }), uploadRows.idempotencyConflict)
+  const put = begun.put
+  if (put === undefined) return try refusedPut(putRefusal(begun.state, digest) ?? (try unexpected(begun.state.reply)))
+  const written = try settledOr(writeBytes({ run, by: serverRuntime, key, bytes, puts: [put] }), uploadRows.idempotencyConflict)
+  const stored = written.state.puts.find((each) => each.key === key && each.stage === "PutWritten")
+  if (stored === undefined) {
+    try Effect.logError("trace_storage_failed", { runId: found.runId, reply: written.state.reply })
+    throw refused(uploadRows.internalError)
+  }
+  const attached = try settledOr(attachPut({ run, key, puts: [stored] }), uploadRows.idempotencyConflict)
+  if (attached.state.reply !== "ReplyCreated") return try refusedPut(putRefusal(attached.state, digest) ?? (try unexpected(attached.state.reply)))
+  const row = try recorded(attached.run)
+  return traceJson({ serverRunId: row.id, clientRunId: row.client_run_id, traceObjectId: `sha256:${digest}`, traceSha256: digest, sizeBytes: bytes.length, state: row.state }, 201)
+}
+
+effect function observed() {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const unavailable = bare(getPrivateRequestIntake.privateIntakeUnavailable)
+  const status = (try IntakeHealth).status() catch effect (error) => {
+    try Effect.logError("private_intake_status_unreadable", { reason: error._tag })
+    return undefined
+  }
+  if (status === undefined || !validIsoTimestamp(status.verifiedAt)) return unavailable
+  const ready = traceCollectionReadyAt({ tag: "Observed", enabled: true, verifiedAt: millisOf(status.verifiedAt) }, try Clock.currentTimeMillis)
+  if (!ready) return unavailable
+  return traceJson({ enabled: status.enabled, source: "github-public-status", verifiedAt: status.verifiedAt })
+}
+
+export const runRoutes = Layer.mergeAll(
+  handleRaw(createRunRoute, (input) => created(input)),
+  handleRaw(traceIntentRoute, (input) => intended(input)),
+  handleRaw(finalizeRoute, (input) => finalized(input)),
+  handleRaw(eventRoute, (input) => appended(input)),
+  handleRaw(traceUploadRoute, (input) => uploaded(input.params.capability ?? "")),
+  handleRaw(privateIntakeRoute, () => observed()),
+)

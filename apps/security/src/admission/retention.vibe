@@ -1,0 +1,75 @@
+// spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/enforcement.md, "Retained evidence is checked when clearance relies on it"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { type ObjectRow, type Run, bytes, document, objectsOf, run, verify } from "../evidence/store.vibe"
+import { executionItem, inventoryBinds, jsonDocument, reportEvidence } from "./binding.ts"
+import { type RecordedResult, type ScanResult, isScanResult, storedResult } from "./result.ts"
+
+effect function boundGraph(result: ScanResult, assessmentId: string, current: Run, found: ReadonlyMap<string, ObjectRow>, required: Set<string>) {
+  const reportRow = found.get(result.scan.reportSha256)
+  const sourceRow = found.get(result.assessed.sourceInventorySha256 ?? "")
+  const finalRow = found.get(result.assessed.inputManifestSha256)
+  if (reportRow?.kind !== "trace" || sourceRow?.kind !== "manifest" || finalRow?.kind !== "manifest") return false
+  const evidence = reportEvidence(jsonDocument(try document(reportRow, current)), result, assessmentId)
+  if (evidence === undefined) return false
+  const requested = new Set(result.artifacts.filter((artifact) => artifact.requestedExecution).map((artifact) => artifact.sha256))
+  const covered = new Set<string>()
+  const runs = new Set<string>()
+  const items: { readonly id: string; readonly text: string; readonly sha256: string }[] = []
+  for (const sha of evidence) {
+    const row = found.get(sha)
+    if (row?.kind !== "trace") return false
+    required.add(sha)
+    if (result.disposition !== "clean") continue
+    const item = executionItem(try bytes(row, current), requested, result)
+    if (item === undefined || runs.has(item.runId)) return false
+    covered.add(item.artifactSha256)
+    runs.add(item.runId)
+    items.push({ id: `execution:${item.runId}`, text: item.text, sha256: try sha256Hex(utf8(item.text)) })
+  }
+  if (result.disposition !== "clean") return true
+  if ([...requested].some((sha) => !covered.has(sha))) return false
+  const source = jsonDocument(try document(sourceRow, current))
+  const final = finalRow === sourceRow ? source : jsonDocument(try document(finalRow, current))
+  return inventoryBinds(source, final, result, items)
+}
+
+effect function scanEvidence(result: ScanResult, assessmentId: string) {
+  const current = try run(assessmentId, result.scan.runId)
+  if (current.row.trace_sha256 !== result.scan.reportSha256) return false
+  const found = new Map((try objectsOf(assessmentId, result.scan.runId)).map((row) => [row.sha256, row]))
+  const required = new Set([
+    result.scan.reportSha256,
+    result.assessed.inputManifestSha256,
+    ...(result.assessed.sourceInventorySha256 === undefined ? [] : [result.assessed.sourceInventorySha256]),
+    ...result.assessed.dependencyLocks.map((lock) => lock.sha256),
+    ...result.artifacts.flatMap((artifact) => artifact.parentSha256 === null ? [artifact.sha256] : [artifact.sha256, artifact.parentSha256]),
+  ])
+  if (result.assessed.sourceInventorySha256 !== undefined && !(try boundGraph(result, assessmentId, current, found, required))) return false
+  for (const sha of required) {
+    const row = found.get(sha)
+    if (row === undefined) return false
+    try verify(row, current)
+  }
+  return true
+}
+
+export effect function scanRetained(result: ScanResult, assessmentId: string) {
+  return scanEvidence(result, assessmentId) catch effect (error) => {
+    if (error._tag === "Refused") return false
+    throw error
+  }
+}
+
+export effect function retainedEvidence(result: RecordedResult) {
+  if (!isScanResult(result)) return false
+  return try scanRetained(result, result.reusedAssessmentId ?? result.assessmentId)
+}
+
+schema StoredResult { result: string | null }
+
+export effect function retainedAt(row: number) {
+  const found = try first(StoredResult, sql`SELECT result FROM vetting_assessments WHERE rowid = ${row}`)
+  const result = found === undefined || found.result === null ? undefined : storedResult(found.result)
+  return result === undefined ? false : try retainedEvidence(result)
+}

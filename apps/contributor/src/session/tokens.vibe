@@ -1,0 +1,129 @@
+// spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"
+import type { Fetcher } from "@repo/platform/bindings"
+import { nowSeconds } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { base64url, fromBase64url, hmacSha256, timingSafeEqual, utf8 } from "@repo/platform/crypto"
+import { type Bearer, Bearers, Unauthenticated } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { claimsTimely, partsShaped, roleKept, tokenBounded } from "./bearer.ts"
+
+export const traceAudience = "private-trace-api"
+
+const secretShape = /^[\x21-\x7e]{32,128}$/u
+const numericId = /^\d+$/u
+const loginShape = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
+const tokenIdShape = /^[A-Za-z0-9_-]{16,128}$/u
+const tokenShape = /^v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/u
+
+export schema TokenRole = "contributor" | "project_owner" | "operator"
+
+schema TokenClaims {
+  readonly iss: "slop.cash"
+  readonly aud: "private-trace-api"
+  readonly sub: string
+  readonly githubId: string
+  readonly githubLogin: string
+  readonly roles: ReadonlyArray<TokenRole>
+  readonly iat: number
+  readonly exp: number
+  readonly jti: string
+}
+
+export interface IssuedClaims {
+  readonly githubId: string
+  readonly githubLogin: string
+  readonly roles: ReadonlyArray<TokenRole>
+  readonly issuedAt: number
+  readonly expiresAt: number
+  readonly tokenId: string
+}
+
+export service TraceAuth {
+  readonly secret: Redacted.Redacted<string> | undefined
+  readonly identity: Fetcher
+}
+
+export interface TraceAuthVars {
+  readonly TRACE_AUTH_SECRET?: string
+  readonly SLOP_IDENTITY: Fetcher
+}
+
+export function traceAuth(vars: TraceAuthVars) {
+  const text = vars.TRACE_AUTH_SECRET ?? ""
+  return Layer.succeed(TraceAuth, { secret: secretShape.test(text) ? Redacted.make(text) : undefined, identity: vars.SLOP_IDENTITY })
+}
+
+export effect function traceKey() {
+  const { secret } = try TraceAuth
+  if (secret === undefined) return try die(new ConfigInvalid({ name: "TRACE_AUTH_SECRET", issue: "must be 32-128 printable ASCII characters" }))
+  return secret
+}
+
+function wellFormed(claims: TokenClaims) {
+  return claims.sub === `github:${claims.githubId}`
+    && numericId.test(claims.githubId)
+    && loginShape.test(claims.githubLogin)
+    && claims.roles.length > 0
+    && new Set(claims.roles).size === claims.roles.length
+    && Number.isSafeInteger(claims.iat)
+    && Number.isSafeInteger(claims.exp)
+    && tokenIdShape.test(claims.jti)
+}
+
+effect function signature(secret: Redacted.Redacted<string>, payload: string) {
+  return try hmacSha256(secret, `v1.${payload}`)
+}
+
+export effect function signToken(issued: IssuedClaims) {
+  const secret = try traceKey()
+  const claims: TokenClaims = {
+    iss: "slop.cash",
+    aud: traceAudience,
+    sub: `github:${issued.githubId}`,
+    githubId: issued.githubId,
+    githubLogin: issued.githubLogin,
+    roles: issued.roles,
+    iat: issued.issuedAt,
+    exp: issued.expiresAt,
+    jti: issued.tokenId,
+  }
+  if (!wellFormed(claims) || !claimsTimely(claims.iat, claims.exp, claims.iat, claims.roles.includes("operator"))) return try die(new RangeError("Invalid API token claims"))
+  const payload = base64url(utf8(JSON.stringify(claims)))
+  return `v1.${payload}.${base64url(try signature(secret, payload))}`
+}
+
+effect function claimsOf(payload: string) {
+  const bytes = fromBase64url(payload)
+  if (bytes === undefined) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder().decode(bytes)) as unknown) catch () => undefined
+  const claims = Schema.decodeUnknownEffect(TokenClaims)(value, { onExcessProperty: "error" }) catch () => undefined
+  return claims !== undefined && wellFormed(claims) ? claims : undefined
+}
+
+effect function verified(token: string, secret: Redacted.Redacted<string> | undefined, roles: Roles.Shape) {
+  if (secret === undefined) return try die(new ConfigInvalid({ name: "TRACE_AUTH_SECRET", issue: "must be 32-128 printable ASCII characters" }))
+  const parts = tokenBounded(token.length) ? tokenShape.exec(token) : null
+  const payload = parts?.[1] ?? ""
+  const presented = fromBase64url(parts?.[2] ?? "")
+  if (presented === undefined || !partsShaped(payload.length, (parts?.[2] ?? "").length)) throw new Unauthenticated()
+  if (!timingSafeEqual(try signature(secret, payload), presented)) throw new Unauthenticated()
+  const claims = try claimsOf(payload)
+  if (claims === undefined || !claimsTimely(claims.iat, claims.exp, try nowSeconds(), claims.roles.includes("operator"))) throw new Unauthenticated()
+  const listed = try roles.has(claims.githubId, "operator")
+  const kept = claims.roles.filter((role) => roleKept(role, listed))
+  if (kept.length === 0) throw new Unauthenticated()
+  return { githubId: claims.githubId, login: claims.githubLogin, roles: kept, tokenId: claims.jti } satisfies Bearer
+}
+
+export const BearersLive = Layer.effect(Bearers, effect {
+  const { secret } = try TraceAuth
+  const roles = try Roles
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    verify: (token) => provideService(verified(Redacted.value(token), secret, roles), Experimental.Crypto.Crypto, crypto),
+  } satisfies Bearers.Shape
+})
+
+export function traceServices(vars: TraceAuthVars) {
+  return Layer.provideMerge(BearersLive, traceAuth(vars))
+}

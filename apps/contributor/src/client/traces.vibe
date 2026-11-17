@@ -1,0 +1,104 @@
+// spec/contributor/traceServer.md, "The run, its intents, reservation, objects and events are separate records"; spec/contributor/sessionExchange.md, "A lost response preserves server registration without claiming local receipt"
+import type { Tier } from "@repo/platform/config"
+import { type AnyRoute, type TierOrigins, route } from "@repo/platform/route"
+import { StoredEventKind, StoredRunState, TraceContentType } from "../traces/codec.vibe"
+
+export const traceApiOrigins = {
+  production: "https://api.slop.cash",
+  staging: "https://staging.slop.cash",
+  local: "https://slop.test",
+} satisfies Readonly<Record<Tier, string>>
+
+const traceBrowserOrigins: TierOrigins = {
+  production: ["https://slop.cash", "https://slop.tech", "https://eliza.army", "https://www.slop.cash", "https://www.slop.tech"],
+  staging: ["https://staging.slop.cash"],
+  local: ["https://slop.test"],
+}
+
+export const traceApiContract: Readonly<Record<string, string>> = { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }
+
+export schema SessionIssued {
+  readonly token: string
+  readonly tokenType: "Bearer"
+  readonly expiresAt: string
+}
+
+export schema RunFields {
+  readonly clientRunId: string
+  readonly projectId: string
+  readonly repository: string
+  readonly projectPolicyRevision: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly clientVersion: string
+}
+
+export schema RunCreated {
+  readonly serverRunId: string
+  readonly clientRunId: string
+  readonly state: StoredRunState
+}
+
+export schema IntentFields {
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly contentType: string
+}
+
+export schema IntentIssued {
+  readonly serverRunId: string
+  readonly uploadUrl: string
+  readonly expiresAt: string
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly contentType: TraceContentType
+}
+
+export schema TraceStored {
+  readonly serverRunId: string
+  readonly clientRunId: string
+  readonly traceObjectId: string
+  readonly traceSha256: string
+  readonly sizeBytes: number
+  readonly state: StoredRunState
+}
+
+export schema RunFinalized {
+  readonly serverRunId: string
+  readonly clientRunId: string
+  readonly traceObjectId: string
+  readonly traceSha256: string
+  readonly state: StoredRunState
+}
+
+export schema EventFields {
+  readonly kind: string
+  readonly occurredAt: string
+  readonly source: string
+  readonly githubObjectId?: string | null
+  readonly githubUrl?: string | null
+  readonly headSha?: string | null
+}
+
+export schema EventRecorded {
+  readonly eventId: string
+  readonly runId: string
+  readonly kind: StoredEventKind
+}
+
+export schema IntakeObserved {
+  readonly enabled: boolean
+  readonly source: "github-public-status"
+  readonly verifiedAt: string
+}
+
+export const authSession = route({ method: "POST", path: "/api/v1/auth/session", access: "public", limitKib: 1, request: undefined, answer: SessionIssued, rejected: "unauthorized", cache: "no-store", cors: traceBrowserOrigins, corsHeaders: ["x-slop-identity-assertion", "content-type"] })
+export const createRunRoute = route({ method: "POST", path: "/api/v1/runs", access: "bearer", limitKib: 64, request: RunFields, answer: RunCreated, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
+export const traceIntentRoute = route({ method: "POST", path: "/api/v1/runs/:runId/trace-intents", access: "bearer", limitKib: 64, request: IntentFields, answer: IntentIssued, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
+export const finalizeRoute = route({ method: "POST", path: "/api/v1/runs/:runId/finalize", access: "bearer", limitKib: 1, request: undefined, answer: RunFinalized, rejected: "finalize_conflict", cache: "no-store" })
+export const eventRoute = route({ method: "POST", path: "/api/v1/runs/:runId/events", access: "bearer", limitKib: 64, request: EventFields, answer: EventRecorded, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
+export const traceUploadRoute = route({ method: "PUT", path: "/api/v1/trace-uploads/:capability", access: "public", limitKib: 8192, request: undefined, answer: TraceStored, rejected: "idempotency_conflict", cache: "no-store", status: 201 })
+export const privateIntakeRoute = route({ method: "GET", path: "/api/v1/private-request-intake", access: "public", limitKib: 1, request: undefined, answer: IntakeObserved, rejected: "private_intake_unavailable", cache: "no-store" })
+
+export const traceApi: ReadonlyArray<AnyRoute> = [authSession, createRunRoute, traceIntentRoute, finalizeRoute, eventRoute, traceUploadRoute, privateIntakeRoute]

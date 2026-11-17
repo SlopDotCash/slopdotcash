@@ -1,0 +1,46 @@
+// spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/publication.md, "terms.json is served for every listed project, paused included, and carries only public program terms"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema DiscoveryRow {
+  readonly project_id: string
+  readonly project_url: string
+  readonly repository: string
+  readonly review_skill: string
+  readonly review_skill_manifest: string
+  readonly skill: string
+  readonly skill_source: string
+}
+
+export schema ProjectDiscovery {
+  readonly schemaVersion: "1"
+  readonly projects: ReadonlyArray<DiscoveryRow>
+}
+
+export const ProjectTerms = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  projectId: Schema.String,
+  status: Schema.Literals(["active", "paused"]),
+  steward: Schema.Unknown,
+  authority: Schema.Unknown,
+  terms: Schema.Unknown,
+  securityBounty: Schema.Unknown,
+})
+
+export const discoveryPath = "/.well-known/slop/projects.json"
+
+const guideNames = ["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json"]
+
+export const artifactNames: ReadonlyArray<string> = [
+  ...guideNames,
+  ...guideNames.map((name) => `review-${name}`),
+  "terms.json",
+  "SKILL.md",
+  "review/SKILL.md",
+  "downloads/:file",
+]
+
+export const projectDiscovery = route({ method: "GET", path: discoveryPath, access: "public", limitKib: 1, request: undefined, answer: ProjectDiscovery, rejected: "not_found", cache: "no-store" })
+
+export const projectTerms = route({ method: "GET", path: "/projects/:id/terms.json", access: "public", limitKib: 1, request: undefined, answer: ProjectTerms, rejected: "not_found", cache: "no-store" })
+
+export const api: ReadonlyArray<AnyRoute> = [projectDiscovery, projectTerms]

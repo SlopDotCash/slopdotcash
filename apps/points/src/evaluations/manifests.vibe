@@ -1,0 +1,252 @@
+// spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
+import { sha256Hex } from "@repo/platform/crypto"
+import { RegistryManifests } from "@repo/ports/backend"
+import { isUtcIso, parsedUrl, findRepository } from "../client/snapshot/checks.vibe"
+import { externalEvidenceProblem, externalSourceId, externalUrlProblem } from "../client/snapshot/external.vibe"
+import { type ScoreEvent, externalPlatforms, externalSourceNumber } from "../client/snapshot/schema.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { type Repositories, projectOf } from "../journal/ledger.vibe"
+import { type Manifest, type SourceKind, initial, wellFormed } from "../../gen/points__evaluations.effect.vibe"
+import { maximumEvaluatorAwardFiles } from "../collect/feeds/history.vibe"
+import { heldRetirement } from "./retired.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export error EvaluationRefused { path: string; reason: string }
+
+schema ManifestActor { readonly id: string; readonly login: string; readonly avatarUrl: string; readonly url: string; readonly kind: string }
+schema ManifestReview { readonly decisionUrl: string; readonly reviewedAt: string; readonly reviewer: string }
+schema ManifestEvidence { readonly archiveUrl: string; readonly contentSha256: string; readonly capturedAt: string }
+schema ExternalAwardSource { readonly id: string; readonly kind: "external"; readonly platform: string; readonly title: string; readonly url: string; readonly evidence: ManifestEvidence }
+schema GitHubAwardSource { readonly id: string; readonly kind: "comment" | "issue" | "pull-request" | "review"; readonly number: number; readonly title: string; readonly url: string }
+schema AwardSource = ExternalAwardSource | GitHubAwardSource
+
+export schema AwardManifest {
+  readonly schemaVersion: "1"
+  readonly kind: "evaluated-contribution"
+  readonly id: string
+  readonly projectId: string
+  readonly repository: string
+  readonly actor: ManifestActor
+  readonly occurredAt: string
+  readonly points: number
+  readonly source: AwardSource
+  readonly reason: string
+  readonly review: ManifestReview
+}
+
+schema ExternalEvaluations { readonly enabled: boolean }
+schema RewardPolicy { readonly externalEvaluations?: ExternalEvaluations }
+schema ProjectPolicy { readonly reward: RewardPolicy }
+
+export interface ManifestInput { readonly path: string; readonly text: string }
+
+interface EvaluationScope { readonly repositories: Repositories; readonly externalProjects: ReadonlySet<string> }
+
+export interface Admitted {
+  readonly path: string
+  readonly sha256: string
+  readonly manifest: AwardManifest
+  readonly event: ScoreEvent
+  readonly model: Manifest
+}
+
+const decodeManifest = Schema.decodeUnknownEffect(AwardManifest)
+const decodePolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ProjectPolicy))
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const projectPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const awardIdPattern = /^award_[a-z0-9][a-z0-9_-]*$/u
+const reviewPullPath = /^\/(?:elizaOS\/(?:slopdotcash|army)|SlopDotCash\/slopdotcash)\/pull\/[1-9]\d*$/iu
+const sourceKinds: Readonly<Record<AwardSource["kind"], SourceKind>> = {
+  "pull-request": "PullRequestSource",
+  issue: "IssueSource",
+  review: "ReviewSource",
+  comment: "CommentSource",
+  external: "ExternalSource",
+}
+const xStatus = /^\/[A-Za-z0-9_]{1,15}\/status\/([1-9]\d{0,24})$/u
+const discordMessage = /^\/channels\/([1-9]\d{0,24}\/[1-9]\d{0,24}\/[1-9]\d{0,24})$/u
+
+function bounded(value: string, max: number, pattern?: RegExp, min = 1) {
+  return value.length >= min && value.length <= max && (pattern === undefined || pattern.test(value))
+}
+
+function exactUtc(value: string) {
+  return value.length <= 24 && isUtcIso(value) && instantOf(value) !== null
+}
+
+function millis(value: string) {
+  return Date.parse(value)
+}
+
+function canonicalGitHubUrl(value: string, paths: ReadonlyArray<string>, hash?: RegExp) {
+  const url = value.length <= 512 ? parsedUrl(value) : undefined
+  if (url === undefined || url.protocol !== "https:" || url.hostname !== "github.com" || url.search !== "" || url.username !== "" || url.password !== "" || url.port !== "") return false
+  if (!paths.some((path) => url.pathname.toLowerCase() === path.toLowerCase())) return false
+  return hash === undefined ? url.hash === "" : hash.test(url.hash)
+}
+
+function canonicalAvatar(value: string) {
+  const url = value.length <= 512 ? parsedUrl(value) : undefined
+  if (url === undefined || url.protocol !== "https:" || url.hostname !== "avatars.githubusercontent.com" || url.username !== "" || url.password !== "" || url.port !== "") return undefined
+  const version = url.searchParams.get("v")
+  url.search = version === null ? "" : `v=${version}`
+  return url.toString()
+}
+
+function externalWork(url: string, platform: string) {
+  const parsed = parsedUrl(url)
+  if (parsed === undefined) return url
+  if (platform === "x") return `x\u0000status\u0000${xStatus.exec(parsed.pathname)?.[1] ?? url}`
+  if (platform === "discord") return `discord\u0000message\u0000${discordMessage.exec(parsed.pathname)?.[1] ?? url}`
+  if (platform === "youtube") return `youtube\u0000video\u0000${parsed.searchParams.get("v") ?? url}`
+  return `web\u0000${parsed.toString()}`
+}
+
+function repositoryIdentities(scope: EvaluationScope, projectId: string, repository: string) {
+  const found = findRepository(scope.repositories.registry, repository)
+  if (projectOf(scope.repositories, repository) !== projectId || (found !== undefined && found.id !== repository)) return undefined
+  return found === undefined ? [repository] : [found.id, ...found.aliases]
+}
+
+effect function validated(input: ManifestInput, scope: EvaluationScope) {
+  const { path } = input
+  const raw = try Effect.try({ try: () => JSON.parse(input.text) as unknown, catch: () => new EvaluationRefused({ path, reason: `${path} is not valid JSON` }) })
+  const manifest = decodeManifest(raw, { onExcessProperty: "error" }) catch effect () => {
+    throw new EvaluationRefused({ path, reason: "evaluator award has unexpected or missing fields" })
+  }
+  const { actor, review, source } = manifest
+  if (!bounded(manifest.projectId, 48, projectPattern)) throw new EvaluationRefused({ path, reason: "evaluator award.projectId is invalid" })
+  if (!bounded(manifest.repository, 200)) throw new EvaluationRefused({ path, reason: "evaluator award.repository is invalid" })
+  const identities = repositoryIdentities(scope, manifest.projectId, manifest.repository)
+  if (identities === undefined) throw new EvaluationRefused({ path, reason: "evaluator award repository is not canonical for its project" })
+  if (source.kind === "external" && !scope.externalProjects.has(manifest.projectId)) throw new EvaluationRefused({ path, reason: `project ${manifest.projectId} has not opted in to external evaluated contributions` })
+  if (source.kind !== "external" && (!Number.isSafeInteger(source.number) || source.number <= 0)) throw new EvaluationRefused({ path, reason: "evaluator award.source.number must be positive" })
+  if (source.kind === "external") {
+    if (!(externalPlatforms as ReadonlyArray<string>).includes(source.platform)) throw new EvaluationRefused({ path, reason: "evaluator award.source.platform is invalid" })
+    const problem = externalUrlProblem(source.url, source.platform, "evaluator award.source.url") ?? externalEvidenceProblem(source.evidence, source.url, "evaluator award.source.evidence")
+    if (problem !== undefined) throw new EvaluationRefused({ path, reason: problem })
+    if (source.id !== (try externalSourceId(source.url))) throw new EvaluationRefused({ path, reason: "evaluator award.source.id must be the sha256 digest of its external URL" })
+  } else {
+    const kind = source.kind === "issue" || source.kind === "comment" ? "issues" : "pull"
+    const hash = source.kind === "review" ? /^#(?:pullrequestreview-|discussion_r)\d+$/iu : source.kind === "comment" ? /^#issuecomment-\d+$/iu : undefined
+    if (!canonicalGitHubUrl(source.url, identities.map((identity) => `/${identity}/${kind}/${source.number}`), hash)) throw new EvaluationRefused({ path, reason: "evaluator award.source.url is not the expected canonical GitHub URL" })
+  }
+  if (!exactUtc(manifest.occurredAt)) throw new EvaluationRefused({ path, reason: "evaluator award.occurredAt is not a UTC timestamp" })
+  if (!bounded(review.reviewer, 39, loginPattern)) throw new EvaluationRefused({ path, reason: "evaluator award.review.reviewer is invalid" })
+  const decision = review.decisionUrl.length <= 512 ? parsedUrl(review.decisionUrl) : undefined
+  if (decision === undefined || decision.protocol !== "https:" || decision.hostname !== "github.com" || !reviewPullPath.test(decision.pathname) || decision.search !== "" || decision.hash !== "" || decision.username !== "" || decision.password !== "" || decision.port !== "") {
+    throw new EvaluationRefused({ path, reason: "evaluator award.review.decisionUrl must be a Slop review pull request" })
+  }
+  if (!exactUtc(review.reviewedAt)) throw new EvaluationRefused({ path, reason: "evaluator award.review.reviewedAt is not a UTC timestamp" })
+  if (millis(review.reviewedAt) < millis(manifest.occurredAt)) throw new EvaluationRefused({ path, reason: "evaluator award review cannot precede the contribution" })
+  if (source.kind === "external" && (millis(source.evidence.capturedAt) < millis(manifest.occurredAt) || millis(source.evidence.capturedAt) > millis(review.reviewedAt))) {
+    throw new EvaluationRefused({ path, reason: "evaluator award evidence must be captured between the contribution and its review" })
+  }
+  if (!Number.isSafeInteger(manifest.points) || manifest.points < 1 || manifest.points > 8) throw new EvaluationRefused({ path, reason: "evaluator award.points must be an integer from 1 to 8" })
+  if (!bounded(manifest.id, 128, awardIdPattern)) throw new EvaluationRefused({ path, reason: "evaluator award.id is invalid" })
+  if (!bounded(actor.login, 39, loginPattern) || !bounded(actor.id, 128)) throw new EvaluationRefused({ path, reason: "evaluator award.actor is invalid" })
+  if (actor.kind !== "User") throw new EvaluationRefused({ path, reason: "evaluator award.actor.kind must be User" })
+  const avatarUrl = canonicalAvatar(actor.avatarUrl)
+  if (avatarUrl === undefined) throw new EvaluationRefused({ path, reason: "evaluator award.actor.avatarUrl must use GitHub's avatar origin" })
+  if (!canonicalGitHubUrl(actor.url, [`/${actor.login}`])) throw new EvaluationRefused({ path, reason: "evaluator award.actor.url is not the expected canonical GitHub URL" })
+  if (!bounded(source.id, 128) || !bounded(source.title, 512)) throw new EvaluationRefused({ path, reason: "evaluator award.source is invalid" })
+  if (!bounded(manifest.reason, 1000, undefined, 40)) throw new EvaluationRefused({ path, reason: "evaluator award.reason is invalid" })
+  if (path.split("/")[1] !== manifest.projectId) throw new EvaluationRefused({ path, reason: `${path} does not match projectId` })
+  return { manifest: { ...manifest, actor: { ...actor, avatarUrl } }, identity: identities[0] ?? manifest.repository }
+}
+
+function eventOf(manifest: AwardManifest, path: string, sha256: string): ScoreEvent {
+  const { source } = manifest
+  return {
+    id: manifest.id,
+    actor: { id: manifest.actor.id, login: manifest.actor.login, avatarUrl: manifest.actor.avatarUrl, url: manifest.actor.url, kind: "User" },
+    category: "evaluated-contribution",
+    points: manifest.points,
+    occurredAt: manifest.occurredAt,
+    repository: manifest.repository,
+    source: source.kind === "external"
+      ? { id: source.id, kind: source.kind, number: externalSourceNumber, title: source.title, url: source.url, platform: source.platform, evidence: source.evidence }
+      : { id: source.id, kind: source.kind, number: source.number, title: source.title, url: source.url },
+    reason: manifest.reason,
+    evaluation: { decisionUrl: manifest.review.decisionUrl, reviewedAt: manifest.review.reviewedAt, reviewer: manifest.review.reviewer, manifestPath: path, manifestSha256: sha256 },
+  }
+}
+
+class Interned {
+  readonly values = new Map<string, number>()
+  of(value: string) {
+    const found = this.values.get(value)
+    if (found !== undefined) return found
+    const next = this.values.size + 1
+    this.values.set(value, next)
+    return next
+  }
+}
+
+interface Names { readonly ids: Interned; readonly actors: Interned; readonly sources: Interned; readonly work: Interned; readonly content: Interned; readonly pulls: Interned; readonly reviewers: Interned }
+
+function modelOf(names: Names, manifest: AwardManifest, identity: string): Manifest {
+  const { source } = manifest
+  const external = source.kind === "external"
+  const numeric = githubUserIdFromNodeId(manifest.actor.id)
+  return {
+    id: names.ids.of(manifest.id),
+    project: manifest.projectId,
+    actor: names.actors.of(numeric > 0n ? numeric.toString() : manifest.actor.id),
+    actorKind: "User",
+    source: names.sources.of(`${manifest.repository}\u0000${source.id}`),
+    kind: sourceKinds[source.kind],
+    workKey: names.work.of(external
+      ? `external\u0000${manifest.repository}\u0000${externalWork(source.url, source.platform)}`
+      : `github\u0000${JSON.stringify([identity, source.number, (parsedUrl(source.url)?.hash ?? "").toLowerCase()])}`),
+    contentDigest: external ? names.content.of(source.evidence.contentSha256) : 0,
+    pullRequest: source.kind === "review" ? names.pulls.of(`${manifest.repository}\u0000${source.number}`) : 0,
+    points: manifest.points,
+    occurredAt: instantOf(manifest.occurredAt) ?? -1,
+    capturedAt: external ? instantOf(source.evidence.capturedAt) ?? -1 : 0,
+    reviewedAt: instantOf(manifest.review.reviewedAt) ?? -1,
+    reviewer: names.reviewers.of(manifest.review.reviewer.toLowerCase()),
+    decision: manifest.review.decisionUrl,
+    reason: manifest.reason,
+  }
+}
+
+effect function externalEvaluationProjects() {
+  const opted = new Set<string>()
+  for (const registered of try (try RegistryManifests).current()) {
+    const policy = decodePolicy(registered.manifest) catch effect () => {
+      throw new EvaluationRefused({ path: `projects/${registered.projectId}`, reason: `project ${registered.projectId} has no readable reward policy` })
+    }
+    if (policy.reward.externalEvaluations?.enabled === true) opted.add(registered.projectId)
+  }
+  return opted
+}
+
+export effect function admitManifests(inputs: ReadonlyArray<ManifestInput>, repositories: Repositories) {
+  if (inputs.length > maximumEvaluatorAwardFiles) throw new EvaluationRefused({ path: "evaluations", reason: "evaluator award file limit exceeded" })
+  const scope: EvaluationScope = { repositories, externalProjects: try externalEvaluationProjects() }
+  const machine = try heldRetirement(initial)
+  const names: Names = { ids: new Interned(), actors: new Interned(), sources: new Interned(), work: new Interned(), content: new Interned(), pulls: new Interned(), reviewers: new Interned() }
+  const admitted: Admitted[] = []
+  for (const input of [...inputs].sort((left, right) => left.path.localeCompare(right.path))) {
+    const { manifest, identity } = try validated(input, scope)
+    const model = modelOf(names, manifest, identity)
+    const refused = Effect.as(machine.send({ type: "admitManifest", m: model }), false) catch () => true
+    if (refused) {
+      throw new EvaluationRefused({ path: input.path, reason: wellFormed(model) ? "evaluator award repeats an admitted identity, source, work, content or reviewer pull request" : "evaluator award is not well formed" })
+    }
+    const sha256 = try sha256Hex(input.text)
+    admitted.push({ path: input.path, sha256, manifest, event: eventOf(manifest, input.path, sha256), model })
+  }
+  return admitted
+}
+
+export function evaluationEvents(admitted: ReadonlyArray<Admitted>): ReadonlyArray<ScoreEvent> {
+  return admitted.map((item) => item.event)
+}

@@ -1,0 +1,175 @@
+// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import type { JsonRpc } from "@repo/platform/chain/rpc"
+import { expiryBlocksPerRun } from "../kernels/expiryCoverage.ts"
+import { ScanJson } from "../journal/codec.vibe"
+import { solanaGenesis } from "../runtime/pins.ts"
+import { jsonValue } from "../solana/bytes.ts"
+import { type ExpiryProvider, expiryProvider, recoveryOperator } from "../expiry/operators.vibe"
+import { type CoverageStore, type Proven, proveExpiry } from "../expiry/prove.vibe"
+import { CoverageBlock, type Cursor, type Target, advanced, initialCursor, slotNumber } from "../expiry/scan.vibe"
+
+export const solanaPublicPair = ["https://api.mainnet-beta.solana.com", "https://public.rpc.solanavibestation.com"] as const
+
+export const witness = {
+  txId: "5EdudYMmXJMqUo5t65PtnZYeVETfaPVL7VBd8fsqqhorDsEaVHQw43oGboxBYfnYeAmRg7BC8r3qSJtLWGTWYJ6e",
+  blockhash: "GbU3jQ3a5DBUibb4iGzgKEzH7Uk7qtMHBKNfR9oQzkHg",
+  blockhashSlot: 469594628,
+  tipSlot: 469594838,
+  tipHash: "2sA8sesQRUEEmpEWo9rxAfDMoDgLUXhbFA17YtMHsu1E",
+}
+const witnessTarget: Target = { txId: witness.txId, blockhash: witness.blockhash, blockhashSlot: witness.blockhashSlot }
+const reviewedBlocks = 211
+export const reviewedDigest ="8a58871a15801484a89e2283728a3b76643100608c50553b9acfd770c8c99368"
+export const recordFile ="solana-rpc-public-pair-proof.json"
+const requestSpacingMs = 3_000
+const retryMs = 10_000
+const deadlineMs = 60 * 60 * 1000
+const signaturesDigest = /^[a-f0-9]{64}$/u
+
+export error WitnessInconsistent
+export error PairUnqualified { issue: string }
+
+schema PageRecord { operator: string; blocks: ReadonlyArray<CoverageBlock> }
+
+const ProofRecord = Schema.Struct({ schemaVersion: Schema.Literal(1), coverage: Schema.Array(ScanJson), pages: Schema.Array(PageRecord), proof: Schema.Unknown })
+
+interface Retained {
+  readonly coverage: Map<string, Cursor>
+  readonly pages: Array<typeof PageRecord.Type>
+  proof: unknown
+}
+
+function publicOperator(endpoint: string) {
+  return recoveryOperator(endpoint, solanaGenesis) ?? ""
+}
+
+function initialCoverage(): Map<string, Cursor> {
+  return new Map(solanaPublicPair.map((endpoint) => {
+    const operator = publicOperator(endpoint)
+    return [operator, initialCursor(witnessTarget, operator, witness.tipSlot, witness.tipHash)] as const
+  }))
+}
+
+function consistentBlock(cursor: Cursor, block: CoverageBlock) {
+  if (cursor.complete || block.slot !== cursor.nextSlot || block.blockhash !== cursor.expectedHash || block.previousBlockhash === "" || !slotNumber(block.parentSlot) || !slotNumber(block.signatureCount) || !signaturesDigest.test(block.signaturesSha256)) return false
+  const complete = block.slot === witness.blockhashSlot
+  return complete ? block.blockhash === witness.blockhash : block.parentSlot < block.slot && block.parentSlot >= witness.blockhashSlot
+}
+
+function sameCursor(saved: Cursor, expected: Cursor) {
+  return (Object.keys(expected) as Array<keyof Cursor>).every((key) => saved[key] === expected[key])
+}
+
+export effect function retainedRecord(value: unknown) {
+  const saved = Schema.decodeUnknownEffect(ProofRecord)(value) catch effect () => { throw new WitnessInconsistent() }
+  if (saved.coverage.length !== 2) throw new WitnessInconsistent()
+  const reconstructed = initialCoverage()
+  for (const page of saved.pages) {
+    const start = reconstructed.get(page.operator)
+    if (start === undefined || start.complete || page.blocks.length === 0 || page.blocks.length > expiryBlocksPerRun) throw new WitnessInconsistent()
+    let cursor: Cursor = start
+    for (const block of page.blocks) {
+      if (!consistentBlock(cursor, block)) throw new WitnessInconsistent()
+      const complete = block.slot === witness.blockhashSlot
+      cursor = advanced(cursor, block, complete, block.parentSlot, block.previousBlockhash)
+    }
+    if (page.blocks.length < expiryBlocksPerRun && !cursor.complete) throw new WitnessInconsistent()
+    reconstructed.set(page.operator, { ...cursor, revision: cursor.revision + 1 })
+  }
+  for (const expected of reconstructed.values()) {
+    const matches = saved.coverage.filter((entry) => entry.operator === expected.operator)
+    const [match] = matches
+    if (matches.length !== 1 || match === undefined || !sameCursor(match, expected)) throw new WitnessInconsistent()
+  }
+  return { coverage: new Map(saved.coverage.map((entry) => [entry.operator, entry] as const)), pages: [...saved.pages], proof: null } satisfies Retained
+}
+
+function provedRecord(proven: Proven) {
+  return { txId: proven.target.txId, blockhash: proven.target.blockhash, blockhashSlot: proven.target.blockhashSlot, providers: proven.providers }
+}
+
+effect function persisted(directory: string, file: string, retained: Retained) {
+  const fs = try FileSystem.FileSystem
+  const temporary = `${file}.tmp`
+  const text = `${JSON.stringify({ schemaVersion: 1, coverage: [...retained.coverage.values()], pages: retained.pages, proof: retained.proof }, null, 2)}\n`
+  try scoped(effect {
+    const written = try fs.open(temporary, { flag: "w", mode: 0o600 })
+    try written.writeAll(new TextEncoder().encode(text))
+    try written.sync
+  })
+  try fs.rename(temporary, file)
+  try scoped(effect {
+    const folder = try fs.open(directory, { flag: "r" })
+    try folder.sync
+  })
+}
+
+function spaced(rpc: JsonRpc, last: { at: number }): JsonRpc {
+  return {
+    endpoints: rpc.endpoints,
+    call: (method, params, schema) => effect {
+      const now = try Clock.currentTimeMillis
+      try sleep(Duration.millis(Math.max(0, requestSpacingMs - (now - last.at))))
+      last.at = try Clock.currentTimeMillis
+      return try rpc.call(method, params, schema)
+    },
+  }
+}
+
+effect function publicPair() {
+  const last = { at: 0 }
+  const providers: Array<ExpiryProvider> = []
+  for (const endpoint of solanaPublicPair) {
+    const provider = try expiryProvider(endpoint, publicOperator(endpoint))
+    providers.push({ operator: provider.operator, rpc: spaced(provider.rpc, last) })
+  }
+  return providers
+}
+
+function reviewed(proven: Proven) {
+  return proven.providers.every((observation) => observation.coverage.blocks === reviewedBlocks && observation.coverage.digest === reviewedDigest)
+}
+
+export effect function qualifySolanaRpcPair(args: ReadonlyArray<string>) {
+  const [directory] = args
+  if (directory === undefined || directory === "") throw new PairUnqualified({ issue: "usage: qualify-solana-rpc-pair <directory>" })
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const file = path.join(directory, recordFile)
+  const retained: Retained = (try fs.exists(file)) ? try retainedRecord(jsonValue(try fs.readFileString(file))) : { coverage: initialCoverage(), pages: [], proof: null }
+  const store: CoverageStore<PairUnqualified | PlatformError, FileSystem.FileSystem> = {
+    read: (operator) => retained.coverage.get(operator),
+    save: (previous, next, page) => effect {
+      if ((retained.coverage.get(next.operator)?.revision ?? null) !== (previous?.revision ?? null)) throw new PairUnqualified({ issue: "Recovery cursor changed" })
+      retained.coverage.set(next.operator, next)
+      retained.pages.push({ operator: next.operator, blocks: [...page] })
+      try persisted(directory, file, retained)
+      return true
+    },
+  }
+  const providers = try publicPair()
+  const deadline = (try Clock.currentTimeMillis) + deadlineMs
+  let proven: Proven | undefined = undefined
+  while (proven === undefined) {
+    const outcome = proveExpiry(witnessTarget, providers, solanaGenesis, store) catch effect () => {
+      retained.proof = null
+      try persisted(directory, file, retained)
+      try sleep(Duration.millis(retryMs))
+      return "failed" as const
+    }
+    if (outcome !== "failed") {
+      retained.proof = outcome === undefined ? null : provedRecord(outcome)
+      try persisted(directory, file, retained)
+      proven = outcome
+    }
+    if ((try Clock.currentTimeMillis) >= deadline) throw new PairUnqualified({ issue: "Solana public-pair qualification incomplete" })
+  }
+  if (!reviewed(proven)) throw new PairUnqualified({ issue: "Solana witness differs from the reviewed chain" })
+  try Console.log(JSON.stringify({
+    event: "solana_public_pair_qualified",
+    blockhashSlot: witness.blockhashSlot,
+    horizonSlot: witness.tipSlot,
+    blocks: reviewedBlocks,
+    operators: proven.providers.map((observation) => observation.operator),
+  }))
+}

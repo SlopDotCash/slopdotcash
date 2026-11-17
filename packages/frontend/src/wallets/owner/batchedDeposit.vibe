@@ -1,0 +1,162 @@
+// spec/frontend/batchedDeposit.md, "Capabilities that require a wallet upgrade use the separate-signature path"; spec/frontend/batchedDeposit.md, "Wallet references identify later lookups and uncertainty preserves the intent"; spec/frontend/batchedDeposit.md, "Included or missing-event evidence leaves verification pending"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Batch, type BatchCapability, type ChainResult, type Event, initial, intentAttempt, machineOver } from "../../../gen/frontend__batchedDeposit.effect.vibe"
+import { WalletDeclined } from "../core/discovery.vibe"
+import type { EvmConnection } from "../core/evm.vibe"
+import type { SlotStorage } from "../core/slots.ts"
+import { type EvmVault, type Evidence, type TransferReview, batchProgress, checkBatchDeposit, sendBatch } from "./evmVault.vibe"
+import { type EvmBatchPlan, planOf, planText } from "./ownerPlans.schema.ts"
+import { keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+
+export type { Batch, BatchCapability }
+
+export const batchMessages = {
+  storageBlocked: storageBlockedMessage,
+  occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+  unreadable: unreadableMessage,
+  changed: slotChangedMessage,
+  declined: "You declined the wallet request. Nothing was sent.",
+  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  notSent: "Your wallet reports that this request was not sent. Review the deposit, then retry.",
+  waiting: "Submitted. Waiting for finalized chain evidence.",
+  failed: "The transaction failed. Review the amount and wallet, then retry.",
+  noVault: "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
+  verified: "Deposit finalized.",
+} as const
+
+export error BatchStopped { message: string }
+
+export function capabilityOf(review: TransferReview): BatchCapability {
+  return review.batch ? "AlreadyAtomic" : review.approvalNeeded ? "RequiresUpgrade" : "NoCapability"
+}
+
+function live(batch: Batch): boolean {
+  return batch.phase === "IntentSaved" || batch.phase === "WalletReference" || batch.phase === "Uncertain" || batch.phase === "HashKnown"
+}
+
+export function storedBatch(start: Batch, account: number, digest: string, plan: EvmBatchPlan): Batch {
+  const phase = plan.transaction !== "" ? "HashKnown" : plan.reference !== "" ? "WalletReference" : "Uncertain"
+  return { ...start, phase, capability: "AlreadyAtomic", owner: account, intent: 1, digest, reference: plan.reference, transaction: plan.transaction, requests: 1, evidence: "ChainPending", slot: intentAttempt(digest), storageBlocked: false }
+}
+
+export effect function batchFlow(storage: SlotStorage | undefined, key: string) {
+  const held = try Ref.make<Batch>(initial)
+  const keeper = slotKeeper(storage, { intent: key })
+
+  effect function load() {
+    const state = try Ref.get(held)
+    if (live(state) || state.phase === "Verified") return state
+    const read = keeper.read("intent")
+    if (read.kind !== "owned") return state
+    const attempt = read.slot.attempt
+    const plan = planOf(read.slot.plan)
+    if (plan?.kind !== "evmBatch" || attempt.bytesId !== attempt.identity || attempt.hash !== "" || attempt.candidate !== "") return state
+    return storedBatch(state, read.slot.account, attempt.identity, plan)
+  }
+
+  effect function keep(next: Batch) {
+    const before = try Ref.get(held)
+    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : next.owner }
+    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : before.owner }, flow)) try keeper.write("intent", flow)
+    try Ref.set(held, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function sent(event: Event, by: number) {
+    return try keptOrChanged(Effect.ignore(machine.send(event, by)))
+  }
+
+  effect function stopped(message: string) {
+    throw new BatchStopped({ message })
+  }
+
+  effect function savedPlan() {
+    const plan = planOf(keeper.plan("intent"))
+    if (plan?.kind !== "evmBatch") throw new BatchStopped({ message: batchMessages.unreadable })
+    return plan
+  }
+
+  effect function annotate(update: (plan: EvmBatchPlan) => EvmBatchPlan) {
+    const state = try machine.get()
+    const plan = try savedPlan()
+    if (!keeper.annotate("intent", state.digest, planText(update(plan)))) try stopped(batchMessages.changed)
+  }
+
+  return {
+    machine,
+    review: effect (owner: number, review: TransferReview) => {
+      try sent({ type: "review", owner, capability: capabilityOf(review) }, owner)
+      return try machine.get()
+    },
+    send: effect (connection: EvmConnection, vault: EvmVault, amount: string, evidence: Evidence) => {
+      const state = try machine.get()
+      if (keeper.unreadable("intent")) try stopped(batchMessages.unreadable)
+      if (live(state) || keeper.read("intent").kind !== "empty") try stopped(batchMessages.occupied)
+      const intent = state.intent + 1
+      let saved = false
+      const beforePrompt = effect (plan: EvmBatchPlan) => {
+        const text = planText(plan)
+        const digest = try sha256Hex(text)
+        keeper.propose("intent", text)
+        if (!keeper.writable()) {
+          try sent({ type: "saveIntent", intent, digest, stored: false }, state.owner)
+          try stopped(batchMessages.storageBlocked)
+        }
+        if (!(try sent({ type: "saveIntent", intent, digest, stored: true }, state.owner))) try stopped(batchMessages.occupied)
+        if ((try machine.get()).phase !== "IntentSaved") try stopped(batchMessages.occupied)
+        saved = true
+      }
+      const reference: string = sendBatch(connection, vault, amount, evidence, beforePrompt) catch effect (error) => {
+        if (!saved) throw error
+        if (error._tag === "VaultBatchUnavailable") {
+          try sent({ type: "refuseBatch" }, state.owner)
+          throw new BatchStopped({ message: error.message })
+        }
+        if (error._tag === "WalletDeclined") {
+          try sent({ type: "declineBatch" }, state.owner)
+          throw new WalletDeclined({ message: batchMessages.declined })
+        }
+        try sent({ type: "keepUncertain" }, state.owner)
+        throw new BatchStopped({ message: batchMessages.unclear })
+      }
+      try sent({ type: "keepWalletReference", reference }, state.owner)
+      try annotate((plan) => ({ ...plan, reference }))
+      return try machine.get()
+    },
+    lookup: effect (connection: EvmConnection, vault: EvmVault) => {
+      const state = try machine.get()
+      if (state.phase !== "WalletReference") return state
+      const report = batchProgress(connection, vault, state.reference) catch effect (error) => { throw new BatchStopped({ message: error.message }) }
+      if (report.kind === "notSent") {
+        try sent({ type: "reportNotSent", reference: state.reference }, state.owner)
+        try stopped(batchMessages.notSent)
+      }
+      if (report.kind === "landed" && report.hash !== undefined) {
+        const transaction = report.hash
+        try sent({ type: "nameTransaction", reference: state.reference, transaction }, state.owner)
+        try annotate((plan) => ({ ...plan, transaction }))
+      }
+      return try machine.get()
+    },
+    recoverHash: effect (transaction: string, by: number) => {
+      const hash = transaction.trim().toLowerCase()
+      if (!/^0x[0-9a-f]{64}$/u.test(hash)) try stopped("Enter a transaction hash from your wallet.")
+      try sent({ type: "recoverHash", transaction: hash }, by)
+      if ((try machine.get()).phase === "HashKnown") try annotate((plan) => ({ ...plan, transaction: hash }))
+      return try machine.get()
+    },
+    observe: effect (connection: EvmConnection, vault: EvmVault, gross: bigint) => {
+      const state = try machine.get()
+      if (state.phase !== "HashKnown") return state
+      const plan = try savedPlan()
+      const check = checkBatchDeposit(connection, vault, gross, plan, state.transaction) catch effect (error) => { throw new BatchStopped({ message: error.message }) }
+      const observed: ChainResult = check === "finalized" ? "ChainFinalEvent" : check === "failed" ? "ChainFinalFailed" : check === "noVault" ? "ChainFinalMissingEvent" : check === "received" ? "ChainIncluded" : "ChainPending"
+      try sent({ type: "observeChain", intent: state.intent, expectedDigest: state.digest, transaction: state.transaction, observed }, state.owner)
+      if (observed === "ChainFinalFailed") try stopped(batchMessages.failed)
+      if (observed === "ChainFinalMissingEvent") try stopped(batchMessages.noVault)
+      return try machine.get()
+    },
+    clearUnreadable: effect () => keeper.clearUnreadable("intent"),
+  }
+}

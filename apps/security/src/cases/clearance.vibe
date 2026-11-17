@@ -1,0 +1,32 @@
+// spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"
+import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
+import type { Refused } from "@repo/platform/http"
+import type { ProjectClearance } from "../../gen/security__cases.ts"
+import type { FrozenTerms } from "../receipt/program.vibe"
+import type { Refusal } from "./store.vibe"
+
+export interface AwardRequest {
+  readonly caseId: string
+  readonly projectId: string
+  readonly caseRevision: number
+  readonly modelRevision: number
+  readonly rootCauseKey: string
+  readonly policyRevision: number | null
+  readonly terms: FrozenTerms
+  readonly grossMinor: string
+  readonly reporterGithubId: string
+  readonly actorGithubId: string
+  readonly proposal: boolean
+  readonly at: string
+}
+
+export interface AwardCommitment {
+  readonly clearance: ProjectClearance
+  readonly before: ReadonlyArray<Statement>
+  readonly require: Statement
+  readonly unmet: Refusal
+}
+
+export service AwardClearances {
+  commitment(request: AwardRequest): AwardCommitment!(Refused | D1Error | RowMismatch)
+}

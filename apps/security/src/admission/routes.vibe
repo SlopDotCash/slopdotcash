@@ -1,0 +1,232 @@
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"; spec/security/admission.md, "A reused clean result cites one original clean scan of the same repository and commit"; spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"
+import type { Fetcher } from "@repo/platform/bindings"
+import { type Actor, handleRaw, json, outboundVia, refuse, strictBody } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { Registry } from "@repo/ports/backend"
+import { postAdminVettingAssessments as queueRows, getVettingRequests as requestRows, postVettingRefresh as refreshRows, postVettingResults as resultRows, postVettingReuse as reuseRows, getVettingSandbox as sandboxRows } from "../client/refusals.vibe"
+import { queueAssessment, sandboxHealth, sandboxRun, scanJournal, scanRefresh, scanRequests, scanResults, scanReuse } from "../client/admission.vibe"
+import { idOf } from "../enforcement/replay.vibe"
+import { loadEnforcement } from "../enforcement/store.vibe"
+import { EvidenceBucket } from "../evidence/objects.vibe"
+import { serviceAvailable } from "./compose.vibe"
+import { journal } from "./journal.vibe"
+import { overviewRoutes } from "./overview.vibe"
+import { listedRepository } from "./livePin.vibe"
+import { queueRepositories } from "./queue.vibe"
+import { outcomeAccepted, outcomeOf, recordResult, reinstateFromScan, repositoryOf } from "./record.vibe"
+import { refreshQueue } from "./refresh.vibe"
+import { type RecordedResult, isScanResult, parseResult, resultProblems, resultProven } from "./result.ts"
+import { retainedEvidence } from "./retention.vibe"
+import { lookup, reusable } from "./reuse.vibe"
+import { type Assessment, adminView, assessment, pendingAssessments, projectAssessments, summaryOf } from "./store.vibe"
+
+export service VettingSandbox { readonly binding: Fetcher }
+
+export function vettingSandbox(binding: Fetcher) {
+  return Layer.succeed(VettingSandbox, { binding })
+}
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+function refused(row: Row, message?: string) {
+  return refuse(row.status, row.error, message ?? row.message ?? "")
+}
+
+const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+const assessmentIdPattern = /^vet_[a-f0-9]{32}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const AnyObject = Schema.Record(Schema.String, Schema.Unknown)
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function signedBytes() {
+  return new Uint8Array(try orDie((try HttpServerRequest.HttpServerRequest).arrayBuffer))
+}
+
+effect function jsonOf(bytes: Uint8Array, invalid: Row) {
+  return try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: () => refused(invalid) })
+}
+
+effect function origin() {
+  return new URL((try HttpServerRequest.HttpServerRequest).originalUrl).origin
+}
+
+effect function queue() {
+  if (Option.isNone(try Effect.serviceOption(EvidenceBucket))) throw refused(requestRows.evidenceUnavailablePrivateEvidenceStorageIs)
+  const site = try origin()
+  return json({
+    schemaVersion: "slop-vetting-queue-v1",
+    assessments: (try pendingAssessments()).map((pending) => ({
+      assessmentId: pending.id,
+      projectId: pending.projectId,
+      revision: pending.revision,
+      manifestSha256: pending.manifestSha256,
+      repository: pending.repositoryId,
+      commitSha: pending.commitSha,
+      templateSha256: pending.templateSha256,
+      manifestUrl: `${site}/api/v1/project-revisions/${pending.projectId}/${pending.revision}`,
+      templateIndexUrl: `${site}/skill-templates/index.json`,
+      requestedAt: pending.requestedAt,
+    })),
+  })
+}
+
+effect function stored(result: RecordedResult) {
+  const found = try assessment(result.assessmentId)
+  if (found === undefined) throw refused(resultRows.notFoundAssessmentNotFoundNoStore)
+  if (found.projectId !== result.projectId || found.revision !== result.revision || found.manifestSha256 !== result.manifestSha256) throw refused(resultRows.revisionMismatch)
+  if (found.state !== "pending") throw refused(resultRows.alreadyRecorded)
+  if ((try (try Registry).project(found.projectId)) === undefined) throw refused(resultRows.notFoundProjectNotFound)
+  if (result.assessed.repository.toLowerCase() !== found.repositoryId.toLowerCase()) throw refused(resultRows.revisionMismatchTheResultScannedAnother)
+  if (result.assessed.commitSha !== found.commitSha || result.assessed.templateSha256 !== found.templateSha256) {
+    throw refused(resultRows.commitMismatch, `The result must scan commit ${found.commitSha} with skill template ${found.templateSha256}, which the queue assigned`)
+  }
+  return found
+}
+
+function evidenceIncomplete(result: RecordedResult) {
+  return refused(resultRows.evidenceIncomplete, isScanResult(result) ? "Clean scan results require the exact retained report, inventory, dependency locks and artifacts" : "Clean results require a complete authorized canonical assembly and its exact retained evidence")
+}
+
+effect function retainedFor(result: RecordedResult) {
+  if (result.disposition === "incomplete") return false
+  const retained = retainedEvidence(result) catch effect (error) => {
+    try Effect.logError("vetting evidence read failure", { assessment: result.assessmentId, failure: error._tag })
+    throw refused(resultRows.evidenceUnavailableSlopCouldNotRead)
+  }
+  if (!retained) throw evidenceIncomplete(result)
+  return true
+}
+
+effect function settled(found: Assessment) {
+  const current = try assessment(found.id)
+  return refused(current?.state === "pending" ? resultRows.staleProject : resultRows.alreadyRecorded)
+}
+
+effect function reinstated(found: Assessment) {
+  return reinstateFromScan(found.projectId, found) catch effect (error) => {
+    try Effect.logError("flag reinstatement after a clean scan failed", { assessment: found.id, failure: error._tag })
+    return false
+  }
+}
+
+effect function results(keyId: string) {
+  const value = try jsonOf(try signedBytes(), resultRows.invalidRequestTheResultMustBe)
+  if (!isRecord(value)) throw refused(resultRows.invalidRequestTheResultMustBeAnObject)
+  const parsed = parseResult(value)
+  if (parsed.kind === "invalid") throw refused(resultRows.invalidVettingResultNoStore, parsed.message)
+  const result = parsed.result
+  if (!resultProven(result)) throw refused(resultRows.dispositionNotProven, `The ${result.disposition} disposition is not proven: ${resultProblems(result).join("; ")}`)
+  const found = try stored(result)
+  const loaded = try loadEnforcement(found.projectId)
+  if (isScanResult(result) && result.reusedAssessmentId !== null) {
+    const cached = try assessment(result.reusedAssessmentId)
+    if (!(try reusable(found, cached, result, loaded))) throw refused(resultRows.reuseMismatch)
+  }
+  const retained = try retainedFor(result)
+  const outcome = outcomeOf(result, found, repositoryOf(loaded.state, found.row), retained)
+  if (outcome.repository === 0) throw refused(resultRows.staleProject)
+  if (!outcomeAccepted(outcome)) throw evidenceIncomplete(result)
+  recordResult({ result, assessment: found, outcome, keySha256: keyId }) catch effect (error) => {
+    if (error._tag === "ProjectRefused" || error._tag === "Conflict" || error._tag === "ConstraintViolation") throw (try settled(found))
+    throw error
+  }
+  const recorded = try assessment(found.id)
+  if (recorded === undefined) return try die(new Error("Assessment vanished"))
+  if (outcome.disposition === "DClean" && !outcome.reused) try reinstated(recorded)
+  const setup = result.disposition === "clean" ? { state: "retry" as const, message: "Scan recorded. Project setup must be checked again." } : null
+  return json({ setup, assessment: { ...summaryOf(recorded), resultSha256: recorded.resultSha256 } })
+}
+
+effect function reuse() {
+  const value = try jsonOf(try signedBytes(), reuseRows.invalidRequestTheLookupMustBe)
+  const invalid = refused(reuseRows.invalidRequestInvalidScanReuseLookup)
+  if (!isRecord(value) || Object.keys(value).sort().join() !== "assessmentId,inputManifestSha256,policyVersion") throw invalid
+  const { assessmentId, inputManifestSha256, policyVersion } = value
+  if (typeof assessmentId !== "string" || !assessmentIdPattern.test(assessmentId) || typeof inputManifestSha256 !== "string" || !digestPattern.test(inputManifestSha256) || typeof policyVersion !== "string" || policyVersion.trim() === "" || policyVersion.length > 200) throw invalid
+  const found = try assessment(assessmentId)
+  if (found === undefined) throw refused(reuseRows.notFoundAssessmentNotFoundNoStore)
+  if (found.state !== "pending") throw refused(reuseRows.alreadyRecorded)
+  if ((try (try Registry).project(found.projectId)) === undefined) throw refused(reuseRows.notFoundProjectNotFound)
+  const result = try lookup(found, try projectAssessments(found.projectId), inputManifestSha256, policyVersion)
+  return json({ schemaVersion: "slop-vetting-reuse-v1", result })
+}
+
+effect function refresh() {
+  if (new TextDecoder().decode(try signedBytes()) !== "{}") throw refused(refreshRows.invalidRequestSendAnEmptyJSON)
+  return json(try refreshQueue())
+}
+
+effect function sandbox(method: "GET" | "POST") {
+  const configured = try Effect.serviceOption(VettingSandbox)
+  const body = try signedBytes()
+  if (Option.isNone(configured)) throw refused(sandboxRows.sandboxUnavailable)
+  const target = method === "GET" ? HttpClientRequest.get("https://vetting-sandbox.internal/health") : HttpClientRequest.bodyUint8Array(HttpClientRequest.post("https://vetting-sandbox.internal/run"), body, "application/json")
+  provide outboundVia(configured.value.binding) {
+    const response = try HttpClient.execute(HttpClientRequest.setHeader(target, "content-type", "application/json"))
+    const bytes = new Uint8Array(try response.arrayBuffer)
+    return HttpServerResponse.uint8Array(bytes, { status: response.status, headers: { "content-type": response.headers["content-type"] ?? "text/plain", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } })
+  }
+}
+
+effect function requireAdmin(actor: Actor) {
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refused(queueRows.forbiddenAdminAccessIsRequired)
+}
+
+effect function queueRequest(actor: Actor) {
+  try requireAdmin(actor)
+  const body = try strictBody(AnyObject, 65536)
+  const keys = Object.keys(body).sort().join(",")
+  if (keys !== "projectId,reason,revision" && keys !== "projectId,reason,repository,revision") throw refused(queueRows.invalidRequestSendProjectIdRevisionAnd)
+  const repository = body.repository
+  if (repository !== undefined && (typeof repository !== "string" || repository.length < 3 || repository.length > 201)) throw refused(queueRows.invalidRequestInvalidRepository)
+  const projectId = body.projectId
+  if (typeof projectId !== "string" || !projectIdPattern.test(projectId)) throw refused(queueRows.invalidRequestInvalidProjectIdNoStore)
+  const revision = body.revision
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) throw refused(queueRows.invalidRequestInvalidRevision)
+  const reason = typeof body.reason === "string" ? body.reason.trim() : ""
+  if (reason.length < 1 || reason.length > 1000) throw refused(queueRows.invalidRequestReasonMustBe1To1000Characters)
+  if (!(try serviceAvailable())) throw refused(queueRows.vettingUnavailableTheVettingServiceIs)
+  const view = try (try Registry).project(projectId)
+  if (view === undefined) throw refused(queueRows.notFoundProjectNotFound)
+  if (view.revision !== revision) throw refused(queueRows.staleRevisionScanTheProjectS)
+  let paths = view.repositories.map((entry) => entry.fullName)
+  if (typeof repository === "string") {
+    const listed = listedRepository(view, repository)
+    if (listed === undefined) throw refused(queueRows.repositoryNotListed)
+    paths = [listed.fullName]
+  }
+  const by = idOf(actor.githubId)
+  const plans = paths.map((repositoryPath) => ({ repositoryPath, reason, origin: "AdminInvestigation" as const, by }))
+  const queued = queueRepositories(view, { githubId: actor.githubId, githubLogin: actor.login }, plans) catch effect (error) => {
+    if (error._tag === "PinUnavailable") throw refused(queueRows.pinUnavailable, `Slop could not read the integration-branch head or the skill template digest, so a scan cannot be queued. ${error.reason}`.trim())
+    throw error
+  }
+  const [first] = queued
+  if (first === undefined) throw refused(queueRows.assessmentQueued)
+  return json({ assessment: adminView(first), ...(view.repositories.length > 1 ? { assessments: queued.map(adminView) } : {}) }, 201)
+}
+
+export const admissionServiceRoutes = Layer.mergeAll(
+  handleRaw(scanRequests, () => queue()),
+  handleRaw(scanReuse, () => reuse()),
+  handleRaw(scanJournal, () => effect { return try journal(try signedBytes()) }),
+  handleRaw(sandboxHealth, () => sandbox("GET")),
+  handleRaw(sandboxRun, () => sandbox("POST")),
+)
+
+export const admissionRecordRoutes = Layer.mergeAll(
+  handleRaw(scanResults, (input) => results(input.actor.keyId)),
+  handleRaw(scanRefresh, () => refresh()),
+  handleRaw(queueAssessment, (input) => queueRequest(input.actor)),
+)
+
+export { overviewRoutes }
+
+export const admissionRoutes = Layer.mergeAll(admissionServiceRoutes, overviewRoutes, admissionRecordRoutes)

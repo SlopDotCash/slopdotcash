@@ -1,0 +1,82 @@
+// spec/security/admission.md, "A reused clean result cites one original clean scan of the same repository and commit"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"
+import type { Disposition, ReuseOrigin, Scan } from "../../gen/security__admission.ts"
+import { canReuse, initial } from "../../gen/security__admission.effect.vibe"
+import type { Enforcement } from "../../gen/security__enforcement.ts"
+import { latestOf } from "../../gen/security__enforcement.effect.vibe"
+import { type Loaded, loadEnforcement } from "../enforcement/store.vibe"
+import { type ScanResult, isScanResult, resultProven, sameScanEvidence, sourceInventory } from "./result.ts"
+import { retainedEvidence } from "./retention.vibe"
+import { type Assessment, coversActiveFlags } from "./store.vibe"
+
+const dispositionOf: Readonly<Record<Assessment["state"], Disposition>> = { pending: "NoDisposition", clean: "DClean", incomplete: "DIncomplete", malicious: "DMalicious" }
+
+function identityOf(state: Enforcement, row: number) {
+  const pending = state.repositories.map((repository) => latestOf(state, repository)).find((latest) => latest.id === row)
+  return pending?.identity ?? state.recorded.find((recorded) => recorded.id === row)?.identity ?? 0
+}
+
+function laterRestriction(loaded: Loaded, cached: Assessment) {
+  if (loaded.state.restriction === "Clear") return false
+  if (loaded.state.restriction === "FlagQuarantine") return true
+  const boundary = loaded.history.journal.filter((record) => record.action === "quarantine" || record.action === "ban").at(-1)
+  if (boundary === undefined) return false
+  return boundary.actor_role === "vetting-service" ? cached.requestedAt <= boundary.created_at : cached.requestedAt < boundary.created_at
+}
+
+function same(left: string | number | null, right: string | number | null) {
+  return left !== null && left === right ? 1 : 2
+}
+
+export effect function reusable(assessment: Assessment, cached: Assessment | undefined, result: ScanResult, loaded: Loaded) {
+  const prior = cached?.result
+  if (cached === undefined || prior === undefined || !isScanResult(prior)) return false
+  if (cached.id !== result.reusedAssessmentId || cached.projectId !== result.projectId || prior.projectId !== result.projectId || result.disposition !== "clean") return false
+  if (!sameScanEvidence(prior, result)) return false
+  const scan: Scan = {
+    ...initial,
+    phase: "Reviewing",
+    inventoryDigest: 7,
+    assignment: { assessment: assessment.row, repository: 1, identityEpoch: 1, requestedAt: 1, revision: assessment.revision, manifestDigest: 1, commit: 1, template: 1, policy: 1 },
+  }
+  const origin: ReuseOrigin = {
+    assessment: cached.row,
+    disposition: dispositionOf[cached.state],
+    reused: prior.reusedAssessmentId !== null,
+    repository: same(cached.repositoryId.toLowerCase(), assessment.repositoryId.toLowerCase()),
+    identityEpoch: same(identityOf(loaded.state, cached.row), identityOf(loaded.state, assessment.row)),
+    commit: same(cached.commitSha, assessment.commitSha),
+    inventoryDigest: sourceInventory(prior) !== null && sourceInventory(prior) === sourceInventory(result) ? 7 : 8,
+    template: same(prior.assessed.templateSha256, assessment.templateSha256),
+    policy: same(prior.policyVersion, result.policyVersion),
+    retained: try retainedEvidence(prior),
+    laterRestriction: laterRestriction(loaded, cached),
+    flagsCovered: try coversActiveFlags(cached.id),
+  }
+  return canReuse(scan, origin)
+}
+
+export effect function lookup(assessment: Assessment, candidates: ReadonlyArray<Assessment>, inputManifestSha256: string, policyVersion: string) {
+  const repository = assessment.repositoryId.toLowerCase()
+  let loaded: Loaded | undefined = undefined
+  for (const cached of candidates.filter((each) => each.repositoryId.toLowerCase() === repository).toReversed()) {
+    const prior = cached.result
+    if (prior === undefined || !isScanResult(prior)) continue
+    const result: ScanResult = {
+      ...prior,
+      assessmentId: assessment.id,
+      projectId: assessment.projectId,
+      revision: assessment.revision,
+      manifestSha256: assessment.manifestSha256,
+      policyVersion,
+      assessed: { ...prior.assessed, repository: assessment.repositoryId, commitSha: assessment.commitSha, templateSha256: assessment.templateSha256 },
+      reusedAssessmentId: cached.id,
+    }
+    if (sourceInventory(result) !== inputManifestSha256) continue
+    loaded = loaded ?? try loadEnforcement(assessment.projectId)
+    if (!(try reusable(assessment, cached, result, loaded))) continue
+    if (!resultProven(result)) continue
+    if (!(try retainedEvidence(result))) continue
+    return result
+  }
+  return null
+}

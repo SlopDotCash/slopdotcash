@@ -1,0 +1,42 @@
+// spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"
+import type { Address } from "@repo/platform/chain/evm"
+import { type Fee, type VaultClaim, claimAdmitted, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import { safeNumber } from "../conversion/chain.vibe"
+import { claimFeesCalldata } from "../evm/abi.ts"
+import { feesPerGas, gasLimit } from "../evm/client.vibe"
+import { type KyberSettings, nativeValue, quote, referenceStable } from "../kyber/route.vibe"
+import type { EvmNetwork } from "../signer/intents.ts"
+
+export type Valued = { readonly kind: "valued"; readonly valueMicro: bigint } | { readonly kind: "skipped"; readonly reason: string }
+
+export type Admission = { readonly kind: "admitted"; readonly valueMicro: number; readonly gasValue: number } | { readonly kind: "skipped"; readonly reason: string }
+
+export effect function evmClaimValue(network: EvmNetwork, token: string, amount: bigint, settings: KyberSettings) {
+  const reference = referenceStable(network, settings)
+  if (reference === undefined) return { kind: "skipped", reason: "no reference stable values this network's fees" } satisfies Valued
+  if (token.toLowerCase() === reference.toLowerCase()) return { kind: "valued", valueMicro: amount } satisfies Valued
+  const quoted = try quote(network, token as Address, amount, reference, 0, settings)
+  if (quoted.kind === "NoRoute") return { kind: "skipped", reason: quoted.detail } satisfies Valued
+  return { kind: "valued", valueMicro: quoted.quote.amountOut } satisfies Valued
+}
+
+export effect function evmClaimCost(network: EvmNetwork, vault: Address, settings: KyberSettings) {
+  const gas = try gasLimit(vault, claimFeesCalldata, 0n)
+  const fees = try feesPerGas()
+  return try nativeValue(network, gas * fees.maxFeePerGas, settings)
+}
+
+function skipped(reason: string): Admission {
+  return { kind: "skipped", reason }
+}
+
+export function admission(state: Fee, candidate: VaultClaim, value: bigint, cost: bigint | undefined): Admission {
+  const valueMicro = safeNumber(value)
+  if (valueMicro === undefined) return skipped("claim value exceeds safe integer accounting")
+  const gasValue = cost === undefined ? undefined : safeNumber(cost)
+  if (gasValue === undefined) return skipped("claim network fee could not be priced")
+  if (!claimAdmitted(state, { ...candidate, valueMicro: maximumSafeValue, gasValue: 0 })) return skipped("the reviewed vault, fee wallet or accrued amount does not admit the claim")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue: 0 })) return skipped("below the minimum conversion value")
+  if (!claimAdmitted(state, { ...candidate, valueMicro, gasValue })) return skipped("below the gas-cost multiple")
+  return { kind: "admitted", valueMicro, gasValue }
+}

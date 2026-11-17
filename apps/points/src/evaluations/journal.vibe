@@ -1,0 +1,159 @@
+// spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"; spec/points/journal.md, "An evaluated award changes only by a reviewed manifest decision or the incident recovery"; spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"
+import type { Award, Revision as Row } from "../kernels/records/canonical.ts"
+import { instantOf } from "../kernels/records/instants.ts"
+import { type Names, type Opened, type Repositories, type Store, advanceTo, command, heldMachine, hold } from "../journal/ledger.vibe"
+import { appended, commit, flush, rowsOf, sameAward, sendAll } from "../journal/rows.vibe"
+import { retainedAwards } from "../journal/retained.vibe"
+import { type Event, type Ledger, type Revision, decodeState, initial, noDecision, noRevision } from "../../gen/points__journal.effect.vibe"
+import { retirementZeroDigest } from "../../gen/points__evaluations.effect.vibe"
+import type { Manifest } from "../../gen/points__evaluations.ts"
+import type { Admitted } from "./manifests.vibe"
+import { type Retired, recoveryDigest, retiredAwards } from "./retired.vibe"
+
+const recoveryReason = "The retired evaluator award recorded before 19 October 2026 is restored after the erroneous 20 October 2026 zeroing batch."
+
+interface Supplied { readonly award: Award; readonly item: Admitted }
+
+function dayOf(at: string) {
+  return instantOf(at) ?? -1
+}
+
+function single(key: string, actor: string): Names {
+  return {
+    keys: new Map([[key, { project: "", actor: 1, category: "Evaluated", source: 1, workUnit: 1 }]]),
+    units: new Map(),
+    unitNames: new Map(),
+    actorIds: new Map([[1, actor]]),
+    sources: new Map(),
+    opaque: new Set(),
+  }
+}
+
+function modelRevision(id: number, row: Row, project: string): Revision {
+  return {
+    ...noRevision,
+    id,
+    key: { project, actor: 1, category: "Evaluated", source: 1, workUnit: 1 },
+    amount: row.award.amount,
+    occurredAt: dayOf(row.award.occurredAt),
+    recordedAt: dayOf(row.recordedAt),
+    rule: "ScoreV2",
+    sourceDigest: row.sourceDigest,
+  }
+}
+
+effect function keyed(store: Store, prior: Row, retired: Retired | undefined, manifest: Manifest | undefined) {
+  const project = prior.award.projectId
+  const zeroed = retired !== undefined && retired.phase === "IncidentZeroed"
+  const first = modelRevision(1, zeroed ? retired.retained : prior, project)
+  const revisions: Revision[] = zeroed
+    ? [first, {
+      ...modelRevision(2, prior, project),
+      previous: 1,
+      priorAmount: first.amount,
+      sourceDigest: retirementZeroDigest,
+      decision: { basis: "RetirementBatch", effectiveAt: dayOf(prior.recordedAt), reason: "retired evaluator batch", delta: -first.amount },
+    }]
+    : [first]
+  const admitted = manifest === undefined ? [] : [{ ...manifest, actor: 1, source: 1, workKey: 1 }]
+  const ledger: Ledger = { ...initial, now: store.now, frozen: [...store.frozen], revisions, nextId: revisions.length + 1, admitted }
+  const state = decodeState(ledger) catch () => undefined
+  if (state === undefined) return undefined
+  return { machine: try heldMachine(state), names: single(prior.award.key, prior.award.actor.id), start: state.nextId } satisfies Opened
+}
+
+effect function written(store: Store, opened: Opened, template: Award, provenance: { readonly recordedAt: string; readonly sourceDigest: string; readonly decisionSourceId: string; readonly effectiveAt: string; readonly confirmation?: boolean }) {
+  const rows: Row[] = []
+  for (const revision of try appended(opened)) rows.push(...(try rowsOf(store, opened, revision, new Map([[template.actor.id, template]]), provenance)))
+  return rows
+}
+
+effect function recovered(store: Store, key: string, retired: Retired, recordedAt: string) {
+  const opened = try keyed(store, retired.latest, retired, undefined)
+  if (opened === undefined) {
+    hold(store, { subject: key, reason: "the retired evaluator award is outside the journal model", digest: retirementZeroDigest })
+    return []
+  }
+  const refused = try sendAll(opened, [{ type: "recoverIncident", k: { project: retired.latest.award.projectId, actor: 1, category: "Evaluated", source: 1, workUnit: 1 }, reason: recoveryReason }])
+  if (refused !== "") {
+    hold(store, { subject: key, reason: `the journal refused ${refused}`, digest: retirementZeroDigest })
+    return []
+  }
+  return try written(store, opened, retired.retained.award, { recordedAt, sourceDigest: try recoveryDigest(), decisionSourceId: retired.retained.award.sourceId, effectiveAt: recordedAt })
+}
+
+effect function credited(store: Store, supplied: Supplied, digest: string, recordedAt: string) {
+  const { award, item } = supplied
+  const opened = try command(store, { awards: [award], units: [], sources: [award.sourceId] })
+  const key = opened.names.keys.get(award.key)
+  if (key === undefined || opened.names.opaque.has(award.key)) {
+    hold(store, { subject: award.key, reason: "the recorded history of this source is outside the journal model", digest })
+    return []
+  }
+  const m = { ...item.model, actor: key.actor, source: key.source, workKey: key.workUnit }
+  const events: Event[] = [{ type: "admitManifest", m }, { type: "creditEvaluation", m }]
+  const refused = try sendAll(opened, events)
+  if (refused !== "") {
+    hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  return try written(store, opened, award, { recordedAt, sourceDigest: digest, decisionSourceId: item.manifest.id, effectiveAt: item.manifest.review.reviewedAt })
+}
+
+effect function decided(store: Store, supplied: Supplied, prior: Row, retired: Retired | undefined, digest: string, recordedAt: string, confirmation: boolean) {
+  const { award, item } = supplied
+  const opened = try keyed(store, prior, retired, item.model)
+  if (opened === undefined) {
+    hold(store, { subject: award.key, reason: "the recorded evaluated award is outside the journal model", digest })
+    return []
+  }
+  const k = { project: award.projectId, actor: 1, category: "Evaluated" as const, source: 1, workUnit: 1 }
+  const d = { source: 1, points: item.manifest.points, reviewer: item.model.reviewer, decision: item.manifest.review.decisionUrl, reason: item.manifest.reason }
+  const refused = try sendAll(opened, [{ type: "decideEvaluation", k, d }])
+  if (refused !== "") {
+    hold(store, { subject: award.key, reason: `the journal refused ${refused}`, digest })
+    return []
+  }
+  return try written(store, opened, award, { recordedAt, sourceDigest: digest, decisionSourceId: item.manifest.id, effectiveAt: item.manifest.review.reviewedAt, confirmation })
+}
+
+export effect function applyEvaluations(store: Store, repositories: Repositories, admitted: ReadonlyArray<Admitted>, digest: string, recordedAt: string) {
+  try advanceTo(store, recordedAt)
+  const awards = try retainedAwards(repositories, admitted.map((item) => item.event))
+  const supplied: Supplied[] = awards.flatMap((credited, position) => {
+    const item = admitted[position]
+    return item === undefined ? [] : [{ award: credited.award, item }]
+  }).sort((left, right) => left.award.key.localeCompare(right.award.key))
+  const keys = new Set(supplied.map(({ award }) => award.key))
+  const retired = try retiredAwards(store.revisions)
+  const recoveries: Row[] = []
+  for (const [key, found] of [...retired].sort(([left], [right]) => left.localeCompare(right))) {
+    if (found.phase !== "IncidentZeroed" || keys.has(key)) continue
+    try commit(store, recoveries, try recovered(store, key, found, recordedAt))
+  }
+  flush(store, recoveries)
+  const covered = new Set(store.coverage.map((entry) => entry.digest))
+  const changes: Row[] = []
+  const confirmations: Supplied[] = []
+  for (const item of supplied) {
+    const prior = store.latest.get(item.award.key)
+    const found = retired.get(item.award.key)
+    if (prior === undefined) {
+      try commit(store, changes, try credited(store, item, digest, recordedAt))
+      continue
+    }
+    if (!sameAward(prior.award, item.award)) {
+      try commit(store, changes, try decided(store, item, prior, found, digest, recordedAt, false))
+      continue
+    }
+    if (covered.has(prior.sourceDigest) || (found !== undefined && found.phase !== "Ended")) confirmations.push(item)
+  }
+  flush(store, changes)
+  const confirmed: Row[] = []
+  for (const item of confirmations) {
+    const prior = store.latest.get(item.award.key)
+    if (prior !== undefined) try commit(store, confirmed, try decided(store, item, prior, retired.get(item.award.key), digest, recordedAt, true))
+  }
+  flush(store, confirmed)
+  store.generatedAt = recordedAt
+}

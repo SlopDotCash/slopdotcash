@@ -1,0 +1,97 @@
+// spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"
+import { boundedBytes } from "@repo/platform/browser"
+import type { Hex } from "@repo/platform/chain/evm"
+import { dln } from "../runtime/pins.ts"
+import { decimal } from "../evm/abi.ts"
+import { jsonValue } from "../solana/bytes.ts"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+}
+import { errorText } from verified
+
+export error DlnUnavailable { detail: string }
+export error DlnRefused { issue: string }
+
+const responseLimitBytes = 1_000_000
+
+export interface DlnRequest {
+  readonly srcChainId: string
+  readonly giveToken: string
+  readonly giveAmount: bigint
+  readonly takeChainId: string
+  readonly takeToken: string
+  readonly wallet: string
+  readonly receiver: string
+}
+
+export interface DlnProposal {
+  readonly to: string
+  readonly data: Hex
+  readonly value: bigint
+  readonly orderId: Hex
+  readonly estimatedTakeAmount: bigint
+}
+
+export type Proposed = { readonly kind: "Proposal"; readonly proposal: DlnProposal } | { readonly kind: "NoRoute"; readonly detail: string }
+
+const Answer = Schema.Struct({
+  errorId: Schema.optionalKey(Schema.Unknown),
+  errorMessage: Schema.optionalKey(Schema.Unknown),
+  orderId: Schema.optionalKey(Schema.Unknown),
+  tx: Schema.optionalKey(Schema.Struct({ to: Schema.optionalKey(Schema.Unknown), data: Schema.optionalKey(Schema.Unknown), value: Schema.optionalKey(Schema.Unknown) })),
+  estimation: Schema.optionalKey(Schema.Struct({ dstChainTokenOut: Schema.optionalKey(Schema.Struct({ amount: Schema.optionalKey(Schema.Unknown) })) })),
+})
+
+const orderIdText = /^0x[0-9a-fA-F]{64}$/u
+const calldataText = /^0x([0-9a-fA-F]{2})+$/u
+
+function query(request: DlnRequest) {
+  return new URLSearchParams({
+    srcChainId: request.srcChainId,
+    srcChainTokenIn: request.giveToken,
+    srcChainTokenInAmount: request.giveAmount.toString(),
+    dstChainId: request.takeChainId,
+    dstChainTokenOut: request.takeToken,
+    dstChainTokenOutAmount: "auto",
+    dstChainTokenOutRecipient: request.receiver,
+    srcChainOrderAuthorityAddress: request.wallet,
+    dstChainOrderAuthorityAddress: request.receiver,
+    srcAllowedCancelBeneficiary: request.wallet,
+    prependOperatingExpenses: "false",
+    referralCode: "0",
+  })
+}
+
+export effect function proposeDlnOrder(request: DlnRequest) {
+  const url = `${dln.api}/dln/order/create-tx?${query(request).toString()}`
+  const response = HttpClient.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } })) catch effect (error) => {
+    throw new DlnUnavailable({ detail: errorText(`DLN request failed: ${String(error)}`) })
+  }
+  const bytes = boundedBytes(response, responseLimitBytes, "DLN") catch effect (error) => {
+    throw new DlnUnavailable({ detail: error._tag === "BodyTooLarge" ? "DLN response too large" : `DLN returned HTTP ${response.status}` })
+  }
+  const parsed = jsonValue(new TextDecoder().decode(bytes))
+  if (parsed === undefined) throw new DlnUnavailable({ detail: `DLN returned HTTP ${response.status}` })
+  const body = Schema.decodeUnknownEffect(Answer)(parsed) catch () => undefined
+  const ok = response.status >= 200 && response.status <= 299
+  if (!ok || body?.errorId !== undefined) {
+    const reason = errorText(`DLN ${String(body?.errorId ?? response.status).slice(0, 80)}: ${String(body?.errorMessage ?? "").slice(0, 160)}`).trim()
+    if (response.status >= 400 && response.status < 500) return { kind: "NoRoute", detail: reason } satisfies Proposed
+    throw new DlnUnavailable({ detail: reason })
+  }
+  const to = body?.tx?.to
+  const data = body?.tx?.data
+  const value = decimal(body?.tx?.value ?? "0")
+  const amount = decimal(body?.estimation?.dstChainTokenOut?.amount)
+  const orderId = body?.orderId
+  if (typeof orderId !== "string" || !orderIdText.test(orderId) || typeof data !== "string" || !calldataText.test(data)
+    || (to !== undefined && typeof to !== "string") || value === undefined || amount === undefined)
+    throw new DlnUnavailable({ detail: "DLN order response is malformed" })
+  return {
+    kind: "Proposal",
+    proposal: { to: typeof to === "string" ? to : "", data: data as Hex, value, orderId: orderId.toLowerCase() as Hex, estimatedTakeAmount: amount },
+  } satisfies Proposed
+}

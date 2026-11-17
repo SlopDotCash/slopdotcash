@@ -1,0 +1,222 @@
+// spec/points/journal.md, "Public totals are views of the latest revisions, with penalties bounded by the month's credit"; spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { type Coverage, type Journal, type Revision as Row, coverageText, revisionText } from "../kernels/records/canonical.ts"
+import { journalFile } from "../kernels/records/ids.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { categoryOf, ruleOf } from "../journal/ledger.vibe"
+import { compareCodeUnits } from "../client/snapshot/checks.vibe"
+import { type Revision, initial, noDecision, publicTotal } from "../../gen/points__journal.effect.vibe"
+import { maxIndexBytes, maxRevisions, maxShardBytes, pointsRule, shardCount, shardPath } from "../client/journal.vibe"
+
+export error ProjectionInvalid { message: string }
+export error ProjectionUnavailable { path: string; message: string }
+
+export interface Member { readonly id: string; readonly login: string; readonly total: number }
+
+export interface ProjectionFiles {
+  readonly index: string
+  readonly indexDigest: string
+  readonly shards: ReadonlyArray<string>
+  readonly summary: string
+  readonly members: ReadonlyArray<Member>
+}
+
+type JsonObject = Readonly<Record<string, unknown>>
+
+const indexKeys = ["schemaVersion", "ruleVersion", "generatedAt", "coverage", "revisionCount", "shards"]
+const shardKeys = ["path", "sha256", "count"]
+const rowKeys = ["sequence", "revision"]
+const checksumMismatch = "Points shard checksum mismatch"
+const actorNumber = 1
+
+function invalid(message: string) {
+  return new ProjectionInvalid({ message })
+}
+
+export function shardRows(journal: Journal) {
+  const shards = Array.from({ length: shardCount }, () => [] as { readonly sequence: number; readonly revision: Row }[])
+  journal.revisions.forEach((revision, sequence) => {
+    shards[Number.parseInt(revision.award.key.slice(0, 1), 16)]?.push({ sequence, revision })
+  })
+  return shards
+}
+
+function latestRows(journal: Journal) {
+  const latest = new Map<string, Row>()
+  for (const revision of journal.revisions) latest.set(revision.award.key, revision)
+  return [...latest.values()]
+}
+
+effect function instant(text: string) {
+  const value = instantOf(text)
+  if (value === null) throw invalid("Invalid points instant")
+  return value
+}
+
+effect function modelRevision(row: Row, id: number, workUnit: number) {
+  const category = categoryOf(row.award.category)
+  const { rule, tableVersion } = ruleOf(row.sourceRule)
+  return {
+    id,
+    previous: 0,
+    key: { project: row.award.projectId, actor: category === "MergedWork" ? 0 : actorNumber, category, source: 0, workUnit },
+    amount: row.award.amount,
+    priorAmount: 0,
+    occurredAt: try instant(row.award.occurredAt),
+    recordedAt: try instant(row.recordedAt),
+    rule,
+    tableVersion,
+    sourceDigest: row.sourceDigest,
+    provisional: row.award.provisional,
+    decision: noDecision,
+    recipients: [],
+    completeLines: false,
+    shares: category === "MergedWork" ? [{ actor: actorNumber, points: row.award.amount }] : [],
+  } satisfies Revision
+}
+
+effect function actorTotal(rows: ReadonlyArray<Row>) {
+  const ordered = [...rows].sort((left, right) => compareCodeUnits(left.award.workUnitId, right.award.workUnitId) || compareCodeUnits(left.award.key, right.award.key))
+  const revisions: Revision[] = []
+  for (const [position, row] of ordered.entries()) revisions.push(try modelRevision(row, position + 1, position + 1))
+  return publicTotal({ ...initial, revisions, nextId: revisions.length + 1 }, actorNumber)
+}
+
+function counted(row: Row) {
+  return row.award.amount === 0 ? row.decision?.sourceId.startsWith("value:") === true : row.award.category !== "slopbot-penalty"
+}
+
+export effect function members(journal: Journal) {
+  const logins = new Map<string, Row>()
+  for (const revision of journal.revisions) {
+    if (revision.award.category === "slopbot-penalty") continue
+    const prior = logins.get(revision.award.actor.id)
+    if (prior === undefined || revision.recordedAt >= prior.recordedAt) logins.set(revision.award.actor.id, revision)
+  }
+  const byActor = new Map<string, Row[]>()
+  const memberIds = new Set<string>()
+  for (const row of latestRows(journal)) {
+    const rows = byActor.get(row.award.actor.id) ?? []
+    rows.push(row)
+    byActor.set(row.award.actor.id, rows)
+    if (counted(row)) memberIds.add(row.award.actor.id)
+  }
+  const found: Member[] = []
+  for (const [id, rows] of byActor) {
+    if (memberIds.has(id)) found.push({ id, login: logins.get(id)?.award.actor.login ?? rows[0]?.award.actor.login ?? "", total: try actorTotal(rows) })
+  }
+  return found
+}
+
+function summaryText(journal: Journal, indexDigest: string, found: ReadonlyArray<Member>) {
+  const ranked = found.filter((member) => member.total > 0).sort((left, right) => right.total - left.total || left.id.localeCompare(right.id))
+  const summary = {
+    schemaVersion: "1",
+    ruleVersion: journal.ruleVersion,
+    generatedAt: journal.generatedAt,
+    indexDigest,
+    totals: { contributors: ranked.length, points: ranked.reduce((sum, member) => sum + member.total, 0) },
+    contributors: ranked.map((member) => ({ actor: { id: member.id, login: member.login }, total: member.total })),
+  }
+  return `${JSON.stringify(summary)}\n`
+}
+
+export effect function projectionFiles(journal: Journal) {
+  const shards: string[] = []
+  const entries: string[] = []
+  for (const [position, rows] of shardRows(journal).entries()) {
+    const text = `[${rows.map((row) => `{"sequence":${row.sequence},"revision":${revisionText(row.revision)}}`).join(",")}]\n`
+    if (new TextEncoder().encode(text).length > maxShardBytes) throw invalid("Points shard exceeds size limit")
+    shards.push(text)
+    entries.push(`{"path":${JSON.stringify(shardPath(position))},"sha256":${JSON.stringify(try sha256Hex(text))},"count":${rows.length}}`)
+  }
+  const index = `{"schemaVersion":"1","ruleVersion":${JSON.stringify(journal.ruleVersion)},"generatedAt":${JSON.stringify(journal.generatedAt)},"coverage":[${journal.coverage.map((entry: Coverage) => coverageText(entry)).join(",")}],"revisionCount":${journal.revisions.length},"shards":[${entries.join(",")}]}`
+  const indexDigest = try sha256Hex(index)
+  const found = try members(journal)
+  return { index: `${index}\n`, indexDigest, shards, summary: summaryText(journal, indexDigest, found), members: found } satisfies ProjectionFiles
+}
+
+function objectOf(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
+}
+
+function exactKeys(value: JsonObject, keys: ReadonlyArray<string>) {
+  const actual = Object.keys(value)
+  return actual.length === keys.length && actual.every((key) => keys.includes(key))
+}
+
+effect function parsed(text: string, message: string) {
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw invalid(message)
+  }
+  return value
+}
+
+export effect function assembleProjection(indexText: string, parts: ReadonlyArray<string>) {
+  const index = objectOf(try parsed(indexText, "Invalid points index"))
+  if (index === undefined || !exactKeys(index, indexKeys)) throw invalid("Invalid points index")
+  const shards = index.shards
+  const count = index.revisionCount
+  if (index.schemaVersion !== "1" || index.ruleVersion !== pointsRule || typeof index.generatedAt !== "string" || !Array.isArray(shards) || shards.length !== shardCount
+    || parts.length !== shardCount || typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > maxRevisions) {
+    throw invalid("Invalid points index")
+  }
+  const records: { readonly sequence: number; readonly revision: unknown }[] = []
+  for (const [position, entry] of shards.entries()) {
+    const shard = objectOf(entry)
+    const part = parts[position] ?? ""
+    if (shard === undefined || !exactKeys(shard, shardKeys) || shard.path !== shardPath(position) || (try sha256Hex(part)) !== shard.sha256) throw invalid(checksumMismatch)
+    const rows = try parsed(part, "Incomplete points shard")
+    if (!Array.isArray(rows) || rows.length !== shard.count) throw invalid("Incomplete points shard")
+    for (const value of rows) {
+      const row = objectOf(value)
+      if (row === undefined || !exactKeys(row, rowKeys) || typeof row.sequence !== "number" || !Number.isSafeInteger(row.sequence) || row.sequence < 0) throw invalid("Invalid points sequence")
+      records.push({ sequence: row.sequence, revision: row.revision })
+    }
+  }
+  records.sort((left, right) => left.sequence - right.sequence)
+  if (records.length !== count || records.some((record, position) => record.sequence !== position)) throw invalid("Incomplete points sequence")
+  const journal = { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: index.generatedAt, coverage: index.coverage, revisions: records.map((record) => record.revision) }
+  return journalFile(`${JSON.stringify(journal)}\n`) catch effect () => {
+    throw invalid("Invalid points journal")
+  }
+}
+
+effect function unavailable<A, E, R>(operation: A!E!R, path: string, message: string) {
+  const value = operation catch effect () => {
+    throw new ProjectionUnavailable({ path, message })
+  }
+  return value
+}
+
+effect function boundedText(path: string, limitBytes: number) {
+  const fs = try FileSystem.FileSystem
+  const info = try unavailable(fs.stat(path), path, "Points projection file is unavailable")
+  if (Number(info.size) > limitBytes) throw new ProjectionUnavailable({ path, message: "Points projection file exceeds its size limit" })
+  return try unavailable(fs.readFileString(path), path, "Points projection file is unavailable")
+}
+
+export effect function readProjection(directory: string) {
+  const files = try Path.Path
+  const index = try boundedText(files.join(directory, "points.json"), maxIndexBytes)
+  const parts: string[] = []
+  for (let position = 0; position < shardCount; position++) parts.push(try boundedText(files.join(directory, "points", `${position.toString(16)}.json`), maxShardBytes))
+  return try assembleProjection(index, parts)
+}
+
+effect function replaced(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const temporary = `${path}.${try randomId()}.tmp`
+  try unavailable(fs.writeFileString(temporary, text, { flag: "wx" }), path, "Points projection file could not be written")
+  try unavailable(fs.rename(temporary, path), path, "Points projection file could not be replaced")
+}
+
+export effect function writeProjection(directory: string, projection: ProjectionFiles) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const shards = files.join(directory, "points")
+  try unavailable(fs.makeDirectory(shards, { recursive: true }), shards, "Points projection directory could not be created")
+  for (const [position, text] of projection.shards.entries()) try unavailable(fs.writeFileString(files.join(shards, `${position.toString(16)}.json`), text), shards, "Points shard could not be written")
+  try replaced(files.join(directory, "points.json"), projection.index)
+  try replaced(files.join(directory, "points-summary.json"), projection.summary)
+}

@@ -1,0 +1,64 @@
+// spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"
+import { json, refuse } from "@repo/platform/http"
+import { postVettingJournal as rows } from "../client/refusals.vibe"
+import { dispositions } from "./result.ts"
+import { assessment, completeReceipt, hasIntent, reserveIntent } from "./store.vibe"
+
+const journalSchema = "slop-vetting-journal-v1"
+const outcomes = ["accepted", "rejected", "unknown"]
+const journalId = /^[A-Za-z0-9._-]{1,128}$/u
+const digest = /^[a-f0-9]{64}$/u
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+function refused(row: Row) {
+  return refuse(row.status, row.error, row.message)
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function exact(value: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const keys = Object.keys(value)
+  if (!required.every((key) => keys.includes(key)) || !keys.every((key) => required.includes(key) || optional.includes(key))) throw refused(rows.invalidRequestRequestBodyHasUnexpectedFields)
+}
+
+export effect function journal(body: Uint8Array) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)) as unknown, catch: () => refused(rows.invalidRequestTheJournalRequestMust) })
+  if (!isRecord(value)) throw refused(rows.invalidRequestTheJournalRequestMustBeAnObject)
+  const operation = value.operation
+  const assessmentId = value.assessmentId
+  if (typeof assessmentId !== "string" || !journalId.test(assessmentId)) throw refused(rows.invalidRequestTheJournalAssessmentId)
+  if (operation === "has") {
+    try exact(value, ["operation", "assessmentId"])
+    return json({ schemaVersion: journalSchema, present: try hasIntent(assessmentId) })
+  }
+  if (operation !== "reserve" && operation !== "complete") throw refused(rows.invalidRequestTheJournalOperationIs)
+  try exact(value, ["operation", "assessmentId", "resultSha256", "origin", "disposition"], operation === "complete" ? ["outcome", "httpStatus"] : [])
+  const resultSha256 = value.resultSha256
+  if (typeof resultSha256 !== "string" || !digest.test(resultSha256)) throw refused(rows.invalidRequestTheJournalResultDigest)
+  const origin = value.origin
+  if (typeof origin !== "string" || origin.length === 0 || origin.length > 200) throw refused(rows.invalidRequestTheJournalOriginIs)
+  const disposition = dispositions.find((each) => each === value.disposition)
+  if (disposition === undefined) throw refused(rows.invalidRequestTheJournalDispositionIs)
+  const intent = { assessmentId, resultSha256, origin, disposition }
+  if ((try assessment(assessmentId)) === undefined) throw refused(rows.notFoundAssessmentNotFoundNoStore)
+  if (operation === "reserve") {
+    if (!(try reserveIntent(intent))) throw refused(rows.alreadyReserved)
+    return json({ schemaVersion: journalSchema, reserved: true })
+  }
+  const outcome = value.outcome
+  if (typeof outcome !== "string" || !outcomes.includes(outcome)) throw refused(rows.invalidRequestTheJournalOutcomeIs)
+  const httpStatus = value.httpStatus
+  const status = typeof httpStatus === "number" && Number.isSafeInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null
+  if (httpStatus !== null && status === null) throw refused(rows.invalidRequestTheJournalHTTPStatus)
+  const recorded = try completeReceipt(intent, outcome, status)
+  if (recorded === "missing") throw refused(rows.noMatchingIntent)
+  if (recorded === "duplicate") throw refused(rows.alreadyRecordedThisPublicationAlreadyHas)
+  return json({ schemaVersion: journalSchema, recorded: true })
+}

@@ -1,0 +1,182 @@
+import { assert, layer } from "@effect/vitest"
+import { type World, commit, pending, project, read, rows, signed, started, strangerKey, template } from "./support/admission/harness.ts"
+
+service Admission { readonly world: World }
+
+const Started = Layer.effect(Admission, effect {
+  const world = try acquireRelease(promise(() => started()), (running) => promise(() => running.mf.dispose()))
+  return { world }
+})
+
+const stale = "The signed timestamp is missing or stale"
+const invalid = "The vetting signature is not valid"
+
+function refusal(answer: { readonly status: number; readonly body: unknown }) {
+  const body = answer.body as { readonly error?: string; readonly message?: string }
+  return [answer.status, body.error ?? "", body.message ?? ""]
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Signed service requests are bound to their method, path, body and a five-minute window (spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template")', () => effect {
+    const { world } = try Admission
+    const queue = try promise(() => signed(world, "GET", "/api/v1/vetting/requests"))
+    const has = { operation: "has", assessmentId: pending }
+    const expired = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has, { timestamp: new Date(Date.now() - 301_000).toISOString() }))
+    const early = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has, { timestamp: new Date(Date.now() + 301_000).toISOString() }))
+    const malformed = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has, { timestamp: "2026-11-17 10:00:00" }))
+    const stranger = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has, { key: strangerKey }))
+    const swapped = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has, { signedBody: new TextEncoder().encode(JSON.stringify({ operation: "has", assessmentId: "probe" })) }))
+    const otherRoute = try promise(() => signed(world, "POST", "/api/v1/vetting/reuse", has, { signedPath: "/api/v1/vetting/journal" }))
+    const accepted = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has))
+    const replayed = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", has))
+    try Effect.try(() => assert.deepStrictEqual({
+      queue: [queue.status, queue.cache, queue.body],
+      refused: [expired, early, malformed, stranger, swapped, otherRoute].map(refusal),
+      accepted: [accepted.status, accepted.body, replayed.status],
+    }, {
+      queue: [200, "no-store", {
+        schemaVersion: "slop-vetting-queue-v1",
+        assessments: [{
+          assessmentId: pending,
+          projectId: project,
+          revision: 1,
+          manifestSha256: "a".repeat(64),
+          repository: "slop-test/admission",
+          commitSha: commit,
+          templateSha256: template,
+          manifestUrl: `https://slop.test/api/v1/project-revisions/${project}/1`,
+          templateIndexUrl: "https://slop.test/skill-templates/index.json",
+          requestedAt: (queue.body as { readonly assessments: ReadonlyArray<{ readonly requestedAt: string }> }).assessments[0]?.requestedAt ?? "",
+        }],
+      }],
+      refused: [
+        [401, "invalid_signature", stale],
+        [401, "invalid_signature", stale],
+        [401, "invalid_signature", stale],
+        [401, "invalid_signature", invalid],
+        [401, "invalid_signature", invalid],
+        [401, "invalid_signature", invalid],
+      ],
+      accepted: [200, { schemaVersion: "slop-vetting-journal-v1", present: false }, 200],
+    }))
+  })
+
+  it.effect('The publication journal reserves one intent and records one receipt (spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once")', () => effect {
+    const { world } = try Admission
+    const intent = { assessmentId: pending, resultSha256: "e".repeat(64), origin: "scanner:fixture", disposition: "clean" }
+    const steps = [
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "reserve", ...intent })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "reserve", ...intent })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "complete", ...intent, resultSha256: "f".repeat(64), outcome: "accepted", httpStatus: 200 })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "complete", ...intent, outcome: "unknown", httpStatus: null })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "complete", ...intent, outcome: "accepted", httpStatus: 200 })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "has", assessmentId: pending })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "reserve", ...intent, assessmentId: `vet_${"9".repeat(32)}` })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "erase", assessmentId: pending })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "reserve", ...intent, extra: true })),
+    ].map((answer) => [answer.status, answer.body])
+    const stored = try promise(() => rows(world, "SELECT i.result_sha256, i.origin, i.disposition, r.outcome, r.http_status FROM vetting_publication_intents i JOIN vetting_publication_receipts r ON r.assessment_id = i.assessment_id WHERE i.assessment_id = ?", pending))
+    try Effect.try(() => assert.deepStrictEqual({ steps, stored }, {
+      steps: [
+        [200, { schemaVersion: "slop-vetting-journal-v1", reserved: true }],
+        [409, { error: "already_reserved", message: "Publication already reserved; reconcile its outcome" }],
+        [422, { error: "no_matching_intent", message: "Publication receipt has no matching intent" }],
+        [200, { schemaVersion: "slop-vetting-journal-v1", recorded: true }],
+        [409, { error: "already_recorded", message: "This publication already has its receipt" }],
+        [200, { schemaVersion: "slop-vetting-journal-v1", present: true }],
+        [404, { error: "not_found", message: "Assessment not found" }],
+        [400, { error: "invalid_request", message: "The journal operation is not supported" }],
+        [400, { error: "invalid_request", message: "Request body has unexpected fields" }],
+      ],
+      stored: [{ result_sha256: "e".repeat(64), origin: "scanner:fixture", disposition: "clean", outcome: "unknown", http_status: null }],
+    }))
+  })
+
+  it.effect('A reuse lookup without a retained clean original returns nothing and refuses malformed lookups (spec/security/admission.md, "A reused clean result cites one original clean scan of the same repository and commit")', () => effect {
+    const { world } = try Admission
+    const lookup = { assessmentId: pending, inputManifestSha256: "b".repeat(64), policyVersion: "slop-scan-policy-v2" }
+    const steps = [
+      try promise(() => signed(world, "POST", "/api/v1/vetting/reuse", lookup)),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/reuse", { ...lookup, assessmentId: `vet_${"9".repeat(32)}` })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/reuse", { ...lookup, policyVersion: " " })),
+      try promise(() => signed(world, "POST", "/api/v1/vetting/reuse", "not json")),
+    ].map((answer) => [answer.status, answer.body])
+    try Effect.try(() => assert.deepStrictEqual(steps, [
+      [200, { schemaVersion: "slop-vetting-reuse-v1", result: null }],
+      [404, { error: "not_found", message: "Assessment not found" }],
+      [400, { error: "invalid_request", message: "Invalid scan reuse lookup" }],
+      [400, { error: "invalid_request", message: "The lookup must be UTF-8 JSON" }],
+    ]))
+  })
+
+  it.effect('The isolated runner is reached only through a signed request and keeps no cache (spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window")', () => effect {
+    const { world } = try Admission
+    const run = { artifactSha256: "a".repeat(64) }
+    const health = try promise(() => signed(world, "GET", "/api/v1/vetting/sandbox"))
+    const ran = try promise(() => signed(world, "POST", "/api/v1/vetting/sandbox", run))
+    const forged = try promise(() => signed(world, "POST", "/api/v1/vetting/sandbox", run, { key: strangerKey }))
+    try Effect.try(() => assert.deepStrictEqual({
+      answers: [health, ran].map((answer) => [answer.status, answer.cache, answer.body]),
+      forged: refusal(forged),
+      sandbox: world.sandbox,
+    }, {
+      answers: [[200, "no-store", { outcome: "exited" }], [200, "no-store", { outcome: "exited" }]],
+      forged: [401, "invalid_signature", invalid],
+      sandbox: ["GET /health", `POST /run ${JSON.stringify(run)}`],
+    }))
+  })
+
+  it.effect('Only an administrator reads the vetting overview of projects, assessments, exemptions, flags and the service (spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction")', () => effect {
+    const { world } = try Admission
+    const signedOut = try promise(() => read(world, "/api/v1/admin/vetting"))
+    const member = try promise(() => read(world, "/api/v1/admin/vetting", "777"))
+    const admin = try promise(() => read(world, "/api/v1/admin/vetting", "801"))
+    const body = admin.body as {
+      readonly projects: ReadonlyArray<{ readonly clearance: unknown }>
+      readonly service: unknown
+      readonly assessments: ReadonlyArray<{ readonly id: string; readonly state: string; readonly requestReason: string; readonly result: unknown }>
+      readonly exemptions: unknown
+      readonly flags: unknown
+    }
+    try Effect.try(() => assert.deepStrictEqual({
+      refused: [signedOut, member].map(refusal),
+      answer: [admin.status, admin.cache],
+      projects: body.projects.map(({ clearance: _, ...shown }) => shown),
+      service: body.service,
+      assessments: body.assessments.map((each) => [each.id, each.state, each.requestReason, each.result]),
+      exemptions: body.exemptions,
+      flags: body.flags,
+    }, {
+      refused: [[401, "unauthorized", "Sign in with GitHub"], [403, "forbidden", "Admin access is required"]],
+      answer: [200, "no-store"],
+      projects: [{ id: project, name: "Admission fixture", status: "paused", revision: 1 }],
+      service: { state: "available", queueRegistrationAvailable: true },
+      assessments: [[pending, "pending", "Automatic scan of new project content", null]],
+      exemptions: [],
+      flags: [],
+    }))
+  })
+})
+
+service Unkeyed { readonly world: World }
+
+const StartedUnkeyed = Layer.effect(Unkeyed, effect {
+  const world = try acquireRelease(promise(() => started("")), (running) => promise(() => running.mf.dispose()))
+  return { world }
+})
+
+layer(StartedUnkeyed, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Without a configured service key every signed route answers vetting_unavailable and the overview says why (spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window")', () => effect {
+    const { world } = try Unkeyed
+    const queue = try promise(() => signed(world, "GET", "/api/v1/vetting/requests"))
+    const journal = try promise(() => signed(world, "POST", "/api/v1/vetting/journal", { operation: "has", assessmentId: pending }))
+    const admin = try promise(() => read(world, "/api/v1/admin/vetting", "801"))
+    try Effect.try(() => assert.deepStrictEqual({
+      refused: [queue, journal].map(refusal),
+      service: (admin.body as { readonly service: unknown }).service,
+    }, {
+      refused: [[503, "vetting_unavailable", "The vetting service is not configured"], [503, "vetting_unavailable", "The vetting service is not configured"]],
+      service: { state: "unavailable", queueRegistrationAvailable: false, reason: "The vetting service key is unavailable. New scans cannot be queued, acquired or recorded. Existing decisions still require current retained evidence." },
+    }))
+  })
+})

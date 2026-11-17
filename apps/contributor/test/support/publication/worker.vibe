@@ -1,0 +1,82 @@
+// spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { handle } from "@repo/platform/http"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { Restrictions } from "@repo/ports/backend"
+import { Clearance, Enforcement } from "@repo/ports/security"
+import { PublishedProjectsLive } from "../../../src/publication/projects.vibe"
+import { publicationRoutes } from "../../../src/publication/routes.vibe"
+import { siteAssets } from "../../../src/publication/templates.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+schema PlannedRestriction {
+  readonly projectId: string
+  readonly sourceProjectId: string
+  readonly restriction: "FlagQuarantine" | "ModeratorQuarantine" | "ServiceBan" | "ModeratorBan"
+}
+
+schema PlannedClearance {
+  readonly projectId: string
+  readonly revision: number
+  readonly templateSha256: string
+  readonly read: "ClearanceCleared" | "ClearanceUnverified" | "ClearanceRefused"
+}
+
+schema SecurityPlan {
+  readonly restrictions: ReadonlyArray<PlannedRestriction>
+  readonly clearances: ReadonlyArray<PlannedClearance>
+}
+
+const plan: { current: SecurityPlan } = { current: { restrictions: [], clearances: [] } }
+
+const security = Layer.mergeAll(
+  Layer.succeed(Restrictions, {
+    account: () => succeed({ banned: false }),
+    project: (projectId) => effect {
+      const entry = plan.current.restrictions.find((each) => each.projectId === projectId)
+      return entry === undefined ? { restricted: false } : { restricted: true, sourceProjectId: entry.sourceProjectId }
+    },
+    fence: () => succeed(sql`SELECT 1`),
+    unbanned: () => succeed(sql`1`),
+  } satisfies Restrictions.Shape),
+  Layer.succeed(Enforcement, {
+    project: (projectId) => effect {
+      const own = plan.current.restrictions.find((each) => each.projectId === projectId && each.sourceProjectId === projectId)
+      return { restriction: own?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" }
+    },
+    fence: () => succeed(sql`SELECT 1`),
+  } satisfies Enforcement.Shape),
+  Layer.succeed(Clearance, {
+    of: (pin) => effect {
+      const entry = plan.current.clearances.find((each) => each.projectId === pin.projectId && each.revision === pin.revision && each.templateSha256 === pin.templateSha256)
+      return entry?.read ?? "ClearanceRefused"
+    },
+  } satisfies Clearance.Shape),
+)
+
+const planRoute = route({ method: "POST", path: "/api/v1/test/publication-security", access: "public", limitKib: 16, request: SecurityPlan, answer: SecurityPlan, rejected: "rejected", cache: "no-store" })
+
+const planned = handle(planRoute, (input) => effect {
+  plan.current = input.body
+  return plan.current
+})
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.SLOP_DB),
+    webCrypto,
+    siteAssets(env.ASSETS),
+    security,
+    Layer.provide(PublishedProjectsLive, d1(env.SLOP_DB)),
+    Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+  ),
+  routes: Layer.mergeAll(publicationRoutes, planned),
+})

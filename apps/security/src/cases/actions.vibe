@@ -1,0 +1,428 @@
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "A technical decision records the finding, duplicate identity and relatedness"; spec/security/cases.md, "An award commits only under paid terms, eligibility and project clearance"; spec/security/cases.md, "An independent moderator upholds or returns the appeal"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
+import { millisOf } from "@repo/platform/clock"
+import { first, sql } from "@repo/platform/d1"
+import { type Actor, refuse } from "@repo/platform/http"
+import { Restrictions } from "@repo/ports/backend"
+import type { Json } from "@repo/ports/backend"
+import type { Decision, Event, PrivateCase, ProjectClearance, Receipt } from "../../gen/security__cases.ts"
+import { Rejected, apply, committed as holdsAward, reporterRelated } from "../../gen/security__cases.effect.vibe"
+import { postSecurityCasesByIdActions as rows } from "../client/refusals.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
+import type { CaseRole } from "../receipt/statements.vibe"
+import { awardSplit } from "../terms/asset.ts"
+import { allowedAmount, amountOf, eligibleUnder, fixedOffer, fullAward, losses, offeredMinor, severities } from "../terms/receipt.vibe"
+import { AwardClearances } from "./clearance.vibe"
+import { caseId as casePattern } from "./rows.vibe"
+import { type Assignments, type Change, type Observed, type Refusal, modelColumns, notAllowed, refused } from "./store.vibe"
+import { caseActions } from "./view.vibe"
+
+export type Body = Readonly<Record<string, unknown>>
+
+export interface Plan {
+  readonly observed: Observed
+  readonly actor: Actor
+  readonly body: Body
+  readonly at: string
+  readonly nowMs: number
+}
+
+export interface Planned {
+  readonly change: Change
+  readonly next: PrivateCase
+}
+
+const common = ["action", "expectedRevision", "idempotencyKey"]
+const githubIdPattern = /^[1-9]\d{0,19}$/u
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const rootCausePattern = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/u
+const sha256 = /^[0-9a-f]{64}$/u
+const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const grossPattern = /^[1-9]\d{0,38}$/u
+const noClearance: ProjectClearance = { caseRevision: 0, firstQualifying: false, rootCauseFree: false, rail: "NoRail" }
+const outcomes: Readonly<Record<string, Receipt>> = { confirmed: "Confirmed", duplicate: "Duplicate", "out-of-scope": "OutOfScope", rejected: "Rejected" }
+const unmetParticipation: Refusal = { status: 409, error: "participation_banned", message: "The award participants can no longer start a new Slop award." }
+
+schema Found { found: number }
+schema Analysis { state: string; advisory_digest: string | null }
+schema Original { project_id: string; submission_state: string }
+
+export effect function exactKeys(body: Body, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const allowed = new Set([...required, ...optional])
+  if (required.some((key) => !Object.hasOwn(body, key)) || Object.keys(body).some((key) => !allowed.has(key))) throw refused(rows.invalidRequestRequestBodyHasUnexpected)
+}
+
+effect function stringField(body: Body, key: string, pattern: RegExp, invalid: Refusal) {
+  const value = body[key]
+  if (typeof value !== "string" || !pattern.test(value)) throw refused(invalid)
+  return value
+}
+
+effect function textField(body: Body, key: string, min: number, max: number, invalid: Refusal, length: Refusal) {
+  const value = body[key]
+  if (typeof value !== "string") throw refused(invalid)
+  const trimmed = value.trim()
+  if (trimmed.length < min || trimmed.length > max) throw refused(length)
+  return trimmed
+}
+
+effect function optionalText(body: Body, key: string, max: number, invalid: Refusal, length: Refusal) {
+  const value = body[key]
+  if (value === undefined || value === null || value === "") return null
+  return try textField(body, key, 1, max, invalid, length)
+}
+
+effect function choice<T extends string>(body: Body, key: string, options: ReadonlyArray<T>, invalid: Refusal) {
+  const value = body[key]
+  const found = options.find((option) => option === value)
+  if (found === undefined) throw refused(invalid)
+  return found
+}
+
+effect function timeField(body: Body, key: string, nowMs: number, past: boolean, invalid: Refusal) {
+  const value = try stringField(body, key, timestamp, invalid)
+  const time = millisOf(value)
+  if (!Number.isFinite(time) || (past ? time > nowMs : time <= nowMs)) throw refuse(400, "invalid_request", `${key} must be a ${past ? "past" : "future"} UTC time`)
+  return value
+}
+
+effect function reason(body: Body) {
+  return try textField(body, "reason", 8, 2000, rows.invalidRequestInvalidReason, rows.invalidRequestReasonMustBe8)
+}
+
+effect function requireRole(observed: Observed, role: CaseRole, row: Refusal) {
+  if (!observed.roles.has(role)) throw refused(row)
+}
+
+effect function requireAction(observed: Observed, viewer: number, action: string, row?: Refusal) {
+  if (!caseActions(observed, viewer).includes(action)) throw row === undefined ? notAllowed(action) : refused(row)
+}
+
+effect function stepped(model: PrivateCase, event: Event, by: number, action: string, row?: Refusal) {
+  return apply(model, event, by) catch effect (error) => {
+    if (error instanceof Rejected) throw row === undefined ? notAllowed(action) : refused(row)
+    throw error
+  }
+}
+
+function changeOf(plan: Plan, before: PrivateCase, next: PrivateCase, change: Omit<Change, "set"> & { readonly set?: Assignments }): Planned {
+  return { change: { ...change, set: { ...modelColumns(before, next), ...change.set } }, next }
+}
+
+effect function verifyLink(plan: Plan) {
+  const { observed, body, actor, at, nowMs } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "receivedAt", "confirmation"])
+  try requireRole(observed, "security-maintainer", rows.forbiddenSecurityMaintainersVerify)
+  try requireAction(observed, by, "verify-link")
+  if (body.confirmation !== true) throw refused(rows.confirmationRequiredConfirmThatTheGitHub)
+  const receivedAt = try timeField(body, "receivedAt", nowMs, true, rows.invalidRequestInvalidReceivedAt)
+  const program = try (try ReportingPrograms).atReceipt({ projectId: observed.record.row.project_id, receivedAt })
+  if (program === undefined) throw notAllowed("verify-link")
+  const terms = receiptTermsOf(program, millisOf(program.publishedAt), millisOf(receivedAt))
+  const next = try stepped(observed.model, { type: "verifyLink", checkedEpoch: observed.epoch, terms }, by, "verify-link")
+  return changeOf(plan, observed.model, next, {
+    kind: "verify-link",
+    role: "security-maintainer",
+    reason: null,
+    evidenceReference: null,
+    detail: { receivedAt, receivedAtSource: "maintainer-attested", policyRevision: program.revision },
+    event: { type: "verifyLink", checkedEpoch: observed.epoch, terms },
+    set: { submission_state: "verified", received_at: receivedAt, verified_at: at, verified_by_github_id: actor.githubId, policy_revision: program.revision, terms: program.terms === undefined ? null : JSON.stringify(program.terms), award_state: program.terms === undefined ? "not-applicable" : "pending", owner_github_id: actor.githubId },
+    require: sql`NOT EXISTS (SELECT 1 FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id WHERE s.project_id = security_cases.project_id AND s.advisory_ghsa = security_cases.advisory_ghsa AND s.state IN ('submitted', 'receipt-verified'))`,
+    unmet: rows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas,
+  })
+}
+
+effect function rejectLink(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "reason"])
+  try requireRole(observed, "security-maintainer", rows.forbiddenSecurityMaintainersVerify)
+  try requireAction(observed, by, "reject-link")
+  const text = try reason(body)
+  const event: Event = { type: "rejectLink", checkedEpoch: observed.epoch }
+  const next = try stepped(observed.model, event, by, "reject-link")
+  return changeOf(plan, observed.model, next, { kind: "reject-link", role: "security-maintainer", reason: text, evidenceReference: null, detail: {}, event, set: { submission_state: "link-rejected" } })
+}
+
+function memberGuard(plan: Plan, idempotencyKey: string, kind: string, githubId: string) {
+  const { row } = plan.observed.record
+  return sql`EXISTS (SELECT 1 FROM security_case_events WHERE case_id = ${row.id} AND case_revision = ${row.revision + 1} AND idempotency_key = ${idempotencyKey} AND kind = ${kind} AND json_extract(detail, '$.githubId') = ${githubId})`
+}
+
+effect function triagers(plan: Plan, kind: "assign-triager" | "revoke-triager", idempotencyKey: string) {
+  const { observed, body, actor, at } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "githubId"], kind === "assign-triager" ? ["githubLogin"] : [])
+  try requireRole(observed, "security-maintainer", rows.forbiddenSecurityMaintainersAssign)
+  try requireAction(observed, by, kind)
+  const githubId = try stringField(body, "githubId", githubIdPattern, rows.invalidRequestInvalidGithubId)
+  const { row } = observed.record
+  if (githubId === row.reporter_github_id) throw refused(rows.conflictedTheReporterCannotTriage)
+  const guard = memberGuard(plan, idempotencyKey, kind, githubId)
+  const target = githubNumber(githubId)
+  if (kind === "assign-triager") {
+    const login = try stringField(body, "githubLogin", githubLogin, rows.invalidRequestInvalidGithubLogin)
+    const event: Event = { type: "assignTriager", checkedEpoch: observed.epoch, actor: target }
+    const next = try stepped(observed.model, event, by, kind, rows.alreadyAssigned)
+    return changeOf(plan, observed.model, next, {
+      kind, role: "security-maintainer", reason: null, evidenceReference: null, detail: { githubId, githubLogin: login }, event,
+      after: [sql`INSERT INTO security_case_members (case_id, github_id, github_login, role, added_by_github_id, added_at) SELECT ${row.id}, ${githubId}, ${login}, 'triager', ${actor.githubId}, ${at} WHERE ${guard}`],
+    })
+  }
+  if (!observed.record.members.some((member) => member.github_id === githubId && member.revoked_at === null)) throw refused(rows.notAssigned)
+  const event: Event = { type: "revokeTriager", checkedEpoch: observed.epoch, actor: target }
+  const next = try stepped(observed.model, event, by, kind, rows.notAssigned)
+  return changeOf(plan, observed.model, next, {
+    kind, role: "security-maintainer", reason: null, evidenceReference: null, detail: { githubId }, event,
+    after: [sql`UPDATE security_case_members SET revoked_at = ${at}, revoked_by_github_id = ${actor.githubId} WHERE case_id = ${row.id} AND github_id = ${githubId} AND revoked_at IS NULL AND ${guard}`],
+  })
+}
+
+effect function requestInformation(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "reason"])
+  try requireAction(observed, by, "request-information")
+  const text = try reason(body)
+  const event: Event = { type: "requestInformation", checkedEpoch: observed.epoch }
+  const next = try stepped(observed.model, event, by, "request-information")
+  return changeOf(plan, observed.model, next, { kind: "request-information", role: observed.roles.has("security-maintainer") ? "security-maintainer" : "triager", reason: text, evidenceReference: null, detail: {}, event })
+}
+
+effect function rootCauseFree(projectId: string, caseId: string, rootCauseKey: string) {
+  const taken = try first(Found, sql`SELECT 1 AS found FROM security_award_reservations WHERE project_id = ${projectId} AND root_cause_key = ${rootCauseKey}
+    UNION ALL SELECT 1 FROM security_direct_awards WHERE project_id = ${projectId} AND root_cause_key = ${rootCauseKey}
+    UNION ALL SELECT 1 FROM security_cases o WHERE o.project_id = ${projectId} AND o.id <> ${caseId} AND o.root_cause_key = ${rootCauseKey} AND o.receipt_state = 'confirmed' AND o.award_state = 'pending' AND (o.related_party_review = 'pending' OR COALESCE(o.award_gross_base, o.award_gross_minor) IS NOT NULL) LIMIT 1`)
+  if (taken !== undefined) throw refused(rows.rootCauseReserved)
+}
+
+effect function evidenceDigestOf(body: Body, caseId: string) {
+  if (body.evidenceDigest !== undefined) return try stringField(body, "evidenceDigest", sha256, rows.invalidRequestInvalidEvidenceDigest)
+  const latest = try first(Analysis, sql`SELECT state, advisory_digest FROM security_case_analyses WHERE case_id = ${caseId} ORDER BY attempt DESC LIMIT 1`)
+  return latest?.state === "complete" ? latest.advisory_digest : null
+}
+
+effect function decide(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  const { row } = observed.record
+  try exactKeys(body, [...common, "outcome", "severity", "loss", "inScope", "reason", "relatedParty"], ["rootCauseKey", "duplicateOf", "evidenceReference", "evidenceDigest", "award"])
+  try requireRole(observed, "security-maintainer", rows.forbiddenSecurityMaintainersDecide)
+  try requireAction(observed, by, "decide", rows.actionNotAllowedTheCaseDoesNotAllowDecideIn)
+  if (holdsAward(observed.model)) throw refused(rows.awardObligationExists)
+  const outcome = try choice(body, "outcome", ["confirmed", "duplicate", "out-of-scope", "rejected"], rows.invalidRequestInvalidOutcome)
+  const severity = try choice(body, "severity", ["critical", "high", "medium", "low", "informational", "unresolved"], rows.invalidRequestInvalidSeverity)
+  const loss = try choice(body, "loss", ["verified-potential", "verified-actual", "not-verified", "unresolved"], rows.invalidRequestInvalidLoss)
+  if (typeof body.inScope !== "boolean") throw refused(rows.invalidRequestInvalidInScope)
+  if (typeof body.relatedParty !== "boolean") throw refused(rows.invalidRequestInvalidRelatedParty)
+  const inScope = body.inScope
+  const relatedParty = body.relatedParty || reporterRelated(observed.model)
+  const text = try reason(body)
+  const evidenceReference = try optionalText(body, "evidenceReference", 500, rows.invalidRequestInvalidEvidenceReference, rows.invalidRequestEvidenceReferenceMustBe1)
+  const rootCauseKey = body.rootCauseKey === undefined ? null : try stringField(body, "rootCauseKey", rootCausePattern, rows.invalidRequestInvalidRootCauseKey)
+  const evidenceDigest = try evidenceDigestOf(body, row.id)
+  let duplicateOf: string | null = null
+  if (outcome === "duplicate") {
+    duplicateOf = try stringField(body, "duplicateOf", casePattern, rows.invalidRequestInvalidDuplicateOf)
+    const original = try first(Original, sql`SELECT project_id, submission_state FROM security_cases WHERE id = ${duplicateOf}`)
+    if (original === undefined || original.project_id !== row.project_id || duplicateOf === row.id || original.submission_state !== "verified") throw refused(rows.invalidDuplicate)
+  } else if (body.duplicateOf !== undefined) throw refused(rows.invalidRequestDuplicateOfAppliesOnlyTo)
+  if ((outcome === "confirmed" || outcome === "duplicate") && rootCauseKey === null) throw refused(rows.invalidRequestRecordTheRootCause)
+  if (outcome === "confirmed" && observed.record.frozen !== undefined && rootCauseKey !== null) try rootCauseFree(row.project_id, row.id, rootCauseKey)
+  const decision: Decision = { finding: outcomes[outcome] ?? "Rejected", severity: severities[severity], loss: losses[loss], inScope, rootCause: rootCauseKey === null ? 0 : 1, duplicateOf: duplicateOf === null ? 0 : 1, declareRelated: body.relatedParty }
+  const event: Event = { type: "decide", checkedEpoch: observed.epoch, version: observed.model.reportVersion, decision }
+  const next = try stepped(observed.model, event, by, "decide", rows.actionNotAllowedTheCaseDoesNotAllowDecideIn)
+  const detail = { outcome, severity, loss, inScope, relatedParty, priority: severity === "critical" || loss === "verified-potential" || loss === "verified-actual" }
+  const decided = changeOf(plan, observed.model, next, {
+    kind: "decide", role: "security-maintainer", reason: text, evidenceReference, detail, event,
+    set: { severity, loss_finding: loss, root_cause_key: rootCauseKey, duplicate_of: duplicateOf, evidence_digest: evidenceDigest, technical_decider_github_id: actor.githubId },
+  })
+  if (body.award === undefined) return decided
+  const award = body.award
+  if (typeof award !== "object" || award === null || Array.isArray(award)) throw refused(rows.invalidRequestInvalidAward)
+  if (outcome !== "confirmed" || observed.record.frozen === undefined) throw refused(rows.invalidRequestAnAwardNeedsA)
+  const awardBody = award as Body
+  try exactKeys(awardBody, ["decision"], ["grossMinor", "paymentDeadline", "confirmation"])
+  const awarded = try planAward(plan, next, awardBody, rootCauseKey ?? "")
+  return { change: { ...awarded.change, kind: "decide", role: "security-maintainer", reason: text, evidenceReference, detail: { ...detail, award: awarded.change.detail }, set: { ...decided.change.set, ...awarded.change.set, ...modelColumns(observed.model, awarded.next) } }, next: awarded.next } satisfies Planned
+}
+
+effect function eligibility(plan: Plan, model: PrivateCase) {
+  if (eligibleUnder(model.terms, model.inScope, model.severity, model.loss)) return
+  const frozen = plan.observed.record.frozen
+  const inScopeProgram = frozen?.eligibility === "in-scope-security"
+  if (!inScopeProgram && !(model.severity === "Critical" && (model.loss === "VerifiedPotential" || model.loss === "VerifiedActual"))) throw refused(rows.awardNotEligible)
+  throw refused(rows.awardNotEligibleThisProgramAwardsOnly)
+}
+
+effect function participation(plan: Plan) {
+  const { authority } = plan.observed.model
+  const reporter = githubNumber(plan.observed.record.row.reporter_github_id)
+  if (authority.banned.includes(reporter) || authority.banned.includes(githubNumber(plan.actor.githubId))) throw refused(rows.participationBanned)
+  if (authority.programRestricted) throw refused(rows.programRestricted)
+}
+
+effect function unbannedGuard(plan: Plan) {
+  const restrictions = try Restrictions
+  const reporter = try restrictions.unbanned(plan.observed.record.row.reporter_github_id)
+  const actor = try restrictions.unbanned(plan.actor.githubId)
+  return sql`${reporter} AND ${actor}`
+}
+
+effect function clearanceFor(plan: Plan, model: PrivateCase, grossMinor: string, rootCauseKey: string, proposal: boolean) {
+  const { row, frozen } = plan.observed.record
+  if (frozen === undefined) throw refused(rows.actionNotAllowedTheCaseHasNo)
+  return try (try AwardClearances).commitment({
+    caseId: row.id,
+    projectId: row.project_id,
+    caseRevision: row.revision,
+    modelRevision: model.revision,
+    rootCauseKey,
+    policyRevision: row.policy_revision,
+    terms: frozen,
+    grossMinor,
+    reporterGithubId: row.reporter_github_id,
+    actorGithubId: plan.actor.githubId,
+    proposal,
+    at: plan.at,
+  })
+}
+
+function decisionWithout(body: Body) {
+  return body.grossMinor !== undefined || body.paymentDeadline !== undefined || body.confirmation !== undefined
+}
+
+effect function planAward(plan: Plan, model: PrivateCase, body: Body, rootCauseKey: string) {
+  const { observed, actor, nowMs } = plan
+  const by = githubNumber(actor.githubId)
+  const { row, frozen } = observed.record
+  const decision = try choice(body, "decision", ["none", "amount"], rows.invalidRequestInvalidDecision)
+  if (frozen === undefined) throw refused(rows.actionNotAllowedNoPaidTermsWere)
+  const reserved = row.reserved === 1
+  if (decision === "none") {
+    if (decisionWithout(body)) throw refused(rows.invalidRequestNoAwardTakesNo)
+    if (reserved) throw refused(rows.awardObligationExists)
+    const event: Event = { type: "declineAward", checkedEpoch: observed.epoch }
+    const next = try stepped(model, event, by, "award")
+    return changeOf(plan, model, next, { kind: "award", role: "security-maintainer", reason: null, evidenceReference: null, detail: { decision }, event, set: { award_gross_minor: null } })
+  }
+  if (fixedOffer(frozen)) try eligibility(plan, model)
+  const grossMinor = try stringField(body, "grossMinor", grossPattern, rows.invalidRequestInvalidGrossMinor)
+  if (fixedOffer(frozen) && grossMinor !== offeredMinor(frozen)) throw refused(rows.awardAmountMismatch)
+  const split = awardSplit(grossMinor, fullAward(frozen))
+  if (split.kind === "indivisible") throw refuse(rows.invalidAmount.status, rows.invalidAmount.error, split.message)
+  const paymentDeadline = try timeField(body, "paymentDeadline", nowMs, false, rows.invalidRequestInvalidPaymentDeadline)
+  if (body.confirmation !== true) throw refused(rows.confirmationRequiredConfirmTheAwardGross)
+  const detail: { readonly [key: string]: Json } = { decision, ...split.shares }
+  if (reserved) {
+    if (row.award_gross_minor !== grossMinor) throw refused(rows.awardObligationExistsThisCaseAlreadyReserved)
+    const event: Event = { type: "approveReservedAward", checkedEpoch: observed.epoch, amount: amountOf(grossMinor) }
+    const next = try stepped(model, event, by, "award")
+    return changeOf(plan, model, next, { kind: "award", role: "security-maintainer", reason: null, evidenceReference: null, detail, event, set: { payment_deadline: paymentDeadline, award_gross_minor: grossMinor } })
+  }
+  if (!allowedAmount(model.terms, grossMinor)) throw refused(rows.awardAmountMismatch)
+  try eligibility(plan, model)
+  try participation(plan)
+  const proposal = reporterRelated(model) && model.relatedReview !== "ReviewApproved"
+  const commitment = try clearanceFor(plan, model, grossMinor, rootCauseKey === "" ? row.root_cause_key ?? "" : rootCauseKey, proposal)
+  const event: Event = { type: "decideAward", checkedEpoch: observed.epoch, amount: amountOf(grossMinor), clearance: commitment.clearance }
+  const next = try stepped(model, event, by, "award")
+  const unbanned = try unbannedGuard(plan)
+  return changeOf(plan, model, next, {
+    kind: "award", role: "security-maintainer", reason: null, evidenceReference: null,
+    detail: proposal ? { ...detail, relatedPartyReview: "pending" } : detail,
+    event,
+    set: { award_gross_minor: grossMinor, payment_deadline: paymentDeadline },
+    before: proposal ? [] : commitment.before,
+    require: sql`${unbanned} AND ${commitment.require}`,
+    unmet: proposal ? unmetParticipation : commitment.unmet,
+    relatedReview: proposal,
+  })
+}
+
+effect function award(plan: Plan) {
+  const { observed, body, actor } = plan
+  try exactKeys(body, [...common, "decision", "reason"], ["grossMinor", "paymentDeadline", "confirmation"])
+  try requireRole(observed, "security-maintainer", rows.forbiddenTheProjectOwnerDecides)
+  try requireAction(observed, githubNumber(actor.githubId), "award")
+  const text = try reason(body)
+  const planned = try planAward(plan, observed.model, body, observed.record.row.root_cause_key ?? "")
+  return { ...planned, change: { ...planned.change, reason: text } } satisfies Planned
+}
+
+effect function appeal(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "reason"])
+  try requireAction(observed, by, "appeal")
+  const text = try textField(body, "reason", 20, 2000, rows.invalidRequestInvalidReason, rows.invalidRequestReasonMustBe20)
+  const event: Event = { type: "appeal" }
+  const next = try stepped(observed.model, event, by, "appeal")
+  const from = observed.record.row.receipt_state
+  return changeOf(plan, observed.model, next, { kind: "appeal", role: "reporter", reason: text, evidenceReference: null, detail: { from }, event, set: { appeal_from_state: from } })
+}
+
+function priorDecider(observed: Observed, by: number) {
+  return observed.model.deciders.includes(by)
+}
+
+effect function decideAppeal(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  try exactKeys(body, [...common, "outcome", "reason"])
+  try requireAction(observed, by, "decide-appeal")
+  if (priorDecider(observed, by)) throw refused(rows.conflictedYouDecidedThisCase)
+  const outcome = try choice(body, "outcome", ["uphold", "return"], rows.invalidRequestInvalidOutcome)
+  const text = try reason(body)
+  const event: Event = { type: "decideAppeal", checkedEpoch: observed.epoch, uphold: outcome === "uphold" }
+  const next = try stepped(observed.model, event, by, "decide-appeal", rows.conflictedYouDecidedThisCase)
+  return changeOf(plan, observed.model, next, { kind: "decide-appeal", role: "dispute", reason: text, evidenceReference: null, detail: { outcome }, event })
+}
+
+effect function decideRelatedParty(plan: Plan) {
+  const { observed, body, actor } = plan
+  const by = githubNumber(actor.githubId)
+  const { row, frozen } = observed.record
+  try exactKeys(body, [...common, "outcome", "reason"])
+  try requireAction(observed, by, "decide-related-party")
+  if (priorDecider(observed, by)) throw refused(rows.conflictedYouAlreadyReviewedThis)
+  const outcome = try choice(body, "outcome", ["approve", "refuse"], rows.invalidRequestInvalidOutcome)
+  const text = try reason(body)
+  const reviewed = { related_party_reviewer_github_id: actor.githubId }
+  if (outcome === "refuse") {
+    const event: Event = { type: "reviewRelated", checkedEpoch: observed.epoch, approve: false, clearance: noClearance }
+    const next = try stepped(observed.model, event, by, "decide-related-party", rows.conflictedYouAlreadyReviewedThis)
+    return changeOf(plan, observed.model, next, { kind: "decide-related-party", role: "dispute", reason: text, evidenceReference: null, detail: { outcome }, event, set: { ...reviewed, award_gross_minor: null } })
+  }
+  try participation(plan)
+  const grossMinor = row.award_gross_minor ?? offeredMinor(frozen) ?? ""
+  const commitment = try clearanceFor(plan, observed.model, grossMinor, row.root_cause_key ?? "", false)
+  const event: Event = { type: "reviewRelated", checkedEpoch: observed.epoch, approve: true, clearance: commitment.clearance }
+  const next = try stepped(observed.model, event, by, "decide-related-party")
+  const unbanned = try unbannedGuard(plan)
+  return changeOf(plan, observed.model, next, {
+    kind: "decide-related-party", role: "dispute", reason: text, evidenceReference: null, detail: { outcome }, event,
+    set: { ...reviewed, award_gross_minor: grossMinor },
+    before: commitment.before,
+    require: sql`${unbanned} AND ${commitment.require}`,
+    unmet: commitment.unmet,
+  })
+}
+
+export effect function planned(action: string, plan: Plan, idempotencyKey: string) {
+  switch (action) {
+    case "verify-link": return try verifyLink(plan)
+    case "reject-link": return try rejectLink(plan)
+    case "assign-triager": return try triagers(plan, "assign-triager", idempotencyKey)
+    case "revoke-triager": return try triagers(plan, "revoke-triager", idempotencyKey)
+    case "request-information": return try requestInformation(plan)
+    case "decide": return try decide(plan)
+    case "award": return try award(plan)
+    case "appeal": return try appeal(plan)
+    case "decide-appeal": return try decideAppeal(plan)
+    case "decide-related-party": return try decideRelatedParty(plan)
+    default: return undefined
+  }
+}

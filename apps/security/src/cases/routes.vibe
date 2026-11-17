@@ -1,0 +1,297 @@
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Legacy GitHub-first record, import and receipt-check cases stay readable and accept no new write"
+import { isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
+import { type Actor, Refused, handleRaw, json, jsonBody } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "@repo/ports/backend"
+import { NotAState, apply, initial } from "../../gen/security__cases.effect.vibe"
+import { ownerBudgetMs } from "../analysis/route.vibe"
+import { analyze } from "../assessment/routes.vibe"
+import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
+import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
+import { projectId as projectPattern } from "../intake/availability.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { caseEvent, caseInsert } from "../receipt/statements.vibe"
+import { type Body, exactKeys, planned } from "./actions.vibe"
+import { CaseRow, caseColumns, caseRecord } from "./rows.vibe"
+import { type Observed, accessLog, audited, caseNotices, committed, observedAs, observedCase, refused } from "./store.vibe"
+import { type Starter, scheduledTriage, triageMayStart, triaged } from "./triage.vibe"
+import { type ExtraActions, caseView, noExtraActions } from "./view.vibe"
+
+export interface CaseActionInput {
+  readonly observed: Observed
+  readonly actor: Actor
+  readonly body: Body
+  readonly idempotencyKey: string
+  readonly at: string
+}
+
+export service CaseActionHandlers {
+  contribution(observed: Observed, viewerGithubId: string): ExtraActions!!
+  act(action: string, input: CaseActionInput): (unknown | undefined)!unknown
+}
+
+schema Replay { kind: string; actor_github_id: string }
+schema Linked { case_id: string }
+schema ProgramRow { id: string; bounty: number }
+
+const common = ["action", "expectedRevision", "idempotencyKey"]
+const idempotencyPattern = /^[A-Za-z0-9_-]{16,80}$/u
+const ghsa = /^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$/u
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+const listLimit = 500
+
+function answer(body: unknown, status = 200) {
+  return json(body, status, privateHeaders)
+}
+
+effect function extraActions(observed: Observed, viewerGithubId: string) {
+  const handlers = try Effect.serviceOption(CaseActionHandlers)
+  return Option.isSome(handlers) ? try handlers.value.contribution(observed, viewerGithubId) : noExtraActions
+}
+
+effect function shownCase(observed: Observed, actor: Actor, includeHistory: boolean) {
+  return try caseView(observed, actor.githubId, includeHistory, try extraActions(observed, actor.githubId))
+}
+
+effect function current(id: string, actor: Actor) {
+  return try observedCase(id, actor.githubId, actionRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+}
+
+export effect function opened(actor: Actor, id: string) {
+  const observed = try observedCase(id, actor.githubId, readRows.notFoundCaseNotFound, actionRows.githubUnavailable)
+  try audited(id, actor.githubId, observed.roles)
+  return { case: try shownCase(observed, actor, true) }
+}
+
+effect function rememberedAuthority() {
+  const authority = try RepositoryAuthority
+  const reads = new Map<string, AuthorityRead>()
+  return {
+    repository: effect (read) => {
+      const key = `${read.actorGithubId}:${read.repositoryId}`
+      const known = reads.get(key)
+      if (known !== undefined) return known
+      const fresh = try authority.repository(read)
+      reads.set(key, fresh)
+      return fresh
+    },
+  } satisfies RepositoryAuthority.Shape
+}
+
+effect function projectAuthority(projectId: string, viewerGithubId: string) {
+  const project = try (try Registry).project(projectId)
+  const repository = project?.repositories[0]
+  if (project === undefined || repository === undefined) return "denied" as const
+  const read = try (try RepositoryAuthority).repository({ actorGithubId: viewerGithubId, repositoryId: repository.id })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return "unavailable" as const
+  return read.installation === "Installed" && (viewerGithubId === project.stewardGithubId || read.permission === "PermissionVerified") ? "granted" as const : "denied" as const
+}
+
+effect function visibleProjects(actor: Actor) {
+  const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') = 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
+  const reporting = try ReportingPrograms
+  const roles = new Map<string, Set<string>>()
+  const scoped: string[] = []
+  let authorityUnavailable = false
+  for (const program of programs) {
+    const held = new Set<string>()
+    if (program.bounty === 1) {
+      const approvers = (try reporting.current(program.id))?.approvers
+      if (approvers?.technical.includes(actor.githubId) === true) held.add("security-maintainer")
+      if (approvers?.financial.includes(actor.githubId) === true) held.add("financial")
+    } else {
+      const read = try projectAuthority(program.id, actor.githubId)
+      if (read === "unavailable") authorityUnavailable = true
+      if (read === "granted") held.add("security-maintainer")
+    }
+    if (held.size === 0) continue
+    roles.set(program.id, held)
+    scoped.push(program.id)
+  }
+  return { roles, scoped, authorityUnavailable }
+}
+
+effect function listedRecord(id: string) {
+  return caseRecord(id) catch effect (error) => {
+    if (!(error instanceof NotAState) && !(error instanceof RowMismatch)) throw error
+    try Effect.logWarning("security case left out of the case list", { caseId: id, reason: error._tag })
+    return undefined
+  }
+}
+
+effect function visibleCases(actor: Actor) {
+  const projects = try visibleProjects(actor)
+  const { roles, scoped } = projects
+  let authorityUnavailable = projects.authorityUnavailable
+  const moderator = try (try Roles).has(actor.githubId, "moderator")
+  const scope = scoped.length === 0 ? sql`` : sql` OR c.project_id IN (SELECT value FROM json_each(${JSON.stringify(scoped)}))`
+  const disputes = moderator ? sql` OR c.appeal_state <> 'none' OR c.related_party_review <> 'not-applicable'` : sql``
+  const candidates = try allRows(CaseRow, sql`SELECT ${caseColumns} FROM security_cases c WHERE c.reporter_github_id = ${actor.githubId} OR c.id IN (SELECT case_id FROM security_case_members WHERE github_id = ${actor.githubId} AND revoked_at IS NULL)${scope}${disputes} ORDER BY c.created_at DESC LIMIT ${listLimit}`)
+  const visible: Observed[] = []
+  for (const candidate of candidates) {
+    const record = try listedRecord(candidate.id)
+    if (record === undefined) continue
+    const observed = observedAs(record, actor.githubId, actionRows.githubUnavailable) catch effect (error) => {
+      if (error instanceof Refused && error.code === actionRows.githubUnavailable.error) return undefined
+      throw error
+    }
+    if (observed === undefined) {
+      authorityUnavailable = true
+      continue
+    }
+    if (observed.roles.size === 0) continue
+    visible.push(observed)
+    if (!observed.roles.has("dispute")) continue
+    const held = roles.get(record.row.project_id) ?? new Set<string>()
+    held.add("dispute")
+    roles.set(record.row.project_id, held)
+  }
+  const cases: unknown[] = []
+  for (const observed of visible) cases.push(try shownCase(observed, actor, false))
+  const at = try isoNow()
+  if (visible.length > 0) try (try D1).batch(visible.map((observed) => accessLog(observed.record.row.id, actor.githubId, observed.roles, "read", at)))
+  return {
+    viewer: { githubId: actor.githubId, githubLogin: actor.login },
+    programs: [...roles.entries()].map(([projectId, held]) => ({ projectId, roles: [...held].sort() })),
+    cases,
+    authorityUnavailable,
+  }
+}
+
+export effect function listed(actor: Actor) {
+  return try provideService(visibleCases(actor), RepositoryAuthority, try rememberedAuthority())
+}
+
+effect function stringField(body: Body, key: string, pattern: RegExp, invalid: { readonly status: number; readonly error: string; readonly message: string }) {
+  const value = body[key]
+  if (typeof value !== "string" || !pattern.test(value)) throw refused(invalid)
+  return value
+}
+
+effect function replayedClaim(caseId: string, actor: Actor) {
+  const record = try caseRecord(caseId)
+  if (record === undefined || record.row.reporter_github_id !== actor.githubId) return undefined
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  if (observed.roles.size === 0) return undefined
+  try audited(caseId, actor.githubId, observed.roles)
+  return { replayed: true, case: try shownCase(observed, actor, true) }
+}
+
+export effect function claimed(actor: Actor, body: Body) {
+  if (body.mode !== "claim") throw refused(createRows.invalidRequestInvalidMode)
+  try exactKeys(body, ["mode", "projectId", "advisory", "idempotencyKey"])
+  const projectId = try stringField(body, "projectId", projectPattern, createRows.invalidRequestInvalidProjectId)
+  const advisory = try stringField(body, "advisory", ghsa, createRows.invalidRequestInvalidAdvisory)
+  const idempotencyKey = try stringField(body, "idempotencyKey", idempotencyPattern, createRows.invalidRequestInvalidIdempotencyKey)
+  const program = try (try ReportingPrograms).current(projectId)
+  if (program === undefined) throw refused(createRows.programNotFoundThisProjectHasNo)
+  const project = try (try Registry).project(projectId)
+  if (project === undefined || project.listingTier === "Retired") throw refused(createRows.projectNotFound)
+  const linked = try first(Linked, sql`SELECT case_id FROM security_submissions WHERE project_id = ${projectId} AND repository = ${program.repository} AND advisory_ghsa = ${advisory} AND case_id IS NOT NULL AND state IN ('submitted', 'receipt-verified') AND EXISTS (SELECT 1 FROM security_submission_intake i WHERE i.submission_id = security_submissions.id)`)
+  if (linked !== undefined) {
+    const replay = try replayedClaim(linked.case_id, actor)
+    if (replay !== undefined) return answer(replay)
+    throw refused(createRows.advisoryAlreadyRecorded)
+  }
+  try orDie(apply(initial, { type: "claim" }, initial.reporter))
+  const id = `sc_${(try randomId()).replaceAll("-", "")}`
+  const at = try isoNow()
+  const notices = try caseNotices({ caseId: id, revision: 1, kind: "claim", idempotencyKey, actorGithubId: actor.githubId, reporterGithubId: actor.githubId, detail: {}, program, relatedReview: false, at })
+  const written = (try D1).batch([
+    caseInsert({ id, projectId, repository: program.repository, advisory, reporter: { githubId: actor.githubId, login: actor.login }, verified: undefined, ownerGithubId: null, at }),
+    caseEvent({ caseId: id, revision: 1, kind: "claim", actorGithubId: actor.githubId, role: "reporter", idempotencyKey, reason: null, evidenceReference: null, detail: { advisory }, at, guard: false }),
+    accessLog(id, actor.githubId, new Set(["reporter"]), "write", at),
+    ...notices,
+  ]) catch effect (error) => {
+    if (error instanceof ConstraintViolation && /UNIQUE/iu.test(error.message)) return undefined
+    throw error
+  }
+  if (written === undefined) {
+    const existing = try first(Linked, sql`SELECT id AS case_id FROM security_cases WHERE project_id = ${projectId} AND advisory_ghsa = ${advisory} AND reporter_github_id = ${actor.githubId} AND submission_state <> 'link-rejected'`)
+    const replay = existing === undefined ? undefined : try replayedClaim(existing.case_id, actor)
+    if (replay !== undefined) return answer(replay)
+    throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  }
+  const record = try caseRecord(id)
+  if (record === undefined) throw refused(createRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  return answer({ case: try shownCase(observed, actor, true) }, 201)
+}
+
+export type Performed =
+  | { readonly kind: "answered"; readonly body: unknown }
+  | { readonly kind: "changed"; readonly caseId: string }
+  | { readonly kind: "triage"; readonly caseId: string; readonly starter: Starter }
+
+export effect function performed(actor: Actor, id: string, body: Body) {
+  const observed = try current(id, actor)
+  const { row } = observed.record
+  const action = typeof body.action === "string" ? body.action : ""
+  const idempotencyKey = try stringField(body, "idempotencyKey", idempotencyPattern, actionRows.invalidRequestInvalidIdempotencyKey)
+  const replay = try first(Replay, sql`SELECT kind, actor_github_id FROM security_case_events WHERE case_id = ${row.id} AND idempotency_key = ${idempotencyKey}`)
+  if (replay !== undefined) {
+    if (replay.kind !== action || replay.actor_github_id !== actor.githubId) throw refused(actionRows.idempotencyConflict)
+    try audited(row.id, actor.githubId, observed.roles)
+    return { kind: "answered", body: { replayed: true, case: try shownCase(observed, actor, true) } } satisfies Performed
+  }
+  if (typeof body.expectedRevision !== "number" || !Number.isSafeInteger(body.expectedRevision)) throw refused(actionRows.invalidRequestInvalidExpectedRevision)
+  if (body.expectedRevision !== row.revision) throw refused(actionRows.staleRevision)
+  if (action === "analyze") {
+    try exactKeys(body, common)
+    try analyze({ caseId: row.id, actor })
+    return { kind: "changed", caseId: row.id } satisfies Performed
+  }
+  if (action === "triage-appeal") {
+    try exactKeys(body, common)
+    if (!observed.roles.has("dispute") || observed.model.appeal !== "AppealOpen") throw refused(actionRows.actionNotAllowedTheCaseDoesNot)
+    const by = githubNumber(actor.githubId)
+    if (!triageMayStart(observed.model, by, observed.epoch, try Clock.currentTimeMillis)) throw refused(actionRows.analysisRunning)
+    return { kind: "triage", caseId: row.id, starter: { kind: "moderator", by, epoch: observed.epoch, model: observed.model } } satisfies Performed
+  }
+  if (row.submission_state !== "verified" && action !== "verify-link" && action !== "reject-link") throw refused(actionRows.notVerified)
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoNow()
+  const plan = try planned(action, { observed, actor, body, at, nowMs }, idempotencyKey)
+  if (plan === undefined) {
+    const handlers = try Effect.serviceOption(CaseActionHandlers)
+    const handled = Option.isSome(handlers) ? try handlers.value.act(action, { observed, actor, body, idempotencyKey, at }) : undefined
+    if (handled === undefined) throw refused(actionRows.invalidRequestUnknownAction)
+    return { kind: "answered", body: handled } satisfies Performed
+  }
+  try committed({ observed, actor, change: plan.change, idempotencyKey, at })
+  if (plan.change.kind === "appeal") return { kind: "triage", caseId: row.id, starter: { kind: "automatic" } } satisfies Performed
+  return { kind: "changed", caseId: row.id } satisfies Performed
+}
+
+export effect function acted(actor: Actor, id: string, body: Body) {
+  const done: Performed = try performed(actor, id, body)
+  if (done.kind === "answered") return done.body
+  if (done.kind === "triage") {
+    if (done.starter.kind === "automatic") try scheduledTriage(done.caseId)
+    else try triaged(done.caseId, done.starter, ownerBudgetMs)
+  }
+  return try afterwards(done.caseId, actor)
+}
+
+effect function afterwards(id: string, actor: Actor) {
+  const record = try caseRecord(id)
+  if (record === undefined) throw refused(actionRows.notFoundCaseNotFound)
+  const observed = try observedAs(record, actor.githubId, actionRows.githubUnavailable)
+  if (observed.roles.size === 0) return { case: { id: record.row.id, revision: record.row.revision } }
+  try audited(id, actor.githubId, observed.roles)
+  return { case: try shownCase(observed, actor, true) }
+}
+
+effect function bodyOf(limitKib: number) {
+  return (try jsonBody(limitKib)) as Body
+}
+
+export const caseRoutes = Layer.mergeAll(
+  handleRaw(listCases, (input) => Effect.map(listed(input.actor), (body) => answer(body))),
+  handleRaw(readCase, (input) => Effect.map(opened(input.actor, input.params.id ?? ""), (body) => answer(body))),
+  handleRaw(claimCase, (input) => Effect.flatMap(bodyOf(claimCase.limitKib), (body) => claimed(input.actor, body))),
+  handleRaw(actOnCase, (input) => Effect.flatMap(bodyOf(actOnCase.limitKib), (body) => Effect.map(acted(input.actor, input.params.id ?? "", body), (result) => answer(result)))),
+)

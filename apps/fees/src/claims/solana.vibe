@@ -1,0 +1,274 @@
+// spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { type Address, type Commitment, type FetchedTransaction, type Message, type TokenBalance, type TransactionMeta, ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, SolanaRpc, associatedTokenAddress, base58Encode, base64Decode, base64Encode, decodeTokenAccount, encodeMessage, encodeTransaction, findPda, publicKey } from "@repo/platform/chain/solana"
+import { conversionSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import { jupiterQuote } from "../jupiter/quote.vibe"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import type { SolanaReviewed, SolanaWalletOptions } from "../signer/solana.vibe"
+import { digest58, u64At, wideOf } from "../solana/bytes.ts"
+import { FeeSolana, addressed, admittedMint, blockhashAnchor, lamportDeltas, networkFee, signatureOfText } from "../solana/client.vibe"
+import { wrappedSol } from "../solana/wire.vibe"
+import { DeploymentRefused, type SolanaVaultDeployment, VaultDeployments } from "./deployments.vibe"
+import { type ClaimEvidence, ClaimRefused, failedClaim } from "./evm.vibe"
+
+const projectSize = 332
+const configSize = 105
+const accruedOffset = 316
+const projectDiscriminator = Uint8Array.of(205, 168, 189, 202, 181, 247, 142, 19)
+const configDiscriminator = Uint8Array.of(155, 12, 170, 224, 30, 250, 204, 130)
+const claimFeesData = Uint8Array.of(82, 251, 233, 156, 12, 52, 184, 202)
+const claimFeesNativeData = Uint8Array.of(191, 89, 211, 129, 186, 98, 126, 166)
+const feesClaimedTag = Uint8Array.of(22, 104, 110, 222, 38, 157, 14, 62)
+const createIdempotent = Uint8Array.of(1)
+const recentProjectSignatures = 25
+const tokenAccountSize = 165
+const token2022AccountSize = 170
+
+export interface SolanaVaultState {
+  readonly deployment: SolanaVaultDeployment
+  readonly accrued: bigint
+}
+
+export type ClaimTarget = Pick<SolanaVaultDeployment, "program" | "project" | "vault" | "mint">
+
+export interface SolanaClaimPlan extends ClaimTarget {
+  readonly amount: bigint
+  readonly valueMicro: bigint
+}
+
+export type ClaimSigning = Pick<SolanaWalletOptions, "runtime" | "limits" | "gasMultiple" | "maxSlippageBps" | "jupiter">
+
+interface AccountUse { readonly key: string; readonly write: boolean }
+interface Instruction { readonly program: string; readonly accounts: ReadonlyArray<AccountUse>; readonly data: Uint8Array }
+interface Holder { readonly tokenProgram: string; readonly feeAccount: string }
+
+function startsWith(bytes: Uint8Array, prefix: Uint8Array) {
+  return bytes.length >= prefix.length && prefix.every((byte, index) => bytes[index] === byte)
+}
+
+function native(target: ClaimTarget) {
+  return target.mint === SYSTEM_PROGRAM
+}
+
+function keyAt(bytes: Uint8Array, at: number) {
+  return base58Encode(bytes.slice(at, at + 32))
+}
+
+effect function refuse(issue: string) {
+  throw new ClaimRefused({ issue })
+}
+
+effect function programAccount(owner: string, at: string, size: number, discriminator: Uint8Array, commitment: Commitment, what: string) {
+  const account = try (try SolanaRpc).account(try addressed(at), commitment)
+  if (account === undefined) return try refuse(`${what} account missing`)
+  if (account.owner !== owner || account.data.length !== size || !startsWith(account.data, discriminator)) return try refuse(`${what} account differs from the reviewed escrow program`)
+  return account.data
+}
+
+effect function derived(seeds: ReadonlyArray<Uint8Array>, program: string, what: string) {
+  const found = findPda(seeds, try addressed(program))
+  if (found === undefined) return try refuse(`the ${what} address cannot be derived`)
+  return found.address
+}
+
+effect function vaultAddress(target: ClaimTarget) {
+  const project = publicKey(target.project)
+  if (project === undefined) return try refuse("the reviewed project is not a Solana address")
+  return try derived([new TextEncoder().encode("vault"), project], target.program, "vault")
+}
+
+effect function rolesHeld(deployment: SolanaVaultDeployment, wallet: string, commitment: Commitment) {
+  const config = try programAccount(deployment.program, try derived([new TextEncoder().encode("config")], deployment.program, "config"), configSize, configDiscriminator, commitment, "Config")
+  if (keyAt(config, 40) !== wallet) return try refuse("the escrow Config pays another fee recipient")
+  const project = try programAccount(deployment.program, deployment.project, projectSize, projectDiscriminator, commitment, "project")
+  if (keyAt(project, 136) !== wallet || keyAt(project, 168) !== deployment.mint) return try refuse("project account differs from its reviewed deployment")
+  return deployment.upgradeAuthority === wallet || [keyAt(config, 8), keyAt(config, 72), keyAt(project, 8), keyAt(project, 104), keyAt(project, 257)].includes(wallet)
+}
+
+export effect function solanaVault(fact: VaultFact, commitment: Commitment) {
+  const { wallet } = try FeeSolana
+  const deployment = try (try VaultDeployments).solana(fact, undefined)
+  if (deployment.vault !== fact.vault) throw new DeploymentRefused({ message: "vault differs from its reviewed deployment record" })
+  if (deployment.feeRecipient !== wallet) return undefined
+  if (deployment.upgradeAuthority === wallet) return try refuse("Fee wallet must not be the program upgrade authority")
+  if ((try vaultAddress(deployment)) !== deployment.vault) return try refuse("vault is not the reviewed project's vault address")
+  if (try rolesHeld(deployment, wallet, commitment)) return try refuse("The fee wallet holds or is proposed for a vault role")
+  const accrued = u64At(try programAccount(deployment.program, deployment.project, projectSize, projectDiscriminator, commitment, "project"), accruedOffset)
+  if (accrued === undefined) return try refuse("project account missing")
+  return { deployment, accrued } satisfies SolanaVaultState
+}
+
+export effect function verifySolanaClaim(vaults: ReadonlyArray<VaultFact>, vault: string) {
+  const fact = vaults.find((entry) => entry.vault === vault)
+  if (fact === undefined) return try refuse("Recorded claim names no reviewed vault")
+  if ((try solanaVault(fact, "finalized")) === undefined) return try refuse("Recorded claim pays another fee wallet")
+}
+
+export effect function claimSettled(target: ClaimTarget) {
+  const rpc = try SolanaRpc
+  if (u64At(try programAccount(target.program, target.project, projectSize, projectDiscriminator, "confirmed", "project"), accruedOffset) === 0n) return try refuse("an earlier claim is confirmed but not yet finalized")
+  const recent = try rpc.signatures(try addressed(target.project), { limit: recentProjectSignatures }, "confirmed")
+  const succeeded = recent.filter((entry) => !entry.err).map((entry) => entry.signature)
+  if (succeeded.length === 0) return
+  const statuses = try rpc.signatureStatuses(succeeded)
+  if (statuses.some((status) => status === undefined || status.confirmationStatus !== "finalized")) return try refuse("an earlier project transaction is not yet finalized")
+}
+
+effect function holderOf(target: ClaimTarget, wallet: string) {
+  if (native(target)) return { tokenProgram: SYSTEM_PROGRAM, feeAccount: wallet } satisfies Holder
+  const { program } = try admittedMint(target.mint)
+  const feeAccount = associatedTokenAddress(try addressed(wallet), try addressed(target.mint), try addressed(program))
+  if (feeAccount === undefined) return try refuse("the fee wallet's token account cannot be derived")
+  return { tokenProgram: program, feeAccount } satisfies Holder
+}
+
+function claimInstructions(target: ClaimTarget, wallet: string, holder: Holder): ReadonlyArray<Instruction> {
+  const { feeAccount, tokenProgram } = holder
+  if (native(target)) return [{ program: target.program, accounts: [{ key: target.project, write: true }, { key: target.vault, write: true }, { key: feeAccount, write: true }], data: claimFeesNativeData }]
+  return [
+    {
+      program: ASSOCIATED_TOKEN_PROGRAM,
+      accounts: [{ key: wallet, write: true }, { key: feeAccount, write: true }, { key: wallet, write: false }, { key: target.mint, write: false }, { key: SYSTEM_PROGRAM, write: false }, { key: tokenProgram, write: false }],
+      data: createIdempotent,
+    },
+    {
+      program: target.program,
+      accounts: [{ key: target.project, write: true }, { key: target.mint, write: false }, { key: target.vault, write: true }, { key: feeAccount, write: true }, { key: tokenProgram, write: false }],
+      data: claimFeesData,
+    },
+  ]
+}
+
+effect function compiled(wallet: string, blockhash: Message["recentBlockhash"], instructions: ReadonlyArray<Instruction>) {
+  const writable = new Map<string, boolean>([[wallet, true]])
+  for (const instruction of instructions) {
+    for (const use of instruction.accounts) writable.set(use.key, (writable.get(use.key) ?? false) || use.write)
+    if (!writable.has(instruction.program)) writable.set(instruction.program, false)
+  }
+  const others = [...writable.keys()].filter((key) => key !== wallet)
+  const keys = [wallet, ...others.filter((key) => writable.get(key) === true), ...others.filter((key) => writable.get(key) !== true)]
+  const accountKeys: Array<Address> = []
+  for (const key of keys) accountKeys.push(try addressed(key))
+  return {
+    version: "legacy",
+    header: { requiredSignatures: 1, readonlySigned: 0, readonlyUnsigned: others.filter((key) => writable.get(key) !== true).length },
+    accountKeys,
+    recentBlockhash: blockhash,
+    instructions: instructions.map((instruction) => ({ programIndex: keys.indexOf(instruction.program), accounts: instruction.accounts.map((use) => keys.indexOf(use.key)), data: instruction.data })),
+  } satisfies Message
+}
+
+effect function tokenAmount(data: Uint8Array | undefined) {
+  if (data === undefined) return 0n
+  const decoded = decodeTokenAccount(data)
+  if (decoded.kind !== "decoded") return try refuse("claim simulation credited an unreadable token account")
+  return decoded.value.amount
+}
+
+effect function simulated(target: ClaimTarget, unsigned: Uint8Array, wallet: string, holder: Holder, fee: bigint) {
+  const rpc = try SolanaRpc
+  const payer = try addressed(wallet)
+  const account = try addressed(holder.feeAccount)
+  const watched = native(target) ? [payer] : [payer, account]
+  const before = try rpc.accounts(watched, "confirmed")
+  const simulation = try rpc.simulate(unsigned, watched, "confirmed")
+  const walletAfter = simulation.accounts[0]
+  if (simulation.err || walletAfter === undefined) return try refuse("claim simulation failed")
+  const walletBefore = before.value[0]?.lamports ?? 0n
+  const debit = walletBefore - walletAfter.lamports
+  if (native(target)) return { credit: fee - debit, debit }
+  const credited = simulation.accounts[1]
+  if (credited === undefined) return try refuse("claim simulation did not credit the fee account")
+  return { credit: (try tokenAmount(credited.data)) - (try tokenAmount(before.value[1]?.data)), debit }
+}
+
+effect function creationRent(target: ClaimTarget, holder: Holder) {
+  if (native(target)) return 0n
+  const rpc = try SolanaRpc
+  return try rpc.rentExemption(holder.tokenProgram === TOKEN_2022_PROGRAM ? token2022AccountSize : tokenAccountSize, "confirmed")
+}
+
+export effect function solanaClaimPrepared(plan: SolanaClaimPlan, signing: ClaimSigning) {
+  if (!conversionSigns(signing.runtime, "Solana")) return try refuse("SolanaClaim is not activated on Solana")
+  const { wallet } = try FeeSolana
+  const rpc = try SolanaRpc
+  if ((try vaultAddress(plan)) !== plan.vault) return try refuse("vault is not the reviewed project's vault address")
+  try claimSettled(plan)
+  const holder = try holderOf(plan, wallet)
+  const latest = try rpc.blockhash("confirmed")
+  const message = try compiled(wallet, latest.blockhash, claimInstructions(plan, wallet, holder))
+  const body = encodeMessage(message)
+  const unsigned = body === undefined ? undefined : encodeTransaction({ signatures: [new Uint8Array(64)], message })
+  if (body === undefined || unsigned === undefined) return try refuse("the claim message cannot be encoded")
+  const fee = try networkFee(body)
+  if (fee.fee === 0n) return try refuse("Solana signature fee evidence is missing")
+  const maximum = fee.fee + (try creationRent(plan, holder))
+  const outcome = try simulated(plan, unsigned, wallet, holder, fee.fee)
+  if (outcome.credit < plan.amount) return try refuse("claim simulation credited less than the accrued fee")
+  if (outcome.debit > maximum) return try refuse("Solana simulation has unbounded native wallet debit")
+  if (maximum > signing.limits.perTransaction || maximum > wideOf(transactionCeilingOf("Solana"))) return try refuse("Solana native fee and account creation exceed the transaction budget")
+  const priced = try jupiterQuote(signing.jupiter, wrappedSol, maximum, signing.maxSlippageBps)
+  if (priced.outAmount <= 0n) return try refuse("Final Solana native cost cannot be priced")
+  if (priced.outAmount * signing.gasMultiple > plan.valueMicro) return try refuse("Final Solana native cost exceeds the gas-cost multiple")
+  return {
+    family: "solana",
+    intent: { kind: "SolanaClaim", network: "Solana", ...plan },
+    intentHash: digest58(body),
+    maximumUnits: transactionCeilingOf("Solana"),
+    blockhashSlot: try blockhashAnchor(latest.blockhash, fee.slot),
+    accountProof: undefined,
+    unsigned,
+    messageOffset: unsigned.length - body.length,
+    expiresAt: latest.lastValidBlockHeight,
+    minimumOutput: 0n,
+  } satisfies SolanaReviewed
+}
+
+const ClaimLogs = Schema.NullOr(Schema.Struct({ slot: Schema.Number, transaction: Schema.Array(Schema.String), meta: Schema.Struct({ logMessages: Schema.Array(Schema.String) }) }))
+
+function tokenTotal(balances: ReadonlyArray<TokenBalance>, owner: string, mint: string) {
+  return balances.filter((balance) => balance.owner === owner && balance.mint === mint).reduce((sum, balance) => sum + balance.amount, 0n)
+}
+
+function tokenDelta(meta: TransactionMeta, owner: string, mint: string) {
+  return tokenTotal(meta.postTokenBalances, owner, mint) - tokenTotal(meta.preTokenBalances, owner, mint)
+}
+
+effect function claimedEvent(target: ClaimTarget, logs: ReadonlyArray<string>, feeAccount: string) {
+  const programs: Array<string> = []
+  let amount: bigint | undefined = undefined
+  for (const log of logs) {
+    const invoked = /^Program (\w+) invoke \[\d+\]$/u.exec(log)
+    if (invoked !== null) programs.push(invoked[1] ?? "")
+    else if (/^Program \w+ (?:success|failed:)/u.test(log)) programs.pop()
+    else if (programs.at(-1) === target.program && log.startsWith("Program data: ")) {
+      const data = base64Decode(log.slice("Program data: ".length))
+      if (data === undefined || !startsWith(data, feesClaimedTag)) continue
+      if (amount !== undefined || data.length !== 80 || keyAt(data, 8) !== target.project || keyAt(data, 40) !== feeAccount) return try refuse("claim receipt has an invalid FeesClaimed event")
+      amount = u64At(data, 72)
+    }
+  }
+  if (amount === undefined || amount === 0n) return try refuse("claim receipt lacks the reviewed vault fee event")
+  return amount
+}
+
+effect function claimLogs(txId: string, found: FetchedTransaction) {
+  const logged = try (try FeeSolana).raw.call("getTransaction", [txId, { commitment: "finalized", encoding: "base64", maxSupportedTransactionVersion: 0 }], ClaimLogs)
+  if (logged === null || logged.slot !== found.slot || logged.transaction[0] !== base64Encode(found.wire) || logged.transaction[1] !== "base64") return try refuse("claim receipt identity or slot is missing")
+  return logged.meta.logMessages
+}
+
+export effect function solanaClaimEvidence(fact: VaultFact, txId: string) {
+  const solana = try FeeSolana
+  const found = try (try SolanaRpc).transaction(try signatureOfText(txId), "finalized")
+  if (found === undefined || !Number.isSafeInteger(found.slot) || found.slot < 0) return try refuse("claim receipt identity or slot is missing")
+  if (found.meta.err) return failedClaim
+  const logs = try claimLogs(txId, found)
+  const deployment = try (try VaultDeployments).solana(fact, found.slot)
+  if (deployment.vault !== fact.vault || deployment.feeRecipient !== solana.wallet) return try refuse("Recorded claim pays another fee wallet")
+  const roleFree = !(try rolesHeld(deployment, solana.wallet, "finalized"))
+  const { feeAccount } = try holderOf(deployment, solana.wallet)
+  const feesClaimed = try claimedEvent(deployment, logs, feeAccount)
+  if (!native(deployment)) return { succeeded: true, feesClaimed, vaultDebit: -tokenDelta(found.meta, deployment.project, deployment.mint), walletCredit: tokenDelta(found.meta, solana.wallet, deployment.mint), roleFree } satisfies ClaimEvidence
+  const deltas = try lamportDeltas(found.meta, [...found.transaction.message.accountKeys, ...found.meta.loadedWritable, ...found.meta.loadedReadonly])
+  return { succeeded: true, feesClaimed, vaultDebit: -(deltas.get(deployment.vault) ?? 0n), walletCredit: deltas.get(solana.wallet) ?? 0n, roleFree } satisfies ClaimEvidence
+}

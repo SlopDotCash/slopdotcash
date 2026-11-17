@@ -1,0 +1,335 @@
+// spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"; spec/operations/escrowQualification.md, "Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation"
+import { type Abi, type Hex, encodeCall } from "@repo/platform/chain/evm"
+import { SYSTEM_PROGRAM, TOKEN_PROGRAM, type Address as SolanaAddress, address, associatedTokenAddress, findPda, publicKey } from "@repo/platform/chain/solana"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Network, Operation, Plan, StepKind } from "../../../gen/operations__escrowQualification.effect.vibe"
+import { tokenAbi, units, vaultAbi, wordValue } from "./contracts.ts"
+import { bytesHex, hexBytes } from "./envelope.ts"
+import { type Registry, reviewedEvmOf, reviewedSolanaOf } from "./registry.ts"
+
+export error PlanRefused { message: string }
+
+export schema PlanCall {
+  readonly to: string
+  readonly data: string
+  readonly accounts: ReadonlyArray<string>
+}
+
+export schema PlanStep {
+  readonly key: string
+  readonly kind: "SupportingWrite" | "Deposit" | "Payout"
+  readonly to: string
+  readonly data: string
+  readonly accounts: ReadonlyArray<string>
+  readonly gasLimit: number
+  readonly gross: number
+  readonly net: number
+  readonly fee: number
+  readonly actor: number
+}
+
+export schema EscrowPlan {
+  readonly schema: "slop-escrow-plan:v1"
+  readonly network: "Base" | "Solana" | "Robinhood" | "Ethereum"
+  readonly vault: string
+  readonly asset: string
+  readonly authority: string
+  readonly monthlyCap: number
+  readonly automatic: boolean
+  readonly launch: string
+  readonly testnet: string
+  readonly steps: ReadonlyArray<PlanStep>
+  readonly activation: PlanCall
+}
+
+schema PinsNetwork { readonly network: string }
+
+export schema EvmPins {
+  readonly network: "Base" | "Robinhood"
+  readonly vault: string
+  readonly authority: string
+  readonly launch: string
+  readonly testnet: string
+  readonly sourceDigest: string
+  readonly bindingVersion: number
+  readonly gas: { readonly approve: number; readonly deposit: number; readonly commit: number; readonly pay: number }
+  readonly activation: { readonly to: string; readonly data: string }
+}
+
+export schema SolanaPins {
+  readonly network: "Solana"
+  readonly project: string
+  readonly authority: string
+  readonly destination: string
+  readonly launch: string
+  readonly testnet: string
+  readonly sourceDigest: string
+  readonly bindingVersion: number
+  readonly gas: { readonly deposit: number; readonly commit: number; readonly pay: number }
+  readonly activation: PlanCall
+}
+
+export interface Reviewed {
+  readonly plan: EscrowPlan
+  readonly review: string
+}
+
+export type Family = "evm" | "solana"
+
+export interface NetworkFacts {
+  readonly family: Family
+  readonly identity: string
+  readonly stablecoin: string
+  readonly testnet: string
+}
+
+export const networks: Readonly<Record<Network, NetworkFacts>> = {
+  Base: { family: "evm", identity: "8453", stablecoin: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", testnet: "base-sepolia" },
+  Solana: { family: "solana", identity: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", stablecoin: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", testnet: "solana-devnet" },
+  Robinhood: { family: "evm", identity: "4663", stablecoin: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", testnet: "robinhood-testnet" },
+  Ethereum: { family: "evm", identity: "1", stablecoin: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", testnet: "ethereum-sepolia" },
+}
+
+export const depositUnits = 10_000_000
+export const payoutUnits = { gross: 1_000_000, net: 980_000, fee: 20_000 } as const
+export const qualificationActor = 18_633_264
+export const monthlyCapUnits = 1_000_000_000
+
+const anchor = {
+  deposit: [242, 35, 198, 137, 82, 225, 242, 182],
+  commit: [223, 140, 142, 165, 229, 208, 156, 74],
+  pay: [119, 18, 216, 65, 192, 117, 122, 220],
+} as const
+
+const planBytesLimit = 256 * 1024
+const digest = /^[0-9a-f]{64}$/u
+const evmAddress = /^0x[0-9a-f]{40}$/u
+const hexData = /^0x(?:[0-9a-f]{2})+$/u
+const solanaText = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
+
+export function sameAddress(family: Family, left: string, right: string) {
+  return family === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+export function u64le(value: bigint) {
+  const bytes = new Uint8Array(8)
+  let rest = value
+  for (let index = 0; index < 8; index += 1) {
+    bytes[index] = Number(rest % 256n)
+    rest /= 256n
+  }
+  return bytes
+}
+
+function readU64(bytes: Uint8Array, at: number) {
+  let value = 0n
+  for (let index = 7; index >= 0; index -= 1) value = value * 256n + units(bytes[at + index] ?? 0)
+  return value
+}
+
+function startsWith(bytes: Uint8Array, prefix: ReadonlyArray<number>) {
+  return prefix.every((byte, index) => bytes[index] === byte)
+}
+
+effect function encodes(abi: Abi, name: string, args: ReadonlyArray<unknown>, data: string) {
+  const encoded = encodeCall(abi, name, args) catch () => undefined
+  return encoded !== undefined && encoded.toLowerCase() === data
+}
+
+function words(data: string) {
+  const body = data.slice(10)
+  return { at: (index: number) => `0x${body.slice(index * 64, index * 64 + 64)}`, count: body.length / 64 }
+}
+
+effect function evmStepInScope(plan: EscrowPlan, step: PlanStep) {
+  const args = words(step.data)
+  if (step.accounts.length !== 0 || !Number.isInteger(args.count)) return false
+  if (step.kind === "Deposit") return sameAddress("evm", step.to, plan.vault) && (try encodes(vaultAbi, "deposit", [units(depositUnits)], step.data))
+  if (step.kind === "Payout") return sameAddress("evm", step.to, plan.vault) && args.count === 2 && (try encodes(vaultAbi, "pay", [args.at(0), wordValue(args.at(1))], step.data))
+  if (sameAddress("evm", step.to, plan.asset)) return try encodes(tokenAbi, "approve", [plan.vault, units(depositUnits)], step.data)
+  return sameAddress("evm", step.to, plan.vault) && args.count === 4
+    && (try encodes(vaultAbi, "commitAward", [args.at(0), units(qualificationActor), units(payoutUnits.gross), args.at(3)], step.data))
+}
+
+function solanaStepInScope(program: string, step: PlanStep) {
+  const data = hexBytes(step.data) ?? new Uint8Array()
+  if (step.to !== program || !step.accounts.every((account) => address(account) !== undefined)) return false
+  if (step.kind === "Deposit") return data.length === 16 && startsWith(data, anchor.deposit) && readU64(data, 8) === units(depositUnits)
+  if (step.kind === "Payout") return data.length === 16 && startsWith(data, anchor.pay)
+  return data.length === 88 && startsWith(data, anchor.commit) && readU64(data, 72) === units(qualificationActor) && readU64(data, 80) === units(payoutUnits.gross)
+}
+
+function amountsInScope(step: PlanStep) {
+  const amounts = [step.gasLimit, step.gross, step.net, step.fee, step.actor]
+  if (!amounts.every((value) => Number.isSafeInteger(value) && value >= 0)) return false
+  if (step.kind === "Deposit") return step.gross === depositUnits && step.net === 0 && step.fee === 0 && step.actor === 0
+  if (step.kind === "Payout") return step.gross === payoutUnits.gross && step.net === payoutUnits.net && step.fee === payoutUnits.fee && step.actor === qualificationActor
+  return step.gross === 0 && step.net === 0 && step.fee === 0 && step.actor === 0
+}
+
+effect function wellFormed(plan: EscrowPlan, registry: Registry) {
+  const family = networks[plan.network].family
+  const isAddress = (text: string) => family === "evm" ? evmAddress.test(text) : solanaText.test(text) && address(text) !== undefined
+  const keys = plan.steps.map((step) => step.key)
+  const program = reviewedSolanaOf(registry, plan.network)?.program
+  const reviewed = family === "evm" ? reviewedEvmOf(registry, plan.network) !== undefined : program !== undefined
+  const basics = reviewed && (plan.vault === "" ? plan.network === "Ethereum" && plan.steps.length === 0 : isAddress(plan.vault))
+    && isAddress(plan.asset) && isAddress(plan.authority) && digest.test(plan.launch) && digest.test(plan.testnet)
+    && new Set(keys).size === keys.length && keys.every((key) => key !== "")
+    && isAddress(plan.activation.to) && hexData.test(plan.activation.data)
+    && (family === "evm" ? plan.activation.accounts.length === 0 : plan.activation.accounts.every(isAddress))
+    && plan.steps.every((step) => isAddress(step.to) && hexData.test(step.data) && amountsInScope(step))
+  if (!basics) return false
+  for (const step of plan.steps) {
+    const inScope = family === "evm" ? try evmStepInScope(plan, step) : solanaStepInScope(program ?? "", step)
+    if (!inScope) return false
+  }
+  return true
+}
+
+export effect function readReviewed(path: string, registry: Registry) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch effect () => {
+    throw new PlanRefused({ message: `the reviewed file ${path} is unreadable` })
+  }
+  if (info.type !== "File" || Number(info.size) > planBytesLimit) throw new PlanRefused({ message: `the reviewed file ${path} must be a regular file of at most ${planBytesLimit} bytes` })
+  const bytes = fs.readFile(path) catch effect () => {
+    throw new PlanRefused({ message: `the reviewed file ${path} is unreadable` })
+  }
+  const value = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown, catch: () => new PlanRefused({ message: `the reviewed file ${path} is not JSON` }) })
+  const plan = Schema.decodeUnknownEffect(EscrowPlan)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new PlanRefused({ message: `the reviewed file ${path} is not an escrow plan` })
+  }
+  if (!(try wellFormed(plan, registry))) throw new PlanRefused({ message: `the reviewed file ${path} has a malformed address or digest, a network without a reviewed registry deployment, or a step outside the qualification scope` })
+  return { plan, review: try sha256Hex(bytes) } satisfies Reviewed
+}
+
+export effect function fileDigest(path: string) {
+  const fs = try FileSystem.FileSystem
+  const bytes = fs.readFile(path) catch effect () => {
+    throw new PlanRefused({ message: `the evidence file ${path} is unreadable` })
+  }
+  return { bytes, sha256: try sha256Hex(bytes) }
+}
+
+export function modelPlan(reviewed: Reviewed): Plan {
+  const { plan } = reviewed
+  const facts = networks[plan.network]
+  const symbol = plan.network === "Robinhood" ? "USDG" : "USDC"
+  return {
+    network: plan.network,
+    vault: plan.vault,
+    asset: sameAddress(facts.family, plan.asset, facts.stablecoin) ? symbol : plan.asset,
+    review: reviewed.review,
+    monthlyCap: plan.monthlyCap,
+    automatic: plan.automatic,
+  }
+}
+
+export function stepOf(plan: EscrowPlan, key: string) {
+  return plan.steps.find((step) => step.key === key)
+}
+
+export function operationOf(step: PlanStep, transaction: string): Operation {
+  return { key: step.key, transaction, kind: step.kind satisfies StepKind, gasLimit: step.gasLimit, gross: step.gross, net: step.net, fee: step.fee, actor: step.actor }
+}
+
+effect function calldata(abi: Abi, name: string, args: ReadonlyArray<unknown>) {
+  return encodeCall(abi, name, args) catch effect (error) => {
+    throw new PlanRefused({ message: `${name} could not be encoded: ${error.issue}` })
+  }
+}
+
+effect function checkedPlan(plan: EscrowPlan, registry: Registry) {
+  if (!(try wellFormed(plan, registry))) throw new PlanRefused({ message: "the registry pins have a malformed address, digest or gas limit, or the network has no reviewed registry deployment" })
+  return plan
+}
+
+function exactPins(sourceDigest: string, bindingVersion: number) {
+  return digest.test(sourceDigest.replace(/^0x/u, "")) && Number.isSafeInteger(bindingVersion) && bindingVersion >= 1
+}
+
+export effect function buildEvmPlan(pins: EvmPins, awardId: Hex, registry: Registry) {
+  const facts = networks[pins.network]
+  const lower = (text: string) => text.toLowerCase()
+  const vault = lower(pins.vault)
+  if (!exactPins(pins.sourceDigest, pins.bindingVersion)) throw new PlanRefused({ message: "the award source digest and binding version must be exact" })
+  const steps: ReadonlyArray<PlanStep> = [
+    { key: "approve", kind: "SupportingWrite", to: facts.stablecoin, data: lower(try calldata(tokenAbi, "approve", [vault, units(depositUnits)])), accounts: [], gasLimit: pins.gas.approve, gross: 0, net: 0, fee: 0, actor: 0 },
+    { key: "deposit", kind: "Deposit", to: vault, data: lower(try calldata(vaultAbi, "deposit", [units(depositUnits)])), accounts: [], gasLimit: pins.gas.deposit, gross: depositUnits, net: 0, fee: 0, actor: 0 },
+    { key: "commit", kind: "SupportingWrite", to: vault, data: lower(try calldata(vaultAbi, "commitAward", [awardId, units(qualificationActor), units(payoutUnits.gross), lower(pins.sourceDigest)])), accounts: [], gasLimit: pins.gas.commit, gross: 0, net: 0, fee: 0, actor: 0 },
+    { key: "pay", kind: "Payout", to: vault, data: lower(try calldata(vaultAbi, "pay", [awardId, units(pins.bindingVersion)])), accounts: [], gasLimit: pins.gas.pay, gross: payoutUnits.gross, net: payoutUnits.net, fee: payoutUnits.fee, actor: qualificationActor },
+  ]
+  return try checkedPlan({
+    schema: "slop-escrow-plan:v1",
+    network: pins.network,
+    vault,
+    asset: facts.stablecoin,
+    authority: lower(pins.authority),
+    monthlyCap: monthlyCapUnits,
+    automatic: false,
+    launch: pins.launch,
+    testnet: pins.testnet,
+    steps,
+    activation: { to: lower(pins.activation.to), data: lower(pins.activation.data), accounts: [] },
+  }, registry)
+}
+
+effect function pda(program: SolanaAddress, seeds: ReadonlyArray<Uint8Array>) {
+  const found = findPda(seeds, program)
+  if (found === undefined) throw new PlanRefused({ message: "a program address of the Solana escrow could not be derived" })
+  return found.address
+}
+
+effect function solanaKey(text: string) {
+  const key = address(text)
+  const bytes = publicKey(text)
+  if (key === undefined || bytes === undefined) throw new PlanRefused({ message: `${text} is not a Solana address` })
+  return { key, bytes }
+}
+
+export effect function buildSolanaPlan(pins: SolanaPins, registry: Registry) {
+  const reviewed = reviewedSolanaOf(registry, "Solana")
+  if (reviewed === undefined) throw new PlanRefused({ message: "Solana has no reviewed registry deployment" })
+  if (!exactPins(pins.sourceDigest, pins.bindingVersion)) throw new PlanRefused({ message: "the award source digest and binding version must be exact" })
+  const program = (try solanaKey(reviewed.program)).key
+  const project = try solanaKey(pins.project)
+  const authority = (try solanaKey(pins.authority)).key
+  const destination = (try solanaKey(pins.destination)).key
+  const mint = (try solanaKey(networks.Solana.stablecoin)).key
+  const source = hexBytes(pins.sourceDigest.toLowerCase().replace(/^(?:0x)?/u, "0x")) ?? new Uint8Array()
+  const awardId = hexBytes(`0x${try sha256Hex(new Uint8Array([...new TextEncoder().encode("slop-escrow-award"), ...project.bytes, ...source]))}`) ?? new Uint8Array()
+  const actor = u64le(units(qualificationActor))
+  const version = u64le(units(pins.bindingVersion))
+  const vault = try pda(program, [new TextEncoder().encode("vault"), project.bytes])
+  const obligation = try pda(program, [new TextEncoder().encode("award"), project.bytes, awardId])
+  const origin = try pda(program, [new TextEncoder().encode("origin"), project.bytes, source])
+  const binding = try pda(program, [new TextEncoder().encode("wallet"), project.bytes, actor])
+  const veto = try pda(program, [new TextEncoder().encode("veto"), project.bytes, actor, version])
+  const depositor = associatedTokenAddress(authority, mint, TOKEN_PROGRAM)
+  if (depositor === undefined) throw new PlanRefused({ message: "the authority's stablecoin account could not be derived" })
+  const data = (...parts: ReadonlyArray<ReadonlyArray<number> | Uint8Array>) => bytesHex(new Uint8Array(parts.flatMap((part) => [...part])))
+  const steps: ReadonlyArray<PlanStep> = [
+    { key: "deposit", kind: "Deposit", to: program, data: data(anchor.deposit, u64le(units(depositUnits))), accounts: [authority, project.key, mint, depositor, vault, TOKEN_PROGRAM], gasLimit: pins.gas.deposit, gross: depositUnits, net: 0, fee: 0, actor: 0 },
+    { key: "commit", kind: "SupportingWrite", to: program, data: data(anchor.commit, awardId, source, actor, u64le(units(payoutUnits.gross))), accounts: [authority, project.key, vault, origin, obligation, SYSTEM_PROGRAM], gasLimit: pins.gas.commit, gross: 0, net: 0, fee: 0, actor: 0 },
+    { key: "pay", kind: "Payout", to: program, data: data(anchor.pay, version), accounts: [project.key, obligation, binding, mint, vault, destination, TOKEN_PROGRAM, veto], gasLimit: pins.gas.pay, gross: payoutUnits.gross, net: payoutUnits.net, fee: payoutUnits.fee, actor: qualificationActor },
+  ]
+  return try checkedPlan({
+    schema: "slop-escrow-plan:v1",
+    network: "Solana",
+    vault,
+    asset: mint,
+    authority,
+    monthlyCap: monthlyCapUnits,
+    automatic: false,
+    launch: pins.launch,
+    testnet: pins.testnet,
+    steps,
+    activation: pins.activation,
+  }, registry)
+}
+
+export effect function pinsNetwork(value: unknown) {
+  const head = Schema.decodeUnknownEffect(PinsNetwork)(value) catch () => undefined
+  return head?.network
+}

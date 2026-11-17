@@ -1,0 +1,144 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"
+import { boundedBytes } from "@repo/platform/browser"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+
+export error ToolFailed { tool: string; step: string; message: string }
+
+export interface Call {
+  readonly args: ReadonlyArray<string>
+  readonly cwd?: string
+  readonly seconds?: number
+}
+
+export service Cloudflare {
+  readonly accountId: string
+  wrangler(step: string, call: Call): string!ToolFailed
+  docker(step: string, call: Call): string!ToolFailed
+  read(step: string, path: string): unknown!ToolFailed
+  write(step: string, method: "PUT" | "POST", path: string, body: unknown): unknown!ToolFailed
+}
+
+export interface CloudflareOptions {
+  readonly root: string
+  readonly wrangler: string
+}
+
+export const cloudflareApi = "https://api.cloudflare.com/client/v4"
+
+const outputLimit = 4 * 1024 * 1024
+const errorLimit = 64 * 1024
+const responseLimit = 1024 * 1024
+const defaultSeconds = 300
+const apiSeconds = 30
+const accountPattern = /^[0-9a-f]{32}$/u
+const inherited = ["HOME", "PATH", "TMPDIR", "XDG_CONFIG_HOME", "DOCKER_HOST", "DOCKER_CONFIG"] as const
+
+schema Envelope {
+  readonly success: boolean
+  readonly result: Schema.Unknown
+}
+
+error OutputLimit
+
+export function pinnedWrangler(root: string) {
+  return `${root.replace(/\/+$/u, "")}/apps/operations/node_modules/.bin/wrangler`
+}
+
+effect function collected<E>(stream: Stream.Stream<Uint8Array, E>, limit: number) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of stream) {
+    size += chunk.length
+    if (size > limit) throw new OutputLimit()
+    chunks.push(chunk)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.length
+  }
+  return bytes
+}
+
+function lastLine(bytes: Uint8Array) {
+  const lines = new TextDecoder().decode(bytes).split(/\r?\n/u).map((line) => line.trim()).filter((line) => line !== "")
+  return (lines.at(-1) ?? "no diagnostic").slice(0, 300)
+}
+
+effect function environment() {
+  const values: Record<string, string> = {}
+  for (const name of inherited) {
+    const value = Option.getOrUndefined(try Config.option(Config.String(name)))
+    if (value !== undefined) values[name] = value
+  }
+  return values
+}
+
+export function cloudflare(options: CloudflareOptions) {
+  return Layer.effect(Cloudflare, effect {
+    const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+    if (!accountPattern.test(accountId)) throw new ToolFailed({ tool: "cloudflare", step: "credentials", message: "CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account id" })
+    const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+    if (Redacted.value(token).trim() === "") throw new ToolFailed({ tool: "cloudflare", step: "credentials", message: "CLOUDFLARE_API_TOKEN is empty" })
+    const apiBase = Option.getOrUndefined(try Config.option(Config.String("CLOUDFLARE_API_BASE_URL")))
+    const api = (apiBase ?? cloudflareApi).replace(/\/+$/u, "")
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const client = try HttpClient.HttpClient
+    const env = {
+      ...(try environment()),
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: token,
+      ...apiBase === undefined ? {} : { CLOUDFLARE_API_BASE_URL: apiBase },
+      CI: "true",
+      NO_COLOR: "1",
+      WRANGLER_SEND_METRICS: "false",
+      WRANGLER_LOG: "error",
+      WRANGLER_WRITE_LOGS: "false",
+    }
+
+    effect function execute(tool: string, command: string, step: string, call: Call) {
+      const ran = scoped(effect {
+        const handle = try spawner.spawn(ChildProcess.make(command, call.args, { cwd: call.cwd ?? options.root, env, extendEnv: false, stdin: "ignore" }))
+        const [stdout, stderr, code] = try.all [collected(handle.stdout, outputLimit), collected(handle.stderr, errorLimit), handle.exitCode]
+        return { stdout, stderr, code: Number(code) }
+      })
+      const output = timeout(ran, Duration.seconds(call.seconds ?? defaultSeconds)) catch effect () => {
+        throw new ToolFailed({ tool, step, message: `${tool} did not finish within its bound or exceeded its output bound` })
+      }
+      if (output.code !== 0) throw new ToolFailed({ tool, step, message: `${tool} exited ${output.code}: ${lastLine(output.stderr)}` })
+      return new TextDecoder().decode(output.stdout)
+    }
+
+    effect function exchange(step: string, request: HttpClientRequest.HttpClientRequest) {
+      const failed = (message: string) => new ToolFailed({ tool: "cloudflare", step, message })
+      const authorized = HttpClientRequest.setHeaders(request, { authorization: `Bearer ${Redacted.value(token)}`, "cache-control": "no-cache", accept: "application/json" })
+      const answered = timeout(effect {
+        provide FetchHttpClient.RequestInit = { redirect: "manual" } {
+          const response = try client.execute(authorized)
+          const bytes = try boundedBytes(response, responseLimit, step)
+          return { status: response.status, bytes }
+        }
+      }, Duration.seconds(apiSeconds)) catch effect () => {
+        throw failed("the Cloudflare API request failed")
+      }
+      if (answered.status < 200 || answered.status > 299) throw failed(`the Cloudflare API answered HTTP ${answered.status}`)
+      const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(answered.bytes)) as unknown) catch effect () => {
+        throw failed("the Cloudflare API answered with invalid JSON")
+      }
+      const envelope = Schema.decodeUnknownEffect(Envelope)(value) catch effect () => {
+        throw failed("the Cloudflare API answer has no result envelope")
+      }
+      if (!envelope.success) throw failed("the Cloudflare API reported failure")
+      return envelope.result
+    }
+
+    return {
+      accountId,
+      wrangler: (step: string, call: Call) => execute("wrangler", options.wrangler, step, call),
+      docker: (step: string, call: Call) => execute("docker", "docker", step, call),
+      read: (step: string, path: string) => exchange(step, HttpClientRequest.get(`${api}/accounts/${accountId}${path}`)),
+      write: (step: string, method: "PUT" | "POST", path: string, body: unknown) => exchange(step, HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.make(method)(`${api}/accounts/${accountId}${path}`), body)),
+    } satisfies Cloudflare.Shape
+  })
+}

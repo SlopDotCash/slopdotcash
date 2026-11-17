@@ -1,0 +1,93 @@
+// spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/vettingComposition.md, "A recorded scan feeds enforcement only for its own pending assessment and identity"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { Registry } from "@repo/ports/backend"
+import type { Confirmation, Outcome } from "../../gen/security__admission.ts"
+import { validOutcome } from "../../gen/security__admission.effect.vibe"
+import type { Enforcement, PinRead } from "../../gen/security__enforcement.ts"
+import { canReinstateFlagPause, latestOf } from "../../gen/security__enforcement.effect.vibe"
+import { withRetainedEvidence } from "../enforcement/retained.vibe"
+import { loadEnforcement } from "../enforcement/store.vibe"
+import { compose, manifestText, policyCheck, vettingService } from "./compose.vibe"
+import { pinOrUndefined } from "./livePin.vibe"
+import type { RecordedResult } from "./result.ts"
+import { type Assessment, projectAssessments, resultWrites } from "./store.vibe"
+
+export const maliceReason = "Confirmed malicious evidence under the reviewed security vetting rule"
+const reinstatementReason = "A clean fresh security scan lifted a pause that contributor flags alone placed"
+const reinstatementRule = "clean-fresh-scan-after-flags"
+
+const dispositions = { clean: "DClean", incomplete: "DIncomplete", malicious: "DMalicious" } as const
+const bases: Readonly<Record<"reproducible-behavior" | "verified-source-evidence", Confirmation>> = { "reproducible-behavior": "ReproducibleBehavior", "verified-source-evidence": "VerifiedSourceEvidence" }
+
+export function repositoryOf(state: Enforcement, row: number) {
+  return state.repositories.find((repository) => latestOf(state, repository).id === row) ?? 0
+}
+
+export function outcomeOf(result: RecordedResult, assessment: Assessment, repository: number, retained: boolean): Outcome {
+  return {
+    assessment: assessment.row,
+    repository,
+    revision: assessment.revision,
+    disposition: dispositions[result.disposition],
+    confirmation: result.confirmation === null ? "NoConfirmation" : bases[result.confirmation.basis],
+    reused: "reusedAssessmentId" in result && result.reusedAssessmentId !== null,
+    retained: result.disposition !== "incomplete" && retained,
+  }
+}
+
+export function outcomeAccepted(outcome: Outcome) {
+  return validOutcome(outcome)
+}
+
+export interface Intake {
+  readonly result: RecordedResult
+  readonly assessment: Assessment
+  readonly outcome: Outcome
+  readonly keySha256: string
+}
+
+export effect function recordResult(intake: Intake) {
+  const { result, assessment } = intake
+  const text = JSON.stringify(result)
+  const recording = { result, text, sha256: try sha256Hex(text), keySha256: intake.keySha256, at: try isoNow() }
+  const alongside = try resultWrites(recording)
+  const current = try loadEnforcement(assessment.projectId)
+  const policy = try policyCheck(assessment.projectId, current.mirror.revision)
+  const event = { type: "recordResult", scanOutcome: intake.outcome, policy }
+  if (result.disposition !== "malicious" || result.confirmation === null) {
+    try compose({ projectId: assessment.projectId, event, by: vettingService, alongside })
+    return
+  }
+  const manifest = try manifestText(assessment.projectId)
+  const issuer = { keySha256: intake.keySha256, assessmentId: assessment.id, policyVersion: result.policyVersion, rule: result.confirmation.rule }
+  try compose(
+    { projectId: assessment.projectId, event, by: vettingService, alongside, ...(manifest === undefined ? {} : { revision: { manifestText: manifest, reason: maliceReason, actor: undefined } }) },
+    { kind: "service", reason: maliceReason, evidenceReference: assessment.id, issuer },
+  )
+}
+
+export effect function reinstateFromScan(projectId: string, scan: Assessment) {
+  if (scan.state !== "clean" || scan.signingKeySha256 === null || scan.policyVersion === null) return false
+  if (scan.result !== undefined && "reusedAssessmentId" in scan.result && scan.result.reusedAssessmentId !== null) return false
+  const loaded = try loadEnforcement(projectId)
+  if (loaded.state.restriction !== "FlagQuarantine") return false
+  const view = try (try Registry).project(projectId)
+  if (view === undefined) return false
+  const observed = try withRetainedEvidence(loaded.state)
+  const assessments = try projectAssessments(projectId)
+  const pins: PinRead[] = []
+  for (const repository of observed.repositories) {
+    const listed = view.repositories.find((entry) => entry.id === String(repository))
+    const latest = assessments.find((row) => row.row === latestOf(observed, repository).id)
+    const pin = listed === undefined ? undefined : try pinOrUndefined(view, listed.fullName)
+    pins.push({ repository, pin: pin === undefined || latest === undefined ? "PinUnavailable" : latest.commitSha === pin.commitSha && latest.templateSha256 === pin.templateSha256 ? "PinMatches" : "PinChanged" })
+  }
+  if (!canReinstateFlagPause(observed, vettingService, pins)) return false
+  const issuer = { keySha256: scan.signingKeySha256, assessmentId: scan.id, policyVersion: scan.policyVersion, rule: reinstatementRule }
+  const sent = compose({ projectId, event: { type: "reinstateFlagPause", pins }, by: vettingService }, { kind: "service", reason: reinstatementReason, evidenceReference: scan.id, issuer }) catch effect (error) => {
+    if (error._tag === "ProjectRefused" || error._tag === "Conflict") return false
+    throw error
+  }
+  return sent !== false
+}

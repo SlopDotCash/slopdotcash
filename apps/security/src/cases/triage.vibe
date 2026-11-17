@@ -1,0 +1,174 @@
+// spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"
+import { isoAt } from "@repo/platform/clock"
+import { first, sql } from "@repo/platform/d1"
+import { update } from "@repo/platform/stored"
+import { Execution, later } from "@repo/platform/worker"
+import type { PrivateCase, TriageOutcome } from "../../gen/security__cases.ts"
+import { Rejected, apply, canRetryTriage } from "../../gen/security__cases.effect.vibe"
+import { appealDraft } from "../analysis/proposals.vibe"
+import { appealMessage, appealPrompt, appealTriagePromptRevision, jsonValue } from "../analysis/prompts.ts"
+import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
+import { type CaseRecord, type TriageRow, appealRevisionOf, caseAggregate } from "./rows.vibe"
+
+export interface TriageRun {
+  readonly caseId: string
+  readonly appealRevision: number
+  readonly attempt: number
+}
+
+export interface TriageView {
+  readonly appealRevision: number
+  readonly attempt: number
+  readonly state: TriageRow["state"]
+  readonly provider: string | null
+  readonly model: string | null
+  readonly promptRevision: string
+  readonly proposedOutcome: "uphold" | "return" | null
+  readonly rationale: string | null
+  readonly confidence: number | null
+  readonly escalationReasons: ReadonlyArray<string>
+  readonly startedAt: string
+  readonly finishedAt: string | null
+  readonly retryable: boolean
+}
+
+export type Starter = { readonly kind: "automatic" } | { readonly kind: "moderator"; readonly by: number; readonly epoch: number; readonly model: PrivateCase }
+
+export error TriageClosed { caseId: string }
+
+const lostAfterMs = 900000
+
+schema InputRow {
+  appeal_from_state: string | null
+  severity: string | null
+  loss_finding: string | null
+  root_cause_key: string | null
+  award_state: string
+  manifest: string | null
+  decision_reason: string | null
+  summary: string | null
+}
+schema AppealReason { reason: string | null }
+schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
+schema Bounty { scope?: Scope }
+schema ManifestScope { securityBounty?: Bounty }
+
+function stringList(text: string | null) {
+  const value = text === null ? [] : jsonValue(text)
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+}
+
+export function triageView(record: CaseRecord, nowMs: number): TriageView | null {
+  if (record.row.appeal_state !== "open") return null
+  const revision = appealRevisionOf(record.events)
+  const row = record.triages.filter((found) => found.appeal_revision === revision).at(-1)
+  if (row === undefined) return null
+  const lost = row.state === "running" && nowMs - record.model.triage.startedAt > lostAfterMs
+  return {
+    appealRevision: row.appeal_revision,
+    attempt: row.attempt,
+    state: row.state,
+    provider: row.provider,
+    model: row.model,
+    promptRevision: row.prompt_revision,
+    proposedOutcome: row.proposed_outcome,
+    rationale: row.rationale,
+    confidence: row.confidence,
+    escalationReasons: stringList(row.escalation_reasons),
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    retryable: row.state === "failed" || row.state === "unavailable" || lost,
+  }
+}
+
+export function triageMayStart(model: PrivateCase, by: number, epoch: number, nowMs: number) {
+  return model.appeal === "AppealOpen" && (model.triage.state === "TriageQueued" || canRetryTriage(model, by, epoch, nowMs))
+}
+
+effect function queued(model: PrivateCase, starter: Starter, nowMs: number) {
+  if (starter.kind === "automatic" || model.triage.state === "TriageQueued") return model
+  return try apply(model, { type: "retryTriage", checkedEpoch: starter.epoch, nowMs }, starter.by)
+}
+
+export effect function triageStarted(caseId: string, starter: Starter) {
+  const nowMs = try Clock.currentTimeMillis
+  const at = try isoAt(nowMs)
+  const ready = try privateRouteReady()
+  return try update(caseAggregate(caseId), (record) => effect {
+    if (record === undefined) throw new TriageClosed({ caseId })
+    const current = starter.kind === "moderator" ? { ...record.model, authority: starter.model.authority } : record.model
+    const next = try apply(try queued(current, starter, nowMs), { type: "startTriage", nowMs }, 0)
+    const run = { caseId, appealRevision: next.triage.appealRevision, attempt: next.triage.attempt } satisfies TriageRun
+    return {
+      value: run,
+      writes: [sql`INSERT INTO security_appeal_triages (case_id, appeal_revision, attempt, state, prompt_revision, provider, model, started_at) VALUES (${caseId}, ${run.appealRevision}, ${run.attempt}, 'running', ${appealTriagePromptRevision}, ${ready ? privateProvider : null}, ${ready ? privateModel : null}, ${at})`],
+    }
+  })
+}
+
+function finishWrite(run: TriageRun, result: TriageOutcome, belowFloor: boolean, draft: { readonly proposedOutcome: string; readonly rationale: string; readonly confidence: number } | undefined, at: string) {
+  const where = sql`WHERE case_id = ${run.caseId} AND appeal_revision = ${run.appealRevision} AND attempt = ${run.attempt} AND state = 'running'`
+  if (result.tag !== "Drafted" || draft === undefined) return sql`UPDATE security_appeal_triages SET state = ${result.tag === "TriageUnavailableResult" ? "unavailable" : "failed"}, finished_at = ${at} ${where}`
+  const reasons = JSON.stringify(["private-security-case", ...belowFloor ? ["confidence-below-floor"] : []])
+  return sql`UPDATE security_appeal_triages SET state = 'complete', proposed_outcome = ${draft.proposedOutcome}, rationale = ${draft.rationale}, confidence = ${draft.confidence}, escalation_reasons = ${reasons}, finished_at = ${at} ${where}`
+}
+
+export effect function triageFinished(run: TriageRun, result: TriageOutcome, draft?: { readonly proposedOutcome: string; readonly rationale: string; readonly confidence: number }) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  return try update(caseAggregate(run.caseId), (record) => effect {
+    if (record === undefined) return { value: false, writes: [] }
+    const next = apply(record.model, { type: "finishTriage", appealRevision: run.appealRevision, attempt: run.attempt, result }, 0) catch effect (error) => {
+      if (error instanceof Rejected) return undefined
+      throw error
+    }
+    if (next === undefined) return { value: false, writes: [] }
+    return { value: true, writes: [finishWrite(run, result, next.triage.belowFloor, draft, at)] }
+  })
+}
+
+effect function appealInput(run: TriageRun) {
+  const appeal = try first(AppealReason, sql`SELECT reason FROM security_case_events WHERE case_id = ${run.caseId} AND case_revision = ${run.appealRevision} AND kind = 'appeal'`)
+  const row = try first(InputRow, sql`SELECT c.appeal_from_state, c.severity, c.loss_finding, c.root_cause_key, c.award_state, p.manifest,
+      (SELECT e.reason FROM security_case_events e WHERE e.case_id = c.id AND e.case_revision < ${run.appealRevision}
+        AND e.kind IN ('decide', 'award', 'decide-related-party') ORDER BY e.case_revision DESC LIMIT 1) AS decision_reason,
+      (SELECT a.summary FROM security_case_analyses a
+        LEFT JOIN security_submission_intake i ON i.case_id = a.case_id
+        WHERE a.case_id = c.id AND a.state = 'complete' AND a.report_version IS i.report_version
+          AND (i.case_id IS NULL OR i.review_decision = 'forward'
+               OR (i.review_decision IS NULL AND i.screening_state = 'legitimate'))
+        ORDER BY a.attempt DESC LIMIT 1) AS summary
+    FROM security_cases c LEFT JOIN project_revisions p ON p.project_id = c.project_id AND p.revision = c.policy_revision WHERE c.id = ${run.caseId}`)
+  if (appeal?.reason === null || appeal === undefined || row === undefined) return undefined
+  const parsed = row.manifest === null ? {} : Schema.decodeUnknownEffect(ManifestScope)(jsonValue(row.manifest)) catch () => undefined
+  if (parsed === undefined) return undefined
+  const scope = parsed.securityBounty?.scope
+  return appealMessage({
+    decision: { outcome: row.appeal_from_state ?? "unknown", severity: row.severity, loss: row.loss_finding, rootCauseKey: row.root_cause_key, awardState: row.award_state, reason: row.decision_reason },
+    appeal: { reason: appeal.reason },
+    analysisSummary: row.summary,
+    scope: scope === undefined ? null : { includedAssets: [...scope.includedAssets], severityRubric: scope.severityRubric, lossDefinition: scope.lossDefinition },
+  })
+}
+
+export effect function triaged(caseId: string, starter: Starter, budgetMs: number) {
+  const run = triageStarted(caseId, starter) catch effect (error) => {
+    if (error instanceof Rejected || error instanceof TriageClosed) return undefined
+    throw error
+  }
+  if (run === undefined) return false
+  if (!(try privateRouteReady())) return try triageFinished(run, { tag: "TriageUnavailableResult" })
+  const message = try appealInput(run)
+  if (message === undefined) return try triageFinished(run, { tag: "TriageFailedResult" })
+  const answer = try privateCall(appealPrompt, message, budgetMs)
+  if (answer.kind === "failed") return try triageFinished(run, answer.failure === "NotConfigured" ? { tag: "TriageUnavailableResult" } : { tag: "TriageFailedResult" })
+  const draft = appealDraft(answer.text)
+  if (draft === undefined) return try triageFinished(run, { tag: "TriageFailedResult" })
+  return try triageFinished(run, { tag: "Drafted", returnCase: draft.proposedOutcome === "return", confidencePercent: Math.floor(draft.confidence * 100) }, draft)
+}
+
+export effect function scheduledTriage(caseId: string) {
+  const execution = try Effect.serviceOption(Execution)
+  const background = Effect.ignore(triaged(caseId, { kind: "automatic" }, backgroundBudgetMs))
+  if (Option.isSome(execution)) return try provideService(later(background), Execution, execution.value)
+  try Effect.asVoid(triaged(caseId, { kind: "automatic" }, ownerBudgetMs))
+}

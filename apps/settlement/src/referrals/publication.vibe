@@ -1,0 +1,352 @@
+// spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded"
+import { isoAt } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import type { Accrual } from "../../gen/settlement__referralAccrual.ts"
+import { type Attempt, type Claim, type ClaimReceipt, type Event, type GasSettlement, NotAState, type Publication, type Root, apply, decodeState, emptyRoot } from "../../gen/settlement__referralPublication.effect.vibe"
+import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
+import { formatPeriod, parsePeriod } from "../kernels/calendar.ts"
+import type { Deployment } from "./distributor.vibe"
+import { ordinalOf, periodOf } from "./periods.ts"
+
+export schema PostRow {
+  readonly attempt: number
+  readonly id: string
+  readonly period: string
+  readonly epoch: number
+  readonly network: string
+  readonly distributor: string
+  readonly token: string
+  readonly poster: string
+  readonly merkle_root: string
+  readonly total_base: string
+  readonly tx_id: string
+  readonly raw_tx: string
+  readonly evm_nonce: number
+  readonly state: "submitted" | "unknown" | "finalized" | "failed" | "voided"
+  readonly reason: string | null
+  readonly block_number: string | null
+  readonly void_acknowledged_at: string | null
+  readonly created_at: string
+  readonly finalized_at: string | null
+  readonly maximum_wei: number | null
+  readonly actual_wei: number | null
+  readonly settled_day: string | null
+}
+
+schema FileRow {
+  readonly period: string
+  readonly epoch: number
+  readonly merkle_root: string | null
+  readonly tree_total_base: string
+}
+
+schema CacheRow {
+  readonly body: string | null
+  readonly observed_at: string | null
+  readonly error_at: string | null
+}
+
+schema CachedEpochMark {
+  readonly epoch: number
+  readonly voided: boolean
+}
+
+export schema CachedClaims {
+  readonly paused: boolean
+  readonly latestPaused: boolean
+  readonly claimed: Readonly<Record<string, string>>
+  readonly claimedEpochs?: ReadonlyArray<number>
+  readonly epochs?: ReadonlyArray<CachedEpochMark>
+}
+
+export interface PostedFile {
+  readonly period: string
+  readonly fileEpoch: number
+  readonly merkleRoot: string | null
+}
+
+export interface Ledger {
+  readonly deployment: Deployment
+  readonly accrual: Accrual
+  readonly day: number
+  readonly state: Publication
+  readonly posts: ReadonlyArray<PostRow>
+  readonly files: ReadonlyMap<number, PostedFile>
+  readonly snapshot: CachedClaims | undefined
+}
+
+export interface Signed {
+  readonly id: string
+  readonly runId: string
+  readonly raw: string
+  readonly txId: string
+  readonly nonce: number
+  readonly poster: string
+}
+
+export interface Evidence {
+  readonly signed?: Signed
+  readonly reason?: string
+  readonly blockNumber?: bigint
+  readonly settledDay?: string
+  readonly note?: string
+  readonly cache?: string
+}
+
+const dayMillis = 86_400_000
+const maxUint256 = (1n << 256n) - 1n
+const revertReason = "postRoot transaction reverted"
+
+export function utcDay(millis: number) {
+  return Math.floor(millis / dayMillis) + 1
+}
+
+export function dayText(day: number) {
+  return new Date((day - 1) * dayMillis).toISOString().slice(0, 10)
+}
+
+function dayOf(iso: string) {
+  const millis = Date.parse(iso.length === 10 ? `${iso}T00:00:00.000Z` : iso)
+  return Number.isFinite(millis) ? utcDay(millis) : 0
+}
+
+export function rootIdOf(fileEpoch: number) {
+  return fileEpoch + 1
+}
+
+export function receiptOf(attempt: number, kind: "posted" | "failed" | "voided") {
+  return attempt * 4 + (kind === "posted" ? 1 : kind === "failed" ? 2 : 3)
+}
+
+function mismatch(issue: string) {
+  return new RowMismatch({ text: "referral_root_posts", issue })
+}
+
+const postColumns = sql`p.rowid AS attempt, p.id, p.period, p.epoch, p.network, p.distributor, p.token, p.poster, p.merkle_root, p.total_base, p.tx_id, p.raw_tx, p.evm_nonce, p.state, p.reason, p.block_number, p.void_acknowledged_at, p.created_at, p.finalized_at, g.maximum_wei, g.actual_wei, g.settled_day`
+
+function aggregate(deployment: Deployment, accrual: Accrual, day: number): Aggregate<Ledger, RowMismatch | NotAState, never> {
+  const network = deployment.networkKey
+  return {
+    name: `referral publication on ${network}`,
+    version: sql`SELECT coalesce((SELECT group_concat(rowid || ':' || state || ':' || coalesce(length(reason), -1) || ':' || coalesce(block_number, '') || ':' || (void_acknowledged_at IS NOT NULL), ',') FROM (SELECT * FROM referral_root_posts WHERE network = ${network} ORDER BY rowid)), '') || '|' || (SELECT count(*) || ':' || count(actual_wei) FROM referral_post_gas WHERE network = ${network}) || '|' || coalesce((SELECT coalesce(observed_at, '') || ':' || coalesce(error_at, '') || ':' || coalesce(length(body), -1) FROM referral_claim_cache WHERE id = 'program'), '') AS version`,
+    reads: [
+      sql`SELECT ${postColumns} FROM referral_root_posts p LEFT JOIN referral_post_gas g ON g.post_id = p.id WHERE p.network = ${network} ORDER BY p.rowid`,
+      sql`SELECT period, epoch, merkle_root, tree_total_base FROM referral_accrual_files ORDER BY epoch`,
+      sql`SELECT body, observed_at, error_at FROM referral_claim_cache WHERE id = 'program'`,
+    ],
+    decode: (found) => ledgerOf(deployment, accrual, day, found),
+  }
+}
+
+effect function cachedClaims(row: CacheRow | undefined) {
+  if (row === undefined || row.body === null) return undefined
+  return Schema.decodeUnknownEffect(Schema.fromJsonString(CachedClaims))(row.body) catch effect () => { throw new RowMismatch({ text: "referral_claim_cache", issue: "body is not a claim snapshot" }) }
+}
+
+effect function ledgerOf(deployment: Deployment, accrual: Accrual, day: number, [postRows, fileRows, cacheRows]: ReadonlyArray<Rows>) {
+  const posts = try decoded(PostRow, postRows ?? [], "referral_root_posts")
+  const fileList = try decoded(FileRow, fileRows ?? [], "referral_accrual_files")
+  const cache = (try decoded(CacheRow, cacheRows ?? [], "referral_claim_cache"))[0]
+  const files = new Map<number, PostedFile>()
+  for (const file of fileList) {
+    const period = parsePeriod(file.period)
+    if (period === undefined) throw new RowMismatch({ text: "referral_accrual_files", issue: `${file.period} is not a month` })
+    files.set(ordinalOf(period), { period: file.period, fileEpoch: file.epoch, merkleRoot: file.merkle_root })
+  }
+  const snapshot = try cachedClaims(cache)
+  const sealed = new Set(snapshot?.claimedEpochs ?? [])
+  const attempts: Attempt[] = []
+  const settledGas: GasSettlement[] = []
+  const receipts: number[] = []
+  const roots: Root[] = []
+  let pending: { readonly row: PostRow; readonly root: Root } | undefined
+  let failed: Root | undefined
+  let lastFinalized = ""
+  for (const row of posts) {
+    if (row.distributor !== deployment.distributor || row.token !== deployment.token) throw mismatch("journal deployment differs")
+    const parsed = parsePeriod(row.period)
+    const ordinal = parsed === undefined ? -1 : ordinalOf(parsed)
+    const file = files.get(ordinal)
+    const filing = accrual.filings.find((candidate) => candidate.period === ordinal)
+    if (file === undefined || filing === undefined || file.merkleRoot !== row.merkle_root || fromAmount(filing.total).toString() !== row.total_base) throw mismatch(`${row.id} does not match its filed tree`)
+    if (row.maximum_wei === null) throw mismatch(`${row.id} has no native fee reservation`)
+    const root = { ...emptyRoot, id: rootIdOf(file.fileEpoch), epoch: row.epoch, merkleRoot: row.merkle_root, period: ordinal, sourceDigest: filing.sourceDigest, entries: filing.entries, total: filing.total }
+    attempts.push({ id: row.attempt, root: root.id, epoch: row.epoch, day: dayOf(row.created_at), reservedGas: row.maximum_wei })
+    if (row.actual_wei !== null) settledGas.push({ attempt: row.attempt, actual: row.actual_wei, day: dayOf(row.settled_day ?? "") })
+    if (row.state === "failed") receipts.push(receiptOf(row.attempt, "failed"))
+    if (row.state === "finalized" || row.state === "voided") {
+      receipts.push(receiptOf(row.attempt, "posted"))
+      if (row.state === "voided") receipts.push(receiptOf(row.attempt, "voided"))
+      roots.push({ ...root, height: Number(row.block_number ?? "0"), voided: row.state === "voided", sealed: sealed.has(row.epoch), voidAcknowledged: row.void_acknowledged_at !== null })
+      if ((row.finalized_at ?? "") > lastFinalized) lastFinalized = row.finalized_at ?? ""
+    }
+    if (row.state === "submitted" || row.state === "unknown") pending = { row, root }
+    failed = row.state === "failed" ? root : undefined
+  }
+  const actorOf = new Map(accrual.pins.map((pin) => [pin.wallet, pin.actor]))
+  const claims: Claim[] = []
+  for (const [wallet, cumulative] of Object.entries(snapshot?.claimed ?? {})) {
+    const actor = actorOf.get(wallet)
+    const amount = parseClaimed(cumulative)
+    if (actor === undefined || amount === undefined) throw new RowMismatch({ text: "referral_claim_cache", issue: `claim of ${wallet} has no pinned account` })
+    claims.push({ actor, cumulative: amount })
+  }
+  const bound = posts.length > 0
+  const phase = pending !== undefined ? pending.row.state === "submitted" ? "Submitted" : pending.row.reason === null ? "Journaled" : "Uncertain" : failed !== undefined ? "Prepared" : "Idle"
+  const marks = new Map((snapshot?.epochs ?? []).map((mark) => [mark.epoch, mark.voided]))
+  const observedRoots = roots.every((root) => marks.get(root.epoch) === root.voided)
+  const state = try decodeState({
+    phase,
+    prepared: pending?.root ?? failed ?? emptyRoot,
+    roots: roots.sort((left, right) => left.epoch - right.epoch),
+    attempts,
+    claims,
+    pins: bound ? accrual.pins : [],
+    receipts,
+    token: bound ? deployment.token : "",
+    tokenUnit: bound ? accrual.tokenUnit : [0],
+    currentAttempt: attempts.reduce((highest, attempt) => Math.max(highest, attempt.id), 0),
+    day,
+    settledGas,
+    nativeHold: pending?.row.maximum_wei ?? 0,
+    postingPaused: false,
+    distributorPaused: snapshot === undefined ? false : snapshot.paused || snapshot.latestPaused,
+    cacheFresh: cache !== undefined && cache.body !== null && cache.error_at === null && snapshot?.claimedEpochs !== undefined && (cache.observed_at ?? "") >= lastFinalized && observedRoots,
+    network: deployment.network,
+    activated: bound && deployment.network === "RobinhoodMainnet",
+  } satisfies Publication)
+  return { deployment, accrual, day, state, posts, files, snapshot } satisfies Ledger
+}
+
+function parseClaimed(text: string) {
+  const value = parseBaseUnits(text, maxUint256)
+  if (value === undefined) return undefined
+  const limbs: number[] = []
+  let rest = value
+  do {
+    limbs.push(Number(rest % 1000n))
+    rest /= 1000n
+  } while (rest > 0n)
+  return limbs
+}
+
+export effect function openLedger(deployment: Deployment, accrual: Accrual) {
+  const day = utcDay(try Clock.currentTimeMillis)
+  return (try load(aggregate(deployment, accrual, day))).state
+}
+
+function pendingRow(ledger: Ledger) {
+  return ledger.posts.find((row) => row.attempt === ledger.state.currentAttempt && (row.state === "submitted" || row.state === "unknown"))
+}
+
+function rowOfRoot(ledger: Ledger, rootId: number) {
+  return ledger.posts.find((row) => row.state === "finalized" && rootIdOf(ledger.files.get(parsePeriodOrdinal(row.period))?.fileEpoch ?? -2) === rootId)
+}
+
+function parsePeriodOrdinal(text: string) {
+  const period = parsePeriod(text)
+  return period === undefined ? -1 : ordinalOf(period)
+}
+
+export error EvidenceMissing { event: string }
+
+export function claimCacheWrite(body: string, observedAt: string) {
+  return sql`INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', ${body}, ${observedAt}, NULL) ON CONFLICT(id) DO UPDATE SET body = excluded.body, observed_at = excluded.observed_at, error_at = NULL WHERE referral_claim_cache.observed_at IS NULL OR referral_claim_cache.observed_at < excluded.observed_at AND CAST(json_extract(referral_claim_cache.body, '$.block.number') AS INTEGER) <= CAST(json_extract(excluded.body, '$.block.number') AS INTEGER)`
+}
+
+function claimWrite(ledger: Ledger, next: Publication, receipt: ClaimReceipt, now: string) {
+  const root = next.roots.find((candidate) => candidate.id === receipt.rootId)
+  if (root === undefined) return undefined
+  const claimed = { ...ledger.snapshot?.claimed ?? {}, [receipt.wallet]: fromAmount(receipt.cumulative).toString() }
+  const claimedEpochs = [...new Set([...ledger.snapshot?.claimedEpochs ?? [], root.epoch])].sort((left, right) => left - right)
+  const body = JSON.stringify({ block: { number: "0" }, paused: false, latestPaused: false, epochs: [], claimed, claimedEpochs })
+  return sql`INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', ${body}, ${now}, ${now}) ON CONFLICT(id) DO UPDATE SET body = json_set(json_set(referral_claim_cache.body, '$.claimed', json(${JSON.stringify(claimed)})), '$.claimedEpochs', json(${JSON.stringify(claimedEpochs)})), error_at = ${now}`
+}
+
+effect function writesFor(ledger: Ledger, next: Publication, event: Event, evidence: Evidence) {
+  const now = try isoAt(try Clock.currentTimeMillis)
+  const network = ledger.deployment.networkKey
+  const open = pendingRow(ledger)
+  if (event.type === "journal") {
+    const signed = evidence.signed
+    const file = ledger.files.get(next.prepared.period)
+    if (signed === undefined || file === undefined) throw new EvidenceMissing({ event: event.type })
+    const post = sql`INSERT INTO referral_root_posts (rowid, id, run_id, period, epoch, network, distributor, token, poster, merkle_root, total_base, tx_id, raw_tx, evm_nonce, state, reason, created_at, updated_at, submitted_at) VALUES (${event.attempt}, ${signed.id}, ${signed.runId}, ${file.period}, ${next.prepared.epoch}, ${network}, ${ledger.deployment.distributor}, ${ledger.deployment.token}, ${signed.poster}, ${next.prepared.merkleRoot}, ${fromAmount(next.prepared.total).toString()}, ${signed.txId}, ${signed.raw}, ${signed.nonce}, 'unknown', NULL, ${now}, ${now}, ${now})`
+    return [post, sql`INSERT INTO referral_post_gas (post_id, network, maximum_wei) VALUES (${signed.id}, ${network}, ${event.gas})`]
+  }
+  if (event.type === "submit" || event.type === "retransmit") {
+    if (open === undefined) throw new EvidenceMissing({ event: event.type })
+    return [sql`UPDATE referral_root_posts SET state = 'submitted', reason = NULL, updated_at = ${now} WHERE rowid = ${open.attempt}`]
+  }
+  if (event.type === "loseObservation") {
+    if (open === undefined) throw new EvidenceMissing({ event: event.type })
+    return [sql`UPDATE referral_root_posts SET state = 'unknown', reason = ${(evidence.reason ?? "broadcast unconfirmed").slice(0, 500)}, updated_at = ${now} WHERE rowid = ${open.attempt}`]
+  }
+  if (event.type === "finalize" || event.type === "finalizeFailure") {
+    const settledDay = evidence.settledDay
+    const blockNumber = evidence.blockNumber
+    if (open === undefined || settledDay === undefined || blockNumber === undefined) throw new EvidenceMissing({ event: event.type })
+    const actual = event.type === "finalize" ? event.rootReceipt.actualGas : event.actualGas
+    const row = event.type === "finalize"
+      ? sql`UPDATE referral_root_posts SET state = 'finalized', reason = NULL, block_number = ${blockNumber.toString()}, finalized_at = ${now}, updated_at = ${now} WHERE rowid = ${open.attempt}`
+      : sql`UPDATE referral_root_posts SET state = 'failed', reason = ${revertReason}, updated_at = ${now} WHERE rowid = ${open.attempt}`
+    return [row, sql`UPDATE referral_post_gas SET actual_wei = ${actual}, settled_day = ${settledDay} WHERE post_id = ${open.id} AND actual_wei IS NULL`]
+  }
+  if (event.type === "voidRoot" || event.type === "acknowledgeVoid") {
+    const row = event.type === "voidRoot" ? rowOfRoot(ledger, event.rootId) : ledger.posts.find((candidate) => candidate.state === "voided" && rootIdOf(ledger.files.get(parsePeriodOrdinal(candidate.period))?.fileEpoch ?? -2) === event.rootId)
+    if (row === undefined) throw new EvidenceMissing({ event: event.type })
+    if (event.type === "voidRoot") return [sql`UPDATE referral_root_posts SET state = 'voided', updated_at = ${now} WHERE rowid = ${row.attempt} AND state = 'finalized'`]
+    const note = evidence.note
+    if (note === undefined || note.length < 1 || note.length > 1000) throw new EvidenceMissing({ event: event.type })
+    return [sql`UPDATE referral_root_posts SET void_acknowledged_at = ${now}, void_acknowledgement = ${note}, updated_at = ${now} WHERE rowid = ${row.attempt} AND void_acknowledged_at IS NULL`]
+  }
+  if (event.type === "claim") {
+    const write = claimWrite(ledger, next, event.claimReceipt, now)
+    if (write === undefined) throw new EvidenceMissing({ event: event.type })
+    return [write]
+  }
+  if (event.type === "invalidateCache") return [sql`UPDATE referral_claim_cache SET error_at = ${now} WHERE id = 'program'`]
+  if (event.type === "refreshCache") {
+    const body = evidence.cache
+    const observed = body === undefined ? undefined : try cachedClaims({ body, observed_at: now, error_at: null })
+    if (body === undefined || observed === undefined || observed.claimedEpochs === undefined || (observed.paused || observed.latestPaused) !== event.paused) throw new EvidenceMissing({ event: event.type })
+    return [claimCacheWrite(body, now)]
+  }
+  return [] as ReadonlyArray<Statement>
+}
+
+export interface Session {
+  readonly ledger: Ledger
+  readonly state: Publication
+}
+
+export function sessionOf(ledger: Ledger): Session {
+  return { ledger, state: ledger.state }
+}
+
+export effect function applyInSession(session: Session, event: Event, by: string) {
+  return { ...session, state: try apply(session.state, event, by) } satisfies Session
+}
+
+export effect function commit(session: Session, events: ReadonlyArray<{ readonly event: Event; readonly by: string; readonly evidence?: Evidence }>) {
+  const { deployment, accrual } = session.ledger
+  const day = utcDay(try Clock.currentTimeMillis)
+  const committed = try update(aggregate(deployment, accrual, day), (fresh) => effect {
+    let state = session.state
+    const writes: Statement[] = []
+    if (fresh.state.currentAttempt !== session.ledger.state.currentAttempt || fresh.posts.length !== session.ledger.posts.length) throw new RowMismatch({ text: "referral_root_posts", issue: "the journal changed during this run" })
+    for (const step of events) {
+      state = try apply(state, step.event, step.by)
+      writes.push(...(try writesFor({ ...fresh, state }, state, step.event, step.evidence ?? {})))
+    }
+    return { value: state, writes }
+  })
+  const ledger = try load(aggregate(deployment, accrual, day))
+  return { ledger: ledger.state, state: committed } satisfies Session
+}
+
+export function periodText(ordinal: number) {
+  const period = periodOf(ordinal)
+  return period === undefined ? "" : formatPeriod(period)
+}

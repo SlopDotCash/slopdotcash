@@ -5,7 +5,7 @@ import { leavesPerCall, nextLeafCursor } from "../../gen/settlement__monthlySett
 import { type Bytes32, awardCall, awardId, bytes32, decodeAddress, decodeAward, decodeBytes32, escrowGetter, evmAddress, isZero } from "../chain/evm/abi.ts"
 import { type MonthlyEntry, type MonthlyReservation, type MonthlyReserveState, allocationRoot, commitMonthlyCalldata, commitMonthlyLeafCalldata, decodeMonthlyReserve, monthlyDigest, monthlyReserveCall, monthlyReserveDigest, monthlyRootCall, reserveMonthlyCalldata, sumTree } from "../chain/evm/monthlyRoot.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
-import { type Period, parsePeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { type Period, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
 import { payoutFeeAccepted } from "../kernels/fees.ts"
 import { type Attempt, type SendContext, fingerprintOf, parsedAttempt, readAttempt, reasonOf, retireReverted, signNewAttempt } from "./attempts.vibe"
 import { canonicalJson } from "./canonical.ts"
@@ -368,7 +368,7 @@ export effect function serveMonths(context: MonthContext, scope: string, item: {
   const current = try Effect.try(() => periodContaining(nowSeconds))
   let period = config.schedule.firstPeriod
   for (; period < current; period = try Effect.try(() => shiftPeriod(period, 1))) {
-    const text = `${Math.trunc(period / 100)}-${String(period % 100).padStart(2, "0")}`
+    const text = formatPeriod(period)
     const operation = `monthly:${text}`
     const key = `authorization:${scope}:${text}`
     const stored = try recordOf(key)

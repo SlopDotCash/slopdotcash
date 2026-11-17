@@ -1,0 +1,453 @@
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import type { D1Database } from "@repo/platform/bindings"
+import { base64Decode } from "@repo/platform/chain/solana"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import type { Handler } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { type Event, type Quote, type SignedSend, maximumSafeValue } from "../gen/fees__conversion.ts"
+import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
+import type { Session } from "../src/conversion/session.vibe"
+import { ExpiryOperators, expiryOperators, expiryTimeoutMs, recoveryOperator } from "../src/expiry/operators.vibe"
+import { expireUnlanded } from "../src/expiry/prove.vibe"
+import type { Instance } from "../src/journal/codec.vibe"
+import { journaledAttempts } from "../src/journal/queries.vibe"
+import { type Facts, journal, send } from "../src/journal/store.vibe"
+import { qualifySolanaRpcPair, recordFile, reviewedDigest, solanaPublicPair, witness } from "../src/programs/solanaRpcPair.vibe"
+import { solanaGenesis } from "../src/runtime/pins.ts"
+import { jsonValue } from "../src/solana/bytes.ts"
+import { blockhashOf, parsedTransaction } from "../src/solana/wire.vibe"
+import { type GenerationNames, factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+
+type Variant = "clean" | "pruned" | "disagreeing" | "failing"
+
+interface Chain { anchor: string }
+
+interface Endpoint { readonly url: string; readonly blocks: Array<number> }
+
+service Fixture {
+  readonly db: D1Database
+  readonly chain: Chain
+  readonly endpoints: Readonly<Record<"first" | "second" | Exclude<Variant, "clean">, Endpoint>>
+}
+
+const anchorSlot = 40
+const tipSlot = 110
+const tamperedSlot = 76
+const slots: ReadonlyArray<number> = [anchorSlot, ...Array.from({ length: tipSlot - anchorSlot }, (_, index) => anchorSlot + 1 + index).filter((slot) => slot % 7 !== 0)]
+const genesis = "LocalExpiryGenesis11111111111111111111111111"
+
+function hashAt(chain: Chain, slot: number) {
+  return slot === anchorSlot ? chain.anchor : `block-${slot}`
+}
+
+function blockAt(chain: Chain, variant: Variant, slot: number) {
+  const index = slots.indexOf(slot)
+  if (index < 0) return null
+  const parent = slots[index - 1]
+  return {
+    blockhash: hashAt(chain, slot),
+    previousBlockhash: parent === undefined ? "before-anchor" : hashAt(chain, parent),
+    parentSlot: parent ?? anchorSlot - 1,
+    blockHeight: slot,
+    blockTime: null,
+    signatures: variant === "disagreeing" && slot === tamperedSlot ? [`sig-${slot}`, "unrelated"] : [`sig-${slot}`],
+  }
+}
+
+function answered(result: unknown) {
+  return Response.json({ jsonrpc: "2.0", id: 1, result })
+}
+
+function chainRpc(chain: Chain, variant: Variant, blocks: Array<number>): Handler {
+  return async (request) => {
+    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<any> }
+    if (method === "getBlock" && params[1]?.transactionDetails === "signatures") blocks.push(Number(params[0]))
+    if (variant === "failing" && method === "getBlock") return new Response("upstream failure", { status: 500, headers: { "content-type": "text/plain" } })
+    switch (method) {
+      case "getGenesisHash": return answered(genesis)
+      case "getFirstAvailableBlock": return answered(variant === "pruned" ? anchorSlot + 1 : 0)
+      case "getBlock": return answered(blockAt(chain, variant, Number(params[0])))
+      case "isBlockhashValid": return answered({ context: { slot: tipSlot }, value: false })
+      case "getSignatureStatuses": return answered({ context: { slot: tipSlot }, value: [null] })
+      case "getTransaction": return answered(null)
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+    }
+  }
+}
+
+effect function served(chain: Chain, variant: Variant) {
+  const blocks: Array<number> = []
+  const server: Served = try acquireRelease(promise(() => serve(chainRpc(chain, variant, blocks))), (opened) => promise(() => opened.close()))
+  return { url: server.url, blocks } satisfies Endpoint
+}
+
+const Started = Layer.effect(Fixture, effect {
+  const started = try acquireRelease(promise(() => journalDatabase("fees-expiry")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  const chain: Chain = { anchor: "" }
+  const first = try served(chain, "clean")
+  const second = try served(chain, "clean")
+  return { db: started.db, chain, endpoints: { first, second, pruned: try served(chain, "pruned"), disagreeing: try served(chain, "disagreeing"), failing: try served(chain, "failing") } }
+})
+
+interface World {
+  instance: Instance
+  readonly names: GenerationNames
+  readonly clock: SettableClock
+  readonly db: D1Database
+}
+
+const liveSolana = { source: 1, converterMode: "Live", buybackMode: "Off", networks: ["Solana"], keys: ["Solana"], nativeLimits: ["Solana"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+
+const quote: Quote = { token: 1, route: "Found", amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }
+
+const swap: SignedSend = { kind: "Conversion", tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 1, priority: 0 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000, deadline: maximumSafeValue, blockhashSlot: anchorSlot }
+
+function journalServices(world: World) {
+  return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)
+}
+
+effect function step(world: World, event: Event, by: Sender = "Worker") {
+  const facts: Facts = try promise(() => factsFor(event, world.names, world.instance))
+  const sent = try Effect.provide(send(world.instance, world.names, event, by, facts), journalServices(world))
+  world.instance = sent.instance
+  return sent.state
+}
+
+effect function unlanded(generation: number) {
+  const { db, chain } = try Fixture
+  const instance = generationInstance(generation, "Solana")
+  const world: World = { instance, names: generationNames(generation), clock: settableClock(instance.epoch), db }
+  try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+  try step(world, { type: "publishWorker", config: liveSolana }, "ReleaseWorkflow")
+  try step(world, { type: "verifyReadiness" }, "Owner")
+  try step(world, { type: "addToken", asset: "ProjectToken" })
+  try step(world, { type: "receiveFee", transfer: { receipt: 1, token: 1, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true } })
+  try step(world, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+  try step(world, { type: "evaluate", runId: 1, quote })
+  try step(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 5000000 })
+  try step(world, { type: "sign", runId: 1, send: swap })
+  try step(world, { type: "broadcastFail", runId: 1, id: 1 })
+  const txId = world.names.text("tx", swap.tx) ?? ""
+  const rawTx = (try Effect.provide(journaledAttempts("solana"), d1(db))).find((attempt) => attempt.txId === txId)?.rawTx ?? ""
+  const raw = base64Decode(rawTx) ?? new Uint8Array()
+  chain.anchor = blockhashOf(raw, try parsedTransaction(raw))
+  return world
+}
+
+effect function attempt(world: World, primary: Endpoint, recovery: Endpoint) {
+  primary.blocks.length = 0
+  recovery.blocks.length = 0
+  const state = (try Effect.provide(journal(world.instance, world.names), journalServices(world))).state
+  const session: Session = { instance: world.instance, state, renewedAt: world.clock.now(), leased: true, names: world.names, runId: 1 }
+  const operators = Layer.provide(expiryOperators({ primary: Redacted.make(primary.url), recovery: Redacted.make(recovery.url), genesis }), outbound)
+  const outcome = try Effect.provide(expireUnlanded(session, 1), Layer.mergeAll(journalServices(world), operators))
+  world.instance = session.instance
+  return { outcome, blocks: [primary.blocks.length, recovery.blocks.length] }
+}
+
+schema ScanRow { operator: string; revision: number; scan_json: string }
+schema SendRow { state: string; reason: string | null }
+schema GasRow { actual_wei: string | null; receipt_block_hash: string | null }
+schema ProofRow { proof_json: string }
+
+effect function evidence(world: World) {
+  const scope = world.instance.scope
+  const inScope = sql`substr(run_id, 1, ${scope.length}) = ${scope}`
+  return try Effect.provide(effect {
+    const scans = try rows(ScanRow, sql`SELECT operator, revision, scan_json FROM fee_solana_expiry_scan_steps WHERE ${inScope} ORDER BY rowid`)
+    const sends = try rows(SendRow, sql`SELECT state, reason FROM fee_conversions WHERE ${inScope} ORDER BY rowid`)
+    const gas = try rows(GasRow, sql`SELECT actual_wei, receipt_block_hash FROM fee_native_gas WHERE ${inScope} ORDER BY rowid`)
+    const proofs = try rows(ProofRow, sql`SELECT proof_json FROM fee_solana_expiry_proofs WHERE ${inScope} ORDER BY rowid`)
+    return {
+      scans: scans.map((row) => {
+        const scan = jsonValue(row.scan_json) as { blocks: number; complete: boolean; nextSlot: number; tipSlot: number; digest: string }
+        return [label(row.operator), row.revision, scan.blocks, scan.complete, scan.nextSlot, scan.tipSlot]
+      }),
+      digests: [...new Set(scans.filter((row) => (jsonValue(row.scan_json) as { complete: boolean }).complete).map((row) => (jsonValue(row.scan_json) as { digest: string }).digest))].length,
+      sends: sends.map((row) => [row.state, row.reason]),
+      gas: gas.map((row) => [row.actual_wei, row.receipt_block_hash?.startsWith("expiry:") ?? false]),
+      proofs: proofs.map((row) => (jsonValue(row.proof_json) as { providers: ReadonlyArray<{ operator: string }> }).providers.map((provider) => label(provider.operator))),
+    }
+  }, d1(world.db))
+}
+
+let labels: ReadonlyMap<string, string> = new Map()
+
+function label(operator: string) {
+  return labels.get(operator) ?? operator
+}
+
+effect function labelled() {
+  const { endpoints } = try Fixture
+  labels = new Map(Object.entries(endpoints).map(([name, endpoint]) => [recoveryOperator(endpoint.url, genesis) ?? "", name] as const))
+}
+
+effect function direct(world: World, statement: Statement) {
+  return Effect.as(Effect.provide(effect { return try (try D1).run(statement) }, d1(world.db)), "changed") catch (error) => error._tag
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const held = ["unknown", "broadcast: journal broadcastFail answer withheld from <url>"]
+
+const spoofedOperators = ["http://public.rpc.solanavibestation.com", "https://solanavibestation.com", "https://other.rpc.solanavibestation.com", "https://public.rpc.solanavibestation.com.evil.example"]
+const hostedOperators = ["https://public.rpc.solanavibestation.com", "https://public.rpc.solanavibestation.com/historical"]
+
+effect function operatorsOf(primary: string, recovery: string, chainGenesis: string) {
+  const configured = Layer.provide(expiryOperators({ primary: Redacted.make(primary), recovery: Redacted.make(recovery), genesis: chainGenesis }), outbound)
+  return try Effect.provide(effect { return (try ExpiryOperators).providers.map((provider) => label(provider.operator)) }, configured)
+}
+
+interface PacedClock {
+  readonly layer: Layer.Layer<never>
+  now(): number
+}
+
+function pacedClock(start: bigint): PacedClock {
+  let nanos = start
+  const now = () => Number(nanos / 1_000_000n)
+  const live = Clock.Clock.defaultValue()
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: now,
+    currentTimeMillis: Effect.sync(now),
+    currentTimeNanosUnsafe: () => nanos,
+    currentTimeNanos: Effect.sync(() => nanos),
+    monotonicTimeNanosUnsafe: () => nanos,
+    monotonicTimeNanos: Effect.sync(() => nanos),
+    sleep: (duration) => Duration.toMillis(duration) >= expiryTimeoutMs ? live.sleep(duration) : Effect.sync(() => { nanos += Option.getOrElse(Duration.toNanos(duration), () => 0n) }),
+  }
+  return { layer: Layer.succeed(Clock.Clock, clock), now }
+}
+
+interface PublicPair {
+  readonly fetch: typeof globalThis.fetch
+  readonly clock: PacedClock
+  readonly requests: Array<number>
+}
+
+function pairHash(slot: number) {
+  return slot === witness.blockhashSlot ? witness.blockhash : slot === witness.tipSlot ? witness.tipHash : `pair-${slot}`
+}
+
+function pairBlock(slot: number) {
+  if (slot < witness.blockhashSlot || slot > witness.tipSlot) return null
+  return { blockhash: pairHash(slot), previousBlockhash: slot === witness.blockhashSlot ? "before-witness" : pairHash(slot - 1), parentSlot: slot - 1, blockHeight: slot, blockTime: null, signatures: [`pair-${slot}`] }
+}
+
+function publicPair(): PublicPair {
+  const clock = pacedClock(1_794_873_600_000_000_000n)
+  const requests: Array<number> = []
+  const rpc: Handler = async (request) => {
+    requests.push(clock.now())
+    const { method, params } = JSON.parse(await request.text()) as { method: string; params: ReadonlyArray<any> }
+    switch (method) {
+      case "getGenesisHash": return answered(solanaGenesis)
+      case "getFirstAvailableBlock": return answered(0)
+      case "getBlock": return answered(pairBlock(Number(params[0])))
+      case "isBlockhashValid": return answered({ context: { slot: witness.tipSlot }, value: false })
+      case "getSignatureStatuses": return answered({ context: { slot: witness.tipSlot }, value: [null] })
+      case "getTransaction": return answered(null)
+      default: return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32601, message: `unexpected ${method}` } })
+    }
+  }
+  const hosts = Object.fromEntries(solanaPublicPair.map((endpoint) => [new URL(endpoint).host, rpc] as const))
+  return { fetch: asFetch(internet({ hosts }).handler), clock, requests }
+}
+
+effect function qualified(directory: string, pair: PublicPair) {
+  const run = Effect.provide(qualifySolanaRpcPair([directory]), Layer.merge(FetchHttpClient.layer, pair.clock.layer))
+  return Effect.as(Effect.provideService(run, FetchHttpClient.Fetch, pair.fetch), "qualified") catch (error) => ("issue" in error ? error.issue : error._tag)
+}
+
+interface SavedCoverage {
+  readonly operator: string
+  readonly blocks: number
+  readonly complete: boolean
+  readonly revision: number
+  readonly nextSlot: number
+  readonly digest: string
+}
+
+interface SavedRecord {
+  readonly coverage: ReadonlyArray<SavedCoverage>
+  readonly pages: ReadonlyArray<{ readonly operator: string; readonly blocks: ReadonlyArray<{ readonly signaturesSha256: string }> }>
+  readonly proof: { readonly providers: ReadonlyArray<{ readonly operator: string }> } | null
+}
+
+function coverageAt(record: SavedRecord, index: number, change: Readonly<Record<string, unknown>>) {
+  return { ...record, coverage: record.coverage.map((entry, at) => at === index ? { ...entry, ...change } : entry) }
+}
+
+const tampers: ReadonlyArray<(record: SavedRecord) => unknown> = [
+  (record) => ({ ...record, pages: record.pages.map((page, index) => index === 0 ? { ...page, blocks: page.blocks.map((block, at) => at === 7 ? { ...block, signaturesSha256: "f".repeat(64) } : block) } : page) }),
+  (record) => ({ ...record, pages: [] }),
+  (record) => ({ ...record, pages: record.pages.slice(0, -1) }),
+  (record) => ({ ...record, pages: [...record.pages, ...record.pages.slice(0, 1)] }),
+  (record) => coverageAt(record, 1, { operator: record.coverage[0]?.operator }),
+  (record) => coverageAt(record, 0, { txId: "another-transaction" }),
+  (record) => coverageAt(record, 0, { tipSlot: witness.tipSlot + 1 }),
+  (record) => coverageAt(record, 0, { revision: 8 }),
+  (record) => ({ ...record, schemaVersion: 2 }),
+  () => null,
+  () => ({}),
+]
+
+layer(Layer.merge(Started, NodeServices.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A clean pair of independent operators retires an unlanded Solana send only after both retained histories reach the signed blockhash slot, at most 32 blocks per provider per run (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change")', () => effect {
+    try labelled()
+    const { endpoints } = try Fixture
+    const world = try unlanded(801)
+    const first = try attempt(world, endpoints.first, endpoints.second)
+    const partial = try evidence(world)
+    const second = try attempt(world, endpoints.first, endpoints.second)
+    const proven = try evidence(world)
+    const after = try attempt(world, endpoints.first, endpoints.second)
+    const txId = world.names.text("tx", swap.tx) ?? ""
+    const erased = try direct(world, sql`DELETE FROM fee_solana_expiry_scan_steps WHERE tx_id = ${txId}`)
+    const rewritten = try direct(world, sql`UPDATE fee_solana_expiry_proofs SET proof_json = '{}' WHERE tx_id = ${txId}`)
+
+    try same({ first, partial, second, proven, after: after.outcome, permanent: [erased, rewritten] }, {
+      first: { outcome: "held", blocks: [33, 33] },
+      partial: {
+        scans: [["first", 1, 32, false, 73, tipSlot], ["second", 1, 32, false, 73, tipSlot]],
+        digests: 0,
+        sends: [held],
+        gas: [[null, false]],
+        proofs: [],
+      },
+      second: { outcome: "expired", blocks: [30, 30] },
+      proven: {
+        scans: [["first", 1, 32, false, 73, tipSlot], ["second", 1, 32, false, 73, tipSlot], ["first", 2, 61, true, anchorSlot, tipSlot], ["second", 2, 61, true, anchorSlot, tipSlot]],
+        digests: 1,
+        sends: [["failed", "blockhash expired; two independent retained histories prove no inclusion"]],
+        gas: [["0", true]],
+        proofs: [["first", "second"]],
+      },
+      after: "held",
+      permanent: ["ConstraintViolation", "ConstraintViolation"],
+    })
+  })
+
+  it.effect('Missing or disagreeing evidence never retires a Solana send: the same operator twice, a pruned history, disagreeing digests and an RPC error each keep the send unknown with its reservation held (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change")', () => effect {
+    try labelled()
+    const { endpoints } = try Fixture
+
+    const sameOperator = try unlanded(802)
+    const twice = [try attempt(sameOperator, endpoints.first, endpoints.first), try attempt(sameOperator, endpoints.first, endpoints.first)]
+
+    const pruned = try unlanded(803)
+    const prunedTries = [try attempt(pruned, endpoints.first, endpoints.pruned), try attempt(pruned, endpoints.first, endpoints.pruned)]
+
+    const disagreeing = try unlanded(804)
+    const disagreeingTries = [try attempt(disagreeing, endpoints.first, endpoints.disagreeing), try attempt(disagreeing, endpoints.first, endpoints.disagreeing)]
+
+    const failing = try unlanded(805)
+    const failingTries = [try attempt(failing, endpoints.first, endpoints.failing)]
+
+    const spoofed = try unlanded(806)
+    const spoofedTries: Array<unknown> = []
+    const spoofedProviders: Array<unknown> = []
+    for (const url of spoofedOperators) {
+      spoofedTries.push(try attempt(spoofed, endpoints.first, { url, blocks: [] }))
+      spoofedProviders.push(try operatorsOf(endpoints.first.url, url, genesis))
+    }
+    const hostedProviders: Array<unknown> = []
+    for (const url of hostedOperators) hostedProviders.push(try operatorsOf(endpoints.first.url, url, genesis))
+    const mainnetLoopback = try operatorsOf(endpoints.first.url, endpoints.second.url, solanaGenesis)
+
+    try same({
+      sameOperator: [twice, try evidence(sameOperator)],
+      pruned: [prunedTries, try evidence(pruned)],
+      disagreeing: [disagreeingTries, try evidence(disagreeing)],
+      failing: [failingTries, try evidence(failing)],
+      spoofed: [spoofedTries, spoofedProviders, try evidence(spoofed)],
+      hosted: hostedProviders,
+      mainnetLoopback,
+    }, {
+      sameOperator: [
+        [{ outcome: "held", blocks: [0, 0] }, { outcome: "held", blocks: [0, 0] }],
+        { scans: [], digests: 0, sends: [held], gas: [[null, false]], proofs: [] },
+      ],
+      pruned: [
+        [{ outcome: "held", blocks: [33, 0] }, { outcome: "held", blocks: [30, 0] }],
+        { scans: [["first", 1, 32, false, 73, tipSlot], ["first", 2, 61, true, anchorSlot, tipSlot]], digests: 1, sends: [held], gas: [[null, false]], proofs: [] },
+      ],
+      disagreeing: [
+        [{ outcome: "held", blocks: [33, 33] }, { outcome: "held", blocks: [30, 30] }],
+        {
+          scans: [["first", 1, 32, false, 73, tipSlot], ["disagreeing", 1, 32, false, 73, tipSlot], ["first", 2, 61, true, anchorSlot, tipSlot], ["disagreeing", 2, 61, true, anchorSlot, tipSlot]],
+          digests: 2,
+          sends: [held],
+          gas: [[null, false]],
+          proofs: [],
+        },
+      ],
+      failing: [
+        [{ outcome: "held", blocks: [33, 0] }],
+        { scans: [["first", 1, 32, false, 73, tipSlot]], digests: 0, sends: [held], gas: [[null, false]], proofs: [] },
+      ],
+      spoofed: [
+        spoofedOperators.map(() => ({ outcome: "held", blocks: [0, 0] })),
+        spoofedOperators.map(() => []),
+        { scans: [], digests: 0, sends: [held], gas: [[null, false]], proofs: [] },
+      ],
+      hosted: hostedOperators.map(() => ["first", "solana-vibe-station"]),
+      mainnetLoopback: [],
+    })
+  })
+
+  it.effect('Qualify the public Solana RPC pair from the retained synthetic witness, refusing any retained record its pages do not reconstruct (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-solana-pair-" })
+    const file = `${directory}/${recordFile}`
+    const pair = publicPair()
+    const first = try qualified(directory, pair)
+    const kept = try fs.readFileString(file)
+    const mode = (try fs.stat(file)).mode & 0o777
+    const scanning = pair.requests.slice()
+    const again = try qualified(directory, pair)
+    const unchanged = (try fs.readFileString(file)) === kept
+    const refused: Array<unknown> = []
+    for (const tamper of tampers) {
+      try fs.writeFileString(file, JSON.stringify(tamper(jsonValue(kept) as SavedRecord)))
+      refused.push(try qualified(directory, pair))
+    }
+    const record = jsonValue(kept) as SavedRecord
+    const digests = [...new Set(record.coverage.map((entry) => entry.digest))]
+
+    try same({
+      first,
+      again,
+      unchanged,
+      mode,
+      requests: [scanning.length, pair.requests.length - scanning.length],
+      spacing: [...new Set(scanning.slice(1).map((at, index) => at - (scanning[index] ?? 0)))],
+      coverage: record.coverage.map((entry) => [entry.operator, entry.blocks, entry.complete, entry.revision, entry.nextSlot]),
+      digests: [digests.length, digests.includes(reviewedDigest)],
+      pages: record.pages.map((page) => [page.operator, page.blocks.length]),
+      proof: record.proof?.providers.map((provider) => provider.operator),
+      refused,
+    }, {
+      first: "Solana witness differs from the reviewed chain",
+      again: "Solana witness differs from the reviewed chain",
+      unchanged: true,
+      mode: 0o600,
+      requests: [520, 14],
+      spacing: [3000],
+      coverage: [["solana-public", 211, true, 7, witness.blockhashSlot], ["solana-vibe-station", 211, true, 7, witness.blockhashSlot]],
+      digests: [1, false],
+      pages: [32, 32, 32, 32, 32, 32, 19].flatMap((blocks) => [["solana-public", blocks], ["solana-vibe-station", blocks]]),
+      proof: ["solana-public", "solana-vibe-station"],
+      refused: tampers.map(() => "WitnessInconsistent"),
+    })
+  }))
+})

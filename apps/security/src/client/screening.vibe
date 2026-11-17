@@ -1,0 +1,8 @@
+// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { Submitted } from "./intake.vibe"
+
+export const retryScreening = route({ method: "POST", path: "/api/v1/security-submissions/:id/screen", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "screening_not_retryable", cache: "private" })
+export const reviewRouting = route({ method: "POST", path: "/api/v1/security-submissions/:id/review", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "stale_revision", cache: "private" })
+
+export const screeningApi: ReadonlyArray<AnyRoute> = [retryScreening, reviewRouting]

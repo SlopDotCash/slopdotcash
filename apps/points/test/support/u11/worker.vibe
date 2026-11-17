@@ -1,0 +1,46 @@
+// spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { handle, outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { type AccountVars, accountSettings } from "@repo/backend/points"
+import { journalFile } from "../../../src/kernels/records/ids.vibe"
+import { importJournal } from "../../../src/publication/import.vibe"
+import { protectionEvidence } from "../../../src/publication/protection.vibe"
+import { journalRoutes } from "../../../src/publication/routes.vibe"
+import { freezes } from "../../../gen/points__periods.effect.vibe"
+
+interface Env extends RoleVars, AccountVars {
+  readonly SLOP_DB: D1Database
+}
+
+schema ImportRequest { journal: string }
+schema ImportAnswer { outcome: string; attempt: number }
+schema Scope { projectId: string; period: string }
+schema ScopeList { scopes: ReadonlyArray<Scope> }
+schema Freeze { project: string; period: number; frozen: boolean }
+schema Freezes { evidence: ReadonlyArray<Freeze> }
+
+const importRoute = route({ method: "POST", path: "/api/v1/test/points/import", access: "public", limitKib: 256, request: ImportRequest, answer: ImportAnswer, rejected: "rejected", cache: "no-store" })
+const protectionRoute = route({ method: "POST", path: "/api/v1/test/points/protection", access: "public", limitKib: 8, request: ScopeList, answer: Freezes, rejected: "rejected", cache: "no-store" })
+
+effect function imported(text: string) {
+  const journal = try journalFile(text)
+  const done = importJournal(journal, { wait: () => Effect.void }) catch () => undefined
+  if (done === undefined) return { outcome: "failed", attempt: 3 }
+  return { outcome: done.recordedAfterError ? "recorded" : "imported", attempt: done.attempt }
+}
+
+effect function protectedMonths(scopes: ReadonlyArray<Scope>) {
+  const evidence = try protectionEvidence(scopes)
+  return { evidence: evidence.map((entry) => ({ project: entry.project, period: entry.period, frozen: freezes(entry) })) }
+}
+
+export default worker({
+  services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env)), Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))),
+  routes: Layer.mergeAll(journalRoutes, handle(importRoute, (input) => imported(input.body.journal)), handle(protectionRoute, (input) => protectedMonths(input.body.scopes))),
+})

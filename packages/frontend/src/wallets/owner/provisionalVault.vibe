@@ -1,0 +1,183 @@
+// spec/frontend/provisionalVault.md, "Reviewed identity and current chain evidence govern the form"; spec/frontend/provisionalVault.md, "Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads"; spec/frontend/provisionalVault.md, "Only the owner opens the provisional token deposit prompt, after storage saves its attempt"; spec/frontend/provisionalVault.md, "Included deposits are received pending finality only when there is an exact deposit event"; spec/frontend/provisionalVault.md, "Only a finalized deposit in a registered vault is eligible for accounting"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"
+import { type Event, type IncludedDepositEvidence, type Setup, type VaultKind, canCountDeposit, canFinalizeCreation, canFinalizeDeposit, canIncludeCreation, canIncludeDeposit, canObserveFailure, canReplaceCreation, canReplaceDeposit, depositAttempt, initial, machineOver } from "../../../gen/frontend__provisionalVault.effect.vibe"
+import { WalletDeclined } from "../core/discovery.vibe"
+import type { EvmConnection } from "../core/evm.vibe"
+import type { SlotStorage } from "../core/slots.ts"
+import { hexQuantity } from "./evmCalls.ts"
+import { blockIndex, expectedOf } from "./evmEvidence.ts"
+import { type EvmVault, type ReceiptState, depositsBy, evmVaultMessages, plannedTransfer, receiptState, sendTransfer, vaultCodeAt, verifyDeployment } from "./evmVault.vibe"
+import { type EvmCallPlan, type EvmDepositPlan, planOf, planText } from "./ownerPlans.schema.ts"
+import { keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+
+export type { Setup, VaultKind }
+
+export const provisionalMessages = {
+  pending: "The vault creation is in a block that is not final yet. Its owner may deposit now; the deposit counts only once the vault is registered and the deposit is final.",
+  dropped: "The vault creation was dropped from the chain. Review the vault again.",
+  failed: "The vault creation failed.",
+  unavailable: "The vault could not be read. The last verified form is kept.",
+  ownerOnly: "Connect the wallet that created this vault. Other wallets can deposit once it is registered.",
+  storageBlocked: storageBlockedMessage,
+  occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+  unreadable: unreadableMessage,
+  changed: slotChangedMessage,
+  closed: evmVaultMessages.waitRegistered,
+  declined: "You declined the wallet request. Nothing was sent.",
+  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  enterHash: evmVaultMessages.enterHash,
+  waiting: "Submitted. Waiting for finalized chain evidence.",
+  received: "Received. Waiting for finality before it counts.",
+  noVault: "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
+  depositFailed: "The transaction failed. Review the amount and wallet, then retry.",
+} as const
+
+export error DepositStopped { message: string }
+
+const signedTransaction = 1
+
+export effect function provisionalVault(storage: SlotStorage | undefined, key: string, vault: EvmVault, owner: string) {
+  const held = try Ref.make<Setup>(initial)
+  const keeper = slotKeeper(storage, { deposit: key })
+
+  function storedDeposit(): EvmDepositPlan | undefined {
+    const read = keeper.read("deposit")
+    if (read.kind !== "owned" || read.slot.attempt.identity !== depositAttempt.identity) return undefined
+    const plan = planOf(read.slot.plan)
+    return plan?.kind === "evmDeposit" ? plan : undefined
+  }
+
+  effect function load() {
+    const state = try Ref.get(held)
+    if (state.phase !== "NoDeposit" || state.slot.identity !== "") return state
+    const plan = storedDeposit()
+    if (plan === undefined || plan.hash === "") return state
+    return { ...state, phase: "Submitted", transaction: signedTransaction, view: "Waiting", slot: depositAttempt } satisfies Setup
+  }
+
+  effect function keep(next: Setup) {
+    const before = try Ref.get(held)
+    const flow = { slot: next.slot, slotOwner: next.slot.identity === "" ? 0 : 1 }
+    if (!sameSlot({ slot: before.slot, slotOwner: before.slot.identity === "" ? 0 : 1 }, flow)) try keeper.write("deposit", flow)
+    try Ref.set(held, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  function sender(connection: EvmConnection | undefined): string {
+    return connection !== undefined && connection.address.toLowerCase() === owner.toLowerCase() ? "owner" : "other"
+  }
+
+  effect function sent(event: Event, by: string) {
+    return try keptOrChanged(Effect.ignore(machine.send(event, by)))
+  }
+
+  effect function step(event: Event, allowed: boolean) {
+    if (allowed) try sent(event, "")
+    return try machine.get()
+  }
+
+  effect function stopped(message: string) {
+    throw new DepositStopped({ message })
+  }
+
+  effect function createdHere(connection: EvmConnection, read: ReceiptState | undefined) {
+    if (read === undefined || !read.canonical || !read.success) return "absent" as const
+    return Effect.as(verifyDeployment(connection, vault, hexQuantity(read.receipt.blockNumber)), "created" as const) catch (error) => error._tag === "VaultActionRefused" ? "absent" as const : "unavailable" as const
+  }
+
+  effect function annotateHash(hash: string) {
+    const plan = planOf(keeper.plan("deposit"))
+    return plan?.kind === "evmDeposit" && keeper.annotate("deposit", depositAttempt.identity, planText({ ...plan, hash }))
+  }
+
+  return {
+    machine,
+    reviewCreation: effect (kind: VaultKind, matching: boolean) => {
+      try sent({ type: "reviewCreation", kind, matching }, "")
+      return try machine.get()
+    },
+    followCreation: effect (connection: EvmConnection, hash: string) => {
+      const state = try machine.get()
+      const read = receiptState(connection, vault, hash, undefined) catch () => "unavailable" as const
+      const created = read === "unavailable" ? "unavailable" as const : try createdHere(connection, read)
+      if (read === "unavailable" || created === "unavailable") return try step({ type: "checkCreation", readOk: false }, state.phase !== "Prompt" && !state.registered)
+      const block = read === undefined ? 0 : blockIndex(read.receipt.blockNumber)
+      if (created === "absent" && canReplaceCreation(state)) try sent({ type: "replaceCreation" }, "")
+      if (read !== undefined && created === "created" && canIncludeCreation(try machine.get(), block)) try sent({ type: "includeCreation", block }, "")
+      if (read !== undefined && created === "created" && read.final && canFinalizeCreation(try machine.get(), block)) try sent({ type: "finalizeCreation", block }, "")
+      const now = try machine.get()
+      return try step({ type: "checkCreation", readOk: true }, now.phase !== "Prompt" && !now.registered)
+    },
+    deposit: effect (connection: EvmConnection, amount: string) => {
+      const state = try machine.get()
+      const by = sender(connection)
+      if (by !== "owner" && state.form === "Provisional") try stopped(provisionalMessages.ownerOnly)
+      const stored = keeper.read("deposit")
+      if (stored.kind === "unreadable") try stopped(provisionalMessages.unreadable)
+      if (stored.kind === "owned" || state.phase !== "NoDeposit") try stopped(provisionalMessages.occupied)
+      let opened = false
+      const beforePrompt = effect (call: EvmCallPlan) => {
+        keeper.propose("deposit", planText({ kind: "evmDeposit", call, hash: "" }))
+        if (!keeper.writable()) {
+          try sent({ type: "openPrompt", stored: false }, by)
+          try stopped(provisionalMessages.storageBlocked)
+        }
+        if (!(try sent({ type: "openPrompt", stored: true }, by))) try stopped(provisionalMessages.occupied)
+        if ((try machine.get()).phase !== "Prompt") try stopped(provisionalMessages.closed)
+        opened = true
+      }
+      const evidence = state.form === "Registered" ? "finalized" as const : "latest" as const
+      const hash: string = sendTransfer(connection, vault, "deposit", "send", amount, evidence, beforePrompt) catch effect (error) => {
+        if (!opened) throw error
+        if (error._tag === "WalletDeclined") {
+          try sent({ type: "decline" }, by)
+          throw new WalletDeclined({ message: provisionalMessages.declined })
+        }
+        throw new DepositStopped({ message: provisionalMessages.unclear })
+      }
+      const kept = try annotateHash(hash)
+      try sent({ type: "sign", transaction: signedTransaction }, by)
+      if (!kept) try stopped(provisionalMessages.changed)
+      return { hash, state: try machine.get() }
+    },
+    recoverHash: effect (transaction: string) => {
+      const hash = transaction.trim().toLowerCase()
+      if (!/^0x[0-9a-f]{64}$/u.test(hash)) try stopped(provisionalMessages.enterHash)
+      const state = try machine.get()
+      const plan = storedDeposit()
+      if (state.phase !== "NoDeposit" || plan === undefined || plan.hash !== "") try stopped(provisionalMessages.occupied)
+      if (!(try annotateHash(hash))) try stopped(provisionalMessages.changed)
+      return try machine.get()
+    },
+    followDeposit: effect (connection: EvmConnection, gross: bigint) => {
+      const state = try machine.get()
+      if (state.transaction === 0) return state
+      const plan = storedDeposit()
+      if (plan === undefined || plan.hash === "") throw new DepositStopped({ message: provisionalMessages.unreadable })
+      const saved = plan
+      const call = try plannedTransfer(vault, "deposit", "send", gross, saved)
+      const read = try receiptState(connection, vault, saved.hash, expectedOf(call))
+      if ((read === undefined || !read.canonical) && canReplaceDeposit(state)) try sent({ type: "replaceDeposit" }, "")
+      if (read !== undefined && read.canonical) {
+        const block = blockIndex(read.receipt.blockNumber)
+        const now = try machine.get()
+        if (!read.success && read.final && canObserveFailure(now, now.transaction, block)) try sent({ type: "observeFailure", transaction: now.transaction, block }, "")
+        if (read.success) {
+          const exact = depositsBy(vault, read.receipt, call.from, gross) === 1
+          const evidence: IncludedDepositEvidence | undefined = exact ? "ExactDepositEvent" : !(try vaultCodeAt(connection, vault, read.receipt.blockNumber)) ? "VerifiedAbsentCode" : undefined
+          if (evidence !== undefined && canIncludeDeposit(now, now.transaction, block, evidence)) try sent({ type: "includeDeposit", transaction: now.transaction, block, evidence }, "")
+          const included = try machine.get()
+          if (read.final && canFinalizeDeposit(included, included.transaction, block)) try sent({ type: "finalizeDeposit", transaction: included.transaction, block }, "")
+        }
+      }
+      const checked = try machine.get()
+      if (checked.phase !== "NoDeposit" && checked.phase !== "Prompt" && checked.phase !== "Verified") try sent({ type: "checkDeposit" }, "")
+      const counted = try machine.get()
+      return try step({ type: "countDeposit" }, canCountDeposit(counted))
+    },
+    reload: effect () => {
+      const state = try machine.get()
+      return try step({ type: "reload" }, state.phase !== "Prompt")
+    },
+  }
+}

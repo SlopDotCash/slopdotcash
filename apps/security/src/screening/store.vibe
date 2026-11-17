@@ -1,0 +1,198 @@
+// spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/screening.md, "A late result cannot replace human review or a newly saved version"; spec/security/screening.md, "Routing writes only private references for the current qualified version"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import { type Notice, Notices } from "@repo/ports/operations"
+import type { Claim, Event, Input, Observation, Phase, Review, RevisionEvidence, Screening } from "../../gen/security__screening.ts"
+import { apply, decodeState } from "../../gen/security__screening.effect.vibe"
+import { type Revision, revisionStatements } from "../intake/revision.vibe"
+import { StoredIntake } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+
+export interface Loaded {
+  readonly screening: Screening
+  readonly row: StoredIntake
+  readonly reporterGithubId: string
+}
+
+export interface RoutingContext {
+  readonly checked: boolean
+  readonly recipients: ReadonlyArray<string>
+  readonly actingTechnicalApprover: boolean
+}
+
+export interface ScreeningRoute {
+  readonly provider: string
+  readonly model: string
+}
+
+export interface Replacement {
+  readonly seenRevision: number
+  readonly by: number
+  readonly evidence: RevisionEvidence
+  readonly change: Omit<Revision, "stored" | "version">
+}
+
+export error ScreeningMissing { submissionId: string }
+export error ReplacementLost { submissionId: string }
+
+schema Owner { reporter_github_id: string }
+schema ReportDigest { content_sha256: string }
+schema NoticeVersion { version: number }
+
+const phases: Readonly<Record<string, Phase>> = { queued: "Queued", running: "Running", legitimate: "Legitimate", "needs-information": "NeedsInformation", spam: "Spam", unavailable: "Unavailable" }
+const phaseNames: Readonly<Record<Phase, string>> = { Queued: "queued", Running: "running", Legitimate: "legitimate", NeedsInformation: "needs-information", Spam: "spam", Unavailable: "unavailable" }
+const reviews: Readonly<Record<string, Review>> = { forward: "Forward", "request-information": "RequestInformation" }
+const decisionNames: Readonly<Record<Exclude<Review, "PendingReview">, string>> = { Forward: "forward", RequestInformation: "request-information" }
+const unknownStart = Number.MAX_SAFE_INTEGER
+
+export function routeNoticeKey(submissionId: string, version: number) {
+  return `security-route:${submissionId}:${version}`
+}
+
+export function phaseName(phase: Phase) {
+  return phaseNames[phase]
+}
+
+function routePrefix(submissionId: string) {
+  return `security-route:${submissionId}:`
+}
+
+function startOf(row: StoredIntake) {
+  const started = row.screening_started_at ?? (row.screening_state === "running" ? row.received_at : null)
+  if (started === null) return 0
+  const millis = millisOf(started)
+  return Number.isSafeInteger(millis) && millis > 0 ? millis : unknownStart
+}
+
+effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noticeRows]: ReadonlyArray<Rows>) {
+  const [row] = try decoded(StoredIntake, intakeRows ?? [], "security screening")
+  const [owner] = try decoded(Owner, ownerRows ?? [], "security screening reporter")
+  if (row === undefined || owner === undefined) throw new ScreeningMissing({ submissionId: id })
+  const digests = (try decoded(ReportDigest, digestRows ?? [], "security screening reports")).map((report) => report.content_sha256)
+  const notices = (try decoded(NoticeVersion, noticeRows ?? [], "security screening notices")).map((notice) => notice.version)
+  const screening = try decodeState({
+    reporter: githubNumber(owner.reporter_github_id),
+    revision: row.revision,
+    version: row.report_version,
+    digest: digests[row.report_version - 1] ?? "",
+    phase: phases[row.screening_state] ?? row.screening_state,
+    review: row.review_decision === null ? "PendingReview" : reviews[row.review_decision] ?? row.review_decision,
+    startedAt: startOf(row),
+    routed: row.routed_at !== null,
+    noticeVersions: notices,
+    reportDigests: digests,
+  })
+  return { screening, row, reporterGithubId: owner.reporter_github_id } satisfies Loaded
+}
+
+function aggregateOf(id: string) {
+  const prefix = routePrefix(id)
+  return {
+    name: `security screening of ${id}`,
+    version: sql`SELECT revision AS version FROM security_submission_intake WHERE submission_id=${id}`,
+    reads: [
+      sql`SELECT submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision FROM security_submission_intake WHERE submission_id=${id}`,
+      sql`SELECT reporter_github_id FROM security_submissions WHERE id=${id}`,
+      sql`SELECT content_sha256 FROM security_intake_reports WHERE submission_id=${id} ORDER BY version`,
+      sql`SELECT DISTINCT CAST(substr(event_key, ${prefix.length + 1}) AS INTEGER) AS version FROM notifications WHERE substr(event_key, 1, ${prefix.length}) = ${prefix} AND kind = 'security_case' ORDER BY version`,
+    ],
+    decode: (found: ReadonlyArray<Rows>) => screeningOf(id, found),
+  } satisfies Aggregate<Loaded, unknown, unknown>
+}
+
+function intakeEvent(row: StoredIntake, kind: string, actorGithubId: string | null, at: string): Statement {
+  const next = row.revision + 1
+  return sql`INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ${row.submission_id},${next},${kind},${actorGithubId},${at} WHERE changes()=1 AND EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=${row.submission_id} AND revision=${next})`
+}
+
+function qualifiedAt(submissionId: string, revision: number): Statement {
+  return sql`EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=${submissionId} AND revision=${revision} AND (review_decision='forward' OR (review_decision IS NULL AND screening_state='legitimate')))`
+}
+
+effect function decided<E, R>(id: string, event: Event, by: number, writes: (current: Loaded, next: Screening) => ReadonlyArray<Statement>!E!R) {
+  return try update(aggregateOf(id), (current: Loaded) => effect {
+    const next = try apply(current.screening, event, by)
+    return { value: next, writes: try writes(current, next) }
+  })
+}
+
+export effect function screeningAt(id: string) {
+  return (try load(aggregateOf(id))).state
+}
+
+export function claimOf(screening: Screening): Claim {
+  return { revision: screening.revision, version: screening.version, digest: screening.digest }
+}
+
+export effect function claimed(id: string, claim: { readonly seenRevision: number; readonly nowMs: number; readonly admitted: boolean }, route: ScreeningRoute | undefined) {
+  return try decided(id, { type: "claim", ...claim }, 0, (current) => effect {
+    const at = try isoAt(claim.nowMs)
+    const { row } = current
+    return [
+      sql`UPDATE security_submission_intake SET screening_state='running',screening_started_at=${at},screening_finished_at=NULL,screening_reason=NULL,screening_provider=${route?.provider ?? null},screening_model=${route?.model ?? null},revision=revision+1 WHERE submission_id=${row.submission_id} AND revision=${row.revision}`,
+      intakeEvent(row, "screen-start", null, at),
+    ]
+  })
+}
+
+export effect function finished(id: string, token: Claim, input: Input, observation: Observation, reason: string) {
+  return try decided(id, { type: "finish", token, input, observation }, 0, (current, next) => effect {
+    const at = try isoAt(try Clock.currentTimeMillis)
+    const { row } = current
+    return [
+      sql`UPDATE security_submission_intake SET screening_state=${phaseName(next.phase)},screening_reason=${reason},screening_finished_at=${at},revision=revision+1 WHERE submission_id=${row.submission_id} AND revision=${row.revision} AND screening_state='running'`,
+      intakeEvent(row, "screen-finish", null, at),
+    ]
+  })
+}
+
+function informationNotice(row: StoredIntake, reporterGithubId: string, at: string): Notice {
+  return { eventKey: `security-information:${row.submission_id}:${row.revision + 1}`, recipientGithubId: reporterGithubId, kind: "SecurityCase", subject: row.case_id, actionPath: `/inbox?submission=${row.submission_id}`, sourceAt: at }
+}
+
+export effect function reviewed(id: string, review: { readonly seenRevision: number; readonly decision: Exclude<Review, "PendingReview">; readonly currentMaintainer: boolean; readonly checkedReason: boolean }, actorGithubId: string, reason: string) {
+  return try decided(id, { type: "reviewReport", ...review }, githubNumber(actorGithubId), (current) => effect {
+    const at = try isoAt(try Clock.currentTimeMillis)
+    const { row } = current
+    const decision = decisionNames[review.decision]
+    const information = review.decision === "RequestInformation"
+      ? try (try Notices).statements({
+        notices: [informationNotice(row, current.reporterGithubId, at)],
+        onlyIf: sql`EXISTS(SELECT 1 FROM security_submission_intake WHERE submission_id=${row.submission_id} AND revision=${row.revision + 1} AND review_decision='request-information' AND reviewed_by=${actorGithubId})`,
+      })
+      : []
+    return [
+      sql`UPDATE security_submission_intake SET review_decision=${decision},review_reason=${reason},reviewed_by=${actorGithubId},reviewed_at=${at},revision=revision+1 WHERE submission_id=${row.submission_id} AND revision=${row.revision}`,
+      intakeEvent(row, "review", actorGithubId, at),
+      ...information,
+    ]
+  })
+}
+
+export effect function replaced(id: string, replacement: Replacement) {
+  const next = try decided(id, { type: "replace", seenRevision: replacement.seenRevision, digest: replacement.change.digest, evidence: replacement.evidence }, replacement.by, (current, after) => effect {
+    return revisionStatements({ ...replacement.change, stored: current.row, version: after.version })
+  })
+  const kept = try screeningAt(id)
+  if (kept.screening.version !== next.version || kept.screening.digest !== next.digest) throw new ReplacementLost({ submissionId: id })
+  return next
+}
+
+export effect function routed(id: string, seenRevision: number, context: RoutingContext) {
+  const routing = { checkedContext: context.checked, eligibleRecipients: context.recipients.length > 0, actingTechnicalApprover: context.actingTechnicalApprover }
+  return try decided(id, { type: "route", seenRevision, routing }, 0, (current) => effect {
+    const at = try isoAt(try Clock.currentTimeMillis)
+    const { row } = current
+    const notices = try (try Notices).statements({
+      notices: context.recipients.map((recipientGithubId) => ({ eventKey: routeNoticeKey(row.submission_id, row.report_version), recipientGithubId, kind: "SecurityCase", subject: row.case_id, actionPath: `/inbox?submission=${row.submission_id}`, sourceAt: at }) satisfies Notice),
+      onlyIf: qualifiedAt(row.submission_id, row.revision),
+    })
+    return [
+      ...notices,
+      sql`UPDATE security_submission_intake SET routed_at=${at},revision=revision+1 WHERE submission_id=${row.submission_id} AND revision=${row.revision}`,
+      intakeEvent(row, "routed", null, at),
+    ]
+  })
+}
+

@@ -1,0 +1,104 @@
+// spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+import { D1, type NonEmpty, type Statement, rows, sql } from "@repo/platform/d1"
+import { type Journal, coverageText, revisionText } from "../kernels/records/canonical.ts"
+import { batchDigest } from "../kernels/records/ids.vibe"
+import { protectedAward } from "./protection.vibe"
+
+export error ImportFailed { attempts: number; message: string }
+
+export interface ImportOptions {
+  readonly wait: (millis: number) => void!!
+}
+
+export interface Imported {
+  readonly digest: string
+  readonly revisions: number
+  readonly attempt: number
+  readonly recordedAfterError: boolean
+}
+
+schema RecordedBatch { revision_count: number; staged: number }
+
+const importAttempts = 3
+const retryStepMs = 30_000
+const rowsPerStatement = 30
+const bytesPerStatement = 90_000
+const encoder = new TextEncoder()
+
+const staged = sql`s.payload`
+const prior = sql`prior.payload`
+
+function joined(parts: NonEmpty<Statement>) {
+  const [head, ...rest] = parts
+  return rest.reduce((all, part) => sql`${all}, ${part}`, head)
+}
+
+function grouped(texts: ReadonlyArray<string>) {
+  const groups: { readonly start: number; readonly texts: [string, ...string[]] }[] = []
+  let bytes = 0
+  for (const [sequence, text] of texts.entries()) {
+    const size = encoder.encode(text).length
+    const last = groups[groups.length - 1]
+    if (last === undefined || last.texts.length === rowsPerStatement || bytes + size > bytesPerStatement) {
+      groups.push({ start: sequence, texts: [text] })
+      bytes = size
+    } else {
+      last.texts.push(text)
+      bytes += size
+    }
+  }
+  return groups
+}
+
+function stagedRows(digest: string, texts: ReadonlyArray<string>, insert: (values: Statement) => Statement) {
+  return grouped(texts).map((group) => {
+    const [head, ...rest] = group.texts
+    const row = (text: string, offset: number) => sql`(${digest}, ${group.start + offset}, ${text})`
+    return insert(joined([row(head, 0), ...rest.map((text, offset) => row(text, offset + 1))]))
+  })
+}
+
+function economicAward(payload: Statement) {
+  return sql`json_array(json_extract(${payload},'$.award.key'), json_extract(${payload},'$.award.actor.id'), json_extract(${payload},'$.award.projectId'), json_extract(${payload},'$.award.category'), json_extract(${payload},'$.award.amount'), json_extract(${payload},'$.award.occurredAt'), json_extract(${payload},'$.award.sourceId'), json_extract(${payload},'$.award.workUnitId'), CASE WHEN json_extract(${payload},'$.award.category')='substantive-review' THEN json_extract(${payload},'$.award.provisional') END, CASE WHEN json_extract(${payload},'$.award.category') IN ('substantive-review','evaluated-contribution') THEN json_extract(${payload},'$.award.sourceUrl') END)`
+}
+
+function changesProtectedAwards(digest: string) {
+  return sql`EXISTS (SELECT 1 FROM points_staging s LEFT JOIN points_revisions prior ON prior.id=json_extract(s.payload,'$.previous') WHERE s.batch_id=${digest} AND NOT EXISTS (SELECT 1 FROM points_revisions known WHERE known.id=json_extract(s.payload,'$.id')) AND json_extract(s.payload,'$.award.category')!='payout-received' AND (prior.id IS NULL OR ${economicAward(prior)} IS NOT ${economicAward(staged)}) AND (${protectedAward(staged)} OR ${protectedAward(prior)}))`
+}
+
+export function importStatements(digest: string, journal: Journal) {
+  const revisions = stagedRows(digest, journal.revisions.map(revisionText), (values) => sql`INSERT INTO points_staging(batch_id, sequence, payload) VALUES ${values} ON CONFLICT(batch_id, sequence) DO NOTHING`)
+  const coverage = stagedRows(digest, journal.coverage.map(coverageText), (values) => sql`INSERT INTO points_coverage_staging(batch_id, sequence, entry) VALUES ${values} ON CONFLICT(batch_id, sequence) DO NOTHING`)
+  return [
+    ...revisions,
+    ...coverage,
+    sql`INSERT INTO points_batches(digest, generated_at, coverage, revision_count) SELECT ${digest}, ${journal.generatedAt}, (SELECT CASE WHEN COUNT(*)=${journal.coverage.length} AND NOT ${changesProtectedAwards(digest)} THEN json_group_array(json(entry)) END FROM (SELECT entry FROM points_coverage_staging WHERE batch_id=${digest} ORDER BY sequence)), ${journal.revisions.length} WHERE NOT EXISTS (SELECT 1 FROM points_batches WHERE digest=${digest})`,
+    sql`DELETE FROM points_staging WHERE batch_id=${digest} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${digest})`,
+    sql`DELETE FROM points_coverage_staging WHERE batch_id=${digest} AND EXISTS (SELECT 1 FROM points_batches WHERE digest=${digest})`,
+  ]
+}
+
+effect function applied(statements: ReadonlyArray<Statement>) {
+  const database = try D1
+  for (const statement of statements) try database.run(statement)
+  return true
+}
+
+effect function recorded(digest: string, revisions: number) {
+  const found = rows(RecordedBatch, sql`SELECT revision_count, (SELECT COUNT(*) FROM points_staging WHERE batch_id=${digest}) AS staged FROM points_batches WHERE digest=${digest}`) catch () => []
+  const [batch] = found
+  return found.length === 1 && batch?.revision_count === revisions && batch.staged === 0
+}
+
+export effect function importJournal(journal: Journal, options: ImportOptions) {
+  const digest = try batchDigest(journal)
+  const statements = importStatements(digest, journal)
+  const revisions = journal.revisions.length
+  for (let attempt = 1; attempt <= importAttempts; attempt++) {
+    const done = applied(statements) catch () => false
+    if (done) return { digest, revisions, attempt, recordedAfterError: false } satisfies Imported
+    if (try recorded(digest, revisions)) return { digest, revisions, attempt, recordedAfterError: true } satisfies Imported
+    if (attempt < importAttempts) try options.wait(attempt * retryStepMs)
+  }
+  throw new ImportFailed({ attempts: importAttempts, message: `Points import failed after ${importAttempts} attempts.` })
+}

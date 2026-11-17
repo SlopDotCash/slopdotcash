@@ -1,0 +1,194 @@
+// spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"
+import { EvmRpc } from "@repo/platform/chain/evm"
+import { type Fee, type Holding, type VaultClaim, canClaim, leaseHeld, nonceFloor, openRows, solanaSequence, vaultOf, wallet } from "../../gen/fees__conversion.effect.vibe"
+import { type Mode, buybackSigns, converts, networkSigns } from "../../gen/fees__runtime.effect.vibe"
+import { ConversionChain, chainFailure, detailOf, wideNumber } from "../conversion/chain.vibe"
+import type { Claims } from "../conversion/run.vibe"
+import { type Session, renewed, step } from "../conversion/session.vibe"
+import type { Facts } from "../journal/store.vibe"
+import { type JupiterSettings, jupiterQuote } from "../jupiter/quote.vibe"
+import type { KyberSettings } from "../kyber/route.vibe"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import { FeeWallet, type Prepared, type Signed, signedFacts } from "../signer/feeWallet.vibe"
+import type { EvmNetwork, FeeIntent } from "../signer/intents.ts"
+import { solanaSignedFacts } from "../signer/solana.vibe"
+import { ClaimRefused, evmVault, failureText } from "./evm.vibe"
+import { type SolanaClaimPlan, solanaVault } from "./solana.vibe"
+import { type Admission, admission, evmClaimCost, evmClaimValue } from "./value.vibe"
+
+export interface EvmClaimSettings { readonly vaults: ReadonlyArray<VaultFact>; readonly kyber: KyberSettings }
+
+export interface SolanaClaimSettings { readonly vaults: ReadonlyArray<VaultFact>; readonly jupiter: JupiterSettings }
+
+interface Planned {
+  readonly intent: FeeIntent
+  readonly amount: bigint
+  readonly value: bigint
+  readonly cost: bigint | undefined
+}
+
+type Planning = Planned | { readonly skipped: string } | undefined
+
+const runConditions: ReadonlyArray<readonly [(state: Fee, runId: number) => boolean, string]> = [
+  [(state, runId) => leaseHeld(state, runId), "the fee lease is not held"],
+  [(state) => state.trigger === "Recovery", "vault fees are claimed only on a recovery scan"],
+  [(state) => networkSigns(state.runtime, state.network), "this network is not ready to sign"],
+  [(state) => state.runtime.converterMode === "Live", "vault fees are claimed only while the converter is live"],
+  [(state) => converts(state.network) || buybackSigns(state.runtime, state.network), "this network neither converts nor signs buybacks"],
+  [(state) => !state.overrun, "the native budget overran"],
+]
+
+function blockedRun(session: Session, mode: Mode) {
+  return mode === "Live" ? runConditions.find(([holds]) => !holds(session.state, session.runId))?.[1] : undefined
+}
+
+function vaultRecord(fact: VaultFact) {
+  return { vault: fact.vault, projectId: fact.projectId, payoutPolicy: fact.payoutPolicy, deployment: fact.deployment }
+}
+
+function unusedTx(state: Fee) {
+  return state.gas.reduce((highest, entry) => Math.max(highest, entry.tx), 0) + 1
+}
+
+function smaller(left: bigint, right: bigint) {
+  return left < right ? left : right
+}
+
+function candidateOf(state: Fee, holding: Holding, amount: bigint): VaultClaim {
+  const solana = state.network === "Solana"
+  return {
+    vault: holding.vault,
+    deployment: vaultOf(state, holding.vault).deployment,
+    recipient: wallet(state),
+    amount: Number(amount),
+    valueMicro: 0,
+    gasValue: 0,
+    tx: unusedTx(state),
+    nonce: solana ? solanaSequence(state) : nonceFloor(state),
+    gasLimit: 1,
+    fees: { maxFee: 1, priority: 0 },
+    blockhashSlot: solana ? 1 : 0,
+  }
+}
+
+function claimOf(base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, prepared: Prepared, tx: number): VaultClaim {
+  const fitted = { ...base, valueMicro: admitted.valueMicro, gasValue: admitted.gasValue, tx }
+  if (prepared.family === "solana") return { ...fitted, gasLimit: 1, fees: { maxFee: prepared.maximumUnits, priority: 0 }, blockhashSlot: prepared.blockhashSlot }
+  return { ...fitted, nonce: prepared.nonce, gasLimit: prepared.gasLimit, fees: prepared.feeUnits, blockhashSlot: 0 }
+}
+
+function factsOf(signed: Signed, vault: string): Facts {
+  return { ...(signed.family === "evm" ? signedFacts(signed) : solanaSignedFacts(signed)), vault }
+}
+
+effect function evmPlan(session: Session, holding: Holding, fact: VaultFact, settings: EvmClaimSettings) {
+  const network = session.state.network as EvmNetwork
+  const head = try (try EvmRpc).head("latest")
+  const current = try evmVault(fact, head.number)
+  if (current === undefined) return undefined satisfies Planning
+  const amount = smaller(wideNumber(holding.accrued), current.accrued)
+  if (amount === 0n) return undefined satisfies Planning
+  const valued = try evmClaimValue(network, fact.token, amount, settings.kyber)
+  if (valued.kind === "skipped") return { skipped: valued.reason } satisfies Planning
+  const cost = try evmClaimCost(network, current.vault, settings.kyber)
+  const intent: FeeIntent = { kind: "EvmClaimFees", network, nonceFloor: wideNumber(nonceFloor(session.state)), valueMicro: valued.valueMicro, vault: current.vault }
+  return { intent, amount, value: valued.valueMicro, cost } satisfies Planning
+}
+
+effect function solanaPlan(holding: Holding, fact: VaultFact, settings: SolanaClaimSettings) {
+  const current = try solanaVault(fact, "finalized")
+  if (current === undefined) return undefined satisfies Planning
+  const amount = smaller(wideNumber(holding.accrued), current.accrued)
+  if (amount === 0n) return undefined satisfies Planning
+  const value = current.deployment.mint === settings.jupiter.usdc ? amount : (try jupiterQuote(settings.jupiter, current.deployment.mint, amount, 0)).outAmount
+  const { program, project, vault, mint } = current.deployment
+  const plan: SolanaClaimPlan = { program, project, vault, mint, amount, valueMicro: value }
+  const intent: FeeIntent = { kind: "SolanaClaim", network: "Solana", ...plan }
+  return { intent, amount, value, cost: settings.jupiter.feeMicro } satisfies Planning
+}
+
+effect function reserved(session: Session, base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, prepared: Prepared) {
+  if (!(try renewed(session, true))) throw new ClaimRefused({ issue: "the fee lease was lost before signing" })
+  if (!canClaim(session.state, session.runId, claimOf(base, admitted, prepared, unusedTx(session.state)), "Worker"))
+    throw new ClaimRefused({ issue: "the claim does not fit the network's open sends, nonce sequence or native budget" })
+}
+
+effect function journaled(session: Session, base: VaultClaim, admitted: Extract<Admission, { kind: "admitted" }>, signed: Signed, fact: VaultFact) {
+  const vault = try orDie(Effect.try(() => JSON.stringify(vaultRecord(fact))))
+  const vaultClaim = claimOf(base, admitted, signed.prepared, session.names.number("tx", signed.txId))
+  const sent = step(session, { type: "claim", runId: session.runId, vaultClaim }, factsOf(signed, vault)) catch effect (error) => {
+    if (error._tag === "JournalRefused") throw new ClaimRefused({ issue: `journal: ${error.issue}` })
+    throw error
+  }
+  if (sent === undefined) throw new ClaimRefused({ issue: "the journal refused the signed claim" })
+  return session.state.rows.length
+}
+
+effect function submitted(session: Session, mode: Mode, holding: Holding, fact: VaultFact, planned: Planned) {
+  const network = session.state.network
+  const base = candidateOf(session.state, holding, planned.amount)
+  const verdict = admission(session.state, base, planned.value, planned.cost)
+  const amount = planned.amount.toString()
+  if (verdict.kind === "skipped") {
+    try Effect.logInfo("fee_claim_skipped", { network, vault: fact.vault, amount, reason: verdict.reason })
+    return 0
+  }
+  if (mode !== "Live") {
+    try Effect.logInfo("fee_claim_quoted", { network, vault: fact.vault, amount, valueMicro: planned.value.toString() })
+    return 0
+  }
+  const signed = try (try FeeWallet).sign(planned.intent, (prepared) => reserved(session, base, verdict, prepared))
+  const id = try journaled(session, base, verdict, signed, fact)
+  if (!(try renewed(session, true))) return 1
+  const outcome = (try ConversionChain).broadcast(signed.rawTx) catch effect (error) => { return error }
+  const failure = chainFailure(outcome)
+  if (failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: detailOf(failure) })
+  try Effect.logInfo("fee_claim_submitted", { network, vault: fact.vault, amount, txId: signed.txId })
+  return 1
+}
+
+effect function oneVault<E, R>(session: Session, mode: Mode, holding: Holding, fact: VaultFact, plan: (holding: Holding, fact: VaultFact) => Planning!E!R) {
+  const planned = try plan(holding, fact)
+  if (planned === undefined) return 0
+  if ("skipped" in planned) {
+    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, vault: fact.vault, amount: String(holding.accrued), reason: planned.skipped })
+    return 0
+  }
+  return try submitted(session, mode, holding, fact, planned)
+}
+
+effect function claimed<E, R>(session: Session, mode: Mode, vaults: ReadonlyArray<VaultFact>, plan: (holding: Holding, fact: VaultFact) => Planning!E!R) {
+  const blocked = blockedRun(session, mode)
+  if (blocked !== undefined) {
+    try Effect.logInfo("fee_claim_skipped", { network: session.state.network, reason: blocked })
+    return 0
+  }
+  let count = 0
+  for (const holding of session.state.holdings) {
+    if (holding.vault === 0 || holding.accrued <= 0 || openRows(session.state, holding.token) > 0) continue
+    if (!(try renewed(session, false))) break
+    const text = session.names.text("vault", holding.vault)
+    const fact = vaults.find((entry) => entry.vault === text)
+    if (fact === undefined) continue
+    const moved = oneVault(session, mode, holding, fact, plan) catch effect (error) => {
+      try Effect.logWarning("fee_claim_error", { network: session.state.network, vault: fact.vault, error: failureText(error) })
+      return 0
+    }
+    count += moved
+  }
+  return count
+}
+
+export function evmVaultClaims(settings: EvmClaimSettings) {
+  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, (holding, fact) => evmPlan(session, holding, fact, settings))
+}
+
+export function solanaVaultClaims(settings: SolanaClaimSettings) {
+  return (session: Session, mode: Mode) => claimed(session, mode, settings.vaults, (holding, fact) => solanaPlan(holding, fact, settings))
+}
+
+export effect function claimsIn<E, R>(hook: (session: Session, mode: Mode) => number!E!R) {
+  const services = try Effect.context<R>()
+  const claims: Claims = (session, mode) => Effect.provideContext(hook(session, mode), services)
+  return claims
+}

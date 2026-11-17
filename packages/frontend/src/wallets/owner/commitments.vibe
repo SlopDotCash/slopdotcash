@@ -1,0 +1,210 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/frontend/ownerMonthly.md, "Commitment, automatic-payment setting and reserve release each keep one recoverable attempt"
+import { type CommitmentPlan, type CommitmentReview, type SolanaCommitmentAction, type SolanaCommitmentReviewed, monthlyCommitment, monthlySolanaCommitment } from "@repo/settlement/client"
+import { payoutFeeAccepted } from "@repo/settlement/kernels/fees"
+import { NETWORKS, chainFamily, isNetworkKey, maxBaseUnitsForChain } from "@repo/settlement/kernels/networks"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { WalletFailed } from "../core/discovery.vibe"
+import { type EvmConnection, evmRequest, sendTransaction } from "../core/evm.vibe"
+import type { SolanaConnection } from "../core/solana.vibe"
+import { type Deployment, type MonthlySetting, type ProjectReward, MONTHLY_CAP_CALL, MONTHLY_ENABLED_CALL, awardCommitted, baseUnits, evmChainIdOf, commitmentCall, deploymentOf, settingCall, settingOf, vaultMonthlyCap } from "./commitmentCalls.ts"
+import { type Call, callPlan, reviewedVaultOf, samePlannedCall } from "./evmCalls.ts"
+import { type EvmVault, VaultActionRefused, readVault, readWalletTransaction, requireVaultWallet } from "./evmVault.vibe"
+import { expectedOf, vaultEvents } from "./evmEvidence.ts"
+import { settingTarget } from "./ownerDecisions.ts"
+import type { EvmCallPlan, OwnerPlan, SolanaCommitmentPlan } from "./ownerPlans.schema.ts"
+import { type ReviewedWire, type SolanaVaultTerms, commitmentWire } from "./solanaPlans.ts"
+import { signAndVerify } from "./solanaVault.vibe"
+
+export type { CommitmentPlan, Deployment, MonthlySetting, ProjectReward }
+
+export type ChainStatus = "pending" | "failed" | "finalized"
+
+export interface VerifiedCommitment {
+  readonly plan: CommitmentPlan
+  readonly deployment: Deployment
+  readonly gross: bigint
+}
+
+export const commitmentMessages = {
+  reverify: "The award could not be reverified. Reload the awards.",
+  differs: "The prepared award differs from the finalized awards.",
+  amounts: "The prepared award amounts are invalid.",
+  ownerWallet: "Connect the vault owner's wallet to authorize awards.",
+  committed: "This award is already committed. Check its existing transaction.",
+  unverified: "The existing award state could not be verified.",
+  insufficient: "The vault has insufficient free funds for this award.",
+  finalDiffers: "The finalized commitment differs from the approved award.",
+  notRequest: "This transaction does not match the request.",
+  settingOwner: "Connect the vault owner's wallet to change automatic monthly payment.",
+  settingAmount: "Set a monthly amount in project settings first.",
+  settingInvalid: "The monthly payment setting could not be read.",
+  solanaInvalid: "The monthly payment review response is invalid.",
+  solanaWire: "The prepared transaction differs from the reviewed award.",
+  solanaStatus: "The transaction status could not be verified.",
+  assetPolicy: "The vault asset differs from the reviewed policy.",
+  planUnreadable: "The saved transaction cannot be read. Check your wallet activity before starting a new action.",
+} as const
+
+const planLimitBytes = 65_536
+const planDeadlineMs = 120_000
+
+function refused(message: string) {
+  return new VaultActionRefused({ message })
+}
+
+function failureMessage(failure: CallFailure, fallback: string): string {
+  return failure._tag === "Refused" && failure.message !== "" ? failure.message : fallback
+}
+
+export effect function requestCommitment(projectId: string, period: string, review: CommitmentReview, expectedActor: string) {
+  const plan = call(monthlyCommitment, { params: { id: projectId, period }, body: review }, { limitBytes: planLimitBytes, deadlineMs: planDeadlineMs, expectedActor }) catch effect (failure) => {
+    throw refused(failureMessage(failure, commitmentMessages.reverify))
+  }
+  const deployment = deploymentOf(plan.deployment)
+  if (deployment === undefined || plan.projectId !== projectId || plan.cycleId !== period || plan.manifestSha256 !== review.manifestSha256 || plan.snapshotSha256 !== review.snapshotSha256
+    || deployment.network !== review.network || plan.award.githubUserId !== review.githubUserId || !/^[a-f0-9]{64}$/u.test(plan.award.sourceDigest)) throw refused(commitmentMessages.differs)
+  const gross = baseUnits(plan.award.gross, true)
+  const fee = baseUnits(plan.award.fee, false)
+  const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
+  if (gross === undefined) throw refused(commitmentMessages.differs)
+  if (network === undefined || fee === undefined || gross > maxBaseUnitsForChain(network.chain) || !payoutFeeAccepted(gross, fee, false) || plan.award.net !== (gross - fee).toString()) throw refused(commitmentMessages.amounts)
+  return { plan, deployment, gross } satisfies VerifiedCommitment
+}
+
+export function evmVaultOf(deployment: Deployment): EvmVault | undefined {
+  const network = isNetworkKey(deployment.network) ? NETWORKS[deployment.network] : undefined
+  const review = reviewedVaultOf(deployment.network, "OrdinaryPurpose")
+  return network?.family === "evm" && review !== undefined ? { network: deployment.network, chainId: evmChainIdOf(network.chainId), vault: deployment.vault, asset: deployment.asset, owner: deployment.owner, review } : undefined
+}
+
+effect function commitmentOf(vault: EvmVault, verified: VerifiedCommitment) {
+  return try Effect.try({ try: () => commitmentCall(vault.chainId, vault.vault, verified.plan.award.sourceDigest, verified.plan.award.githubUserId, verified.gross), catch: () => refused(commitmentMessages.amounts) })
+}
+
+effect function plannedCall(vault: EvmVault, plan: OwnerPlan | undefined, call: Call) {
+  if (plan?.kind !== "evmCall" || !samePlannedCall(plan, plan.from, vault.chainId, call)) throw refused(commitmentMessages.planUnreadable)
+  return plan
+}
+
+export effect function sendEvmCommitment<E>(connection: EvmConnection, vault: EvmVault, verified: VerifiedCommitment, beforePrompt: (plan: EvmCallPlan) => void!E) {
+  try requireVaultWallet(connection, vault)
+  if (connection.address.toLowerCase() !== vault.owner.toLowerCase()) throw refused(commitmentMessages.ownerWallet)
+  const totals = try readVault(connection, vault, "finalized", commitmentMessages.assetPolicy)
+  const commitment = try commitmentOf(vault, verified)
+  const award = try evmRequest(connection, "eth_call", [{ to: vault.vault, data: commitment.awardRead }, "latest"])
+  const committed = typeof award === "string" ? awardCommitted(award) : undefined
+  if (committed === true) throw refused(commitmentMessages.committed)
+  if (committed === undefined) throw refused(commitmentMessages.unverified)
+  if (totals.counters.free < verified.gross) throw refused(commitmentMessages.insufficient)
+  const call = { to: vault.vault, value: "0x0", data: commitment.data }
+  const transaction = { from: connection.address, ...call }
+  try evmRequest(connection, "eth_estimateGas", [transaction])
+  try requireVaultWallet(connection, vault)
+  return try sendTransaction(connection, vault.chainId, transaction, beforePrompt(callPlan(connection.address, vault.chainId, call)))
+}
+
+export effect function checkEvmCommitment(connection: EvmConnection, vault: EvmVault, verified: VerifiedCommitment, plan: OwnerPlan | undefined, hash: string) {
+  const commitment = try commitmentOf(vault, verified)
+  const planned = try plannedCall(vault, plan, { to: vault.vault, value: "0x0", data: commitment.data })
+  const read = try readWalletTransaction(connection, vault, hash, expectedOf(planned), true)
+  if (read.status === "included" || read.status === "pending" || read.receipt === undefined) return "pending" satisfies ChainStatus
+  if (read.status === "failed") return "failed" satisfies ChainStatus
+  const events = vaultEvents(vault.vault, read.receipt, "AwardCommitted")
+  const [found] = events
+  if (events.length !== 1 || found === undefined) throw refused(commitmentMessages.notRequest)
+  const event = found.event
+  if (event.name !== "AwardCommitted" || event.id !== commitment.id || event.actor.toString() !== verified.plan.award.githubUserId || event.gross !== verified.gross
+    || !payoutFeeAccepted(event.gross, event.fee, false) || event.sourceDigest !== `0x${verified.plan.award.sourceDigest}`) throw refused(commitmentMessages.finalDiffers)
+  return "finalized" satisfies ChainStatus
+}
+
+export interface SettingReview {
+  readonly target: MonthlySetting
+  readonly current: MonthlySetting
+  readonly changes: boolean
+}
+
+export effect function reviewEvmSetting(connection: EvmConnection, vault: EvmVault, automatic: boolean, reward: ProjectReward) {
+  try requireVaultWallet(connection, vault)
+  if (connection.address.toLowerCase() !== vault.owner.toLowerCase()) throw refused(commitmentMessages.settingOwner)
+  const totals = try readVault(connection, vault, "finalized")
+  const cap = try evmRequest(connection, "eth_call", [{ to: vault.vault, data: MONTHLY_CAP_CALL }, "finalized"])
+  const enabled = try evmRequest(connection, "eth_call", [{ to: vault.vault, data: MONTHLY_ENABLED_CALL }, "finalized"])
+  const current = settingOf(String(cap), String(enabled))
+  if (current === undefined) throw refused(commitmentMessages.settingInvalid)
+  const projectCap = automatic ? vaultMonthlyCap(reward, vault, totals.decimals) : { kind: "cap" as const, cap: 0n }
+  if (projectCap.kind === "refused") throw refused(projectCap.message)
+  if (automatic && projectCap.cap <= 0n) throw refused(commitmentMessages.settingAmount)
+  const target = settingTarget(automatic, projectCap.cap, current)
+  const changes = target.cap !== current.cap || target.enabled !== current.enabled
+  if (changes) try evmRequest(connection, "eth_estimateGas", [{ from: connection.address, to: vault.vault, value: "0x0", data: try settingData(target) }])
+  return { target, current, changes } satisfies SettingReview
+}
+
+effect function settingData(target: MonthlySetting) {
+  return try Effect.try({ try: () => settingCall(target), catch: () => refused(commitmentMessages.settingAmount) })
+}
+
+export effect function sendEvmSetting<E>(connection: EvmConnection, vault: EvmVault, target: MonthlySetting, beforePrompt: (plan: EvmCallPlan) => void!E) {
+  try requireVaultWallet(connection, vault)
+  const call = { to: vault.vault, value: "0x0", data: try settingData(target) }
+  return try sendTransaction(connection, vault.chainId, { from: connection.address, ...call }, beforePrompt(callPlan(connection.address, vault.chainId, call)))
+}
+
+export effect function checkEvmSetting(connection: EvmConnection, vault: EvmVault, target: MonthlySetting, plan: OwnerPlan | undefined, hash: string) {
+  const planned = try plannedCall(vault, plan, { to: vault.vault, value: "0x0", data: try settingData(target) })
+  const read = try readWalletTransaction(connection, vault, hash, expectedOf(planned), true)
+  if (read.status === "included" || read.status === "pending" || read.receipt === undefined) return "pending" satisfies ChainStatus
+  if (read.status === "failed") return "failed" satisfies ChainStatus
+  const events = vaultEvents(vault.vault, read.receipt, "MonthlyCommitmentSet")
+  const [found] = events
+  if (events.length !== 1 || found === undefined || found.event.name !== "MonthlyCommitmentSet" || found.event.cap !== target.cap || found.event.enabled !== target.enabled) throw refused(commitmentMessages.notRequest)
+  return "finalized" satisfies ChainStatus
+}
+
+effect function solanaAction(projectId: string, period: string, body: SolanaCommitmentAction, expectedActor: string) {
+  const answer = call(monthlySolanaCommitment, { params: { id: projectId, period }, body }, { limitBytes: planLimitBytes, deadlineMs: planDeadlineMs, expectedActor }) catch effect (failure) => {
+    throw refused(failureMessage(failure, commitmentMessages.reverify))
+  }
+  return answer
+}
+
+export effect function reviewSolanaCommitment(projectId: string, period: string, deployment: Deployment, terms: SolanaVaultTerms, connection: SolanaConnection, review: CommitmentReview, expectedActor: string) {
+  if (connection.address !== deployment.owner) throw refused(commitmentMessages.ownerWallet)
+  const answer = try solanaAction(projectId, period, { step: "review", network: deployment.network, vault: deployment.vault, wallet: connection.address, githubUserId: review.githubUserId, manifestSha256: review.manifestSha256, snapshotSha256: review.snapshotSha256 }, expectedActor)
+  if (!("plan" in answer)) throw refused(commitmentMessages.solanaInvalid)
+  const reviewed: SolanaCommitmentReviewed = answer
+  const { plan, transaction } = reviewed
+  if (plan.projectId !== projectId || plan.cycleId !== period || plan.manifestSha256 !== review.manifestSha256 || plan.snapshotSha256 !== review.snapshotSha256 || plan.award.githubUserId !== review.githubUserId
+    || transaction.wallet !== connection.address || transaction.sourceDigest !== plan.award.sourceDigest || transaction.gross !== plan.award.gross || transaction.githubUserId !== plan.award.githubUserId) throw refused(commitmentMessages.differs)
+  const wire = commitmentWire(terms, plan.award, { payer: connection.address, blockhash: transaction.blockhash, transaction: transaction.transaction })
+  if (wire === undefined) throw refused(commitmentMessages.solanaWire)
+  return { reviewed, wire } satisfies SolanaCommitmentReview
+}
+
+export interface SolanaCommitmentReview {
+  readonly reviewed: SolanaCommitmentReviewed
+  readonly wire: ReviewedWire
+}
+
+export function solanaCommitmentPlanOf(reviewed: SolanaCommitmentReviewed): SolanaCommitmentPlan {
+  const { sourceDigest, githubUserId, gross, blockhash } = reviewed.transaction
+  return { kind: "solanaCommitment", sourceDigest, githubUserId, gross, blockhash }
+}
+
+export effect function sendSolanaCommitment<E>(network: string, connection: SolanaConnection, review: SolanaCommitmentReview, beforePrompt: (plan: SolanaCommitmentPlan) => void!E) {
+  if (review.reviewed.transaction.wallet !== connection.address) throw refused(commitmentMessages.ownerWallet)
+  return try signAndVerify(network, connection, review.wire, solanaCommitmentPlanOf(review.reviewed), beforePrompt)
+}
+
+export effect function checkSolanaCommitment(projectId: string, period: string, deployment: Deployment, connection: SolanaConnection, plan: OwnerPlan | undefined, transactionId: string, expectedActor: string) {
+  if (plan?.kind !== "solanaCommitment") throw refused(commitmentMessages.planUnreadable)
+  const { sourceDigest, githubUserId, gross, blockhash } = plan
+  const answer = try solanaAction(projectId, period, { step: "check", network: deployment.network, vault: deployment.vault, wallet: connection.address, sourceDigest, githubUserId, gross, blockhash, transactionId }, expectedActor)
+  if (!("status" in answer)) throw new WalletFailed({ message: commitmentMessages.solanaStatus })
+  return answer.status satisfies ChainStatus
+}
+
+export function familyOf(deployment: Deployment): "evm" | "solana" | undefined {
+  return isNetworkKey(deployment.network) ? chainFamily(NETWORKS[deployment.network].chain) : undefined
+}

@@ -1,0 +1,114 @@
+// spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { AdmissionExemption, FindingsLocation, ProjectClearance, ScanClearanceFacts } from "./enforcement.vibe"
+
+export schema QueuedScan {
+  assessmentId: string
+  projectId: string
+  revision: number
+  manifestSha256: string
+  repository: string
+  commitSha: string
+  templateSha256: string
+  manifestUrl: string
+  templateIndexUrl: string
+  requestedAt: string
+}
+
+export schema ScanQueue { schemaVersion: "slop-vetting-queue-v1"; assessments: ReadonlyArray<QueuedScan> }
+
+export schema ModelRun { reviewer: string; provider: string; model: string }
+
+export const AssessmentSummary = Schema.Struct({
+  id: Schema.String,
+  revision: Schema.Number,
+  state: Schema.Literals(["pending", "clean", "incomplete", "malicious"]),
+  commitSha: Schema.String,
+  templateSha256: Schema.String,
+  policyVersion: Schema.NullOr(Schema.String),
+  requestedAt: Schema.String,
+  completedAt: Schema.NullOr(Schema.String),
+  modelRuns: Schema.Array(ModelRun),
+  artifacts: Schema.Number,
+  heldArtifacts: Schema.Number,
+  findingsLocation: Schema.optionalKey(FindingsLocation),
+  scan: Schema.optionalKey(ScanClearanceFacts),
+})
+
+export schema SetupRetry { state: "retry"; message: string }
+
+export const RecordedAssessment = Schema.Struct({ setup: Schema.NullOr(SetupRetry), assessment: Schema.Struct({ ...AssessmentSummary.fields, resultSha256: Schema.NullOr(Schema.String) }) })
+
+export const AdminAssessment = Schema.Struct({
+  ...AssessmentSummary.fields,
+  projectId: Schema.String,
+  manifestSha256: Schema.String,
+  requestedBy: Schema.Struct({ githubId: Schema.String, githubLogin: Schema.String }),
+  requestReason: Schema.String,
+  resultSha256: Schema.NullOr(Schema.String),
+  signingKeySha256: Schema.NullOr(Schema.String),
+  result: Schema.Unknown,
+})
+
+export const QueuedAssessments = Schema.Struct({ assessment: AdminAssessment, assessments: Schema.optionalKey(Schema.Array(AdminAssessment)) })
+
+export const ReuseAnswer = Schema.Struct({ schemaVersion: Schema.Literal("slop-vetting-reuse-v1"), result: Schema.Unknown })
+
+export schema JournalPresence { schemaVersion: "slop-vetting-journal-v1"; present: boolean }
+export schema JournalReserved { schemaVersion: "slop-vetting-journal-v1"; reserved: true }
+export schema JournalRecorded { schemaVersion: "slop-vetting-journal-v1"; recorded: true }
+export const JournalAnswer = Schema.Union([JournalPresence, JournalReserved, JournalRecorded])
+
+export schema Skipped { projectId: string; reason: string }
+export schema Refreshed { queued: ReadonlyArray<string>; reinstated: ReadonlyArray<string>; skipped: ReadonlyArray<Skipped> }
+
+export const scanRequests = route({ method: "GET", path: "/api/v1/vetting/requests", access: "service", limitKib: 256, request: undefined, answer: ScanQueue, rejected: "rejected", cache: "no-store" })
+export const scanResults = route({ method: "POST", path: "/api/v1/vetting/results", access: "service", limitKib: 256, request: undefined, answer: RecordedAssessment, rejected: "stale_project", cache: "no-store" })
+export const scanReuse = route({ method: "POST", path: "/api/v1/vetting/reuse", access: "service", limitKib: 1, request: undefined, answer: ReuseAnswer, rejected: "rejected", cache: "no-store" })
+export const scanJournal = route({ method: "POST", path: "/api/v1/vetting/journal", access: "service", limitKib: 4, request: undefined, answer: JournalAnswer, rejected: "rejected", cache: "no-store" })
+export const scanRefresh = route({ method: "POST", path: "/api/v1/vetting/refresh", access: "service", limitKib: 1, request: undefined, answer: Refreshed, rejected: "rejected", cache: "no-store" })
+export const sandboxHealth = route({ method: "GET", path: "/api/v1/vetting/sandbox", access: "service", limitKib: 3072, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
+export const sandboxRun = route({ method: "POST", path: "/api/v1/vetting/sandbox", access: "service", limitKib: 3072, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
+export schema OverviewRepository { id: string; githubId: string | null }
+
+export const OverviewProject = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  status: Schema.Literals(["active", "paused"]),
+  revision: Schema.Number,
+  repositories: Schema.optionalKey(Schema.Array(OverviewRepository)),
+  clearance: Schema.NullOr(ProjectClearance),
+})
+
+export schema ServiceAvailable { state: "available"; queueRegistrationAvailable: true }
+export schema ServiceUnavailable { state: "unavailable"; queueRegistrationAvailable: boolean; reason: string }
+
+export schema FlagReporter { githubId: string; githubLogin: string }
+
+export schema OverviewFlag {
+  id: string
+  projectId: string
+  reporter: FlagReporter
+  revision: number
+  category: string
+  evidence: string
+  evidenceUrl: string | null
+  createdAt: string
+  state: "active"
+  closedAt: null
+  closedBy: null
+  closedReference: null
+}
+
+export const VettingOverview = Schema.Struct({
+  projects: Schema.Array(OverviewProject),
+  service: Schema.Union([ServiceAvailable, ServiceUnavailable]),
+  assessments: Schema.Array(AdminAssessment),
+  exemptions: Schema.Array(AdmissionExemption),
+  flags: Schema.Array(OverviewFlag),
+})
+
+export const vettingOverview = route({ method: "GET", path: "/api/v1/admin/vetting", access: "session", limitKib: 1, request: undefined, answer: VettingOverview, rejected: "rejected", cache: "no-store" })
+export const queueAssessment = route({ method: "POST", path: "/api/v1/admin/vetting/assessments", access: "sessionWrite", limitKib: 64, request: undefined, answer: QueuedAssessments, rejected: "assessment_queued", cache: "no-store", status: 201 })
+
+export const admissionApi: ReadonlyArray<AnyRoute> = [scanRequests, scanResults, scanReuse, scanJournal, scanRefresh, sandboxHealth, sandboxRun, vettingOverview, queueAssessment]

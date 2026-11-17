@@ -107,7 +107,7 @@ effect function preflightRpc(config: KeeperConfig) {
   const resolved = try rpc.send({ type: "resolve" })
   const observed = try exit(observedChain(config))
   if (Exit.isFailure(observed)) {
-    try rpc.send({ type: "preflight", endpointId: resolved.endpoint, selectionId: resolved.selection, observedChain: config.chain, observationAvailable: false })
+    rpc.send({ type: "preflight", endpointId: resolved.endpoint, selectionId: resolved.selection, observedChain: config.chain, observationAvailable: false }) catch () => undefined
     return try Effect.failCause(observed.cause)
   }
   return try rpc.send({ type: "preflight", endpointId: resolved.endpoint, selectionId: resolved.selection, observedChain: observed.value, observationAvailable: true })

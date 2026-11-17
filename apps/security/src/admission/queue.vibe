@@ -1,0 +1,120 @@
+// spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "A replaced template requeues the pending assessment with its original commit"
+import { isoNow } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { update } from "@repo/platform/stored"
+import { Authority, type ProjectView } from "@repo/ports/backend"
+import type { RequestOrigin } from "../../gen/security__enforcement.ts"
+import { canRequeueTemplate } from "../../gen/security__enforcement.effect.vibe"
+import { idOf } from "../enforcement/replay.vibe"
+import { enforcementAggregate, rosterOf } from "../enforcement/store.vibe"
+import { executableContent } from "./binding.ts"
+import { compose, manifestText, vettingService } from "./compose.vibe"
+import { type Pin, PinUnavailable, listedRepository, livePin } from "./livePin.vibe"
+import { type Assessment, type Queued, assessment, nextAssessmentNumber, queueStatement, templateReplacementReason } from "./store.vibe"
+
+export interface Requester {
+  readonly githubId: string
+  readonly githubLogin: string
+}
+
+export interface Plan {
+  readonly repositoryPath: string
+  readonly reason: string
+  readonly origin: RequestOrigin
+  readonly by: number
+}
+
+export error ContentUnreadable { projectId: string }
+
+effect function contentSha256(projectId: string) {
+  const text = try manifestText(projectId)
+  const manifest: unknown = text === undefined ? undefined : try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ContentUnreadable({ projectId }) })
+  if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) throw new ContentUnreadable({ projectId })
+  return try sha256Hex(executableContent(manifest as Record<string, unknown>))
+}
+
+effect function assessmentId() {
+  return `vet_${(try randomId()).replaceAll("-", "").toLowerCase()}`
+}
+
+effect function queuedRow(view: ProjectView, requester: Requester, plan: Plan, pin: Pin, content: string) {
+  const repository = listedRepository(view, plan.repositoryPath)
+  return {
+    id: try assessmentId(),
+    projectId: view.projectId,
+    revision: view.revision,
+    manifestSha256: view.manifestSha256,
+    contentSha256: content,
+    commitSha: pin.commitSha,
+    templateSha256: pin.templateSha256,
+    repositoryId: repository?.fullName ?? plan.repositoryPath,
+    requestedBy: requester,
+    requestedAt: try isoNow(),
+    requestReason: plan.reason,
+    replaces: null,
+  } satisfies Queued
+}
+
+effect function authorityOf(plan: Plan, repository: { readonly id: string }, githubId: number) {
+  const owner = plan.by !== vettingService && (plan.origin === "SetupCheck" || plan.origin === "OwnerRescan")
+  if (!owner) return { actor: plan.by, repository: githubId, permission: "PermissionUnavailable" as const, installation: "InstallationUnavailable" as const }
+  const read = try (try Authority).repository({ actorGithubId: String(plan.by), repositoryId: repository.id })
+  return { actor: idOf(read.actorGithubId), repository: idOf(read.repositoryId), permission: read.permission, installation: read.installation }
+}
+
+effect function inserted(queued: Queued, plan: Plan, repository: { readonly id: string }) {
+  const githubId = idOf(repository.id)
+  const authority = try authorityOf(plan, repository, githubId)
+  const event = { type: "requestAssessment", repository: githubId, requestOrigin: plan.origin, assessmentId: try nextAssessmentNumber(), authority }
+  const outcome = compose({ projectId: queued.projectId, event, by: plan.by, alongside: [queueStatement(queued)] }) catch effect (error) => {
+    if (error._tag === "ProjectRefused" || error._tag === "Conflict" || error._tag === "ConstraintViolation") return "conflict" as const
+    throw error
+  }
+  if (outcome === "conflict") return undefined
+  return try assessment(queued.id)
+}
+
+export effect function queueRepositories(view: ProjectView, requester: Requester, plans: ReadonlyArray<Plan>) {
+  const pins: Pin[] = []
+  for (const plan of plans) pins.push(try livePin(view, plan.repositoryPath))
+  const content = try contentSha256(view.projectId)
+  const created: Assessment[] = []
+  for (const [index, plan] of plans.entries()) {
+    const pin = pins[index]
+    const repository = listedRepository(view, plan.repositoryPath)
+    if (pin === undefined || repository === undefined) continue
+    const row = try inserted(try queuedRow(view, requester, plan, pin, content), plan, repository)
+    if (row !== undefined) created.push(row)
+  }
+  return created
+}
+
+export effect function requeueTemplate(view: ProjectView, requester: Requester, pending: Assessment, pin: Pin) {
+  const repository = listedRepository(view, pending.repositoryId)
+  if (repository === undefined) throw new PinUnavailable({ reason: `The manifest does not list repository ${pending.repositoryId}.` })
+  const queued: Queued = {
+    id: try assessmentId(),
+    projectId: pending.projectId,
+    revision: pending.revision,
+    manifestSha256: pending.manifestSha256,
+    contentSha256: pending.contentSha256,
+    commitSha: pending.commitSha,
+    templateSha256: pin.templateSha256,
+    repositoryId: pending.repositoryId,
+    requestedBy: requester,
+    requestedAt: try isoNow(),
+    requestReason: templateReplacementReason,
+    replaces: pending.id,
+  }
+  const number = try nextAssessmentNumber()
+  const githubId = idOf(repository.id)
+  const written = update(enforcementAggregate(pending.projectId, try rosterOf()), (loaded) => effect {
+    if (!canRequeueTemplate(loaded.state, vettingService, githubId, number)) return { value: false, writes: [] }
+    return { value: true, writes: [queueStatement(queued)] }
+  }) catch effect (error) => {
+    if (error._tag === "Conflict" || error._tag === "ConstraintViolation") return false
+    throw error
+  }
+  if (written !== true) return undefined
+  return try assessment(queued.id)
+}

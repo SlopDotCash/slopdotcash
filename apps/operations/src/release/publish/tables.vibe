@@ -1,0 +1,38 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"
+import { byteOrder } from "../manifest/inventory.vibe"
+import { ConfigRefused } from "./config.vibe"
+import { declaredWrites } from "./declared.ts"
+
+const Writes = Schema.Array(Schema.String)
+
+const internal = /^(?:sqlite_|_cf_|d1_migrations$)/u
+
+export effect function tableOwners(root: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const apps = fs.readDirectory(files.join(root, "apps")) catch effect () => {
+    throw new ConfigRefused({ message: "the apps directory is unreadable" })
+  }
+  const owners = new Map<string, string>()
+  for (const app of [...apps].sort(byteOrder)) {
+    const path = files.join(root, "apps", app, "src", "tables.ts")
+    const info = fs.stat(path) catch () => undefined
+    if (info?.type !== "File") continue
+    const loaded = tryPromise(() => declaredWrites(path)) catch effect () => {
+      throw new ConfigRefused({ message: `apps/${app}/src/tables.ts could not be loaded` })
+    }
+    const tables = Schema.decodeUnknownEffect(Writes)(loaded) catch effect () => {
+      throw new ConfigRefused({ message: `apps/${app}/src/tables.ts must export writes as a list of table names` })
+    }
+    for (const table of tables) {
+      const owner = owners.get(table)
+      if (owner !== undefined && owner !== app) throw new ConfigRefused({ message: `table ${table} is declared by both ${owner} and ${app}` })
+      owners.set(table, app)
+    }
+  }
+  return owners
+}
+
+export function undeclaredTable(owners: ReadonlyMap<string, string>, tables: ReadonlyArray<string>) {
+  return tables.find((table) => !internal.test(table) && !owners.has(table))
+}

@@ -1,0 +1,95 @@
+// spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
+import type { JsonRpc } from "@repo/platform/chain/rpc"
+import { expiryBlocksPerRun } from "../kernels/expiryCoverage.ts"
+import { ScanJson } from "../journal/codec.vibe"
+import { jsonText, sha256Hex } from "../solana/bytes.ts"
+
+module verified {
+  import { type TraversalStep, expiryTraversalStep } from "../kernels/expiryCoverage.ts"
+  /** @throws {never} */
+  export function traversalStep(txId: string, anchorHash: string, anchorSlot: number, current: number, expectedHash: string, block: { readonly blockhash: string; readonly previousBlockhash: string; readonly parentSlot: number; readonly signatures: ReadonlyArray<string> }): TraversalStep {
+    return expiryTraversalStep(txId, anchorHash, anchorSlot, current, expectedHash, { ...block, signatures: [...block.signatures] })
+  }
+}
+import { traversalStep } from verified
+
+export type Cursor = typeof ScanJson.Type
+
+export schema CoverageBlock { slot: number; blockhash: string; previousBlockhash: string; parentSlot: number; signatureCount: number; signaturesSha256: string }
+
+schema HistoryBlock { blockhash: string; previousBlockhash: string; parentSlot: number; signatures: ReadonlyArray<string> }
+
+export interface Target {
+  readonly txId: string
+  readonly blockhash: string
+  readonly blockhashSlot: number
+}
+
+export interface Scanned {
+  readonly cursor: Cursor
+  readonly page: ReadonlyArray<CoverageBlock>
+}
+
+const blockOptions = { commitment: "finalized", transactionDetails: "signatures", rewards: false, maxSupportedTransactionVersion: 0 }
+
+export function slotNumber(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+export function digestOf(value: unknown) {
+  return sha256Hex(new TextEncoder().encode(jsonText(value)))
+}
+
+export function initialCursor(target: Target, operator: string, horizonSlot: number, horizonHash: string): Cursor {
+  return {
+    txId: target.txId,
+    operator,
+    blockhash: target.blockhash,
+    blockhashSlot: target.blockhashSlot,
+    tipSlot: horizonSlot,
+    tipHash: horizonHash,
+    nextSlot: horizonSlot,
+    expectedHash: horizonHash,
+    blocks: 0,
+    digest: digestOf({ txId: target.txId, blockhash: target.blockhash, blockhashSlot: target.blockhashSlot, horizonSlot, horizonHash }),
+    complete: false,
+    revision: 0,
+  }
+}
+
+export function evidenceOf(slot: number, block: typeof HistoryBlock.Type): CoverageBlock {
+  return { slot, blockhash: block.blockhash, previousBlockhash: block.previousBlockhash, parentSlot: block.parentSlot, signatureCount: block.signatures.length, signaturesSha256: digestOf(block.signatures) }
+}
+
+export function advanced(cursor: Cursor, evidence: CoverageBlock, complete: boolean, nextSlot: number, expectedHash: string): Cursor {
+  return {
+    ...cursor,
+    nextSlot: complete ? cursor.nextSlot : nextSlot,
+    expectedHash: complete ? cursor.expectedHash : expectedHash,
+    blocks: cursor.blocks + 1,
+    digest: digestOf({ prior: cursor.digest, block: evidence }),
+    complete,
+  }
+}
+
+export effect function historyBlock(rpc: JsonRpc, slot: number) {
+  const block = try rpc.call("getBlock", [slot, blockOptions], Schema.NullOr(HistoryBlock))
+  if (block === null || block.blockhash === "" || block.previousBlockhash === "" || !slotNumber(block.parentSlot)) return undefined
+  return block
+}
+
+export effect function scanned(rpc: JsonRpc, target: Target, from: Cursor) {
+  let cursor = from
+  const page: Array<CoverageBlock> = []
+  for (let count = 0; !cursor.complete && count < expiryBlocksPerRun; count++) {
+    const current = cursor.nextSlot
+    const block = try historyBlock(rpc, current)
+    if (block === undefined) return undefined
+    const step = traversalStep(target.txId, target.blockhash, target.blockhashSlot, current, cursor.expectedHash, block)
+    if (step.kind === "refused") return undefined
+    const evidence = evidenceOf(current, block)
+    page.push(evidence)
+    cursor = advanced(cursor, evidence, step.kind === "complete", step.nextSlot, step.expectedHash)
+  }
+  return { cursor: page.length === 0 ? cursor : { ...cursor, revision: cursor.revision + 1 }, page } satisfies Scanned
+}

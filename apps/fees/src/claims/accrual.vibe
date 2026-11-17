@@ -1,0 +1,87 @@
+// spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"
+import { EvmRpc } from "@repo/platform/chain/evm"
+import { SolanaRpc } from "@repo/platform/chain/solana"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { wideNumber } from "../conversion/chain.vibe"
+import { amountOf, networkNames } from "../journal/codec.vibe"
+import { inScope } from "../journal/writes.vibe"
+import type { Transfer, VaultCounter } from "../receipts/discover.vibe"
+import type { EnabledNetwork } from "../runtime/config.vibe"
+import type { VaultFact } from "../runtime/reviewed.vibe"
+import { evmVault, failureText } from "./evm.vibe"
+import { solanaVault } from "./solana.vibe"
+
+schema ClaimRow { token: string; amount_in: string; state: string; vault: string | null; tx_id: string | null }
+schema AttemptRow { tx_id: string }
+
+export interface OwnClaims {
+  readonly amounts: ReadonlyMap<string, bigint>
+  readonly transactions: ReadonlySet<string>
+}
+
+export interface FinalizedAccrual { readonly recipient: string; readonly accrued: bigint; readonly height: bigint }
+
+export interface VaultAccrualFact extends VaultCounter {
+  readonly recipient: string
+  readonly height: bigint
+  readonly finalized: boolean
+}
+
+const counted = new Set(["submitted", "unknown", "finalized"])
+
+function vaultKey(network: EnabledNetwork, vault: string) {
+  return network.network === "Solana" ? vault : vault.toLowerCase()
+}
+
+export effect function ownClaims(network: EnabledNetwork, scope: string) {
+  const name = networkNames[network.network]
+  const claims = try rows(ClaimRow, sql`SELECT token, amount_in, state, json_extract(quote, '$.vault') AS vault, tx_id FROM fee_conversions WHERE ${inScope(name, scope)} AND kind = 'claim' AND mode = 'live' ORDER BY rowid`)
+  const replaced = try rows(AttemptRow, sql`SELECT tx_id FROM fee_send_replacements WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${inScope(name, scope)} AND kind = 'claim') ORDER BY rowid`)
+  const amounts = new Map<string, bigint>()
+  const transactions = new Set<string>(replaced.map((row) => row.tx_id.toLowerCase()))
+  for (const row of claims) {
+    if (row.tx_id !== null) transactions.add(row.tx_id.toLowerCase())
+    if (!counted.has(row.state)) continue
+    if (row.vault === null) throw new RowMismatch({ text: `fee claim of ${row.token}`, issue: "the claim records no vault" })
+    const key = vaultKey(network, row.vault)
+    amounts.set(key, (amounts.get(key) ?? 0n) + (try amountOf(row.amount_in, `fee claim of ${row.token}`)))
+  }
+  return { amounts, transactions } satisfies OwnClaims
+}
+
+export function withoutOwnClaims(transfers: ReadonlyArray<Transfer>, own: OwnClaims): ReadonlyArray<Transfer> {
+  return transfers.filter((transfer) => !own.transactions.has((transfer.receipt.split(":")[0] ?? "").toLowerCase()))
+}
+
+export effect function evmFinalizedAccrual(vault: VaultFact) {
+  const head = try (try EvmRpc).head("finalized")
+  const current = try evmVault(vault, head.number)
+  if (current === undefined) return undefined
+  return { recipient: current.deployment.feeRecipient, accrued: current.accrued, height: head.number } satisfies FinalizedAccrual
+}
+
+export effect function solanaFinalizedAccrual(vault: VaultFact) {
+  const height = try (try SolanaRpc).slot("finalized")
+  const current = try solanaVault(vault, "finalized")
+  if (current === undefined) return undefined
+  return { recipient: current.deployment.feeRecipient, accrued: current.accrued, height: wideNumber(height) } satisfies FinalizedAccrual
+}
+
+export effect function vaultAccruals<E, R>(network: EnabledNetwork, vaults: ReadonlyArray<VaultFact>, own: OwnClaims, accrual: (vault: VaultFact) => (FinalizedAccrual | undefined)!E!R) {
+  const facts: Array<VaultAccrualFact> = []
+  for (const vault of vaults) {
+    const claimed = own.amounts.get(vaultKey(network, vault.vault)) ?? 0n
+    const read = accrual(vault) catch effect (error) => {
+      try Effect.logWarning("fee_claim_error", { network: network.definition.name, vault: vault.vault, error: failureText(error) })
+      return null
+    }
+    if (read === undefined) continue
+    if (read === null) {
+      if (claimed > 0n) facts.push({ token: vault.token, vault: vault.vault, recipient: network.feeWallet, accruedTotal: claimed, height: 0n, finalized: false })
+      continue
+    }
+    const accruedTotal = read.accrued + claimed
+    if (accruedTotal > 0n) facts.push({ token: vault.token, vault: vault.vault, recipient: read.recipient, accruedTotal, height: read.height, finalized: true })
+  }
+  return facts
+}

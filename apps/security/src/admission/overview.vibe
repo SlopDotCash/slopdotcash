@@ -1,0 +1,130 @@
+// spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/security/enforcement.md, "Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction"; spec/security/admission.md, "The outcome and the per-assessment record are what enforcement reads"
+import { rows, sql } from "@repo/platform/d1"
+import { type Actor, handle, refuse } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { Registry, RegistryManifests } from "@repo/ports/backend"
+import { activeFlag, flagView } from "../../gen/security__enforcement.effect.vibe"
+import { vettingOverview } from "../client/admission.vibe"
+import { getAdminVetting } from "../client/refusals.vibe"
+import { projectClearance, repositoryClearances } from "../enforcement/port.vibe"
+import { idOf } from "../enforcement/replay.vibe"
+import { withRetainedEvidence } from "../enforcement/retained.vibe"
+import { jsonOf } from "../enforcement/rows.vibe"
+import { type Loaded, loadEnforcement } from "../enforcement/store.vibe"
+import { EvidenceBucket } from "../evidence/objects.vibe"
+import { serviceAvailable } from "./compose.vibe"
+import { adminView, recentAssessments } from "./store.vibe"
+
+schema NamedManifest { name: string }
+
+schema ExemptionRow {
+  id: string
+  project_id: string
+  revision: number
+  manifest_sha256: string
+  repository_id: string
+  repository_node_id: string
+  steward_id: string
+  steward_node_id: string
+  granted_by_github_id: string
+  granted_by_github_login: string
+  granted_at: string
+  reason: string
+  decision_reference: string
+  revoked_at: string | null
+  revoked_by_github_id: string | null
+  revoked_by_github_login: string | null
+  revocation_reason: string | null
+  revocation_decision_reference: string | null
+}
+
+const storageMissing = "Private evidence storage is not bound. You may queue a scan, but acquisition and clean clearance must wait."
+const keyMissing = "The vetting service key is unavailable. New scans cannot be queued, acquired or recorded. Existing decisions still require current retained evidence."
+
+effect function exemptions() {
+  const found = try rows(ExemptionRow, sql`SELECT g.id, g.project_id, g.revision, g.manifest_sha256, g.repository_id, g.repository_node_id, g.steward_id, g.steward_node_id, g.granted_by_github_id, g.granted_by_github_login, g.granted_at, g.reason, g.decision_reference, r.revoked_at, r.revoked_by_github_id, r.revoked_by_github_login, r.reason AS revocation_reason, r.decision_reference AS revocation_decision_reference FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id ORDER BY g.sequence DESC`)
+  return found.map((row) => ({
+    id: row.id,
+    kind: "owner-approved-admission" as const,
+    projectId: row.project_id,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    repositoryId: row.repository_id,
+    repositoryNodeId: row.repository_node_id,
+    stewardId: row.steward_id,
+    stewardNodeId: row.steward_node_id,
+    grantedBy: { githubId: row.granted_by_github_id, githubLogin: row.granted_by_github_login },
+    grantedAt: row.granted_at,
+    reason: row.reason,
+    decisionReference: row.decision_reference,
+    revokedAt: row.revoked_at,
+    revokedBy: row.revoked_by_github_id === null || row.revoked_by_github_login === null ? null : { githubId: row.revoked_by_github_id, githubLogin: row.revoked_by_github_login },
+    revocationReason: row.revocation_reason,
+    revocationDecisionReference: row.revocation_decision_reference,
+  }))
+}
+
+function activeFlags(loaded: Loaded, viewer: number) {
+  return loaded.history.flags.flatMap((row) => {
+    const flag = loaded.state.flags.find((each) => each.receipt === row.row)
+    if (flag === undefined || !activeFlag(loaded.state, flag) || flagView(loaded.state, viewer, row.row) !== "FlagWithEvidence") return []
+    return [{
+      id: row.id,
+      projectId: loaded.projectId,
+      reporter: { githubId: row.reporter_github_id, githubLogin: row.reporter_github_login },
+      revision: row.revision,
+      category: row.category,
+      evidence: row.evidence,
+      evidenceUrl: row.evidence_url,
+      createdAt: row.created_at,
+      state: "active" as const,
+      closedAt: null,
+      closedBy: null,
+      closedReference: null,
+    }]
+  })
+}
+
+effect function enforcementOf(projectId: string) {
+  return loadEnforcement(projectId) catch effect (error) => {
+    if (error._tag === "RowMismatch") return undefined
+    throw error
+  }
+}
+
+effect function overview(actor: Actor) {
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refuse(getAdminVetting.forbiddenAdminAccessIsRequired.status, getAdminVetting.forbiddenAdminAccessIsRequired.error, getAdminVetting.forbiddenAdminAccessIsRequired.message)
+  const viewer = idOf(actor.githubId)
+  const registry = try Registry
+  const projects = []
+  const flags = []
+  for (const current of try (try RegistryManifests).current()) {
+    const view = try registry.project(current.projectId)
+    if (view === undefined) continue
+    const named = try jsonOf(NamedManifest, current.manifest, "project manifest")
+    const loaded = try enforcementOf(current.projectId)
+    const observed = loaded === undefined ? undefined : try withRetainedEvidence(loaded.state)
+    if (loaded !== undefined) flags.push(...activeFlags(loaded, viewer))
+    projects.push({
+      id: view.projectId,
+      name: named.name,
+      status: view.rowStatus === "Active" ? "active" as const : "paused" as const,
+      revision: view.revision,
+      ...(view.repositories.length > 1 ? { repositories: view.repositories.map((repository) => ({ id: repository.fullName, githubId: repository.id === "" ? null : repository.id })) } : {}),
+      clearance: observed === undefined ? null : { state: projectClearance(observed), repositories: repositoryClearances(observed) },
+    })
+  }
+  const queueRegistrationAvailable = try serviceAvailable()
+  const storage = Option.isSome(try Effect.serviceOption(EvidenceBucket))
+  return {
+    projects,
+    service: queueRegistrationAvailable && storage
+      ? { state: "available" as const, queueRegistrationAvailable: true as const }
+      : { state: "unavailable" as const, queueRegistrationAvailable, reason: queueRegistrationAvailable ? storageMissing : keyMissing },
+    assessments: (try recentAssessments()).map(adminView),
+    exemptions: try exemptions(),
+    flags,
+  }
+}
+
+export const overviewRoutes = handle(vettingOverview, (input) => overview(input.actor))

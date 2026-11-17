@@ -1,0 +1,59 @@
+// spec/contributor/sessionExchange.md, "Assertion consumption survives signing errors and a lost session reply"
+import type { Fetcher } from "@repo/platform/bindings"
+import { exchanged } from "@repo/platform/browser"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { handleRaw, outboundVia } from "@repo/platform/http"
+import { postAuthSession } from "../client/refusals.vibe"
+import { authSession } from "../client/traces.vibe"
+import { header, offHost, refused, traceJson } from "../runs/answers.vibe"
+import { validAssertion } from "../runs/validation.ts"
+import { contributorLifetimeSeconds } from "./bearer.ts"
+import { TraceAuth, signToken, traceAudience } from "./tokens.vibe"
+
+const consumeUrl = "https://identity.internal/v1/assertions/consume"
+const identityAnswerBytes = 16 * 1024
+const numericId = /^\d+$/u
+const loginShape = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
+
+schema ConsumedIdentity {
+  readonly audience: string
+  readonly githubActorId: string
+  readonly githubLogin: string
+}
+
+effect function unavailable(status: number) {
+  try Effect.logError("trace_identity_unavailable", { status })
+  return refused(postAuthSession.internalError)
+}
+
+effect function consumeAnswer(identity: Fetcher, assertion: string) {
+  const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.make("POST")(consumeUrl, { headers: { authorization: `Bearer ${assertion}` } }), { audience: traceAudience })
+  provide outboundVia(identity) {
+    return try exchanged(request, identityAnswerBytes)
+  }
+}
+
+effect function consumed(assertion: string) {
+  const outcome = try consumeAnswer((try TraceAuth).identity, assertion)
+  if (outcome.kind === "unreachable") throw try unavailable(0)
+  if (outcome.status === 401) throw refused(postAuthSession.unauthorized)
+  if (outcome.status < 200 || outcome.status > 299 || outcome.kind !== "answered") throw try unavailable(outcome.status)
+  const answered = Schema.decodeUnknownEffect(ConsumedIdentity)(outcome.value) catch () => undefined
+  if (answered === undefined || answered.audience !== traceAudience || !numericId.test(answered.githubActorId) || !loginShape.test(answered.githubLogin)) throw refused(postAuthSession.unauthorized)
+  return answered
+}
+
+effect function exchange() {
+  const off = try offHost()
+  if (off !== undefined) return off
+  const assertion = (try header("x-slop-identity-assertion")) ?? ""
+  if (!validAssertion(assertion)) throw refused(postAuthSession.unauthorized)
+  const identity = try consumed(assertion)
+  const issuedAt = try nowSeconds()
+  const expiresAt = issuedAt + contributorLifetimeSeconds
+  const token = try signToken({ githubId: identity.githubActorId, githubLogin: identity.githubLogin, roles: ["contributor"], issuedAt, expiresAt, tokenId: try randomId() })
+  return traceJson({ token, tokenType: "Bearer", expiresAt: try isoAt(expiresAt * 1000) })
+}
+
+export const sessionRoutes = handleRaw(authSession, () => exchange())

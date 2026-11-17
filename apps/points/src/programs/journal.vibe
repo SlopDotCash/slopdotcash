@@ -1,0 +1,182 @@
+// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"
+import { isoNow } from "@repo/platform/clock"
+import { journalText } from "../kernels/records/canonical.ts"
+import { finish, openStore } from "../journal/ledger.vibe"
+import { repositoriesOf, readSnapshots } from "../journal/build.vibe"
+import { reconcilePenalties } from "../journal/penalties.vibe"
+import { applyRetainedReviews } from "../journal/retained.vibe"
+import { applySnapshots } from "../journal/snapshot.vibe"
+import { recognizePayouts } from "../payoutRecognition/awards.vibe"
+import { evaluationInputs } from "../evaluations/check.vibe"
+import { applyEvaluations } from "../evaluations/journal.vibe"
+import { admitManifests, evaluationEvents } from "../evaluations/manifests.vibe"
+import { readRegistry } from "../snapshot/adaptPr.vibe"
+import { readSnapshotFile } from "../snapshot/files.vibe"
+import { instantOf } from "../kernels/records/instants.ts"
+import { projectionFiles, writeProjection } from "../publication/projections.vibe"
+import { recoverPublished } from "../recovery/published.vibe"
+import type { Environment } from "../../gen/points__recovery.ts"
+
+export error JournalUsage { message: string }
+export error JournalInputInvalid { path: string; message: string }
+
+schema ReviewHistory { events: ReadonlyArray<Schema.Unknown> }
+schema CapturedRepository { readonly id: string; readonly countsFrom?: string }
+schema CapturedProject { readonly repositories: ReadonlyArray<CapturedRepository> }
+schema CapturedRegistry { readonly schemaVersion: number; readonly projects: ReadonlyArray<CapturedProject> }
+
+const usage = "journal build <registry.json> <public data directory> <registry snapshot.json> [--online] [--bootstrap] [--environment production|staging]"
+const historyPath = "data/points/history.json"
+const reviewHistoryPath = "data/accepted-review-history.json"
+const cyclesDirectory = "cycles"
+const buildDirectory = ".points-build"
+const maxHistoryBytes = 256 * 1024 * 1024
+const maxCycleIndexBytes = 64 * 1024 * 1024
+const maxRegistrySnapshotBytes = 64 * 1024 * 1024
+
+interface BuildArguments {
+  readonly registry: string
+  readonly directory: string
+  readonly snapshot: string
+  readonly online: boolean
+  readonly bootstrap: boolean
+  readonly environment: Environment
+}
+
+function refused(message: string) {
+  return new JournalUsage({ message })
+}
+
+effect function textFile(path: string, limitBytes: number) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch effect () => {
+    throw new JournalInputInvalid({ path, message: `${path} is unavailable` })
+  }
+  if (Number(info.size) > limitBytes) throw new JournalInputInvalid({ path, message: `${path} exceeds its size limit` })
+  const text = fs.readFileString(path) catch effect () => {
+    throw new JournalInputInvalid({ path, message: `${path} is unavailable` })
+  }
+  return text
+}
+
+effect function snapshotText(path: string) {
+  const bytes = try readSnapshotFile(path)
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => {
+    throw new JournalInputInvalid({ path, message: `${path} is not UTF-8` })
+  }
+  return text
+}
+
+effect function snapshotTexts(dataDirectory: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const archived = fs.readDirectory(cyclesDirectory, { recursive: true }) catch effect () => {
+    throw new JournalInputInvalid({ path: cyclesDirectory, message: "The cycle archive is unavailable" })
+  }
+  const paths = [...archived.filter((entry) => files.basename(entry) === "source-snapshot.json").map((entry) => files.join(cyclesDirectory, entry)), files.join(dataDirectory, "leaderboard.json")]
+  const texts: string[] = []
+  for (const path of paths) texts.push(try snapshotText(path))
+  return texts
+}
+
+effect function acceptedReviewEvents() {
+  const text = try textFile(reviewHistoryPath, maxHistoryBytes)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw new JournalInputInvalid({ path: reviewHistoryPath, message: "The accepted review history is not JSON" })
+  }
+  const history = Schema.decodeUnknownEffect(ReviewHistory)(value) catch effect () => {
+    throw new JournalInputInvalid({ path: reviewHistoryPath, message: "The accepted review history has no events" })
+  }
+  return history.events
+}
+
+effect function countsFromOf(path: string) {
+  const text = try textFile(path, maxRegistrySnapshotBytes)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw new JournalInputInvalid({ path, message: "The registry snapshot is not JSON" })
+  }
+  const captured = Schema.decodeUnknownEffect(CapturedRegistry)(value) catch effect () => {
+    throw new JournalInputInvalid({ path, message: "The registry snapshot has no project repositories" })
+  }
+  if (captured.schemaVersion !== 1) throw new JournalInputInvalid({ path, message: "The registry snapshot has an unsupported schema version" })
+  const counts: Record<string, string> = {}
+  for (const project of captured.projects) {
+    for (const repository of project.repositories) {
+      if (repository.countsFrom === undefined) continue
+      if (instantOf(repository.countsFrom) === null) throw new JournalInputInvalid({ path, message: `${repository.id} has an invalid countsFrom` })
+      counts[repository.id] = repository.countsFrom
+    }
+  }
+  return counts
+}
+
+effect function environmentOf(text: string | undefined) {
+  if (text === "production") return "Production" satisfies Environment
+  if (text === "staging") return "Staging" satisfies Environment
+  throw refused(`Usage: ${usage}`)
+}
+
+effect function buildArguments(args: ReadonlyArray<string>) {
+  const [registry, directory, snapshot, ...flags] = args
+  if (registry === undefined || directory === undefined || snapshot === undefined || snapshot.startsWith("--")) throw refused(`Usage: ${usage}`)
+  let online = false
+  let bootstrap = false
+  let environment: Environment = "Production"
+  for (let position = 0; position < flags.length; position++) {
+    const flag = flags[position]
+    if (flag === "--online") online = true
+    else if (flag === "--bootstrap") bootstrap = true
+    else if (flag === "--environment") {
+      environment = try environmentOf(flags[position + 1])
+      position += 1
+    } else throw refused(`Usage: ${usage}`)
+  }
+  return { registry, directory, snapshot, online, bootstrap, environment } satisfies BuildArguments
+}
+
+effect function writeBuildFile(name: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const path = files.join(buildDirectory, name)
+  fs.makeDirectory(buildDirectory, { recursive: true }) catch effect () => {
+    throw new JournalInputInvalid({ path: buildDirectory, message: "The build directory could not be created" })
+  }
+  fs.writeFileString(path, text) catch effect () => {
+    throw new JournalInputInvalid({ path, message: `${path} could not be written` })
+  }
+}
+
+effect function waitFor(millis: number) {
+  try sleep(Duration.millis(millis))
+}
+
+effect function build(args: ReadonlyArray<string>) {
+  const parsed = try buildArguments(args)
+  const files = try Path.Path
+  const recordedAt = try isoNow()
+  const history = try textFile(historyPath, maxHistoryBytes)
+  const published = parsed.online ? try recoverPublished({ environment: parsed.environment, bootstrap: parsed.bootstrap, wait: waitFor }) : null
+  const store = try openStore(history, published === null ? null : `${journalText(published)}\n`, [])
+  const registry = try readRegistry(parsed.registry)
+  const repositories = repositoriesOf(registry, try countsFromOf(parsed.snapshot))
+  try applySnapshots(store, repositories, try readSnapshots(try snapshotTexts(parsed.directory), registry), recordedAt)
+  try recognizePayouts(store, try textFile(files.join(parsed.directory, "cycles", "index.json"), maxCycleIndexBytes), recordedAt)
+  const admitted = try admitManifests(try evaluationInputs(files.resolve(".")), { repositories, externalProjects: new Set() })
+  const reviewed: ReadonlyArray<unknown> = [...(try acceptedReviewEvents()), ...evaluationEvents(admitted)]
+  const digest = try applyRetainedReviews(store, repositories, reviewed, recordedAt)
+  try applyEvaluations(store, repositories, admitted, digest, recordedAt)
+  try reconcilePenalties(store, repositories, undefined, digest, recordedAt)
+  const finished = try finish(store, recordedAt)
+  const projection = try projectionFiles(finished.journal)
+  try writeProjection(parsed.directory, projection)
+  const points = projection.members.reduce((sum, member) => sum + member.total, 0)
+  try writeBuildFile("report.json", `${JSON.stringify({ generatedAt: recordedAt, revisionCount: finished.journal.revisions.length, contributors: projection.members.length, points, coverage: finished.journal.coverage }, null, 2)}\n`)
+  try writeBuildFile("held.json", finished.review)
+  try Console.log(`[points] ${projection.members.length} contributors; ${finished.journal.revisions.length} historical revisions; ${finished.held.length} held for owner review`)
+}
+
+export effect function journal(args: ReadonlyArray<string>) {
+  const [subcommand, ...rest] = args
+  if (subcommand === "build") return try build(rest)
+  throw refused(`Usage: ${usage}`)
+}

@@ -1,0 +1,79 @@
+// spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"
+import { EvmRpc, type Hex, evmRpc } from "@repo/platform/chain/evm"
+import { boundedMessage } from "@repo/platform/chain/rpc"
+import { SolanaRpc, address, solanaRpc } from "@repo/platform/chain/solana"
+import { isoNow } from "@repo/platform/clock"
+import { chainIdOf } from "./contracts.ts"
+
+export error FundingRefused { message: string }
+
+interface TestNetwork {
+  readonly family: "evm" | "solana"
+  readonly rpc: string
+  readonly identity: string
+  readonly unit: "wei" | "lamports"
+}
+
+const testNetworks: Readonly<Record<string, TestNetwork>> = {
+  "base-sepolia": { family: "evm", rpc: "https://sepolia.base.org", identity: "84532", unit: "wei" },
+  "robinhood-testnet": { family: "evm", rpc: "https://rpc.testnet.chain.robinhood.com", identity: "46630", unit: "wei" },
+  "solana-devnet": { family: "solana", rpc: "https://api.devnet.solana.com", identity: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", unit: "lamports" },
+  "solana-testnet": { family: "solana", rpc: "https://api.testnet.solana.com", identity: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY", unit: "lamports" },
+}
+
+const mainnetIdentities = new Set(["1", "8453", "4663", "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"])
+
+function endpointOf(text: string) {
+  const url = URL.parse(text)
+  return url !== null && url.protocol === "https:" && url.username === "" && url.password === "" ? url.toString() : undefined
+}
+
+export effect function checkTestFunding(network: string, holder: string, endpoint: string | undefined) {
+  const config = Object.hasOwn(testNetworks, network) ? testNetworks[network] : undefined
+  if (config === undefined || mainnetIdentities.has(config.identity)) throw new FundingRefused({ message: "Expected base-sepolia, solana-devnet, solana-testnet, or robinhood-testnet" })
+  const evmHolder = holder.toLowerCase()
+  if (config.family === "evm" ? !/^0x[0-9a-f]{40}$/u.test(evmHolder) : address(holder) === undefined) throw new FundingRefused({ message: "Invalid public address" })
+  const url = endpointOf(endpoint ?? config.rpc)
+  if (url === undefined) throw new FundingRefused({ message: "RPC must use HTTPS without embedded credentials" })
+  const urls = Redacted.make([url] as ReadonlyArray<string>)
+  const refused = (error: unknown) => new FundingRefused({ message: `RPC check failed: ${boundedMessage(error)}` })
+  if (config.family === "evm") {
+    const read = Effect.provide(evmBalance(evmHolder as Hex), evmRpc({ urls, chainId: chainIdOf(config.identity) })) catch effect (error) => {
+      throw refused(error)
+    }
+    return try funding(network, holder, `0x${chainIdOf(config.identity).toString(16)}`, config.unit, read)
+  }
+  const read = Effect.provide(solanaBalance(holder), solanaRpc({ urls, genesis: config.identity })) catch effect (error) => {
+    throw refused(error)
+  }
+  return try funding(network, holder, config.identity, config.unit, read)
+}
+
+effect function evmBalance(holder: Hex) {
+  const rpc = try EvmRpc
+  const head = try rpc.head("finalized")
+  const block: Readonly<Record<string, string>> = { number: head.number.toString(), hash: head.hash }
+  return { amount: try rpc.balance(holder, head.number), block }
+}
+
+effect function solanaBalance(holder: string) {
+  const rpc = try SolanaRpc
+  const found = address(holder)
+  const read = try rpc.accounts(found === undefined ? [] : [found], "finalized")
+  const block: Readonly<Record<string, string>> = { slot: String(read.slot) }
+  return { amount: read.value[0]?.lamports ?? 0n, block }
+}
+
+effect function funding(network: string, holder: string, identity: string, unit: string, read: { readonly amount: bigint; readonly block: Readonly<Record<string, string>> }) {
+  return {
+    network,
+    address: holder,
+    networkIdentity: identity,
+    commitment: "finalized",
+    block: read.block,
+    balance: read.amount.toString(),
+    unit,
+    nonzero: read.amount > 0n,
+    checkedAt: try isoNow(),
+  }
+}

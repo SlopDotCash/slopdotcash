@@ -1,0 +1,118 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { boundedBytes } from "@repo/platform/browser"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { FileRecord } from "../manifest/inventory.vibe"
+import { Cloudflare } from "../wrangler/cloudflare.vibe"
+
+export interface Patience {
+  readonly rounds: number
+  readonly delaySeconds: number
+}
+
+export const propagation: Patience = { rounds: 72, delaySeconds: 5 }
+
+const requestSeconds = 15
+const concurrency = 8
+const headerBytesLimit = 64 * 1024
+const tokenPattern = /^[A-Za-z0-9._-]{1,128}$/u
+
+schema DomainStatus { readonly status: string }
+
+effect function routeOf(path: string) {
+  const encoded = try orDie(Effect.try(() => path.split("/").map((part) => encodeURIComponent(part)).join("/")))
+  if (encoded === "index.html") return "/"
+  if (encoded.endsWith("/index.html")) return `/${encoded.slice(0, -"index.html".length)}`
+  if (encoded.endsWith(".html")) return `/${encoded.slice(0, -".html".length)}`
+  return `/${encoded}`
+}
+
+effect function fetchedManually(url: string) {
+  const request = HttpClientRequest.get(url, { headers: { accept: "*/*", "accept-encoding": "identity", "cache-control": "no-cache", pragma: "no-cache" } })
+  return timeout(provideService(HttpClient.execute(request), FetchHttpClient.RequestInit, { redirect: "manual", cache: "no-store" }), Duration.seconds(requestSeconds)) catch () => undefined
+}
+
+effect function servesExactly(origin: string, record: FileRecord, token: string) {
+  const response = try fetchedManually(`${origin}${try routeOf(record.path)}?verify=${token}`)
+  if (response?.status !== 200) return false
+  const bytes = boundedBytes(response, record.bytes, record.path) catch () => undefined
+  return bytes !== undefined && bytes.length === record.bytes && (try sha256Hex(bytes)) === record.sha256
+}
+
+export effect function servedMismatches(origin: string, records: ReadonlyArray<FileRecord>, token: string, patience: Patience) {
+  if (!tokenPattern.test(token)) return records.map((record) => record.path)
+  let pending = [...records]
+  for (let round = 1; round <= patience.rounds && pending.length > 0; round += 1) {
+    const failed: FileRecord[] = []
+    for concurrent(concurrency) (const record of pending) {
+      if (!(try servesExactly(origin, record, `${token}-${round}`))) failed.push(record)
+    }
+    pending = failed
+    if (pending.length > 0 && round < patience.rounds) try sleep(Duration.seconds(patience.delaySeconds))
+  }
+  return pending.map((record) => record.path).sort()
+}
+
+function headerRules(text: string) {
+  const rules: Array<readonly [string, string]> = []
+  let global = false
+  for (const line of text.split(/\r?\n/u)) {
+    if (line.trim() === "") continue
+    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+      global = line.trim() === "/*"
+      continue
+    }
+    const separator = line.indexOf(":")
+    if (global && separator > 0) rules.push([line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()])
+  }
+  return rules
+}
+
+function redirectRules(text: string) {
+  return text.split(/\r?\n/u).map((line) => line.trim().split(/\s+/u)).flatMap(([source, target, status]) =>
+    source !== undefined && target !== undefined && (status === "301" || status === "302") && !source.includes(":") && !source.includes("*")
+      ? [{ source, target, status: Number(status) }]
+      : [])
+}
+
+effect function controlText(site: string, name: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const bytes = fs.readFile(files.join(site, name)) catch () => undefined
+  if (bytes === undefined || bytes.length > headerBytesLimit) return undefined
+  return new TextDecoder().decode(bytes)
+}
+
+effect function headersServed(origin: string, rules: ReadonlyArray<readonly [string, string]>) {
+  const response = try fetchedManually(`${origin}/`)
+  if (response?.status !== 200 || rules.length === 0) return false
+  return rules.every(([name, value]) => response.headers[name] === value)
+}
+
+effect function redirectsServed(origin: string, rules: ReadonlyArray<{ readonly source: string; readonly target: string; readonly status: number }>) {
+  for (const rule of rules) {
+    const response = try fetchedManually(`${origin}${rule.source}`)
+    const location = response?.headers.location
+    if (response?.status !== rule.status || location === undefined) return false
+    const resolved = Effect.try(() => new URL(location, origin).href === new URL(rule.target, origin).href) catch () => false
+    if (!resolved) return false
+  }
+  return true
+}
+
+effect function domainActive(project: string, host: string) {
+  const cloudflare = try Cloudflare
+  const answer = cloudflare.read("pages domain", `/pages/projects/${project}/domains/${host}`) catch () => undefined
+  const domain = Schema.decodeUnknownEffect(DomainStatus)(answer) catch () => undefined
+  return domain?.status === "active"
+}
+
+export effect function providerChecks(origin: string, project: string, site: string) {
+  const url = Effect.try(() => new URL(origin)) catch () => undefined
+  if (url === undefined || url.protocol !== "https:" || url.origin !== origin) return false
+  const headers = try controlText(site, "_headers")
+  const redirects = try controlText(site, "_redirects")
+  if (headers === undefined || redirects === undefined) return false
+  if (!(try domainActive(project, url.host))) return false
+  if (!(try headersServed(origin, headerRules(headers)))) return false
+  return try redirectsServed(origin, redirectRules(redirects))
+}

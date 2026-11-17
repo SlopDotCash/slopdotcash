@@ -1,0 +1,219 @@
+// spec/frontend/ownerVault.md, "A flow sends only after storage saves its attempt"; spec/frontend/ownerVault.md, "A withdrawal that would break the month's promise is refused on Slop's pages"; spec/frontend/ownerVault.md, "A wallet reply settles only its own attempt; an unclear one waits for the owner"; spec/frontend/ownerVault.md, "A timer asks only for a wallet-returned hash the owner is not editing"; spec/frontend/ownerVault.md, "Only a finalized matching result registers or counts, and failures keep the saved request"
+import { toAmount } from "@repo/settlement/kernels/amounts"
+import type { PoolFacts } from "../../../gen/frontend__projections.ts"
+import { type Answer, type Flow, Machine, type Notice, type Origin, type OwnerVault, type Target, adapter, autoAskLimit, canAnswer, canAsk, canConfirmUnsent, canEdit, canEnterCandidate, canReview, canSend, canSignIn, canSignOut, canWalletReply, flowOf, idleFlow, initial, machineOver, server, timer, withFlow } from "../../../gen/frontend__ownerVault.effect.vibe"
+import { type Attempt, noAttempt } from "../../../gen/frontend__walletAttempt.effect.vibe"
+import { WalletDeclined } from "../core/discovery.vibe"
+import type { SlotStorage } from "../core/slots.ts"
+import { type OwnerPlan, planOf, planText } from "./ownerPlans.schema.ts"
+import { type SlotKeeper, keptOrChanged, sameSlot, slotChangedMessage, slotKeeper, storageBlockedMessage, unreadableMessage } from "./slotKeeper.vibe"
+
+export type { Answer, Notice, Origin, OwnerVault, Target }
+
+export interface VaultSlotKeys {
+  readonly creation: string
+  readonly transfer: string
+}
+
+export interface Saved {
+  readonly attempt: Attempt
+  readonly plan: OwnerPlan | undefined
+}
+
+export error VaultRefused { notice: Notice; message: string }
+export error VaultUncertain { message: string }
+
+export const vaultMessages = {
+  declined: "You declined the wallet request. Nothing was sent.",
+  unclear: "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
+  withdrawalRefused: "This withdrawal would leave the vault below what contributors were shown for this month.",
+  occupied: "A saved request is waiting for recovery. Check wallet activity before another attempt.",
+  signIn: "Sign in as the project owner first.",
+  checkFailed: "The check could not be completed. Your saved request is kept.",
+  registered: "The vault is registered.",
+  counted: "The transfer is finalized.",
+  received: "Received. Waiting for finality before it counts.",
+  failed: "The transaction failed. Review the amount and wallet, then retry.",
+} as const
+
+const noticeMessages: Readonly<Record<Notice, string>> = {
+  Quiet: "",
+  StorageBlocked: storageBlockedMessage,
+  Occupied: vaultMessages.occupied,
+  WithdrawalRefused: vaultMessages.withdrawalRefused,
+  Received: vaultMessages.received,
+  CheckFailed: vaultMessages.checkFailed,
+  Registered: vaultMessages.registered,
+  Counted: vaultMessages.counted,
+  TransferFailed: vaultMessages.failed,
+}
+
+export function vaultNotice(notice: Notice): string {
+  return noticeMessages[notice]
+}
+
+const targets: ReadonlyArray<Target> = ["Creation", "Transfer"]
+
+function live(flow: Flow): boolean {
+  return flow.phase === "Awaiting" || flow.phase === "Sent" || flow.phase === "Unclear"
+}
+
+function slotTarget(target: Target): "creation" | "transfer" {
+  return target === "Creation" ? "creation" : "transfer"
+}
+
+export function startFor(registered: boolean): OwnerVault {
+  return registered ? { ...initial, creation: { ...idleFlow, phase: "Done" } } : initial
+}
+
+export interface OwnerVaultPage {
+  readonly machine: Machine.Shape
+  follow(account: number): OwnerVault!!
+  review(target: Target, withdrawal: bigint, pool: PoolFacts): OwnerVault!VaultRefused
+  saved(target: Target): Saved!!
+  submit<E extends { readonly _tag: string }, R>(target: Target, prompt: (beforePrompt: (plan: OwnerPlan) => void!VaultRefused) => string!E!R): string!(E | VaultRefused | VaultUncertain | WalletDeclined)!R
+  confirmUnsent(target: Target): OwnerVault!VaultRefused
+  enterCandidate(target: Target, candidate: string): OwnerVault!VaultRefused
+  edit(editing: boolean): OwnerVault!!
+  ask<R>(target: Target, origin: Origin, check: (saved: Saved) => Answer!!R): OwnerVault!!R
+  autoCheck<R>(target: Target, spacingMs: number, check: (saved: Saved) => Answer!!R): OwnerVault!!R
+  clearUnreadable(target: Target): boolean!!
+}
+
+export effect function ownerVaultPage(storage: SlotStorage | undefined, keys: VaultSlotKeys, registered: boolean) {
+  const crypto = try Experimental.Crypto.Crypto
+  const held = try Ref.make<OwnerVault>(startFor(registered))
+  const keeper: SlotKeeper<"creation" | "transfer"> = slotKeeper(storage, keys)
+
+  effect function load() {
+    let state = try Ref.get(held)
+    for (const target of targets) {
+      const flow = flowOf(state, target)
+      if (live(flow) || (target === "Transfer" && state.creation.phase !== "Done")) continue
+      const read = keeper.read(slotTarget(target))
+      const found = read.kind === "owned" ? { slot: read.slot.attempt, slotOwner: read.slot.account } : { slot: noAttempt, slotOwner: 0 }
+      if (sameSlot(flow, found)) continue
+      state = withFlow(target, { ...flow, ...found }, state)
+      const identity = found.slot.identity
+      if (identity !== "" && !state.used.includes(identity)) state = { ...state, used: [...state.used, identity] }
+    }
+    return state
+  }
+
+  effect function keep(next: OwnerVault) {
+    const before = try Ref.get(held)
+    for (const target of targets) {
+      const flow = flowOf(next, target)
+      if (!sameSlot(flowOf(before, target), flow)) try keeper.write(slotTarget(target), flow)
+    }
+    try Ref.set(held, next)
+  }
+
+  const machine = try machineOver(load, keep)
+
+  effect function sent(event: Parameters<Machine.Shape["send"]>[0], by: number) {
+    return try keptOrChanged(Effect.ignore(machine.send(event, by)))
+  }
+
+  effect function refuse(notice: Notice) {
+    throw new VaultRefused({ notice, message: noticeMessages[notice] })
+  }
+
+  effect function asOwner<A>(guard: (state: OwnerVault, owner: number) => boolean, event: Parameters<Machine.Shape["send"]>[0]) {
+    const state = try machine.get()
+    if (!guard(state, state.owner)) throw new VaultRefused({ notice: state.notice, message: state.owner === 0 ? vaultMessages.signIn : slotChangedMessage })
+    if (!(try sent(event, state.owner))) throw new VaultRefused({ notice: state.notice, message: slotChangedMessage })
+    return try machine.get()
+  }
+
+  effect function reply(target: Target, lifetime: number, identity: string, outcome: "Signed" | "Declined" | "Uncertain", hash: string) {
+    const state = try machine.get()
+    if (canWalletReply(state, target, lifetime, identity, outcome, hash, adapter)) try sent({ type: "walletReply", target, lifetime, identity, reply: outcome, hash }, adapter)
+  }
+
+  effect function answered<R>(target: Target, origin: Origin, check: (saved: Saved) => Answer!!R) {
+    const state = try machine.get()
+    if (!canAsk(state, target, origin, origin === "AutoCheck" ? timer : state.owner)) return state
+    try sent({ type: "ask", target, origin }, origin === "AutoCheck" ? timer : state.owner)
+    const asked = try machine.get()
+    const flow = flowOf(asked, target)
+    const result = try check({ attempt: flow.slot, plan: planOf(keeper.plan(slotTarget(target))) })
+    const by = target === "Creation" ? server : adapter
+    const now = try machine.get()
+    if (canAnswer(now, target, asked.lifetime, origin, result, by)) try sent({ type: "answer", target, lifetime: asked.lifetime, origin, result }, by)
+    return try machine.get()
+  }
+
+  effect function submit<E extends { readonly _tag: string }, R>(target: Target, prompt: (beforePrompt: (plan: OwnerPlan) => void!VaultRefused) => string!E!R) {
+    const identity = try orDie(crypto.randomUUIDv4())
+    let lifetime = 0
+    const beforePrompt = effect (plan: OwnerPlan) => {
+      const state = try machine.get()
+      if (!canSend(state, target, identity, true, state.owner)) throw new VaultRefused({ notice: state.notice, message: state.owner === 0 ? vaultMessages.signIn : slotChangedMessage })
+      if (keeper.unreadable(slotTarget(target))) throw new VaultRefused({ notice: "Occupied", message: unreadableMessage })
+      if (!keeper.writable()) {
+        try sent({ type: "send", target, identity, stored: false }, state.owner)
+        try refuse("StorageBlocked")
+      }
+      keeper.propose(slotTarget(target), planText(plan))
+      if (!(try sent({ type: "send", target, identity, stored: true }, state.owner))) throw new VaultRefused({ notice: "Occupied", message: slotChangedMessage })
+      const after = try machine.get()
+      if (flowOf(after, target).awaiting !== identity) try refuse(after.notice)
+      lifetime = after.lifetime
+    }
+    const hash: string = prompt(beforePrompt) catch effect (error) => {
+      if (lifetime === 0) throw error
+      if (error._tag === "WalletDeclined") {
+        try reply(target, lifetime, identity, "Declined", "")
+        throw new WalletDeclined({ message: vaultMessages.declined })
+      }
+      try reply(target, lifetime, identity, "Uncertain", "")
+      throw new VaultUncertain({ message: vaultMessages.unclear })
+    }
+    try reply(target, lifetime, identity, "Signed", hash)
+    return hash
+  }
+
+  return {
+    machine,
+    follow: effect (account: number) => {
+      const state = try machine.get()
+      if (account === 0 && canSignOut(state, state.owner)) try sent({ type: "signOut" }, state.owner)
+      else if (account > 0 && canSignIn(state, account, account)) try sent({ type: "signIn", account }, account)
+      return try machine.get()
+    },
+    review: effect (target: Target, withdrawal: bigint, pool: PoolFacts) => {
+      const amount = try orDie(Effect.try(() => toAmount(withdrawal)))
+      const next = try asOwner((state, owner) => canReview(state, target, amount, pool, owner), { type: "review", target, withdrawal: amount, pool })
+      if (next.notice === "WithdrawalRefused") try refuse("WithdrawalRefused")
+      return next
+    },
+    saved: effect (target: Target) => {
+      const state = try machine.get()
+      return { attempt: flowOf(state, target).slot, plan: planOf(keeper.plan(slotTarget(target))) }
+    },
+    submit,
+    confirmUnsent: (target: Target) => asOwner((state, owner) => canConfirmUnsent(state, target, owner), { type: "confirmUnsent", target }),
+    enterCandidate: (target: Target, candidate: string) => asOwner((state, owner) => canEnterCandidate(state, target, candidate, owner), { type: "enterCandidate", target, candidate }),
+    edit: effect (editing: boolean) => {
+      const state = try machine.get()
+      if (canEdit(state, editing, state.owner)) try sent({ type: "edit", editing }, state.owner)
+      return try machine.get()
+    },
+    ask: (target, origin, check) => answered(target, origin, check),
+    autoCheck: effect (target: Target, spacingMs: number, check) => {
+      for (let attempt = 0; attempt < autoAskLimit; attempt++) {
+        try Effect.sleep(spacingMs)
+        const state = try machine.get()
+        if (!canAsk(state, target, "AutoCheck", timer)) {
+          if (flowOf(state, target).phase !== "Sent" || flowOf(state, target).stopped) return state
+          continue
+        }
+        const after = try answered(target, "AutoCheck", check)
+        if (flowOf(after, target).phase !== "Sent") return after
+      }
+      return try machine.get()
+    },
+    clearUnreadable: effect (target: Target) => keeper.clearUnreadable(slotTarget(target)),
+  } satisfies OwnerVaultPage
+}

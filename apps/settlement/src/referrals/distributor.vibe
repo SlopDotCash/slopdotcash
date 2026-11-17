@@ -1,0 +1,251 @@
+// spec/settlement/referralDistributor.md, "Only exact token deposits increase the balance"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively"; spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"
+import { ConfigInvalid } from "@repo/platform/config"
+import { type Abi, type Block, EvmRpc, type Hex, decodeResult, encodeCall, evmRpc, keccak } from "@repo/platform/chain/evm"
+import type { Distributor, Epoch } from "../../gen/settlement__referralDistributor.ts"
+import type { PostingNetwork } from "../../gen/settlement__referrals.ts"
+import { toAmount } from "../kernels/amounts.ts"
+import { chainAllowed } from "../signer/rootPosterLimits.ts"
+
+export type NetworkKey = "robinhood-testnet" | "robinhood-mainnet"
+
+export interface PosterVars {
+  readonly REFERRAL_POST_NETWORK?: string
+  readonly REFERRAL_DISTRIBUTOR_ADDRESS?: string
+  readonly REFERRAL_TOKEN_ADDRESS?: string
+  readonly REFERRAL_POSTER_ADDRESS?: string
+  readonly REFERRAL_DEPLOYMENT_BLOCK?: string
+  readonly REFERRAL_DISTRIBUTOR_CODE_HASH?: string
+  readonly RPC_URL_REFERRAL?: string
+}
+
+export interface Deployment {
+  readonly networkKey: NetworkKey
+  readonly network: PostingNetwork
+  readonly chainId: bigint
+  readonly distributor: Hex
+  readonly token: Hex
+  readonly poster: Hex
+  readonly deploymentBlock: bigint
+  readonly codeHash: Hex
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+}
+
+export service ReferralDeployment {
+  readonly deployment: Deployment | undefined
+}
+
+export error DistributorMismatch { reason: string }
+
+export effect function wide(value: number | string) {
+  return try orDie(Effect.try(() => BigInt(value)))
+}
+
+export interface EpochView {
+  readonly index: number
+  readonly root: Hex
+  readonly total: bigint
+  readonly postedAt: number
+  readonly voided: boolean
+}
+
+export interface ChainView {
+  readonly head: Block
+  readonly model: Distributor
+  readonly owner: Hex
+  readonly poster: Hex
+  readonly tokenUnit: bigint
+  readonly decimals: number
+  readonly balance: bigint
+  readonly totalClaimed: bigint
+  readonly paused: boolean
+  readonly epochs: ReadonlyArray<EpochView>
+}
+
+const networks: Readonly<Record<NetworkKey, { readonly network: PostingNetwork; readonly chainId: bigint; readonly rpc: string }>> = {
+  "robinhood-testnet": { network: "RobinhoodTestnet", chainId: 46630n, rpc: "https://rpc.testnet.chain.robinhood.com" },
+  "robinhood-mainnet": { network: "RobinhoodMainnet", chainId: 4663n, rpc: "https://rpc.mainnet.chain.robinhood.com" },
+}
+
+const address = /^0x[0-9a-f]{40}$/u
+const digest = /^0x[0-9a-f]{64}$/u
+const block = /^(0|[1-9][0-9]{0,19})$/u
+
+const view = "view" as const
+const out = (type: string) => [{ name: "", type }]
+
+export const distributorAbi = [
+  { type: "function", name: "token", stateMutability: view, inputs: [], outputs: out("address") },
+  { type: "function", name: "owner", stateMutability: view, inputs: [], outputs: out("address") },
+  { type: "function", name: "poster", stateMutability: view, inputs: [], outputs: out("address") },
+  { type: "function", name: "paused", stateMutability: view, inputs: [], outputs: out("bool") },
+  { type: "function", name: "epochCap", stateMutability: view, inputs: [], outputs: out("uint256") },
+  { type: "function", name: "postSpacing", stateMutability: view, inputs: [], outputs: out("uint64") },
+  { type: "function", name: "totalClaimed", stateMutability: view, inputs: [], outputs: out("uint256") },
+  { type: "function", name: "lastUnpausedAt", stateMutability: view, inputs: [], outputs: out("uint64") },
+  { type: "function", name: "epochCount", stateMutability: view, inputs: [], outputs: out("uint256") },
+  { type: "function", name: "CLAIM_DELAY", stateMutability: view, inputs: [], outputs: out("uint64") },
+  { type: "function", name: "currentRoot", stateMutability: view, inputs: [], outputs: [{ name: "root", type: "bytes32" }, { name: "total", type: "uint256" }, { name: "index", type: "uint256" }] },
+  { type: "function", name: "epochAt", stateMutability: view, inputs: [{ name: "index", type: "uint256" }], outputs: [{ name: "", type: "tuple", components: [{ name: "root", type: "bytes32" }, { name: "total", type: "uint256" }, { name: "postedAt", type: "uint64" }, { name: "voided", type: "bool" }] }] },
+  { type: "function", name: "postRoot", stateMutability: "nonpayable", inputs: [{ name: "index", type: "uint256" }, { name: "root", type: "bytes32" }, { name: "newTotal", type: "uint256" }], outputs: [] },
+  { type: "event", name: "RootPosted", anonymous: false, inputs: [{ name: "epoch", type: "uint256", indexed: true }, { name: "root", type: "bytes32", indexed: false }, { name: "total", type: "uint256", indexed: false }, { name: "claimableAt", type: "uint64", indexed: false }] },
+  { type: "event", name: "RootVoided", anonymous: false, inputs: [{ name: "epoch", type: "uint256", indexed: true }, { name: "root", type: "bytes32", indexed: false }] },
+  { type: "event", name: "Claimed", anonymous: false, inputs: [{ name: "account", type: "address", indexed: true }, { name: "epoch", type: "uint256", indexed: true }, { name: "amount", type: "uint256", indexed: false }, { name: "cumulative", type: "uint256", indexed: false }] },
+  { type: "event", name: "Paused", anonymous: false, inputs: [{ name: "account", type: "address", indexed: false }] },
+  { type: "event", name: "Unpaused", anonymous: false, inputs: [{ name: "account", type: "address", indexed: false }, { name: "extendedEpoch", type: "uint256", indexed: true }, { name: "newClaimableAt", type: "uint64", indexed: false }] },
+  { type: "event", name: "Rescued", anonymous: false, inputs: [{ name: "to", type: "address", indexed: true }, { name: "amount", type: "uint256", indexed: false }] },
+] as const satisfies Abi
+
+export const tokenAbi = [
+  { type: "function", name: "decimals", stateMutability: view, inputs: [], outputs: out("uint8") },
+  { type: "function", name: "balanceOf", stateMutability: view, inputs: [{ name: "account", type: "address" }], outputs: out("uint256") },
+] as const satisfies Abi
+
+export const eventTopics = {
+  RootPosted: keccak(new TextEncoder().encode("RootPosted(uint256,bytes32,uint256,uint64)")),
+  RootVoided: keccak(new TextEncoder().encode("RootVoided(uint256,bytes32)")),
+  Claimed: keccak(new TextEncoder().encode("Claimed(address,uint256,uint256,uint256)")),
+  Paused: keccak(new TextEncoder().encode("Paused(address)")),
+  Unpaused: keccak(new TextEncoder().encode("Unpaused(address,uint256,uint64)")),
+  Rescued: keccak(new TextEncoder().encode("Rescued(address,uint256)")),
+} as const
+
+effect function text(name: string, value: string | undefined, pattern: RegExp) {
+  const found = (value ?? "").trim().toLowerCase()
+  if (!pattern.test(found)) throw new ConfigInvalid({ name, issue: "is missing or malformed" })
+  return found
+}
+
+export effect function decodeDeployment(vars: PosterVars) {
+  if ((vars.REFERRAL_DISTRIBUTOR_ADDRESS ?? "").trim() === "") return undefined
+  const key = (vars.REFERRAL_POST_NETWORK ?? "").trim()
+  if (key !== "robinhood-testnet" && key !== "robinhood-mainnet") throw new ConfigInvalid({ name: "REFERRAL_POST_NETWORK", issue: "must be robinhood-testnet or robinhood-mainnet" })
+  const known = networks[key]
+  const distributor = try text("REFERRAL_DISTRIBUTOR_ADDRESS", vars.REFERRAL_DISTRIBUTOR_ADDRESS, address) as Hex
+  const token = try text("REFERRAL_TOKEN_ADDRESS", vars.REFERRAL_TOKEN_ADDRESS, address) as Hex
+  const poster = try text("REFERRAL_POSTER_ADDRESS", vars.REFERRAL_POSTER_ADDRESS, address) as Hex
+  if (distributor === token || poster === distributor || poster === token) throw new ConfigInvalid({ name: "REFERRAL_DISTRIBUTOR_ADDRESS", issue: "distributor, token and poster must differ" })
+  const deploymentBlock = try wide(try text("REFERRAL_DEPLOYMENT_BLOCK", vars.REFERRAL_DEPLOYMENT_BLOCK, block))
+  const codeHash = try text("REFERRAL_DISTRIBUTOR_CODE_HASH", vars.REFERRAL_DISTRIBUTOR_CODE_HASH, digest) as Hex
+  const rpc = (vars.RPC_URL_REFERRAL ?? "").trim() || known.rpc
+  if (!/^https?:\/\//u.test(rpc)) throw new ConfigInvalid({ name: "RPC_URL_REFERRAL", issue: "must be an http(s) URL" })
+  if (!chainAllowed(known.chainId, known.network === "RobinhoodMainnet")) throw new ConfigInvalid({ name: "REFERRAL_POST_NETWORK", issue: "is not a referral network" })
+  return { networkKey: key, network: known.network, chainId: known.chainId, distributor, token, poster, deploymentBlock, codeHash, urls: Redacted.make([rpc]) } satisfies Deployment
+}
+
+export function referralDeployment(vars: PosterVars) {
+  return Layer.effect(ReferralDeployment, effect {
+    return { deployment: try decodeDeployment(vars) }
+  })
+}
+
+export effect function onDistributor<A, E, R>(deployment: Deployment, program: A!E!R) {
+  provide evmRpc({ urls: deployment.urls, chainId: deployment.chainId }) {
+    return try program
+  }
+}
+
+function mismatch(reason: string) {
+  return new DistributorMismatch({ reason })
+}
+
+effect function finalizedRead(to: Hex, abi: Abi, name: string, args: ReadonlyArray<unknown>) {
+  const rpc = try EvmRpc
+  return try decodeResult(abi, name, try rpc.call({ to, data: try encodeCall(abi, name, args), block: "finalized" }))
+}
+
+effect function big(to: Hex, abi: Abi, name: string, args: ReadonlyArray<unknown> = []) {
+  const value = try finalizedRead(to, abi, name, args)
+  if (typeof value !== "bigint") throw mismatch(`${name} is not an integer`)
+  return value
+}
+
+effect function addressAt(to: Hex, name: string) {
+  const value = try finalizedRead(to, distributorAbi, name, [])
+  if (typeof value !== "string" || !address.test(value.toLowerCase())) throw mismatch(`${name} is not an address`)
+  return value.toLowerCase() as Hex
+}
+
+effect function flag(to: Hex, name: string) {
+  const value = try finalizedRead(to, distributorAbi, name, [])
+  if (typeof value !== "boolean") throw mismatch(`${name} is not a boolean`)
+  return value
+}
+
+schema EpochAnswer {
+  readonly root: string
+  readonly total: bigint
+  readonly postedAt: bigint
+  readonly voided: boolean
+}
+
+export effect function epochAt(deployment: Deployment, index: number) {
+  const answer = Schema.decodeUnknownEffect(EpochAnswer)(try finalizedRead(deployment.distributor, distributorAbi, "epochAt", [try wide(index)])) catch effect () => {
+    throw mismatch(`epoch ${index} is malformed`)
+  }
+  return { index, root: answer.root.toLowerCase() as Hex, total: answer.total, postedAt: Number(answer.postedAt), voided: answer.voided } satisfies EpochView
+}
+
+function small(value: bigint) {
+  return value <= 9007199254740991n ? Number(value) : undefined
+}
+
+export effect function verifiedRuntime(deployment: Deployment) {
+  const rpc = try EvmRpc
+  const code = try rpc.code(deployment.distributor, "finalized")
+  if (code === "0x" || keccak(code) !== deployment.codeHash) throw mismatch("distributor runtime differs from the reviewed code")
+}
+
+export effect function readDistributor(deployment: Deployment) {
+  const rpc = try EvmRpc
+  const head = try rpc.head("finalized")
+  if (head.number < deployment.deploymentBlock) throw mismatch("finality has not reached the deployment")
+  try verifiedRuntime(deployment)
+  const { distributor } = deployment
+  const token = try addressAt(distributor, "token")
+  if (token !== deployment.token) throw mismatch(`distributor token ${token} is not ${deployment.token}`)
+  const decimals = small(try big(token, tokenAbi, "decimals"))
+  if (decimals === undefined || decimals > 36) throw mismatch("token decimals are out of range")
+  let tokenUnit = 1n
+  for (let digit = 0; digit < decimals; digit++) tokenUnit *= 10n
+  const owner = try addressAt(distributor, "owner")
+  const poster = try addressAt(distributor, "poster")
+  const paused = try flag(distributor, "paused")
+  const epochCap = try big(distributor, distributorAbi, "epochCap")
+  const postSpacing = small(try big(distributor, distributorAbi, "postSpacing"))
+  const lastUnpausedAt = small(try big(distributor, distributorAbi, "lastUnpausedAt"))
+  const totalClaimed = try big(distributor, distributorAbi, "totalClaimed")
+  const count = small(try big(distributor, distributorAbi, "epochCount"))
+  const balance = try big(token, tokenAbi, "balanceOf", [distributor])
+  if (postSpacing === undefined || lastUnpausedAt === undefined || count === undefined) throw mismatch("distributor counters are out of range")
+  const epochs: EpochView[] = []
+  for (let index = 0; index < count; index++) epochs.push(try epochAt(deployment, index))
+  const amounts = try orDie(Effect.try(() => ({
+    epochs: epochs.map((epoch) => ({ index: epoch.index, root: epoch.root, total: toAmount(epoch.total), postedAt: epoch.postedAt, voided: epoch.voided }) satisfies Epoch), unit: toAmount(tokenUnit), cap: toAmount(epochCap), balance: toAmount(balance), paid: toAmount(totalClaimed), deposited: toAmount(balance + totalClaimed) })))
+  const facts = {
+    configured: true,
+    token,
+    tokenUnit: amounts.unit,
+    epochCap: amounts.cap,
+    postSpacing,
+    owner,
+    pendingOwner: "",
+    poster,
+    paused,
+    now: head.timestamp,
+    deployedAt: lastUnpausedAt,
+    lastUnpausedAt,
+    epochs: amounts.epochs,
+    latestRootClaimed: false,
+    claims: [],
+    balance: amounts.balance,
+    deposited: amounts.deposited,
+    paid: amounts.paid,
+    rescued: [0],
+    depositReceipts: [],
+  } satisfies Distributor
+  return { head, model: facts, owner, poster, tokenUnit, decimals, balance, totalClaimed, paused, epochs } satisfies ChainView
+}
+
+export effect function postRootCalldata(epoch: number, root: Hex, total: bigint) {
+  return try encodeCall(distributorAbi, "postRoot", [try wide(epoch), root, total])
+}

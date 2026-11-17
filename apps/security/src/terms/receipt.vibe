@@ -1,0 +1,80 @@
+// spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"; spec/security/terms.md, "A finding qualifies only under its frozen eligibility class"; spec/security/terms.md, "A fixed offer permits its receipt-time gross amount or no award"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch } from "@repo/platform/d1"
+import type { Json } from "@repo/ports/backend"
+import type { LossFinding, ReceiptTerms, Severity } from "../../gen/security__terms.ts"
+import { amountAllowed, eligibleFinding, unpaidTerms } from "../../gen/security__terms.effect.vibe"
+import { type FrozenTerms, receiptTermsOf } from "../receipt/program.vibe"
+import { type AwardShares, type SplitOutcome, awardSplit, limbsOf } from "./asset.ts"
+
+export interface StoredReceipt {
+  readonly terms: string | null
+  readonly policyRevision: number | null
+  readonly receivedAt: string | null
+  readonly publishedAt: string | null
+}
+
+export const severities = { critical: "Critical", high: "High", medium: "Medium", low: "Low", informational: "Informational", unresolved: "SeverityUnresolved" } as const satisfies Readonly<Record<string, Severity>>
+export const losses = { "verified-potential": "VerifiedPotential", "verified-actual": "VerifiedActual", "not-verified": "NotVerified", unresolved: "LossUnresolved" } as const satisfies Readonly<Record<string, LossFinding>>
+
+export type SeverityText = keyof typeof severities
+export type LossText = keyof typeof losses
+
+function isFrozen(value: unknown): value is FrozenTerms {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export effect function frozenOf(text: string | null) {
+  if (text === null) return undefined
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: "case terms", issue: "not JSON" }) })
+  if (!isFrozen(parsed)) throw new RowMismatch({ text: "case terms", issue: "not a terms object" })
+  return parsed
+}
+
+export effect function caseTerms(stored: StoredReceipt) {
+  const receivedAtMs = stored.receivedAt === null ? 0 : millisOf(stored.receivedAt)
+  const frozen = try frozenOf(stored.terms)
+  const revision = stored.policyRevision ?? 0
+  if (frozen === undefined) return unpaidTerms(revision, receivedAtMs)
+  const publishedAtMs = stored.publishedAt === null ? receivedAtMs : millisOf(stored.publishedAt)
+  return receiptTermsOf({ revision, publishedAt: stored.publishedAt ?? "", terms: frozen }, publishedAtMs, receivedAtMs)
+}
+
+function text(terms: FrozenTerms | undefined, key: string) {
+  const value = terms?.[key]
+  return typeof value === "string" ? value : undefined
+}
+
+export function fullAward(terms: FrozenTerms | undefined) {
+  return terms?.split !== undefined && terms.split !== null
+}
+
+export function offeredMinor(terms: FrozenTerms | undefined) {
+  return text(terms, "grossMinor")
+}
+
+export function fixedOffer(terms: FrozenTerms | undefined) {
+  return text(terms, "fundingPolicy") === "after-approval"
+}
+
+export function sharesOf(terms: FrozenTerms | undefined, grossMinor: string | null): AwardShares | null {
+  if (grossMinor === null) return null
+  const split: SplitOutcome = awardSplit(grossMinor, fullAward(terms))
+  return split.kind === "split" ? split.shares : null
+}
+
+export function amountOf(grossMinor: string) {
+  return limbsOf(grossMinor)
+}
+
+export function eligibleUnder(terms: ReceiptTerms, inScope: boolean, severity: Severity, loss: LossFinding) {
+  return eligibleFinding(terms, inScope, severity, loss)
+}
+
+export function allowedAmount(terms: ReceiptTerms, grossMinor: string) {
+  return amountAllowed(terms, limbsOf(grossMinor))
+}
+
+export function termsJson(terms: FrozenTerms | undefined): Json {
+  return terms ?? null
+}

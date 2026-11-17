@@ -1,0 +1,264 @@
+// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/recovery.md, "Recovery retains exact coverage even when no award revision changes"
+import { boundedBytes } from "@repo/platform/browser"
+import { millisOf } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { type Coverage, type Journal, type Revision, revisionText } from "../kernels/records/canonical.ts"
+import { journalFile } from "../kernels/records/ids.vibe"
+import { maxIndexBytes, maxPageBytes, maxRevisions, maxShardBytes, pointsRule, shardCount, shardPath } from "../client/journal.vibe"
+import { assembleProjection } from "../publication/projections.vibe"
+import type { PublishedRecord } from "../../gen/points__publication.ts"
+import { type CopyEvidence, type CopyState, type Environment, type Event, type PublicHistory, type Recovery, type RecoveryEvidence, type SourceCoverage, Machine, decodeState, enabled, initial, machineOver } from "../../gen/points__recovery.effect.vibe"
+
+export error RecoveryRefused { outcome: string; message: string }
+
+export interface RecoveryOptions {
+  readonly environment: Environment
+  readonly bootstrap: boolean
+  readonly wait: (millis: number) => void!!
+}
+
+interface Copy {
+  readonly state: CopyState
+  readonly journal?: Journal
+}
+
+interface Fetched {
+  readonly status: number
+  readonly bytes: Uint8Array
+}
+
+type JsonObject = Readonly<Record<string, unknown>>
+
+export const origins: Readonly<Record<Environment, string>> = { Production: "https://slop.cash", Staging: "https://staging.slop.cash" }
+
+const readTimeoutMs = 30_000
+const unavailableWaitMs = 15_000
+const unavailableAttempts = 3
+const absent: Copy = { state: "CopyAbsent" }
+const unavailable: Copy = { state: "CopyUnavailable" }
+const unverified: Copy = { state: "CopyPresent" }
+
+const refusals: Readonly<Record<string, string>> = {
+  SourceUnavailable: "Published points history is unavailable; refusing to discard history",
+  BootstrapRefused: "Refusing bootstrap: published points may already exist",
+  MissingHistory: "Published points history is missing; refusing to discard history",
+  WrongEnvironment: "Published points history belongs to another environment",
+  UnverifiedCopy: "Published points history could not be verified",
+  DivergingHistory: "Published points history diverged from its checkpoint",
+}
+
+export effect function recoveryRun(start: Recovery = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function recoveryLayer(start: Recovery = initial) {
+  return Layer.effect(Machine, recoveryRun(start))
+}
+
+export effect function recoverySend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function recoveryReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function recoveryState() {
+  return try (try Machine).get()
+}
+
+function objectOf(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined
+}
+
+effect function fetched(url: string, limitBytes: number, label: string) {
+  const client = try HttpClient.HttpClient
+  const read = effect {
+    const response = try client.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } }))
+    return { status: response.status, bytes: try boundedBytes(response, limitBytes, label) } satisfies Fetched
+  }
+  return timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error", cache: "no-store" }), Duration.millis(readTimeoutMs)) catch () => undefined
+}
+
+effect function textOf(bytes: Uint8Array) {
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
+  return text
+}
+
+effect function jsonOf(bytes: Uint8Array) {
+  const text = try textOf(bytes)
+  if (text === undefined) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return value
+}
+
+effect function journalPage(url: string, wait: (millis: number) => void!!) {
+  for (let attempt = 1; ; attempt++) {
+    const answer = try fetched(url, maxPageBytes, "published points")
+    if (answer === undefined) return undefined
+    const value = objectOf(try jsonOf(answer.bytes))
+    if (answer.status !== 503 || value?.error !== "points_unavailable" || attempt === unavailableAttempts) return { status: answer.status, value }
+    try wait(unavailableWaitMs)
+  }
+}
+
+effect function verified(candidate: unknown) {
+  const journal = journalFile(`${JSON.stringify(candidate)}\n`) catch () => undefined
+  return journal
+}
+
+effect function checkpointCopy(origin: string, wait: (millis: number) => void!!) {
+  let cursor = 0
+  let batch: string | undefined = undefined
+  let head: { readonly generatedAt: unknown; readonly coverage: unknown } | undefined = undefined
+  const revisions: unknown[] = []
+  while (true) {
+    const url = new URL(`${origin}/api/v1/points/journal`)
+    url.searchParams.set("after", String(cursor))
+    if (batch !== undefined) url.searchParams.set("batch", batch)
+    const page = try journalPage(url.href, wait)
+    if (page === undefined) return unavailable
+    const value = page.value
+    if (cursor === 0 && (page.status === 503 || page.status === 404) && (value?.error === "points_not_published" || value?.error === "not_found")) return absent
+    if (page.status < 200 || page.status > 299) return unavailable
+    if (value === undefined || typeof value.batch !== "string" || !Array.isArray(value.revisions) || typeof value.total !== "number" || !Number.isSafeInteger(value.total) || value.total > maxRevisions) return unverified
+    if (batch !== undefined && batch !== value.batch) return unverified
+    batch = value.batch
+    head = head ?? { generatedAt: value.generatedAt, coverage: value.coverage }
+    const rows: ReadonlyArray<unknown> = value.revisions
+    revisions.push(...rows)
+    const next = value.next
+    if (next !== null && (typeof next !== "number" || !Number.isSafeInteger(next) || next <= cursor)) return unverified
+    if (next === null) {
+      if (revisions.length !== value.total) return unverified
+      break
+    }
+    cursor = next
+  }
+  const candidate = { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: head?.generatedAt, coverage: head?.coverage, revisions }
+  const journal = try verified(candidate)
+  if (journal === undefined || batch !== (try sha256Hex(JSON.stringify(candidate)))) return unverified
+  return { state: "CopyPresent", journal } satisfies Copy
+}
+
+effect function projectionParts(origin: string, index: unknown) {
+  const shards = objectOf(index)?.shards
+  if (!Array.isArray(shards) || shards.length !== shardCount) return undefined
+  const parts: string[] = []
+  for (const [position, entry] of shards.entries()) {
+    if (objectOf(entry)?.path !== shardPath(position)) return undefined
+    const shard = try fetched(`${origin}${shardPath(position)}`, maxShardBytes, "points shard")
+    if (shard === undefined || shard.status < 200 || shard.status > 299) return unavailable
+    const text = try textOf(shard.bytes)
+    if (text === undefined) return undefined
+    parts.push(text)
+  }
+  return parts
+}
+
+effect function pagesCopy(origin: string) {
+  let previous: string | undefined = undefined
+  while (true) {
+    const suffix = previous === undefined ? "" : `?snapshot=${try randomId()}`
+    const answer = try fetched(`${origin}/data/points.json${suffix}`, maxIndexBytes, "points index")
+    if (answer === undefined) return unavailable
+    if (answer.status === 404) return absent
+    if (answer.status < 200 || answer.status > 299) return unavailable
+    const text = try textOf(answer.bytes)
+    if (text === undefined) return unverified
+    const index = try jsonOf(answer.bytes)
+    if (index === undefined) return unverified
+    const identity = JSON.stringify(index)
+    if (identity === previous) return unverified
+    const parts = try projectionParts(origin, index)
+    if (parts === undefined) return unverified
+    if (!Array.isArray(parts)) return parts
+    const assembled = assembleProjection(text, parts) catch effect (error) => {
+      if (previous === undefined && error.message === "Points shard checksum mismatch") return "changed" as const
+      return undefined
+    }
+    if (assembled === undefined) return unverified
+    if (assembled !== "changed") return { state: "CopyPresent", journal: assembled } satisfies Copy
+    previous = identity
+  }
+}
+
+interface Names {
+  readonly records: Map<string, number>
+  readonly revisions: Map<number, Revision>
+  readonly coverage: Map<string, Coverage>
+  readonly instants: Map<number, string>
+}
+
+function coverageKey(entry: SourceCoverage) {
+  return JSON.stringify([entry.repository, entry.fromTime, entry.throughTime, entry.digest])
+}
+
+effect function historyOf(copy: Copy, environment: Environment, names: Names) {
+  const journal = copy.journal
+  if (journal === undefined) return { origin: environment, generatedAt: 0, revisions: [], coverage: [] } satisfies PublicHistory
+  const revisions: PublishedRecord[] = []
+  for (const revision of journal.revisions) {
+    const id = names.records.get(revision.id) ?? names.records.size + 1
+    names.records.set(revision.id, id)
+    names.revisions.set(id, revision)
+    revisions.push({ id, digest: try sha256Hex(revisionText(revision)) })
+  }
+  const coverage = journal.coverage.map((entry) => {
+    const row = { repository: entry.repository, fromTime: millisOf(entry.from), throughTime: millisOf(entry.to), digest: entry.digest } satisfies SourceCoverage
+    names.coverage.set(coverageKey(row), entry)
+    return row
+  })
+  const generatedAt = millisOf(journal.generatedAt)
+  names.instants.set(generatedAt, journal.generatedAt)
+  return { origin: environment, generatedAt, revisions, coverage } satisfies PublicHistory
+}
+
+effect function evidenceOf(copy: Copy, environment: Environment, names: Names) {
+  return { state: copy.state, history: try historyOf(copy, environment, names), verified: copy.journal !== undefined } satisfies CopyEvidence
+}
+
+function decisions(evidence: RecoveryEvidence): ReadonlyArray<Event> {
+  return [
+    { type: "recover", evidence },
+    { type: "recoverStagingPages", evidence },
+    { type: "bootstrap", evidence },
+    { type: "refuse", evidence },
+  ]
+}
+
+effect function restored(history: PublicHistory, names: Names) {
+  const revisions = history.revisions.map((record) => names.revisions.get(record.id))
+  const coverage = history.coverage.map((row) => names.coverage.get(coverageKey(row)))
+  const generatedAt = names.instants.get(history.generatedAt)
+  const journal = { schemaVersion: "1", ruleVersion: pointsRule, generatedAt: generatedAt ?? "", coverage, revisions }
+  return journalFile(`${JSON.stringify(journal)}\n`) catch effect () => {
+    throw new RecoveryRefused({ outcome: "UnverifiedCopy", message: refusals.UnverifiedCopy ?? "" })
+  }
+}
+
+export effect function decideRecovery(evidence: RecoveryEvidence) {
+  const run = try recoveryRun()
+  const state = try run.get()
+  const chosen = decisions(evidence).find((event) => enabled(state, event))
+  if (chosen === undefined) throw new RecoveryRefused({ outcome: "Pending", message: refusals.UnverifiedCopy ?? "" })
+  return (try run.send(chosen)).outcome
+}
+
+export effect function recoverPublished(options: RecoveryOptions) {
+  const origin = origins[options.environment]
+  const checkpoint = try checkpointCopy(origin, options.wait)
+  const pages = try pagesCopy(origin)
+  const names: Names = { records: new Map(), revisions: new Map(), coverage: new Map(), instants: new Map() }
+  const evidence = {
+    requested: options.environment,
+    explicitBootstrap: options.bootstrap,
+    checkpoint: try evidenceOf(checkpoint, options.environment, names),
+    pages: try evidenceOf(pages, options.environment, names),
+  } satisfies RecoveryEvidence
+  const outcome = try decideRecovery(evidence)
+  if (outcome.tag === "Bootstrapped") return null
+  if (outcome.tag === "Recovered") return try restored(outcome, names)
+  throw new RecoveryRefused({ outcome: outcome.tag, message: refusals[outcome.tag] ?? outcome.tag })
+}

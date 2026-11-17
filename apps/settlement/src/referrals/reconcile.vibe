@@ -1,0 +1,131 @@
+// spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"
+import { EvmRpc, type Hex, type Log, type Receipt, decodeEvents } from "@repo/platform/chain/evm"
+import type { Referral } from "../../gen/settlement__referrals.ts"
+import { readSignedType2 } from "../chain/evm/transactions.ts"
+import { DistributorMismatch, type Deployment, distributorAbi, epochAt, eventTopics, wide } from "./distributor.vibe"
+import { actualWei } from "./gas.ts"
+import { type PostRow, type Session, commit, dayText, receiptOf, utcDay } from "./publication.vibe"
+
+export const scanPageBlocks = 9_000n
+
+function differs(reason: string) {
+  return new DistributorMismatch({ reason })
+}
+
+function word(value: bigint) {
+  return `0x${value.toString(16).padStart(64, "0")}` as Hex
+}
+
+effect function broadcast(row: PostRow) {
+  const rpc = try EvmRpc
+  const id = row.tx_id.toLowerCase()
+  const sent = rpc.sendRaw(row.raw_tx as Hex) catch effect (error) => {
+    const known = rpc.transaction(row.tx_id as Hex) catch () => undefined
+    if (known === undefined || known.hash.toLowerCase() !== id) throw error
+    return known.hash
+  }
+  if (sent.toLowerCase() !== id) throw differs("the broadcast hash differs from the journaled transaction")
+}
+
+function openRow(session: Session) {
+  return session.ledger.posts.find((row) => row.attempt === session.state.currentAttempt && (row.state === "submitted" || row.state === "unknown"))
+}
+
+effect function resend(session: Session, row: PostRow, control: Referral, lost: boolean) {
+  const failure = broadcast(row) catch effect (error) => `broadcast failed: ${error._tag}`
+  if (typeof failure === "string") return lost ? session : try commit(session, [{ event: { type: "loseObservation" }, by: "poster", evidence: { reason: failure } }])
+  const retransmitted = { event: { type: "retransmit", control } as const, by: "poster" }
+  if (lost) return try commit(session, [retransmitted])
+  return try commit(session, [{ event: { type: "loseObservation" }, by: "poster", evidence: { reason: "receipt not observed; nonce still free" } }, retransmitted])
+}
+
+effect function receiptGas(row: PostRow, receipt: Receipt, deployment: Deployment) {
+  const signed = readSignedType2(row.raw_tx as Hex)
+  const price = receipt.effectiveGasPrice
+  if (signed === undefined || signed.id !== row.tx_id || signed.sender !== row.poster || signed.request.to !== deployment.distributor) throw differs("the journaled transaction differs from its row")
+  if (receipt.from.toLowerCase() !== row.poster || receipt.to?.toLowerCase() !== deployment.distributor || price === undefined || receipt.gasUsed > signed.request.gas || price > signed.request.maxFeePerGas) throw differs("the finalized receipt differs from the journaled transaction")
+  const block = try (try EvmRpc).blockByNumber(receipt.blockNumber)
+  if (block === undefined || block.hash !== receipt.blockHash) throw differs("the receipt block is not canonical")
+  const actual = actualWei(receipt.gasUsed, price, signed.request.gas, signed.request.maxFeePerGas)
+  const day = utcDay(block.timestamp * 1000)
+  return { actual: Number(actual), day, settledDay: dayText(day) }
+}
+
+effect function postedLogs(receipt: Receipt, deployment: Deployment, row: PostRow) {
+  const epoch = try wide(row.epoch)
+  const own = receipt.logs.filter((log) => log.address.toLowerCase() === deployment.distributor && !log.removed && log.topics[0] === eventTopics.RootPosted)
+  const decodedLogs = decodeEvents(distributorAbi, own)
+  return decodedLogs.filter((decoded) => {
+    if (decoded.kind !== "event" || decoded.name !== "RootPosted") return false
+    const args = decoded.args as { readonly epoch: bigint; readonly root: string; readonly total: bigint }
+    return args.epoch === epoch && args.root.toLowerCase() === row.merkle_root && args.total.toString() === row.total_base
+  })
+}
+
+effect function settle(session: Session, row: PostRow, receipt: Receipt) {
+  const { deployment } = session.ledger
+  const gas = try receiptGas(row, receipt, deployment)
+  const { prepared } = session.state
+  if (receipt.status === "reverted") {
+    return try commit(session, [{ event: { type: "finalizeFailure", attempt: row.attempt, receipt: receiptOf(row.attempt, "failed"), actualGas: gas.actual, settledDay: gas.day, finalized: true, succeeded: false }, by: "poster", evidence: { blockNumber: receipt.blockNumber, settledDay: gas.settledDay } }])
+  }
+  if ((try postedLogs(receipt, deployment, row)).length !== 1) throw differs("the posted event differs from the journaled root")
+  const epoch = try epochAt(deployment, row.epoch)
+  if (epoch.root !== row.merkle_root || epoch.total.toString() !== row.total_base) throw differs("the distributor epoch differs from the journaled root")
+  const rootReceipt = { attempt: row.attempt, rootId: prepared.id, epoch: row.epoch, merkleRoot: row.merkle_root, entries: prepared.entries, total: prepared.total, receipt: receiptOf(row.attempt, "posted"), height: Number(receipt.blockNumber), actualGas: gas.actual, settledDay: gas.day, finalized: true, succeeded: true }
+  return try commit(session, [{ event: { type: "finalize", rootReceipt }, by: "poster", evidence: { blockNumber: receipt.blockNumber, settledDay: gas.settledDay } }])
+}
+
+effect function pendingOutcome(session: Session, control: Referral) {
+  const row = openRow(session)
+  if (row === undefined) return session
+  if (session.state.phase === "Journaled") {
+    const sent = broadcast(row) catch effect (error) => `broadcast failed: ${error._tag}`
+    if (typeof sent === "string") return try commit(session, [{ event: { type: "submit", control }, by: "poster" }, { event: { type: "loseObservation" }, by: "poster", evidence: { reason: sent } }])
+    return try commit(session, [{ event: { type: "submit", control }, by: "poster" }])
+  }
+  const rpc = try EvmRpc
+  const receipt = try rpc.finalizedReceipt(row.tx_id as Hex)
+  if (receipt !== undefined) return try settle(session, row, receipt)
+  if ((try rpc.receipt(row.tx_id as Hex)) !== undefined || (try rpc.transaction(row.tx_id as Hex)) !== undefined) return session
+  if ((try rpc.nonce(row.poster as Hex, "finalized")) > (try wide(row.evm_nonce))) return session
+  return try resend(session, row, control, session.state.phase === "Uncertain")
+}
+
+effect function voidLogs(deployment: Deployment, epoch: number, from: bigint, to: bigint) {
+  const rpc = try EvmRpc
+  const found: Log[] = []
+  for (let start = from; start <= to; start += scanPageBlocks) {
+    const end = start + scanPageBlocks - 1n < to ? start + scanPageBlocks - 1n : to
+    found.push(...(try rpc.logs({ address: deployment.distributor, topics: [eventTopics.RootVoided, word(try wide(epoch))], fromBlock: start, toBlock: end })))
+  }
+  return found
+}
+
+effect function observedVoids(session: Session) {
+  const { deployment } = session.ledger
+  const rpc = try EvmRpc
+  const finalized = try rpc.head("finalized")
+  let current = session
+  for (const root of session.state.roots) {
+    if (root.voided) continue
+    const epoch = try epochAt(deployment, root.epoch)
+    if (!epoch.voided) continue
+    const logs = try voidLogs(deployment, root.epoch, try wide(root.height), finalized.number)
+    if (logs.length === 0) continue
+    const [log] = logs
+    if (log === undefined || logs.length !== 1 || log.removed) throw differs("the void evidence differs")
+    const receipt = try rpc.finalizedReceipt(log.transactionHash)
+    if (receipt === undefined) continue
+    const owner = (try rpc.call({ to: deployment.distributor, data: "0x8da5cb5b", block: "finalized" })).slice(-40)
+    if (receipt.status !== "success" || receipt.to?.toLowerCase() !== deployment.distributor || receipt.from.toLowerCase() !== `0x${owner}` || !receipt.logs.some((item) => item.logIndex === log.logIndex && item.data === log.data && item.blockHash === log.blockHash)) throw differs("the void receipt differs")
+    const row = current.ledger.posts.find((candidate) => candidate.state === "finalized" && candidate.epoch === root.epoch)
+    if (row === undefined) throw differs("the voided root has no journal")
+    current = try commit(current, [{ event: { type: "voidRoot", rootId: root.id, receipt: receiptOf(row.attempt, "voided"), height: Number(log.blockNumber), finalized: true }, by: "owner" }])
+  }
+  return current
+}
+
+export effect function reconcile(session: Session, control: Referral) {
+  return try observedVoids(try pendingOutcome(session, control))
+}

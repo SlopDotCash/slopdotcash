@@ -1,0 +1,318 @@
+// spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { assert, layer } from "@effect/vitest"
+import { type Abi, encodeCall } from "@repo/platform/chain/evm"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Anvil, anvil, deploy, forgeBuild, forward, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { qualify } from "../src/programs/qualify.vibe"
+import { tokenAbi } from "../src/qualification/escrow/contracts.ts"
+import { bytesHex, hexBytes } from "../src/qualification/escrow/envelope.ts"
+import { approvalMessage, loadLedger } from "../src/qualification/escrow/ledger.vibe"
+import type { Registry } from "../src/qualification/escrow/registry.ts"
+
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "integration/TestDollar.sol"]
+const projectId = `0x${"5a".repeat(32)}`
+const sourceDigest = `0x${"7c".repeat(32)}`
+const actor = 18_633_264n
+const oneGwei = "0x3b9aca00"
+
+const factoryAbi = [
+  { type: "function", name: "initialize", stateMutability: "nonpayable", inputs: [{ name: "registrar", type: "address" }, { name: "feeRecipient", type: "address" }, { name: "identityAuthority", type: "address" }, { name: "bindingDelay", type: "uint64" }, { name: "upgradeAuthority", type: "address" }, { name: "implementation", type: "address" }], outputs: [] },
+  { type: "function", name: "create", stateMutability: "nonpayable", inputs: [{ name: "projectId", type: "bytes32" }, { name: "token", type: "address" }, { name: "purpose", type: "uint8" }], outputs: [{ name: "", type: "address" }] },
+  { type: "function", name: "vaultKey", stateMutability: "pure", inputs: [{ name: "owner", type: "address" }, { name: "projectId", type: "bytes32" }, { name: "token", type: "address" }, { name: "purpose", type: "uint8" }], outputs: [{ name: "", type: "bytes32" }] },
+  { type: "function", name: "vaults", stateMutability: "view", inputs: [{ name: "key", type: "bytes32" }], outputs: [{ name: "", type: "address" }] },
+] as const satisfies Abi
+const testAbi = [
+  { type: "function", name: "mint", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] },
+  { type: "function", name: "bindDestination", stateMutability: "nonpayable", inputs: [{ name: "actorId", type: "uint64" }, { name: "destination", type: "address" }, { name: "expectedVersion", type: "uint64" }, { name: "claimDigest", type: "bytes32" }, { name: "expiresAt", type: "uint64" }, { name: "walletSignature", type: "bytes" }], outputs: [] },
+] as const satisfies Abi
+
+schema DeployedBytecode {
+  readonly deployedBytecode: { readonly object: string; readonly immutableReferences: Record<string, ReadonlyArray<{ readonly start: number; readonly length: number }>> }
+}
+
+service Escrow {
+  readonly chain: Anvil
+  readonly owner: string
+  readonly upgrader: string
+  readonly identity: string
+  readonly destination: string
+  readonly vault: string
+  readonly registry: Registry
+  readonly directory: string
+  readonly faulty: string
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase() : ""
+}
+
+function word(hex: string) {
+  return `0x${hex.slice(-40)}`
+}
+
+effect function reviewedCodeSha(path: string, self: string) {
+  const fs = try FileSystem.FileSystem
+  const contents = try fs.readFileString(path)
+  const value = try orDie(Effect.try(() => JSON.parse(contents) as unknown))
+  const artifact = try orDie(Schema.decodeUnknownEffect(DeployedBytecode)(value))
+  const code = hexBytes(artifact.deployedBytecode.object.toLowerCase())
+  const address = hexBytes(self.toLowerCase())
+  if (code === undefined || address === undefined) return try die(new Error(`${path} has no runtime code`))
+  for (const references of Object.values(artifact.deployedBytecode.immutableReferences)) {
+    for (const reference of references) code.set(address, reference.start + reference.length - address.length)
+  }
+  return try sha256Hex(code)
+}
+
+const Started = Layer.effect(Escrow, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, sources)), (output) => promise(() => output.close()))
+  const [owner, registrar, identity, upgrader, destination] = chain.accounts
+  if (owner === undefined || registrar === undefined || identity === undefined || upgrader === undefined || destination === undefined) return try die(new Error("anvil has too few accounts"))
+  const artifact = (file: string, name: string) => `${built.out}/${file}/${name}.json`
+  const implementation = text(try promise(() => deploy(chain, artifact("ProjectEscrow.sol", "ProjectEscrow"), [], registrar.address)))
+  const factoryImplementation = text(try promise(() => deploy(chain, artifact("ProjectEscrow.sol", "EscrowFactory"), [], registrar.address)))
+  const initialize = try encodeCall(factoryAbi, "initialize", [registrar.address, "0x0000000000000000000000000000000000000fee", identity.address, 0n, upgrader.address, implementation])
+  const factory = text(try promise(() => deploy(chain, artifact("ERC1967Proxy.sol", "ERC1967Proxy"), [factoryImplementation, initialize], registrar.address)))
+  const dollar = try promise(() => deploy(chain, artifact("TestDollar.sol", "TestDollar"), [], registrar.address))
+  const dollarCode = try promise(() => chain.rpc("eth_getCode", [dollar, "latest"]))
+  try promise(() => chain.rpc("anvil_setCode", [usdc, dollarCode]))
+  const create = try encodeCall(factoryAbi, "create", [projectId, usdc, 0])
+  try promise(() => chain.transact({ from: owner.address, to: factory as never, data: create }))
+  const keyCall = try encodeCall(factoryAbi, "vaultKey", [owner.address, projectId, usdc, 0])
+  const key = text(try promise(() => chain.rpc("eth_call", [{ to: factory, data: keyCall }, "latest"])))
+  const vaultCall = try encodeCall(factoryAbi, "vaults", [key])
+  const vault = word(text(try promise(() => chain.rpc("eth_call", [{ to: factory, data: vaultCall }, "latest"]))))
+  const mint = try encodeCall(testAbi, "mint", [owner.address, 10_000_000n])
+  try promise(() => chain.transact({ from: owner.address, to: usdc, data: mint }))
+  const registry: Registry = {
+    evm: [{
+      network: "Base",
+      sourceCommit: "0".repeat(40),
+      factory,
+      proxyCodeSha256: try reviewedCodeSha(artifact("ERC1967Proxy.sol", "ERC1967Proxy"), factory),
+      vaultImplementation: implementation,
+      vaultImplementationCodeSha256: try reviewedCodeSha(artifact("ProjectEscrow.sol", "ProjectEscrow"), implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try reviewedCodeSha(artifact("ProjectEscrow.sol", "EscrowFactory"), factoryImplementation),
+      authority: text(upgrader.address),
+    }],
+    solana: [],
+  }
+  const fs = try FileSystem.FileSystem
+  const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-escrow-qualification-" })
+  const faults = try orDie(Effect.try(() => rpcFaults(forward(chain.url), [{ method: "eth_getTransactionReceipt", nth: 1, fault: "http500" }])))
+  const faulty = try acquireRelease(promise(() => serve(faults)), (served) => promise(() => served.close()))
+  return {
+    chain,
+    owner: text(owner.address),
+    upgrader: text(upgrader.address),
+    identity: text(identity.address),
+    destination: text(destination.address),
+    vault,
+    registry,
+    directory,
+    faulty: faulty.url,
+  }
+})
+
+const Base = Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer)
+
+effect function run(args: ReadonlyArray<string>, url: string) {
+  const world = try Escrow
+  const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({ QUALIFICATION_RPC_URLS: ` ${url} ,` }))
+  const exit = try Effect.exit(Effect.provide(qualify(args, world.registry), environment))
+  return Exit.isSuccess(exit) ? "ok" : "refused"
+}
+
+effect function signed(name: string, to: string, data: string, gas: bigint) {
+  const world = try Escrow
+  const fs = try FileSystem.FileSystem
+  const nonce = try promise(() => world.chain.rpc("eth_getTransactionCount", [world.owner, "pending"]))
+  const raw = text(try promise(() => world.chain.rpc("eth_signTransaction", [{ from: world.owner, to, data, value: "0x0", nonce, chainId: "0x2105", type: "0x2", gas: `0x${gas.toString(16)}`, maxFeePerGas: oneGwei, maxPriorityFeePerGas: oneGwei }])))
+  const path = `${world.directory}/${name}.raw`
+  try fs.writeFileString(path, raw)
+  return path
+}
+
+effect function ownerApproval(name: string, signer: string, reviewed: string) {
+  const world = try Escrow
+  const fs = try FileSystem.FileSystem
+  const review = try sha256Hex(try fs.readFile(reviewed))
+  const message = bytesHex(new TextEncoder().encode(approvalMessage(review)))
+  const signature = text(try promise(() => world.chain.rpc("eth_sign", [signer, message])))
+  const path = `${world.directory}/${name}.approval.json`
+  try fs.writeFileString(path, JSON.stringify({ scheme: "evm", signer, signature }))
+  return path
+}
+
+effect function bind() {
+  const world = try Escrow
+  const claimDigest = `0x${"11".repeat(32)}`
+  const expiresAt = 4_102_444_800n
+  const typedData = {
+    types: {
+      EIP712Domain: [{ name: "name", type: "string" }, { name: "version", type: "string" }, { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }],
+      DestinationBinding: [{ name: "actorId", type: "uint64" }, { name: "destination", type: "address" }, { name: "expectedVersion", type: "uint64" }, { name: "claimDigest", type: "bytes32" }, { name: "expiresAt", type: "uint64" }],
+    },
+    primaryType: "DestinationBinding",
+    domain: { name: "SlopProjectEscrow", version: "5", chainId: 8453, verifyingContract: world.vault },
+    message: { actorId: actor.toString(), destination: world.destination, expectedVersion: "0", claimDigest, expiresAt: expiresAt.toString() },
+  }
+  const walletSignature = text(try promise(() => world.chain.rpc("eth_signTypedData_v4", [world.destination, typedData])))
+  const data = try encodeCall(testAbi, "bindDestination", [actor, world.destination, 0n, claimDigest, expiresAt, walletSignature])
+  return (try promise(() => world.chain.transact({ from: world.identity as never, to: world.vault as never, data }))).status
+}
+
+effect function ownerSends(to: string, data: string) {
+  const world = try Escrow
+  return text((try promise(() => world.chain.transact({ from: world.owner as never, to: to as never, data: data as never }))).transactionHash)
+}
+
+effect function phase(ledger: string) {
+  const world = try Escrow
+  const loaded = try loadLedger(ledger, world.registry)
+  const state = loaded.state
+  return { phase: state.phase, records: [...state.records].sort(), spent: state.spent > 0, transactions: state.transactions.length, retransmissions: state.retransmissions, paid: state.paid, completed: state.completed, activated: state.activated }
+}
+
+layer(Layer.provideMerge(Started, Base), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('An operator qualifies the Base escrow from an owner-approved plan (spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"; spec/operations/escrowQualification.md, "Each new attempt passes current checks, fits the remaining budget, and binds the exact scoped operation"; spec/operations/escrowQualification.md, "Missing or mismatched evidence holds the attempt, and finalized failure stops further actions"; spec/operations/escrowQualification.md, "Completed lanes do not repeat, and Ethereum requires both shared EVM qualifications and its own evidence")', () => effect {
+    const world = try Escrow
+    const fs = try FileSystem.FileSystem
+    const at = (name: string) => `${world.directory}/${name}`
+    const ledger = at("ledger.json")
+    const launch = at("launch.json")
+    const testnet = at("testnet.json")
+    const plan = at("plan.json")
+    const url = world.chain.url
+    const escrow = (args: ReadonlyArray<string>, endpoint = url) => run(["escrow", ...args], endpoint)
+    try fs.writeFileString(launch, JSON.stringify({ released: "production", nonMoney: "live" }))
+    try fs.writeFileString(testnet, JSON.stringify({ schema: "slop-escrow-acceptance:v1", network: "base-sepolia", mode: "public-testnet", status: "passed" }))
+    try promise(() => world.chain.mine(70))
+    const activation = { to: usdc, data: text(try encodeCall(tokenAbi, "approve", [world.vault, 0n])) }
+    try fs.writeFileString(at("pins.json"), JSON.stringify({
+      network: "Base",
+      vault: world.vault,
+      authority: world.owner,
+      launch: try sha256Hex(try fs.readFile(launch)),
+      testnet: try sha256Hex(try fs.readFile(testnet)),
+      sourceDigest,
+      bindingVersion: 1,
+      gas: { approve: 100_000, deposit: 160_000, commit: 300_000, pay: 250_000 },
+      activation,
+    }))
+    const setup = {
+      funding: try run(["funding", "base-sepolia", world.owner, url], url),
+      planned: try escrow(["plan", at("pins.json"), plan]),
+      initialized: try escrow(["init", ledger]),
+      admittedUnapproved: try escrow(["admit", ledger, plan, launch, testnet]),
+      approvedByStranger: try escrow(["approve", ledger, plan, try ownerApproval("stranger", world.owner, plan)]),
+      approvedByOwner: try escrow(["approve", ledger, plan, try ownerApproval("owner", world.upgrader, plan)]),
+      admitted: try escrow(["admit", ledger, plan, launch, testnet]),
+    }
+    const planText = try fs.readFileString(plan)
+    const steps = try orDie(Effect.try(() => JSON.parse(planText) as { steps: ReadonlyArray<{ key: string; to: string; data: string }> }))
+    const step = (key: string) => steps.steps.find((candidate) => candidate.key === key) ?? { key, to: "", data: "" }
+    const approve = step("approve")
+    const deposit = step("deposit")
+    const commit = step("commit")
+    const pay = step("pay")
+    const ready = try phase(ledger)
+    const otherData = try signed("approve-other", approve.to, text(try encodeCall(tokenAbi, "approve", [world.vault, 1n])), 80_000n)
+    const wrongData = try escrow(["attempt", ledger, plan, "approve", otherData])
+    const overBudget = try escrow(["attempt", ledger, plan, "deposit", try signed("deposit-heavy", deposit.to, deposit.data, 200_000n)])
+    const refusedUnchanged = (try phase(ledger))
+    const attempted = try escrow(["attempt", ledger, plan, "approve", try signed("approve", approve.to, approve.data, 80_000n)])
+    const afterAttempt = try phase(ledger)
+    const unfinalized = try escrow(["reconcile", ledger, plan])
+    const held = try phase(ledger)
+    const retransmitted = try escrow(["retransmit", ledger, plan])
+    const afterRetransmit = try phase(ledger)
+    try promise(() => world.chain.mine(70))
+    const heldText = try fs.readFileString(ledger)
+    const outage = try escrow(["reconcile", ledger, plan], world.faulty)
+    const unchangedByOutage = (try fs.readFileString(ledger)) === heldText
+    const reconciled = try escrow(["reconcile", ledger, plan])
+    const afterApprove = try phase(ledger)
+    const stray = try ownerSends(usdc, text(try encodeCall(tokenAbi, "approve", [world.destination, 1n])))
+    try promise(() => world.chain.mine(70))
+    const strayText = try fs.readFileString(ledger)
+    const mismatchedHistory = try escrow(["historical", ledger, plan, "deposit", stray])
+    const unchangedByMismatch = (try fs.readFileString(ledger)) === strayText
+    const depositAttempt = try escrow(["attempt", ledger, plan, "deposit", try signed("deposit", deposit.to, deposit.data, 150_000n)])
+    try promise(() => world.chain.mine(70))
+    const depositReconciled = try escrow(["reconcile", ledger, plan])
+    const afterDeposit = try phase(ledger)
+    const commitAttempt = try escrow(["attempt", ledger, plan, "commit", try signed("commit-starved", commit.to, commit.data, 30_000n)])
+    try promise(() => world.chain.mine(70))
+    const failure = try escrow(["reconcile", ledger, plan])
+    const stopped = try phase(ledger)
+    const unboundResume = try escrow(["resume", ledger, plan, "pay", try signed("pay-unbound", pay.to, pay.data, 250_000n)])
+    const stillStopped = try phase(ledger)
+    const commitSigned = try signed("commit", commit.to, commit.data, 300_000n)
+    const resumed = try escrow(["resume", ledger, plan, "commit", commitSigned])
+    const committed = try escrow(["attempt", ledger, plan, "commit", commitSigned])
+    try promise(() => world.chain.mine(70))
+    const commitReconciled = try escrow(["reconcile", ledger, plan])
+    const bound = try bind()
+    const payAttempt = try escrow(["attempt", ledger, plan, "pay", try signed("pay", pay.to, pay.data, 250_000n)])
+    try promise(() => world.chain.mine(70))
+    const payReconciled = try escrow(["reconcile", ledger, plan])
+    const afterPay = try phase(ledger)
+    const completed = try escrow(["complete", ledger, plan])
+    const activationSent = try ownerSends(activation.to, activation.data)
+    try promise(() => world.chain.mine(70))
+    const wrongActivation = try escrow(["activate", ledger, plan, stray])
+    const activated = try escrow(["activate", ledger, plan, activationSent])
+    const afterActivation = try phase(ledger)
+    const outcome = {
+      setup, ready, wrongData, overBudget, refusedUnchanged, attempted, afterAttempt, unfinalized, held, retransmitted, afterRetransmit, outage, unchangedByOutage,
+      reconciled, afterApprove, mismatchedHistory, unchangedByMismatch, depositAttempt, depositReconciled, afterDeposit, commitAttempt, failure, stopped,
+      unboundResume, stillStopped, resumed, committed, commitReconciled, bound, payAttempt, payReconciled, afterPay, completed, wrongActivation, activated, afterActivation,
+    }
+    const state = (phase: string, records: ReadonlyArray<string>, spent: boolean, transactions: number, extra: { retransmissions?: number; paid?: boolean; completed?: number; activated?: number } = {}) =>
+      ({ phase, records: [...records].sort(), spent, transactions, retransmissions: extra.retransmissions ?? 1, paid: extra.paid ?? false, completed: extra.completed ?? 0, activated: extra.activated ?? 0 })
+    try Effect.try(() => assert.deepStrictEqual(outcome, {
+      setup: { funding: "refused", planned: "ok", initialized: "ok", admittedUnapproved: "refused", approvedByStranger: "refused", approvedByOwner: "ok", admitted: "ok" },
+      ready: state("Ready", [], false, 0, { retransmissions: 0 }),
+      wrongData: "refused",
+      overBudget: "refused",
+      refusedUnchanged: state("Ready", [], false, 0, { retransmissions: 0 }),
+      attempted: "ok",
+      afterAttempt: state("AwaitingReceipt", [], false, 1, { retransmissions: 0 }),
+      unfinalized: "ok",
+      held: state("Uncertain", [], false, 1, { retransmissions: 0 }),
+      retransmitted: "ok",
+      afterRetransmit: state("Uncertain", [], false, 1),
+      outage: "refused",
+      unchangedByOutage: true,
+      reconciled: "ok",
+      afterApprove: state("Ready", ["approve"], true, 1),
+      mismatchedHistory: "refused",
+      unchangedByMismatch: true,
+      depositAttempt: "ok",
+      depositReconciled: "ok",
+      afterDeposit: state("Ready", ["approve", "deposit"], true, 2),
+      commitAttempt: "ok",
+      failure: "ok",
+      stopped: state("Stopped", ["approve", "deposit"], true, 3),
+      unboundResume: "refused",
+      stillStopped: state("Stopped", ["approve", "deposit"], true, 3),
+      resumed: "ok",
+      committed: "ok",
+      commitReconciled: "ok",
+      bound: "success",
+      payAttempt: "ok",
+      payReconciled: "ok",
+      afterPay: state("Ready", ["approve", "commit", "deposit", "pay"], true, 5, { paid: true }),
+      completed: "ok",
+      wrongActivation: "refused",
+      activated: "ok",
+      afterActivation: state("AwaitingPlan", [], false, 5, { completed: 1, activated: 1 }),
+    }))
+  })
+})

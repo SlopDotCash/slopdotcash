@@ -211,14 +211,18 @@ interface KeeperWorker {
 effect function keeperWorker(script: string, vars: Readonly<Record<string, string>>) {
   const { escrow, registryBody } = try Bench
   const seen: string[] = []
-  const chain = forward(escrow.chain.url)
-  const outbound = (request: Request) => {
-    const url = new URL(request.url)
-    seen.push(`${url.host}${url.pathname}`)
-    if (url.host !== REGISTRY_HOST) return chain(request)
-    return url.pathname === "/api/v1/projects" ? new Response(registryBody, { headers: { "content-type": "application/json" } }) : new Response("missing", { status: 404 })
-  }
-  const mf = try acquireRelease(sync(() => startWorker({ script, vars, durableObjects: { KEEPER: "OperatorKeeper" }, outbound })), (started) => promise(() => started.dispose()))
+  const chain = try Effect.try(() => forward(escrow.chain.url))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    vars,
+    durableObjects: { KEEPER: "OperatorKeeper" },
+    outbound: (request: Request) => {
+      const url = new URL(request.url)
+      seen.push(`${url.host}${url.pathname}`)
+      if (url.host !== REGISTRY_HOST) return chain(request)
+      return url.pathname === "/api/v1/projects" ? new Response(registryBody, { headers: { "content-type": "application/json" } }) : new Response("missing", { status: 404 })
+    },
+  })), (started) => promise(() => started.dispose()))
   return { mf, seen } satisfies KeeperWorker
 }
 
@@ -247,8 +251,7 @@ effect function writtenConfig(file: string, text: string) {
 effect function spawnKeeper(program: string, configPath: string) {
   const { journalPath, operator } = try Bench
   const spawner = try ChildProcessSpawner.ChildProcessSpawner
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME, KEEPER_EVM_PRIVATE_KEY: operator.privateKey }
-  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, "--execute"], { env }))
+  return try spawner.spawn(ChildProcess.make("node", [program, "keeper", "--config", configPath, "--journal", journalPath, "--execute"], { env: { KEEPER_EVM_PRIVATE_KEY: operator.privateKey }, extendEnv: true }))
 }
 
 layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServices.layer)), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
@@ -284,18 +287,21 @@ layer(Layer.mergeAll(Layer.provideMerge(Started, Layer.merge(webCrypto, NodeServ
     try finalize()
     const main = try keeperProgram()
     const before = try operatorNonce()
-    let arrived: () => void = () => undefined
-    const broadcastSeen = new Promise<void>((resolve) => {
-      arrived = resolve
+    const gate = try sync(() => {
+      let open: () => void = () => undefined
+      const reached = new Promise<void>((resolve) => {
+        open = resolve
+      })
+      return { reached, open: () => open() }
     })
     const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_sendRawTransaction", fault: "timeout" }]))
     const stalled = try acquireRelease(promise(() => serve((request) => request.clone().text().then((text) => {
-      if (text.includes("eth_sendRawTransaction")) arrived()
+      if (text.includes("eth_sendRawTransaction")) gate.open()
       return faults(request)
     }))), (server) => promise(() => server.close()))
     const killed = try scoped(effect {
       const handle = try spawnKeeper(main, try writtenConfig("stalled.json", try operatorConfig(stalled.url)))
-      try timeout(promise(() => broadcastSeen), "120 seconds")
+      try timeout(promise(() => gate.reached), "120 seconds")
       try handle.kill({ killSignal: "SIGKILL" })
       return Number(try handle.exitCode)
     })

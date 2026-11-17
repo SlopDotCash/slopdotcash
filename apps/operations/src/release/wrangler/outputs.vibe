@@ -1,0 +1,132 @@
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"
+import { ToolFailed } from "./cloudflare.vibe"
+
+schema SecretEntry { readonly name: string }
+
+schema VersionEntry {
+  readonly id: string
+  readonly annotations?: Record<string, string>
+}
+
+schema ActiveVersion {
+  readonly version_id: string
+  readonly percentage: number
+}
+
+schema DeploymentStatus { readonly versions: ReadonlyArray<ActiveVersion> }
+
+schema TableRow { readonly name: string }
+
+schema VersionBinding {
+  readonly name: string
+  readonly type: string
+  readonly text?: string
+  readonly service?: string
+  readonly id?: string
+  readonly destination_address?: string
+  readonly allowed_destination_addresses?: ReadonlyArray<string>
+}
+
+schema VersionResources { readonly bindings: ReadonlyArray<VersionBinding> }
+
+schema VersionView {
+  readonly id: string
+  readonly annotations?: Record<string, string>
+  readonly resources: VersionResources
+}
+
+export interface EmailBinding {
+  readonly name: string
+  readonly destination_address?: string
+  readonly allowed_destination_addresses?: ReadonlyArray<string>
+}
+
+export interface ExpectedBindings {
+  readonly vars: Readonly<Record<string, string>>
+  readonly secrets: ReadonlyArray<string>
+  readonly services: ReadonlyArray<{ readonly binding: string; readonly service: string }>
+  readonly databases: ReadonlyArray<{ readonly binding: string; readonly database_id: string }>
+  readonly emails: ReadonlyArray<EmailBinding>
+}
+
+const versionPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u
+const uploadedVersion = /^(?:Worker Version ID|Current Version ID):\s*([0-9a-f-]+)\s*$/gmu
+
+effect function parsed<S extends Schema.Top>(schema: S, text: string, step: string, label: string) {
+  const failed = () => new ToolFailed({ tool: "wrangler", step, message: `${label} is not the expected JSON` })
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw failed()
+  }
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw failed()
+  }
+}
+
+export effect function secretNames(text: string, step: string) {
+  const entries = try parsed(Schema.Array(SecretEntry), text, step, "the secret inventory")
+  return entries.map((entry) => entry.name)
+}
+
+export effect function uploadedVersionId(text: string, step: string) {
+  const ids = [...text.matchAll(uploadedVersion)].map((match) => match[1] ?? "")
+  const [only] = ids
+  if (ids.length !== 1 || only === undefined || !versionPattern.test(only)) throw new ToolFailed({ tool: "wrangler", step, message: "the upload did not report exactly one Worker version" })
+  return only
+}
+
+export function releaseMessage(sha: string) {
+  return `slop.cash release ${sha}`
+}
+
+function sameList(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort())
+}
+
+function emailKey(binding: EmailBinding) {
+  return JSON.stringify([binding.name, binding.destination_address ?? "", [...binding.allowed_destination_addresses ?? []].sort()])
+}
+
+export effect function checkedVersion(text: string, versionId: string, sha: string, expected: ExpectedBindings, step: string) {
+  const failed = (message: string) => new ToolFailed({ tool: "wrangler", step, message })
+  const view = try parsed(VersionView, text, step, "the uploaded version")
+  if (view.id !== versionId || view.annotations?.["workers/tag"] !== sha) throw failed("the uploaded version is not bound to the tested source and captured version id")
+  const bindings = view.resources.bindings
+  const ofType = (type: string) => bindings.filter((binding) => binding.type === type)
+  const plain = ofType("plain_text").map((binding) => JSON.stringify([binding.name, binding.text ?? ""]))
+  if (!sameList(plain, Object.entries(expected.vars).map(([name, value]) => JSON.stringify([name, value])))) throw failed("the uploaded variables differ from the generated configuration")
+  const secrets = ofType("secret_text").map((binding) => binding.name)
+  if (new Set(secrets).size !== secrets.length || !sameList(secrets, expected.secrets)) throw failed("the uploaded secret bindings differ from the checked inventory")
+  if (!sameList(ofType("service").map((binding) => `${binding.name}=${binding.service ?? ""}`), expected.services.map((binding) => `${binding.binding}=${binding.service}`))) throw failed("the uploaded service bindings differ from the generated configuration")
+  if (!sameList(ofType("d1").map((binding) => `${binding.name}=${binding.id ?? ""}`), expected.databases.map((database) => `${database.binding}=${database.database_id}`))) throw failed("the uploaded D1 bindings differ from the generated configuration")
+  if (!sameList(ofType("send_email").map(emailKey), expected.emails.map(emailKey))) throw failed("the uploaded email bindings differ from the generated configuration")
+}
+
+export effect function activeTag(statusText: string, versionsText: string, versionId: string | undefined, step: string) {
+  const failed = (message: string) => new ToolFailed({ tool: "wrangler", step, message })
+  const status = try parsed(DeploymentStatus, statusText, step, "the deployment status")
+  const versions = try parsed(Schema.Array(VersionEntry), versionsText, step, "the version list")
+  const [active, ...others] = status.versions
+  if (active === undefined || others.length > 0 || active.percentage !== 100) throw failed("the Worker deployment is not pinned 100% to one version")
+  if (versionId !== undefined && active.version_id !== versionId) throw failed("the Worker deployment does not serve the uploaded version")
+  const version = versions.find((candidate) => candidate.id === active.version_id)
+  const tag = version?.annotations?.["workers/tag"]
+  if (tag === undefined) throw failed("the version serving all traffic carries no source tag")
+  if (version?.annotations?.["workers/message"] !== releaseMessage(tag)) throw failed("the version serving all traffic does not carry its release message")
+  return tag
+}
+
+export effect function queryRows<S extends Schema.Top>(row: S, text: string, step: string) {
+  const answer = Schema.Struct({ success: Schema.Boolean, results: Schema.Array(row) })
+  const [result, ...rest] = try parsed(Schema.Array(answer), text, step, "the D1 query answer")
+  if (result === undefined || rest.length > 0 || !result.success) throw new ToolFailed({ tool: "wrangler", step, message: "the D1 query did not succeed" })
+  return result.results
+}
+
+export effect function tableNames(text: string, step: string) {
+  const rows = try queryRows(TableRow, text, step)
+  return rows.map((row) => row.name)
+}
+
+export function pagesSecretNames(text: string) {
+  return [...text.matchAll(/^\s*-\s+([A-Z][A-Z0-9_]*):\s+Value Encrypted\s*$/gmu)].map((match) => match[1] ?? "")
+}

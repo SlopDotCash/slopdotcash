@@ -1,0 +1,353 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256 } from "@noble/hashes/sha2.js"
+import { bytesToHex } from "@noble/hashes/utils.js"
+import { type Address, type Hex, encodeFunctionData, hexToBytes, keccak256, parseAbi, toHex } from "viem"
+import type { D1Database } from "@repo/platform/bindings"
+import { EvmRpc, checksum } from "@repo/platform/chain/evm"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1, rows, sql } from "@repo/platform/d1"
+import { type Account, type Anvil, anvil, deploy, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch, kyberNative, quotesFake } from "@repo/platform/testing/quotes"
+import { apply, initial } from "../gen/fees__runtime.effect.vibe"
+import type { Runtime, WorkerConfig } from "../gen/fees__runtime.ts"
+import { evmFinalizedAccrual, ownClaims, vaultAccruals, withoutOwnClaims } from "../src/claims/accrual.vibe"
+import { DeploymentRefused, VaultDeployments } from "../src/claims/deployments.vibe"
+import { evmClaimEvidence, evmVault, failureText } from "../src/claims/evm.vibe"
+import { claimsIn, evmVaultClaims } from "../src/claims/run.vibe"
+import { ChainUnavailable, ConversionChain, type OpenSend } from "../src/conversion/chain.vibe"
+import { runNetwork } from "../src/conversion/run.vibe"
+import { word } from "../src/evm/abi.ts"
+import { FeeChain, attemptStatus, broadcast, feeChain, nativeCost } from "../src/evm/client.vibe"
+import type { Instance } from "../src/journal/codec.vibe"
+import { evmTransfers } from "../src/receipts/discover.vibe"
+import type { EnabledNetwork } from "../src/runtime/config.vibe"
+import { definitions } from "../src/runtime/networks.vibe"
+import { circleUsdc, kyberswap } from "../src/runtime/pins.ts"
+import type { TokenFact, VaultFact } from "../src/runtime/reviewed.vibe"
+import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
+import { generationInstance, journalDatabase } from "./support/journal.ts"
+
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const sources = ["src/ProjectEscrow.sol", "vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol", "test/FeeConverterFixture.sol"]
+const usdc = circleUsdc.ethereum as Address
+const factoryAbi = parseAbi([
+  "function initialize(address registrar, address feeRecipient, address identityAuthority, uint64 bindingDelay, address upgradeAuthority, address implementation)",
+  "function create(bytes32 projectId, address token, uint8 purpose) returns (address)",
+  "function vaultKey(address owner, bytes32 projectId, address token, uint8 purpose) view returns (bytes32)",
+  "function vaults(bytes32 key) view returns (address)",
+  "function proposeIdentityAuthority(address next)",
+  "function cancelIdentityAuthorityRotation()",
+])
+const vaultAbi = parseAbi([
+  "function deposit(uint128 amount)",
+  "function withdrawUnused(uint128 gross)",
+  "function claimFees()",
+  "function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest)",
+  "function awardId(bytes32 sourceDigest) view returns (bytes32)",
+  "function feeRecipient() view returns (address)",
+  "function freeBalance() view returns (uint128)",
+  "function reservedPrincipal() view returns (uint128)",
+  "function reservedFees() view returns (uint128)",
+  "function accruedFees() view returns (uint128)",
+])
+const tokenAbi = parseAbi(["function mint(address to, uint256 amount)", "function approve(address spender, uint256 amount) returns (bool)", "function balanceOf(address owner) view returns (uint256)"])
+const nativeLimits = { perTransaction: 1_000_000_000_000_000n, perDay: 10_000_000_000_000_000n, additionalFeeReserve: 0n }
+const kyber = { clientId: kyberswap.clientId, buyback: undefined }
+const tokens: ReadonlyArray<TokenFact> = [{ address: usdc, asset: "TargetStable" }]
+
+interface Escrow {
+  readonly chain: Anvil
+  readonly owner: Account
+  readonly wallet: Account
+  readonly registrar: Account
+  readonly outsider: Account
+  readonly factory: Address
+  readonly vault: Address
+  readonly fact: VaultFact
+  readonly proposeWallet: Hex
+}
+
+service Fixture {
+  readonly db: D1Database
+  readonly escrow: Escrow
+  readonly fetch: typeof globalThis.fetch
+}
+
+async function sent(chain: Anvil, from: Account, to: Address, data: Hex) {
+  const receipt = await chain.transact({ from: from.address, to, data })
+  if (receipt.status !== "success") throw new Error(`${data.slice(0, 10)} to ${to} reverted`)
+  return receipt
+}
+
+async function called(chain: Anvil, to: Address, data: Hex): Promise<Hex> {
+  return await chain.rpc("eth_call", [{ to, data }, "latest"]) as Hex
+}
+
+async function escrowOn(chain: Anvil, out: string): Promise<Escrow> {
+  await refuseMainnet({ url: chain.url, family: "evm" })
+  const [owner, wallet, registrar, outsider, authority, upgrader] = chain.accounts
+  if (owner === undefined || wallet === undefined || registrar === undefined || outsider === undefined || authority === undefined || upgrader === undefined) throw new Error("anvil has too few accounts")
+  const path = (file: string, name: string) => `${out}/${file}/${name}.json`
+  const dollar = await deploy(chain, path("FeeConverterFixture.sol", "FeeConverterUSDC"), [], registrar.address)
+  await chain.rpc("anvil_setCode", [usdc, await chain.rpc("eth_getCode", [dollar, "latest"])])
+  const implementation = await deploy(chain, path("ProjectEscrow.sol", "ProjectEscrow"), [], registrar.address)
+  const factoryImplementation = await deploy(chain, path("ProjectEscrow.sol", "EscrowFactory"), [], registrar.address)
+  const initialize = encodeFunctionData({ abi: factoryAbi, functionName: "initialize", args: [registrar.address, wallet.address, authority.address, 0n, upgrader.address, implementation] })
+  const factory = await deploy(chain, path("ERC1967Proxy.sol", "ERC1967Proxy"), [factoryImplementation, initialize], registrar.address)
+  const projectId = keccak256(toHex("fees-claims"))
+  await sent(chain, owner, factory, encodeFunctionData({ abi: factoryAbi, functionName: "create", args: [projectId, usdc, 0] }))
+  const key = await called(chain, factory, encodeFunctionData({ abi: factoryAbi, functionName: "vaultKey", args: [owner.address, projectId, usdc, 0] }))
+  const vault = `0x${(await called(chain, factory, encodeFunctionData({ abi: factoryAbi, functionName: "vaults", args: [key] }))).slice(26)}` as Address
+  await sent(chain, registrar, usdc, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [owner.address, 10_000_000_000n] }))
+  await sent(chain, owner, usdc, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [vault, 10_000_000_000n] }))
+  await sent(chain, owner, vault, encodeFunctionData({ abi: vaultAbi, functionName: "deposit", args: [10_000_000_000n] }))
+  const source = keccak256(toHex("fees-claims-award"))
+  const award = await called(chain, vault, encodeFunctionData({ abi: vaultAbi, functionName: "awardId", args: [source] }))
+  await sent(chain, owner, vault, encodeFunctionData({ abi: vaultAbi, functionName: "commitAward", args: [award, 7n, 1_000_000_000n, source] }))
+  const code = await chain.rpc("eth_getCode", [vault, "latest"]) as Hex
+  const deployment = { vault, asset: usdc, owner: owner.address, registrar: registrar.address, factory, feeRecipient: wallet.address, codeSha256: bytesToHex(sha256(hexToBytes(code))), upgradeAuthority: upgrader.address }
+  const proposeWallet = encodeFunctionData({ abi: factoryAbi, functionName: "proposeIdentityAuthority", args: [wallet.address] })
+  return { chain, owner, wallet, registrar, outsider, factory, vault, proposeWallet, fact: { vault, projectId: "fees-claims", payoutPolicy: "ordinary", token: usdc, deployment } }
+}
+
+const Started = Layer.effect(Fixture, effect {
+  const opened = try acquireRelease(promise(() => journalDatabase("fees-claims")), (database) => promise(() => database[Symbol.asyncDispose]()))
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 1 })), (started) => promise(() => started.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, sources)), (output) => promise(() => output.close()))
+  const escrow = try promise(() => escrowOn(chain, built.out))
+  const quotes = quotesFake()
+  quotes.kyberswap.route({ chain: "ethereum", tokenIn: kyberNative, tokenOut: usdc, amountOut: (wei) => (wei * 3n) / 1_000_000_000n, routerAddress: kyberswap.router, gasUsd: "0", l1FeeUsd: null })
+  const net = try orDie(Effect.try(() => internet({ quotes: quotes.handler, rpc: { [chain.url]: forward(chain.url) } })))
+  return { db: opened.db, escrow, fetch: asFetch(net.handler) }
+})
+
+schema ReviewedEscrow { vault: string; asset: string; owner: string; registrar: string; factory: string; feeRecipient: string; codeSha256: string; upgradeAuthority: string }
+
+const feeRecipientCall = encodeFunctionData({ abi: vaultAbi, functionName: "feeRecipient" })
+const withdrawFirst = encodeFunctionData({ abi: vaultAbi, functionName: "withdrawUnused", args: [1_000_000_000n] })
+const withdrawSecond = encodeFunctionData({ abi: vaultAbi, functionName: "withdrawUnused", args: [500_000_000n] })
+const claimFeesCall = encodeFunctionData({ abi: vaultAbi, functionName: "claimFees" })
+const cancelRotation = encodeFunctionData({ abi: factoryAbi, functionName: "cancelIdentityAuthorityRotation" })
+
+const reviewedDeployments = Layer.effect(VaultDeployments, effect {
+  const services = try Effect.context<EvmRpc | Experimental.Crypto.Crypto>()
+  const shape: VaultDeployments.Shape = {
+    evm: (fact, block) => Effect.provideContext(effect {
+      const record = Schema.decodeUnknownEffect(ReviewedEscrow)(fact.deployment) catch effect () => { throw new DeploymentRefused({ message: "Reviewed deployment identity is incomplete" }) }
+      const vault = checksum(record.vault)
+      if (vault === undefined) throw new DeploymentRefused({ message: "Reviewed deployment identity is incomplete" })
+      const rpc = try EvmRpc
+      const code = try rpc.code(vault, block)
+      if ((try sha256Hex(try orDie(Effect.try(() => hexToBytes(code))))) !== record.codeSha256) throw new DeploymentRefused({ message: "Escrow runtime code does not match reviewed deployment" })
+      if ((try rpc.call({ to: vault, data: feeRecipientCall, block })).slice(26).toLowerCase() !== record.feeRecipient.slice(2).toLowerCase())
+        throw new DeploymentRefused({ message: "Escrow asset, factory or registrar does not match reviewed deployment" })
+      return { vault: record.vault, asset: record.asset, owner: record.owner, registrar: record.registrar, factory: record.factory, feeRecipient: record.feeRecipient, upgradeAuthority: record.upgradeAuthority }
+    }, services),
+    solana: () => effect { throw new DeploymentRefused({ message: "no Solana deployment in this journey" }) },
+  }
+  return shape
+})
+
+effect function landedSend(send: OpenSend, fact: VaultFact) {
+  const found = try attemptStatus(send.attempts.map((attempt) => attempt.txId as Hex))
+  if (found.kind === "Mined") return { kind: "pending", mined: true } as const
+  if (found.kind === "Unlanded") return { kind: "unseen" } as const
+  const evidence = try evmClaimEvidence(fact, found.receipt, found.transaction)
+  return {
+    kind: "landed",
+    txId: found.tx,
+    output: 0n,
+    actualWei: (try nativeCost(found.receipt)).toString(),
+    blockHash: found.receipt.blockHash,
+    allowance: 0n,
+    ...evidence,
+  } as const
+}
+
+function claimChain(fact: VaultFact) {
+  return Layer.effect(ConversionChain, effect {
+    const services = try Effect.context<EvmRpc | VaultDeployments | FeeChain>()
+    const shape: ConversionChain.Shape = {
+      balance: () => effect { throw new ChainUnavailable({ operation: "balance", detail: "this journey converts nothing" }) },
+      quote: () => effect { throw new ChainUnavailable({ operation: "quote", detail: "this journey converts nothing" }) },
+      reserve: () => effect { throw new ChainUnavailable({ operation: "reserve", detail: "this journey converts nothing" }) },
+      sign: () => effect { throw new ChainUnavailable({ operation: "sign", detail: "this journey converts nothing" }) },
+      broadcast: (rawTx) => Effect.provideContext(effect {
+        const outcome = try broadcast(rawTx as Hex)
+        if (outcome.kind !== "Accepted") throw new ChainUnavailable({ operation: "broadcast", detail: outcome.detail })
+      }, services),
+      status: (send) => Effect.provideContext(Effect.mapError(landedSend(send, fact), (error) => new ChainUnavailable({ operation: "status", detail: error._tag })), services),
+      replacement: () => effect { return { kind: "wait", reason: "this journey replaces nothing" } },
+    }
+    return shape
+  })
+}
+
+effect function runtimeLive() {
+  const config: WorkerConfig = { source: 1, converterMode: "Live", buybackMode: "Off", networks: ["Ethereum"], keys: ["Ethereum"], nativeLimits: ["Ethereum"], evmWallet: 1, solanaWallet: 2 }
+  const variable: Runtime = try apply(initial, { type: "setReleaseVariable", variable: true }, "Owner")
+  const published = try apply(variable, { type: "publish", config }, "ReleaseWorkflow")
+  return try apply(published, { type: "verifyReadiness", network: "Ethereum" }, "Owner")
+}
+
+interface World {
+  readonly base: Instance
+  readonly network: EnabledNetwork
+  readonly runtime: Runtime
+}
+
+effect function worldOf(generation: number) {
+  const { escrow } = try Fixture
+  const made = generationInstance(generation, "Ethereum")
+  const runtime = try runtimeLive()
+  const wallet = escrow.wallet.address.toLowerCase()
+  const base = { ...made, held: { runtime, wallets: [wallet, made.held.wallets[1] ?? ""] } }
+  return { base, runtime, network: { network: "Ethereum", definition: definitions.Ethereum, feeWallet: wallet, allowlist: [], nativeLimits } satisfies EnabledNetwork } satisfies World
+}
+
+effect function onChain<A, E, R>(world: World, fact: VaultFact, program: A!E!R) {
+  const { db, escrow, fetch } = try Fixture
+  const chain = feeChain({ network: "Ethereum", wallet: escrow.wallet.address, urls: Redacted.make([escrow.chain.url]), timeoutMs: 10_000 })
+  const signing = Layer.provideMerge(evmFeeWallet({ network: "Ethereum", wallet: escrow.wallet.address, key: Redacted.make(escrow.wallet.privateKey), runtime: world.runtime, limits: nativeLimits, gasMultiple: 10n, kyber }), chain)
+  const deployments = Layer.provideMerge(reviewedDeployments, Layer.merge(chain, webCrypto))
+  const services = Layer.mergeAll(d1(db), webCrypto, Layer.provideMerge(claimChain(fact), Layer.merge(signing, deployments)))
+  return try Effect.provideService(Effect.provide(Effect.provide(program, services), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
+}
+
+effect function cycle(world: World, fact: VaultFact, trigger: "Receipts" | "Recovery") {
+  return try onChain(world, fact, effect {
+    const own = try ownClaims(world.network, world.base.scope)
+    const transfers = withoutOwnClaims(try evmTransfers(world.network, tokens, { fromBlock: 0n, pageBlocks: 1000n }), own)
+    const counters = try vaultAccruals(world.network, [fact], own, evmFinalizedAccrual)
+    const claims = try claimsIn(evmVaultClaims({ vaults: [fact], kyber }))
+    const result = try runNetwork({ network: world.network, base: world.base, trigger, tokens, income: { transfers, topUps: [], counters } }, claims)
+    return { claimed: result.claimed, status: result.status, reconciled: result.reconciled, receipts: transfers.map((transfer) => transfer.amount), counters: counters.map((counter) => counter.accruedTotal) }
+  })
+}
+
+schema Recorded { kind: string; state: string; amount_in: string; reason: string | null }
+
+effect function recorded(world: World) {
+  const scope = world.base.scope
+  return (try Effect.provide(rows(Recorded, sql`SELECT kind, state, amount_in, reason FROM fee_conversions WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1((try Fixture).db)))
+    .map((row) => `${row.kind} ${row.state} ${row.amount_in} ${row.reason ?? "-"}`)
+}
+
+effect function vaultWord(name: "freeBalance" | "reservedPrincipal" | "reservedFees" | "accruedFees") {
+  const { escrow } = try Fixture
+  return word(try promise(() => called(escrow.chain, escrow.vault, encodeFunctionData({ abi: vaultAbi, functionName: name }))))
+}
+
+effect function walletBalance() {
+  const { escrow } = try Fixture
+  return word(try promise(() => called(escrow.chain, usdc, encodeFunctionData({ abi: tokenAbi, functionName: "balanceOf", args: [escrow.wallet.address] }))))
+}
+
+effect function act(from: (escrow: Escrow) => Account, to: (escrow: Escrow) => Address, data: Hex) {
+  const { escrow } = try Fixture
+  try promise(() => sent(escrow.chain, from(escrow), to(escrow), data))
+}
+
+effect function finalize() {
+  const { escrow } = try Fixture
+  try promise(() => escrow.chain.mine(65))
+}
+
+effect function automine(on: boolean) {
+  const { escrow } = try Fixture
+  try promise(() => escrow.chain.rpc("evm_setAutomine", [on]))
+}
+
+effect function frontRun(data: Hex) {
+  const { escrow } = try Fixture
+  try promise(() => escrow.chain.rpc("eth_sendTransaction", [{ from: escrow.outsider.address, to: escrow.vault, data, maxPriorityFeePerGas: toHex(50_000_000_000n), maxFeePerGas: toHex(500_000_000_000n) }]))
+  try promise(() => escrow.chain.mine(1))
+}
+
+effect function refusal(world: World, fact: VaultFact) {
+  const head = try onChain(world, fact, effect { return (try (try EvmRpc).head("finalized")).number })
+  const outcome = onChain(world, fact, evmVault(fact, head)) catch (error) => failureText(error)
+  return typeof outcome === "string" ? outcome : "verified"
+}
+
+effect function vaultTotals() {
+  return { free: try vaultWord("freeBalance"), principal: try vaultWord("reservedPrincipal"), awardFees: try vaultWord("reservedFees"), accrued: try vaultWord("accruedFees") }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('J7: a recovery run claims exactly the finalized accrued fee of a reviewed EVM vault into the fee wallet, refuses a changed pin and a fee wallet proposed as attester, settles a claim that a third party front-ran as a failed reverted claim, claims only the smaller fee left after a third-party claim, and leaves principal and reserved awards unchanged (spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const { escrow } = try Fixture
+    const world = try worldOf(0)
+    const fact = escrow.fact
+    try act((e) => e.owner, (e) => e.vault, withdrawFirst)
+    try finalize()
+
+    const changed = { ...fact, deployment: { ...(fact.deployment as Record<string, string>), codeSha256: "00".repeat(32) } }
+    const pin = try refusal(world, changed)
+    const pinRun = try cycle(world, changed, "Recovery")
+
+    try act((e) => e.registrar, (e) => e.factory, escrow.proposeWallet)
+    try finalize()
+    const attester = try refusal(world, fact)
+    const attesterRun = try cycle(world, fact, "Recovery")
+    try act((e) => e.registrar, (e) => e.factory, cancelRotation)
+    try finalize()
+
+    try automine(false)
+    const raceRun = try cycle(world, fact, "Recovery")
+    try frontRun(claimFeesCall)
+    try automine(true)
+    try finalize()
+    const failRun = try cycle(world, fact, "Receipts")
+    const failed = try recorded(world)
+
+    try act((e) => e.owner, (e) => e.vault, withdrawSecond)
+    try finalize()
+    const before = try vaultTotals()
+    const claimRun = try cycle(world, fact, "Recovery")
+    const submitted = try recorded(world)
+    try finalize()
+    const settleRun = try cycle(world, fact, "Receipts")
+    const after = try vaultTotals()
+    const quietRun = try cycle(world, fact, "Recovery")
+
+    try same({
+      pin,
+      pinRun: [pinRun.status, pinRun.claimed, pinRun.counters],
+      attester,
+      attesterRun: [attesterRun.status, attesterRun.claimed, attesterRun.counters],
+      raceRun: [raceRun.status, raceRun.claimed, raceRun.counters],
+      failRun: [failRun.status, failRun.reconciled, failRun.receipts, failRun.counters],
+      failed,
+      before,
+      claimRun: [claimRun.status, claimRun.claimed, claimRun.receipts, claimRun.counters],
+      submitted,
+      settleRun: [settleRun.status, settleRun.reconciled, settleRun.receipts],
+      settled: try recorded(world),
+      after,
+      wallet: try walletBalance(),
+      quietRun: [quietRun.status, quietRun.claimed, quietRun.counters],
+    }, {
+      pin: "Escrow runtime code does not match reviewed deployment",
+      pinRun: ["ran", 0, []],
+      attester: "The fee wallet holds or is proposed for a vault role",
+      attesterRun: ["ran", 0, []],
+      raceRun: ["ran", 1, [20_000_000n]],
+      failRun: ["ran", 1, [20_000_000n], [20_000_000n]],
+      failed: ["claim failed 20000000 claim transaction reverted"],
+      before: { free: 7_500_000_000n, principal: 980_000_000n, awardFees: 20_000_000n, accrued: 10_000_000n },
+      claimRun: ["ran", 1, [20_000_000n], [10_000_000n]],
+      submitted: ["claim failed 20000000 claim transaction reverted", "claim submitted 10000000 -"],
+      settleRun: ["ran", 1, [20_000_000n]],
+      settled: ["claim failed 20000000 claim transaction reverted", "claim finalized 10000000 -"],
+      after: { free: 7_500_000_000n, principal: 980_000_000n, awardFees: 20_000_000n, accrued: 0n },
+      wallet: 30_000_000n,
+      quietRun: ["ran", 0, [10_000_000n]],
+    })
+  })
+})

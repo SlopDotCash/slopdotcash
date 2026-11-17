@@ -1,0 +1,475 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import type { Hex } from "@repo/platform/chain/evm"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { forward, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type ReferralAttribution, ReferralAttributions, Restrictions, Wallets } from "@repo/ports/backend"
+import type { Publication } from "../gen/settlement__referralPublication.ts"
+import type { Referral } from "../gen/settlement__referrals.ts"
+import { emptyRoot, initial } from "../gen/settlement__referralPublication.effect.vibe"
+import { readSignedType2 } from "../src/chain/evm/transactions.ts"
+import { fileClosedMonths } from "../src/referrals/accrualJobs.vibe"
+import { openBook, programSetup } from "../src/referrals/accrual.vibe"
+import { ReferralProgram, controlled, decodeProgram } from "../src/referrals/config.vibe"
+import { refreshClaimCache } from "../src/referrals/claimCache.vibe"
+import { type Deployment, ReferralDeployment, decodeDeployment } from "../src/referrals/distributor.vibe"
+import { buildTree } from "../src/referrals/merkle.ts"
+import { postNextRoot, reconcilePosts } from "../src/referrals/posting.vibe"
+import { commit, openLedger, sessionOf } from "../src/referrals/publication.vibe"
+import { PosterRefused, posterMarker, rootPosterKey, signPostRoot } from "../src/signer/rootPoster.vibe"
+import { reviewedVars } from "./support/referralVectors.ts"
+import { type ReferralChain, bundleText, referralChain } from "./support/referralAnvil.ts"
+
+error SetupFailed { message: string }
+
+const startedAt = Date.UTC(2029, 5, 10, 12)
+const dayMillis = 86_400_000
+const referrerId = "401"
+const ownerRoles = { ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "" }
+const perDayReason = "referral native fee budget reached; unknown sends stay reserved"
+const perTransactionReason = "the transaction exceeds the 0.0002 ETH native fee limit"
+
+interface Benched {
+  readonly chain: ReferralChain
+  readonly deployment: Deployment
+  readonly vars: Readonly<Record<string, string>>
+  readonly db: D1Database
+  readonly clock: SettableClock
+  readonly attributions: ReadonlyArray<ReferralAttribution>
+}
+
+service Bench: Benched {}
+
+effect function migrated(mf: ReturnType<typeof startWorker>, binding: string) {
+  const applied = try promise(() => migrate(mf, binding, migrationsDir))
+  const failed = applied.find((entry) => entry.error !== undefined)
+  if (failed !== undefined) throw new SetupFailed({ message: `migration ${failed.file} failed: ${failed.error}` })
+  return try promise(() => database(mf, binding))
+}
+
+const Started = Layer.effect(Bench, effect {
+  const chain = try acquireRelease(promise(() => referralChain(0n, startedAt / 1000)), (started) => promise(() => started.close()))
+  const vars = { REFERRAL_POST_NETWORK: "robinhood-testnet", REFERRAL_DISTRIBUTOR_ADDRESS: chain.distributor, REFERRAL_TOKEN_ADDRESS: chain.token, REFERRAL_POSTER_ADDRESS: chain.poster.address.toLowerCase(), REFERRAL_DEPLOYMENT_BLOCK: String(chain.deploymentBlock), REFERRAL_DISTRIBUTOR_CODE_HASH: chain.codeHash, RPC_URL_REFERRAL: chain.chain.url }
+  const deployment = try decodeDeployment(vars)
+  if (deployment === undefined) throw new SetupFailed({ message: "the anvil deployment did not decode" })
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { REFERRAL_DB: "referral-posting" } })), (started) => promise(() => started.dispose()))
+  const attributions = Array.from({ length: 31 }, (_, index) => ({ projectId: `proj-${String(index).padStart(2, "0")}`, applicantGithubId: "301", stewardGithubId: "302", referrerGithubId: referrerId, referrerGithubLogin: "referrer-401" }) satisfies ReferralAttribution)
+  return { chain, deployment, vars, db: try migrated(mf, "REFERRAL_DB"), clock: settableClock(startedAt), attributions }
+})
+
+function ports(bench: Benched, wallet: string) {
+  const found = { address: wallet, claimId: `claim-${referrerId}`, digest: "d".repeat(64) }
+  return Layer.mergeAll(
+    Layer.succeed(ReferralAttributions, { referred: () => effect { return [...bench.attributions] } }),
+    Layer.succeed(Restrictions, {
+      account: () => effect { return { banned: false } },
+      project: () => effect { return { restricted: false } },
+      fence: () => effect { return sql`SELECT 1` },
+      unbanned: () => effect { return sql`1` },
+    }),
+    Layer.succeed(Wallets, {
+      effective: ({ githubId }) => effect { return githubId === referrerId ? found : undefined },
+      payable: ({ githubId }) => effect { return githubId === referrerId ? found : undefined },
+      authorized: ({ githubId }) => effect { return githubId === referrerId ? [found] : [] },
+      fence: () => effect { return sql`1 = 1` },
+    }),
+  )
+}
+
+function programLayer(mode: string) {
+  return Layer.effect(ReferralProgram, effect { return { program: try decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: mode }) } })
+}
+
+interface Setting {
+  readonly url?: string
+  readonly deployment?: Deployment
+  readonly key?: string
+  readonly mode?: string
+}
+
+effect function environment(setting: Setting = {}) {
+  const bench = try Bench
+  const base = setting.deployment ?? bench.deployment
+  const deployment = setting.url === undefined ? base : { ...base, urls: Redacted.make([setting.url]) }
+  return Layer.mergeAll(d1(bench.db), webCrypto, outbound, bench.clock.layer, rolesFrom(ownerRoles), ports(bench, bench.chain.referrer.address.toLowerCase()), programLayer(setting.mode ?? "DryRun"), Layer.succeed(ReferralDeployment, { deployment }), rootPosterKey(setting.mode === "Off" ? undefined : setting.key ?? bench.chain.poster.privateKey))
+}
+
+effect function post(setting: Setting = {}) {
+  const services = try environment(setting)
+  provide services {
+    return try postNextRoot()
+  }
+}
+
+effect function reconcileOnce(setting: Setting = {}) {
+  const services = try environment(setting)
+  provide services {
+    return try reconcilePosts()
+  }
+}
+
+effect function refresh() {
+  const { clock } = try Bench
+  clock.advance(60_000)
+  const services = try environment()
+  provide services {
+    return try refreshClaimCache()
+  }
+}
+
+effect function file() {
+  const services = try environment()
+  provide services {
+    return try fileClosedMonths()
+  }
+}
+
+effect function ledger() {
+  const services = try environment()
+  provide services {
+    const { program } = try ReferralProgram
+    if (program.mode === "Off") throw new SetupFailed({ message: "the journey program is off" })
+    const book = try openBook(try programSetup(program.ledger, program.mode, (try Bench).attributions))
+    return (try openLedger((try Bench).deployment, book.state)).state
+  }
+}
+
+effect function acknowledge(rootId: number) {
+  const services = try environment()
+  provide services {
+    const { program } = try ReferralProgram
+    if (program.mode === "Off") throw new SetupFailed({ message: "the journey program is off" })
+    const book = try openBook(try programSetup(program.ledger, program.mode, (try Bench).attributions))
+    const session = sessionOf(try openLedger((try Bench).deployment, book.state))
+    return try commit(session, [{ event: { type: "acknowledgeVoid", rootId }, by: "operator", evidence: { note: "The operator recorded the correction for the voided epoch." } }])
+  }
+}
+
+effect function rows(text: string, ...params: ReadonlyArray<string | number>) {
+  const { db } = try Bench
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function rpcOf(method: string, params: ReadonlyArray<unknown> = []) {
+  const { chain } = try Bench
+  return try promise(() => chain.chain.rpc(method, params))
+}
+
+effect function baseFee(wei: bigint, at?: number) {
+  const { chain } = try Bench
+  if (at !== undefined) try rpcOf("evm_setNextBlockTimestamp", [at])
+  try promise(() => chain.chain.setNextBaseFee(wei))
+  try promise(() => chain.chain.mine(1))
+}
+
+effect function served(plan: Parameters<typeof rpcFaults>[1]) {
+  const { chain } = try Bench
+  const methods: string[] = []
+  const faults = try Effect.try(() => rpcFaults(forward(chain.chain.url), plan))
+  const server = try acquireRelease(promise(() => serve((request) => request.clone().text().then((text) => {
+    for (const found of text.matchAll(/"method":"(\w+)"/gu)) methods.push(found[1] ?? "")
+    return faults(request)
+  }))), (started) => promise(() => started.close()))
+  return { url: server.url, methods, fired: faults.fired }
+}
+
+effect function pay(index: number) {
+  const { db } = try Bench
+  const month = new Date(Date.UTC(2026, 10 + index, 10, 12))
+  const obligation = `obl-${String(index).padStart(2, "0")}`
+  const paidAt = month.toISOString()
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, ?, '1', 'base-mainnet', 'base', ?, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', 6, '1000000', '0', ?, 'paid', ?, ?)")
+      .bind(obligation, `proj-${String(index).padStart(2, "0")}`, `0x${"5".repeat(40)}`, obligation.padEnd(64, "0").slice(0, 64), paidAt, `tx-${obligation}`),
+    db.prepare("INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', ?, 0, '0xblock', 'paid', ?, '{}', ?)")
+      .bind(`tx-${obligation}`, obligation, paidAt),
+  ]))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function big(value: unknown) {
+  return try orDie(Effect.try(() => BigInt(String(value))))
+}
+
+effect function keyless(control: Referral, target: Deployment, state: Publication) {
+  const intent = { kind: "PostRoot" as const, nonce: 0, gas: 1n, maxFeePerGas: 1n, maxPriorityFeePerGas: 0n, previousTotal: 0n, tokenUnit: 10n ** 18n }
+  provide rootPosterKey(undefined) {
+    return try signPostRoot(control, state, target, intent)
+  }
+}
+
+effect function sign(control: Referral, target: Deployment, state: Publication) {
+  const refusal = keyless(control, target, state) catch effect (error) => match (error) {
+    when PosterRefused: error.reason;
+    default: throw error;
+  }
+  return typeof refusal === "string" ? refusal : "signed"
+}
+
+function funding(amount: number) {
+  return { type: "recordFunding" as const, funding: { amount, proposal: "SIP-12", outcome: "ProposalPassed" as const, transaction: "0xfunded", finalizedBlock: 7 } }
+}
+
+const watcher = { type: "startWatcher" as const, watcher: { operator: "watcher", heartbeatBlock: 3 } }
+
+effect function activated(amount: number) {
+  const control = controlled([{ event: { type: "dryRun" }, by: "owner" }, { event: funding(amount), by: "owner" }, { event: watcher, by: "owner" }, { event: { type: "activate" }, by: "owner" }]) catch effect (error) => error._tag
+  return typeof control === "string" ? control : control.mode
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Posting is refused without each recorded activation fact and funding other than 2,000,000 tokens, Off posts nothing and DryRun never signs a mainnet root (spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const { deployment } = try Bench
+    const posting = decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: "Posting" }) catch effect (error) => error._tag
+    const dryRun = try decodeProgram({ ...reviewedVars, REFERRAL_ACCRUAL_MODE: "DryRun" })
+    const off = try post({ mode: "Off" })
+    const reviewed = try controlled([{ event: { type: "dryRun" }, by: "owner" }, { event: funding(2_000_000), by: "owner" }, { event: watcher, by: "owner" }, { event: { type: "activate" }, by: "owner" }])
+    const mainnet = { ...deployment, network: "RobinhoodMainnet" as const, chainId: 4663n }
+    const journaled = { ...initial, phase: "Journaled" as const, token: deployment.token, network: "RobinhoodMainnet" as const, activated: true, nativeHold: 1, prepared: { ...emptyRoot, id: 1, epoch: 0, merkleRoot: `0x${"1".repeat(64)}`, total: [1] } }
+    const dropped: Record<string, unknown> = {}
+    for (const [fact, control] of [
+      ["reactivationApproved", { ...reviewed, reactivationApproved: false }],
+      ["tokenExists", { ...reviewed, tokenExists: false }],
+      ["fundingFinalized", { ...reviewed, fundingFinalized: false }],
+      ["watcherOperating", { ...reviewed, watcherOperating: false }],
+      ["independentWatcher", { ...reviewed, watcher: reviewed.poster }],
+    ] as const) dropped[fact] = try sign(control, mainnet, journaled)
+    try same({
+      posting,
+      underfunded: try activated(1_999_999),
+      overfunded: try activated(2_000_001),
+      reviewed: reviewed.mode,
+      dropped,
+      complete: try sign(reviewed, mainnet, journaled),
+      dryRunMainnet: try sign(dryRun.control, mainnet, journaled),
+      dryRunTestnet: try sign(dryRun.control, deployment, { ...journaled, network: "RobinhoodTestnet" }),
+      off,
+    }, {
+      posting: "ConfigInvalid",
+      underfunded: "Rejected",
+      overfunded: "Rejected",
+      reviewed: "Posting",
+      dropped: {
+        reactivationApproved: "posting is not activated for this network",
+        tokenExists: "posting is not activated for this network",
+        fundingFinalized: "posting is not activated for this network",
+        watcherOperating: "posting is not activated for this network",
+        independentWatcher: "posting is not activated for this network",
+      },
+      complete: "no poster key is loaded",
+      dryRunMainnet: "posting is not activated for this network",
+      dryRunTestnet: "no poster key is loaded",
+      off: { status: "off" },
+    })
+  })
+
+  it.effect('The built referral Worker carries only the root-poster signer, its daily cron posts nothing in DryRun and its quarter-hour cron refreshes the claim cache from the finalized distributor (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively")', () => effect {
+    const { chain, vars } = try Bench
+    const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "referralAccrual" }))
+    const text = try Effect.try(() => bundleText(script))
+    const rpcHost = "https://referral-rpc.test"
+    const toChain = try Effect.try(() => forward(chain.chain.url))
+    const mf = try acquireRelease(sync(() => startWorker({
+      script,
+      d1: { REFERRAL_DB: "referral-worker" },
+      vars: { ...reviewedVars, ...vars, ...ownerRoles, RPC_URL_REFERRAL: rpcHost, REFERRAL_ACCRUAL_MODE: "DryRun" },
+      outbound: (request) => toChain(request),
+    })), (started) => promise(() => started.dispose()))
+    const db = try migrated(mf, "REFERRAL_DB")
+    try promise(() => chain.chain.mine(2))
+    const daily = try promise(() => scheduled(mf, "23 1 * * *"))
+    const quarter = try promise(() => scheduled(mf, "*/15 * * * *"))
+    const posts = (try promise(() => db.prepare("SELECT count(*) AS posts FROM referral_root_posts").all())).results
+    const cache = (try promise(() => db.prepare("SELECT observed_at IS NOT NULL AS observed, error_at IS NULL AS clean, json_extract(body, '$.program.distributor') AS distributor, json_array_length(body, '$.epochs') AS epochs FROM referral_claim_cache WHERE id = 'program'").all())).results
+    try same({
+      markers: [...text.matchAll(/slop-signer:[\w:-]+/gu)].map((found) => found[0]).filter((found, index, all) => all.indexOf(found) === index),
+      daily: daily.outcome,
+      quarter: quarter.outcome,
+      posts,
+      cache,
+    }, {
+      markers: [posterMarker],
+      daily: "ok",
+      quarter: "ok",
+      posts: [{ posts: 0 }],
+      cache: [{ observed: 1, clean: 1, distributor: chain.distributor, epochs: 0 }],
+    })
+  })
+
+  it.effect('A root whose broadcast is lost is resent from its journalled bytes, finalizes and is claimed (spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount")', () => effect {
+    const { chain, clock } = try Bench
+    for (let index = 0; index < 31; index++) try pay(index)
+    const filed = try file()
+    const lossy = try served([{ method: "eth_sendRawTransaction", fault: "http500" }])
+    const lost = try post({ url: lossy.url })
+    const [journaled] = try rows("SELECT p.state, p.reason IS NOT NULL AS reasoned, p.raw_tx, p.tx_id, p.evm_nonce, g.maximum_wei > 0 AS reserved, g.actual_wei FROM referral_root_posts p JOIN referral_post_gas g ON g.post_id = p.id")
+    const resent = try reconcileOnce()
+    const finalized = try reconcileOnce()
+    const txId = String(journaled?.tx_id ?? "")
+    const onChain = try rpcOf("eth_getRawTransactionByHash", [txId])
+    const nonce = try rpcOf("eth_getTransactionCount", [chain.poster.address, "latest"])
+    const [settled] = try rows("SELECT p.state, p.raw_tx = ? AS sameBytes, p.block_number IS NOT NULL AS block, g.actual_wei <= g.maximum_wei AS withinReservation, g.settled_day FROM referral_root_posts p JOIN referral_post_gas g ON g.post_id = p.id", String(journaled?.raw_tx ?? ""))
+    const fresh = try refresh()
+    const wallet = chain.referrer.address.toLowerCase() as Hex
+    const tree = try Effect.try(() => buildTree([{ address: wallet, cumulativeBase: 3n * 10n ** 18n }]))
+    try promise(() => chain.claim(chain.referrer.address, 3n * 10n ** 18n, tree?.leaves[0]?.proof ?? []))
+    const afterClaim = try ledger()
+    const claimed = try refresh()
+    const known = try ledger()
+    try same({
+      filed: filed.status === "ran" ? filed.filed.length : 0,
+      lost,
+      journaled: { state: journaled?.state, reasoned: journaled?.reasoned, nonce: journaled?.evm_nonce, reserved: journaled?.reserved, actual: journaled?.actual_wei },
+      fired: [...new Set(lossy.fired.map((entry) => `${entry.method}:${entry.fault}`))],
+      resent,
+      finalized,
+      onChain: onChain === journaled?.raw_tx,
+      nonce,
+      settled,
+      fresh: fresh.status,
+      afterClaim: { claims: afterClaim.claims.length, fresh: afterClaim.cacheFresh },
+      claimed: claimed.status,
+      known: { claims: known.claims.map((entry) => entry.actor), sealed: known.roots.map((root) => root.sealed), fresh: known.cacheFresh, phase: known.phase },
+    }, {
+      filed: 31,
+      lost: { status: "in_flight" },
+      journaled: { state: "unknown", reasoned: 1, nonce: 0, reserved: 1, actual: null },
+      fired: ["eth_sendRawTransaction:http500"],
+      resent: { status: "in_flight" },
+      finalized: { status: "nothing_to_post" },
+      onChain: true,
+      nonce: "0x1",
+      settled: { state: "finalized", sameBytes: 1, block: 1, withinReservation: 1, settled_day: new Date(clock.now()).toISOString().slice(0, 10) },
+      fresh: "refreshed",
+      afterClaim: { claims: 0, fresh: true },
+      claimed: "refreshed",
+      known: { claims: [Number(referrerId)], sealed: [true], fresh: true, phase: "Idle" },
+    })
+  })
+
+  it.effect('An owner void halts posting until an operator acknowledges it, and the claim cache is stale until it sees the new root and the void (spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralDistributor.md, "Voiding the latest unclaimed epoch restores prior live spacing and high water"; spec/settlement/referralPublication.md, "Only exact finalized evidence makes a root claimable")', () => effect {
+    const { chain } = try Bench
+    const posted = try post()
+    const finalized = try reconcileOnce()
+    const afterRoot = (try ledger()).cacheFresh
+    try promise(() => chain.voidRoot(1))
+    const halted = try post()
+    const voided = try ledger()
+    const seen = try refresh()
+    const stillHalted = try post()
+    const seenVoid = (try ledger()).cacheFresh
+    const acknowledged = try acknowledge(voided.roots[1]?.id ?? 0)
+    const resumed = try post()
+    const settled = try reconcileOnce()
+    const posts = try rows("SELECT epoch, state, void_acknowledged_at IS NOT NULL AS acknowledged FROM referral_root_posts ORDER BY rowid")
+    try same({
+      posted,
+      finalized,
+      afterRoot,
+      halted,
+      voided: voided.roots.map((root) => [root.epoch, root.voided, root.voidAcknowledged]),
+      staleAfterVoid: voided.cacheFresh,
+      seen: seen.status,
+      stillHalted: stillHalted.status,
+      seenVoid,
+      acknowledged: acknowledged.state.roots.map((root) => root.voidAcknowledged),
+      resumed,
+      settled,
+      posts,
+    }, {
+      posted: { status: "posted" },
+      finalized: { status: "nothing_to_post" },
+      afterRoot: false,
+      halted: { status: "halted_after_void", reason: "epoch 1 was voided and is not acknowledged" },
+      voided: [[0, false, false], [1, true, false]],
+      staleAfterVoid: false,
+      seen: "refreshed",
+      stillHalted: "halted_after_void",
+      seenVoid: true,
+      acknowledged: [false, true],
+      resumed: { status: "posted" },
+      settled: { status: "nothing_to_post" },
+      posts: [{ epoch: 0, state: "finalized", acknowledged: 0 }, { epoch: 1, state: "voided", acknowledged: 1 }, { epoch: 2, state: "finalized", acknowledged: 0 }],
+    })
+  })
+
+  it.effect('Forged deployment facts, a key that is not the configured poster and an RPC answering another chain are refused before anything is signed or sent (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralDistributor.md, "Configuration, retained claims and complete balance accounting never change retroactively"; spec/settlement/referrals.md, "Posting requires every recorded activation fact")', () => effect {
+    const { chain, deployment } = try Bench
+    const before = try rows("SELECT count(*) AS posts FROM referral_root_posts")
+    const forgedCode = try post({ deployment: { ...deployment, codeHash: `0x${"ab".repeat(32)}` as Hex } })
+    const otherKey = try post({ key: chain.owner.privateKey })
+    const wrong = try served([{ method: "eth_chainId", fault: "wrongChain" }])
+    const wrongChain = try post({ url: wrong.url })
+    const after = try rows("SELECT count(*) AS posts FROM referral_root_posts")
+    try same({ forgedCode, otherKey, wrongChain, sent: wrong.methods.filter((method) => method === "eth_sendRawTransaction").length, fired: [...new Set(wrong.fired.map((entry) => entry.fault))], unchanged: after }, {
+      forgedCode: { status: "chain_mismatch", reason: "distributor runtime differs from the reviewed code" },
+      otherKey: { status: "refused", reason: "the key is not the configured poster" },
+      wrongChain: { status: "chain_mismatch", reason: "chain id 46631 is not 46630" },
+      sent: 0,
+      fired: ["wrongChain"],
+      unchanged: before,
+    })
+  })
+
+  it.effect('Poster gas pauses above the transaction ceiling and above the UTC-day ceiling, and posting resumes after midnight (spec/settlement/referrals.md, "Poster gas has transaction and UTC-day ceilings"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")', () => effect {
+    const { clock } = try Bench
+    const before = try rows("SELECT count(*) AS posts FROM referral_root_posts")
+    try baseFee(1_000_000_000_000n)
+    const perTransaction = try post()
+    const unchanged = try rows("SELECT count(*) AS posts FROM referral_root_posts")
+    const [last] = try rows("SELECT raw_tx FROM referral_root_posts ORDER BY rowid DESC LIMIT 1")
+    const signed = try orDie(Effect.try(() => readSignedType2(String(last?.raw_tx ?? "0x") as Hex)))
+    if (signed === undefined) return try die(new SetupFailed({ message: "the journalled transaction does not parse" }))
+    const priority = try big(try rpcOf("eth_maxPriorityFeePerGas"))
+    const targetFee = 160_000_000_000_000n / signed.request.gas
+    const base = targetFee > priority ? ((targetFee - priority) * 10n) / 12n : 1n
+    const statuses: string[] = []
+    let refusal: { readonly status: string; readonly reason?: string } | undefined
+    for (let round = 0; round < 27 && refusal === undefined; round++) {
+      try baseFee(base)
+      const outcome = try post()
+      if (outcome.status === "gas_budget") refusal = outcome
+      else {
+        statuses.push(outcome.status)
+        try reconcileOnce()
+      }
+    }
+    const today = new Date(clock.now()).toISOString().slice(0, 10)
+    const [spent] = try rows("SELECT sum(actual_wei) AS wei FROM referral_post_gas WHERE settled_day = ?", today)
+    const spentWei = try big(spent?.wei ?? "0")
+    const midnight = Date.UTC(2029, 5, 11, 0, 5)
+    clock.set(midnight)
+    try baseFee(base, midnight / 1000)
+    const nextDay = try post()
+    const settledNextDay = try reconcileOnce()
+    const [rolled] = try rows("SELECT g.settled_day FROM referral_root_posts p JOIN referral_post_gas g ON g.post_id = p.id ORDER BY p.rowid DESC LIMIT 1")
+    try same({
+      perTransaction,
+      unchanged: unchanged[0]?.posts === before[0]?.posts,
+      postedBeforeCeiling: statuses.length >= 10 && statuses.every((status) => status === "posted"),
+      refusal,
+      withinDay: spentWei <= 2_000_000_000_000_000n,
+      nextDay,
+      settledNextDay,
+      rolled: rolled?.settled_day,
+    }, {
+      perTransaction: { status: "gas_budget", reason: perTransactionReason },
+      unchanged: true,
+      postedBeforeCeiling: true,
+      refusal: { status: "gas_budget", reason: perDayReason },
+      withinDay: true,
+      nextDay: { status: "posted" },
+      settledNextDay: { status: "nothing_to_post" },
+      rolled: new Date(midnight).toISOString().slice(0, 10),
+    })
+  })
+})

@@ -1,0 +1,114 @@
+// spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"
+import type { Address, Hex } from "@repo/platform/chain/evm"
+import { definitions } from "../runtime/networks.vibe"
+import { chainIds, dln, robinhoodUsdg } from "../runtime/pins.ts"
+import { dlnOrderCalldata, fixedNativeFeeCalldata, wholeBig } from "../evm/abi.ts"
+import { FeeChain, readWord } from "../evm/client.vibe"
+import type { DlnOrderTerms } from "../signer/intents.ts"
+import { DlnRefused, proposeDlnOrder } from "./api.vibe"
+import { type CheckedDlnOrder, checkedDlnOrder } from "./evmCalldata.ts"
+
+export const dlnOrderGas = 700_000n
+
+export interface EvmOrderProposal {
+  readonly data: Hex
+  readonly giveToken: Address
+  readonly order: DlnOrderTerms
+  readonly estimatedTakeAmount: bigint
+}
+
+export type EvmProposed = { readonly kind: "Proposed"; readonly proposal: EvmOrderProposal } | { readonly kind: "NoRoute"; readonly detail: string }
+
+const takeChainId = wholeBig(chainIds.robinhood) ?? 0n
+
+effect function sourceUsdc() {
+  const chain = try FeeChain
+  if (chain.network === "Robinhood") throw new DlnRefused({ issue: "Robinhood Chain is the bridge destination, never a source" })
+  const target = definitions[chain.network].target
+  if (target.kind !== "usdc") throw new DlnRefused({ issue: `no verified USDC on ${chain.network}` })
+  return target.address.toLowerCase() as Address
+}
+
+effect function checked(data: Hex, giveToken: Address, giveAmount: bigint, receiver: Address) {
+  const chain = try FeeChain
+  const check = checkedDlnOrder(data, {
+    wallet: chain.wallet,
+    giveToken,
+    giveAmount,
+    takeToken: robinhoodUsdg,
+    takeChainId,
+    receiver,
+    allowedTakers: dln.allowedTakers,
+  })
+  if (check.kind === "Refused") throw new DlnRefused({ issue: check.issue })
+  return check.order
+}
+
+function signedBytes(wallet: Address, giveToken: Address, giveAmount: bigint, receiver: Address, order: CheckedDlnOrder) {
+  return dlnOrderCalldata({
+    giveToken,
+    giveAmount,
+    takeToken: robinhoodUsdg as Address,
+    takeAmount: order.takeAmount,
+    takeChainId,
+    receiver,
+    sourceWallet: wallet,
+    allowedTaker: order.allowedTaker,
+    salt: order.salt,
+    metadata: order.metadata,
+  })
+}
+
+export effect function proposeEvmOrder(giveAmount: bigint, receiver: Address) {
+  const chain = try FeeChain
+  const giveToken = try sourceUsdc()
+  const proposed = try proposeDlnOrder({
+    srcChainId: chain.chainId.toString(),
+    giveToken,
+    giveAmount,
+    takeChainId: takeChainId.toString(),
+    takeToken: robinhoodUsdg,
+    wallet: chain.wallet,
+    receiver,
+  })
+  if (proposed.kind === "NoRoute") return { kind: "NoRoute", detail: proposed.detail } satisfies EvmProposed
+  const { proposal } = proposed
+  if (proposal.to.toLowerCase() !== dln.source) throw new DlnRefused({ issue: "DLN proposal names an unexpected contract" })
+  const order = try checked(proposal.data, giveToken, giveAmount, receiver)
+  const fixedFee = try readWord(dln.source as Address, fixedNativeFeeCalldata, "latest")
+  if (proposal.value !== fixedFee) throw new DlnRefused({ issue: "DLN proposal value differs from the fixed fee" })
+  if (order.takeAmount > giveAmount) throw new DlnRefused({ issue: "DLN proposal delivers more than its input" })
+  const rebuilt = signedBytes(chain.wallet, giveToken, giveAmount, receiver, order)
+  if (rebuilt === undefined || rebuilt.toLowerCase() !== proposal.data.toLowerCase()) throw new DlnRefused({ issue: "Bridge calldata has bytes outside the checked order" })
+  return {
+    kind: "Proposed",
+    proposal: {
+      data: proposal.data,
+      giveToken,
+      order: {
+        giveAmount,
+        takeAmount: order.takeAmount,
+        salt: order.salt,
+        receiver: receiver.toLowerCase() as Address,
+        allowedTaker: order.allowedTaker,
+        metadata: order.metadata,
+        nativeFee: fixedFee,
+        orderId: proposal.orderId,
+      },
+      estimatedTakeAmount: proposal.estimatedTakeAmount,
+    },
+  } satisfies EvmProposed
+}
+
+export effect function recheckedEvmOrder(proposal: EvmOrderProposal) {
+  const chain = try FeeChain
+  const giveToken = try sourceUsdc()
+  const { order } = proposal
+  if (giveToken !== proposal.giveToken.toLowerCase()) throw new DlnRefused({ issue: "Bridge proposal differs from its quote" })
+  const again = try checked(proposal.data, giveToken, order.giveAmount, order.receiver)
+  if (again.takeAmount !== order.takeAmount || again.salt !== order.salt || again.allowedTaker !== order.allowedTaker || again.metadata !== order.metadata)
+    throw new DlnRefused({ issue: "Bridge proposal differs from its quote" })
+  const rebuilt = signedBytes(chain.wallet, giveToken, order.giveAmount, order.receiver, again)
+  if (rebuilt === undefined || rebuilt.toLowerCase() !== proposal.data.toLowerCase()) throw new DlnRefused({ issue: "Bridge calldata has bytes outside the checked order" })
+  return order
+}

@@ -1,0 +1,164 @@
+// spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+import { first, sql } from "@repo/platform/d1"
+import { Refused } from "@repo/platform/http"
+import { StorageFailure } from "@repo/platform/r2"
+import { later } from "@repo/platform/worker"
+import type { Claim, Input, Observation, Phase, Screening } from "../../gen/security__screening.ts"
+import { Rejected, canClaim, mayCall, observedPhase, privateReasonMayUseProposal, qualified } from "../../gen/security__screening.effect.vibe"
+import { type AnalysisReport, type ProgramScope, analysisMessage, jsonValue, screeningPrompt } from "../analysis/prompts.ts"
+import { type ScreeningDecision, screeningProposal } from "../analysis/proposals.vibe"
+import { backgroundBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
+import { assessQualified } from "../assessment/routes.vibe"
+import { priorCases } from "../assessment/store.vibe"
+import { parseReport } from "../intake/report.vibe"
+import { reportBytes } from "../privacy/reads.vibe"
+import { routeQualified } from "./notify.vibe"
+import { claimOf, claimed, finished, screeningAt } from "./store.vibe"
+
+export interface ScreeningRun {
+  readonly admitted: boolean
+  readonly budgetMs: number
+}
+
+export interface Observed {
+  readonly input: Input
+  readonly observation: Observation
+  readonly proposedReason?: string
+}
+
+schema Facts { project_id: string; created_at: string; case_id: string; policy_revision: number | null }
+schema Matched { matched: number }
+schema Manifest { manifest: string }
+schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
+schema Bounty { scope?: Scope }
+schema ManifestScope { securityBounty?: Bounty }
+
+const duplicateReason = "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report."
+const unavailableReason = "Automatic screening is unavailable. Your report is saved for retry or private human review."
+const overlapReason = "This report may overlap an earlier report. Provide distinct evidence, or request private maintainer review."
+const meritsReason = "Concrete security evidence merits private human review."
+const evidenceReason = "Provide the affected component, impact and safe reproduction for private human review."
+const persistMarginMs = 500
+
+const decisions: Readonly<Record<ScreeningDecision, Phase>> = { legitimate: "Legitimate", "needs-information": "NeedsInformation", spam: "Spam" }
+
+export function screeningReason(observed: Pick<Observed, "observation" | "proposedReason">): string {
+  const { observation } = observed
+  if (observation.tag === "DuplicateEvidence") return duplicateReason
+  const phase = observedPhase(observation)
+  if (phase === "Unavailable") return unavailableReason
+  if (observation.tag === "Proposal" && observation.matchesPriorCase) return overlapReason
+  if (privateReasonMayUseProposal(observation) && observed.proposedReason !== undefined) return observed.proposedReason
+  return phase === "Legitimate" ? meritsReason : evidenceReason
+}
+
+effect function factsOf(submissionId: string) {
+  return try first(Facts, sql`SELECT s.project_id, s.created_at, i.case_id, c.policy_revision FROM security_submissions s JOIN security_submission_intake i ON i.submission_id = s.id JOIN security_cases c ON c.id = i.case_id WHERE s.id = ${submissionId}`)
+}
+
+effect function earlierEvidence(submissionId: string, facts: Facts, digest: string) {
+  const caseMatch = try first(Matched, sql`SELECT 1 AS matched FROM security_cases
+    WHERE project_id = ${facts.project_id}
+      AND (receipt_evidence_digest = ${digest} OR evidence_digest = ${digest})
+      AND submission_state <> 'link-rejected'
+      AND NOT EXISTS (SELECT 1 FROM security_submissions s WHERE s.case_id = security_cases.id AND s.state IN ('failed', 'abandoned'))
+      AND (created_at, rowid) < (${facts.created_at}, (SELECT rowid FROM security_cases WHERE id = ${facts.case_id}))
+      AND id <> ${facts.case_id}
+    LIMIT 1`)
+  if (caseMatch !== undefined) return true
+  const reportMatch = try first(Matched, sql`SELECT 1 AS matched FROM security_intake_reports r
+      JOIN security_submissions s ON s.id = r.submission_id
+    WHERE s.project_id = ${facts.project_id}
+      AND r.content_sha256 = ${digest}
+      AND s.state NOT IN ('failed', 'abandoned', 'draft')
+      AND (s.created_at, s.rowid) < (${facts.created_at}, (SELECT rowid FROM security_submissions WHERE id = ${submissionId}))
+      AND s.id <> ${submissionId}
+    LIMIT 1`)
+  return reportMatch !== undefined
+}
+
+export effect function exactReport(submissionId: string, version: number) {
+  const bytes = reportBytes(submissionId, version) catch effect (error) => {
+    if (error instanceof Refused || error instanceof StorageFailure) return undefined
+    throw error
+  }
+  if (bytes === undefined) return undefined
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
+  const parsed = text === undefined ? undefined : parseReport(jsonValue(text))
+  if (parsed === undefined || parsed.kind === "refused") return undefined
+  const { report } = parsed
+  return { summary: report.summary, description: report.description, severity: report.severity ?? null, cvss: report.cvssVectorString ?? null, cweIds: [...report.cweIds ?? []], packages: [] } satisfies AnalysisReport
+}
+
+export effect function scopeAt(projectId: string, policyRevision: number | null) {
+  if (policyRevision === null) return { kind: "scope", scope: null } as const
+  const found = try first(Manifest, sql`SELECT manifest FROM project_revisions WHERE project_id=${projectId} AND revision=${policyRevision}`)
+  if (found === undefined) return { kind: "scope", scope: null } as const
+  const parsed = Schema.decodeUnknownEffect(ManifestScope)(jsonValue(found.manifest)) catch () => undefined
+  if (parsed === undefined) return { kind: "unreadable" } as const
+  const scope = parsed.securityBounty?.scope
+  return { kind: "scope", scope: scope === undefined ? null : { includedAssets: [...scope.includedAssets], severityRubric: scope.severityRubric, lossDefinition: scope.lossDefinition } satisfies ProgramScope } as const
+}
+
+export effect function observe(submissionId: string, facts: Facts, claim: { readonly screening: Screening; readonly token: Claim }, budgetMs: number) {
+  const route = (try privateRouteReady()) ? "Surplus" as const : "Absent" as const
+  if (try earlierEvidence(submissionId, facts, claim.screening.digest)) {
+    return { input: { exactVersionLoaded: false, duplicateEvidence: true, route }, observation: { tag: "DuplicateEvidence" } } satisfies Observed
+  }
+  const report = try exactReport(submissionId, claim.screening.version)
+  const input: Input = { exactVersionLoaded: report !== undefined, duplicateEvidence: false, route }
+  if (report === undefined || !mayCall(claim.screening, claim.token, input)) return { input, observation: { tag: "Unready" } } satisfies Observed
+  const scope = try scopeAt(facts.project_id, facts.policy_revision)
+  if (scope.kind === "unreadable") return { input, observation: { tag: "Incomplete" } } satisfies Observed
+  const prior = (try priorCases(facts.project_id, facts.case_id)).filter((entry) => entry.summary !== null)
+  const answer = try privateCall(screeningPrompt, analysisMessage({ report, scope: scope.scope, priorCases: prior }), budgetMs)
+  if (answer.kind === "failed") return { input, observation: { tag: "Incomplete" } } satisfies Observed
+  const proposal = screeningProposal(answer.text, new Set(prior.map((entry) => entry.id)))
+  const supplied = prior.length > 0
+  if (proposal === undefined) return { input, observation: { tag: "Proposal", phase: "Unavailable", validResponse: false, matchesPriorCase: false, suppliedPriorCases: supplied } } satisfies Observed
+  return {
+    input,
+    observation: { tag: "Proposal", phase: decisions[proposal.decision], validResponse: true, matchesPriorCase: proposal.duplicateCaseIds.length > 0, suppliedPriorCases: supplied },
+    proposedReason: proposal.reason,
+  } satisfies Observed
+}
+
+effect function rejectedAsUndefined<A, E, R>(program: A!E!R) {
+  return program catch effect (error) => {
+    if (error instanceof Rejected) return undefined
+    throw error
+  }
+}
+
+export effect function screenSubmission(submissionId: string, run: ScreeningRun) {
+  const begun = try Clock.currentTimeMillis
+  const facts = try factsOf(submissionId)
+  if (facts === undefined) return
+  const { screening } = try screeningAt(submissionId)
+  if (qualified(screening)) {
+    try routeQualified(submissionId, facts.project_id)
+    return
+  }
+  const nowMs = try Clock.currentTimeMillis
+  if (!canClaim(screening, screening.revision, nowMs, run.admitted)) return
+  const ready = try privateRouteReady()
+  const running = try rejectedAsUndefined(claimed(submissionId, { seenRevision: screening.revision, nowMs, admitted: run.admitted }, ready ? { provider: privateProvider, model: privateModel } : undefined))
+  if (running === undefined) return
+  const token = claimOf(running)
+  const attempt = try exit(observe(submissionId, facts, { screening: running, token }, run.budgetMs))
+  if (Exit.isFailure(attempt)) try Effect.logError("security screening evidence failed", { submissionId })
+  const observed: Observed = Exit.isSuccess(attempt) ? attempt.value : { input: { exactVersionLoaded: false, duplicateEvidence: false, route: ready ? "Surplus" : "Absent" }, observation: { tag: "Unready" } }
+  const done = try rejectedAsUndefined(finished(submissionId, token, observed.input, observed.observation, screeningReason(observed)))
+  if (done === undefined || !qualified(done)) return
+  try routeQualified(submissionId, facts.project_id)
+  const remaining = Math.max(1, Math.floor(run.budgetMs - ((try Clock.currentTimeMillis) - begun) - persistMarginMs))
+  try assessQualified({ caseId: facts.case_id, version: done.version, timeoutMs: remaining })
+}
+
+export effect function scheduleScreening(submissionId: string, admitted: boolean) {
+  try later(effect {
+    screenSubmission(submissionId, { admitted, budgetMs: backgroundBudgetMs }) catch effect () => {
+      try Effect.logError("security screening failed", { submissionId })
+    }
+  })
+}

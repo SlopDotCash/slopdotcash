@@ -1,0 +1,30 @@
+// spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/settlement/referralPublication.md, "Every signed root reserves gas and journals its exact identity first"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { byCron, worker } from "@repo/platform/worker"
+import { ReferralAttributionsLive } from "@repo/backend/ports"
+import { type ReferralVars, referralProgram } from "../referrals/config.vibe"
+import { type PosterVars, referralDeployment } from "../referrals/distributor.vibe"
+import { referralCrons } from "../referrals/jobs.vibe"
+import { rootPosterKey } from "../signer/rootPoster.vibe"
+
+export interface Env extends ReferralVars, PosterVars, RoleVars {
+  readonly REFERRAL_DB: D1Database
+  readonly REFERRAL_POSTER_KEY?: string
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.REFERRAL_DB), webCrypto, outbound, rolesFrom(env))
+  const ports = Layer.provide(ReferralAttributionsLive, base)
+  const poster = env.REFERRAL_ACCRUAL_MODE?.trim() === "Posting" ? rootPosterKey(env.REFERRAL_POSTER_KEY) : rootPosterKey(undefined)
+  return Layer.mergeAll(base, ports, referralProgram(env), referralDeployment(env), poster)
+}
+
+export default worker({
+  services,
+  routes: HttpRouter.add("*", "*", HttpServerResponse.text("Not found", { status: 404 })),
+  scheduled: byCron(referralCrons),
+})

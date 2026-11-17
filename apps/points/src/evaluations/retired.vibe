@@ -1,0 +1,96 @@
+// spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"; spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Revision as Row } from "../kernels/records/canonical.ts"
+import { instantOf } from "../kernels/records/instants.ts"
+import { sameAward } from "../journal/rows.vibe"
+import { type Event, type Protection, type RetiredAwards, Machine, award, initial, machineOver, retiredAt, retirementZeroDigest, retirementZeroRule } from "../../gen/points__evaluations.effect.vibe"
+
+export interface Retired { readonly phase: Protection; readonly retained: Row; readonly latest: Row }
+
+export effect function recoveryDigest() {
+  return try sha256Hex(`retired-evaluator-recovery-v1:${retirementZeroDigest}`)
+}
+
+export effect function heldRetirement(start: RetiredAwards) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function retirementLayer(start: RetiredAwards = initial) {
+  return Layer.effect(Machine, heldRetirement(start))
+}
+
+export effect function retirementSend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function retirementReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function retirementState() {
+  return try (try Machine).get()
+}
+
+function dayOf(at: string) {
+  return instantOf(at) ?? -1
+}
+
+effect function sendOrEnd(machine: Machine.Shape, event: Event, key: number) {
+  const sent = Effect.as(machine.send(event), true) catch () => false
+  if (!sent) machine.send({ type: "laterDecision", key }) catch () => undefined
+}
+
+effect function successor(machine: Machine.Shape, key: number, row: Row, retained: Row, recovery: string) {
+  const zero = sameAward(row.award, { ...retained.award, amount: 0 }) && row.sourceDigest === retirementZeroDigest && row.sourceRule === retirementZeroRule
+  if (zero) {
+    try sendOrEnd(machine, { type: "incidentZero", key, b: { recordedAt: dayOf(row.recordedAt), digest: row.sourceDigest, rule: row.sourceRule, amount: row.award.amount } }, key)
+    return
+  }
+  if (sameAward(row.award, retained.award) && row.sourceDigest === recovery && row.sourceRule === retirementZeroRule) {
+    try sendOrEnd(machine, { type: "recover", key }, key)
+    return
+  }
+  machine.send({ type: "laterDecision", key }) catch () => undefined
+}
+
+export effect function retiredAwards(revisions: ReadonlyArray<Row>) {
+  const machine = try heldRetirement(initial)
+  const recovery = try recoveryDigest()
+  const ids = new Map<string, number>()
+  const pending = new Map<string, Row>()
+  const retained = new Map<string, Row>()
+  const latest = new Map<string, Row>()
+  const after = new Set<string>()
+  effect function retainPending(key: string, id: number) {
+    const row = pending.get(key)
+    if (row === undefined || retained.has(key)) return
+    pending.delete(key)
+    const kept = Effect.as(machine.send({ type: "retain", key: id, amount: row.award.amount, recordedAt: dayOf(row.recordedAt) }), true) catch () => false
+    if (kept) retained.set(key, row)
+  }
+  for (const row of revisions) {
+    if (row.award.category !== "evaluated-contribution") continue
+    const key = row.award.key
+    const id = ids.get(key) ?? ids.size + 1
+    ids.set(key, id)
+    latest.set(key, row)
+    const day = dayOf(row.recordedAt)
+    if (day >= 0 && day < retiredAt && !retained.has(key) && !after.has(key)) {
+      pending.set(key, row)
+      continue
+    }
+    after.add(key)
+    try retainPending(key, id)
+    const kept = retained.get(key)
+    if (kept !== undefined) try successor(machine, id, row, kept, recovery)
+  }
+  for (const [key] of pending) try retainPending(key, ids.get(key) ?? 0)
+  const state = try machine.get()
+  const found = new Map<string, Retired>()
+  for (const [key, row] of retained) {
+    const last = latest.get(key)
+    if (last !== undefined) found.set(key, { phase: award(state, ids.get(key) ?? 0).phase, retained: row, latest: last })
+  }
+  return found
+}

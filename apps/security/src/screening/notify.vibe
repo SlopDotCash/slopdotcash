@@ -1,0 +1,53 @@
+// spec/security/screening.md, "Routing writes only private references for the current qualified version"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+import { rows, sql } from "@repo/platform/d1"
+import { Authority, Registry } from "@repo/ports/backend"
+import { Rejected, qualified } from "../../gen/security__screening.effect.vibe"
+import { activeTriagers } from "../caseAuthority/snapshot.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { type RoutingContext, routed, screeningAt } from "./store.vibe"
+
+schema Candidate { github_id: string }
+
+const unchecked: RoutingContext = { checked: false, recipients: [], actingTechnicalApprover: false }
+
+effect function registryApprovers(projectId: string) {
+  const project = try (try Registry).project(projectId)
+  const first = project?.repositories[0]
+  if (project === undefined || first === undefined) return undefined
+  const found = try rows(Candidate, sql`SELECT actor_github_id AS github_id FROM project_revisions WHERE project_id = ${projectId} AND actor_github_id IS NOT NULL UNION SELECT a.applicant_github_id FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ${projectId}`)
+  const candidates = [...new Set([...found.map((candidate) => candidate.github_id), project.stewardGithubId])]
+  const authority = try Authority
+  const technical: string[] = []
+  for (const candidate of candidates) {
+    const read = try authority.repository({ actorGithubId: candidate, repositoryId: first.id })
+    if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return undefined
+    if (read.installation === "Installed" && (candidate === project.stewardGithubId || read.permission === "PermissionVerified")) technical.push(candidate)
+  }
+  return technical
+}
+
+effect function technicalApprovers(projectId: string) {
+  const project = try (try Registry).project(projectId)
+  if (project === undefined || (project.listingTier === "Retired" && project.retirement !== "RestrictionRetired")) return undefined
+  const program = try (try ReportingPrograms).current(projectId)
+  if (program === undefined) return undefined
+  return program.approvers === undefined ? try registryApprovers(projectId) : program.approvers.technical
+}
+
+export effect function routingContext(read: { readonly caseId: string; readonly projectId: string; readonly reporterGithubId: string; readonly actorGithubId?: string }) {
+  const technical = try technicalApprovers(read.projectId)
+  if (technical === undefined) return unchecked
+  const triagers = (try activeTriagers(read.caseId)).map(String)
+  const recipients = [...new Set([...technical, ...triagers])].filter((id) => id !== read.actorGithubId && id !== read.reporterGithubId)
+  return { checked: true, recipients, actingTechnicalApprover: read.actorGithubId !== undefined && technical.includes(read.actorGithubId) } satisfies RoutingContext
+}
+
+export effect function routeQualified(submissionId: string, projectId: string, actorGithubId?: string) {
+  const current = try screeningAt(submissionId)
+  if (!qualified(current.screening) || current.screening.routed) return current.screening
+  const context = try routingContext({ caseId: current.row.case_id, projectId, reporterGithubId: current.reporterGithubId, actorGithubId })
+  return routed(submissionId, current.screening.revision, context) catch effect (error) => {
+    if (error instanceof Rejected) return error.state
+    throw error
+  }
+}
