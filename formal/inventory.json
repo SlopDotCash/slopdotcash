@@ -2179,11 +2179,11 @@
     },
     {
       "path": "functions/index.ts",
-      "sha256": "fd0e475b20201e174ba3228e2e1185f5cc26bf11df43c9a000db35eeda700ed3",
+      "sha256": "d835f9b6371c3778432240d1a5f66c3e153870991d675089ede31df42198219a",
       "models": [],
-      "candidateLines": [83, 84, 91, 116, 125, 152],
+      "candidateLines": [159, 160, 167, 203, 220, 229, 256],
       "review": "reviewed-no-independent-state",
-      "statelessReason": "Transforms one successful HTML response by request host and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
+      "statelessReason": "Transforms one successful HTML response by request host and path and otherwise passes it through. No cross-request data, authorization state, timer, persistent write or cache is owned here. Transform/deployed-byte behavior still needs artifact tests."
     },
     {
       "path": "migrations/0001_private_trace_backend.sql",
@@ -4760,9 +4760,9 @@
     },
     {
       "path": "scripts/render-social-images.mjs",
-      "sha256": "fff2b89cc25e0d4bad975f9dd125f78e10c05b12baeea5ebf9181a0f168d0479",
+      "sha256": "fccf832da95485bacd324e1e4c8f26c12a5507c33d54331d61d1bbd935d68a28",
       "models": ["formal/models/release/static_asset_generation.qnt"],
-      "candidateLines": [9],
+      "candidateLines": [10],
       "review": "mapped-abstraction"
     },
     {
@@ -7160,7 +7160,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "2b6bdcb44a7563537c7e3912adff16779335f051c87effa9ffa8a840c8f43f9e",
+      "sha256": "524b454ef76dc0ab002ff4c0c154a2a50dd63a72f1011993549ae7910a3999a1",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
