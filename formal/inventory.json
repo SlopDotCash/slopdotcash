@@ -9623,7 +9623,7 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "sha256": "1c40e9bbd4d177304f5e09db459cd1351cffa86e9c715a5f4888e692c67e3173",
+      "sha256": "fe534611e06b5696f22309e1e9b5e149f9d5127f7f65613a93847a7ca6f63aec",
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
         "formal/models/vetting/vetting_gzip_expansion.qnt",
@@ -9632,7 +9632,7 @@
       ],
       "candidateLines": [
         249, 257, 258, 1772, 1773, 1809, 1810, 1979, 2040, 2061, 2128, 2144,
-        2187
+        2203
       ],
       "review": "mapped-abstraction"
     },

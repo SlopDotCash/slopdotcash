@@ -1,13 +1,11 @@
 import { expect, test } from "bun:test";
 import { parseRecordedVettingResult } from "../../backend/vetting/scan-result";
-import { sha256Hex } from "../../src/lib/sha256";
 import {
   composeScanResult,
   inspectRepository,
   type RepositoryInspection,
 } from "./bounded-scan";
 import { SCAN_REVIEW_AREAS, type ScannerEvidence } from "./scanners";
-import { SCAN_SURFACES, SCAN_THREATS } from "../../backend/vetting/scan-result";
 
 const hex64 = "a".repeat(64);
 const sha40 = "b".repeat(40);
@@ -137,6 +135,66 @@ test("a long undecodable path keeps its gap within the parser limit", () => {
   expect(gap).toBeDefined();
   expect(gap!.length).toBeGreaterThan(300);
   const result = compose(inspection);
+  expect(result.visibilityGaps.every((entry) => entry.length <= 300)).toBe(
+    true,
+  );
+  expect(result.disposition).toBe("incomplete");
+  expect(() => parse(result)).not.toThrow();
+});
+
+test("a tab in a path is replaced, not rejected by the parser", () => {
+  const inspection = inspectRepository({
+    files: [
+      {
+        path: "bin/a\tb.sh",
+        bytes: new Uint8Array([0xff, 0xfe, 0xfd, 0x0a]),
+      },
+    ],
+  });
+  const gap = inspection.visibilityGaps.find((entry) =>
+    entry.startsWith("Undecodable executable content at "),
+  );
+  expect(gap).toBeDefined();
+  // Producer fact: the raw gap carries a control character the parser rejects.
+  expect(gap).toBe("Undecodable executable content at bin/a\tb.sh");
+  const result = compose(inspection);
+  expect(
+    result.visibilityGaps.some(
+      (entry) => entry === "Undecodable executable content at bin/a b.sh",
+    ),
+  ).toBe(true);
+  expect(result.visibilityGaps.every((entry) => !/\p{Cc}/u.test(entry))).toBe(
+    true,
+  );
+  expect(result.disposition).toBe("incomplete");
+  expect(() => parse(result)).not.toThrow();
+});
+
+test("an astral character straddling the 300 limit is dropped whole", () => {
+  // "Undecodable executable content at " is 34 characters, so the emoji's
+  // high surrogate lands exactly at UTF-16 index 299: a plain slice would
+  // leave it lone, and a UTF-8 round-trip would turn it into U+FFFD.
+  const path = `${"a".repeat(265)}😀.sh`;
+  const inspection = inspectRepository({
+    files: [
+      {
+        path,
+        bytes: new Uint8Array([0xff, 0xfe, 0xfd, 0x0a]),
+      },
+    ],
+  });
+  const gap = inspection.visibilityGaps.find((entry) =>
+    entry.startsWith("Undecodable executable content at "),
+  );
+  expect(gap).toBeDefined();
+  expect(gap!.length).toBeGreaterThan(300);
+  const result = compose(inspection);
+  const composed = result.visibilityGaps.find((entry) =>
+    entry.startsWith("Undecodable executable content at "),
+  );
+  expect(composed).toBe(`Undecodable executable content at ${"a".repeat(265)}`);
+  expect(composed!.length).toBe(299);
+  expect(composed!.isWellFormed()).toBe(true);
   expect(result.visibilityGaps.every((entry) => entry.length <= 300)).toBe(
     true,
   );

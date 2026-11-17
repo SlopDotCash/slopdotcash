@@ -2155,6 +2155,22 @@ export function composeAcquisitionRefusal(input: {
 }
 
 /**
+ * Truncates one composed visibility gap to what the intake parser accepts:
+ * at most 300 printable characters, no control characters, no trailing
+ * whitespace. Control characters are replaced with a space first: the parser
+ * rejects them anywhere in the string, so a tab in a repository path would
+ * fail the same way a long gap did. A UTF-16 slice can split a surrogate
+ * pair, so a trailing lone high surrogate is dropped whole instead of leaving
+ * a string that corrupts on a UTF-8 round-trip.
+ */
+function truncateVisibilityGap(gap: string): string {
+  const printable = gap.replace(/\p{Cc}/gu, " ");
+  let truncated = printable.slice(0, 300);
+  if (/[\uD800-\uDBFF]$/.test(truncated)) truncated = truncated.slice(0, -1);
+  return truncated.trimEnd();
+}
+
+/**
  * Composes the signed-intake result and its private report. The disposition
  * is derived, never supplied: it is clean only when the intake's own rules
  * accept clean, and incomplete in every other case. A scan never confirms
@@ -2264,11 +2280,8 @@ export function composeScanResult(input: {
   // The intake parser caps each visibility gap at 300 printable characters
   // (parseRecordedVettingResult), but gap strings carry repository paths and
   // download URLs that can run longer. Truncate them here instead of emitting
-  // a result no intake can record; trimming the end keeps a slice that lands
-  // on a space publishable too.
-  result.visibilityGaps = result.visibilityGaps.map((gap) =>
-    gap.slice(0, 300).trimEnd(),
-  );
+  // a result no intake can record.
+  result.visibilityGaps = result.visibilityGaps.map(truncateVisibilityGap);
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {
