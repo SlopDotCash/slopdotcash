@@ -3,6 +3,7 @@
 // @source scripts/private-payout-packet.ts
 // @source scripts/private-packet-preview.ts
 // @evidence scripts/private-packet-preview.test.ts
+// @evidence scripts/reviewed-historical-points.test.ts
 // Ciphertext transport authenticates each exact object before the existing complete-input gate.
 // @source .github/workflows/private-payout-packet.yml
 // @source .github/workflows/reviewed-historical-points.yml
@@ -13,17 +14,88 @@
 // @source src/lib/payments/escrow-cycle.ts
 // Complete validated input precedes publication; disclosure is not a verified payment.
 module source_import {
-  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int}
+  // An identity represents the agreed immutable source ID, repository, URL,
+  // submitted head, occurrence, and PR actor. Live observations must supply
+  // the same accepted output for both views of that source.
+  type MixedProof = {
+    context: bool,
+    submittedIdentity: int,
+    squashIdentity: int,
+    contextAcceptedOutput: int,
+    squashOutput: int,
+    submitted: Set[int],
+    pathCommit: int,
+  }
+  pure val none = {
+    context: false,
+    submittedIdentity: 0,
+    squashIdentity: 0,
+    contextAcceptedOutput: 0,
+    squashOutput: 0,
+    submitted: Set(),
+    pathCommit: 0,
+  }
+  pure val mixed = {
+    context: true,
+    submittedIdentity: 1,
+    squashIdentity: 1,
+    contextAcceptedOutput: 20,
+    squashOutput: 20,
+    submitted: Set(10),
+    pathCommit: 20,
+  }
+  pure def mixedBound(p: MixedProof): bool = all {
+    p.context,
+    p.submittedIdentity == p.squashIdentity,
+    p.contextAcceptedOutput == p.squashOutput,
+    not(p.submitted.contains(p.squashOutput)),
+    p.pathCommit == p.squashOutput or p.submitted.contains(p.pathCommit),
+  }
+  pure def pathRole(p: MixedProof): int = if (p.pathCommit == p.squashOutput) 2 else 1
+  type S={parts:Set[int],valid:bool,complete:bool,published:bool,disclosed:bool,verifiedPaid:bool,identity:int,mixedProof:MixedProof,role:int}
   var s:S
-  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1}
+  action init=s'={parts:Set(),valid:false,complete:false,published:false,disclosed:false,verifiedPaid:false,identity:1,mixedProof:none,role:0}
+  action bindMixed(p: MixedProof): bool = all {
+    not(s.valid),
+    mixedBound(p),
+    s' = s.with("mixedProof",p).with("role",pathRole(p)),
+  }
   action part(id:int):bool=all{not(s.published),s'=s.with("parts",s.parts.union(Set(id)))}
   action validate=all{s.parts==Set(1,2),s'=s.with("valid",true).with("complete",true)}
   action publish=all{s.valid,s.complete,s'=s.with("published",true)}
   action disclose=all{s.published,s'=s.with("disclosed",true)}
   action appendSameIdentity(id:int):bool=all{id==s.identity,s'=s}
-  action step=any{part(1),part(2),validate,publish,disclose,appendSameIdentity(1),s'=s}
-  val invariant=all{s.published implies(s.valid and s.complete),not(s.verifiedPaid),s.identity==1}
+  action step=any {
+    part(1),part(2),validate,publish,disclose,appendSameIdentity(1),
+    bindMixed(mixed),
+    bindMixed(mixed.with("pathCommit",10)),
+    bindMixed(mixed.with("squashIdentity",2)),
+    bindMixed(mixed.with("contextAcceptedOutput",30)),
+    bindMixed(mixed.with("submitted",Set(10,20))),
+    bindMixed(mixed.with("pathCommit",30)),
+    bindMixed(mixed.with("context",false)),
+    s'=s,
+  }
+  val invariant=all {
+    s.published implies(s.valid and s.complete),
+    not(s.verifiedPaid),
+    s.identity==1,
+    s.role != 0 implies mixedBound(s.mixedProof),
+    s.role == 1 implies s.mixedProof.pathCommit != s.mixedProof.squashOutput,
+    s.role == 2 implies s.mixedProof.pathCommit == s.mixedProof.squashOutput,
+  }
   run partialRefusedTest=init.then(part(1)).then(publish.fail())
   run disclosedNotVerifiedTest=init.then(part(1)).then(part(2)).then(validate).then(publish).then(disclose).expect(s.disclosed and not(s.verifiedPaid) and invariant)
   run conflictingImportTest=init.then(appendSameIdentity(2).fail())
+  run mixedPathsRoutedByCommitTest = init.then(bindMixed(mixed)).expect(s.role == 2 and invariant)
+    .then(bindMixed(mixed.with("pathCommit",10))).expect(s.role == 1 and invariant)
+  run mixedSourcesMustAgreeTest = init.then(bindMixed(mixed.with("squashIdentity",2)).fail())
+  run mixedAcceptedOutputMustAgreeTest = init.then(bindMixed(mixed.with("contextAcceptedOutput",30)).fail())
+  run mixedEarlierContextRequiredTest = init.then(bindMixed(mixed.with("context",false)).fail())
+  run mixedOutputCannotBeSubmittedTest = init.then(bindMixed(mixed.with("submitted",Set(10,20))).fail())
+  run mixedPathCannotUseAnotherCommitTest = init.then(bindMixed(mixed.with("pathCommit",30)).fail())
+  run validatedMixedEvidenceCannotChangeTest = init.then(bindMixed(mixed)).then(part(1)).then(part(2)).then(validate)
+    .then(bindMixed(mixed.with("pathCommit",10)).fail())
+  run mixedImportPreservesAcceptedRoleTest = init.then(bindMixed(mixed)).then(part(1)).then(part(2)).then(validate)
+    .then(publish).expect(s.role == 2 and invariant)
 }
