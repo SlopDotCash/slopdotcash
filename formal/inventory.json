@@ -7576,7 +7576,10 @@
     {
       "path": "workers/fee-converter/buyback-config.ts",
       "sha256": "b80298700a56b26d71a2c48c9f6d4271515675fc39d9304050a5271c3732e411",
-      "models": ["formal/models/fees/buyback_market.qnt"],
+      "models": [
+        "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt"
+      ],
       "candidateLines": [39, 49, 123],
       "review": "mapped-abstraction"
     },
@@ -7596,18 +7599,19 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "9c99922657b795f0b0e1497386de34abbf30d77a34e42b165695a0e9572be3dc",
+      "sha256": "ce96452a5e44626a87e3f7de95b53aeb7b857fc8e97ba02ffbc7a6091cc65099",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
-        4, 16, 86, 93, 95, 96, 110, 115, 127, 211, 312, 328, 330, 337, 342, 343,
-        344, 349, 376, 378, 385, 389, 403, 404, 411, 412, 432, 477, 510, 607,
-        636, 641, 751, 755, 841, 847, 849, 884, 885, 886
+        4, 16, 86, 93, 95, 96, 110, 115, 127, 213, 314, 330, 332, 339, 344, 345,
+        346, 351, 378, 380, 387, 391, 405, 406, 413, 414, 434, 479, 512, 609,
+        638, 643, 707, 718, 747, 783, 787, 873, 879, 881, 916, 917, 918
       ],
       "review": "mapped-abstraction"
     },
@@ -7615,6 +7619,7 @@
       "path": "workers/fee-converter/config.ts",
       "sha256": "1541d6103506568e1e9e8feeaeabaee909ebe18708e75a873f386bed536e112c",
       "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
@@ -7687,10 +7692,11 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "17ebba2a9cfa9a758976a7ce9424d05263e7ebb3b3e9eb45f9653a3c7743f890",
+      "sha256": "61af438ac617a02be5f0e9391a7e3f250aed79c3c8bf1fd653c6ded3f83bb27e",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
         "formal/models/fees/fee_nonce_reuse.qnt",
@@ -7879,6 +7885,7 @@
       "sha256": "12eabf3a9e6c778ad5408ddd08879046e7cbdc22de630775351c8e185f057f49",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt"
       ],
       "candidateLines": [],
@@ -7941,15 +7948,21 @@
     },
     {
       "path": "workers/fee-converter/wrangler.staging.toml",
-      "sha256": "da8dada8cc508e35f7ecc6020a995a1874b250132c7cdfe7084f8579d43c2781",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "e28350524d1e15dc8c588fd527717372c18c97de0dacbb3f47ac01494b304b91",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "b369860dbab16dab769a582566c24235ca0c4a4a9a674b1c9c9e8718f94910f2",
-      "models": ["formal/models/payments/payment_worker_run.qnt"],
+      "sha256": "4f98232cc1e86f6a85079811d1d75848f63d3b23948d05e5e95bf2ea275dde07",
+      "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
+        "formal/models/payments/payment_worker_run.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -12686,6 +12699,36 @@
         "pausedTokenOnlyWaitsTest",
         "revertedSwapReleasesAndRetriesTest",
         "swapNeedsItsFinalApprovalTest"
+      ]
+    },
+    {
+      "path": "formal/models/fees/buyback_quote_eligibility.qnt",
+      "sha256": "3ee77d1be3e12f39b33e56db191d87142c4af92d70db0f055166f2e20a6a64d4",
+      "sources": [
+        "workers/fee-converter/buyback-config.ts",
+        "workers/fee-converter/buyback.ts",
+        "workers/fee-converter/config.ts",
+        "workers/fee-converter/evm.ts",
+        "workers/fee-converter/verified-buyback.ts",
+        "workers/fee-converter/wrangler.staging.toml",
+        "workers/fee-converter/wrangler.toml"
+      ],
+      "scenarios": [
+        "aboveTenPercentCostRefusedTest",
+        "belowHalfEntitlementDoesNotQuoteTest",
+        "exactlyThresholdQuotesTest",
+        "owedBurnRemainsPossibleBelowQuoteThresholdTest",
+        "ownerTopupIsNotFeeIncomeTest",
+        "priorCommitmentLeavesOnlyRemainderTest",
+        "referenceArrivalIsNotHalvedAgainTest",
+        "refundRestoresEntitlementWithoutErasingCapUsageTest",
+        "remainingCapStopsNewQuoteTest",
+        "sweepBoundsActualAvailableFundsTest",
+        "tenPercentAllInBridgeCostAcceptedTest",
+        "tokenUnitsNeedValuationTest",
+        "unavailableValuationDoesNotRequestSlopTest",
+        "unfinalizedFeeWaitsForEvidenceTest",
+        "valuedOtherAssetCanRequestSlopRouteTest"
       ]
     },
     {
