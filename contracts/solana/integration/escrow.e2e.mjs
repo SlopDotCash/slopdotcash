@@ -1591,6 +1591,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
         month: pda(seed("month"), key(project), periodSeed(n)),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions(pre)
       .signers([stranger])
@@ -2485,6 +2486,7 @@ const monthlyAdmission = (stranger, period, n) =>
         month: monthAt(n),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions([
         Ed25519Program.createInstructionWithPrivateKey({
@@ -3452,29 +3454,33 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
       .signers(owner === payer ? [] : [owner])
       .rpc();
   const before = await read();
+  const total = Number(tree.total);
+  const released = Number(c.grossMicro);
+  assert.equal(total, 60_000_000);
+  assert.equal(released, 10_000_000);
   // Preserve the owner, authority and exact-state controls.
   await assert.rejects(
-    release(35_000_000, 35_000_000, authority, stranger),
+    release(total, total, authority, stranger),
     /ConstraintHasOne|has one/,
   );
   await assert.rejects(
-    release(35_000_000, 35_000_000, nextAuthority),
+    release(total, total, nextAuthority),
     /InvalidAttestation/,
   );
   await assert.rejects(
-    release(30_000_000, 30_000_000),
+    release(total - released, total - released),
     /MonthlyReserveChanged/,
   );
   // The advisory's first step can no longer release only the uncommittable leaf.
-  await assert.rejects(release(35_000_000, 5_000_000), /InvalidAmount/);
-  await assert.rejects(release(35_000_000, 0), /InvalidAmount/);
-  await leaf(2, "release");
+  await assert.rejects(release(total, released), /InvalidAmount/);
+  await assert.rejects(release(total, 0), /InvalidAmount/);
+  await leaf(2, "release", null);
   const afterLeaf = await read();
-  assert.equal(afterLeaf.reserved.toString(), "30000000");
-  assert.equal(afterLeaf.monthlyOutstanding.toString(), "30000000");
+  assert.equal(afterLeaf.reserved.toNumber(), total - released);
+  assert.equal(afterLeaf.monthlyOutstanding.toNumber(), total - released);
   // The reverse order is excluded too; neither reserve counter moves again.
   await assert.rejects(
-    release(30_000_000, 30_000_000),
+    release(total - released, total - released),
     /MonthlyReserveChanged/,
   );
   assert.deepEqual(await read(), afterLeaf);
@@ -3482,10 +3488,10 @@ test("monthly release paths cannot double-release an uncommittable leaf", async 
   await leaf(1, "commit");
   const settled = await read();
   assert.equal(settled.monthlyOutstanding.toString(), "0");
-  assert.equal(settled.reserved.toString(), "30000000");
+  assert.equal(settled.reserved.toNumber(), total - released);
   assert.equal(
     settled.reserved.toNumber(),
-    before.reserved.toNumber() - 5_000_000,
+    before.reserved.toNumber() - released,
   );
   const award = await program.account.obligation.fetch(awardAt(a));
   assert.equal(award.gross.toString(), a.grossMicro);

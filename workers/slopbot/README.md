@@ -10,6 +10,25 @@ Deep value, quality and recovery detail lives in the modules named below and in
 [`QUALITY.md`](QUALITY.md). Do not treat older narrative in git history as
 current behavior.
 
+The production config declares `limits.cpu_ms = 300000`, a CPU ceiling per
+invocation on Workers Paid with Standard usage. Cloudflare enforces it on its
+network. It applies to HTTP and queue work, including historical validation;
+the cron that runs every five minutes retains its platform 30-second CPU cap.
+Network waits and wall-time caps are separate. After a protected release,
+verify the 100% active version, `cpu_ms = 300000`, Standard usage and a supported
+plan before retrying an import. This budget does not guarantee completion.
+
+The protected main `fee-worker-bindings.yml` workflow accepts an optional exact
+`slopbot_source` SHA for a separate read-only metadata job. Its
+selection skips the fee job and its publication concurrency group. Combining
+it with any fee probe, rotation or prior-proof input is refused in a
+credential-free step before the metadata read. With `slopbot_source` empty,
+the existing fee workflow keeps its original input behavior. The
+`slopbot-runtime.json` artifact retains only the matching source, active version,
+CPU limit, usage model and deployment stability. Missing, denied, malformed or
+changing metadata stays unavailable. The receipt does not verify Paid plan
+entitlement, execution success or the cause of an earlier import failure.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records
@@ -42,10 +61,11 @@ current behavior.
    yield free advisory results when closure is unavailable. A potentially
    closable result still goes through model triage and independent confirmation;
    model verdicts replace the hint.
-6. **Models.** `models.ts` starts with Orbio `anthropic/claude-sonnet-5.5`.
-   Any Orbio failure, including exhausted credits, goes directly to Surplus
-   `claude-sonnet-5.5`, then Surplus `gpt-6.1-terra`. Missing provider keys skip
-   that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
+6. **Models.** `models.ts` starts with Surplus `claude-sonnet-5.5`, then
+   Surplus `gpt-6.1-terra`, then Orbio `anthropic/claude-sonnet-5.5` as the
+   backstop (operator decision, 16 November 2026). A Surplus spending denial
+   skips the remaining Surplus model and goes directly to Orbio. Missing
+   provider keys skip that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
    internal provider cost and a zero billed amount.
 7. **Close gates.** A close needs all of the following (`review.ts`,
    `closure-eligibility.ts`, `penalties.ts`, `contracts.ts`):
@@ -133,13 +153,59 @@ decides. If it is present and valid, its `closure` flag and per-category
 `off` / `label` / `close` restrictions still apply (`contracts.ts`). If it is
 present but invalid, review falls back to label-only with no closure.
 
+## Ready label
+
+Operator decision, 16 November 2026 (PRD section 5). When a project owner
+turns on `slopbot.readyLabel` in project settings (absent means off),
+`ready-label.ts` adds the `slopbot:ready` label and one line to the review
+comment while all of these hold at the pull request's exact head commit:
+
+1. GitHub's `mergeable_state` is `clean` (or `has_hooks`): mergeable with every
+   check passing. Slopbot has no Checks permission, so it reads this from the
+   pull request itself.
+2. Slopbot's latest review of that head (`slopbot_reviews.revision`) completed
+   with category `none`, no coverage limitation and the comment action. A pull
+   request Slopbot did not review (an exempt maintainer, a draft, the monthly
+   cap) never gets the label.
+3. The required approvals (default 1) on that head commit come from distinct
+   `User` accounts other than the author whose repository permission is
+   `write` or `admin`, and no such account's latest review requests changes.
+4. Changed lines and files are within the owner's caps (defaults 400 and 20).
+5. No changed path (or previous path of a rename) is protected. The built-in
+   set in `ready-label.ts` covers `.github/` and CI configuration, dependency
+   manifests and lockfiles, contracts and payment code, skill, agent and
+   policy files, the Slop project manifest, `SECURITY.md`, binary files and
+   files without a text diff, deleted files, and more than 300 deleted lines.
+   Owner patterns add to it and never remove from it.
+
+The label comes off on a new push or when a condition stops holding. Pull
+request pushes, draft changes and review decisions queue a `ready_label` job,
+and so does every finished pull request review. Check results have no webhook
+here, so a pending result is checked again every 10 minutes for up to 14 days
+per head commit, and a labelled pull request every hour
+(`slopbot_ready_labels`, `dispatchReadyChecks`). A closed or merged pull request
+keeps its last label. Every write re-reads the head commit first. Slopbot never
+merges: a human does. Labels and comments are already within Issues and Pull
+requests write, and Points and scoring are unchanged.
+
 ## Free reviews, budget blocks, spend
 
+Free advisory reviews are capped at 2,000 pull requests or issues per
+repository per UTC month; value assessment is not capped (operator decision,
+16 November 2026). `review-cap.ts` admits a review before any model call and
+records one row per item in `slopbot_review_month_starts`. Any later review of
+an item already admitted this month (new pushes, a moved base, retries) runs
+and adds nothing. A new item over the cap makes no model call, writes nothing
+to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
-provider window opens. Orbio errors, including credit exhaustion, try Surplus
-immediately. A Surplus spending denial is not a paid value attempt:
-the request waits as `budget` and does not use one of the three attempts per
-inference key (`value-inference.ts`). Free reviews still record provider cost
+provider window opens. A Surplus spending denial skips the other Surplus model
+and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
+normally. If Orbio has no key or does not serve, the request waits as `budget`
+until the Surplus reset. An attempt whose only call was the Surplus denial is
+not a paid value attempt and does not use one of the three attempts per
+inference key (`value-inference.ts`). An attempt that also called Orbio is a
+paid attempt, even when it then waits as `budget`. Free reviews still record provider cost
 rows with zero customer charge. Whole-micro Orbio `usage.cost` receipts are
 retained as actual cost; fractional-micro or missing receipts keep actual cost
 unknown. Release qualification uses a rounded-up fractional receipt only as a
@@ -173,6 +239,37 @@ Value scoring is a separate pipeline from advisory/close review. Entry points:
 | Work units / joint groups | `value-work-unit*.ts`, `value-group-collection.ts` |
 | Live registry / authority checks | `value-consumer.ts`, `registry.ts` |
 | Historical / import intake | `value-import.ts`, `value-import-service.ts` |
+
+The authenticated Pages assessment import accepts `Accept: application/x-ndjson` for long-running publication. It sends pending heartbeat frames, then one `{status, body}` terminal frame containing the ordinary HTTP result. A pending frame or interrupted stream does not prove publication. Reconcile the exact record through public assessment history before retrying. Requests without this Accept type keep the ordinary JSON response.
+
+The private publisher records a failed import's fixed stage, zero-based source
+index/count, allowlisted error name/HTTP status and bounded message SHA-256.
+It retains no message, body, stack, path or source identity and rethrows the
+original failure. The protected intake diagnostic reprojects only that exact
+structured shape; an observation is not a publication receipt.
+
+For an earlier failure, the trusted-main `value-intake-diagnostic.yml` workflow
+accepts paired `history_from` and `history_to` UTC bounds. They must cover at
+most 15 minutes within the last 24 hours. The existing short live-tail path is
+unchanged when both are absent. Retained inspection uses one dry Cloudflare
+query for this Worker, at most 200 events and 1 MiB, with no automatic retry or
+pagination. It checks the current deployment before and after reading. Only
+the existing seven-field failures and their event times are retained; raw
+messages, bodies, stacks, request IDs and query-run IDs are discarded. Missing,
+unprojectable, truncated or unavailable evidence does not establish a cause or
+prove that an import succeeded. Deployment stability now does not establish
+the version that produced an earlier observation.
+The provider's `$workers.truncated` flag and both reported ABR levels are also
+checked: a truncated/invalid event or sampled/invalid query cannot report a
+complete read. Absent ABR metadata follows the provider's documented default
+of 1. A bounded read still does not establish unsampled source coverage or the
+absence of failures.
+
+The Cloudflare query API requires the `Workers Observability Write` permission
+even for its dry read. Use only the existing protected credential. A refusal
+is reported with fixed stage and scalar status/code; this workflow does not
+grant permissions or create credentials. Keep observations and any subsequent
+publication attempt separate, and reconcile public history before a retry.
 
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and
@@ -241,8 +338,8 @@ Do these in order. Each step names who does it and how to verify it.
    - `SLOPBOT_APP_PRIVATE_KEY` (the PKCS#8 PEM)
    - `SURPLUS_API_KEY`
 
-   Orbio is primary; Surplus is backup. Each provider serves both models with
-   its own key. The default Anthropic-compatible bases are
+   Surplus is primary; Orbio is the backstop. Each provider uses its own
+   key. The default Anthropic-compatible bases are
    `https://api.orbio.so/api` and
    `https://api.surplusintelligence.ai/anthropic`. Optional `ORBIO_BASE_URL`
    and `SURPLUS_BASE_URL` overrides must name verified endpoints for that

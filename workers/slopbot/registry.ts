@@ -2,10 +2,7 @@ import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../../backend/projects/cloudflare-persistence";
-import {
-  repositoryIdentity,
-  retiredByRestriction,
-} from "../../backend/projects/enforcement";
+import { retiredByRestriction } from "../../backend/projects/enforcement";
 import {
   evaluateProjectCapabilities,
   type ProjectCapabilities,
@@ -45,9 +42,16 @@ export async function registeredHistoryRepository(
       WHERE lower(json_extract(r.value, '$.id')) = ?
          OR EXISTS (SELECT 1 FROM json_each(r.value, '$.aliases') a
                     WHERE lower(a.value) = ?))`
-        : `SELECT manifest FROM projects WHERE json_extract(manifest, '$.authority.repositoryNodeId') = ?`,
+        : `SELECT manifest FROM projects p
+      WHERE json_extract(p.manifest, '$.authority.repositoryNodeId') = ?
+         OR EXISTS (SELECT 1 FROM json_each(p.manifest, '$.repositories') r
+                    WHERE r.key > 0 AND json_extract(r.value, '$.nodeId') = ?)`,
     )
-    .bind(...(repositoryNodeId === null ? [key, key] : [repositoryNodeId]))
+    .bind(
+      ...(repositoryNodeId === null
+        ? [key, key]
+        : [repositoryNodeId, repositoryNodeId]),
+    )
     .first<{ manifest: string }>();
   if (row === null) return null;
   const project = assertProjectDefinition(JSON.parse(row.manifest));
@@ -58,11 +62,20 @@ export async function registeredHistoryRepository(
             (id) => id.toLowerCase() === key,
           ),
         )
-      : 0;
+      : project.authority.repositoryNodeId === repositoryNodeId
+        ? 0
+        : project.repositories.findIndex(
+            (repository, position) =>
+              position > 0 && repository.nodeId === repositoryNodeId,
+          );
   if (index < 0) return null;
+  // An appended repository carries its own permanent node id.
   return {
     id: project.repositories[index].id,
-    nodeId: index === 0 ? project.authority.repositoryNodeId : null,
+    nodeId:
+      index === 0
+        ? project.authority.repositoryNodeId
+        : (project.repositories[index].nodeId ?? null),
   };
 }
 
@@ -94,11 +107,41 @@ export async function repositoryCapabilities(
 }> {
   const key = `${job.owner}/${job.repo}`.toLowerCase();
   const row = await db
-    .prepare(`SELECT p.status, p.manifest FROM project_repositories r
+    .prepare(`WITH registered AS (
+      SELECT p.id, p.status, p.manifest FROM project_repositories r
       JOIN projects p ON p.id = r.project_id
-      WHERE r.repository_key = ?`)
+      WHERE r.repository_key = ?
+    ), identity_keys AS (
+      SELECT lower(json_extract(repository.value, '$.id')) AS value
+      FROM registered p, json_each(p.manifest, '$.repositories') repository
+      UNION ALL
+      SELECT lower(alias.value)
+      FROM registered p, json_each(p.manifest, '$.repositories') repository,
+        json_each(repository.value, '$.aliases') alias
+      UNION ALL
+      SELECT 'github:' || json_extract(repository.value, '$.githubId')
+      FROM registered p, json_each(p.manifest, '$.repositories') repository
+      WHERE repository.key > 0
+        AND json_extract(repository.value, '$.githubId') IS NOT NULL
+    )
+    SELECT p.status, p.manifest, (
+      SELECT e.state_after FROM project_enforcements e
+      WHERE NOT EXISTS (SELECT 1 FROM project_enforcements newer
+        WHERE newer.project_id = e.project_id AND newer.sequence > e.sequence)
+      AND e.state_after <> 'clear'
+      AND (e.project_id = p.id
+        OR e.repository_github_id = json_extract(p.manifest, '$.authority.repositoryId')
+        OR EXISTS (SELECT 1 FROM json_each(e.repository_keys) old_key
+          JOIN identity_keys current_key ON old_key.value = current_key.value))
+      ORDER BY e.state_after = 'banned' DESC LIMIT 1
+    ) AS restriction_state
+    FROM registered p`)
     .bind(key)
-    .first<{ status: string; manifest: string }>();
+    .first<{
+      status: string;
+      manifest: string;
+      restriction_state: ProjectRestrictionState | null;
+    }>();
   if (row === null)
     return { projectId: null, project: null, capabilities: UNREGISTERED };
   const project = assertProjectDefinition(JSON.parse(row.manifest));
@@ -109,25 +152,20 @@ export async function repositoryCapabilities(
         .toLowerCase() === key,
   );
   // Old aliases are history, not permission to review a reused repository name.
+  // Each repository answers to its own permanent GitHub id: the first one's
+  // is the project authority, an appended one carries its own.
   if (
     index < 0 ||
-    (index === 0 && String(job.repositoryId) !== project.authority.repositoryId)
+    String(job.repositoryId) !==
+      (index === 0
+        ? project.authority.repositoryId
+        : project.repositories[index].githubId)
   )
     return { projectId: null, project: null, capabilities: UNREGISTERED };
-  const identity = repositoryIdentity(project);
-  // An enforcement can be effective before its paused revision is appended.
-  // Match the current restriction of every project sharing this identity.
-  const restricted = await db
-    .prepare(`SELECT e.state_after AS state FROM project_enforcements e
-      WHERE NOT EXISTS (SELECT 1 FROM project_enforcements newer
-        WHERE newer.project_id = e.project_id AND newer.sequence > e.sequence)
-      AND e.state_after <> 'clear'
-      AND (e.project_id = ? OR e.repository_github_id = ? OR EXISTS (
-        SELECT 1 FROM json_each(e.repository_keys) old_key
-        JOIN json_each(?) current_key ON old_key.value = current_key.value))
-      ORDER BY e.state_after = 'banned' DESC LIMIT 1`)
-    .bind(project.id, identity.githubId, JSON.stringify(identity.keys))
-    .first<{ state: ProjectRestrictionState }>();
+  // The same fresh statement reads the manifest and effective restriction.
+  // identity_keys mirrors repositoryIdentity: ASCII repository ids/aliases and
+  // permanent ids of appended repositories. No mutable authority is cached.
+  const restricted = row.restriction_state;
   // A quarantine or ban retires the listing it pauses. Only an owner's
   // retirement ends review (owner decision D12).
   const restrictionRetired =
@@ -154,7 +192,7 @@ export async function repositoryCapabilities(
           : "paused",
       listingTier: project.listingTier,
       retiredByRestriction: restrictionRetired === true,
-      restriction: restricted?.state ?? "clear",
+      restriction: restricted ?? "clear",
     }),
   };
 }

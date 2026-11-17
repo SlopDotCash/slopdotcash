@@ -1,33 +1,45 @@
 import { expect, type Page } from "@playwright/test";
 
-/** Hold a parsed preflight until the editor's committed DOM removal. */
+/**
+ * Hold a session read until the editor's committed DOM removal. Parent/child
+ * tests may need later reads to advance the still-live parent; opt into one
+ * shared gate for concurrent reads when testing a mutation's preflight.
+ */
 export async function holdProjectSessionUntilUnmount(
   page: Page,
   selector: string,
   pathSuffix = "/api/v1/project-session",
+  { holdConcurrentReads = false }: { holdConcurrentReads?: boolean } = {},
 ) {
   await page.evaluate(
-    ({ selector, pathSuffix }) => {
+    ({ selector, pathSuffix, holdConcurrentReads }) => {
       const state = {
         waiting: false,
+        waitingReads: 0,
         removed: false,
         released: false,
         release: () => {},
       };
+      const released = new Promise<void>((resolve) => {
+        state.release = () => {
+          state.released = true;
+          resolve();
+        };
+      });
       Object.assign(window, { heldEditorSession: state });
       const hold = () => {
         state.waiting = true;
-        return new Promise<void>((resolve) => {
-          state.release = () => {
-            state.released = true;
-            resolve();
-          };
-        });
+        state.waitingReads += 1;
+        return released;
       };
       const readJson = Response.prototype.json;
       Response.prototype.json = async function (this: Response) {
         const value = await readJson.call(this);
-        if (!state.waiting && this.url.endsWith(pathSuffix)) await hold();
+        if (
+          (holdConcurrentReads || !state.waiting) &&
+          this.url.endsWith(pathSuffix)
+        )
+          await hold();
         return value;
       };
       // Bounded readers parse the body stream instead of calling json().
@@ -43,7 +55,11 @@ export async function holdProjectSessionUntilUnmount(
           const held = heldBodies.get(this);
           if (held) return held;
           const body = readBody.call(this) as ReadableStream<Uint8Array> | null;
-          if (!body || state.waiting || !this.url.endsWith(pathSuffix))
+          if (
+            !body ||
+            (!holdConcurrentReads && state.waiting) ||
+            !this.url.endsWith(pathSuffix)
+          )
             return body;
           const reader = body.getReader();
           const parsed = hold().then(() => reader);
@@ -70,7 +86,7 @@ export async function holdProjectSessionUntilUnmount(
       });
       observer.observe(document.body, { childList: true, subtree: true });
     },
-    { selector, pathSuffix },
+    { selector, pathSuffix, holdConcurrentReads },
   );
 }
 

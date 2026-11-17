@@ -60,6 +60,10 @@ flowchart LR
 
 ## Add your open-source project
 
+Choose **Maintainer** on [slop.cash](https://slop.cash/?audience=maintainer), or
+give your agent the [maintainer skill](https://slop.cash/maintain/SKILL.md), to
+add, resume or maintain a project through the existing GitHub and Slop workflows.
+
 Sign in with GitHub and create your project at
 [`slop.cash/projects/new`](https://slop.cash/projects/new). The form checks your
 GitHub authority, creates a paused project, and queues its first security scan.
@@ -265,10 +269,31 @@ profiles:
 gh workflow run deploy.yml --ref main -f use_published_data=true
 ```
 
-This option is available only for a manual `main` release. It validates the
+A manual `development` release may use the same option to deploy staging with
+the leaderboard and profiles staging last published:
+
+```bash
+gh workflow run deploy.yml --ref development -f use_published_data=true
+```
+
+This option is available only for a manual `main` or `development` release.
+
+A manual release may also leave out the state-model and LemmaScript proof
+stages, which pull requests run for the files they change and a nightly run
+checks in full:
+
+```bash
+gh workflow run deploy.yml --ref main -f use_published_data=true -f skip_proofs=true
+```
+
+Add `-f skip_browser_tests=true` to run the browser smoke lane instead of the
+complete browser lanes. Every other check and all deployment verification
+still run. A release that skipped the proofs or the browser lanes is not
+evidence that they passed.
+Each environment reuses only its own last publication. It validates the
 published data and preserves its original collection timestamps and history.
 It skips fresh leaderboard/profile collection and the merge-collector install.
-All code, browser, sandbox, build and production release checks still run.
+All code, browser, sandbox, build and release checks still run.
 Missing or invalid published data stops the release. The option defaults to
 `false`; normal releases continue to collect fresh data.
 

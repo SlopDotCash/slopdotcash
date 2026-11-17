@@ -3,6 +3,11 @@ import { sha256Hex } from "./async-sha256.mjs";
 import { isCanonicalExternalSourceUrl } from "./external-sources";
 import { exactRecord, type FundingPreparation } from "./funding-review-data";
 import { compareActors } from "./github-actor";
+import {
+  isScoreThirds,
+  scoreThirdsStringToPoints,
+  scoreThirdsToPoints,
+} from "./score-units";
 import { allocateWeightedRows } from "./weighted-allocation";
 
 const QUALITY_TIERS = {
@@ -125,7 +130,7 @@ export function assertQualityEvidence(
       "Invalid quality source",
     );
     requireValue(
-      Number.isSafeInteger(event.scoreThirds) &&
+      isScoreThirds(event.scoreThirds) &&
         (event.scoreThirds as number) > 0 &&
         typeof event.weight === "string" &&
         integer.test(event.weight) &&
@@ -145,7 +150,7 @@ export function assertQualityEvidence(
       weight: 0n,
       count: 0,
     };
-    total.thirds += BigInt(event.scoreThirds as number);
+    total.thirds += BigInt(scoreThirdsToPoints(event.scoreThirds as number));
     total.weight += BigInt(event.weight);
     total.count++;
     totals.set(event.actorId, total);
@@ -154,7 +159,7 @@ export function assertQualityEvidence(
     const total = totals.get(row.actor.id);
     requireValue(
       total &&
-        total.thirds === BigInt(row.scoreThirds) &&
+        total.thirds === scoreThirdsStringToPoints(row.scoreThirds) &&
         total.weight === BigInt(row.weight) &&
         total.count === row.eventCount,
       "Quality census does not reconcile with the frozen contributor ledger",

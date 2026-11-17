@@ -21,6 +21,10 @@ import {
   SLOPBOT_INSTALL_URL,
   slopbotInstallScopeNote,
 } from "../../src/lib/project-contracts";
+import {
+  findListedRepository,
+  repositoryIdentity,
+} from "../../src/lib/project-repositories.mjs";
 import { publishesGeneratedSkills } from "../../src/lib/project-skill.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { scanClearanceView } from "../../src/lib/scan-clearance";
@@ -142,6 +146,73 @@ export async function readRepositoryAccess(
         "GitHub or Slopbot did not answer the installation check. Try again.",
     };
   }
+}
+
+/**
+ * Reads repository access for one listed repository of the manifest, by its
+ * current GitHub path and permanent GitHub id. The first repository reads
+ * exactly as `readRepositoryAccess`. Returns null when the manifest does not
+ * list the repository or records no permanent identity for it.
+ */
+export async function readListedRepositoryAccess(
+  reader: RepositoryAccessReader | undefined,
+  manifest: ProjectDefinition,
+  repositoryId: string,
+  actor: GithubActor,
+): Promise<AccessCheck | null> {
+  const found = findListedRepository(manifest.repositories, repositoryId);
+  if (found === null) return null;
+  if (found.index === 0) return readRepositoryAccess(reader, manifest, actor);
+  const identity = repositoryIdentity(manifest, found.repository.id);
+  if (identity === null) return null;
+  if (reader === undefined)
+    return {
+      state: "retry",
+      message:
+        "Slop cannot reach Slopbot to check the installation right now. Try again later.",
+    };
+  try {
+    return {
+      state: "read",
+      access: await reader(
+        {
+          path: currentRepositoryPath(found.repository),
+          githubId: identity.githubId,
+        },
+        actor,
+      ),
+    };
+  } catch {
+    return {
+      state: "retry",
+      message:
+        "GitHub or Slopbot did not answer the installation check. Try again.",
+    };
+  }
+}
+
+/**
+ * GitHub reports a listed repository under its permanent identity and
+ * current manifest name, as a public repository. The first repository also
+ * matches its steward (`manifestMatchesRepository`).
+ */
+export function listedRepositoryMatches(
+  manifest: ProjectDefinition,
+  repositoryId: string,
+  facts: RepositoryFacts,
+): boolean {
+  const found = findListedRepository(manifest.repositories, repositoryId);
+  if (found === null) return false;
+  if (found.index === 0) return manifestMatchesRepository(manifest, facts);
+  const identity = repositoryIdentity(manifest, found.repository.id);
+  return (
+    identity !== null &&
+    String(facts.id) === identity.githubId &&
+    facts.node_id === identity.nodeId &&
+    String(facts.full_name).toLowerCase() ===
+      currentRepositoryPath(found.repository).toLowerCase() &&
+    facts.private === false
+  );
 }
 
 function authorityAccess(access: AccessCheck): AuthorityAccess {
@@ -307,6 +378,11 @@ export function projectSetupStatus(input: {
   restriction: ProjectRestriction;
   authority: SetupAuthority;
   access: AccessCheck;
+  /**
+   * The Slopbot installation read of each repository after the first, in
+   * manifest order. Every repository needs Slopbot.
+   */
+  repositoryAccess?: readonly { repositoryId: string; access: AccessCheck }[];
   clearance: VettingClearance | { state: "unavailable"; message: string };
   scanRequest: ScanRequest | null;
   activatedRevision: number | null;
@@ -314,16 +390,34 @@ export function projectSetupStatus(input: {
 }): ProjectSetupStatus {
   const { project, restriction, authority, access, clearance } = input;
   const manifest = project.manifest;
-  const repository = manifest.repositories[0].id;
+  const reads = [
+    { repositoryId: manifest.repositories[0].id, access },
+    ...(input.repositoryAccess ?? []),
+  ];
+  // The first repository that is not installed decides; else every one is.
+  const unmet =
+    reads.find(
+      (read) =>
+        read.access.state === "retry" ||
+        read.access.access.installation !== "installed",
+    ) ?? null;
+  const repository = unmet?.repositoryId ?? manifest.repositories[0].id;
   const installation: ProjectSetupStatus["checks"]["installation"] =
-    access.state === "retry"
-      ? { state: "retry", message: access.message }
-      : access.access.installation === "installed"
-        ? {
-            state: "installed",
-            message: `Slopbot is installed on ${repository}.`,
-          }
-        : access.access.installation === "suspended"
+    unmet === null
+      ? {
+          state: "installed",
+          message: `Slopbot is installed on ${
+            reads.length === 1
+              ? repository
+              : `${reads
+                  .slice(0, -1)
+                  .map((read) => read.repositoryId)
+                  .join(", ")} and ${reads.at(-1)?.repositoryId}`
+          }.`,
+        }
+      : unmet.access.state === "retry"
+        ? { state: "retry", message: unmet.access.message }
+        : unmet.access.access.installation === "suspended"
           ? {
               state: "suspended",
               message: `The Slopbot installation for ${repository} is suspended on GitHub.`,
@@ -333,6 +427,15 @@ export function projectSetupStatus(input: {
               message: `Slopbot is not installed on ${repository}.`,
             };
   let scan = scanCheck(input.clearance);
+  // A project with more than one repository names an appended repository
+  // that has not cleared.
+  if (
+    "repository" in clearance &&
+    clearance.repository !== undefined &&
+    clearance.repository !== manifest.repositories[0].id
+  ) {
+    scan = { ...scan, message: `${clearance.repository}: ${scan.message}` };
+  }
   const queuedNow =
     input.scanRequest?.state === "queued" ||
     input.scanRequest?.state === "already_queued";

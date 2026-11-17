@@ -83,11 +83,16 @@ function fixture(creator: typeof CREATOR | null = CREATOR) {
   const permissions = new Map<string, Permission>();
   let installation: "installed" | "missing" | "suspended" = "installed";
   let missingRepositoryFacts = false;
+  const accessPaths: string[] = [];
   const repositoryAccess: RepositoryAccessReader = async (
-    _repository,
+    repository,
     actor,
   ) => {
     accessActors.push(actor);
+    accessPaths.push(repository.path);
+    const listed = manifest.repositories.find(
+      (entry, index) => index > 0 && entry.id === repository.path,
+    );
     beforeAccess?.();
     beforeAccess = null;
     if (unavailable) throw new Error("Synthetic GitHub outage");
@@ -101,22 +106,35 @@ function fixture(creator: typeof CREATOR | null = CREATOR) {
       roleName: null,
       repository: missingRepositoryFacts
         ? undefined
-        : {
-            id: wrongIdentity
-              ? 999999
-              : Number(manifest.authority.repositoryId),
-            node_id: manifest.authority.repositoryNodeId,
-            full_name: wrongRepositoryName
-              ? "another/repository"
-              : manifest.repositories[0].id,
-            private: false,
-            owner: {
-              id: Number(manifest.steward.github.actorId),
-              node_id: manifest.steward.github.nodeId,
-              login: manifest.steward.github.login,
-              type: manifest.steward.github.type,
+        : listed
+          ? {
+              id: Number(listed.githubId),
+              node_id: listed.nodeId as string,
+              full_name: listed.id,
+              private: false,
+              owner: {
+                id: 55555,
+                node_id: "O_second",
+                login: "second-owner",
+                type: "Organization",
+              },
+            }
+          : {
+              id: wrongIdentity
+                ? 999999
+                : Number(manifest.authority.repositoryId),
+              node_id: manifest.authority.repositoryNodeId,
+              full_name: wrongRepositoryName
+                ? "another/repository"
+                : manifest.repositories[0].id,
+              private: false,
+              owner: {
+                id: Number(manifest.steward.github.actorId),
+                node_id: manifest.steward.github.nodeId,
+                login: manifest.steward.github.login,
+                type: manifest.steward.github.type,
+              },
             },
-          },
     };
   };
   const readPin = async () => ({
@@ -266,6 +284,7 @@ function fixture(creator: typeof CREATOR | null = CREATOR) {
     setActorPermission: (id: string, value: Permission) =>
       permissions.set(id, value),
     accessActors,
+    accessPaths,
     setInstallation: (value: typeof installation) => (installation = value),
     setMissingRepositoryFacts: () => (missingRepositoryFacts = true),
     setWrongRepositoryName: () => (wrongRepositoryName = true),
@@ -754,4 +773,82 @@ test("a result write cannot change the automatic retry predecessor", async () =>
   ).toThrow("vetting replacement provenance is immutable");
   await f.finish(retry, "incomplete");
   expect(await f.clearance()).toMatchObject({ state: "cleared" });
+});
+
+describe("exemptions of a project with more than one repository", () => {
+  const SECOND = "example/second-admission";
+  const SECOND_ID = "223456789";
+  const twoRepositories = () => {
+    const f = fixture();
+    f.publish({
+      ...f.manifest(),
+      repositories: [
+        ...f.manifest().repositories,
+        {
+          id: SECOND,
+          displayName: SECOND,
+          githubUrl: `https://github.com/${SECOND}`,
+          description: "The second repository of the project.",
+          integrationBranch: "main",
+          githubId: SECOND_ID,
+          nodeId: "R_second",
+          countsFrom: "2026-11-01T00:00:00.000Z",
+        },
+      ],
+    } as ProjectDefinition);
+    return f;
+  };
+
+  test("an exemption binds one repository and never clears another", async () => {
+    const f = twoRepositories();
+    const second = await f.grant({ repository: SECOND });
+    expect(second.status).toBe(201);
+    expect(second.body.exemption).toMatchObject({
+      repositoryId: SECOND_ID,
+      repositoryNodeId: "R_second",
+    });
+    // The maintainer's authority was read on the exempted repository.
+    expect(f.accessPaths).toEqual([SECOND]);
+    // The first repository is still unscanned.
+    expect(await f.clearance()).toEqual({
+      state: "unscanned",
+      repository: REPO,
+    });
+    // The default is the first repository.
+    const first = await f.grant();
+    expect(first.status).toBe(201);
+    expect(first.body.exemption).toMatchObject({
+      repositoryId: f.manifest().authority.repositoryId,
+    });
+    expect(f.accessPaths.at(-1)).toBe(REPO);
+    expect(await f.clearance()).toMatchObject({
+      state: "cleared",
+      assessment: null,
+      exemption: { id: first.body.exemption.id },
+    });
+    // A replay of the second grant is idempotent.
+    expect((await f.grant({ repository: SECOND })).body).toMatchObject({
+      replayed: true,
+      exemption: { id: second.body.exemption.id },
+    });
+    // A later investigation of the first repository controls only it.
+    const investigation = await f.queue();
+    expect(await f.clearance()).toMatchObject({
+      state: "queued",
+      repository: REPO,
+      assessment: { id: investigation.id },
+    });
+  });
+
+  test("an unlisted repository is refused and a second repository needs its own identity match", async () => {
+    const f = twoRepositories();
+    const unlisted = await f.grant({ repository: "example/not-listed" });
+    expect(unlisted.status).toBe(422);
+    expect(unlisted.body.error).toBe("repository_not_listed");
+    f.setWrongRepositoryName();
+    // Wrong facts for the first repository do not affect the second.
+    expect((await f.grant({ repository: SECOND })).status).toBe(201);
+    expect((await f.grant()).status).toBe(409);
+    expect(await f.vetting.listAdmissionExemptions()).toHaveLength(1);
+  });
 });

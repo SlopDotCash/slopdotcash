@@ -1,5 +1,4 @@
-import { execFileSync } from "node:child_process";
-import { notifySlopbotAppeal } from "../../backend/notifications/events";
+import { appealSeedSql, runAppealFixtureSql } from "../slopbot-appeal-fixture";
 import { expect, expectAccessible, test } from "./fixtures";
 
 // The worker workflow test covers the actual escalation and mail dispatch.
@@ -12,44 +11,11 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
   const persist = process.env.SLOP_E2E_PERSIST_TO;
   const token = process.env.SLOP_E2E_MODERATOR_TOKEN;
   if (!persist || !token) throw new Error("Missing isolated registry fixture");
-  const sql = (command: string) =>
-    execFileSync(
-      "node",
-      [
-        "node_modules/wrangler/bin/wrangler.js",
-        "d1",
-        "execute",
-        "slop-private",
-        "--local",
-        "--persist-to",
-        persist,
-        "--command",
-        command,
-      ],
-      { stdio: "pipe" },
-    );
+  const sql = (command: string) => runAppealFixtureSql(persist, command);
   const quote = (value: unknown) => `'${String(value).replaceAll("'", "''")}'`;
   const key = `appeal:browser-${test.info().project.name}:revision`;
   const at = new Date().toISOString();
-  const job = JSON.stringify({
-    owner: "example",
-    repo: "project",
-    itemKind: "pull_request",
-    number: 5,
-  });
-  const notice = notifySlopbotAppeal(
-    {
-      prepare: (query) => ({
-        bind: (...values) =>
-          query.replace(/\?(\d+)/gu, (_, n) => quote(values[Number(n) - 1])),
-      }),
-    },
-    key,
-    "900000004",
-    at,
-  );
-  sql(`INSERT INTO slopbot_appeals(appeal_key,repository_id,item_node_id,appellant_github_id,job_json,opened_at,due_at,escalated_at,escalation)
-    VALUES (${quote(key)},1,${quote(key)},'900000002',${quote(job)},${quote(at)},'2099-01-01T00:00:00.000Z',${quote(at)},'A moderator decision is required'); ${notice};`);
+  await sql(appealSeedSql(key, at));
   await page.goto("/how-it-works", { waitUntil: "networkidle" });
   await page.evaluate((value) => {
     document.cookie = `__Host-slop_points=${value}; Path=/; Secure; SameSite=Strict`;
@@ -88,7 +54,7 @@ test("an escalated contribution appeal opens from the moderator Inbox and shows 
     path: test.info().outputPath("appeal-review.png"),
     fullPage: true,
   });
-  sql(
+  await sql(
     `UPDATE slopbot_appeals SET resolved_at=${quote(new Date().toISOString())},resolution='denied',resolved_by='moderator' WHERE appeal_key=${quote(key)};`,
   );
   await page.reload({ waitUntil: "networkidle" });

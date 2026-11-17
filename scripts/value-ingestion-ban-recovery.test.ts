@@ -135,6 +135,44 @@ test("a complete empty ban feed succeeds", async () => {
   expect(await loadParticipationBans(github, transport)).toEqual(new Map());
 });
 
+test("retained historical user IDs preserve a deleted account's ban across node-ID spellings", async () => {
+  const legacy = "MDQ6VXNlcjQy";
+  const current = "U_kgDOAAAAKg";
+  const unrelated = "MDQ6VXNlcjQz";
+  const at = "2026-01-01T00:00:00.000Z";
+  const transport = Object.assign(
+    async () =>
+      Response.json({
+        schemaVersion: "slop-account-bans:v1",
+        bans: [{ githubId: "42", bannedAt: at }],
+      }),
+    { preconnect: fetch.preconnect },
+  );
+  const deleted = { get: async () => null };
+  expect(
+    await loadParticipationBans(deleted, transport, [
+      legacy,
+      current,
+      unrelated,
+    ]),
+  ).toEqual(
+    new Map([
+      [legacy, at],
+      [current, at],
+    ]),
+  );
+  const live = { get: async <T>() => ({ id: 42, node_id: current }) as T };
+  expect(await loadParticipationBans(live, transport, [legacy])).toEqual(
+    new Map([
+      [legacy, at],
+      [current, at],
+    ]),
+  );
+  await expect(
+    loadParticipationBans(deleted, transport, ["unknown-user-id"]),
+  ).rejects.toThrow("canonical GitHub user ID");
+});
+
 for (const feed of [
   "bans",
   "penalties",

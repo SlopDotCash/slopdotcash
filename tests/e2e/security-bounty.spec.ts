@@ -9,7 +9,10 @@
  */
 import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
-import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
+import {
+  SECURITY_DEFAULT_EXCLUSIONS,
+  type SecurityBountyTerms,
+} from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
@@ -1093,6 +1096,11 @@ test("a reporter confirms a legacy linked report with GitHub @registry", async (
   await expectAccessible(page);
 });
 
+const OWNER_EXCLUSIONS = [
+  "Price feed staleness within the documented heartbeat",
+  "Rounding dust below one cent",
+];
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   diagnostics,
@@ -1128,6 +1136,7 @@ test("owners publish and control bounty programs with verified funding @registry
       Disclosure: "Contact the maintainer before disclosure.",
       "Researcher protection":
         "Good-faith testing within these rules is authorized.",
+      "Also does not qualify": `  ${OWNER_EXCLUSIONS.join("\n\n")}\n`,
     };
     for (const group of [
       "Scope and testing",
@@ -1150,6 +1159,7 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(stored.manifest.securityBounty).toMatchObject({
       status: "paused",
       fundingPolicy: "after-approval",
+      scope: { excludedFindings: OWNER_EXCLUSIONS },
     });
     // A historical prefunded offer still needs verified available funds.
     const unsupported = await api(
@@ -1265,7 +1275,29 @@ test("owners publish and control bounty programs with verified funding @registry
     // The refusal is the same when the vault has available funds.
     await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
+    // The published page lists Slop's lines, then the owner's.
+    const scope = page.getByRole("region", { name: "Scope", exact: true });
+    await expect(
+      scope
+        .getByRole("list", { name: "Does not qualify", exact: true })
+        .getByRole("listitem"),
+    ).toHaveText([...SECURITY_DEFAULT_EXCLUSIONS]);
+    await expect(
+      scope
+        .getByRole("list", {
+          name: "Also does not qualify for this program",
+          exact: true,
+        })
+        .getByRole("listitem"),
+    ).toHaveText(OWNER_EXCLUSIONS);
     await openProjectSecuritySettings(page);
+    await page
+      .locator("summary")
+      .filter({ hasText: "Scope and testing" })
+      .click();
+    await expect(
+      page.getByLabel("Also does not qualify", { exact: true }),
+    ).toHaveValue(OWNER_EXCLUSIONS.join("\n"));
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await expectAccessible(page);
     await page.screenshot({
@@ -1613,6 +1645,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
+    const intakeRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/security-programs/${b.id}/intake`,
+    );
     await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC security bounty",
@@ -1624,8 +1662,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
-    // Finish the overview background reads before explicitly closing this context.
-    // Strict diagnostics must still catch unexpected request cancellations.
+    // Finish this program's intake and font reads before leaving its page.
+    // Waiting only on the destination would cancel these requests first.
+    expect(await (await intakeRead).finished()).toBeNull();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
     await expect(
       page.getByText("Loading records…", { exact: true }),
@@ -2617,7 +2659,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         "/.well-known/slop/projects.json",
         `/projects/${a.id}/security`,
         "/",
-      ].map(async (path) => (await request.get(path)).text()),
+      ].map(async (path) => {
+        const response = await request.get(path, { maxRetries: 1 });
+        expect(response.status(), path).toBe(200);
+        return response.text();
+      }),
     );
     for (const text of outputs) {
       expect(text).not.toContain("GHSA-");
@@ -3167,17 +3213,15 @@ test("admin placement and explicit bounty type drive generic project pages @regi
       )
       .evaluateAll((sections) => sections.map((section) => section.id)),
   ).toEqual(["security-bounties", "projects", "leaderboard"]);
-  const featured = page.locator('[aria-labelledby="featured-projects"]');
-  await expect(featured.locator(".project-card")).toHaveCount(1);
-  await expect(featured).toContainText("$10k");
-  await expect(featured).toContainText("Pledged");
-  await expect(featured).not.toContainText("Points only");
+  // The bounty is listed once, in its own section, never again as a project.
+  const projects = page.locator("#projects");
+  await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
   await expect(section).toContainText("$10k");
+  await expect(section).not.toContainText("Pledged");
   await expect(section).not.toContainText("7,500 USDC");
   await expect(
     page.getByRole("link", { name: "Your private reports", exact: true }),
   ).toHaveCount(0);
-  await expect(page.locator("#community-projects")).toHaveCount(0);
   const link = section.getByRole("link").filter({
     has: page.getByRole("heading", {
       name: "Security test program",
@@ -3250,33 +3294,27 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   ).toBeVisible();
   expect(await (await intakeRead).finished()).toBeNull();
 
-  // Clearing Featured moves the same bounty to Community without changing its offer.
-  shown = { ...project, listingTier: "community" };
-  await page.goto("/", { waitUntil: "networkidle" });
-  await expect(featured).toHaveCount(0);
-  const community = page.locator(".community-projects");
-  const row = community.locator(`a[href="/projects/${id}"]`);
-  await expect(row).toBeVisible();
-  await expect(row).toContainText("$10k / Critical");
-  await expect(row).toContainText("Pledged");
-  await expect(row).not.toContainText("Points only");
-
-  // A separate open bounty names the existing offer while ordinary routing stays intact.
-  shown = {
-    ...project,
-    listingTier: "featured",
-    securityBounty: { ...project.securityBounty, rewardMode: "separate" },
-  };
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(featured).toContainText("$10k");
-  await expect(featured).toContainText("/ Critical");
-  await expect(featured).toContainText("Pledged");
-  await expect(featured).not.toContainText("Points only");
-  shown = { ...shown, listingTier: "community" };
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("$10k / Critical");
-  await expect(row).toContainText("Pledged");
-  await expect(row).not.toContainText("Points only");
+  // Placement never lists the bounty a second time, and a separate open bounty
+  // keeps its own section card.
+  for (const next of [
+    { ...project, listingTier: "community" },
+    {
+      ...project,
+      listingTier: "featured",
+      securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+    },
+    {
+      ...project,
+      listingTier: "community",
+      securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+    },
+  ]) {
+    shown = next;
+    await page.goto("/", { waitUntil: "networkidle" });
+    await expect(section).toContainText("$10k");
+    await expect(section).not.toContainText("Pledged");
+    await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+  }
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
@@ -3293,7 +3331,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   const ordinarySnapshot = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
   );
-  await row.click();
+  await page.goto(`/projects/${id}`);
   const snapshotResponse = await ordinarySnapshot;
   await snapshotResponse.finished();
   const snapshot = (await snapshotResponse.json()) as {
@@ -3615,6 +3653,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
+    await expect
+      .poll(
+        () =>
+          privateReads.some((url) => {
+            const receipt = new URL(url);
+            return (
+              receipt.pathname ===
+                `/api/v1/security-submissions/${submissionId}` &&
+              receipt.searchParams.get("view") === "receipt"
+            );
+          }),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await expect(report).toBeVisible();
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -3631,7 +3684,11 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox-compact.png"),
       fullPage: true,
     });
-    expect(privateReads).toHaveLength(0);
+    expect(
+      privateReads.every(
+        (url) => new URL(url).searchParams.get("view") === "receipt",
+      ),
+    ).toBe(true);
     // Keep the real stored report and its authorization route. Hide just its
     // row from the recent projection, as the API does after 100 newer receipts.
     // The API regression separately creates all 101 receipts with real migrations.
@@ -3644,6 +3701,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       );
       await route.fulfill({ response, json: body });
     };
+    privateReads.length = 0;
     await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
     await page.reload({ waitUntil: "networkidle" });
     await expect(report).toHaveClass(/is-focused/u);
@@ -3656,6 +3714,23 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
     const missingReceipt = "ss_missing_receipt_fixture";
+    const receiptPath = `**/api/v1/security-submissions/${missingReceipt}?view=receipt`;
+    const wrongReceipt = async (route: Route) => {
+      const url = new URL(route.request().url());
+      url.pathname = `/api/v1/security-submissions/${submissionId}`;
+      const response = await route.fetch({ url: url.href });
+      expect(response.status()).toBe(200);
+      await route.fulfill({ response });
+    };
+    await page.route(receiptPath, wrongReceipt);
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText(/The private report receipt could not be verified/),
+    ).toBeVisible();
+    await expect(report).toHaveCount(1);
+    await page.unroute(receiptPath, wrongReceipt);
     diagnostics.allowResponse(
       404,
       "GET",
@@ -3731,16 +3806,55 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         ],
         { stdio: "pipe" },
       );
-      await page.reload({ waitUntil: "networkidle" });
-      await report.getByText("Read private report", { exact: true }).click();
-      await expect(report.locator(".security-report-text")).toHaveText(
-        description,
-      );
+      let releaseList!: () => void;
+      let listCaptured = false;
+      let listSnapshot: Record<string, unknown> = {};
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      const heldList = async (route: Route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        listSnapshot = await response.json();
+        listCaptured = true;
+        await listGate;
+        if (state === "queued") {
+          // Mark the stale list so the test observes when it actually renders.
+          await route.fulfill({
+            response,
+            json: { ...listSnapshot, authorityUnavailable: true },
+          });
+        } else {
+          await route.fulfill({
+            status: 503,
+            json: { message: "Recent reports unavailable." },
+          });
+        }
+      };
+      if (state === "running")
+        diagnostics.allowResponse(503, "GET", "/api/v1/security-submissions");
+      await page.route("**/api/v1/security-submissions", heldList);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect.poll(() => listCaptured).toBe(true);
       const retry = report.getByRole("button", {
         name: "Retry screening",
         exact: true,
       });
       await expect(retry).toBeVisible();
+      await expect(report.locator(".security-report-text")).toHaveCount(0);
+      if (state === "running") {
+        releaseList();
+        await expect(
+          page
+            .getByRole("alert")
+            .filter({ hasText: "Recent reports unavailable." }),
+        ).toBeVisible();
+        await expect(retry).toBeVisible();
+      }
+      await report.getByText("Read private report", { exact: true }).click();
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
       await page.screenshot({
         path: test.info().outputPath(`recovery-${state}.png`),
         fullPage: true,
@@ -3767,9 +3881,41 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
             .intake.state;
         })
         .toBe("legitimate");
-      await page
-        .getByRole("button", { name: "Refresh reports", exact: true })
-        .click();
+      const refresh = page.getByRole("button", {
+        name: "Refresh reports",
+        exact: true,
+      });
+      if (state === "queued") {
+        releaseList();
+        const authority = page.getByText(
+          "Some maintainer access could not be checked. Your own reports are shown.",
+        );
+        await expect(authority).toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", heldList);
+
+        // The screening POST schedules work and can return the queued receipt.
+        // Refresh now reads its completed state while the stale list is pending.
+        let releaseStaleList!: () => void;
+        const staleGate = new Promise<void>((resolve) => {
+          releaseStaleList = resolve;
+        });
+        const staleList = async (route: Route) => {
+          await staleGate;
+          await route.fulfill({
+            json: { ...listSnapshot, authorityUnavailable: false },
+          });
+        };
+        await page.route("**/api/v1/security-submissions", staleList);
+        await refresh.click();
+        await expect(retry).not.toBeVisible();
+        releaseStaleList();
+        await expect(authority).not.toBeVisible();
+        await expect(retry).not.toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", staleList);
+      } else {
+        await page.unroute("**/api/v1/security-submissions", heldList);
+        await refresh.click();
+      }
       await expect(retry).not.toBeVisible();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,
@@ -5810,10 +5956,12 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
-  // The real SPA navigation deliberately leaves Home while its public Points
-  // shards may still be loading. Their aborts are the expected cleanup.
+  // The test deliberately leaves Home while its public reads are in flight.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/api\/v1\/(?:merge-activity|pool-funding)$/u,
   );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);

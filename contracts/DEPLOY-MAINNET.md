@@ -58,8 +58,12 @@ Registrar `0xd64F35aC87D9a1FB8eBD44e745c24436B606cF60`, identity authority
 `0x31B87d13f9091bC3b8A5cb6F45C8b3cB99Ed6d70`, fee recipient
 `0x8f77C37D8650776bFe73c9b12B15209eE15D9b86`, upgrade authority and deployer
 `0x2Ad20Afa352Ec70E43A6d0E7794cf305c9Cbe35D`, binding delay 0. Sourcify has a
-full match for all three initial contracts on each chain. That verification
-does not cover the replacement implementations.
+full match for all three initial contracts on each chain. Since 17 November
+2026 it also has a match for the replacement factory and vault implementations
+above on each chain, built from `7fdedd35` with the pinned `foundry.toml`
+settings, and for every EVM vault registered by that date. The Robinhood Chain
+Blockscout explorer shows that source. The Etherscan-family explorers
+(etherscan.io, basescan.org, robin.etherscan.io) are not verified.
 
 Solana program `7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ` was upgraded
 at finalized slot **461,493,344** from reviewed source `83827c04` (#1271).
@@ -151,8 +155,10 @@ payments, hosted attester acceptance and future monthly execution remain
 separate. New vaults register through the normal owner flow in D1; the public
 factory review contains no project or owner inventory. The normal protected
 release must publish the review before the website offers this factory.
-External explorer verification of the replacement implementations is not
-claimed; exact runtime and source checks are the independent proof here. The
+External explorer verification of the replacement implementations was not
+part of this evidence; exact runtime and source checks are the independent
+proof here. Sourcify verification followed on 17 November 2026 (see "Current
+mainnet deployments"). The
 [sanitized finalized proof and checksum](https://github.com/SlopDotCash/slopdotcash/releases/tag/pr-evidence-base-upgrade-208fbf5b)
 include the independent readback, exact source mapping and local rehearsal;
 private signing journals and credentials are excluded.
@@ -407,6 +413,18 @@ arguments are the vault implementation and the encoded initializer used for
 creation), record its runtime code SHA-256 as `codeSha256`, and run
 `verifyEvmDeployment` from `contracts/evm/adapter.ts` against the manifest
 before activation.
+
+Every vault is the same `ERC1967Proxy` at a new address, so each new vault
+needs its own source verification. Sourcify needs no key. From `contracts/evm`
+at the deployed source commit:
+
+```sh
+forge verify-contract "$VAULT" \
+  vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
+  --chain-id "$CHAIN_ID" --verifier sourcify --watch
+```
+
+Nothing runs this automatically when an owner creates a vault.
 
 ### 1.7 EVM evidence
 
@@ -693,9 +711,10 @@ Do this section for one network. Finish it, reconcile the first payout, and
 record the evidence before you start the next network. A human or an
 owner-authorized agent may run these steps within the approved financial scope.
 
-The code enables only Base mainnet (section 3.6). Every other value in
+The code enables Base mainnet (section 3.6), Robinhood Chain and Solana
+mainnet (section 3.7). The Ethereum value in
 `workers/payment-executor/mainnet-execution.mjs` is `false`, and the
-executor and the attester refuse those mainnets before they read a signer
+executor and the attester refuse that mainnet before they read a signer
 secret. `workers/payment-executor/configure.mjs --stack production`
 generates the production stack for one mainnet. It is the identity attester
 Worker only (PAY-05). Slop holds no relayer key and runs no dispatcher or
@@ -1127,6 +1146,21 @@ snapshot leaves an existing attester unchanged. Do not delete the signing
 secret as a stop procedure: enabling that network later requires it. Do
 not delete the Worker: that deletes its signing journal. Slop cannot stop a payment that the project
 or a permissionless executor submits for an approved and funded obligation.
+
+### 3.7 Robinhood Chain and Solana mainnet activation
+
+Operator decision of 14 November 2026: `robinhood-mainnet` and
+`solana-mainnet` are `true` in `mainnet-execution.mjs`. The release derives
+the Pages `PAYMENT_NETWORKS` and the attester bindings from that file, as for
+Base (section 3.6). Both attester Workers already existed with their vault
+pins and their secrets installed (`PAYMENT_RPC_URLS` and
+`SIGNER_PRIVATE_KEY` for Robinhood Chain, `PAYMENT_RPC_URLS` and
+`SOLANA_SIGNER_SEED` for Solana); the release checks the names and deploys
+each with its cron. The readiness report (section 3.3) and the first payout
+reconciliation (section 3.5) on each network were not run before the switch.
+The Robinhood Chain `PAYMENT_RPC_URLS` endpoint must serve the finalized
+tag; if it does not, the attester refuses to sign and its run fails in the
+Worker logs. Ethereum stays off.
 
 ## 4. EVM monthly reserve V2 upgrade
 

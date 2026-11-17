@@ -33,6 +33,7 @@ import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
 import type { QueuedAssessment } from "./assembly-manifest";
 import { expandGzipInputs } from "./gzip-inputs";
+import { localInstallHelpers } from "./local-install-helpers";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
@@ -168,6 +169,9 @@ const INSTALL_FILES = new Set([
   "jenkinsfile",
   "vagrantfile",
   "rakefile",
+  "rakefile.rb",
+  "gemfile",
+  "gems.rb",
   "brewfile",
   "procfile",
   "cmakelists.txt",
@@ -210,7 +214,7 @@ const INSTALL_FILES = new Set([
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|rake|mk|make|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
@@ -269,6 +273,9 @@ export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
   const surfaces = new Set<ScanSurface>();
+  const rubyManifest =
+    !name.endsWith(".lock") &&
+    /^(?:gemfile(?:\..+)?|.+\.gemfile|gems\.rb)$/u.test(name);
   if (
     LOCKFILES.has(name) ||
     /^requirements[^/]*\.txt$/u.test(name) ||
@@ -277,7 +284,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     /(?:^|\/)requirements\/[^/]*\.txt$/u.test(lower)
   )
     surfaces.add("dependencies");
-  if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
+  if (MANIFESTS.has(name) || name.endsWith(".gemspec") || rubyManifest)
     surfaces.add("manifests");
   if (
     name.endsWith(".md") ||
@@ -293,6 +300,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    rubyManifest ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
     inDirectory(lower, ".husky") ||
@@ -551,6 +559,8 @@ const RULE_POLICY_SHA256 = sha256(
       "msbuild-element-text-except-exec-comments-and-cdata",
     compressedInputs:
       "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
+    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -1676,6 +1686,8 @@ export function inspectRepository(input: {
     text: string;
     surfaces: ScanSurface[];
     flagged: boolean;
+    /** Unknown text is never assumed to be generated or vendored source. */
+    fullTextRequired: boolean;
     /** Rule patterns the deterministic pass proved cannot match `text`. */
     nonMatches?: ReadonlySet<RegExp>;
   };
@@ -1689,6 +1701,36 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const texts = new Map(files.map((file) => [file.path, decode(file.bytes)]));
+  const helpers = localInstallHelpers(
+    files.map((file) => ({
+      path: file.path,
+      text: texts.get(file.path) ?? null,
+    })),
+    files.flatMap((file) => {
+      const text = texts.get(file.path);
+      if (text === null || text === undefined) return [];
+      const surfaces = surfacesOf(file.logicalPath ?? file.path);
+      const directory = file.path.includes("/")
+        ? file.path.slice(0, file.path.lastIndexOf("/"))
+        : "";
+      const commands = installHookCommands(file.path, text);
+      if (
+        (surfaces.includes("installScripts") ||
+          (surfaces.length === 0 && declaresInterpreter(file.bytes)) ||
+          gypIncludes.has(file.path) ||
+          cmakeIncludes.has(file.path)) &&
+        (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
+          /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
+      )
+        commands.push(text);
+      return commands.map((text) => ({ path: file.path, text, directory }));
+    }),
+  );
+  if (helpers.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...helpers.unacquired);
+  }
   for (const file of files) {
     const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
@@ -1696,10 +1738,15 @@ export function inspectRepository(input: {
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      helpers.included.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
+    const unclassified = surfaces.length === 0;
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
@@ -1729,20 +1776,42 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
-    const text = decode(file.bytes);
+    const text = texts.get(file.path) ?? null;
     // Ant imports may use any filename. Its project root identifies the
     // executable build document without parsing XML or resolving entities.
     if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length === 0) continue;
+    // An extension is a hint, not proof that acquired bytes cannot execute.
+    // Keep native/archive handling above. Every other acquired file enters
+    // source review; unreadable bytes below remain an explicit coverage gap.
+    if (unclassified) {
+      if (!surfaces.includes("source")) surfaces.push("source");
+      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
+    }
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);
+      if (unclassified) {
+        // Unknown binary bytes are evidence too. Keep their digest and
+        // quarantine rather than reusing the same path-only visibility gap
+        // when an opaque input changes.
+        artifacts.push({
+          sha256: digest,
+          parentSha256: file.parentArtifactSha256 ?? null,
+          origin: file.parentArtifactSha256 ? "archive" : "repository",
+          path: file.path.slice(0, 500),
+          type: "binary",
+          state: "quarantined",
+          analysis: "pending",
+          requestedExecution: false,
+        });
+        counts.downloads += 1;
+      }
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
@@ -1784,6 +1853,7 @@ export function inspectRepository(input: {
       text,
       surfaces,
       flagged: found.length > 0 || hooks.length > 0,
+      fullTextRequired: unclassified,
       // The recorded non-matches were proven against `ruleText`; they are
       // only valid for the excerpt pass when that is the text it reads.
       ...(ruleText === text ? { nonMatches: provenNonMatches } : {}),
@@ -1826,7 +1896,9 @@ export function inspectRepository(input: {
   if (envelope(items)) {
     items = [...links];
     for (const candidate of candidates) {
-      const kind = bulkClass(candidate.path, candidate.surfaces);
+      const kind = candidate.fullTextRequired
+        ? null
+        : bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
         kind === null
           ? null

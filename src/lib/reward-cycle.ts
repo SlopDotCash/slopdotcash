@@ -36,6 +36,11 @@ import {
   type WalletProof,
 } from "./rewards";
 import { eventThirds } from "./score-penalties";
+import {
+  addScoreThirds,
+  isScoreThirds,
+  scoreThirdsToPoints,
+} from "./score-units";
 import { allocateWeightedRows } from "./weighted-allocation";
 
 type RewardCycleProposal =
@@ -107,9 +112,7 @@ export function allocateReviewBudgetMinor(
   if (
     contributors.some(
       ({ actorId, scoreThirds }) =>
-        actorId.length === 0 ||
-        !Number.isSafeInteger(scoreThirds) ||
-        scoreThirds < 0,
+        actorId.length === 0 || !isScoreThirds(scoreThirds),
     ) ||
     new Set(contributors.map(({ actorId }) => actorId)).size !==
       contributors.length
@@ -117,16 +120,14 @@ export function allocateReviewBudgetMinor(
     throw new TypeError("review weights must be unique non-negative integers");
   }
   const eligible = contributors
-    .filter(
-      ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
-    )
+    .filter(({ scoreThirds }) => scoreThirds > 0)
     .sort((left, right) => left.actorId.localeCompare(right.actorId));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
   const allocations = new Map(eligible.map(({ actorId }) => [actorId, 0n]));
   for (const { row, amount } of allocateWeightedRows(
     totalMinor,
     eligible,
-    (contributor) => BigInt(contributor.scoreThirds),
+    (contributor) => BigInt(scoreThirdsToPoints(contributor.scoreThirds)),
     (left, right) => left.actorId.localeCompare(right.actorId),
   )) {
     allocations.set(row.actorId, amount);
@@ -146,7 +147,7 @@ export function additiveReviewBudgetWeights(
     if (event.category !== "substantive-review") continue;
     weights.set(
       event.actor.id,
-      (weights.get(event.actor.id) ?? 0) + eventThirds(event),
+      addScoreThirds(weights.get(event.actor.id) ?? 0, eventThirds(event)),
     );
   }
   return [...weights].map(([actorId, scoreThirds]) => ({

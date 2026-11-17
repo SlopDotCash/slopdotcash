@@ -47,3 +47,36 @@ export function implementationCreditActors<
             : 0,
   );
 }
+
+/** Complete GitHub additions/deletions are allocation weights, never value.
+ * Callers provide each first-accepted, non-merge commit once and substitute a
+ * verified original author before calling this for retained copies.
+ */
+export function implementationLineWeights<
+  Actor extends { id: string; kind: string },
+>(
+  sourceAuthor: Actor | null,
+  commits: readonly {
+    author: Actor | null;
+    additions?: number;
+    deletions?: number;
+  }[],
+): Map<string, bigint> | null {
+  const weights = new Map<string, bigint>();
+  for (const commit of commits) {
+    const actors = implementationCreditActors(sourceAuthor, [commit.author]);
+    if (actors.length === 0) continue;
+    if (
+      !Number.isSafeInteger(commit.additions) ||
+      !Number.isSafeInteger(commit.deletions) ||
+      (commit.additions as number) < 0 ||
+      (commit.deletions as number) < 0
+    )
+      return null;
+    const lines =
+      BigInt(commit.additions as number) + BigInt(commit.deletions as number);
+    const actor = actors[0];
+    weights.set(actor.id, (weights.get(actor.id) ?? 0n) + lines);
+  }
+  return weights;
+}

@@ -7,13 +7,16 @@
  */
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { fail } from "../backend/http";
 import { hasParticipationBan } from "../backend/projects/account-bans";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import type { RepositoryControl } from "../backend/projects/contracts";
 import {
+  finishSavedVaultCreations,
   handleProjectApi,
   type ProjectApiDependencies,
   refreshProjectSetup,
+  savedVaultCreationSweep,
 } from "../backend/projects/handler";
 import type { ScanRequest } from "../backend/projects/setup";
 import { TokenMetadataError } from "../backend/projects/token-metadata";
@@ -1490,6 +1493,203 @@ test("an intervening revision refuses removal without overwriting the newer proj
     manifest: { listingTier: "community", headline: "Newer maintainer edit." },
   });
   expect(await t.persistence.listRevisions()).toHaveLength(2);
+});
+
+test("removal waits for reinstatement instead of reporting a quarantine's own retired revision as removed", async () => {
+  const t = registry();
+  const MOD_2 = "900000005";
+  t.deps.adminGithubIds = new Set([ADMIN, MOD_2]);
+  t.deps.moderatorGithubIds = new Set([ADMIN, MOD_2]);
+  await t.create("remove-quarantined", "example/remove-quarantined");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-quarantined");
+  if (!listed) throw new Error("Project missing");
+  expect(listed).toMatchObject({
+    status: "active",
+    manifest: { listingTier: "community" },
+  });
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        ADMIN,
+        {
+          action: "quarantine",
+          reason: "Investigating a contributor report",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: listed.revision,
+          expectedSequence: 1,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const quarantined = await t.persistence.getProject("remove-quarantined");
+  if (!quarantined) throw new Error("Project missing");
+  expect(quarantined.manifest).toMatchObject({
+    status: "paused",
+    listingTier: "retired",
+  });
+  // That revision is the quarantine's, not a removal: reinstatement lists
+  // the project again. Neither the current head nor an editor loaded before
+  // the quarantine is told that the project was removed.
+  for (const expectedRevision of [quarantined.revision, listed.revision]) {
+    const removed = await t.call(
+      "POST",
+      "projects/remove-quarantined/remove",
+      OTHER,
+      { expectedRevision },
+    );
+    expect(removed.status).toBe(409);
+    expect(removed.body).toMatchObject({ error: "project_restricted" });
+  }
+  expect((await t.persistence.getProject(listed.id))?.revision).toBe(
+    quarantined.revision,
+  );
+  // The owner appeals; after a fresh clean scan another moderator reinstates.
+  expect(
+    (
+      await t.call("POST", "project-appeals", OWNER, {
+        projectId: "remove-quarantined",
+        reason: "The report is mistaken",
+        evidenceReference: "private-appeal-fixture",
+      })
+    ).status,
+  ).toBe(200);
+  t.state.clearance = {
+    ...CLEARED,
+    assessment: CLEARED.assessment && {
+      ...CLEARED.assessment,
+      revision: quarantined.revision,
+    },
+  };
+  t.sqlite
+    .prepare(
+      `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean', 'fixture', ?, ?, ?, ?)`,
+    )
+    .run(
+      CLEARED.assessment?.id ?? "",
+      listed.id,
+      quarantined.revision,
+      quarantined.manifestSha256,
+      "e".repeat(64),
+      "a".repeat(40),
+      "d".repeat(64),
+      ADMIN,
+      "admin",
+      NOW,
+      "Reinstatement scan",
+      JSON.stringify({ disposition: "clean" }),
+      "f".repeat(64),
+      "0".repeat(64),
+      NOW,
+    );
+  expect(
+    (
+      await t.call(
+        "POST",
+        "admin/projects/remove-quarantined/enforcement",
+        MOD_2,
+        {
+          action: "reinstate",
+          reason: "The report did not hold up",
+          evidenceReference: "private-case-fixture",
+          expectedRevision: quarantined.revision,
+          expectedSequence: 3,
+        },
+      )
+    ).status,
+  ).toBe(200);
+  const reinstated = await t.persistence.getProject(listed.id);
+  if (!reinstated) throw new Error("Project missing");
+  expect(reinstated.manifest.listingTier).toBe("community");
+  // A removal now appends its own revision, and that revision holds.
+  expect(
+    (
+      await t.call("POST", "projects/remove-quarantined/remove", OTHER, {
+        expectedRevision: reinstated.revision,
+      })
+    ).status,
+  ).toBe(200);
+  await t.call("POST", "project-setup/remove-quarantined/check", OWNER, {});
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: reinstated.revision + 1,
+    status: "paused",
+    manifest: { listingTier: "retired" },
+  });
+  expect((await t.call("GET", "projects/remove-quarantined", "")).status).toBe(
+    404,
+  );
+});
+
+test("a Ban recorded while a removal is in flight refuses it at the guarded write", async () => {
+  const t = registry();
+  await t.create("remove-ban-race", "example/remove-ban-race");
+  t.state.clearance = CLEARED;
+  await t.call("POST", "project-setup/remove-ban-race/check", OWNER, {});
+  const listed = await t.persistence.getProject("remove-ban-race");
+  if (!listed) throw new Error("Project missing");
+  expect(listed.status).toBe("active");
+  // A confirmed malicious scan records its Ban after the removal read a clear
+  // restriction. The Ban's paused, retired revision is still pending, so a
+  // removal revision written now would become the one reinstatement undoes.
+  const generation = t.persistence.enforcementGeneration.bind(t.persistence);
+  let banned = false;
+  t.persistence.enforcementGeneration = async () => {
+    if (!banned) {
+      banned = true;
+      expect(
+        await t.persistence.appendEnforcement(
+          {
+            id: "enf_remove_ban_race_scan",
+            projectId: listed.id,
+            sequence: 1,
+            action: "ban",
+            stateAfter: "banned",
+            appealAfter: "none",
+            reason: "Synthetic confirmed malicious scan",
+            evidenceReference: "private-case-fixture",
+            repositoryGithubId: "987654321",
+            repositoryKeys: ["example/remove-ban-race"],
+            actor: null,
+            actorRole: "vetting-service",
+            decisionSource: "standing-rule",
+            systemIssuer: {
+              kind: "vetting-service",
+              keySha256: "a".repeat(64),
+              assessmentId: "vet_fixture",
+              policyVersion: "fixture",
+              rule: "confirmed-malicious",
+            },
+            beforeRevision: listed.revision,
+            beforeManifestSha256: listed.manifestSha256,
+            afterRevision: null,
+            afterManifestSha256: null,
+            result: "revision_pending",
+            createdAt: NOW,
+          },
+          null,
+          [],
+        ),
+      ).toBe("recorded");
+    }
+    return generation();
+  };
+  const removed = await t.call(
+    "POST",
+    "projects/remove-ban-race/remove",
+    OTHER,
+    { expectedRevision: listed.revision },
+  );
+  expect(banned).toBe(true);
+  expect(removed.status).toBe(409);
+  expect(removed.body).toMatchObject({ error: "project_restricted" });
+  expect(await t.persistence.getProject(listed.id)).toMatchObject({
+    revision: listed.revision,
+    manifest: { listingTier: "community" },
+  });
 });
 
 function storeCancellableApplication(
@@ -3180,7 +3380,7 @@ test.each(["vault verification", "owner update"])(
       register: async () => {
         start();
         await verified;
-        return TEST_VAULT;
+        return { deployment: TEST_VAULT, evidence: "finalized" };
       },
     };
     const prepared = await t.persistence.getProject(target.id);
@@ -3303,7 +3503,7 @@ test("only the steward or a repository admin can register the project vault", as
     },
     register: async (_project, actor) => {
       registered.push(actor.githubId);
-      return TEST_VAULT;
+      return { deployment: TEST_VAULT, evidence: "finalized" };
     },
   };
   const register = (actor: string) =>
@@ -3384,7 +3584,10 @@ test("an EVM vault creation hash registers in any letter case", async () => {
     // Like the chain verifier, the deployment records the hash it was given.
     register: async (_project, _actor, _input, transactionId) => {
       verified.push(transactionId);
-      return { ...TEST_VAULT, deploymentTransaction: transactionId };
+      return {
+        deployment: { ...TEST_VAULT, deploymentTransaction: transactionId },
+        evidence: "finalized",
+      };
     },
   };
   const register = (transactionId: string) =>
@@ -3809,4 +4012,774 @@ test("an admission investigation queued during the activation check prevents act
     revision: 2,
     status: "active",
   });
+});
+
+// Owner add-repository flow (PRD section 4 "Setup requirements", section 8
+// "Clear a project before execution"): an owner appends a public repository
+// that GitHub and Slopbot verify; it counts from the next UTC month and the
+// existing executable-change path pauses an active project until it clears.
+const ADDED = "acme-tools/extra";
+
+function addedGithubRepository(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 555000111,
+    node_id: "R_extra",
+    full_name: ADDED,
+    description: "Extra tooling used by the open registry project.",
+    private: false,
+    fork: false,
+    archived: false,
+    default_branch: "main",
+    owner: {
+      login: "acme-tools",
+      id: 777000111,
+      node_id: "O_acme",
+      type: "Organization",
+    },
+    ...overrides,
+  };
+}
+
+/** GitHub REST and GraphQL answers for the added repository. */
+function addedGithub(
+  repository: () => Record<string, unknown> | "unavailable" | null,
+) {
+  return {
+    token: "public-read-token-fixture",
+    fetch: async (url: string, init?: RequestInit) => {
+      const facts = repository();
+      if (facts === "unavailable")
+        return new Response("unavailable", { status: 502 });
+      if (url === "https://api.github.com/graphql") {
+        if (facts === null) return new Response(null, { status: 404 });
+        const { query } = JSON.parse(String(init?.body));
+        return Response.json({
+          data: {
+            node: {
+              __typename: "Repository",
+              id: facts.node_id,
+              fullDatabaseId: String(facts.id),
+              isPrivate: false,
+              ...(query.includes("ProjectRepositoryBranches")
+                ? {
+                    refs: {
+                      nodes: [
+                        {
+                          name: "main",
+                          prefix: "refs/heads/",
+                          target: { __typename: "Commit", oid: "a".repeat(40) },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  }
+                : { ref: null }),
+            },
+          },
+        });
+      }
+      if (url === `https://api.github.com/repos/${ADDED}` && facts !== null)
+        return Response.json(facts);
+      return Response.json({ message: "Not Found" }, { status: 404 });
+    },
+  };
+}
+
+function addedEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: ADDED,
+    displayName: ADDED,
+    githubUrl: `https://github.com/${ADDED}`,
+    description: "Extra tooling used by the open registry project.",
+    integrationBranch: "main",
+    githubId: "555000111",
+    nodeId: "R_extra",
+    countsFrom: "2026-11-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const WRITE_ACCESS = {
+  installation: "installed",
+  installationId: 42,
+  permission: "write",
+  roleName: "write",
+} as RepositoryAccess;
+
+/** A listed project, activated through setup, ready for an owner append. */
+async function addRepositoryFixture(
+  options: { active?: boolean } = {},
+): Promise<
+  ReturnType<typeof registry> & {
+    githubFacts: { value: Record<string, unknown> | "unavailable" | null };
+    accessReads: string[];
+    appendedAccess: { value: RepositoryAccess | "unavailable" };
+  }
+> {
+  const t = registry();
+  const githubFacts: {
+    value: Record<string, unknown> | "unavailable" | null;
+  } = { value: addedGithubRepository() };
+  const appendedAccess: { value: RepositoryAccess | "unavailable" } = {
+    value: WRITE_ACCESS,
+  };
+  const accessReads: string[] = [];
+  t.deps.github = addedGithub(() => githubFacts.value);
+  t.deps.repositoryAccess = async (repository) => {
+    accessReads.push(`${repository.path}#${repository.githubId}`);
+    if (repository.path !== ADDED) return t.state.access;
+    if (appendedAccess.value === "unavailable")
+      throw new Error("Slopbot unavailable");
+    return appendedAccess.value;
+  };
+  await t.create("open-registry", "example/open-registry");
+  t.state.access = WRITE_ACCESS;
+  if (options.active !== false) {
+    t.state.clearance = CLEARED;
+    await t.call("POST", "project-setup/open-registry/check", OWNER, {});
+    expect((await t.persistence.getProject("open-registry"))?.status).toBe(
+      "active",
+    );
+  }
+  t.state.scans = [];
+  accessReads.length = 0;
+  return { ...t, githubFacts, accessReads, appendedAccess };
+}
+
+async function appendAdded(
+  t: Awaited<ReturnType<typeof addRepositoryFixture>>,
+  entry: Record<string, unknown> = addedEntry(),
+) {
+  const current = await t.persistence.getProject("open-registry");
+  if (!current) throw new Error("project expected");
+  return t.call("PUT", "projects/open-registry", OWNER, {
+    manifest: {
+      ...current.manifest,
+      repositories: [...current.manifest.repositories, entry],
+    },
+    expectedRevision: current.revision,
+  });
+}
+
+test("an owner appends a verified repository: one revision names it, the active project pauses and a scan is queued", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  // The appended repository is not scanned yet.
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(200);
+  expect(response.body.changes).toEqual({
+    presentation: [],
+    executable: ["repositories"],
+    financial: [],
+  });
+  const stored = await t.persistence.getProject("open-registry");
+  expect(stored?.revision).toBe((before?.revision ?? 0) + 1);
+  expect(stored?.status).toBe("paused");
+  expect(stored?.manifest.repositories.map((entry) => entry.id)).toEqual([
+    "example/open-registry",
+    ADDED,
+  ]);
+  expect(stored?.manifest.repositories[1]).toEqual(addedEntry());
+  const reason = t.sqlite
+    .query(
+      "SELECT reason FROM project_revisions WHERE project_id = 'open-registry' ORDER BY revision DESC LIMIT 1",
+    )
+    .get() as { reason: string };
+  expect(reason.reason).toStartWith(
+    `Owner update by @owner: added repository ${ADDED};`,
+  );
+  expect(t.state.scans).toEqual([
+    `open-registry@${stored?.revision}: Owner changed repositories`,
+  ]);
+  // Slopbot read the owner's permission on the appended repository itself.
+  expect(t.accessReads).toContain(`${ADDED}#555000111`);
+});
+
+test.each([
+  ["a fork", { fork: true }, {}, "invalid_repository"],
+  ["an archived repository", { archived: true }, {}, "invalid_repository"],
+  ["a private repository", { private: true }, {}, "invalid_repository"],
+  ["another numeric id", { id: 555000112 }, {}, "invalid_repository"],
+  ["another node id", { node_id: "R_other" }, {}, "invalid_repository"],
+  [
+    "another current name",
+    { full_name: "acme-tools/renamed" },
+    {},
+    "invalid_repository",
+  ],
+  [
+    "a missing integration branch",
+    {},
+    { integrationBranch: "release" },
+    "invalid_repository",
+  ],
+  [
+    "a display name other than its id",
+    {},
+    { displayName: "Extra tools" },
+    "invalid_repository",
+  ],
+  [
+    "a start in the current month",
+    {},
+    { countsFrom: "2026-10-01T00:00:00.000Z" },
+    "invalid_repository_start",
+  ],
+  [
+    "a start two months away",
+    {},
+    { countsFrom: "2026-12-01T00:00:00.000Z" },
+    "invalid_repository_start",
+  ],
+] as const)(
+  "an owner cannot append %s",
+  async (_label, github, entry, error) => {
+    const t = await addRepositoryFixture();
+    const before = await t.persistence.getProject("open-registry");
+    t.githubFacts.value = addedGithubRepository(github);
+    const response = await appendAdded(t, addedEntry(entry));
+    expect(response.status).toBe(422);
+    expect(response.body.error).toBe(error);
+    expect(await t.persistence.getProject("open-registry")).toEqual(before);
+    expect(t.state.scans).toEqual([]);
+  },
+);
+
+test("an appended repository GitHub does not list, or cannot answer for, is refused without a revision", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  t.githubFacts.value = null;
+  const missing = await appendAdded(t);
+  expect(missing.status).toBe(422);
+  expect(missing.body.error).toBe("invalid_repository");
+  t.githubFacts.value = "unavailable";
+  const unavailable = await appendAdded(t);
+  expect(unavailable.status).toBe(503);
+  expect(unavailable.body.error).toBe("github_unavailable");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// Review Focus 4: authority on the first repository never covers another.
+test("an owner needs write access and Slopbot on the appended repository itself", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  t.appendedAccess.value = {
+    installation: "installed",
+    installationId: 43,
+    permission: "read",
+    roleName: "read",
+  };
+  const readOnly = await appendAdded(t);
+  expect(readOnly.status).toBe(403);
+  expect(readOnly.body.error).toBe("authority_required");
+  expect(String(readOnly.body.message)).toContain(ADDED);
+  t.appendedAccess.value = { installation: "missing" };
+  const missing = await appendAdded(t);
+  expect(missing.status).toBe(409);
+  expect(missing.body.error).toBe("slopbot_required");
+  expect(String(missing.body.message)).toContain(ADDED);
+  t.appendedAccess.value = "unavailable";
+  const unavailable = await appendAdded(t);
+  expect(unavailable.status).toBe(503);
+  expect(unavailable.body.error).toBe("github_unavailable");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
+});
+
+// Review Focus 3: a repository another project lists, by id or by a
+// recorded transfer alias, is a registry conflict, never a stale revision.
+test("an owner cannot append a repository another project lists by id or alias", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect((await t.create("other-registry", ADDED)).status).toBe(201);
+  const byId = await appendAdded(t);
+  expect(byId.status).toBe(409);
+  expect(byId.body.error).toBe("registry_conflict");
+  // A listed project that records the name as a transfer alias, stored the
+  // way a reviewed rename leaves it.
+  const other = await t.persistence.getProject("other-registry");
+  if (!other) throw new Error("project expected");
+  const renamed = "acme-tools/extra-renamed";
+  const manifest = JSON.stringify({
+    ...other.manifest,
+    repositories: [
+      {
+        ...other.manifest.repositories[0],
+        id: renamed,
+        displayName: renamed,
+        githubUrl: `https://github.com/${renamed}`,
+        aliases: [ADDED],
+      },
+    ],
+  });
+  const sha256 = await sha256Hex(new TextEncoder().encode(manifest));
+  t.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('other-registry',?,?,?,'Reviewed rename',?)",
+    )
+    .run(other.revision + 1, manifest, sha256, NOW);
+  t.sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'other-registry'",
+    )
+    .run(other.revision + 1, manifest, sha256);
+  const byAlias = await appendAdded(t);
+  expect(byAlias.status).toBe(409);
+  expect(byAlias.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+test("a paused project's append stays paused, and existing owner edits are unchanged", async () => {
+  const t = await addRepositoryFixture({ active: false });
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(200);
+  expect((await t.persistence.getProject("open-registry"))?.status).toBe(
+    "paused",
+  );
+  // A presentation edit of the two-repository project reads no GitHub facts
+  // for the already listed appended repository.
+  const reads: string[] = [];
+  const github = t.deps.github;
+  t.deps.github = {
+    ...github,
+    fetch: async (url, init) => {
+      reads.push(url);
+      return github.fetch(url, init);
+    },
+  };
+  const current = await t.persistence.getProject("open-registry");
+  const presentation = await t.call("PUT", "projects/open-registry", OWNER, {
+    manifest: { ...current?.manifest, headline: "Two repositories now." },
+    expectedRevision: current?.revision,
+  });
+  expect(presentation.status).toBe(200);
+  expect(reads).toEqual([]);
+});
+
+// The registry is keyed by permanent GitHub ids too: a repository listed
+// under another name, by any project or by this one, is a registry conflict.
+test("an owner cannot append a repository another project lists under another name as its first repository", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  const base = applicationManifest("elsewhere", "acme-tools/elsewhere");
+  const created = await t.call("POST", "projects", OWNER, {
+    manifest: {
+      ...base,
+      authority: {
+        ...(base.authority as Record<string, unknown>),
+        repositoryId: "555000111",
+        repositoryNodeId: "R_extra",
+      },
+    },
+  });
+  expect(created.status).toBe(201);
+  t.state.scans = [];
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("elsewhere");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
+});
+
+test("an owner cannot append a repository another project appended under another name", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect(
+    (await t.create("elsewhere", "acme-tools/elsewhere-main")).status,
+  ).toBe(201);
+  const other = await t.persistence.getProject("elsewhere");
+  if (!other) throw new Error("project expected");
+  // Stored the way an earlier owner append leaves it.
+  const manifest = JSON.stringify({
+    ...other.manifest,
+    repositories: [
+      ...other.manifest.repositories,
+      addedEntry({
+        id: "acme-tools/elsewhere",
+        displayName: "acme-tools/elsewhere",
+        githubUrl: "https://github.com/acme-tools/elsewhere",
+      }),
+    ],
+  });
+  const sha256 = await sha256Hex(new TextEncoder().encode(manifest));
+  t.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('elsewhere',?,?,?,'Owner append',?)",
+    )
+    .run(other.revision + 1, manifest, sha256, NOW);
+  t.sqlite
+    .query(
+      "UPDATE projects SET revision = ?, manifest = ?, manifest_sha256 = ? WHERE id = 'elsewhere'",
+    )
+    .run(other.revision + 1, manifest, sha256);
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("elsewhere");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+test("an owner cannot append the project's own first repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  if (!before) throw new Error("project expected");
+  const renamed = "example/renamed-registry";
+  const response = await appendAdded(
+    t,
+    addedEntry({
+      id: renamed,
+      displayName: renamed,
+      githubUrl: `https://github.com/${renamed}`,
+      githubId: before.manifest.authority.repositoryId,
+      nodeId: before.manifest.authority.repositoryNodeId,
+    }),
+  );
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(String(response.body.message)).toContain("open-registry");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+  expect(t.state.scans).toEqual([]);
+});
+
+/** The appended repository, renamed on GitHub, as a new project's first. */
+function renamedAddedManifest(
+  id: string,
+  overrides: Parameters<typeof applicationManifest>[2] = {},
+) {
+  const renamed = "acme-tools/extra-renamed";
+  const base = applicationManifest(id, renamed, overrides);
+  return {
+    ...base,
+    authority: {
+      ...(base.authority as Record<string, unknown>),
+      repositoryId: "555000111",
+      repositoryNodeId: "R_extra",
+    },
+  };
+}
+
+test("a new project cannot list another project's appended repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const created = await t.call("POST", "projects", OTHER, {
+    manifest: renamedAddedManifest("relisted"),
+  });
+  expect(created.status).toBe(409);
+  expect(created.body.error).toBe("registry_conflict");
+  expect(String(created.body.message)).toContain("open-registry");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+  // Creation of an unlisted repository is unchanged.
+  expect((await t.create("unrelated", "example/unrelated")).status).toBe(201);
+});
+
+test("a restricted project's appended repository stays restricted after a rename", async () => {
+  const t = await addRepositoryFixture();
+  t.deps.moderatorGithubIds = new Set([ADMIN]);
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const project = await t.persistence.getProject("open-registry");
+  if (!project) throw new Error("project expected");
+  const banned = await t.call(
+    "POST",
+    "admin/projects/open-registry/enforcement",
+    ADMIN,
+    {
+      action: "quarantine",
+      reason: "Synthetic quarantine of the whole project",
+      evidenceReference: "private-case-fixture",
+      expectedRevision: project.revision,
+      expectedSequence: 1,
+    },
+  );
+  expect(banned.status).toBe(200);
+  const created = await t.call("POST", "projects", OTHER, {
+    manifest: renamedAddedManifest("relisted"),
+  });
+  expect(created.status).toBe(403);
+  expect(created.body.error).toBe("repository_restricted");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+});
+
+test("a stored application cannot publish another project's appended repository under a new name", async () => {
+  const t = await addRepositoryFixture();
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  // Submission stored the verified reward asset with the manifest.
+  const manifest = JSON.stringify(
+    renamedAddedManifest("relisted", {
+      rewardAsset: {
+        network: "ethereum",
+        kind: "stablecoin",
+        address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        symbol: "USDC",
+        decimals: 6,
+        chainId: "1",
+        cluster: null,
+        verifiedAt: "2026-10-10T00:00:00.000Z",
+      },
+    }),
+  );
+  t.sqlite.exec(
+    `INSERT INTO project_applications (id,project_id,repository_key,manifest,manifest_sha256,acceptance_criteria,applicant_github_id,applicant_github_login,submitted_at,status,admin_notification,admin_notification_at)
+       VALUES ('app_renamedappended01','relisted','acme-tools/extra-renamed','${manifest}','${"a".repeat(64)}','Merged pull requests','${OTHER}','other','2026-10-10T00:00:00.000Z','pending','sent','2026-10-10T00:00:01.000Z')`,
+  );
+  const published = await t.call(
+    "POST",
+    "project-applications/app_renamedappended01/publish",
+    OTHER,
+    {},
+  );
+  expect(published.status).toBe(409);
+  expect(published.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("relisted")).toBeNull();
+});
+
+test("activation refused for an uncleared appended repository names that repository", async () => {
+  const t = await addRepositoryFixture({ active: false });
+  const activate = async () => {
+    const current = await t.persistence.getProject("open-registry");
+    if (!current) throw new Error("project expected");
+    return t.call("PUT", "admin/projects/open-registry/manifest", ADMIN, {
+      manifest: { ...current.manifest, status: "active" },
+      expectedRevision: current.revision,
+      reason: "Activate",
+    });
+  };
+  // One repository: the message is unchanged.
+  t.state.clearance = { state: "unscanned" };
+  const single = await activate();
+  expect(single.status).toBe(422);
+  expect(single.body).toEqual({
+    error: "vetting_required",
+    message:
+      "Security vetting is unscanned. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.",
+  });
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  expect((await appendAdded(t)).status).toBe(200);
+  const multiple = await activate();
+  expect(multiple.status).toBe(422);
+  expect(multiple.body).toEqual({
+    error: "vetting_required",
+    message: `Security vetting of ${ADDED} is unscanned. A successful retained admission scan of ${ADDED} is required before activation; reinstatement requires fresh evidence.`,
+  });
+});
+
+test("an appended name another project takes during the write is a registry conflict, not a stale revision", async () => {
+  const t = await addRepositoryFixture();
+  const before = await t.persistence.getProject("open-registry");
+  expect(
+    (await t.create("other-registry", "example/other-registry")).status,
+  ).toBe(201);
+  const write = t.persistence.appendProjectRevision.bind(t.persistence);
+  // Another project claims the name after the handler's registry checks.
+  t.persistence.appendProjectRevision = async (input, generation) => {
+    t.sqlite
+      .query(
+        "INSERT INTO project_repositories (repository_key, project_id) VALUES (?, 'other-registry')",
+      )
+      .run(ADDED.toLowerCase());
+    return write(input, generation);
+  };
+  t.state.clearance = { state: "unscanned", repository: ADDED };
+  const response = await appendAdded(t);
+  expect(response.status).toBe(409);
+  expect(response.body.error).toBe("registry_conflict");
+  expect(await t.persistence.getProject("open-registry")).toEqual(before);
+});
+
+// A vault creation that is not final when its owner leaves the page is saved
+// and finished by the server as the same owner (PRD section 6).
+async function savedCreationFixture() {
+  const t = registry();
+  await t.create("vault-target", "example/vault-target");
+  const target = await t.persistence.getProject("vault-target");
+  if (!target) throw new Error("Project required");
+  expect(
+    (
+      await t.call("PUT", "admin/projects/vault-target/manifest", ADMIN, {
+        expectedRevision: target.revision,
+        reason: "Set the approved monthly vault policy",
+        manifest: {
+          ...target.manifest,
+          reward: { ...target.manifest.reward, feeBasisPoints: 200 },
+          escrow: {
+            schemaVersion: "1",
+            effectiveCycle: "2026-11",
+            chain: "ethereum",
+            feeBasisPoints: 200,
+            withdrawalFeeBasisPoints: 200,
+            feeMode: "deduct-from-gross",
+            deployments: [],
+          },
+        },
+      })
+    ).status,
+  ).toBe(200);
+  const chain = {
+    answer: "absent" as "absent" | "included" | "finalized" | "failed",
+  };
+  const asked: string[] = [];
+  t.deps.vaultSetup = {
+    observe: async () => {},
+    networks: async () => ["ethereum"],
+    review: async () => {
+      throw new Error("Not used");
+    },
+    register: async (_project, actor) => {
+      asked.push(actor.githubId);
+      if (chain.answer === "failed")
+        fail(409, "vault_creation_failed", "The vault creation failed.");
+      return chain.answer === "absent"
+        ? null
+        : { deployment: TEST_VAULT, evidence: chain.answer };
+    },
+  };
+  const register = () =>
+    t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId: TEST_VAULT.deploymentTransaction,
+    });
+  const later = (minutes: number) => {
+    t.state.now = new Date(
+      Date.parse(t.state.now) + minutes * 60_000,
+    ).toISOString();
+  };
+  const finish = () =>
+    finishSavedVaultCreations(
+      new Request("https://slop.cash/api/v1/projects"),
+      t.deps,
+    );
+  const vaults = async () =>
+    (await t.persistence.getProject("vault-target"))?.manifest.escrow
+      ?.deployments ?? [];
+  return { t, chain, asked, register, later, finish, vaults };
+}
+
+test.each(["absent", "included"] as const)(
+  "the server finishes a creation that was %s when the owner left",
+  async (seen) => {
+    const f = await savedCreationFixture();
+    f.chain.answer = seen;
+    const first = await f.register();
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe("pending");
+    // Nothing is due yet, so nothing is asked again.
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toEqual([OWNER]);
+    // Still not final at the first check: the creation keeps waiting.
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+    expect(await f.vaults()).toEqual([]);
+    f.chain.answer = "finalized";
+    f.later(3);
+    expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
+    // The same owner is named, and the vault is on the project record.
+    expect(f.asked).toEqual([OWNER, OWNER, OWNER]);
+    expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+    expect((await f.t.persistence.getProject("vault-target"))?.revision).toBe(
+      3,
+    );
+    // A finished creation is never asked about again.
+    f.later(60);
+    expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+    expect(f.asked).toHaveLength(3);
+  },
+);
+
+test("the server does not finish a creation for an owner who lost access", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.t.state.access = {
+    installation: "installed",
+    installationId: 42,
+    permission: "read",
+    roleName: "read",
+  };
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 1, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a failed creation is not asked about again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "failed";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  f.chain.answer = "finalized";
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("the owner's own registration closes the saved creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  expect((await f.register()).body.status).toBe("registered");
+  const asks = f.asked.length;
+  f.later(60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 0 });
+  expect(f.asked).toHaveLength(asks);
+});
+
+test("a saved creation is given up after two days", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  expect(f.asked).toEqual([OWNER]);
+  expect(await f.vaults()).toEqual([]);
+});
+
+test("a later request to the project API finishes a due creation", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  const background: Promise<unknown>[] = [];
+  f.t.deps.waitUntil = (work) => void background.push(work);
+  savedVaultCreationSweep.nextAt = 0;
+  expect((await f.t.call("GET", "project-setup", OWNER)).status).toBe(200);
+  await Promise.all(background);
+  expect((await f.vaults()).map((d) => d.vault)).toEqual([TEST_VAULT.vault]);
+});
+
+test("at most three creations wait for one project", async () => {
+  const f = await savedCreationFixture();
+  const ask = (transactionId: string) =>
+    f.t.call("POST", "project-vaults/vault-target", OWNER, {
+      step: "register",
+      expectedRevision: 2,
+      network: "ethereum",
+      claimId: "verified-owner-wallet",
+      automatic: true,
+      transactionId,
+    });
+  for (const digit of ["1", "2", "3", "4"])
+    expect((await ask(`0x${digit.repeat(64)}`)).body.status).toBe("pending");
+  f.later(3);
+  // Only three were kept, so only three are asked about again.
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 3, ended: 0 });
+});
+
+test("an expired creation waits again when its owner asks again", async () => {
+  const f = await savedCreationFixture();
+  await f.register();
+  f.later(49 * 60);
+  expect(await f.finish()).toEqual({ registered: 0, waiting: 0, ended: 1 });
+  await f.register();
+  f.chain.answer = "finalized";
+  f.later(3);
+  expect(await f.finish()).toEqual({ registered: 1, waiting: 0, ended: 0 });
 });

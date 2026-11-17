@@ -22,6 +22,7 @@ import {
   ShieldOff,
 } from "lucide-react";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -79,6 +80,8 @@ type Overview = {
     name: string;
     status: string;
     revision: number;
+    /** Present only for a project with more than one repository. */
+    repositories?: { id: string; githubId: string | null }[];
     clearance: Clearance;
   }[];
   assessments: AdminAssessment[];
@@ -193,12 +196,18 @@ function AdmissionExemptionForm({
   actorId,
   project,
   exemption,
+  repository,
+  repositoryField,
   onSaved,
   onAccessLost,
 }: {
   actorId: string;
   project: Overview["projects"][number];
   exemption?: AdmissionExemption;
+  /** The repository to exempt, for a project with more than one. */
+  repository?: string;
+  /** The repository choice, shown first in the form. */
+  repositoryField?: ReactNode;
   onSaved: () => void;
   onAccessLost: () => void;
 }) {
@@ -222,7 +231,11 @@ function AdmissionExemptionForm({
       {
         ...(revoke
           ? {}
-          : { projectId: project.id, revision: project.revision }),
+          : {
+              projectId: project.id,
+              revision: project.revision,
+              ...(repository === undefined ? {} : { repository }),
+            }),
         reason: reason.trim(),
         decisionReference: decisionReference.trim(),
         confirmation: true,
@@ -242,6 +255,7 @@ function AdmissionExemptionForm({
           void save();
         }}
       >
+        {repositoryField}
         <label>
           {revoke ? "Reason for revocation" : "Reason for the exemption"}
           <textarea
@@ -297,6 +311,74 @@ function AdmissionExemptionForm({
         </button>
       </form>
     </section>
+  );
+}
+
+/** Chooses one repository of a project with more than one. */
+function RepositorySelect({
+  repositories,
+  value,
+  onChange,
+}: {
+  repositories: { id: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label>
+      Repository
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {repositories.map((repository) => (
+          <option key={repository.id} value={repository.id}>
+            {repository.id}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The exemption form of one chosen repository of a multi-repository project. */
+function RepositoryExemptionForm({
+  actorId,
+  project,
+  repositories,
+  exemptions,
+  onSaved,
+  onAccessLost,
+}: {
+  actorId: string;
+  project: Overview["projects"][number];
+  repositories: { id: string; githubId: string | null }[];
+  exemptions: AdmissionExemption[];
+  onSaved: (revoked: boolean) => void;
+  onAccessLost: () => void;
+}) {
+  const [repository, setRepository] = useState(repositories[0].id);
+  const githubId = repositories.find(
+    (entry) => entry.id === repository,
+  )?.githubId;
+  const active = exemptions.find(
+    (exemption) =>
+      exemption.revokedAt === null && exemption.repositoryId === githubId,
+  );
+  return (
+    <AdmissionExemptionForm
+      key={`${project.revision}:${repository}:${active?.id ?? "grant"}`}
+      actorId={actorId}
+      onAccessLost={onAccessLost}
+      project={project}
+      exemption={active}
+      repository={repository}
+      repositoryField={
+        <RepositorySelect
+          repositories={repositories}
+          value={repository}
+          onChange={setRepository}
+        />
+      }
+      onSaved={() => onSaved(active !== undefined)}
+    />
   );
 }
 
@@ -394,6 +476,9 @@ function QueueScan({
   onAccessLost: () => void;
 }) {
   const [reason, setReason] = useState("");
+  const [repository, setRepository] = useState(
+    project.repositories?.[0]?.id ?? "",
+  );
   const { busy, error, setError, run } = useVettingMutation(
     actorId,
     onAccessLost,
@@ -409,6 +494,7 @@ function QueueScan({
         projectId: project.id,
         revision: project.revision,
         reason: reason.trim(),
+        ...(project.repositories ? { repository } : {}),
       },
       onQueued,
     );
@@ -425,6 +511,13 @@ function QueueScan({
           queue();
         }}
       >
+        {project.repositories ? (
+          <RepositorySelect
+            repositories={project.repositories}
+            value={repository}
+            onChange={setRepository}
+          />
+        ) : null}
         <label>
           Reason for the scan
           <textarea
@@ -951,22 +1044,41 @@ export function VettingSection({
                           project={project}
                         />
                       ) : null}
-                      <AdmissionExemptionForm
-                        key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
-                        actorId={actorId}
-                        onAccessLost={onAccessLost}
-                        project={project}
-                        exemption={activeExemption}
-                        onSaved={() => {
-                          if (!mounted.current) return;
-                          setNote(
-                            activeExemption
-                              ? `Revoked the owner-approved exemption for ${project.id}.`
-                              : `Recorded the owner-approved exemption for ${project.id}.`,
-                          );
-                          load();
-                        }}
-                      />
+                      {project.repositories ? (
+                        <RepositoryExemptionForm
+                          actorId={actorId}
+                          onAccessLost={onAccessLost}
+                          project={project}
+                          repositories={project.repositories}
+                          exemptions={exemptions}
+                          onSaved={(revoked) => {
+                            if (!mounted.current) return;
+                            setNote(
+                              revoked
+                                ? `Revoked the owner-approved exemption for ${project.id}.`
+                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                            );
+                            load();
+                          }}
+                        />
+                      ) : (
+                        <AdmissionExemptionForm
+                          key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
+                          actorId={actorId}
+                          onAccessLost={onAccessLost}
+                          project={project}
+                          exemption={activeExemption}
+                          onSaved={() => {
+                            if (!mounted.current) return;
+                            setNote(
+                              activeExemption
+                                ? `Revoked the owner-approved exemption for ${project.id}.`
+                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                            );
+                            load();
+                          }}
+                        />
+                      )}
                     </div>
                     {history.length > 0 ? (
                       <>

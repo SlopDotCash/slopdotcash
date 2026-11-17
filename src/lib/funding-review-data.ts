@@ -5,6 +5,7 @@ import type { CycleWalletProof } from "./cycle-index";
 import { compareActors } from "./github-actor";
 import type { ActorRef } from "./leaderboard-types";
 import { findProject } from "./projects.mjs";
+import { scoreThirdsStringToPoints } from "./score-units";
 import {
   isWalletAddress,
   isWalletChain,
@@ -63,6 +64,7 @@ interface FundingReview extends Omit<FundingPreparation, "contributors"> {
   contributors: FundingReviewContributor[];
 }
 const integer = /^(0|[1-9][0-9]{0,19})$/u;
+const score = /^(0|[1-9][0-9]{0,19})(?:\.[1-9])?$/u;
 const hash = /^[a-f0-9]{64}$/u;
 export function exactRecord(
   value: unknown,
@@ -206,7 +208,7 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
   const c = exactRecord(v.counts, "contributors,events,scoreThirds,weight");
   count(c.contributors);
   count(c.events);
-  text(c.scoreThirds, integer);
+  text(c.scoreThirds, score);
   text(c.weight, integer);
   if (!Array.isArray(v.contributors) || v.contributors.length > 100000)
     throw new TypeError("Invalid contributors");
@@ -221,12 +223,12 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
     text(a.login, /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})$/u);
     if (ids.has(a.id)) throw new TypeError("Duplicate preparation actor");
     ids.add(a.id);
-    text(r.scoreThirds, integer);
+    text(r.scoreThirds, score);
     text(r.weight, integer);
     text(r.eventIdsSha256, hash);
     count(r.eventCount);
     if (
-      BigInt(r.scoreThirds) === 0n ||
+      scoreThirdsStringToPoints(r.scoreThirds) === 0n ||
       BigInt(r.weight) === 0n ||
       r.eventCount === 0
     )
@@ -240,13 +242,13 @@ export function assertFundingPreparation(value: unknown): FundingPreparation {
     if (r.wallet && (r.wallet as CycleWalletProof).observedAt > v.observedAt)
       throw new TypeError("Wallet observation is after preparation");
     events += r.eventCount;
-    scores += BigInt(r.scoreThirds);
+    scores += scoreThirdsStringToPoints(r.scoreThirds);
     weights += BigInt(r.weight);
   }
   if (
     ids.size !== c.contributors ||
     events !== c.events ||
-    scores.toString() !== c.scoreThirds ||
+    scores !== scoreThirdsStringToPoints(c.scoreThirds) ||
     weights.toString() !== c.weight ||
     events > Number(p.snapshotLedgerCount)
   )

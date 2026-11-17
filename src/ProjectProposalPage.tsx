@@ -13,6 +13,12 @@ import {
   useProjectDraftSave,
   useProjectDraftStore,
 } from "./lib/project-draft-store";
+import {
+  protectedPathProblem,
+  READY_LABEL_DEFAULTS,
+  READY_LABEL_LIMITS,
+  type ReadyLabelSettings,
+} from "./lib/slopbot-ready.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -54,6 +60,12 @@ import {
   validRepositoryPath,
 } from "./lib/project-contracts";
 import {
+  normalizeWebsiteInput,
+  normalizeXInput,
+  withOwnerLinks,
+  xInputValue,
+} from "./lib/project-links";
+import {
   boundedText,
   type FundingChoice,
   formatMonthlyAmount,
@@ -66,6 +78,7 @@ import {
   safeProposalHttpsUrl,
   slugify,
 } from "./lib/project-proposal";
+import { nextUtcMonthStart } from "./lib/project-repositories.mjs";
 import { classifyRevisionChanges } from "./lib/project-revision-changes";
 import {
   monthlyAmountDisplay,
@@ -92,6 +105,7 @@ import { ChangeReview } from "./OwnerPresentation";
 import { PendingProjectApplications } from "./PendingProjectApplications";
 import {
   Avatar,
+  formatDate,
   ProjectNav,
   RoutePageHeader,
   SignInPanel,
@@ -99,6 +113,7 @@ import {
 import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 const SETTLEMENT_CHAIN_NAMES: Record<string, string> = NETWORK_NAMES;
+type ProjectRepositoryEntry = ProjectDefinition["repositories"][number];
 const PROPOSAL_DRAFT_KEY = "slop:project-proposal:v1";
 const LEGACY_PROPOSAL_STEP_KEY = `${PROPOSAL_DRAFT_KEY}:step`;
 const PROPOSAL_STEP_KEY = `${LEGACY_PROPOSAL_STEP_KEY}:v2`;
@@ -154,6 +169,8 @@ const EMPTY_PROPOSAL = {
   headline: "",
   image: "",
   goal: "",
+  website: "",
+  x: "",
   criteria: "",
   contributionGuide: "",
   supportedTasks: "",
@@ -205,6 +222,8 @@ const FIELD_STEP: Partial<Record<ProposalField, number>> = {
   image: 0,
   headline: 0,
   goal: 0,
+  website: 0,
+  x: 0,
   criteria: 0,
   contributionGuide: 0,
   supportedTasks: 0,
@@ -281,6 +300,10 @@ function proposalErrors(p: Proposal): FieldErrors {
   if (goal) errors.goal = goal;
   const criteria = lengthError(p.criteria, 6, 2_000);
   if (criteria) errors.criteria = criteria;
+  const website = normalizeWebsiteInput(p.website);
+  if (!website.ok) errors.website = website.error;
+  const x = normalizeXInput(p.x);
+  if (!x.ok) errors.x = x.error;
   // The remaining skill fields are optional; empty defers to the repository.
   for (const field of SKILL_RULE_FIELDS) {
     const value = p[field];
@@ -659,6 +682,163 @@ function ClosureConsent({
           You can turn this off at any time.
         </p>
       )}
+    </div>
+  );
+}
+
+type ReadyDraft = {
+  readyLabel: string;
+  readyApprovals: string;
+  readyMaxLines: string;
+  readyMaxFiles: string;
+  readyProtectedPaths: string;
+};
+
+/** The owner's slopbot:ready settings as typed, with any problems. */
+function readyLabelDraft(value: ReadyDraft): {
+  settings: Omit<ReadyLabelSettings, "enabled"> | null;
+  errors: Record<string, string | undefined>;
+} {
+  const limits = READY_LABEL_LIMITS;
+  const whole = (text: string, min: number, max: number) => {
+    const n = /^\d{1,6}$/u.test(text.trim()) ? Number(text.trim()) : Number.NaN;
+    return Number.isSafeInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const approvals = whole(
+    value.readyApprovals,
+    limits.minApprovals,
+    limits.maxApprovals,
+  );
+  const maxChangedLines = whole(
+    value.readyMaxLines,
+    limits.minChangedLines,
+    limits.maxChangedLines,
+  );
+  const maxChangedFiles = whole(
+    value.readyMaxFiles,
+    limits.minChangedFiles,
+    limits.maxChangedFiles,
+  );
+  const protectedPaths = [
+    ...new Set(
+      value.readyProtectedPaths
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const pathProblem =
+    protectedPaths.length > limits.maxProtectedPaths
+      ? `List at most ${limits.maxProtectedPaths} paths.`
+      : (protectedPaths
+          .map((path) => {
+            const problem = protectedPathProblem(path);
+            return problem === null ? null : `${path}: ${problem}`;
+          })
+          .find((problem) => problem !== null) ?? undefined);
+  const errors = {
+    readyApprovals:
+      approvals === null
+        ? `Enter a whole number from ${limits.minApprovals} to ${limits.maxApprovals}.`
+        : undefined,
+    readyMaxLines:
+      maxChangedLines === null
+        ? `Enter a whole number from ${limits.minChangedLines} to ${limits.maxChangedLines}.`
+        : undefined,
+    readyMaxFiles:
+      maxChangedFiles === null
+        ? `Enter a whole number from ${limits.minChangedFiles} to ${limits.maxChangedFiles}.`
+        : undefined,
+    readyProtectedPaths: pathProblem,
+  };
+  return {
+    settings:
+      approvals === null ||
+      maxChangedLines === null ||
+      maxChangedFiles === null ||
+      pathProblem !== undefined
+        ? null
+        : { approvals, maxChangedLines, maxChangedFiles, protectedPaths },
+    errors,
+  };
+}
+
+function readySummary(settings: ReadyLabelSettings | undefined): string {
+  if (settings?.enabled !== true) return "Off";
+  const extra = settings.protectedPaths.length;
+  return `On: ${settings.approvals} approval${settings.approvals === 1 ? "" : "s"}, at most ${settings.maxChangedLines} lines in ${settings.maxChangedFiles} files${extra ? `, ${extra} extra protected path${extra === 1 ? "" : "s"}` : ""}`;
+}
+
+/**
+ * The slopbot:ready label (PRD section 5): off unless the owner turns it on.
+ * Slopbot labels a pull request it could merge safely; a human merges.
+ */
+function ReadyLabelFields({
+  value,
+  set,
+  error,
+}: {
+  value: ReadyDraft;
+  set: (field: keyof ReadyDraft) => (next: string) => void;
+  error: (field: keyof ReadyDraft) => string | undefined;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="ready-label-hint"
+          checked={value.readyLabel === "true"}
+          name="readyLabel"
+          onChange={(event) =>
+            set("readyLabel")(String(event.currentTarget.checked))
+          }
+          type="checkbox"
+        />{" "}
+        Label pull requests that are ready to merge
+      </label>
+      <p className="field-hint" id="ready-label-hint">
+        Slopbot adds <code>slopbot:ready</code> when checks pass, its review has
+        no finding, maintainers approved the latest commit, the change is small
+        and it touches no protected path such as CI, dependencies, contracts or
+        policy files. Slopbot never merges.
+      </p>
+      {value.readyLabel === "true" ? (
+        <>
+          <TextField
+            error={error("readyApprovals")}
+            inputMode="numeric"
+            label="Approvals required"
+            name="readyApprovals"
+            onChange={set("readyApprovals")}
+            value={value.readyApprovals}
+          />
+          <TextField
+            error={error("readyMaxLines")}
+            inputMode="numeric"
+            label="Most changed lines"
+            name="readyMaxLines"
+            onChange={set("readyMaxLines")}
+            value={value.readyMaxLines}
+          />
+          <TextField
+            error={error("readyMaxFiles")}
+            inputMode="numeric"
+            label="Most changed files"
+            name="readyMaxFiles"
+            onChange={set("readyMaxFiles")}
+            value={value.readyMaxFiles}
+          />
+          <TextField
+            error={error("readyProtectedPaths")}
+            hint="One per line, for example docs/legal/ or *.sql. These add to the built-in list."
+            label="Extra protected paths"
+            multiline
+            name="readyProtectedPaths"
+            onChange={set("readyProtectedPaths")}
+            value={value.readyProtectedPaths}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1100,6 +1280,10 @@ function ProjectProposalForm({
   };
   const valid = Object.keys(errors).length === 0;
   const p = proposal;
+  const websiteInput = normalizeWebsiteInput(p.website);
+  const websiteLink = websiteInput.ok ? websiteInput.value : null;
+  const xInput = normalizeXInput(p.x);
+  const xLink = xInput.ok ? xInput.value : null;
   const branches =
     branchChoices?.repository === p.repository ? branchChoices.names : [];
   const slug =
@@ -1307,10 +1491,14 @@ function ProjectProposalForm({
         mode: "open-declared",
         disclosureRequired: true,
       },
-      links: {
-        repository: `https://github.com/${repository}`,
-        issues: `https://github.com/${repository}/issues`,
-      },
+      links: withOwnerLinks(
+        {
+          repository: `https://github.com/${repository}`,
+          issues: `https://github.com/${repository}/issues`,
+        },
+        websiteLink,
+        xLink,
+      ),
     };
   })();
   const bounty = manifest.securityBounty;
@@ -1634,6 +1822,25 @@ function ProjectProposalForm({
               onChange={set("goal")}
               value={p.goal}
             />
+            <div className="setup-rule-grid">
+              <TextField
+                error={shown("website")}
+                label="Website (optional)"
+                name="website"
+                onChange={set("website")}
+                placeholder="https://example.com"
+                type="url"
+                value={p.website}
+              />
+              <TextField
+                error={shown("x")}
+                label="X account (optional)"
+                name="x"
+                onChange={set("x")}
+                placeholder="@handle"
+                value={p.x}
+              />
+            </div>
             <TextField
               error={shown("criteria")}
               label="Acceptance criteria"
@@ -1959,11 +2166,13 @@ function ProjectProposalForm({
   );
 }
 
-type UpdateDraft = {
+type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
   headline: string;
   goal: string;
+  website: string;
+  x: string;
   criteria: string;
   note: string;
   fundingMode: string;
@@ -1972,13 +2181,22 @@ type UpdateDraft = {
   tokenAddress: string;
   tokenSymbol: string;
   monthlyAmount: string;
+  /** Pending added repositories as JSON, or "" when there are none. */
+  repositories: string;
 } & Record<SkillRuleField, string>;
 
 const DRAFT_FIELDS = [
   "image",
   "automaticClosure",
+  "readyLabel",
+  "readyApprovals",
+  "readyMaxLines",
+  "readyMaxFiles",
+  "readyProtectedPaths",
   "headline",
   "goal",
+  "website",
+  "x",
   "criteria",
   ...SKILL_RULE_FIELDS,
   "fundingMode",
@@ -1988,7 +2206,55 @@ const DRAFT_FIELDS = [
   "tokenSymbol",
   "monthlyAmount",
   "note",
+  "repositories",
 ] as const;
+
+/** A repository the owner added in this edit, not yet published. */
+type PendingRepository = {
+  entry: Omit<ProjectRepositoryEntry, "countsFrom">;
+  ownDescription: boolean;
+};
+
+/**
+ * Pending repositories from the saved draft. The draft comes from this
+ * device's storage, so anything that is not exactly an added entry is
+ * dropped as a whole.
+ */
+function pendingRepositories(text: string): PendingRepository[] {
+  if (text === "") return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const valid = (item: unknown): item is PendingRepository => {
+    if (typeof item !== "object" || item === null) return false;
+    const { entry, ownDescription } = item as Record<string, unknown>;
+    if (typeof ownDescription !== "boolean") return false;
+    if (typeof entry !== "object" || entry === null) return false;
+    const fields = entry as Record<string, unknown>;
+    return (
+      Object.keys(fields).sort().join(",") ===
+        "description,displayName,githubId,githubUrl,id,integrationBranch,nodeId" &&
+      typeof fields.id === "string" &&
+      validRepositoryPath(fields.id) &&
+      fields.displayName === fields.id &&
+      fields.githubUrl === `https://github.com/${fields.id}` &&
+      typeof fields.description === "string" &&
+      typeof fields.integrationBranch === "string" &&
+      fields.integrationBranch.length > 0 &&
+      fields.integrationBranch.length <= 255 &&
+      typeof fields.githubId === "string" &&
+      /^[1-9][0-9]*$/u.test(fields.githubId) &&
+      typeof fields.nodeId === "string" &&
+      /^[A-Za-z0-9_=-]{1,100}$/u.test(fields.nodeId)
+    );
+  };
+  return Array.isArray(value) && value.length <= 19 && value.every(valid)
+    ? value
+    : [];
+}
 
 /**
  * Owners publish project changes directly (PRD section 4). The page edits the
@@ -2112,6 +2378,19 @@ function ProjectUpdateForm({
     | { state: "idle" | "removing" | "removed" }
     | { state: "error"; message: string; staleRevision: boolean }
   >({ state: "idle" });
+  // Repositories the owner adds in this edit (PRD section 4). Each counts
+  // from the next UTC month, set when the revision is built.
+  const [repositoryInput, setRepositoryInput] = useState("");
+  const [repositoryLookup, setRepositoryLookup] = useState<
+    { state: "idle" | "loading" } | { state: "error"; message: string }
+  >({ state: "idle" });
+  const repositoryLookupController = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      repositoryLookupController.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     let active = true;
     setLoadError(null);
@@ -2146,11 +2425,25 @@ function ProjectUpdateForm({
       reward.paymentMode === "enabled" ||
       BigInt(reward.committedMinor) > 0n ||
       (current.escrow?.deployments.length ?? 0) > 0);
+  const currentReady = current.slopbot?.readyLabel;
   const initial: UpdateDraft = {
     automaticClosure: String(current.slopbot?.automaticClosure === true),
+    readyLabel: String(currentReady?.enabled === true),
+    readyApprovals: String(
+      currentReady?.approvals ?? READY_LABEL_DEFAULTS.approvals,
+    ),
+    readyMaxLines: String(
+      currentReady?.maxChangedLines ?? READY_LABEL_DEFAULTS.maxChangedLines,
+    ),
+    readyMaxFiles: String(
+      currentReady?.maxChangedFiles ?? READY_LABEL_DEFAULTS.maxChangedFiles,
+    ),
+    readyProtectedPaths: (currentReady?.protectedPaths ?? []).join("\n"),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
+    website: current.links.website ?? "",
+    x: xInputValue(current.links.x),
     criteria: current.contribution?.approvedScope ?? "",
     note: "",
     fundingMode: capMinor === "0" ? "none" : "monthly",
@@ -2164,6 +2457,7 @@ function ProjectUpdateForm({
       capMinor === "0"
         ? ""
         : formatBaseUnits(capMinor, decimals, { grouping: false }),
+    repositories: "",
     ...(Object.fromEntries(
       SKILL_RULE_FIELDS.map((field) => [
         field,
@@ -2188,7 +2482,9 @@ function ProjectUpdateForm({
             (field) =>
               typeof saved[field] === "string" &&
               (saved[field] as string).length <=
-                (field === "image" ? 16_384 : 4_000),
+                (field === "image" || field === "repositories"
+                  ? 16_384
+                  : 4_000),
           ).map((field) => [field, saved[field]]),
         )
       : null,
@@ -2229,6 +2525,19 @@ function ProjectUpdateForm({
     if (draft === null) setDraftRevision(base?.revision ?? null);
     setDraft((existing) => ({ ...(existing ?? {}), [field]: next }));
   };
+  // Pending added repositories are kept in the draft like any other edit.
+  const addedRepositories = useMemo(
+    () => pendingRepositories(value.repositories),
+    [value.repositories],
+  );
+  const changePending = (
+    change: (list: PendingRepository[]) => PendingRepository[],
+  ) => {
+    const list = change(
+      pendingRepositories(latestDraft.current?.repositories ?? ""),
+    );
+    set("repositories")(list.length > 0 ? JSON.stringify(list) : "");
+  };
   // A legacy project needs an explicit funding choice to initialize a vault.
   // Editing only its text must preserve its existing funding and fee terms.
   const assetTouched =
@@ -2250,9 +2559,24 @@ function ProjectUpdateForm({
         : undefined,
   );
   const amountMinor = amount.valid ? amount.minor : null;
+  const websiteInput = normalizeWebsiteInput(value.website);
+  const xInput = normalizeXInput(value.x);
+  const ready = readyLabelDraft(value);
+  const readyOn = value.readyLabel === "true";
+  // Off keeps the owner's last numbers so turning it back on restores them.
+  const nextReady: ReadyLabelSettings | undefined = readyOn
+    ? ready.settings
+      ? { enabled: true, ...ready.settings }
+      : currentReady
+    : currentReady
+      ? { ...currentReady, enabled: false }
+      : undefined;
   const errors: Record<string, string | undefined> = {
+    ...(readyOn ? ready.errors : {}),
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
+    website: websiteInput.ok ? undefined : websiteInput.error,
+    x: xInput.ok ? undefined : xInput.error,
     criteria: lengthError(value.criteria, 6, 2_000),
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
@@ -2266,6 +2590,12 @@ function ProjectUpdateForm({
         value[field].trim() === ""
           ? undefined
           : lengthError(value[field], 1, 2_000),
+      ]),
+    ),
+    ...Object.fromEntries(
+      addedRepositories.map((added, index) => [
+        `addedRepository${index}`,
+        lengthError(added.entry.description, 12, 500),
       ]),
     ),
   };
@@ -2300,6 +2630,7 @@ function ProjectUpdateForm({
         error instanceof Error ? `${error.message}.` : "Check the token.";
     }
   }
+  const repositoryCountsFrom = nextUtcMonthStart(new Date());
   /** The submitted manifest: the current revision with the owner's edits. */
   const next = ((): ProjectDefinition => {
     const source = current;
@@ -2334,12 +2665,37 @@ function ProjectUpdateForm({
     return {
       ...source,
       ...fundingFields,
-      ...(source.slopbot !== undefined || value.automaticClosure === "true"
-        ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
+      ...(addedRepositories.length > 0
+        ? {
+            repositories: [
+              ...source.repositories,
+              ...addedRepositories.map(({ entry }) => ({
+                ...entry,
+                description: entry.description.trim(),
+                countsFrom: repositoryCountsFrom,
+              })),
+            ],
+          }
+        : {}),
+      ...(source.slopbot !== undefined ||
+      value.automaticClosure === "true" ||
+      nextReady !== undefined
+        ? {
+            slopbot: {
+              automaticClosure: value.automaticClosure === "true",
+              ...(nextReady ? { readyLabel: nextReady } : {}),
+            },
+          }
         : {}),
       image: value.image || undefined,
       headline: value.headline.trim(),
       description: value.goal.trim(),
+      // An invalid entry keeps the published link until it is corrected.
+      links: withOwnerLinks(
+        source.links,
+        websiteInput.ok ? websiteInput.value : (source.links.website ?? null),
+        xInput.ok ? xInput.value : (source.links.x ?? null),
+      ),
       contribution: {
         ...(source.contribution ?? {}),
         approvedScope: value.criteria.trim(),
@@ -2355,6 +2711,8 @@ function ProjectUpdateForm({
       changes.executable.length +
       changes.financial.length >
     0;
+  // An added repository always needs its own scan, cleared project or not.
+  const executableCleared = scanCleared && addedRepositories.length === 0;
   const fundingText = (minor: string, digits: number, symbol: string) =>
     minor === "0"
       ? "No monthly funding"
@@ -2374,6 +2732,12 @@ function ProjectUpdateForm({
       after:
         next.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
     },
+    {
+      field: "readyLabel",
+      label: "Slopbot ready label",
+      before: readySummary(current.slopbot?.readyLabel),
+      after: readySummary(next.slopbot?.readyLabel),
+    },
     ...(current.image !== next.image
       ? [
           {
@@ -2387,6 +2751,12 @@ function ProjectUpdateForm({
         ]
       : []),
     {
+      field: "repositories",
+      label: "Repositories",
+      before: current.repositories.map((entry) => entry.id).join(", "),
+      after: next.repositories.map((entry) => entry.id).join(", "),
+    },
+    {
       field: "headline",
       label: "Short description",
       before: current.headline,
@@ -2397,6 +2767,18 @@ function ProjectUpdateForm({
       label: "Goal",
       before: current.description,
       after: next.description,
+    },
+    {
+      field: "website",
+      label: "Website",
+      before: current.links.website ?? "None",
+      after: next.links.website ?? "None",
+    },
+    {
+      field: "x",
+      label: "X account",
+      before: current.links.x ?? "None",
+      after: next.links.x ?? "None",
     },
     {
       field: "approvedScope",
@@ -2495,7 +2877,24 @@ function ProjectUpdateForm({
       // published; keep them as the new draft, rebased on the new revision.
       // Only clear when nothing changed since the request went out.
       const editedDuringSave = latestDraft.current !== submittedDraft;
-      setDraft(editedDuringSave ? latestDraft.current : null);
+      // Published additions leave the draft; later ones stay pending.
+      const published = new Set(
+        result.project.manifest.repositories.map((entry) =>
+          entry.id.toLowerCase(),
+        ),
+      );
+      const remaining = pendingRepositories(
+        latestDraft.current?.repositories ?? "",
+      ).filter(({ entry }) => !published.has(entry.id.toLowerCase()));
+      setDraft(
+        editedDuringSave
+          ? {
+              ...latestDraft.current,
+              repositories:
+                remaining.length > 0 ? JSON.stringify(remaining) : "",
+            }
+          : null,
+      );
       setDraftRevision(editedDuringSave ? result.project.revision : null);
       setAttempted(false);
     } catch (error) {
@@ -2511,10 +2910,75 @@ function ProjectUpdateForm({
         staleRevision:
           failure instanceof ProjectApiError &&
           failure.code === "stale_revision",
-        message: errorMessage(failure, "Publication could not be confirmed."),
+        // The start month is the next UTC month on Slop's clock; the month
+        // changed since this page set it.
+        message:
+          failure instanceof ProjectApiError &&
+          failure.code === "invalid_repository_start"
+            ? "The month changed, so an added repository counts from a later month. Reload the page, then publish again."
+            : errorMessage(failure, "Publication could not be confirmed."),
       });
     } finally {
       publishInFlight.current = false;
+    }
+  }
+  async function addRepository() {
+    const repository = normalizeRepositoryInput(repositoryInput);
+    const listed = (name: string) =>
+      [...current.repositories, ...addedRepositories.map(({ entry }) => entry)]
+        .flatMap((entry) => [entry.id, ...(entry.aliases ?? [])])
+        .some((id) => id.toLowerCase() === name.toLowerCase());
+    repositoryLookupController.current?.abort();
+    if (listed(repository)) {
+      setRepositoryLookup({
+        state: "error",
+        message: `${repository} is already listed.`,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    repositoryLookupController.current = controller;
+    setRepositoryLookup({ state: "loading" });
+    try {
+      const facts = await lookupGitHubRepository(repository, controller.signal);
+      if (controller.signal.aborted || !mounted.current) return;
+      const refusal =
+        facts.fork !== false
+          ? `${facts.repository} is a fork. Add the original repository instead.`
+          : facts.archived !== false
+            ? `${facts.repository} is archived on GitHub.`
+            : listed(facts.repository)
+              ? `${facts.repository} is already listed.`
+              : null;
+      if (refusal !== null) {
+        setRepositoryLookup({ state: "error", message: refusal });
+        return;
+      }
+      const description = facts.description ?? "";
+      const usable = boundedText(description, 12, 500);
+      changePending((list) => [
+        ...list,
+        {
+          entry: {
+            id: facts.repository,
+            displayName: facts.repository,
+            githubUrl: `https://github.com/${facts.repository}`,
+            description: usable ? description.trim() : "",
+            integrationBranch: facts.defaultBranch,
+            githubId: facts.numericId,
+            nodeId: facts.nodeId,
+          },
+          ownDescription: !usable,
+        },
+      ]);
+      setRepositoryInput("");
+      setRepositoryLookup({ state: "idle" });
+    } catch (error) {
+      if (controller.signal.aborted || !mounted.current) return;
+      setRepositoryLookup({
+        state: "error",
+        message: errorMessage(error, "Repository could not load."),
+      });
     }
   }
   async function remove() {
@@ -2638,6 +3102,23 @@ function ProjectUpdateForm({
             onChange={set("goal")}
             value={value.goal}
           />
+          <TextField
+            error={shown("website")}
+            label="Website (optional)"
+            name="website"
+            onChange={set("website")}
+            placeholder="https://example.com"
+            type="url"
+            value={value.website}
+          />
+          <TextField
+            error={shown("x")}
+            label="X account (optional)"
+            name="x"
+            onChange={set("x")}
+            placeholder="@handle"
+            value={value.x}
+          />
         </details>
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
@@ -2653,6 +3134,11 @@ function ProjectUpdateForm({
           <ClosureConsent
             onChange={set("automaticClosure")}
             value={value.automaticClosure}
+          />
+          <ReadyLabelFields
+            error={(field) => shown(field)}
+            set={set}
+            value={value}
           />
           <details className="proposal-skill-rules">
             <summary>Contributor instructions</summary>
@@ -2672,6 +3158,93 @@ function ProjectUpdateForm({
               />
             ))}
           </details>
+        </details>
+        <details className="proposal-advanced">
+          <summary>Repositories</summary>
+          <ul>
+            {current.repositories.map((entry) => (
+              <li key={entry.id}>
+                {entry.id}
+                {entry.countsFrom ? (
+                  <>
+                    {" "}
+                    <small className="field-hint">
+                      Counts from {formatDate(entry.countsFrom)}
+                    </small>
+                  </>
+                ) : null}
+              </li>
+            ))}
+            {addedRepositories.map((added, index) => (
+              <li key={added.entry.id}>
+                {added.entry.id}{" "}
+                <small className="field-hint">
+                  Counts from {formatDate(repositoryCountsFrom)}. A security
+                  scan runs before it counts; an active project pauses until the
+                  scan clears. If the scan has not cleared when the month
+                  closes, that month has no allocation.
+                </small>
+                <button
+                  aria-label={`Remove ${added.entry.id}`}
+                  className="text-button"
+                  disabled={submission.state === "publishing"}
+                  onClick={() =>
+                    changePending((list) =>
+                      list.filter((_, position) => position !== index),
+                    )
+                  }
+                  type="button"
+                >
+                  Remove
+                </button>
+                {added.ownDescription ? (
+                  <TextField
+                    error={shown(`addedRepository${index}`)}
+                    label="Description"
+                    name={`addedRepository${index}`}
+                    onChange={(description) =>
+                      changePending((list) =>
+                        list.map((item, position) =>
+                          position === index
+                            ? { ...item, entry: { ...item.entry, description } }
+                            : item,
+                        ),
+                      )
+                    }
+                    value={added.entry.description}
+                  />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <TextField
+            error={
+              repositoryLookup.state === "error"
+                ? repositoryLookup.message
+                : undefined
+            }
+            label="GitHub repository"
+            name="addRepository"
+            onChange={(entry) => {
+              setRepositoryInput(entry);
+              if (repositoryLookup.state === "error")
+                setRepositoryLookup({ state: "idle" });
+            }}
+            placeholder="owner/repository or GitHub URL"
+            value={repositoryInput}
+          />
+          <button
+            className="button secondary-button"
+            disabled={
+              repositoryLookup.state === "loading" ||
+              repositoryInput.trim() === "" ||
+              submission.state === "publishing"
+            }
+            onClick={() => void addRepository()}
+            type="button"
+          >
+            Add
+          </button>
         </details>
         {monthly && !bountyOnly ? (
           <details className="proposal-advanced">
@@ -2757,12 +3330,12 @@ function ProjectUpdateForm({
             <h2 id="update-changes">Changes</h2>
             <ul>
               {changes.presentation.length > 0 ||
-              (scanCleared && changes.executable.length > 0) ? (
+              (executableCleared && changes.executable.length > 0) ? (
                 <li>
                   Presentation and cleared contribution changes publish now.
                 </li>
               ) : null}
-              {!scanCleared && changes.executable.length > 0 ? (
+              {!executableCleared && changes.executable.length > 0 ? (
                 <li>
                   Contribution changes need a new security scan.{" "}
                   {current.status === "active"

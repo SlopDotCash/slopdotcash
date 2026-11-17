@@ -11,11 +11,14 @@ import {
 import {
   createProjectView,
   type ProjectView,
+  projectActivityCollected,
   projectCycleHasOpened,
 } from "./lib/project-view";
 import { findProject, type ProjectDefinition } from "./lib/projects.mjs";
 import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import type { CycleIndexState } from "./lib/use-cycle-index";
+import { useMonthlyCuts } from "./lib/use-monthly-cuts";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 import { useTimeBoundary } from "./lib/use-time-boundary";
 import {
@@ -115,11 +118,7 @@ export function CyclePage({
   // A paused project is not collected; its recorded cycles still render.
   const collected =
     state.status === "ready" &&
-    project.repositories.every((repository) =>
-      state.snapshot.repositories.some(
-        (candidate) => candidate.id === repository.id,
-      ),
-    );
+    projectActivityCollected(state.snapshot, project, cycleId);
   let view: ProjectView | null = null;
   // A month outside the snapshot window has no live view.
   if (
@@ -323,6 +322,7 @@ export function CyclePage({
           {stages[currentStage]?.[1]}
         </p>
       )}
+      {ownerCutoff ? <OwnerCuts project={project} period={cycleId} /> : null}
       {!terminalMessage || record?.reward.lines ? (
         <details className="cycle-history">
           <summary>Cycle history</summary>
@@ -355,6 +355,56 @@ export function CyclePage({
         <CycleAllocation updatedAt={state.snapshot.generatedAt} view={view} />
       ) : null}
     </main>
+  );
+}
+
+/**
+ * Each current cut below a proposed amount, with the owner's public reason
+ * (PRD section 6, operator decision of 15 November 2026). Other owner
+ * changes are not shown.
+ */
+function OwnerCuts({
+  project,
+  period,
+}: {
+  project: ProjectDefinition;
+  period: string;
+}) {
+  const [state, retry] = useMonthlyCuts(project.id, period);
+  const amount = (value: string) =>
+    formatRewardMinor(value, project.rewardAsset);
+  return (
+    <section className="cycle-owner-cuts" aria-labelledby="owner-cuts-heading">
+      <h2 id="owner-cuts-heading">Owner cuts</h2>
+      {state.status === "loading" ? (
+        <p role="status">Loading owner cuts…</p>
+      ) : state.status === "error" ? (
+        <p role="status">
+          Owner cuts unavailable.{" "}
+          <button type="button" className="text-button" onClick={retry}>
+            Retry owner cuts
+          </button>
+        </p>
+      ) : state.cuts.length === 0 ? (
+        <p>No cuts.</p>
+      ) : (
+        <ul className="owner-cut-list">
+          {state.cuts.map((cut) => (
+            <li key={cut.githubUserId}>
+              <p>
+                <Link href={`/contributors/${encodeURIComponent(cut.login)}`}>
+                  {cut.login}
+                </Link>
+                : proposed {amount(cut.proposedGrossBase)}, new amount{" "}
+                {amount(cut.grossBase)} ·{" "}
+                <time dateTime={cut.cutAt}>{formatDateTime(cut.cutAt)}</time>
+              </p>
+              <p>Reason: {cut.reason}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -447,8 +497,8 @@ function ArchivedCycleLeaderboard({ cycle }: { cycle: CycleIndexEntry }) {
                       </small>
                     </th>
                     <td>
-                      {(
-                        (contributor.scoreThirds ?? contributor.score * 3) * 10
+                      {scoreThirdsToPoints(
+                        contributor.scoreThirds ?? contributor.score * 3,
                       ).toLocaleString()}
                     </td>
                     <td>

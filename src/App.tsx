@@ -1,12 +1,6 @@
+import { ArrowRight, Check, Clipboard, Plus } from "lucide-react";
 import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  ChevronRight,
-  Clipboard,
-  Plus,
-} from "lucide-react";
-import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
@@ -31,10 +25,20 @@ import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
-  communityProjects,
   hasBountyOverview,
+  homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
+import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
+import {
+  asShown,
+  listedThisMonth,
+  loadPoolFunding,
+  monthName,
+  NOT_LISTED_NOTICE,
+  poolFundingStatus,
+} from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
   findHistoricalProject,
   findProject,
@@ -47,6 +51,7 @@ import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
+import { usePublicResource } from "./lib/use-public-resource";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountPage,
@@ -133,6 +138,21 @@ const HERO_ACTIONS = [
   "HACKING THE PLANET.",
   "BUILDING AGI.",
 ] as const;
+type HomeAudience = "contributor" | "maintainer";
+const HOME_AUDIENCES = {
+  contributor: {
+    heading: "MAKE MONEY",
+    accessibleHeading: "MAKE MONEY SHIPPING OPEN SOURCE.",
+    actions: HERO_ACTIONS,
+    skillPath: "/contribute/SKILL.md",
+  },
+  maintainer: {
+    heading: "SHIP FASTER.",
+    accessibleHeading: "SHIP FASTER. WITH CONTRIBUTORS.",
+    actions: ["WITH CONTRIBUTORS."],
+    skillPath: "/maintain/SKILL.md",
+  },
+} as const;
 const HERO_HOLD_MS = 2_400;
 const HERO_TYPE_MS = 55;
 const HERO_DELETE_MS = 30;
@@ -445,15 +465,16 @@ function Footer({ marketing }: { marketing: boolean }) {
   );
 }
 
-function HeroHeading() {
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [characters, setCharacters] = useState(campaign.actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = HERO_ACTIONS[index];
+    const target = campaign.actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -465,7 +486,7 @@ function HeroHeading() {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setIndex((value) => (value + 1) % campaign.actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -476,14 +497,14 @@ function HeroHeading() {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [characters, index, phase]);
-  const action = HERO_ACTIONS[index];
+  }, [campaign.actions, characters, index, phase]);
+  const action = campaign.actions[index];
   return (
-    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
+    <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
-        <span>MAKE MONEY</span>
+        <span>{campaign.heading}</span>
         <span className="hero-action">
-          {HERO_ACTIONS.map((candidate) => (
+          {campaign.actions.map((candidate) => (
             <span className="hero-switch-sizer" key={candidate}>
               {candidate}
               <span className="hero-typewriter-caret" />
@@ -619,10 +640,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
     ? securityBountyAmountLabel(bounty)
     : project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
-      : compactPrizeLabel(
-          project.reward.externalOpportunity?.advertisedAmountDisplay ??
-            "External",
-        );
+      : // An external prize is someone else's money: the card leads with
+        // points, and the project page names the prize (operator decision,
+        // 16 November 2026).
+        "Points";
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -640,22 +661,17 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
                 ? "/ Critical"
                 : "/ Finding"}
             </span>
-          ) : monthlyPoolPointsOnly(project.reward) ||
-            project.reward.kind === "external-prize-share" ? (
+          ) : project.reward.kind === "external-prize-share" ? (
+            <span> + external prize</span>
+          ) : monthlyPoolPointsOnly(project.reward) ? (
             <span> + points</span>
           ) : (
             <span>/mo</span>
           )}
         </p>
-        {bounty ? (
-          <small className="project-money-state">
-            {bountyFundingLabel(bounty)}
-          </small>
-        ) : monthlyPoolPointsOnly(project.reward) ? (
+        {!bounty && monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
-        ) : project.reward.kind === "monthly-pool" ? null : (
-          <small className="project-money-state">External prize</small>
-        )}
+        ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
@@ -666,86 +682,10 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
   );
 }
 
-function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const bounty = hasProjectCardBounty(project)
-    ? project.securityBounty
-    : undefined;
-  const amount = bounty
-    ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
-    : monthlyPoolPointsOnly(project.reward)
-      ? "Points only"
-      : project.reward.kind === "monthly-pool"
-        ? `${monthlyPoolCapLabel(project)}/mo`
-        : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
-  return (
-    <li>
-      <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectImage lazy project={project} />
-        <span className="project-row-name">
-          <strong>{project.name}</strong>
-          <small>{project.description}</small>
-        </span>
-        <span className="project-row-amount">{amount}</span>
-        <ChevronRight aria-hidden="true" />
-      </Link>
-    </li>
-  );
-}
-
-const COMMUNITY_PAGE_SIZE = 10;
-
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
-  const [page, setPage] = useState(0);
-  if (projects.length === 0) return null;
-  const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
-  const current = Math.min(page, pages - 1);
-  const visible = projects.slice(
-    current * COMMUNITY_PAGE_SIZE,
-    (current + 1) * COMMUNITY_PAGE_SIZE,
-  );
-  return (
-    <section
-      className="project-tier community-projects"
-      aria-labelledby="community-projects"
-    >
-      <h3 id="community-projects">Community</h3>
-      <ul className="project-rows">
-        {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
-        ))}
-      </ul>
-      {pages > 1 ? (
-        <nav aria-label="Community project pages" className="pagination">
-          <button
-            aria-label="Previous page"
-            className="button secondary-button icon-button"
-            disabled={current === 0}
-            onClick={() => setPage(current - 1)}
-            type="button"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <span>
-            {current + 1} / {pages}
-          </span>
-          <button
-            aria-label="Next page"
-            className="button secondary-button icon-button"
-            disabled={current === pages - 1}
-            onClick={() => setPage(current + 1)}
-            type="button"
-          >
-            <ArrowRight aria-hidden="true" />
-          </button>
-        </nav>
-      ) : null}
-    </section>
-  );
-}
-
-function bootstrapAgentPrompt(): string {
+function bootstrapAgentPrompt(audience?: HomeAudience): string {
   const origin = window.location.origin.replace(/\/$/u, "");
-  return `Read ${origin}/SKILL.md and follow it.`;
+  const path = audience ? HOME_AUDIENCES[audience].skillPath : "/SKILL.md";
+  return `Read ${origin}${path} and follow it.`;
 }
 
 /** Published bounty terms come from the same registry as project discovery. */
@@ -764,6 +704,9 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
+        <Link className="button primary-button" href="/projects/new">
+          <Plus aria-hidden="true" /> Add a bounty
+        </Link>
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
@@ -805,9 +748,6 @@ function SecurityBounties() {
                         : "/ Finding"}
                     </span>
                   </p>
-                  <small className="project-money-state">
-                    {bountyFundingLabel(terms)}
-                  </small>
                 </div>
               </Link>
             );
@@ -819,13 +759,51 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
+  const audience: HomeAudience =
+    new URLSearchParams(window.location.search).get("audience") === "maintainer"
+      ? "maintainer"
+      : "contributor";
+  const selectAudience = (next: HomeAudience) => {
+    if (next === audience) return;
+    const destination = new URL(window.location.href);
+    if (next === "maintainer") destination.searchParams.set("audience", next);
+    else destination.searchParams.delete("audience");
+    window.history.pushState(window.history.state, "", destination);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  // Funding changes the displayed reward, never homepage discovery.
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const now = new Date();
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const listedProjects = homeProjectOrder(
+    homeProjects().map((project) => asShown(project, fundingIndex, now)),
+  );
+
   return (
     <main>
       <section className="hero shell">
-        <HeroHeading />
-        <InstallPanel />
+        <fieldset
+          aria-label="Choose your Slop journey"
+          className="home-audience-switch"
+        >
+          {(["contributor", "maintainer"] as const).map((option) => (
+            <button
+              aria-pressed={audience === option}
+              className="button"
+              key={option}
+              onClick={() => selectAudience(option)}
+              type="button"
+            >
+              {option === "contributor" ? "Contributor" : "Maintainer"}
+            </button>
+          ))}
+        </fieldset>
+        <HeroHeading audience={audience} key={audience} />
+        <InstallPanel audience={audience} />
       </section>
 
       <SecurityBounties />
@@ -836,25 +814,14 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        {featuredProjects.length + listedCommunityProjects.length === 0 ? (
+        {listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
         ) : (
-          <>
-            {featuredProjects.length > 0 ? (
-              <section
-                className="project-tier"
-                aria-labelledby="featured-projects"
-              >
-                <h3 id="featured-projects">Featured</h3>
-                <div className="project-grid">
-                  {featuredProjects.map((project) => (
-                    <ProjectCard key={project.id} project={project} />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <CommunityProjects projects={listedCommunityProjects} />
-          </>
+          <div className="project-grid">
+            {listedProjects.map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
         )}
       </section>
       <section
@@ -932,9 +899,11 @@ const AGENT_DEEP_LINKS: readonly {
 function AgentPromptBox({
   prompt,
   openIn = false,
+  skillUrl,
 }: {
   prompt: string;
   openIn?: boolean;
+  skillUrl?: string;
 }) {
   const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
@@ -988,7 +957,7 @@ function AgentPromptBox({
         <span>Open in</span>
         <ul>
           {AGENT_DEEP_LINKS.map((agent) => {
-            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const href = agent.href(prompt, skillUrl ?? `${origin}/SKILL.md`);
             const web = href.startsWith("https://");
             return (
               <li key={agent.name}>
@@ -1067,11 +1036,16 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   return <ProjectInstallPanel key={project.id} project={project} />;
 }
 
-function InstallPanel() {
+function InstallPanel({ audience }: { audience: HomeAudience }) {
+  const origin = window.location.origin.replace(/\/$/u, "");
   return (
     <div className="home-agent-setup">
-      <p className="hero-copy">Paste this into your coding agent.</p>
-      <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
+      <p className="hero-copy">Paste into your agent.</p>
+      <AgentPromptBox
+        openIn
+        prompt={bootstrapAgentPrompt(audience)}
+        skillUrl={`${origin}${HOME_AUDIENCES[audience].skillPath}`}
+      />
     </div>
   );
 }
@@ -1084,6 +1058,16 @@ function InstallPanel() {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  // Discovery leaves out an unfunded monthly pool this month; that is not a
+  // clearance problem, so the owner setup link does not apply.
+  const [funding] = usePublicResource(
+    project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const unlisted =
+    funding.status === "ready" &&
+    !listedThisMonth(project, funding.index, new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1127,9 +1111,11 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
           {eligibility === "loading"
             ? "Checking project clearance…"
             : eligibility === "blocked"
-              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
+              ? unlisted
+                ? "This project is not listed this month. The prompt below picks only listed projects."
+                : "This project is not cleared for agents. The prompt below picks only cleared projects."
               : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" ? (
+          {eligibility === "blocked" && !unlisted ? (
             <>
               {" "}
               <Link href={`/projects/${project.slug}/manage`}>
@@ -1350,10 +1336,31 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
 }
 
 /** Shared copy for every registry reward model; no project-specific descriptions. */
-function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+function ProjectRewardSummary({
+  project: registered,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [funding] = usePublicResource(
+    registered.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const index = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const project = asShown(registered, index, now);
+  const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
+        {status.state === "withdrawn" ? (
+          <p className="project-reward-status">
+            {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
+          </p>
+        ) : null}
+        {index !== null && !listedThisMonth(registered, index, now) ? (
+          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1399,6 +1406,77 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
   );
 }
 
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/** #1993: how promptly the project merges outside work, from the daily D1 read. */
+function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
+  const active = project.status === "active";
+  const [state] = usePublicResource(
+    active,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  if (!active || state.status === "loading") return null;
+  if (state.status === "error")
+    return (
+      <p className="project-merge-activity">Merge activity unavailable.</p>
+    );
+  // A repository not read yet shows nothing rather than an empty claim.
+  const line = mergeActivityLine(state.index.get(project.id), new Date());
+  return line ? <p className="project-merge-activity">{line}</p> : null;
+}
+
 function ProjectBountyIntroduction({
   project,
 }: {
@@ -1413,6 +1491,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1449,6 +1528,8 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
+          <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
@@ -1513,7 +1594,11 @@ export function App() {
 }
 
 function AppContent({ route }: { route: Route }) {
-  useHashScroll(window.location.href);
+  const scrollLocation = new URL(window.location.href);
+  // Switching the homepage journey keeps the reader at the hero, even when
+  // the shared URL has an anchor for the project list or leaderboard.
+  if (route.kind === "home") scrollLocation.searchParams.delete("audience");
+  useHashScroll(window.location.href, scrollLocation.href);
   useDocumentHead(route);
   const { registry, snapshot } = ROUTES[route.kind];
   const staleRegistry = globalThis.__SLOP_PROJECT_REGISTRY_STALE__;

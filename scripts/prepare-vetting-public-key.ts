@@ -9,6 +9,7 @@ class PublicKeyPreparationError extends Error {}
 
 export const SCANNER_PUBLIC_KEYS = "VETTING_RESULT_PUBLIC_KEYS";
 export type PagesMetadata = {
+  name?: string;
   production_branch: string;
   deployment_configs: {
     production: { env_vars?: Record<string, { type: string; value?: string }> };
@@ -33,6 +34,19 @@ const targets = {
     origin: "https://slop.cash",
   },
 };
+export function requireReviewedPagesProject(
+  remote: PagesMetadata,
+  target: PublicScannerKey["target"],
+) {
+  const expected = targets[target];
+  if (
+    remote.name !== expected.project ||
+    remote.production_branch !== expected.branch
+  )
+    throw new PublicKeyPreparationError(
+      "The reviewed Pages project contract drifted",
+    );
+}
 export async function publicScannerKey(
   raw: string | undefined,
   target: PublicScannerKey["target"],
@@ -122,6 +136,9 @@ export function verifyScannerPublicKey(
 export async function pagesMetadata(
   target: PublicScannerKey["target"],
   env = process.env,
+  transport: typeof fetch = fetch,
+  wait = (milliseconds: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
 ): Promise<PagesMetadata> {
   const account = env.CLOUDFLARE_ACCOUNT_ID,
     token = env.CLOUDFLARE_API_TOKEN;
@@ -129,25 +146,43 @@ export async function pagesMetadata(
     throw new PublicKeyPreparationError(
       "Protected Cloudflare configuration is required",
     );
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${targets[target].project}`,
-    {
-      redirect: "error",
-      signal: AbortSignal.timeout(30_000),
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
-  if (!response.ok)
-    throw new PublicKeyPreparationError(
-      "Pages configuration could not be read",
-    );
-  const body = (await response.json()) as {
-    success?: boolean;
-    result?: PagesMetadata;
-  };
-  if (body.success !== true || !body.result?.deployment_configs?.production)
-    throw new PublicKeyPreparationError("Pages configuration is unavailable");
-  return body.result;
+  for (let attempt = 1; ; attempt++) {
+    let response: Response;
+    try {
+      response = await transport(
+        `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects/${targets[target].project}`,
+        {
+          redirect: "error",
+          signal: AbortSignal.timeout(30_000),
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+    } catch {
+      if (attempt === 3)
+        throw new PublicKeyPreparationError(
+          "Pages configuration could not be read after 3 attempts",
+        );
+      await wait(attempt * 1_000);
+      continue;
+    }
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt === 3)
+        throw new PublicKeyPreparationError(
+          `Pages configuration could not be read (HTTP ${response.status})`,
+        );
+      await response.body?.cancel().catch(() => {});
+      await wait(attempt * 1_000);
+      continue;
+    }
+    const body = (await response.json()) as {
+      success?: boolean;
+      result?: PagesMetadata;
+    };
+    if (body.success !== true || !body.result?.deployment_configs?.production)
+      throw new PublicKeyPreparationError("Pages configuration is unavailable");
+    return body.result;
+  }
 }
 function release(target: string) {
   if (!(target in targets))
@@ -181,6 +216,11 @@ function temporary(path: string) {
 async function main() {
   const [mode, target, keyFile, configFile] = process.argv.slice(2);
   release(target);
+  if (mode === "preflight") {
+    const chosen = target as PublicScannerKey["target"];
+    requireReviewedPagesProject(await pagesMetadata(chosen), chosen);
+    return;
+  }
   const path = temporary(keyFile);
   if (mode === "derive") {
     const key = await publicScannerKey(

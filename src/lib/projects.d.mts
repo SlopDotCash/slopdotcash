@@ -6,6 +6,7 @@ import type { ContributionField } from "./project-schema.mjs";
 
 import type { RewardAsset } from "./reward-asset.mjs";
 import type { SecurityBountyTerms } from "./security-bounty.mjs";
+import type { ReadyLabelSettings } from "./slopbot-ready.mjs";
 
 export type ProjectId = string;
 export type ProjectStatus = "active" | "paused";
@@ -212,7 +213,11 @@ export interface ProjectDefinition {
   /** Maintainer-authored fields that generate the project skills (SKL-03). */
   readonly contribution?: Readonly<Record<ContributionField, string>>;
   /** Explicit owner consent, recorded by immutable revision; absent is false. */
-  readonly slopbot?: { readonly automaticClosure: boolean };
+  readonly slopbot?: {
+    readonly automaticClosure: boolean;
+    /** The slopbot:ready label (PRD section 5); absent means off. */
+    readonly readyLabel?: ReadyLabelSettings;
+  };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;
   readonly repositories: readonly {
@@ -222,6 +227,10 @@ export interface ProjectDefinition {
     readonly githubUrl: string;
     readonly description: string;
     readonly integrationBranch: string;
+    /** Appended repositories only (never repositories[0]). */
+    readonly githubId?: string;
+    readonly nodeId?: string;
+    readonly countsFrom?: string;
   }[];
   readonly skill: {
     readonly id: string;

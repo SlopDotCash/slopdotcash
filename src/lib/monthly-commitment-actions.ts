@@ -189,6 +189,8 @@ export async function checkEvmMonthlySetting(
     deployment.vault,
     buildSetMonthlyCommitmentCalldata(target.cap, target.enabled),
   );
+  // Not final yet: this flow reports only pending until finality.
+  if (checked.status === "included") return "pending" as const;
   if (checked.status !== "finalized") return checked.status;
   const events = checked.receipt.logs.filter(
     (log) =>

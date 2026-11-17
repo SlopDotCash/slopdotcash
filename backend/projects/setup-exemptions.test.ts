@@ -211,6 +211,7 @@ describe("summarize findings location classification", () => {
     state: "incomplete",
     commitSha: "c".repeat(40),
     templateSha256: "t".repeat(64),
+    repositoryId: "example/test-project",
     policyVersion: "1",
     requestedBy: { githubId: "1", githubLogin: "owner" },
     requestReason: "admission",
@@ -458,6 +459,7 @@ describe("incomplete scan badges for the owner (issue #1991)", () => {
     state: "incomplete",
     commitSha: "c".repeat(40),
     templateSha256: hex("d"),
+    repositoryId: "example/exemption-test",
     policyVersion: "slop-bounded-2026-10-24",
     requestedBy: { githubId: "1", githubLogin: "owner" },
     requestReason: "First scan after self-service setup",
@@ -717,5 +719,109 @@ describe("incomplete scan badges for the owner (issue #1991)", () => {
     expect(unfinished.checks.scan.message).toBe(
       "The last scan could not finish, so it did not clear the project.",
     );
+  });
+});
+
+describe("setup of a project with more than one repository", () => {
+  const second = "example/second-repository";
+  const multi: ProjectRecord = {
+    ...project,
+    manifest: {
+      ...project.manifest,
+      repositories: [
+        ...project.manifest.repositories,
+        {
+          id: second,
+          displayName: second,
+          githubUrl: `https://github.com/${second}`,
+          description: "The second repository of the project.",
+          integrationBranch: "main",
+          githubId: "223456789",
+          nodeId: "R_second",
+          countsFrom: "2026-11-01T00:00:00.000Z",
+        },
+      ],
+    } as ProjectDefinition,
+  };
+  const installed = {
+    state: "read" as const,
+    access: {
+      installation: "installed" as const,
+      installationId: 123,
+      permission: "admin" as const,
+      roleName: "admin",
+    },
+  };
+  const cleared: VettingClearance = {
+    state: "cleared",
+    assessment: null,
+    grandfathered: true,
+  };
+  const setup = (
+    clearance: VettingClearance,
+    secondAccess: Parameters<typeof projectSetupStatus>[0]["access"],
+  ) =>
+    projectSetupStatus({
+      project: multi,
+      restriction: projectRestriction(multi.id, []),
+      authority: { state: "verified", message: "Fixture authority check." },
+      access: installed,
+      repositoryAccess: [{ repositoryId: second, access: secondAccess }],
+      clearance,
+      scanRequest: null,
+      activatedRevision: null,
+      checkedAt: at,
+    });
+
+  test("Slopbot must be installed on every repository, naming the one that lacks it", () => {
+    const result = setup(cleared, {
+      state: "read",
+      access: { installation: "missing" },
+    });
+    expect(result.checks.installation).toEqual({
+      state: "missing",
+      message: `Slopbot is not installed on ${second}.`,
+    });
+    expect(result.state).toBe("action_required");
+    expect(result.nextAction.kind).toBe("install_slopbot");
+    expect(result.nextAction.message).toContain(second);
+    const suspended = setup(cleared, {
+      state: "read",
+      access: { installation: "suspended", installationId: 9 },
+    });
+    expect(suspended.checks.installation.state).toBe("suspended");
+    expect(suspended.nextAction.kind).toBe("install_slopbot");
+    const retry = setup(cleared, { state: "retry", message: "Try again." });
+    expect(retry.nextAction.kind).toBe("retry_installation");
+  });
+
+  test("an installed project names every repository and is ready once every repository clears", () => {
+    const result = setup(cleared, installed);
+    expect(result.checks.installation).toEqual({
+      state: "installed",
+      message: `Slopbot is installed on ${multi.manifest.repositories[0].id} and ${second}.`,
+    });
+    expect(result.state).toBe("ready");
+  });
+
+  test("the scan check names an appended repository that has not cleared", () => {
+    const result = setup({ state: "unscanned", repository: second }, installed);
+    expect(result.checks.scan).toEqual({
+      state: "unscanned",
+      message: `${second}: This revision has not been scanned yet.`,
+    });
+    expect(result.nextAction.kind).toBe("retry_scan");
+    // The first repository is the project's own; its message is unchanged.
+    const first = setup(
+      {
+        state: "unscanned",
+        repository: multi.manifest.repositories[0].id,
+      },
+      installed,
+    );
+    expect(first.checks.scan).toEqual({
+      state: "unscanned",
+      message: "This revision has not been scanned yet.",
+    });
   });
 });

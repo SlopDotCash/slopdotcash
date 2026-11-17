@@ -40,6 +40,11 @@ const MAX_VETOES_BETWEEN_PAYMENTS: u8 = 3;
 const FEE_DIVISOR: u64 = 50;
 /// Size of a Project created before accrued fees and the monthly gate were added.
 const LEGACY_PROJECT_SIZE: usize = 316;
+/// Size of a Project created before month pledges were added (accrued fees and the monthly
+/// gate present, no `pledged_open`).
+const PRE_PLEDGE_PROJECT_SIZE: usize = 332;
+/// A pledge may name the current UTC period or one of the next 11 periods.
+const MAX_PLEDGE_PERIODS_AHEAD: i64 = 12;
 #[program]
 pub mod slop_escrow {
     use super::*;
@@ -325,7 +330,13 @@ pub mod slop_escrow {
             actor_id,
             gross,
             fee_for(gross),
-        )
+        )?;
+        // An owner pays by hand only from unpledged funds.
+        require!(
+            free(&a.project)? >= a.project.pledged_open,
+            EscrowError::PledgedFunds
+        );
+        Ok(())
     }
     /// Bounties reuse ordinary reserves, destination authorization and recovery, in a
     /// bounty-purpose project only.
@@ -373,8 +384,93 @@ pub mod slop_escrow {
         });
         Ok(())
     }
+    // The owner pledges `amount` of free funds to one period (YYYYMM, UTC): the current
+    // period or one of the next 11, never one already committed. A pledge can be raised,
+    // never lowered or cancelled. While it is open, withdrawals and hand commits cannot take
+    // free funds below the open pledges, and commit_monthly may record that period with
+    // monthly commitments off, up to the pledge (with them on, up to the larger of the
+    // monthly cap and the pledge). Clients
+    // batch several periods in one transaction.
+    pub fn pledge_month(ctx: Context<PledgeMonth>, period: u32, amount: u64) -> Result<()> {
+        let p = &mut ctx.accounts.project;
+        require!(p.purpose == Purpose::Ordinary, EscrowError::WrongPurpose);
+        require!(amount > 0, EscrowError::InvalidAmount);
+        let ahead = months_ahead(period, Clock::get()?.unix_timestamp)?;
+        // A period's window opens 72 hours after the period ends, so the current or a later
+        // period can never already be committed.
+        require!(
+            (0..MAX_PLEDGE_PERIODS_AHEAD).contains(&ahead),
+            EscrowError::PledgePeriodClosed
+        );
+        let project = p.key();
+        let pledge = &mut ctx.accounts.month_pledge;
+        if pledge.project == Pubkey::default() {
+            pledge.project = project;
+            pledge.period = period;
+            pledge.bump = ctx.bumps.month_pledge;
+        } else {
+            // A pledge closes only when its period is committed or has lapsed, and neither
+            // period can be pledged again.
+            require!(pledge.open, EscrowError::PledgePeriodClosed);
+        }
+        let previous = if pledge.open { pledge.amount } else { 0 };
+        require!(amount >= previous, EscrowError::PledgeTooLow);
+        if amount == previous {
+            return Ok(());
+        }
+        p.pledged_open = add(p.pledged_open, amount - previous)?;
+        require!(
+            free(p)? >= p.pledged_open,
+            EscrowError::InsufficientFreeBalance
+        );
+        pledge.amount = amount;
+        pledge.open = true;
+        emit!(MonthPledged {
+            project,
+            period,
+            amount
+        });
+        Ok(())
+    }
+    // Anyone closes an open pledge whose period was never committed once the period's
+    // monthly window has closed, so pledged funds cannot be held forever. A pledge whose
+    // period was committed without naming it closes at once, as commit_monthly would have.
+    pub fn expire_pledge(ctx: Context<ExpirePledge>, period: u32) -> Result<()> {
+        let pledge = &mut ctx.accounts.month_pledge;
+        require!(pledge.open, EscrowError::PledgeNotLapsed);
+        let reserved = !absent(&ctx.accounts.month);
+        if !reserved {
+            let (_, closes_at) = monthly_window(period)?;
+            require!(
+                Clock::get()?.unix_timestamp >= closes_at,
+                EscrowError::PledgeNotLapsed
+            );
+        }
+        let amount = pledge.amount;
+        pledge.open = false;
+        let p = &mut ctx.accounts.project;
+        p.pledged_open = p
+            .pledged_open
+            .checked_sub(amount)
+            .ok_or(EscrowError::Arithmetic)?;
+        emit!(PledgeClosed {
+            project: p.key(),
+            period,
+            amount,
+            reserved
+        });
+        Ok(())
+    }
+    // The owner closes a pledge that has already closed (committed or lapsed) and takes
+    // back its rent. Its period is always before the current one by then, so pledge_month
+    // cannot open it again.
+    pub fn close_month_pledge(ctx: Context<CloseMonthPledge>, _period: u32) -> Result<()> {
+        require!(!ctx.accounts.month_pledge.open, EscrowError::PledgeOpen);
+        Ok(())
+    }
     // Anyone records one period's allocation root inside the period's window, once per
-    // period, while the owner has monthly commitments on. The instruction just before this
+    // period, while the owner has monthly commitments on or the period has an open pledge,
+    // which must then be passed as `month_pledge`. The instruction just before this
     // one must be an Ed25519 program check of the project's identity authority signature
     // over monthly_message(program, project, period, root, total, frozen_at, network).
     // `frozen_at` is when the attester froze the allocation, after it checked that no
@@ -388,7 +484,16 @@ pub mod slop_escrow {
     ) -> Result<()> {
         let p = &mut ctx.accounts.project;
         require!(p.purpose == Purpose::Ordinary, EscrowError::WrongPurpose);
-        require!(p.monthly_enabled, EscrowError::MonthlyDisabled);
+        // An open pledge is the owner's consent to record this period up to the pledge,
+        // whatever the switch says now. A closed pledge counts for nothing.
+        let pledged = match &ctx.accounts.month_pledge {
+            Some(pledge) if pledge.open => pledge.amount,
+            _ => 0,
+        };
+        require!(
+            p.monthly_enabled || pledged > 0,
+            EscrowError::MonthlyDisabled
+        );
         let (opens_at, closes_at) = monthly_window(period)?;
         let now = Clock::get()?.unix_timestamp;
         require!(
@@ -400,11 +505,20 @@ pub mod slop_escrow {
             EscrowError::InvalidFreeze
         );
         require!(total > 0, EscrowError::InvalidAmount);
-        require!(total <= p.monthly_cap, EscrowError::MonthlyCapExceeded);
+        require!(
+            total <= monthly_limit(p.monthly_enabled, p.monthly_cap, pledged),
+            EscrowError::MonthlyCapExceeded
+        );
         require!(
             free(p)? >= total && vault_amount(&ctx.accounts.vault, p)? >= add(held(p)?, total)?,
             EscrowError::InsufficientFreeBalance
         );
+        // A month never takes funds another period's open pledge holds.
+        let others = p
+            .pledged_open
+            .checked_sub(pledged)
+            .ok_or(EscrowError::Arithmetic)?;
+        require!(free(p)? - total >= others, EscrowError::PledgedFunds);
         let message = monthly_message(
             ctx.program_id,
             &p.key(),
@@ -432,6 +546,20 @@ pub mod slop_escrow {
             allocation_root,
             total
         });
+        // The reserved total left free balance above; any pledge above it returns to the
+        // owner's free funds.
+        if let Some(pledge) = ctx.accounts.month_pledge.as_mut() {
+            if pledge.open {
+                pledge.open = false;
+                p.pledged_open = others;
+                emit!(PledgeClosed {
+                    project: p.key(),
+                    period,
+                    amount: pledged,
+                    reserved: true
+                });
+            }
+        }
         Ok(())
     }
     // Anyone commits one award of a recorded allocation with its Merkle proof. The award
@@ -821,6 +949,10 @@ pub mod slop_escrow {
             gross > 0 && ctx.accounts.vault.amount >= add(held(p)?, gross)? && free(p)? >= gross,
             EscrowError::InsufficientFreeBalance
         );
+        require!(
+            free(p)? - gross >= p.pledged_open,
+            EscrowError::PledgedFunds
+        );
         let fee = fee_for(gross);
         let returned = gross.checked_sub(fee).ok_or(EscrowError::Arithmetic)?;
         let (purpose, bump) = ([p.purpose as u8], [p.bump]);
@@ -854,6 +986,10 @@ pub mod slop_escrow {
                 && free(p)? >= gross,
             EscrowError::InsufficientFreeBalance
         );
+        require!(
+            free(p)? - gross >= p.pledged_open,
+            EscrowError::PledgedFunds
+        );
         let fee = fee_for(gross);
         let returned = gross.checked_sub(fee).ok_or(EscrowError::Arithmetic)?;
         send_native(&ctx.accounts.vault, &ctx.accounts.destination, p, returned)?;
@@ -869,14 +1005,16 @@ pub mod slop_escrow {
         });
         Ok(())
     }
-    // Anyone grows a Project created by the 316-byte build to the current layout, paying
-    // any extra rent. The new counters start at zero: that build sent fees out at once and
-    // had no monthly gate. No other instruction can read the old layout.
+    // Anyone grows a Project of an earlier layout to the current one, paying any extra rent.
+    // The appended fields start at zero: the 316-byte build sent fees out at once and had no
+    // monthly gate, and neither earlier build had pledges. No other instruction can read an
+    // earlier layout.
     pub fn migrate_project(ctx: Context<MigrateProject>) -> Result<()> {
         let info = ctx.accounts.project.to_account_info();
         require!(
             info.owner == ctx.program_id
-                && info.data_len() == LEGACY_PROJECT_SIZE
+                && (info.data_len() == LEGACY_PROJECT_SIZE
+                    || info.data_len() == PRE_PLEDGE_PROJECT_SIZE)
                 && info.try_borrow_data()?[..8] == *Project::DISCRIMINATOR,
             EscrowError::NotLegacyProject
         );
@@ -1215,6 +1353,44 @@ fn add_i64(a: i64, b: i64) -> Result<i64> {
 fn unvetoed(veto: &UncheckedAccount) -> bool {
     veto.data_is_empty() && veto.owner == &anchor_lang::system_program::ID
 }
+/// True when no program account exists at the address (a month never committed).
+/// The most commit_monthly may record for a period. With monthly commitments on, the
+/// larger of the monthly cap and the period's open pledge; with them off, the pledge
+/// alone (zero without one, which commit_monthly refuses first).
+fn monthly_limit(enabled: bool, cap: u64, pledged: u64) -> u64 {
+    if enabled {
+        cap.max(pledged)
+    } else {
+        pledged
+    }
+}
+fn absent(account: &UncheckedAccount) -> bool {
+    account.data_is_empty() && account.owner == &anchor_lang::system_program::ID
+}
+/// Calendar months from the UTC period containing `now` to `period` (negative when past).
+fn months_ahead(period: u32, now: i64) -> Result<i64> {
+    monthly_window(period)?;
+    let current = period_at(now);
+    let index = |p: u32| (p / 100) as i64 * 12 + (p % 100) as i64;
+    Ok(index(period) - index(current))
+}
+/// The UTC period (YYYYMM) containing `now`, consistent with `month_start` (civil from days).
+fn period_at(now: i64) -> u32 {
+    let z = now.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted = (5 * day_of_year + 2) / 153;
+    let month = if shifted < 10 {
+        shifted + 3
+    } else {
+        shifted - 9
+    };
+    let year = year_of_era + era * 400 + if month <= 2 { 1 } else { 0 };
+    (year * 100 + month) as u32
+}
 // Unsolicited token transfers do not acquire sponsor refund or award rights.
 fn free(p: &Project) -> Result<u64> {
     p.deposited
@@ -1420,6 +1596,44 @@ pub struct CommitMonthly<'info> {
     #[account(address=anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+    /// The period's pledge when one exists; pass the program ID when none does. An open
+    /// pledge lets the period commit with monthly commitments off and closes on success.
+    #[account(mut,has_one=project,seeds=[b"pledge",project.key().as_ref(),&period.to_le_bytes()],bump=month_pledge.bump)]
+    pub month_pledge: Option<Box<Account<'info, MonthPledge>>>,
+}
+#[derive(Accounts)]
+#[instruction(period:u32)]
+pub struct PledgeMonth<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(mut,has_one=owner)]
+    pub project: Box<Account<'info, Project>>,
+    /// One per project and period; it records the latest pledged amount.
+    #[account(init_if_needed,payer=owner,space=8+MonthPledge::INIT_SPACE,seeds=[b"pledge",project.key().as_ref(),&period.to_le_bytes()],bump)]
+    pub month_pledge: Box<Account<'info, MonthPledge>>,
+    pub system_program: Program<'info, System>,
+}
+#[derive(Accounts)]
+#[instruction(period:u32)]
+pub struct CloseMonthPledge<'info> {
+    /// Receives the pledge account's rent.
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    #[account(has_one=owner)]
+    pub project: Box<Account<'info, Project>>,
+    #[account(mut,has_one=project,close=owner,seeds=[b"pledge",project.key().as_ref(),&period.to_le_bytes()],bump=month_pledge.bump)]
+    pub month_pledge: Box<Account<'info, MonthPledge>>,
+}
+#[derive(Accounts)]
+#[instruction(period:u32)]
+pub struct ExpirePledge<'info> {
+    #[account(mut)]
+    pub project: Box<Account<'info, Project>>,
+    #[account(mut,has_one=project,seeds=[b"pledge",project.key().as_ref(),&period.to_le_bytes()],bump=month_pledge.bump)]
+    pub month_pledge: Box<Account<'info, MonthPledge>>,
+    /// CHECK: the period's month address; whether it exists decides how the pledge ends.
+    #[account(seeds=[b"month",project.key().as_ref(),&period.to_le_bytes()],bump)]
+    pub month: UncheckedAccount<'info>,
 }
 #[derive(Accounts)]
 #[instruction(period:u32, award_id:[u8;32], source_digest:[u8;32])]
@@ -1668,6 +1882,20 @@ pub struct Project {
     /// Gross of admitted monthly allocations not yet committed or released. While it is
     /// positive the owner cannot commit by hand.
     pub monthly_outstanding: u64,
+    /// Sum of open month pledges. Withdrawals and hand commits keep free balance at or
+    /// above it.
+    pub pledged_open: u64,
+}
+/// The owner's pledge of free funds to one period. It stays open until the period is
+/// committed or its monthly window closes; the account is never closed.
+#[account]
+#[derive(InitSpace)]
+pub struct MonthPledge {
+    pub project: Pubkey,
+    pub period: u32,
+    pub amount: u64,
+    pub open: bool,
+    pub bump: u8,
 }
 /// What a project holds funds for. It is part of the project PDA seeds.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
@@ -1825,6 +2053,20 @@ pub struct MonthlyReserveReleased {
     pub released: u64,
 }
 #[event]
+pub struct MonthPledged {
+    pub project: Pubkey,
+    pub period: u32,
+    pub amount: u64,
+}
+#[event]
+pub struct PledgeClosed {
+    pub project: Pubkey,
+    pub period: u32,
+    pub amount: u64,
+    /// True when the period was committed; false when the pledge lapsed.
+    pub reserved: bool,
+}
+#[event]
 pub struct ProjectMigrated {
     pub project: Pubkey,
 }
@@ -1921,7 +2163,7 @@ pub enum EscrowError {
     MonthlyOutstanding,
     #[msg("This monthly award can still be committed")]
     AwardCommittable,
-    #[msg("Account is not a Project of the 316-byte layout")]
+    #[msg("Account is not a Project of an earlier layout")]
     NotLegacyProject,
     #[msg("The month has already expired")]
     MonthExpired,
@@ -1931,6 +2173,16 @@ pub enum EscrowError {
     MonthlyReserveChanged,
     #[msg("Token extension or authority is outside the approved metadata-only policy")]
     UnsupportedTokenExtension,
+    #[msg("A pledge can be raised, never lowered")]
+    PledgeTooLow,
+    #[msg("The pledge is not open or its period's window has not closed")]
+    PledgeNotLapsed,
+    #[msg("Free balance would fall below the open month pledges")]
+    PledgedFunds,
+    #[msg("The period is past, more than 11 months ahead, or its pledge has closed")]
+    PledgePeriodClosed,
+    #[msg("The pledge is still open")]
+    PledgeOpen,
 }
 
 #[account]
@@ -2003,10 +2255,52 @@ mod tests {
         assert_eq!(merkle_sum_root(leaves[0], 0, 1, &[]).unwrap(), leaves[0]);
     }
     #[test]
-    fn migration_appends_two_counters() {
-        assert_eq!(8 + Project::INIT_SPACE, LEGACY_PROJECT_SIZE + 16);
+    fn migration_appends_the_counters() {
+        assert_eq!(PRE_PLEDGE_PROJECT_SIZE, LEGACY_PROJECT_SIZE + 16);
+        assert_eq!(8 + Project::INIT_SPACE, PRE_PLEDGE_PROJECT_SIZE + 8);
+        assert_eq!(8 + MonthPledge::INIT_SPACE, 54);
         // A legacy 92-byte month cannot deserialize as the current month.
         assert_eq!(8 + MonthlyAllocation::INIT_SPACE, 109);
+    }
+    #[test]
+    fn period_at_matches_the_monthly_window() {
+        // 00:00 UTC on 1 November 2026, one second earlier, and the end of the month.
+        assert_eq!(period_at(1_793_491_200), 202611);
+        assert_eq!(period_at(1_793_491_199), 202610);
+        assert_eq!(period_at(1_796_083_199), 202611);
+        assert_eq!(period_at(1_796_083_200), 202612);
+        // Every month from 2000 to 2100 starts in its own period, round-tripping month_start.
+        for year in 2000..=2100i64 {
+            for month in 1..=12i64 {
+                let start = month_start(year, month);
+                assert_eq!(period_at(start), (year * 100 + month) as u32);
+                let previous = if month == 1 {
+                    (year - 1) * 100 + 12
+                } else {
+                    year * 100 + month - 1
+                };
+                assert_eq!(period_at(start - 1), previous as u32);
+            }
+        }
+    }
+    #[test]
+    fn monthly_limit_with_the_switch_off_is_the_pledge() {
+        assert_eq!(monthly_limit(true, 5, 2), 5);
+        assert_eq!(monthly_limit(true, 1, 2), 2);
+        assert_eq!(monthly_limit(true, 5, 0), 5);
+        assert_eq!(monthly_limit(false, 5, 2), 2);
+        assert_eq!(monthly_limit(false, 1, 2), 2);
+        assert_eq!(monthly_limit(false, 5, 0), 0);
+    }
+
+    #[test]
+    fn pledges_reach_eleven_months_ahead() {
+        let now = 1_793_491_200; // 1 November 2026
+        assert_eq!(months_ahead(202611, now).unwrap(), 0);
+        assert_eq!(months_ahead(202710, now).unwrap(), 11);
+        assert_eq!(months_ahead(202711, now).unwrap(), 12);
+        assert_eq!(months_ahead(202610, now).unwrap(), -1);
+        assert!(months_ahead(202613, now).is_err());
     }
     #[test]
     fn fee_is_two_percent_per_award_or_withdrawal() {

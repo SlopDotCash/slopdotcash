@@ -4,13 +4,14 @@
 // @source workers/slopbot/review.ts
 // @evidence workers/slopbot/penalty-appeal.test.ts
 // One draftValueDispute invocation and three configured route entries:
-// Orbio Sonnet, Surplus Sonnet and Surplus Terra. Every Orbio error moves
-// immediately to the backup provider, including insufficient credits.
-// Missing provider credentials skip their entries before any authority check
-// or receipt. Configured route entries check mayCall separately. Invalid
+// Surplus Sonnet, Surplus Terra and Orbio Sonnet (operator decision,
+// 16 November 2026). Missing provider credentials skip their entries before
+// any authority check or receipt; a missing Surplus key skips both Surplus
+// entries. Configured route entries check mayCall separately. Invalid
 // output, a wrong served model and ordinary provider failures may fall back.
-// A structured Surplus budget response stops the route; Orbio quota failure
-// falls back. Usage recording precedes every returned verdict,
+// A structured Surplus budget response skips the remaining Surplus entry and
+// tries Orbio; the request is deferred only if Orbio does not serve. An Orbio
+// quota failure is an ordinary failure. Usage recording precedes every returned verdict,
 // deferred result or route error. Inserts are sequential: a failure may retain
 // only a prefix. A retry can incur and record new calls; exactly-once provider
 // charging is not claimed. Confidence classes preserve the 0.9 decision cut
@@ -25,31 +26,32 @@ module bot_value_dispute_draft {
   val confidences = Set(0, 70, 89, 90, 100)
   var s: { phase: str, step: int, calls: int, persisted: int, outcome: str,
     gap: bool, partialJoint: bool, draft: str, confidence: int, returnedConfidence: int,
-    recordedBeforeReturn: bool, laterAllowed: bool }
+    recordedBeforeReturn: bool, laterAllowed: bool, denied: bool }
   action init = s' = { phase: "idle", step: 1, calls: 0, persisted: 0, outcome: "none",
     gap: false, partialJoint: false, draft: "none", confidence: 0, returnedConfidence: 0,
-    recordedBeforeReturn: false, laterAllowed: true }
+    recordedBeforeReturn: false, laterAllowed: true, denied: false }
   action begin(gap: bool, partialJoint: bool): bool = all { s.phase == "idle",
     s' = s.with("phase", "authority").with("gap", gap).with("partialJoint", partialJoint) }
-  action missingProvider = all { s.phase == "authority", Set(1, 2).contains(s.step),
-    s' = s.with("step", if (s.step == 1) 2 else 3)
-      .with("phase", if (s.step == 1) "authority" else "persist")
-      .with("outcome", if (s.step == 1) "none" else "exhausted") }
+  action missingProvider = all { s.phase == "authority", Set(1, 3).contains(s.step),
+    s' = if (s.step == 1) s.with("step", 3)
+      else s.with("phase", "persist").with("outcome", if (s.denied) "budget" else "exhausted") }
   action authority(answer: str): bool = all { s.phase == "authority", Set("allow", "deny", "throw").contains(answer),
     s' = if (answer == "allow") s.with("phase", "provider")
       else s.with("phase", "persist").with("outcome", if (answer == "deny") "blocked" else "authority-failure") }
   action authorityChanges = s' = s.with("laterAllowed", not(s.laterAllowed))
   action provider(reply: str, confidence: int, draft: str): bool = {
     val valid = reply == "valid"
-    val stopped = reply == "budget" and s.step >= 2
-    val fallback = not(valid) and not(stopped)
+    // Only a Surplus entry (steps 1 and 2) can return a spending denial.
+    val denial = reply == "budget" and s.step <= 2
+    val more = not(valid) and s.step < 3
     all { s.phase == "provider", Set("valid", "invalid", "wrong-model", "failed", "budget").contains(reply),
       confidences.contains(confidence), Set("uphold", "deny").contains(draft),
-      s' = s.with("calls", s.calls + 1)
+      s' = s.with("calls", s.calls + 1).with("denied", s.denied or denial)
         .with("draft", if (valid) draft else "none").with("confidence", if (valid) confidence else 0)
-        .with("outcome", if (valid) "verdict" else if (stopped) "budget" else if (s.step == 3) "exhausted" else "none")
-        .with("phase", if (fallback and s.step < 3) "authority" else "persist")
-        .with("step", if (fallback and s.step < 3) s.step + 1 else s.step) }
+        .with("outcome", if (valid) "verdict" else if (more) "none"
+          else if (s.denied or denial) "budget" else "exhausted")
+        .with("phase", if (more) "authority" else "persist")
+        .with("step", if (more) (if (denial) 3 else s.step + 1) else s.step) }
   }
   action persistOne = all { s.phase == "persist", s.persisted < s.calls,
     s' = s.with("persisted", s.persisted + 1) }
@@ -77,11 +79,13 @@ module bot_value_dispute_draft {
     Set("returned", "deferred", "route-error").contains(s.phase) implies s.recordedBeforeReturn and s.persisted == s.calls,
     s.phase == "returned" implies s.outcome == "verdict" and Set("uphold", "deny").contains(s.draft),
     s.phase == "returned" and (s.gap or s.partialJoint) implies s.returnedConfidence <= 89,
-    s.phase == "storage-error" implies not(s.recordedBeforeReturn) }
+    s.phase == "storage-error" implies not(s.recordedBeforeReturn),
+    s.phase == "deferred" implies s.denied,
+    s.denied implies s.calls >= 1 }
   action allow = authority("allow")
   action valid(confidence: int): bool = provider("valid", confidence, "uphold")
-  run missingOrbioStartsSurplusWithoutReceiptTest = init.then(begin(false, false)).then(missingProvider)
-    .expect(s.step == 2 and s.calls == 0).then(allow).then(valid(90)).then(persistOne).then(finish)
+  run missingSurplusStartsOrbioWithoutReceiptTest = init.then(begin(false, false)).then(missingProvider)
+    .expect(s.step == 3 and s.calls == 0).then(allow).then(valid(90)).then(persistOne).then(finish)
     .expect(s.calls == 1 and s.phase == "returned" and invariant)
   run missingBothProvidersMakesNoCallTest = init.then(begin(false, false))
     .then(missingProvider).then(missingProvider).then(finish)
@@ -107,22 +111,34 @@ module bot_value_dispute_draft {
     .then(authority("deny")).then(persistOne).then(finish).expect(s.calls == 1 and s.outcome == "blocked" and invariant)
   run fallbackAuthorityExceptionStillRecordsFirstCallTest = init.then(begin(false, false)).then(allow).then(provider("failed", 0, "uphold"))
     .then(authority("throw")).then(persistOne).then(finish).expect(s.persisted == 1 and s.outcome == "authority-failure" and invariant)
-  run surplusBudgetStopsFallbackTest = init.then(begin(false, false))
-    .then(allow).then(provider("failed", 0, "uphold"))
+  run surplusBudgetGoesToOrbioTest = init.then(begin(false, false))
     .then(allow).then(provider("budget", 0, "uphold"))
-    .then(persistOne).then(persistOne).then(finish)
-    .expect(s.calls == 2 and s.phase == "deferred" and invariant)
-  run orbioQuotaFailureImmediatelyUsesSurplusTest = init.then(begin(false, false))
-    .then(allow).then(provider("budget", 0, "uphold"))
+    .expect(s.step == 3 and s.denied and s.phase == "authority")
     .then(allow).then(valid(90)).then(persistOne).then(persistOne).then(finish)
     .expect(s.calls == 2 and s.phase == "returned" and invariant)
+  run surplusBudgetThenOrbioFailureDefersTest = init.then(begin(false, false))
+    .then(allow).then(provider("failed", 0, "uphold"))
+    .then(allow).then(provider("budget", 0, "uphold"))
+    .then(allow).then(provider("failed", 0, "uphold"))
+    .then(persistOne).then(persistOne).then(persistOne).then(finish)
+    .expect(s.calls == 3 and s.phase == "deferred" and invariant)
+  run surplusBudgetWithoutOrbioKeyDefersTest = init.then(begin(false, false))
+    .then(allow).then(provider("budget", 0, "uphold"))
+    .then(missingProvider).then(persistOne).then(finish)
+    .expect(s.calls == 1 and s.phase == "deferred" and invariant)
+  run orbioQuotaFailureIsNotASurplusDenialTest = init.then(begin(false, false))
+    .then(allow).then(provider("failed", 0, "uphold"))
+    .then(allow).then(provider("failed", 0, "uphold"))
+    .then(allow).then(provider("budget", 0, "uphold"))
+    .then(persistOne).then(persistOne).then(persistOne).then(finish)
+    .expect(s.calls == 3 and not(s.denied) and s.phase == "route-error" and invariant)
   run exhaustedRoutesRecordAllFailuresTest = init.then(begin(false, false))
     .then(allow).then(provider("failed", 0, "uphold"))
     .then(allow).then(provider("invalid", 0, "uphold"))
     .then(allow).then(provider("wrong-model", 0, "uphold"))
     .then(persistOne).then(persistOne).then(persistOne).then(finish)
     .expect(s.outcome == "exhausted" and s.phase == "route-error" and s.calls == 3 and invariant)
-  run backupAuthorityRefusalRecordsOrbioFailureTest = init.then(begin(false, false))
+  run backupAuthorityRefusalRecordsSurplusFailureTest = init.then(begin(false, false))
     .then(allow).then(provider("failed", 0, "uphold"))
     .then(authority("deny")).then(persistOne).then(finish)
     .expect(s.calls == 1 and s.outcome == "blocked" and s.persisted == 1 and invariant)

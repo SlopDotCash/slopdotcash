@@ -188,15 +188,29 @@ for (const denied of [false, true]) {
         unavailable = false;
         await retry.focus();
         await page.keyboard.press("Enter");
-        await expect(publish).toBeVisible();
+        await expect(publish).toBeEnabled();
         expect(successfulAccessReads).toBeGreaterThan(0);
         expect(writes).toBe(0);
+        // The recovered editor enables both controls before their colors finish
+        // transitioning. Audit their settled, usable state.
+        await publish.evaluate(async (button) => {
+          await Promise.all(
+            button
+              .parentElement!.getAnimations({ subtree: true })
+              .filter((animation) =>
+                Number.isFinite(animation.effect?.getComputedTiming().endTime),
+              )
+              .map((animation) => animation.finished.catch(() => {})),
+          );
+        });
         await expectAccessible(page);
         await page.screenshot({
           path: info.outputPath("access-recovered.png"),
           fullPage: true,
         });
       } finally {
+        // Drain routed requests before disposing the server they use.
+        await page.unrouteAll({ behavior: "wait" });
         await api.dispose();
       }
     },

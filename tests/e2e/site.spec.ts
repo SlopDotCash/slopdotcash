@@ -6,10 +6,11 @@ import { readLeaderboardResponse } from "./leaderboard-response";
  */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { assertCycleIndex, type CycleIndex } from "../../src/lib/cycle-index";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
-import { communityProjects } from "../../src/lib/home-projects";
+import { homeProjects } from "../../src/lib/home-projects";
 import {
   assertLeaderboardSnapshot,
   assignLeaderboardRanks,
@@ -25,7 +26,12 @@ import {
 } from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
@@ -496,22 +502,13 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     "href",
     "https://github.com/SlopDotCash/slopdotcash",
   );
-  const community = page.locator("section.community-projects");
-  const listedCommunity = communityProjects();
-  if (listedCommunity.length === 0) {
-    await expect(community).toHaveCount(0);
-  } else {
-    // Community projects list ten per page; every page stays reachable.
-    const pages = Math.ceil(listedCommunity.length / 10);
-    for (let index = 0; index < pages; index += 1) {
-      for (const project of listedCommunity.slice(index * 10, (index + 1) * 10))
-        await expect(
-          community.locator(`a.project-row[href="/projects/${project.id}"]`),
-        ).toBeVisible();
-      if (index < pages - 1)
-        await community.getByRole("button", { name: "Next page" }).click();
-    }
-  }
+  // Every open project is one card in the single projects grid.
+  const projects = page.locator("#projects");
+  for (const project of homeProjects())
+    await expect(
+      projects.locator(`a.project-card[href="/projects/${project.id}"]`),
+    ).toBeVisible();
+  await expect(page.locator("section.community-projects")).toHaveCount(0);
   for (const project of PROJECTS.filter(
     (project) => project.status === "paused",
   )) {
@@ -520,14 +517,20 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
-  // The external prize is a community listing that also earns points.
+  // The frozen project has a pledge and no verified vault funding.
   await expect(
-    community.locator('a.project-row[href="/projects/delta-star"]'),
-  ).toContainText("$1,000,000");
+    elizaCard.getByText("Points only", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
+  // An external prize leads with points; the card never headlines its amount.
+  const deltaStar = projects.locator(
+    'a.project-card[href="/projects/delta-star"]',
+  );
+  await expect(deltaStar).toContainText("Points + external prize");
+  await expect(deltaStar).not.toContainText("$1m");
   await expect(
     page.getByRole("status", { name: "Agent prompt" }),
-  ).toContainText(`${new URL(page.url()).origin}/SKILL.md`);
+  ).toContainText(`${new URL(page.url()).origin}/contribute/SKILL.md`);
   for (const agent of ["Cursor", "ChatGPT", "Claude"])
     await expect(
       page.getByRole("link", { name: agent, exact: true }),
@@ -638,6 +641,19 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
+});
+
+test("public project summaries read the migrated Pages database", {
+  tag: ["@pages", "@pages-only"],
+}, async ({ request }) => {
+  for (const [path, schema] of [
+    ["merge-activity", "slop-merge-activity-v1"],
+    ["pool-funding", "slop-pool-funding-v1"],
+  ]) {
+    const response = await request.get(`/api/v1/${path}`);
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ schema, projects: [] });
+  }
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -1536,6 +1552,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
     request.get("/.well-known/agent-skills/index.json"),
@@ -1545,6 +1562,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/protocol/points-v1.md"),
     request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
+    request.get("/skill-manifest.json"),
   ]);
   for (const response of [
     bootstrapResponse,
@@ -1555,6 +1573,7 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     pointsRulesResponse,
     scoringRulesResponse,
     llmsResponse,
+    skillManifestResponse,
   ]) {
     expect(response.status()).toBe(200);
   }
@@ -1596,8 +1615,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     expect(rules).toContain("## Historical protocol record");
   }
   expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
-  const bootstrap = await bootstrapResponse.body();
-  const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
   const discovery = (await discoveryResponse.json()) as {
     $schema: string;
     skills: Array<{
@@ -1607,19 +1624,71 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
       url: string;
     }>;
   };
-  expect(discovery).toEqual({
-    $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-    skills: [
-      expect.objectContaining({
-        digest: `sha256:${bootstrapDigest}`,
-        name: "slop",
-        type: "skill-md",
-        url: "https://slop.cash/SKILL.md",
-      }),
-    ],
+  expect(discovery.$schema).toBe(
+    "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  );
+  const manifest = await skillManifestResponse.json();
+  expect(skillManifestResponse.headers()["content-type"]).toContain(
+    "application/json",
+  );
+  expect(skillManifestResponse.headers()["access-control-allow-origin"]).toBe(
+    "*",
+  );
+  const globalSkills = [
+    { name: "slop", path: "/SKILL.md" },
+    { name: "slop-contributor", path: "/contribute/SKILL.md" },
+    { name: "slop-maintainer", path: "/maintain/SKILL.md" },
+  ];
+  expect(discovery.skills.map((skill) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest.skills.map((skill: { name: string }) => skill.name)).toEqual(
+    globalSkills.map((skill) => skill.name),
+  );
+  expect(manifest).toMatchObject({
+    schemaVersion: "1",
+    repository: "SlopDotCash/slopdotcash",
+    revision: expect.stringMatching(/^[a-f0-9]{40}$/u),
   });
-  expect(await discoverySkillResponse.body()).toEqual(bootstrap);
-  expect(await llmsResponse.text()).toContain(`SHA-256: ${bootstrapDigest}`);
+  const llms = await llmsResponse.text();
+  for (const [index, skill] of globalSkills.entries()) {
+    const [response, alias] =
+      skill.name === "slop"
+        ? [bootstrapResponse, discoverySkillResponse]
+        : await Promise.all([
+            request.get(skill.path),
+            request.get(`/.well-known/agent-skills/${skill.name}/SKILL.md`),
+          ]);
+    for (const published of [response, alias]) {
+      expect(published.status()).toBe(200);
+      expect(published.headers()["content-type"]).toContain("text/markdown");
+      expect(published.headers()["access-control-allow-origin"]).toBe("*");
+      expect(published.headers()["cache-control"]).toContain("max-age=300");
+    }
+    const bytes = await response.body();
+    const source = `skills/${skill.name}/SKILL.md`;
+    expect(bytes).toEqual(
+      readFileSync(new URL(`../../${source}`, import.meta.url)),
+    );
+    expect(await alias.body()).toEqual(bytes);
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    expect(discovery.skills[index]).toMatchObject({
+      name: skill.name,
+      type: "skill-md",
+      url: `https://slop.cash${skill.path}`,
+      digest,
+    });
+    expect(manifest.skills[index]).toEqual({
+      name: skill.name,
+      source,
+      url: `https://slop.cash${skill.path}`,
+      digest,
+      revision: manifest.revision,
+      revisionStatus: expect.stringMatching(/^(committed|working-tree)$/u),
+    });
+    expect(llms).toContain(`https://slop.cash${skill.path}`);
+    expect(llms).toContain(`SHA-256: ${digest.slice("sha256:".length)}`);
+  }
 });
 
 test("shows an explicit error for invalid data and retries", async ({
@@ -1853,6 +1922,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
   diagnostics,
 }, testInfo) => {
+  await servePublicProjectReads(page);
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -1906,7 +1976,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Finish the remounted Sponsors page's funding read before leaving for Home.
+  const [fundingResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+        response.request().method() === "GET",
+    ),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
+  expect(fundingResponse.ok()).toBe(true);
+  expect(await fundingResponse.finished()).toBeNull();
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();
@@ -2013,6 +2093,34 @@ test("lands direct and lazy cross-route hash links on their section", async ({
     await expect(page.locator(`#${id}`)).toBeInViewport();
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   }
+});
+
+test("how it works answers the referral and buyback questions", async ({
+  page,
+}) => {
+  await page.goto("/how-it-works#faq");
+  const faq = page.locator("#faq");
+  const referral = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Is there a referral program?" }),
+  });
+  await expect(referral).toContainText("slop.cash/r/");
+  await expect(referral).toContainText("paid its contributors");
+  await expect(
+    referral.getByRole("link", { name: "Referral terms" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  const buyback = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
+  });
+  await expect(buyback).toContainText("configured live since 12 November 2026");
+  await expect(buyback).toContainText("eligible fee income");
+  await expect(buyback).toContainText("once minimum order sizes are met");
+  await expect(buyback).toContainText(
+    "The first verified bridge fill, purchase and burn are still pending",
+  );
+  await expect(buyback).not.toContainText("starts with the first fee");
+  await expect(
+    buyback.getByRole("link", { name: "How the buyback works" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
 });
 
 test("refuses retired and unknown paths and recovers to projects", async ({
