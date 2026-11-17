@@ -48,7 +48,7 @@ type SendKind = Conversion | Approval | Claim
 type RowState = Quoted | DustPending | Skipped | NoRoute | Submitted | Unknown | Finalized | Failed
 type Reason = NoReason | BelowMinimum | BelowGasMultiple | RunCapReached | DayCapReached | ExceedsRemaining
   | UnsafeValue | ImpactUnknown | ImpactAbove | SlippageOutside | NoRouteFound | PrepareFailed
-  | RunEndedBeforeSigning | Reverted | ExpiredUnlanded | BroadcastUnknown | BelowSignedMinimum
+  | RunEndedBeforeSigning | Reverted | ExpiredUnlanded | BroadcastUnknown | BelowSignedMinimum | NonceConsumed
 type GasState = Reserved | Signed | Abandoned
 type Attempt = { tx: int, maxFee: int, priority: int, at: int }
 type Row = { id: int, token: int, kind: SendKind, live: bool, state: RowState, reason: Reason, runId: int, wallet: int,
@@ -274,7 +274,8 @@ exceeds its reservation holds every later signature on the network. A lost
 lease between reservation and signature leaves an unsigned reservation that
 the stepped run abandons. Every token draws nonces from the one network
 sequence, and a nonce held by a reservation of another send is never
-issued twice; only a nonce whose send expired unlanded may be reused. A
+issued twice; only a nonce whose send expired unlanded, and that no
+canonical receipt has settled since, may be reused. A
 claim starts only when the run has no other reservation or intent. A Solana signature records the slot of the
 blockhash it was signed against; that slot never changes.
 
@@ -299,7 +300,7 @@ pure def worstCase(f: Fee, gasLimit: int, fees: EvmFees): int =
   if (f.network == R::Solana) R::transactionCeilingOf(f.network) else gasLimit * fees.maxFee + additionalReserve(f.network)
 pure def expiredRow(f: Fee, id: int): bool = f.rows.some(r => r.id == id and r.reason == ExpiredUnlanded)
 pure def nonceFloor(f: Fee): int = f.gas.foldl(0, (t, g) =>
-  if ((g.state == Reserved or (g.state == Signed and not(expiredRow(f, g.row)))) and g.nonce >= t) g.nonce + 1 else t)
+  if ((g.state == Reserved or (g.state == Signed and (g.settled or not(expiredRow(f, g.row))))) and g.nonce >= t) g.nonce + 1 else t)
 pure def solanaSequence(f: Fee): int = f.gas.foldl(0, (t, g) => if (g.nonce >= t) g.nonce + 1 else t)
 pure def ownReservation(f: Fee, runId: int): Reservation =
   f.gas.foldl(noGas, (found, g) => if (g.state == Reserved and g.runId == runId) g else found)
@@ -372,7 +373,7 @@ pure def sometimesSharedNonceSequence(f: Fee): bool = f.gas.some(g => g.state ==
 
 ### Only a finalized receipt of one of the row's own attempts settles it
 
-A finalized receipt settles its whole nonce group: the landed attempt is
+A finalized receipt settles its whole nonce group in that fee wallet: the landed attempt is
 charged its actual fee and every other attempt with that nonce is charged
 nothing. A success credits the exact output; the balance before is evidence
 only, and an output below the signed minimum is recorded as such. A revert
@@ -385,7 +386,7 @@ its token: a wallet change is no authority to reinterpret a retained send.
 type SendReceipt = { tx: int, succeeded: bool, output: int, actualNative: int, finalized: bool }
 pure def landedIn(r: Row, tx: int): bool = r.attempts.some(a => a.tx == tx)
 pure def settleGas(f: Fee, r: Row, tx: int, actualNative: int): List[Reservation] =
-  f.gas.listMap(g => if (g.state == Signed and not(g.settled) and g.nonce == r.nonce)
+  f.gas.listMap(g => if (g.state == Signed and not(g.settled) and g.nonce == r.nonce and f.rows.nthOr(g.row - 1, noRow).wallet == r.wallet)
     { ...g, settled: true, actual: if (g.tx == tx) actualNative else 0, settledDay: day(f) } else g)
 pure def overran(f: Fee, tx: int, actualNative: int): bool = f.gas.some(g => g.tx == tx and actualNative > g.maximum)
 pure def canFinalizeSend(f: Fee, runId: int, id: int, receipt: SendReceipt, by: R::Sender): bool =
@@ -432,7 +433,10 @@ at a finalized block without inclusion closes as failed, but its nonce keeps
 its largest reservation until a canonical receipt for that nonce settles it,
 so a later send may reuse the nonce without a second liability; a later
 canonical receipt of the expired attempt itself, necessarily a revert,
-settles that nonce at its actual fee and leaves the row failed.
+settles that nonce at its actual fee and leaves the row failed. That receipt
+proves the nonce consumed, so an open send that reused it can never land: it
+closes as failed with its nonce consumed, a claim among them returns its
+amount to the accrued balance, and no later send may take that nonce.
 
 An expired claim returns its amount to the accrued balance. A Solana send
 releases its reservation only with proof from two independent
@@ -486,9 +490,15 @@ pure def canSettleExpired(f: Fee, runId: int, id: int, receipt: SendReceipt, by:
   by == R::Worker and leaseHeld(f, runId) and f.network != R::Solana and r.id == id and r.state == Failed and r.reason == ExpiredUnlanded
     and receipt.finalized and not(receipt.succeeded) and landedIn(r, receipt.tx) and receipt.actualNative >= 0
     and f.gas.some(g => g.tx == receipt.tx and g.state == Signed and not(g.settled))
+pure def reusedNonce(f: Fee, r: Row, x: Row): bool = x.id != r.id and x.wallet == r.wallet and (x.state == Submitted or x.state == Unknown)
+  and f.gas.some(g => g.row == x.id and g.state == Signed and not(g.settled) and g.nonce == r.nonce)
+pure def nonceLosers(f: Fee, r: Row, token: int): int =
+  f.rows.foldl(0, (t, x) => if (reusedNonce(f, r, x) and x.kind == Claim and x.token == token) t + x.amountIn else t)
 pure def settleExpired(f: Fee, runId: int, id: int, receipt: SendReceipt, by: R::Sender): Fee =
   val r = f.rows.nthOr(id - 1, noRow)
-  { ...f, gas: settleGas(f, r, receipt.tx, receipt.actualNative), overrun: f.overrun or overran(f, receipt.tx, receipt.actualNative) }
+  { ...f, rows: f.rows.listMap(x => if (reusedNonce(f, r, x)) { ...x, state: Failed, reason: NonceConsumed } else x),
+    gas: settleGas(f, r, receipt.tx, receipt.actualNative), overrun: f.overrun or overran(f, receipt.tx, receipt.actualNative),
+    holdings: f.holdings.listMap(h => { ...h, accrued: h.accrued + nonceLosers(f, r, h.token) }) }
 pure def canExpireSolana(f: Fee, runId: int, id: int, proof: ExpiryProof, by: R::Sender): bool =
   val r = f.rows.nthOr(id - 1, noRow)
   by == R::Worker and leaseHeld(f, runId) and f.network == R::Solana and r.id == id and (r.state == Submitted or r.state == Unknown)
@@ -673,6 +683,7 @@ pure val receiptValues = Set({ tx: 11, succeeded: true, output: 450000000, actua
   { tx: 11, succeeded: true, output: 450000000, actualNative: 60000, finalized: true },
   { tx: 11, succeeded: true, output: 400000000, actualNative: 40000, finalized: true },
   { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true },
+  { tx: 11, succeeded: true, output: 0, actualNative: 40000, finalized: true },
   { tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: false })
 pure val deadlineValues = Set({ finalizedTime: 9000000001, included: false }, { finalizedTime: 9000000001, included: true })
 pure val scanValues = Set(
