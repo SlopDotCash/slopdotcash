@@ -18,6 +18,11 @@ PAYMENT_NETWORKS = '[]'
 # Automatic private-report intake (PRD section 8; owner activation of 26
 # October 2026). Routes stay closed unless every intake App secret is set.
 SLOP_PRIVATE_INTAKE_MODE = "on"
+# Routine decisions on undecided private reports (PRD section 8; operator
+# decision of 17 November 2026): off, dry_run or live. dry_run records what a
+# pass would decide and changes no case and notifies nobody. Moving to live
+# needs its own reviewed change after the dry-run counts are read.
+SECURITY_ROUTINE_DECISIONS = "dry_run"
 
 [[d1_databases]]
 binding = "SLOP_DB"

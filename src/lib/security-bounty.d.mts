@@ -99,6 +99,10 @@ export declare function programExclusions(
 export declare function securityExclusions(
   scope: { readonly excludedFindings?: readonly string[] } | null | undefined,
 ): string[];
+export declare function routineClosingExclusions(
+  scope: { readonly excludedFindings?: readonly string[] } | null | undefined,
+): string[];
+export declare const SECURITY_ROUTINE_DECISION_NOTICE: string;
 export declare const SECURITY_SPLIT: Readonly<{
   researcherBasisPoints: 7500;
   slopBasisPoints: 2500;

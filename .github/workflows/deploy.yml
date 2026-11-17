@@ -1195,6 +1195,19 @@ jobs:
         # any publication on failure.
         run: bun --no-env-file scripts/qualify-security-screening.ts
 
+      - name: Qualify private report routine decisions with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 6
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        # Three synthetic reports through the production routine-decision
+        # call (PRD section 8): at most five bounded calls (1 USD each,
+        # 5 USD total) that retry only transient failures; no private reports
+        # or delivery side effects. A wrong answer fails at once, and every
+        # failure logs only its category. This protected main-only job fails
+        # before any publication on failure.
+        run: bun --no-env-file scripts/qualify-security-routine.ts
+
       - name: Require reviewed Pages project
         if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
@@ -1350,9 +1363,11 @@ jobs:
           if (xKeys.length === 1) throw new TypeError("X OAuth credentials must be configured together");
           // Optional owner-provisioned payment RPC, private-report intake,
           // private analysis and public GitHub read secrets (PRD sections 4, 6,
-          // 8 and 11). They stay inert until their feature is enabled or set;
-          // any other name still fails closed.
+          // 8 and 11), and the operator's reserved-awards feed token (PRD
+          // section 9). They stay inert until their feature is enabled or
+          // set; any other name still fails closed.
           const optional = [
+            "OPERATOR_FEED_TOKEN",
             "PAYMENT_RPC_URLS",
             "REWARD_RPC_SOLANA",
             "SLOP_GITHUB_READ_TOKEN",

@@ -114,6 +114,13 @@ discovery lists every cleared project as before; the response is `no-store`,
 so the next request reads again. The per-project artifacts above keep serving
 by direct link.
 
+Discovery also reads the stored open pull request counts
+(`readIntakeCounts` in `merge-activity.ts`) and leaves out an active project
+that is over its owner's intake cap (`intakePaused` in
+`src/lib/intake-cap.mjs`; PRD section 5, operator decision of 17 November
+2026). A count that cannot be read, was never read or is older than three
+days pauses nothing.
+
 ## Self-service setup
 
 A project starts without routine admin approval after complete setup,

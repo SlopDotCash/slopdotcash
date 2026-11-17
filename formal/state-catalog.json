@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "c20403b9f1af7cdf3aaf44e18c12a65ae65730c47159525d3e06d23fb0f33ac1",
+  "inventorySha256": "7c378b1384e49dbfcfdfe9ef1f70ebb4a8021c5147f624be3e48c7f79b2374de",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -236,11 +236,12 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 39,
+      "line": 40,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt",
@@ -251,11 +252,12 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 51,
+      "line": 52,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt",
@@ -294,7 +296,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 408,
+      "line": 523,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -308,7 +310,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 640,
+      "line": 755,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -322,7 +324,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 763,
+      "line": 878,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -336,7 +338,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 904,
+      "line": 1019,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -350,7 +352,23 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 109,
+      "line": 89,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["off"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/case-store.ts",
+      "line": 119,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -358,14 +376,15 @@
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 681,
+      "line": 695,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -373,7 +392,8 @@
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden", "ready"],
       "review": "candidate-only"
@@ -418,6 +438,158 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["off", "on"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 51,
+      "name": "RoutineMode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["off"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 128,
+      "name": "Outcome",
+      "kind": "string-union",
+      "values": [
+        "acknowledged",
+        "does-not-qualify",
+        "duplicate",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "acknowledged",
+        "does-not-qualify",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 136,
+      "name": "HoldReason",
+      "kind": "string-union",
+      "values": [
+        "analysis-unavailable",
+        "calls-disagreed",
+        "github-advisory",
+        "loss-plausible",
+        "proof-still-missing",
+        "report-not-stored"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "analysis-unavailable",
+        "calls-disagreed",
+        "github-advisory",
+        "loss-plausible",
+        "proof-still-missing",
+        "report-not-stored"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 160,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["answered", "failed"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["answered"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 187,
+      "name": "decision",
+      "kind": "string-union",
+      "values": ["exclusionLine", "missing", "outcome", "proofDueAt"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "exclusionLine",
+        "missing",
+        "outcome",
+        "proofDueAt"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 318,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 474,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 575,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["answered", "failed"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["answered"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 663,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 796,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 893,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 906,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1971,6 +2143,49 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 15,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 51,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 53,
+      "name": "outcome",
+      "kind": "sql-check",
+      "values": [
+        "acknowledged",
+        "does-not-qualify",
+        "duplicate",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "acknowledged",
+        "does-not-qualify",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
       "line": 7,
       "name": "reason",
@@ -2458,11 +2673,12 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 485,
+      "line": 490,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
@@ -2485,11 +2701,12 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1117,
+      "line": 1144,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
@@ -2715,11 +2932,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1061,
+      "line": 1062,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -2739,11 +2957,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1543,
+      "line": 1544,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -2763,11 +2982,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2469,
+      "line": 2496,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -2787,11 +3007,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2474,
+      "line": 2501,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -2811,11 +3032,12 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2481,
+      "line": 2508,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -2835,7 +3057,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 367,
+      "line": 368,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2863,7 +3085,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1058,
+      "line": 1066,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2891,7 +3113,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1073,
+      "line": 1081,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2919,7 +3141,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1075,
+      "line": 1083,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2947,7 +3169,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1091,
+      "line": 1099,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2975,7 +3197,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1130,
+      "line": 1138,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3031,7 +3253,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1492,
+      "line": 1500,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3059,7 +3281,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1734,
+      "line": 1742,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -4323,11 +4545,12 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2831,
+      "line": 2858,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -4343,11 +4566,12 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2905,
+      "line": 2932,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -4363,11 +4587,12 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2968,
+      "line": 2995,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",

@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "5e0b2df969095c1bc8f0ca3dd3f986477822c1340e62c7dff7ed90d718327fac",
+      "sha256": "204bbeac5e92138e4262a85089ef9538dd58f846bc38666f726349e19dd60d7c",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -25,9 +25,9 @@
       ],
       "candidateLines": [
         36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
-        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
-        1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
-        2199, 2208, 2209, 2210, 2227
+        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1205, 1296, 1404, 1406,
+        1407, 1611, 1694, 1847, 1849, 1879, 1988, 2010, 2081, 2092, 2117, 2188,
+        2201, 2214, 2223, 2224, 2225, 2242
       ],
       "review": "mapped-abstraction"
     },
@@ -141,9 +141,9 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "439192752ac7176a6a2ab65b4e3b79362b0c0bec46af6025330e7cb60bd3a0bb",
+      "sha256": "bd8d55d53012265d39e44a35ee1803c14a0ffbc03a595e1a4651c88d8d4b26c4",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [39, 43],
+      "candidateLines": [39],
       "review": "mapped-abstraction"
     },
     {
@@ -346,12 +346,12 @@
     },
     {
       "path": "backend/pages.ts",
-      "sha256": "86b68581bbe12883cf9f89f1cfb210d9ce84860f508a603705e6ab72de3d6b1f",
+      "sha256": "d788ae821f9643654a630c1ba34eeb805621c1935e24d3fcd6b199bcfd229584",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/project_skill_publication.qnt"
       ],
-      "candidateLines": [100],
+      "candidateLines": [112],
       "review": "mapped-abstraction"
     },
     {
@@ -520,6 +520,13 @@
         "formal/models/payments/received_totals.qnt"
       ],
       "candidateLines": [29, 89, 108, 115, 200, 239, 240],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/reserved-awards-feed.ts",
+      "sha256": "9357de84172d12ba73e318be4498e93b77410c452f8e71ff087ab277ab632cce",
+      "models": ["formal/models/api/api_reserved_awards_feed.qnt"],
+      "candidateLines": [18, 84, 96],
       "review": "mapped-abstraction"
     },
     {
@@ -766,9 +773,12 @@
     },
     {
       "path": "backend/projects/merge-activity.ts",
-      "sha256": "108bed3fa102252aeb5b9193f184e00eaccd5e5d92193d3d399e87e7985255fe",
-      "models": ["formal/models/api/api_merge_activity.qnt"],
-      "candidateLines": [30, 167, 285, 341, 373, 378, 408, 411],
+      "sha256": "49e9f52614d158606faf4e8a0300f281341d926320ef5bb1da17ac2ac4bcf4ad",
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_merge_activity.qnt"
+      ],
+      "candidateLines": [36, 197, 356, 429, 461, 467, 501, 504],
       "review": "mapped-abstraction"
     },
     {
@@ -813,15 +823,16 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "sha256": "a6b17a0120796322487a37ad3b135a17caa681a3d6a278e9b52daa460a71a4bb",
+      "sha256": "0e16e3482658e95d80c93dbbd17b1420ad33a027117c82a6112c104fa5e4e2d9",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
-        152, 154, 164, 189, 223, 234, 261, 264, 272, 290, 295, 331
+        160, 162, 172, 197, 246, 258, 285, 288, 296, 314, 319, 355
       ],
       "review": "mapped-abstraction"
     },
@@ -920,15 +931,16 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "sha256": "3443de8641109eab65eb08d758af3836f7dc6855e146fdfa76bb67a6164238ff",
+      "sha256": "e2337b228d294c960ab0a6cae1f9b0c09252863030b9442f8c31f4107d4e3ef5",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_transaction.qnt"
       ],
       "candidateLines": [
-        36, 408, 428, 445, 446, 447, 471, 523, 596, 612, 640, 645, 647, 678,
-        679, 738, 763, 781, 821, 829, 842, 875, 885, 904, 907, 909, 922, 974
+        36, 523, 543, 560, 561, 562, 586, 638, 711, 727, 755, 760, 762, 793,
+        794, 853, 878, 896, 936, 944, 957, 990, 1000, 1019, 1022, 1024, 1037,
+        1089
       ],
       "review": "mapped-abstraction"
     },
@@ -944,16 +956,17 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "sha256": "904c0d1a8c3c17f3f528d47d661120fcf1c1872329c5403f42abeb3c9b384e5b",
+      "sha256": "829e217ec09b83b0ab9200fe645f1e02a05707bc9a8c70832baa6d3e0845e33c",
       "models": [
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "candidateLines": [
-        134, 170, 174, 198, 210, 211, 259, 377, 404, 474, 517, 536, 541, 570,
-        651, 669, 715, 718
+        144, 180, 184, 208, 220, 221, 269, 387, 414, 484, 527, 546, 551, 582,
+        665, 683, 729, 732
       ],
       "review": "mapped-abstraction"
     },
@@ -1040,12 +1053,13 @@
     },
     {
       "path": "backend/security/handler.ts",
-      "sha256": "716c52ce3f19e714738eca9225de8f415e17a72a4ee42633b208c7b698e14ef3",
+      "sha256": "7376b87337e32d502deb2d5d2d7e6bf28da6b0be24040e305a2fe74c4bb53c7a",
       "models": [
         "formal/models/api/api_bounty_reservation.qnt",
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt",
         "formal/models/api/notification_escalation.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/payments/direct_preparation_completion.qnt",
@@ -1057,13 +1071,13 @@
         "formal/models/ui/ui_solana_history_recovery.qnt"
       ],
       "candidateLines": [
-        298, 299, 350, 352, 359, 412, 420, 422, 495, 560, 627, 633, 655, 657,
-        665, 683, 749, 901, 927, 1070, 1090, 1123, 1129, 1145, 1275, 1317, 1318,
-        1320, 1322, 1342, 1444, 1467, 1486, 1583, 1584, 1599, 1612, 1637, 1708,
-        1712, 1757, 1782, 1981, 2106, 2466, 2492, 2517, 2570, 2737, 2740, 2741,
-        2780, 2789, 2809, 2855, 2906, 2907, 2909, 2952, 3014, 3043, 3049, 3055,
-        3085, 3122, 3133, 3151, 3157, 3238, 3246, 3248, 3263, 3356, 3365, 3371,
-        3383, 3386, 3387, 3415, 3419, 3422
+        305, 306, 357, 359, 366, 423, 431, 433, 506, 571, 638, 644, 666, 668,
+        676, 694, 760, 912, 938, 1081, 1101, 1134, 1140, 1156, 1286, 1328, 1329,
+        1331, 1333, 1353, 1455, 1478, 1497, 1594, 1595, 1610, 1625, 1650, 1721,
+        1725, 1770, 1795, 1978, 2021, 2146, 2506, 2532, 2557, 2610, 2777, 2780,
+        2781, 2820, 2829, 2849, 2895, 2946, 2947, 2949, 2992, 3054, 3083, 3089,
+        3095, 3125, 3162, 3173, 3191, 3197, 3278, 3286, 3288, 3303, 3399, 3408,
+        3414, 3426, 3429, 3430, 3458, 3462, 3465, 3502
       ],
       "review": "mapped-abstraction"
     },
@@ -1133,22 +1147,23 @@
     },
     {
       "path": "backend/security/report-intake.ts",
-      "sha256": "d553107e36425689851515e77f444a0d7c1a701fa7009b41b8db538ecbca1dec",
+      "sha256": "3236fe6958b21c51daae5975b38cc09c3492f4c4c9561da58aae18ab60e0f3b7",
       "models": [
         "formal/models/api/api_private_assessment.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
         "formal/models/api/api_private_intake.qnt",
         "formal/models/api/api_report_forward_revision.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt",
         "formal/models/api/api_submission_recovery.qnt",
         "formal/models/api/submission_authorization_wrappers.qnt",
         "formal/models/api/submission_receipt_verification.qnt",
         "formal/models/ui/ui_private_intake.qnt"
       ],
       "candidateLines": [
-        69, 106, 133, 152, 157, 178, 185, 202, 209, 250, 359, 366, 447, 460,
-        502, 512, 527, 534, 558, 569, 585, 587, 613, 647, 653, 665, 667, 670,
-        671, 846, 864, 875, 880, 885, 954, 1185, 1263, 1278, 1318, 1354, 1360,
-        1374, 1379, 1391, 1396, 1401
+        70, 107, 134, 153, 158, 179, 186, 203, 210, 251, 360, 367, 448, 461,
+        503, 513, 528, 535, 559, 570, 586, 588, 614, 648, 654, 666, 668, 671,
+        672, 847, 865, 876, 881, 886, 955, 1218, 1296, 1311, 1351, 1387, 1393,
+        1407, 1412, 1424, 1429, 1434
       ],
       "review": "mapped-abstraction"
     },
@@ -1160,6 +1175,16 @@
         "formal/models/api/api_reporting_readiness.qnt"
       ],
       "candidateLines": [97, 143, 146],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "sha256": "36e92413bd74f732efe6b32af8dded745df23e1bf42133840201de64b86a665c",
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "candidateLines": [
+        160, 328, 378, 411, 428, 575, 579, 624, 640, 642, 668, 681, 768, 822,
+        914, 916, 925, 973, 1076
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -2159,8 +2184,9 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "91fb4b7107ffe372371c78c2f83c35f96775742e0a9d099859a3f859b18e5c11",
+      "sha256": "defbc99c86f7d750e39b364087f3235399e6a41bdcac82f1752619d193c5622a",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/ui/ui_project_listing.qnt"
       ],
@@ -2170,15 +2196,16 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "7e59776ff2e71e4a6116f6e73cf7fdb7bd3c7447e246e1150942fca6be01141d",
+      "sha256": "96cd67fe5ab1a1e74b1404ba29224f948fcabf471292b2be615c8fceca9dce91",
       "models": [
         "formal/models/api/api_request_composition.qnt",
+        "formal/models/api/api_reserved_awards_feed.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
         "formal/models/api/trace_route_authorization.qnt",
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [534, 535, 571, 584],
+      "candidateLines": [550, 551, 587, 600],
       "review": "mapped-abstraction"
     },
     {
@@ -3521,9 +3548,23 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "sha256": "cf52fbd51235ca92e7d27bedb31071e4ba0a1dc195a965de621b4edcb09545f2",
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "candidateLines": [12, 25, 26, 32, 33, 98, 99, 104, 105],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
       "sha256": "cccfefe22c0b0d964f6feee80044b910207a4be0a46e7d71e4681717654daa36",
       "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0134_merge_activity_open_outside.sql",
+      "sha256": "64d598dc5768c7940f9e5eeb5f09e14414ed555c29631c47dcdddf1942415edf",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -4609,6 +4650,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/qualify-security-routine.ts",
+      "sha256": "2810a327de9a5796ed2cef55732399528e6b366e71a75e82fb6a2ba42fb4f794",
+      "models": ["formal/models/vetting/qualification_routine_budget.qnt"],
+      "candidateLines": [46, 268, 269, 280, 281, 283, 284, 285, 348, 362],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/qualify-security-screening.ts",
       "sha256": "43a2d06e6b892aa47ac6bdacdf23345813b322a8b8a86a79c8d5f78f7939e6bb",
       "models": ["formal/models/vetting/qualification_screening_budget.qnt"],
@@ -5277,8 +5325,9 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "a2a796e42f13a891744bb912c87ae6ca297ce087594a47be71ef65fca751b75d",
+      "sha256": "dad3aeffa9fb6756d5d6a9896ee820b751dc7fc38066894215c430ea21339e21",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
@@ -5297,14 +5346,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        19, 21, 319, 329, 339, 350, 359, 360, 361, 362, 363, 365, 366, 427, 483,
-        484, 485, 488, 511, 577, 608, 645, 715, 793, 794, 804, 1035, 1050, 1068,
-        1114, 1116, 1119, 1184, 1187, 1189, 1193, 1194, 1199, 1216, 1220, 1228,
-        1229, 1232, 1234, 1242, 1273, 1319, 1322, 1337, 1338, 1388, 1391, 1394,
-        1395, 1396, 1397, 1403, 1406, 1426, 1428, 1445, 1509, 1510, 1515, 1516,
-        1521, 1559, 1560, 1563, 1564, 1567, 1568, 1589, 1590, 1596, 1601, 1603,
-        1607, 1608, 1647, 1670, 1680, 1711, 1713, 1738, 1739, 1755, 1756, 1767,
-        1769, 1782, 1785
+        19, 21, 324, 334, 344, 355, 364, 365, 366, 367, 368, 370, 371, 432, 488,
+        489, 490, 493, 516, 582, 613, 650, 720, 798, 799, 809, 819, 1053, 1068,
+        1086, 1132, 1136, 1141, 1143, 1146, 1213, 1216, 1218, 1222, 1223, 1228,
+        1245, 1249, 1257, 1258, 1261, 1263, 1271, 1302, 1348, 1351, 1366, 1367,
+        1417, 1420, 1423, 1424, 1425, 1426, 1432, 1435, 1455, 1457, 1474, 1538,
+        1539, 1544, 1545, 1550, 1556, 1597, 1598, 1601, 1602, 1605, 1606, 1627,
+        1628, 1634, 1639, 1641, 1645, 1646, 1685, 1708, 1718, 1749, 1751, 1776,
+        1777, 1793, 1794, 1805, 1807, 1820, 1823
       ],
       "review": "mapped-abstraction"
     },
@@ -5825,8 +5874,9 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "00a89101cf085b2e0b1059f7896c6c0619c4363639f3962ad2c26d0f7b28b333",
+      "sha256": "9d8dffe712b77ffac345eb1ebdd2e23251c239b877718de209945b4e705f6446",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_draft_save_progress.qnt",
@@ -5842,20 +5892,20 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "candidateLines": [
-        23, 155, 478, 481, 482, 483, 484, 485, 486, 487, 489, 492, 496, 501,
-        517, 528, 536, 537, 554, 570, 574, 592, 600, 608, 615, 618, 638, 653,
-        654, 1004, 1015, 1016, 1026, 1037, 1040, 1045, 1048, 1057, 1060, 1061,
-        1063, 1064, 1069, 1097, 1101, 1104, 1114, 1115, 1174, 1176, 1180, 1185,
-        1194, 1204, 1209, 1266, 1279, 1287, 1290, 1297, 1372, 1397, 1405, 1406,
-        1408, 1413, 1417, 1426, 1441, 1448, 1542, 1543, 1544, 1546, 1552, 1562,
-        1569, 1585, 1598, 1630, 1640, 1647, 1652, 1655, 1666, 1688, 1689, 1691,
-        1692, 1788, 1791, 1818, 2239, 2241, 2279, 2315, 2364, 2367, 2373, 2374,
-        2376, 2386, 2388, 2392, 2403, 2417, 2429, 2446, 2456, 2460, 2461, 2464,
-        2467, 2468, 2469, 2470, 2471, 2472, 2473, 2474, 2475, 2476, 2479, 2480,
-        2481, 2482, 2484, 2490, 2565, 2575, 2589, 2620, 2631, 2966, 2990, 2995,
-        3024, 3049, 3056, 3069, 3090, 3094, 3108, 3116, 3126, 3139, 3144, 3149,
-        3150, 3153, 3180, 3227, 3228, 3232, 3237, 3355, 3387, 3395, 3396, 3404,
-        3406, 3480, 3488, 3489, 3526, 3531, 3537, 3543, 3557, 3570, 3571, 3586
+        23, 156, 479, 482, 483, 484, 485, 486, 487, 488, 490, 493, 497, 502,
+        518, 529, 537, 538, 555, 571, 575, 593, 601, 609, 616, 619, 639, 654,
+        655, 1005, 1016, 1017, 1027, 1038, 1041, 1046, 1049, 1058, 1061, 1062,
+        1064, 1065, 1070, 1098, 1102, 1105, 1115, 1116, 1175, 1177, 1181, 1186,
+        1195, 1205, 1210, 1267, 1280, 1288, 1291, 1298, 1373, 1398, 1406, 1407,
+        1409, 1414, 1418, 1427, 1442, 1449, 1543, 1544, 1545, 1547, 1553, 1563,
+        1570, 1586, 1599, 1631, 1641, 1648, 1653, 1656, 1667, 1689, 1690, 1692,
+        1693, 1789, 1792, 1819, 2240, 2242, 2305, 2342, 2391, 2394, 2400, 2401,
+        2403, 2413, 2415, 2419, 2430, 2444, 2456, 2473, 2483, 2487, 2488, 2491,
+        2494, 2495, 2496, 2497, 2498, 2499, 2500, 2501, 2502, 2503, 2506, 2507,
+        2508, 2509, 2511, 2517, 2593, 2603, 2617, 2648, 2659, 3008, 3032, 3037,
+        3066, 3091, 3098, 3111, 3132, 3136, 3150, 3158, 3168, 3181, 3186, 3191,
+        3192, 3195, 3222, 3269, 3270, 3274, 3279, 3405, 3437, 3445, 3446, 3454,
+        3456, 3530, 3538, 3539, 3576, 3581, 3587, 3593, 3607, 3620, 3621, 3636
       ],
       "review": "mapped-abstraction"
     },
@@ -5910,14 +5960,15 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "9bf28e777fee709dea4eadc7d65bb22a4c735b672bccdb59d89458bd9ce7cdbf",
+      "sha256": "caf9c52229f392286f152754104250784453e4fedbf1fb8d7d788f0fbc28a166",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        180, 313, 346, 347, 349, 350, 381, 383, 393, 541, 542, 544, 545, 552,
-        591, 593, 661
+        181, 314, 347, 348, 350, 351, 382, 384, 394, 542, 543, 545, 546, 553,
+        576, 579, 602, 604, 672
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -5962,7 +6013,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "sha256": "5bfc4684844e25fb4be9906f2b6420ed3e1a431a79d57838b076297c16466aee",
+      "sha256": "6f533cecbb8cff65c65d33efe6798eac326ab98a956efa366c66caa5dfcb53eb",
       "models": [
         "formal/models/ui/ui_bounty_payment_parent.qnt",
         "formal/models/ui/ui_inbox.qnt",
@@ -5983,26 +6034,26 @@
         "formal/models/ui/ui_submitted_payment_recovery.qnt"
       ],
       "candidateLines": [
-        42, 47, 132, 135, 183, 188, 238, 239, 241, 320, 331, 358, 360, 367, 380,
-        381, 383, 390, 393, 407, 410, 412, 420, 429, 431, 437, 443, 444, 445,
-        448, 450, 453, 469, 470, 477, 479, 482, 486, 489, 490, 491, 493, 496,
-        498, 499, 502, 503, 506, 509, 515, 516, 521, 524, 528, 537, 541, 545,
-        548, 552, 589, 611, 695, 705, 708, 746, 747, 751, 758, 763, 781, 820,
-        821, 828, 866, 1058, 1073, 1111, 1116, 1138, 1213, 1214, 1215, 1216,
-        1238, 1249, 1256, 1262, 1263, 1271, 1273, 1278, 1305, 1309, 1351, 1354,
-        1484, 1485, 1492, 1495, 1496, 1511, 1531, 1532, 1533, 1536, 1608, 1609,
-        1610, 1613, 1674, 1725, 1732, 1754, 1756, 1825, 1827, 1836, 1846, 1856,
-        1860, 1864, 1866, 1911, 1912, 1916, 1919, 1973, 1981, 2002, 2003, 2009,
-        2010, 2019, 2024, 2025, 2031, 2088, 2094, 2104, 2105, 2153, 2164, 2165,
-        2169, 2170, 2171, 2186, 2190, 2196, 2239, 2305, 2311, 2317, 2321, 2364,
-        2372, 2395, 2396, 2397, 2398, 2399, 2400, 2401, 2553, 2716, 2720, 2751,
-        2952, 3023, 3024, 3173, 3250, 3251, 3264, 3265, 3268, 3272, 3273, 3288,
-        3308, 3330, 3350, 3352, 3380, 3381, 3385, 3393, 3420, 3442, 3444, 3473,
-        3474, 3478, 3486, 3535, 3586, 3597, 3660, 3683, 3695, 3696, 3697, 3702,
-        3706, 3709, 3711, 3715, 3846, 3852, 3853, 4026, 4051, 4537, 4540, 4549,
-        4554, 4559, 4560, 4562, 4567, 4614, 4617, 4622, 4624, 4668, 4680, 4686,
-        4711, 4713, 4715, 4719, 4720, 4724, 4727, 4728, 4730, 4747, 4749, 4767,
-        4768, 4769, 4774, 4777, 4779, 4784, 4811, 4854, 4862, 4866, 4955
+        42, 47, 133, 136, 184, 189, 239, 240, 242, 321, 332, 359, 361, 368, 381,
+        382, 384, 391, 394, 408, 411, 413, 421, 430, 432, 438, 444, 445, 446,
+        449, 451, 454, 470, 471, 478, 480, 483, 487, 490, 491, 492, 494, 497,
+        499, 500, 503, 504, 507, 510, 516, 517, 522, 525, 529, 538, 542, 546,
+        549, 553, 590, 612, 696, 706, 709, 747, 748, 752, 759, 764, 782, 821,
+        822, 829, 867, 1066, 1081, 1119, 1124, 1146, 1221, 1222, 1223, 1224,
+        1246, 1257, 1264, 1270, 1271, 1279, 1281, 1286, 1313, 1317, 1359, 1362,
+        1492, 1493, 1500, 1503, 1504, 1519, 1539, 1540, 1541, 1544, 1616, 1617,
+        1618, 1621, 1682, 1733, 1740, 1762, 1764, 1833, 1835, 1844, 1854, 1864,
+        1868, 1872, 1874, 1919, 1920, 1924, 1927, 1981, 1989, 2010, 2011, 2017,
+        2018, 2027, 2032, 2033, 2039, 2096, 2102, 2112, 2113, 2161, 2172, 2173,
+        2177, 2178, 2179, 2194, 2198, 2204, 2247, 2313, 2319, 2325, 2329, 2372,
+        2380, 2403, 2404, 2405, 2406, 2407, 2408, 2409, 2561, 2724, 2728, 2759,
+        2960, 3031, 3032, 3181, 3258, 3259, 3272, 3273, 3276, 3280, 3281, 3296,
+        3316, 3338, 3358, 3360, 3388, 3389, 3393, 3401, 3428, 3450, 3452, 3481,
+        3482, 3486, 3494, 3543, 3594, 3605, 3668, 3691, 3703, 3704, 3705, 3710,
+        3714, 3717, 3719, 3723, 3854, 3860, 3861, 4034, 4059, 4545, 4548, 4557,
+        4562, 4567, 4568, 4570, 4575, 4622, 4625, 4630, 4632, 4676, 4688, 4694,
+        4719, 4721, 4723, 4727, 4728, 4732, 4735, 4736, 4738, 4755, 4757, 4775,
+        4776, 4777, 4782, 4785, 4787, 4792, 4819, 4862, 4870, 4874, 4963
       ],
       "review": "mapped-abstraction"
     },
@@ -6478,6 +6529,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/intake-cap.mjs",
+      "sha256": "a6307f5b9212da00f73727d48b37bd517cf5b057b18c27016afbf14235115be2",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
+      "candidateLines": [62],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/intake-drafts.ts",
       "sha256": "400ae102e4241308d24b2c13beda3ac61f9c132fbfd65d8c9a9ca1384b8c43f5",
       "models": [
@@ -6560,8 +6618,11 @@
     },
     {
       "path": "src/lib/merge-activity.ts",
-      "sha256": "d0c1bf1ce8577206cbf961bcbd726f5030aba0d1ffb447b912c386926d6bba0c",
-      "models": ["formal/models/api/api_merge_activity.qnt"],
+      "sha256": "3a53c93f2fbccbf4662eb95ccfe6d9565f9775c7f0f01bd24a541918aa48179d",
+      "models": [
+        "formal/models/api/api_intake_cap.qnt",
+        "formal/models/api/api_merge_activity.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -6967,16 +7028,16 @@
     },
     {
       "path": "src/lib/project-schema.mjs",
-      "sha256": "e319a62edf36cf85dd83023ce9560e7e4dec315bc36ed61aa292a189453b1ae2",
+      "sha256": "3fc16d740ced16aa4e1a19d6826031f5c232b3e0023d3b7439806705b47841d8",
       "models": [
         "formal/models/api/project_repository_append.qnt",
         "formal/models/ui/ui_project_policy.qnt"
       ],
       "candidateLines": [
-        127, 332, 343, 348, 352, 353, 412, 418, 424, 427, 431, 435, 536, 539,
-        546, 549, 567, 593, 694, 695, 697, 702, 712, 1303, 1304, 1307, 1315,
-        1318, 1328, 1329, 1331, 1333, 1446, 1447, 1448, 1452, 1455, 1457, 1467,
-        1468, 1470, 1580
+        128, 333, 344, 349, 353, 354, 413, 419, 425, 428, 432, 436, 537, 540,
+        547, 550, 568, 594, 695, 696, 698, 703, 713, 1308, 1309, 1312, 1320,
+        1323, 1333, 1334, 1336, 1338, 1451, 1452, 1453, 1457, 1460, 1462, 1472,
+        1473, 1475, 1585
       ],
       "review": "mapped-abstraction"
     },
@@ -7173,12 +7234,12 @@
     },
     {
       "path": "src/lib/security-bounty.mjs",
-      "sha256": "579fd8240374a0e46cee4c98322530fe62634c0d75e117f1850a5117607bf75e",
+      "sha256": "2859accbe7f05c68850a3c89d520a92bbfc9d8a29a7ec9b768591ae12304595c",
       "models": [
         "formal/models/payments/bounty_terms.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt"
       ],
-      "candidateLines": [27, 113, 241, 317, 318, 319, 320, 324, 471, 473, 475],
+      "candidateLines": [27, 139, 267, 343, 344, 345, 346, 350, 497, 499, 501],
       "review": "mapped-abstraction"
     },
     {
@@ -8745,6 +8806,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/intake-cap.ts",
+      "sha256": "125560c570228fd5977d9b101354f4908953abb8a5e42c1b1060e68fa1d119cb",
+      "models": ["formal/models/api/api_intake_cap.qnt"],
+      "candidateLines": [31, 52],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/maintainer-holds.ts",
       "sha256": "526b12a26b034913407f3409fcbef0171bd21261116e862dc851a75f008665a3",
       "models": ["formal/models/slopbot/bot_moderation.qnt"],
@@ -8886,8 +8954,9 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "0e7d95389c45072666afb81edb7ae7caada1083b9aae94e24a9b095e7b8f0f0a",
+      "sha256": "d3fda2a200dce3e516ae11dbc318e16bde1f471c2390d4494f63a658726533f8",
       "models": [
+        "formal/models/api/api_intake_cap.qnt",
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -8899,13 +8968,13 @@
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 155, 269, 284, 293, 303, 306, 498, 652, 799, 828, 838, 973, 978, 983,
-        985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
-        1090, 1141, 1163, 1164, 1172, 1177, 1278, 1280, 1300, 1319, 1396, 1401,
-        1485, 1600, 1607, 1608, 1643, 1660, 1663, 1664, 1826, 1831, 1893, 1906,
-        1911, 1918, 1919, 1923, 1924, 1932, 1948, 2005, 2152, 2212, 2218, 2229,
-        2255, 2285, 2310, 2318, 2341, 2346, 2422, 2423, 2473, 2508, 2559, 2704,
-        2961, 3036, 3202, 3213, 3221, 3319, 3320, 3360, 3410, 3424, 3440
+        3, 156, 270, 285, 294, 304, 307, 499, 653, 800, 829, 839, 974, 979, 984,
+        986, 989, 991, 992, 1003, 1006, 1008, 1065, 1066, 1068, 1069, 1085,
+        1091, 1142, 1164, 1165, 1173, 1178, 1279, 1281, 1301, 1320, 1398, 1403,
+        1512, 1627, 1634, 1635, 1670, 1687, 1690, 1691, 1853, 1858, 1920, 1933,
+        1938, 1945, 1946, 1950, 1951, 1959, 1975, 2032, 2179, 2239, 2245, 2256,
+        2282, 2312, 2337, 2345, 2368, 2373, 2449, 2450, 2500, 2535, 2586, 2731,
+        2988, 3063, 3229, 3240, 3248, 3346, 3347, 3387, 3437, 3451, 3467
       ],
       "review": "mapped-abstraction"
     },
@@ -9851,7 +9920,7 @@
     },
     {
       "path": "wrangler.toml",
-      "sha256": "094fc7c7dda7ced906ba0a7bcb228e3712917d6d3da054cb9c306a2735f2612d",
+      "sha256": "31c302ff2e5c11f3afec9f2cebca9c87bcef2d8bbae346619f7c6d7678bf11a3",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -10020,6 +10089,41 @@
         "completedSourceHiddenTest",
         "gapSurvivesExhaustionTest",
         "laterGapRemainsTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_intake_cap.qnt",
+      "sha256": "5415d61afba6ecd27d63384e9071fe4a64452874a718a35d5807203431f644fa",
+      "sources": [
+        "backend/projects/merge-activity.ts",
+        "backend/projects/skill-publication.ts",
+        "functions/[[path]].ts",
+        "migrations/0134_merge_activity_open_outside.sql",
+        "src/App.tsx",
+        "src/ProjectProposalPage.tsx",
+        "src/PublicPages.tsx",
+        "src/lib/intake-cap.mjs",
+        "src/lib/merge-activity.ts",
+        "workers/slopbot/intake-cap.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "belowTheNumberIsListedTest",
+        "clearingTheNumberListsAgainTest",
+        "comesBackByItselfTest",
+        "failedBrowserReadListsAsBeforeTest",
+        "failedReadKeepsTheLastCountTest",
+        "failedServerReadListsAsBeforeTest",
+        "maintainerPullRequestIsReviewedTest",
+        "mergedWorkScoresWhilePausedTest",
+        "neverReadPausesNothingTest",
+        "newOutsidePullRequestIsSkippedTest",
+        "offByDefaultTest",
+        "pausedProjectKeepsItsListingTest",
+        "pausesAtTheNumberTest",
+        "reviewedPullRequestKeepsItsReviewsTest",
+        "skippedPullRequestIsReviewedBelowTheNumberTest",
+        "staleCountPausesNothingTest"
       ]
     },
     {
@@ -10221,7 +10325,7 @@
     },
     {
       "path": "formal/models/api/api_private_case.qnt",
-      "sha256": "4eb0171e06bc5bc9b179f982e970d747f902cb22de29d4f9b56be97307d8082b",
+      "sha256": "45085145f4f12e1e94257c0922e03f2078437f3b695369ec90c0adff919ef4e2",
       "sources": [
         "backend/security/analysis.ts",
         "backend/security/award-asset.ts",
@@ -10624,6 +10728,28 @@
       ]
     },
     {
+      "path": "formal/models/api/api_reserved_awards_feed.qnt",
+      "sha256": "8aed735de35ee8684cd37d32b240839f9a49e356e6076f325bf5ce9460600b51",
+      "sources": [
+        "backend/payments/reserved-awards-feed.ts",
+        "functions/api/v1/[[path]].ts"
+      ],
+      "scenarios": [
+        "askingChangesNoPaymentStateTest",
+        "boundAwardIsNotListedTest",
+        "closedAccountIsNotListedTest",
+        "confirmedWalletNeedsAuthorizeTest",
+        "failedBindingIsListedAgainTest",
+        "paidAwardIsNotListedTest",
+        "removedSecretClosesTheRouteTest",
+        "teamAccountIsNotListedTest",
+        "unconfirmedWalletStillNeedsWalletTest",
+        "unsetSecretIsNotFoundTest",
+        "walletlessAwardNeedsWalletTest",
+        "wrongOrMissingTokenIsNotFoundTest"
+      ]
+    },
+    {
       "path": "formal/models/api/api_saved_vault_creation.qnt",
       "sha256": "a14a912ce66bc99f1e3bb241a376001304307543a13d4c35b2e630ce6a396ee1",
       "sources": [
@@ -10639,6 +10765,37 @@
         "lostAccessWaitsTest",
         "ownerClosesSavedRequestTest",
         "serverFinishesTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_security_routine_decisions.qnt",
+      "sha256": "e19655ae234457634e43c8ea6ca74ff5ba9ca6c18df27495fe510f46b352727b",
+      "sources": [
+        "backend/security/case-store.ts",
+        "backend/security/handler.ts",
+        "backend/security/report-intake.ts",
+        "backend/security/routine-decisions.ts",
+        "migrations/0133_security_routine_decisions.sql"
+      ],
+      "scenarios": [
+        "agreedLineClosesTest",
+        "appealedReportIsNeverReadAgainTest",
+        "dryRunChangesNothingTest",
+        "dryRunDecidesOnceTest",
+        "failedCallsGoToOwnerTest",
+        "failedCallsStopAtThreeTest",
+        "githubReportGoesToOwnerTest",
+        "githubReportIsNotClosedByDigestTest",
+        "githubReportIsNotReadByCallsTest",
+        "lossStopsCloseTest",
+        "newVersionIsReadAgainTest",
+        "newVersionStopsClockTest",
+        "noProofClosesAfterClockTest",
+        "noProofWaitsForClockTest",
+        "oneCallAloneDoesNotCloseTest",
+        "personRequestHasNoClockTest",
+        "routineAppealIsOnceTest",
+        "routineAppealReturnsToOwnerTest"
       ]
     },
     {
@@ -15106,7 +15263,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "e096e271a97e60f4efa7dab7bb559af00fbda31f3a0514312e1e65910dd40767",
+      "sha256": "b6b6973f822c8f09c3ba273bb1f15021277796e7d1496ee72d0d446df76acf6f",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -15117,11 +15274,15 @@
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
         ".github/workflows/value-intake-diagnostic.yml",
+        ".github/workflows/value-intake-diagnostic.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
         "scripts/inspect-slopbot-runtime.ts",
+        "scripts/inspect-slopbot-runtime.ts",
         "scripts/inspect-value-intake-history.ts",
+        "scripts/inspect-value-intake-history.ts",
+        "scripts/inspect-value-intake.ts",
         "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",
         "scripts/run-vetting-controller.ts"
@@ -19741,6 +19902,18 @@
       "scenarios": [
         "overflowCannotReplayTest",
         "rebuiltBodyKeepsUnknownCostTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/qualification_routine_budget.qnt",
+      "sha256": "959a3b89d5aae1b6f4728e56fa351b4cae91087935a63e3635705d81629cd345",
+      "sources": ["scripts/qualify-security-routine.ts"],
+      "scenarios": [
+        "dryRunIsNotProviderQualificationTest",
+        "spentBudgetRefusesLaterReportTest",
+        "threeRightAnswersQualifyTest",
+        "unknownAttemptsExhaustTest",
+        "wrongAnswerStopsTest"
       ]
     },
     {
