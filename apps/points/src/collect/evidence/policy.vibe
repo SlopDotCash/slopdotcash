@@ -1,0 +1,178 @@
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"
+
+export interface EvidenceRow {
+  readonly id: string
+  readonly label: string
+}
+
+export type ArtifactKind = "opaque-upload" | "release-upload" | "legacy-image"
+export type Presentation = "image" | "video" | "link"
+
+export interface TrustedArtifact {
+  readonly url: string
+  readonly presentation: Presentation
+  readonly identity: string
+  readonly extension: string
+  readonly kind: ArtifactKind
+}
+
+export const requiredEvidenceRows: ReadonlyArray<EvidenceRow> = [
+  { id: "before-screenshots", label: "Before screenshots" },
+  { id: "after-screenshots", label: "After screenshots" },
+  { id: "walkthrough-video", label: "Walkthrough video" },
+  { id: "backend-logs", label: "Backend logs" },
+  { id: "frontend-logs", label: "Frontend console/network logs" },
+  { id: "llm-trajectory", label: "Real-LLM trajectory" },
+  { id: "domain-artifacts", label: "Domain artifacts" },
+]
+
+export const surfaceOcrEvidenceRow: EvidenceRow = { id: "ocr-review", label: "OCR visual text review" }
+
+export const ocrEvidence = /\bOCR\b|ocr-triage|mvp:visual-verify|audit:app:verify|tesseract|text readout/i
+
+export const imageExtensions: ReadonlySet<string> = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"])
+export const videoExtensions: ReadonlySet<string> = new Set([".m4v", ".mov", ".mp4", ".webm"])
+export const evidenceFileExtensions: ReadonlySet<string> = new Set([".csv", ".html", ".json", ".jsonl", ".log", ".md", ".txt"])
+
+const marker = /<!--\s*evidence-row:([a-z0-9-]+)\s*-->/gi
+const uuidPath = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+const userAttachmentPath = new RegExp(`^/user-attachments/assets/${uuidPath}$`, "i")
+const legacyUserImagePath = /^\/[0-9]+\/[^/].+$/
+
+interface Reference {
+  readonly url: string
+  readonly presentation: Presentation
+}
+
+interface RepositoryPaths {
+  readonly legacyAsset: RegExp
+  readonly releaseAsset: RegExp
+}
+
+function repositoryPaths(repositories: ReadonlyArray<string>): RepositoryPaths {
+  const pattern = `(?:${repositories.map((repository) => repository.replaceAll(".", "\\.")).join("|")})`
+  return {
+    legacyAsset: new RegExp(`^/${pattern}/assets/[0-9]+/${uuidPath}$`, "i"),
+    releaseAsset: new RegExp(`^/${pattern}/releases/download/pr-evidence(?:-[1-9][0-9]*)?/([^/]+)$`, "i"),
+  }
+}
+
+function extensionFromPath(pathname: string): string | undefined {
+  try {
+    const filename = decodeURIComponent(pathname.split("/").at(-1) ?? "")
+    return filename.toLowerCase().match(/(\.[a-z0-9]+)$/)?.[1] ?? ""
+  } catch {
+    return undefined
+  }
+}
+
+function urlReferences(text: string): ReadonlyArray<Reference> {
+  const references: Reference[] = []
+  const seen = new Set<string>()
+  const add = (rawUrl: string, presentation: Presentation) => {
+    const normalized = rawUrl.trim().replace(/^<|>$/g, "")
+    if (seen.has(normalized)) return
+    seen.add(normalized)
+    references.push({ url: normalized, presentation })
+  }
+  for (const match of text.matchAll(/(!?)\[[^\]]*\]\(\s*<?(https:\/\/[^)\s>]+)>?(?:\s+["'][^)]*["'])?\s*\)/gi)) add(match[2] ?? "", match[1] === "!" ? "image" : "link")
+  for (const match of text.matchAll(/<(img|video|source)\b[^>]*\bsrc\s*=\s*["'](https:\/\/[^"']+)["'][^>]*>/gi)) add(match[2] ?? "", (match[1] ?? "").toLowerCase() === "img" ? "image" : "video")
+  for (const match of text.matchAll(/https:\/\/[^\s<>"'`)\]]+/gi)) add(match[0].replace(/[.,;:!?]+$/g, ""), "link")
+  return references
+}
+
+function trustedArtifact(reference: Reference, paths: RepositoryPaths): TrustedArtifact | undefined {
+  const url = URL.parse(reference.url)
+  if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "" || url.hash !== "") return undefined
+  const hostname = url.hostname.toLowerCase()
+  const extension = extensionFromPath(url.pathname)
+  if (extension === undefined || extension === ".zip") return undefined
+  const base = { url: url.href, presentation: reference.presentation, identity: `${url.origin}${url.pathname}`, extension }
+  if (hostname === "github.com") {
+    if (userAttachmentPath.test(url.pathname) || paths.legacyAsset.test(url.pathname)) return { ...base, kind: "opaque-upload" }
+    if (paths.releaseAsset.test(url.pathname)) return { ...base, kind: "release-upload" }
+    return undefined
+  }
+  if (hostname === "user-images.githubusercontent.com" && legacyUserImagePath.test(url.pathname) && imageExtensions.has(extension)) return { ...base, kind: "legacy-image" }
+  return undefined
+}
+
+export function trustedArtifacts(text: string, repositories: ReadonlyArray<string>): ReadonlyArray<TrustedArtifact> {
+  const paths = repositoryPaths(repositories)
+  const artifacts = new Map<string, TrustedArtifact>()
+  for (const reference of urlReferences(text)) {
+    const artifact = trustedArtifact(reference, paths)
+    if (artifact === undefined) continue
+    const existing = artifacts.get(artifact.identity)
+    if (existing === undefined || (existing.presentation === "link" && artifact.presentation !== "link")) artifacts.set(artifact.identity, artifact)
+  }
+  return [...artifacts.values()]
+}
+
+export function artifactCanBeEvidenceFile(artifact: Pick<TrustedArtifact, "extension" | "kind" | "presentation">): boolean {
+  return (artifact.kind === "opaque-upload" && artifact.presentation === "link") || evidenceFileExtensions.has(artifact.extension)
+}
+
+function substantiveTrajectoryValue(value: unknown, minimumLength: number): boolean {
+  const serialized = typeof value === "string" ? value.trim() : JSON.stringify(value) ?? ""
+  if (serialized.length < minimumLength) return false
+  const semantic = serialized.replace(/[^a-z0-9]+/gi, "").toLowerCase()
+  return semantic.length >= minimumLength && new Set(semantic).size >= 4
+}
+
+function hasMeaningfulTrajectoryKey(value: unknown, acceptedKeys: ReadonlySet<string>, minimumLength: number): boolean {
+  if (Array.isArray(value)) return value.some((entry) => hasMeaningfulTrajectoryKey(entry, acceptedKeys, minimumLength))
+  if (value === null || typeof value !== "object") return false
+  for (const [key, entry] of Object.entries(value)) {
+    if (acceptedKeys.has(key.toLowerCase().replace(/[-_]/g, "")) && substantiveTrajectoryValue(entry, minimumLength)) return true
+    if (hasMeaningfulTrajectoryKey(entry, acceptedKeys, minimumLength)) return true
+  }
+  return false
+}
+
+export function hasTrajectorySemantics(value: unknown): boolean {
+  return hasMeaningfulTrajectoryKey(value, new Set(["provider"]), 4)
+    && hasMeaningfulTrajectoryKey(value, new Set(["model", "modelid"]), 4)
+    && hasMeaningfulTrajectoryKey(value, new Set(["input", "messages", "prompt", "request"]), 8)
+    && hasMeaningfulTrajectoryKey(value, new Set(["completion", "events", "output", "response", "steps"]), 8)
+}
+
+function boundRowBlock(block: string): string {
+  const lines = block.split(/\r?\n/)
+  const out: string[] = []
+  let started = false
+  let detailsDepth = 0
+  for (const [index, line] of lines.entries()) {
+    if (!started) {
+      if (line.trim() === "") continue
+      started = true
+      out.push(line)
+      continue
+    }
+    const trimmed = line.trim()
+    if (trimmed === "") {
+      const next = lines.slice(index + 1).find((candidate) => candidate.trim() !== "")
+      if (detailsDepth > 0 || (next !== undefined && /^<details\b/i.test(next.trim()))) {
+        out.push(line)
+        continue
+      }
+      break
+    }
+    if (detailsDepth === 0 && /^#/.test(trimmed)) break
+    if (/<!--\s*evidence-row:/i.test(trimmed)) break
+    if (detailsDepth === 0 && /^[-*]\s/.test(line) && !/^\s/.test(line)) break
+    out.push(line)
+    detailsDepth = Math.max(0, detailsDepth + (line.match(/<details\b/gi) ?? []).length - (line.match(/<\/details>/gi) ?? []).length)
+  }
+  return out.join("\n").trim()
+}
+
+export function extractEvidenceRows(body: string): ReadonlyMap<string, string> {
+  const rows = new Map<string, string>()
+  const matches = [...body.matchAll(marker)].map((match) => ({ id: (match[1] ?? "").toLowerCase(), start: match.index, end: match.index + match[0].length }))
+  for (const [index, current] of matches.entries()) {
+    const rowText = boundRowBlock(body.slice(current.end, matches[index + 1]?.start ?? body.length))
+    if (!rows.has(current.id) || rowText.length > 0) rows.set(current.id, rowText)
+  }
+  return rows
+}

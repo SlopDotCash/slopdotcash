@@ -1,0 +1,436 @@
+// spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically"; spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"; spec/settlement/money.md, "Story: Preserve every base unit"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation, D1, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { type Accrual, type AccrualRecord, type Attribution, type Event, type Filing, type Payout, type RootEntry, type Wallet, NotAState, actorAccrued, apply, decodeEvent, decodeState, firstPeriod, initial, poolCap, projectCap, rateFor, totalAccrued, windowEnd } from "../../gen/settlement__referralAccrual.effect.vibe"
+import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { formatPeriod, parsePeriod } from "../kernels/calendar.ts"
+import type { Accruing } from "./config.vibe"
+import { type FileAccrual, type FileMode, RULE_VERSION, type ReferrerTotal, assembleFile } from "./fileBytes.ts"
+import { type StoredOutcome, countsTowardTotals, modelOutcome, rowConsistent, storedOutcome } from "./judge.ts"
+import { calendarDate, closedBy, isoOfDate, ordinalOf, periodOf, periodOfInstant } from "./periods.ts"
+import type { ReferralAttribution, Snapshot, SourceRow } from "./source.vibe"
+
+export const leaseMillis = 10 * 60 * 1000
+export const owner = "owner"
+export const job = "accrual-job"
+
+const uint256Max = (1n << 256n) - 1n
+const teamReason = "team account"
+const banReason = "participation ban"
+const windowFirst = /\(first payout ([^)]+)\)$/u
+
+export error LedgerChanged { expected: string; found: string }
+export error LeaseLost { runId: string }
+export error SourceUnmatched { obligationId: string; issue: string }
+export error FileUnbuildable { issue: string }
+
+export interface Setup {
+  readonly mode: FileMode
+  readonly start: Accrual
+  readonly projects: ReadonlyMap<string, number>
+}
+
+export interface Book extends Setup {
+  readonly state: Accrual
+  readonly fingerprint: string
+  readonly payoutIds: ReadonlyMap<string, number>
+  readonly sources: ReadonlyMap<number, SourceRow>
+}
+
+schema StoredOutcomeText = "accrued" | "project_cap" | "pool_cap" | "window_closed" | "held" | "referrer_excluded" | "asset_not_eligible"
+
+schema AccrualRow {
+  readonly obligation_id: string
+  readonly period: string
+  readonly project_id: string
+  readonly referrer_github_id: string
+  readonly referrer_github_login: string
+  readonly network: string
+  readonly paid_transaction: string
+  readonly paid_observed_at: string
+  readonly gross_base: string
+  readonly asset_address: string
+  readonly asset_symbol: string
+  readonly rate_base_per_micro: string
+  readonly computed_base: string
+  readonly accrued_base: string
+  readonly outcome: StoredOutcomeText
+  readonly reason: string | null
+}
+
+schema FileRow {
+  readonly period: string
+  readonly epoch: number
+  readonly body_sha256: string
+  readonly tree_total_base: string
+  readonly leaf_count: number
+}
+
+schema PinRow {
+  readonly referrer_github_id: string
+  readonly wallet: string
+  readonly pinned_period: string
+}
+
+schema VersionRow {
+  readonly version: string
+}
+
+schema LeaseRow {
+  readonly run_id: string
+}
+
+const fingerprint = sql`SELECT (SELECT count(*) FROM referral_accruals) || ':' || (SELECT count(*) FROM referral_accrual_files) || ':' || (SELECT count(*) FROM referral_claim_wallets) AS version`
+
+function units(amount: Amount) {
+  return fromAmount(amount).toString()
+}
+
+function highestId(ids: ReadonlyMap<string, number>) {
+  return Math.max(0, ...ids.values())
+}
+
+effect function limbsOf(value: bigint) {
+  return try orDie(Effect.try(() => toAmount(value)))
+}
+
+effect function stored(text: string, column: string) {
+  const value = parseBaseUnits(text, uint256Max)
+  if (value === undefined) throw new RowMismatch({ text: column, issue: "not an integer of base units" })
+  return try limbsOf(value)
+}
+
+function sourceOf(row: AccrualRow): SourceRow {
+  const first = row.outcome === "window_closed" ? windowFirst.exec(row.reason ?? "")?.[1] : undefined
+  return {
+    obligationId: row.obligation_id,
+    projectId: row.project_id,
+    referrerGithubId: row.referrer_github_id,
+    referrerGithubLogin: row.referrer_github_login,
+    network: row.network,
+    paidTransaction: row.paid_transaction,
+    paidObservedAt: row.paid_observed_at,
+    firstPaidAt: first ?? row.paid_observed_at,
+    grossBase: row.gross_base,
+    assetAddress: row.asset_address,
+    assetSymbol: row.asset_symbol,
+    stablecoin: row.outcome !== "asset_not_eligible",
+    team: row.outcome === "referrer_excluded" && row.reason === teamReason,
+    banned: row.outcome === "referrer_excluded" && row.reason !== teamReason,
+    hold: row.outcome === "held" ? row.reason ?? undefined : undefined,
+  }
+}
+
+effect function payoutOf(projects: ReadonlyMap<string, number>, source: SourceRow, id: number) {
+  const paidAt = calendarDate(source.paidObservedAt)
+  const firstPaidAt = calendarDate(source.firstPaidAt)
+  const period = periodOfInstant(source.paidObservedAt)
+  const gross = parseBaseUnits(source.grossBase, uint256Max)
+  if (paidAt === undefined || firstPaidAt === undefined || period === undefined) throw new SourceUnmatched({ obligationId: source.obligationId, issue: "the paid instant is not an exact UTC time" })
+  if (gross === undefined) throw new SourceUnmatched({ obligationId: source.obligationId, issue: "the gross is not an integer of base units" })
+  return {
+    id,
+    project: projects.get(source.projectId) ?? 0,
+    period: ordinalOf(period),
+    paidAt,
+    firstPaidAt,
+    gross: try limbsOf(gross),
+    paid: true,
+    stablecoin: source.stablecoin,
+    team: source.team,
+    banned: source.banned,
+    held: source.hold !== undefined,
+  } satisfies Payout
+}
+
+effect function recordOf(row: AccrualRow, id: number, projects: ReadonlyMap<string, number>) {
+  if (!projects.has(row.project_id)) throw new RowMismatch({ text: "referral_accruals", issue: `project ${row.project_id} has no referrer attribution` })
+  const computed = try stored(row.computed_base, "referral_accruals.computed_base")
+  const amount = try stored(row.accrued_base, "referral_accruals.accrued_base")
+  if (!rowConsistent(row.outcome, fromAmount(computed), fromAmount(amount))) throw new RowMismatch({ text: "referral_accruals", issue: `${row.obligation_id} breaks its outcome's amounts` })
+  const payout = payoutOf(projects, sourceOf(row), id) catch effect (error) => {
+    throw new RowMismatch({ text: "referral_accruals", issue: error.issue })
+  }
+  return {
+    payout,
+    referrer: Number(row.referrer_github_id),
+    eligible: countsTowardTotals(row.outcome),
+    rate: { fromPeriod: firstPeriod, numerator: try stored(row.rate_base_per_micro, "referral_accruals.rate_base_per_micro"), denominator: [1] },
+    computed,
+    amount,
+    outcome: modelOutcome(row.outcome),
+  } satisfies AccrualRecord
+}
+
+effect function filingsOf(files: ReadonlyArray<FileRow>, records: ReadonlyArray<AccrualRecord>, pins: ReadonlyArray<PinRow>) {
+  const filings: Filing[] = []
+  for (const file of files) {
+    const period = parsePeriod(file.period)
+    if (period === undefined || file.epoch !== filings.length) throw new RowMismatch({ text: "referral_accrual_files", issue: `${file.period} is not the next filed epoch` })
+    const ordinal = ordinalOf(period)
+    const cumulative = new Map<number, bigint>()
+    let count = 0
+    for (const record of records) {
+      if (record.payout.period <= ordinal) cumulative.set(record.referrer, (cumulative.get(record.referrer) ?? 0n) + fromAmount(record.amount))
+      if (record.payout.period === ordinal) count += 1
+    }
+    const entries: RootEntry[] = []
+    let total = 0n
+    for (const pin of [...pins].sort((left, right) => Number(left.referrer_github_id) - Number(right.referrer_github_id))) {
+      const pinned = parsePeriod(pin.pinned_period)
+      const amount = cumulative.get(Number(pin.referrer_github_id)) ?? 0n
+      if (pinned === undefined || pinned > period || amount === 0n) continue
+      entries.push({ actor: Number(pin.referrer_github_id), wallet: pin.wallet, amount: try limbsOf(amount) })
+      total += amount
+    }
+    if (total.toString() !== file.tree_total_base || entries.length !== file.leaf_count) throw new RowMismatch({ text: "referral_accrual_files", issue: `${file.period} does not match its records and pins` })
+    filings.push({ period: ordinal, sourceDigest: file.body_sha256, sourceCount: count, recordCount: count, entries, total: try limbsOf(total) })
+  }
+  return filings
+}
+
+effect function bookOf(setup: Setup, known: ReadonlyMap<string, number>, [versionRows, accrualRows, fileRows, pinRows]: ReadonlyArray<Rows>) {
+  const version = try decoded(VersionRow, versionRows ?? [], "referral ledger version")
+  const accruals = try decoded(AccrualRow, accrualRows ?? [], "referral_accruals")
+  const files = try decoded(FileRow, fileRows ?? [], "referral_accrual_files")
+  const pins = try decoded(PinRow, pinRows ?? [], "referral_claim_wallets")
+  const payoutIds = new Map(known)
+  const sources = new Map<number, SourceRow>()
+  const records: AccrualRecord[] = []
+  for (const row of accruals) {
+    const id = payoutIds.get(row.obligation_id) ?? highestId(payoutIds) + 1
+    payoutIds.set(row.obligation_id, id)
+    sources.set(id, sourceOf(row))
+    records.push(try recordOf(row, id, setup.projects))
+  }
+  const filings = try filingsOf(files, records, pins)
+  const state = try decodeState({
+    ...setup.start,
+    phase: setup.start.phase === "Collecting" ? "Ready" : setup.start.phase,
+    records,
+    staged: [],
+    pending: [],
+    filings,
+    pins: pins.map((pin) => ({ actor: Number(pin.referrer_github_id), wallet: pin.wallet, authorized: true }) satisfies Wallet),
+    nextPeriod: firstPeriod + filings.length,
+    leaseRun: "",
+  })
+  return { ...setup, state, fingerprint: version[0]?.version ?? "", payoutIds, sources } satisfies Book
+}
+
+function ledger(setup: Setup, known: ReadonlyMap<string, number>): Aggregate<Book, NotAState | RowMismatch, never> {
+  return {
+    name: "referral ledger",
+    version: fingerprint,
+    reads: [
+      fingerprint,
+      sql`SELECT obligation_id, period, project_id, referrer_github_id, referrer_github_login, network, paid_transaction, paid_observed_at, gross_base, asset_address, asset_symbol, rate_base_per_micro, computed_base, accrued_base, outcome, reason FROM referral_accruals ORDER BY rowid`,
+      sql`SELECT period, epoch, body_sha256, tree_total_base, leaf_count FROM referral_accrual_files ORDER BY epoch`,
+      sql`SELECT referrer_github_id, wallet, pinned_period FROM referral_claim_wallets ORDER BY rowid`,
+    ],
+    decode: (found) => bookOf(setup, known, found),
+  }
+}
+
+function setupOf(book: Book): Setup {
+  return { mode: book.mode, start: book.state, projects: book.projects }
+}
+
+export effect function programSetup(accruing: Accruing, mode: "DryRun" | "Posting", attributions: ReadonlyArray<ReferralAttribution>) {
+  const configured = try apply(initial, { type: "configure", tokenUnit: accruing.tokenUnit, verified: accruing.verified }, owner)
+  const ready = try apply(configured, { type: "enableDryRun", reactivationApproved: accruing.reactivationApproved }, owner)
+  const sorted = [...attributions].sort((left, right) => (left.projectId < right.projectId ? -1 : left.projectId > right.projectId ? 1 : 0))
+  const projects = new Map(sorted.map((entry, index) => [entry.projectId, index + 1]))
+  const referred = sorted.map((entry, index) => ({ project: index + 1, applicant: Number(entry.applicantGithubId), steward: Number(entry.stewardGithubId), referrer: Number(entry.referrerGithubId) }) satisfies Attribution)
+  return { mode: mode === "Posting" ? "live" : "dry_run", start: { ...ready, attributions: referred }, projects } satisfies Setup
+}
+
+export function blankSetup(projects: ReadonlyMap<string, number>): Setup {
+  return { mode: "dry_run", start: initial, projects }
+}
+
+export effect function openBook(setup: Setup) {
+  return (try load(ledger(setup, new Map()))).state
+}
+
+export effect function reload(book: Book) {
+  return (try load(ledger(setupOf(book), book.payoutIds))).state
+}
+
+export effect function decodeLedgerEvent(raw: unknown) {
+  return try decodeEvent(raw)
+}
+
+export effect function applyToBook(book: Book, event: Event, by: string) {
+  return { ...book, state: try apply(book.state, event, by) } satisfies Book
+}
+
+export effect function acquireLease(runId: string) {
+  const now = try Clock.currentTimeMillis
+  const until = try isoAt(now + leaseMillis)
+  const changes = try (try D1).run(sql`INSERT INTO referral_accrual_locks (scope, run_id, expires_at) VALUES ('accrual', ${runId}, ${until}) ON CONFLICT(scope) DO UPDATE SET run_id = excluded.run_id, expires_at = excluded.expires_at WHERE referral_accrual_locks.expires_at < ${try isoAt(now)}`)
+  return changes === 1
+}
+
+export effect function releaseLease(runId: string) {
+  try (try D1).run(sql`DELETE FROM referral_accrual_locks WHERE scope = 'accrual' AND run_id = ${runId} AND expires_at >= ${try isoNow()}`)
+}
+
+export effect function leaseHeld(runId: string) {
+  if (runId === "") return false
+  return (try first(LeaseRow, sql`SELECT run_id FROM referral_accrual_locks WHERE scope = 'accrual' AND run_id = ${runId} AND expires_at >= ${try isoNow()}`)) !== undefined
+}
+
+export effect function beginMonth(book: Book, snapshot: Snapshot, runId: string) {
+  const now = try Clock.currentTimeMillis
+  const payoutIds = new Map(book.payoutIds)
+  const sources = new Map(book.sources)
+  const payouts: Payout[] = []
+  for (const row of snapshot.rows) {
+    const known = payoutIds.get(row.obligationId)
+    const id = known ?? highestId(payoutIds) + 1
+    if (known === undefined) {
+      payoutIds.set(row.obligationId, id)
+      sources.set(id, row)
+    }
+    payouts.push(try payoutOf(book.projects, row, id))
+  }
+  const event: Event = {
+    type: "startMonth",
+    period: ordinalOf(snapshot.period),
+    payouts,
+    sourceDigest: snapshot.digest,
+    closed: closedBy(snapshot.period, now),
+    complete: snapshot.complete,
+    canonicalOrder: snapshot.canonicalOrder,
+    leaseId: runId,
+    leaseCurrent: try leaseHeld(runId),
+  }
+  return { ...book, state: try apply(book.state, event, job), payoutIds, sources } satisfies Book
+}
+
+export effect function accrueNext(book: Book) {
+  return try applyToBook(book, { type: "accrueNext" }, job)
+}
+
+export effect function abandonMonth(book: Book, runId: string) {
+  return try applyToBook(book, { type: "abandonMonth", leaseId: runId, leaseCurrent: try leaseHeld(runId) }, job)
+}
+
+effect function windowReason(record: AccrualRecord, source: SourceRow) {
+  const end = try orDie(Effect.try(() => isoOfDate(windowEnd(record.payout.firstPaidAt))))
+  return `referral window ended ${end} (first payout ${source.firstPaidAt})`
+}
+
+effect function reasonFor(record: AccrualRecord, source: SourceRow) {
+  const window = try windowReason(record, source)
+  return match (record.outcome) {
+    when "Accrued": null;
+    when "ProjectCap": "project lifetime cap reached";
+    when "PoolCap": "program pool exhausted";
+    when "WindowClosed": window;
+    when "Held": source.hold ?? "held";
+    when "ReferrerExcluded": source.team ? teamReason : banReason;
+    when "AssetNotEligible": "payout asset is not a reference stablecoin of its network";
+  }
+}
+
+effect function decimalsOf(tokenUnit: Amount) {
+  const unit = fromAmount(tokenUnit)
+  let decimals = 0
+  let power = 1n
+  while (power < unit) {
+    power *= 10n
+    decimals += 1
+  }
+  if (power !== unit) throw new FileUnbuildable({ issue: "the token unit is not a power of ten" })
+  return decimals
+}
+
+function referrersOf(next: Accrual, sources: ReadonlyMap<number, SourceRow>, entries: ReadonlyArray<RootEntry>): ReadonlyArray<ReferrerTotal> {
+  const logins = new Map<number, string>()
+  for (const record of next.records)
+    if (record.eligible) logins.set(record.referrer, sources.get(record.payout.id)?.referrerGithubLogin ?? "")
+  const wallets = new Map(entries.map((entry) => [entry.actor, entry.wallet]))
+  return [...logins.keys()].sort((left, right) => left - right).map((actor) => ({
+    githubId: String(actor),
+    githubLogin: logins.get(actor) ?? "",
+    cumulativeBase: fromAmount(actorAccrued(next, actor)),
+    wallet: wallets.get(actor) ?? null,
+  }))
+}
+
+effect function filingWrites(book: Book, next: Accrual, runId: string, now: string) {
+  const period = periodOf(book.state.activePeriod)
+  const filing = next.filings[next.filings.length - 1]
+  if (period === undefined || filing === undefined) throw new FileUnbuildable({ issue: "no month is being filed" })
+  const periodText = formatPeriod(period)
+  const accruals: FileAccrual[] = []
+  const writes: Statement[] = []
+  for (const record of book.state.staged) {
+    const source = book.sources.get(record.payout.id)
+    if (source === undefined) throw new FileUnbuildable({ issue: `payout ${record.payout.id} has no source row` })
+    const accrual = {
+      obligationId: source.obligationId,
+      projectId: source.projectId,
+      referrerGithubId: source.referrerGithubId,
+      referrerGithubLogin: source.referrerGithubLogin,
+      network: source.network,
+      paidTransaction: source.paidTransaction,
+      paidObservedAt: source.paidObservedAt,
+      grossBase: source.grossBase,
+      assetAddress: source.assetAddress,
+      assetSymbol: source.assetSymbol,
+      computedBase: units(record.computed),
+      accruedBase: units(record.amount),
+      outcome: storedOutcome(record.outcome) satisfies StoredOutcome,
+      reason: try reasonFor(record, source),
+    } satisfies FileAccrual
+    accruals.push(accrual)
+    writes.push(sql`INSERT INTO referral_accruals (obligation_id, period, run_id, project_id, referrer_github_id, referrer_github_login, network, paid_transaction, paid_observed_at, gross_base, asset_address, asset_symbol, rate_base_per_micro, computed_base, accrued_base, outcome, reason, rule_version, created_at) VALUES (${accrual.obligationId}, ${periodText}, ${runId}, ${accrual.projectId}, ${accrual.referrerGithubId}, ${accrual.referrerGithubLogin}, ${accrual.network}, ${accrual.paidTransaction}, ${accrual.paidObservedAt}, ${accrual.grossBase}, ${accrual.assetAddress}, ${accrual.assetSymbol}, ${units(record.rate.numerator)}, ${accrual.computedBase}, ${accrual.accruedBase}, ${accrual.outcome}, ${accrual.reason}, ${RULE_VERSION}, ${now})`)
+  }
+  const epoch = book.state.filings.length
+  const tokenDecimals = try decimalsOf(next.tokenUnit)
+  const assembled = try Effect.try({
+    try: () => assembleFile({
+      period: periodText,
+      epoch,
+      mode: book.mode,
+      generatedAt: now,
+      runId,
+      parameters: {
+        rateBasePerMicro: units(rateFor(next, book.state.activePeriod).numerator),
+        tokenDecimals,
+        poolBase: units(poolCap(next)),
+        projectCapBase: units(projectCap(next)),
+        windowMonths: 12,
+      },
+      accruals,
+      poolAccruedBase: fromAmount(totalAccrued(next)),
+      referrers: referrersOf(next, book.sources, filing.entries),
+    }),
+    catch: (cause) => new FileUnbuildable({ issue: String(cause) }),
+  })
+  if (assembled.treeTotalBase !== units(filing.total) || assembled.leafCount !== filing.entries.length) throw new FileUnbuildable({ issue: "the assembled tree differs from the filed entries" })
+  const bodySha256 = try sha256Hex(assembled.body)
+  writes.push(sql`INSERT INTO referral_accrual_files (period, epoch, run_id, mode, body, body_sha256, merkle_root, tree_total_base, leaf_count, created_at) VALUES (${periodText}, ${epoch}, (SELECT run_id FROM referral_accrual_locks WHERE scope = 'accrual' AND run_id = ${runId} AND expires_at >= ${now}), ${book.mode}, ${assembled.body}, ${bodySha256}, ${assembled.merkleRoot}, ${assembled.treeTotalBase}, ${assembled.leafCount}, ${now})`)
+  for (const pin of next.pins.slice(book.state.pins.length))
+    writes.push(sql`INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at) VALUES (${String(pin.actor)}, ${pin.wallet}, ${periodText}, ${now})`)
+  return writes
+}
+
+export effect function fileMonth(book: Book, wallets: ReadonlyArray<Wallet>, runId: string) {
+  const next = try apply(book.state, { type: "fileMonth", wallets: [...wallets], leaseId: runId, leaseCurrent: try leaseHeld(runId) }, job)
+  const writes = try filingWrites(book, next, runId, try isoNow())
+  update(ledger(setupOf(book), book.payoutIds), (loaded) => effect {
+    if (loaded.fingerprint !== book.fingerprint) throw new LedgerChanged({ expected: book.fingerprint, found: loaded.fingerprint })
+    return { value: true, writes }
+  }) catch effect (error) => match (error) {
+    when ConstraintViolation: throw (error.message.includes("run_id") ? new LeaseLost({ runId }) : error);
+    default: throw error;
+  }
+  return try reload({ ...book, state: next })
+}

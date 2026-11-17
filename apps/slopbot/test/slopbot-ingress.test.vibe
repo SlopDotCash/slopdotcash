@@ -1,0 +1,228 @@
+// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/installation.md, "Story: Apply installation changes in GitHub's order"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"
+import { assert, layer } from "@effect/vitest"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { signature256 } from "@repo/platform/testing/github"
+import { maxRetries } from "../src/jobs/retry.vibe"
+import { busyNumber, lostQueueNumber } from "./support/ingressWorker.vibe"
+
+const secret = "ingress-webhook-secret"
+const appUserId = "424242"
+const headSha = "a".repeat(40)
+
+const widgets = { projectId: "widgets", path: "ada/widgets", repositoryId: "7001", rowStatus: "Active", manifestStatus: "Active", retirement: "NotRetired", restriction: "Clear", owner: "501" }
+const retired = { ...widgets, projectId: "relics", path: "ada/relics", repositoryId: "7002", retirement: "OwnerRemoved", owner: "502" }
+
+function registry(unavailable: ReadonlyArray<string> = []) {
+  return JSON.stringify({ projects: [widgets, retired], unavailable })
+}
+
+const Ingress = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "ingress",
+  d1: { SLOPBOT_DB: "slop-private" },
+  vars: { SLOPBOT_WEBHOOK_SECRET: secret, SLOPBOT_APP_USER_ID: appUserId, TEST_REGISTRY: registry(["ada/flaky"]) },
+  queues: {
+    producers: { SLOPBOT_QUEUE: "slopbot-jobs" },
+    consumers: { "slopbot-jobs": { maxRetries, deadLetterQueue: "slopbot-jobs-dlq" }, "slopbot-jobs-dlq": { maxRetries: 0 } },
+  },
+})
+
+interface Delivery {
+  readonly bytes?: Uint8Array
+  readonly signature?: string
+  readonly deliveryId: string
+}
+
+function encoded(payload: unknown) {
+  return new TextEncoder().encode(JSON.stringify(payload))
+}
+
+effect function delivered(area: AreaShape, event: string, payload: unknown, delivery: Delivery) {
+  const bytes = delivery.bytes ?? encoded(payload)
+  const answer = try area.request("/github/webhook", {
+    method: "POST",
+    body: bytes,
+    origin: null,
+    headers: { "content-type": "application/json", "x-github-event": event, "x-github-delivery": delivery.deliveryId, "x-hub-signature-256": delivery.signature ?? signature256(secret, bytes) },
+  })
+  return [answer.status, answer.body] as const
+}
+
+function repository(path: string, id: number, visibility: { readonly private: boolean } = { private: false }) {
+  const [owner = "", name = ""] = path.split("/")
+  return { id, name, private: visibility.private, owner: { login: owner } }
+}
+
+function pullEvent(action: string, path: string, repositoryId: number, number: number, sender = 77) {
+  return {
+    action,
+    installation: { id: 9100 },
+    repository: repository(path, repositoryId),
+    sender: { id: sender, type: "User" },
+    pull_request: { number, node_id: `PR_${number}`, updated_at: "2026-11-10T12:00:00Z", head: { sha: headSha } },
+  }
+}
+
+function installationEvent(action: string, updatedAt: unknown, account: unknown = { id: 55, login: "ada", type: "User" }) {
+  return { action, installation: { id: 9100, account, updated_at: updatedAt }, repositories: [{ id: 7001 }], sender: { id: 55, type: "User" } }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try Effect.sleep("100 millis")
+  }
+  return try probe
+}
+
+effect function prepared(area: AreaShape) {
+  try area.sql("CREATE TABLE IF NOT EXISTS ingress_jobs (queue TEXT NOT NULL, delivery TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL)")
+  try area.sql("CREATE TABLE IF NOT EXISTS ingress_notices (event_key TEXT NOT NULL, recipient TEXT NOT NULL, kind TEXT NOT NULL, source_at TEXT NOT NULL, PRIMARY KEY (event_key, recipient))")
+}
+
+layer(Ingress, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A signed delivery is checked before any write, recorded once and queued only for its registered scope (spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Story: Record the delivery and make independent routing decisions"; spec/slopbot/webhookDelivery.md, "An ordinary pending receipt does not claim exclusive execution"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/repositoryScope.md, "Scope follows registration, status, retirement and restriction in a fixed order"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const review = pullEvent("opened", "ada/widgets", 7001, 1)
+    const refused = [
+      try delivered(area, "pull_request", review, { deliveryId: "d-large", bytes: new Uint8Array(25 * 1024 * 1024 + 1).fill(32) }),
+      try delivered(area, "pull_request", review, { deliveryId: "d-retry", signature: signature256("another secret", encoded(review)) }),
+      try delivered(area, "pull_request", review, { deliveryId: "" }),
+      try delivered(area, "pull_request", review, { deliveryId: "d-utf8", bytes: Uint8Array.from([0x7b, 0xff, 0x7d]) }),
+      try delivered(area, "pull_request", review, { deliveryId: "d-json", bytes: new TextEncoder().encode("{\"action\":") }),
+      try delivered(area, "pull_request", [review], { deliveryId: "d-array" }),
+    ]
+    const written = try area.sql("SELECT count(*) AS n FROM slopbot_deliveries WHERE delivery_id IN ('d-large', 'd-retry', 'd-utf8', 'd-json', 'd-array')")
+    const routed = [
+      try delivered(area, "pull_request", review, { deliveryId: "d-retry" }),
+      try delivered(area, "pull_request", review, { deliveryId: "d-retry" }),
+      try delivered(area, "pull_request", pullEvent("closed", "ada/widgets", 7001, 2), { deliveryId: "d-value" }),
+      try delivered(area, "pull_request", pullEvent("opened", "ada/unknown", 7009, 3), { deliveryId: "d-unregistered" }),
+      try delivered(area, "pull_request", { ...pullEvent("opened", "ada/widgets", 7999, 4), slop: { registered: true, scope: "Contributor" } }, { deliveryId: "d-forged" }),
+      try delivered(area, "pull_request", pullEvent("opened", "ada/relics", 7002, 5), { deliveryId: "d-retired-review" }),
+      try delivered(area, "pull_request", pullEvent("reopened", "ada/relics", 7002, 6), { deliveryId: "d-retired-reopen" }),
+      try delivered(area, "pull_request", pullEvent("opened", "ada/widgets", 7001, 7, Number(appUserId)), { deliveryId: "d-self" }),
+      try delivered(area, "pull_request", { ...pullEvent("opened", "ada/widgets", 7001, 8), repository: repository("ada/widgets", 7001, { private: true }) }, { deliveryId: "d-private" }),
+    ]
+    const receipts = try area.sql("SELECT delivery_id, event, processed_at IS NOT NULL AS processed FROM slopbot_deliveries WHERE delivery_id LIKE 'd-%' ORDER BY delivery_id")
+    const values = try area.sql("SELECT delivery_id, installation_id, repository_id, owner, repo, pull_request_number FROM slopbot_value_requests WHERE delivery_id LIKE 'd-%' ORDER BY delivery_id")
+    const queued = try eventually(area.sql("SELECT delivery, kind, number FROM ingress_jobs WHERE queue = 'slopbot-jobs' AND delivery LIKE 'd-%' ORDER BY delivery"), (rows) => rows.length >= 2)
+    try same({ refused, written, routed, receipts, values, queued }, {
+      refused: [[413, "payload too large"], [401, "invalid signature"], [400, "missing delivery id"], [400, "invalid body"], [400, "invalid JSON"], [400, "invalid payload"]],
+      written: [{ n: 0 }],
+      routed: [
+        [202, "queued"],
+        [202, "duplicate delivery"],
+        [202, "valuation pending"],
+        [202, "repository is not registered in the Slop registry"],
+        [202, "repository is not registered in the Slop registry"],
+        [202, "repository is not registered in the Slop registry"],
+        [202, "queued"],
+        [202, "ignored"],
+        [202, "ignored"],
+      ],
+      receipts: [
+        { delivery_id: "d-forged", event: "pull_request", processed: 1 },
+        { delivery_id: "d-private", event: "pull_request", processed: 1 },
+        { delivery_id: "d-retired-reopen", event: "pull_request", processed: 1 },
+        { delivery_id: "d-retired-review", event: "pull_request", processed: 1 },
+        { delivery_id: "d-retry", event: "pull_request", processed: 1 },
+        { delivery_id: "d-self", event: "pull_request", processed: 1 },
+        { delivery_id: "d-unregistered", event: "pull_request", processed: 1 },
+        { delivery_id: "d-value", event: "pull_request", processed: 1 },
+      ],
+      values: [{ delivery_id: "d-value", installation_id: 9100, repository_id: 7001, owner: "ada", repo: "widgets", pull_request_number: 2 }],
+      queued: [{ delivery: "d-retired-reopen", kind: "human_reopen", number: 6 }, { delivery: "d-retry", kind: "review", number: 1 }],
+    })
+  })
+
+  it.effect('A failed lookup or queue send releases the receipt, and a pinned reopen source survives and refuses a changed source (spec/slopbot/webhookDelivery.md, "Story: Recover an uncertain queue submission without changing source authority"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/webhookDelivery.md, "An ordinary pending receipt does not claim exclusive execution")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const flaky = pullEvent("opened", "ada/flaky", 7003, 1)
+    const failedLookup = try delivered(area, "pull_request", flaky, { deliveryId: "r-flaky" })
+    const afterLookup = try area.sql("SELECT count(*) AS n FROM slopbot_deliveries WHERE delivery_id = 'r-flaky'")
+    const reopen = pullEvent("reopened", "ada/widgets", 7001, lostQueueNumber)
+    const lost = try delivered(area, "pull_request", reopen, { deliveryId: "r-reopen" })
+    const pinned = try area.sql("SELECT reopen_source, processed_at FROM slopbot_deliveries WHERE delivery_id = 'r-reopen'")
+    const changed = try delivered(area, "pull_request", { ...reopen, pull_request: { ...reopen.pull_request, head: { sha: "b".repeat(40) } } }, { deliveryId: "r-reopen" })
+    const kept = try area.sql("SELECT reopen_source FROM slopbot_deliveries WHERE delivery_id = 'r-reopen'")
+    const unavailable = try delivered(area, "pull_request", { ...reopen, pull_request: { number: 12, node_id: "", updated_at: "yesterday" } }, { deliveryId: "r-unavailable" })
+    try same({ failedLookup, afterLookup, lost, pinned, changed, kept, unavailable }, {
+      failedLookup: [503, ""],
+      afterLookup: [{ n: 0 }],
+      lost: [503, ""],
+      pinned: [{ reopen_source: `{"installationId":9100,"repositoryId":7001,"itemKind":"pull_request","number":${lostQueueNumber},"senderId":77,"itemNodeId":"PR_${lostQueueNumber}","revision":"${headSha}","occurredAt":"2026-11-10T12:00:00Z"}`, processed_at: null }],
+      changed: [503, ""],
+      kept: pinned,
+      unavailable: [202, "reopen source unavailable; no decision"],
+    })
+  })
+
+  it.effect('Installation changes apply in GitHub\'s order and only an applied loss notifies the owners (spec/slopbot/installation.md, "Story: Apply installation changes in GitHub\'s order"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"; spec/slopbot/installation.md, "Only an applied removal or suspension notifies the project owners"; spec/slopbot/installation.md, "Every Slopbot effect requires an active installation")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const state = area.sql("SELECT suspended_at IS NOT NULL AS suspended, removed_at IS NOT NULL AS removed, source_updated_at FROM slopbot_installations WHERE installation_id = 9100")
+    const steps = [
+      [try delivered(area, "installation", installationEvent("created", "2026-11-10T00:00:10Z"), { deliveryId: "i-created" }), try state],
+      [try delivered(area, "installation", installationEvent("deleted", "2026-11-10T00:00:20Z"), { deliveryId: "i-deleted" }), try state],
+      [try delivered(area, "installation", installationEvent("created", "2026-11-10T00:00:20Z"), { deliveryId: "i-tied" }), try state],
+      [try delivered(area, "installation", installationEvent("created", 1_794_268_815), { deliveryId: "i-older" }), try state],
+      [try delivered(area, "installation", installationEvent("deleted", "2026-11-10T00:00:20Z"), { deliveryId: "i-deleted" }), try state],
+      [try delivered(area, "installation", installationEvent("suspend", "2026-11-10T00:00:30Z"), { deliveryId: "i-suspended" }), try state],
+      [try delivered(area, "installation", installationEvent("unsuspend", "2026-11-10T00:00:40Z"), { deliveryId: "i-unsuspended" }), try state],
+      [try delivered(area, "installation", installationEvent("deleted", "not a time"), { deliveryId: "i-invalid" }), try state],
+      [try delivered(area, "installation", installationEvent("deleted", "not a time"), { deliveryId: "i-invalid" }), try state],
+      [try delivered(area, "installation", { action: "deleted", installation: { id: 9100 } }, { deliveryId: "i-accountless" }), try state],
+    ]
+    const flags = try area.sql("SELECT delivery_id, installation_processed_at IS NOT NULL AS processed FROM slopbot_deliveries WHERE delivery_id LIKE 'i-%' ORDER BY delivery_id")
+    const notices = try area.sql("SELECT recipient, kind, event_key LIKE 'slopbot-installation:9100:%:widgets' AS keyed FROM ingress_notices ORDER BY source_at")
+    const removedAt = 1_794_268_820_000
+    try same({ steps, flags, notices }, {
+      steps: [
+        [[202, "ignored"], [{ suspended: 0, removed: 0, source_updated_at: 1_794_268_810_000 }]],
+        [[202, "ignored"], [{ suspended: 0, removed: 1, source_updated_at: removedAt }]],
+        [[202, "ignored"], [{ suspended: 0, removed: 1, source_updated_at: removedAt }]],
+        [[202, "ignored"], [{ suspended: 0, removed: 1, source_updated_at: removedAt }]],
+        [[202, "duplicate delivery"], [{ suspended: 0, removed: 1, source_updated_at: removedAt }]],
+        [[202, "ignored"], [{ suspended: 1, removed: 1, source_updated_at: 1_794_268_830_000 }]],
+        [[202, "ignored"], [{ suspended: 0, removed: 1, source_updated_at: 1_794_268_840_000 }]],
+        [[500, ""], [{ suspended: 0, removed: 1, source_updated_at: 1_794_268_840_000 }]],
+        [[500, ""], [{ suspended: 0, removed: 1, source_updated_at: 1_794_268_840_000 }]],
+        [[202, "ignored"], [{ suspended: 0, removed: 1, source_updated_at: 1_794_268_840_000 }]],
+      ],
+      flags: [
+        { delivery_id: "i-accountless", processed: 1 },
+        { delivery_id: "i-created", processed: 1 },
+        { delivery_id: "i-deleted", processed: 1 },
+        { delivery_id: "i-invalid", processed: 0 },
+        { delivery_id: "i-older", processed: 1 },
+        { delivery_id: "i-suspended", processed: 1 },
+        { delivery_id: "i-tied", processed: 1 },
+        { delivery_id: "i-unsuspended", processed: 1 },
+      ],
+      notices: [{ recipient: "501", kind: "ProjectInstallationLost", keyed: 1 }, { recipient: "501", kind: "ProjectInstallationLost", keyed: 1 }],
+    })
+  })
+
+  it.effect('A contended job retries with its bounded delay until the dead-letter queue keeps it, and a malformed copy is retried (spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"; spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/jobQueue.md, "A dead-lettered job stays visible and has no recovery route until the owner decides one")', () => effect {
+    const area = try Area
+    try prepared(area)
+    const sent = try delivered(area, "pull_request", pullEvent("opened", "ada/widgets", 7001, busyNumber), { deliveryId: "q-busy" })
+    const dead = try eventually(area.sql("SELECT queue, kind, number FROM ingress_jobs WHERE delivery = 'q-busy' AND queue = 'slopbot-jobs-dlq'"), (rows) => rows.length > 0)
+    const attempts = try area.sql("SELECT count(*) AS n FROM ingress_jobs WHERE delivery = 'q-busy' AND queue = 'slopbot-jobs'")
+    const direct = try area.queue("slopbot-jobs", [{ kind: "review", deliveryId: "q-direct", installationId: 9100, repositoryId: 7001, owner: "ada", repo: "widgets", itemKind: "pull_request", number: 3 }, { kind: "unknown" }])
+    try same({ sent, dead, attempts, direct: [direct.explicitAcks, direct.retryMessages.map((message) => message.msgId)] }, {
+      sent: [202, "queued"],
+      dead: [{ queue: "slopbot-jobs-dlq", kind: "review", number: busyNumber }],
+      attempts: [{ n: maxRetries + 1 }],
+      direct: [["message-0"], ["message-1"]],
+    })
+  })
+})

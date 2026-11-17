@@ -1,0 +1,65 @@
+// spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required"
+import { type SkillValidation, apply, initial, maxRuntimes } from "../../gen/contributor__skillValidation.effect.vibe"
+import { ran, refused, utf8Text } from "./sources.vibe"
+
+export const validatorPath = "apps/contributor/tools/quick_validate.py"
+
+const maxSkillFileBytes = 1024 * 1024
+const pinnedYaml = "import yaml,sys;sys.exit(0 if yaml.__version__ == '6.0.3' else 1)"
+
+interface Runtime {
+  readonly executable: string
+  readonly prefix: ReadonlyArray<string>
+  readonly probe: ReadonlyArray<string>
+}
+
+function runtimes(configured: string | undefined): ReadonlyArray<Runtime> {
+  const interpreters = [configured, "python3", "/usr/bin/python3"].filter((value, index, values): value is string => value !== undefined && value !== "" && values.indexOf(value) === index)
+  return [
+    ...interpreters.map((executable) => ({ executable, prefix: [], probe: ["-c", pinnedYaml] })),
+    { executable: "uv", prefix: ["run", "--with", "PyYAML==6.0.3", "python"], probe: ["--version"] },
+  ].slice(0, maxRuntimes)
+}
+
+effect function succeeds(command: string, args: ReadonlyArray<string>, cwd: string) {
+  const output = ran(command, args, { cwd, quiet: true }) catch () => undefined
+  return output?.status === 0
+}
+
+effect function inspection(root: string, skillPath: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const directory = fs.lstat(path.join(root, skillPath)) catch () => undefined
+  const skill = fs.lstat(path.join(root, skillPath, "SKILL.md")) catch () => undefined
+  return {
+    realDirectory: directory?.type === "Directory" && skill?.type === "File",
+    bounded: skill !== undefined && Number(skill.size) <= maxSkillFileBytes,
+  }
+}
+
+export effect function validateSkill(root: string, skillPath: string) {
+  const configured = try Config.option(Config.String("SLOP_PYTHON"))
+  let state: SkillValidation = initial
+  let chosen: Runtime | undefined
+  for (const runtime of runtimes(Option.getOrUndefined(configured))) {
+    const matches = try succeeds(runtime.executable, runtime.probe, root)
+    state = try apply(state, { type: "probeRuntime", matches })
+    if (matches) {
+      chosen = runtime
+      break
+    }
+  }
+  if (chosen === undefined) {
+    throw refused("skill packaging requires Python with PyYAML 6.0.3 or uv; set SLOP_PYTHON to an interpreter with that exact version")
+  }
+  const path = try Path.Path
+  const facts = try inspection(root, skillPath)
+  const output = ran(chosen.executable, [...chosen.prefix, "-B", path.join(root, validatorPath), path.join(root, skillPath)], { cwd: root }) catch effect () => {
+    throw refused("the skill validator could not run")
+  }
+  try Console.log((try utf8Text(output.stdout, "the skill validator's report")).trimEnd())
+  state = try apply(state, { type: "inspect", realDirectory: facts.realDirectory, bounded: facts.bounded, yaml: output.status === 0 })
+  state = try apply(state, { type: "decide" })
+  if (state.outcome !== "Valid") throw refused(`skill validation refused ${skillPath}`)
+  return state
+}

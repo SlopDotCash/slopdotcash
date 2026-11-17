@@ -1,0 +1,36 @@
+// spec/slopbot/reportingReadiness.md, "Story: Observe private reporting and answer repository access from the App's own reads"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { Caller, Unauthenticated, answered, json, outbound } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { repositoryAccessRoutes } from "../../src/access/route.vibe"
+import { ReportingReadinessLive } from "../../src/readiness/port.vibe"
+import { refreshReportingReadiness } from "../../src/readiness/reporting.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly SLOPBOT_APP_ID: string
+  readonly SLOPBOT_APP_PRIVATE_KEY: string
+}
+
+const anonymous = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
+
+function services(env: Env) {
+  const database = d1(env.SLOPBOT_DB)
+  const app = Layer.provide(githubApp({ appId: env.SLOPBOT_APP_ID, privateKey: Redacted.make(env.SLOPBOT_APP_PRIVATE_KEY), userAgent: "slopbot" }), outbound)
+  return Layer.mergeAll(database, webCrypto, outbound, anonymous, app, Layer.provide(ReportingReadinessLive, database))
+}
+
+const refresh = HttpRouter.add("POST", "/__test/reporting-refresh", answered(effect {
+  return json(try refreshReportingReadiness())
+}))
+
+const observation = HttpRouter.add("GET", "/__test/reporting/:projectId", answered(effect {
+  const projectId = (try HttpRouter.params).projectId ?? ""
+  return json(try (try ReportingReadiness).current(projectId))
+}))
+
+export default worker({ services, routes: Layer.mergeAll(repositoryAccessRoutes, refresh, observation) })

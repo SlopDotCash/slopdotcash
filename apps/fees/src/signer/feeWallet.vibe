@@ -1,0 +1,240 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import type { EvmRpc, Hex } from "@repo/platform/chain/evm"
+import type { RpcFailure } from "@repo/platform/chain/rpc"
+import { type SignedSend, maximumSafeValue, swapRouter } from "../../gen/fees__conversion.effect.vibe"
+import { type Network, type Runtime, buybackSigns, conversionSigns, replacementSigns } from "../../gen/fees__runtime.effect.vibe"
+import { type Type2, exactNumber, parsedType2, sameFields, signerOf, transactionId, unsignedType2, type Unsigned } from "../evm/abi.ts"
+import type { ApprovalRefused } from "../evm/approval.vibe"
+import { type ChainRefused, FeeChain, chainPreflight, dataOperatorFee, feesPerGas, gasLimit, nativeBalance } from "../evm/client.vibe"
+import type { Facts } from "../journal/store.vibe"
+import { type KyberRefused, type KyberSettings, type KyberUnavailable, type RouteMismatch, nativeValue } from "../kyber/route.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { type EvmCall, SignRefused, derivedCall, replacementTransaction } from "./evm.vibe"
+import { evmKey, feeWalletEvmMarker } from "./evmKey.ts"
+import type { EvmIntent, EvmNetwork, FeeIntent, SolanaIntent } from "./intents.ts"
+
+export { SignRefused } from "./evm.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { nativeUnits as units } from "../journal/amounts.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function gweiCeiling(wei: bigint): bigint { return units(wei, false) }
+}
+import { errorText, gweiCeiling } from verified
+
+export error KeyMismatch { network: string }
+
+export interface EvmPrepared {
+  readonly family: "evm"
+  readonly intent: EvmIntent
+  readonly unsigned: Unsigned
+  readonly nonce: number
+  readonly gasLimit: number
+  readonly feeUnits: { readonly maxFee: number; readonly priority: number }
+  readonly maximumUnits: number
+  readonly maximumWei: bigint
+  readonly deadline: number
+  readonly expiresAt: number | undefined
+  readonly minimumOutput: bigint
+  readonly approvedAmount: bigint
+}
+
+export interface SolanaPrepared {
+  readonly family: "solana"
+  readonly intent: SolanaIntent
+  readonly intentHash: string
+  readonly maximumUnits: number
+  readonly blockhashSlot: number
+  readonly accountProof: string | undefined
+}
+
+export type Prepared = EvmPrepared | SolanaPrepared
+
+export interface EvmSigned { readonly family: "evm"; readonly prepared: EvmPrepared; readonly rawTx: Hex; readonly txId: Hex }
+export interface SolanaSigned { readonly family: "solana"; readonly prepared: SolanaPrepared; readonly rawTx: string; readonly txId: string }
+export type Signed = EvmSigned | SolanaSigned
+
+export service FeeWallet {
+  readonly network: Network
+  readonly address: string
+  sign<E, R>(intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): Signed!(SignRefused | E)!R
+}
+
+export interface EvmWalletOptions {
+  readonly network: EvmNetwork
+  readonly wallet: string
+  readonly key: Redacted.Redacted<string> | undefined
+  readonly runtime: Runtime
+  readonly limits: NativeLimits
+  readonly gasMultiple: bigint
+  readonly kyber: KyberSettings
+}
+
+type Unprepared = SignRefused | RpcFailure | ChainRefused | ApprovalRefused | KyberUnavailable | KyberRefused | RouteMismatch
+
+function refusalOf(error: Unprepared): SignRefused {
+  switch (error._tag) {
+    case "SignRefused": return error
+    case "RpcUnavailable": return new SignRefused({ step: "chain", issue: errorText(error.message) })
+    case "RpcMalformed": return new SignRefused({ step: "chain", issue: errorText(error.issue) })
+    case "RpcRefused": return new SignRefused({ step: "chain", issue: errorText(error.message) })
+    case "WrongChain": return new SignRefused({ step: "chain", issue: `the RPC answered chain ${error.actual}, not ${error.expected}` })
+    case "ChainRefused": return new SignRefused({ step: "facts", issue: error.issue })
+    case "ApprovalRefused": return new SignRefused({ step: "facts", issue: error.issue })
+    case "KyberUnavailable": return new SignRefused({ step: "facts", issue: errorText(error.detail) })
+    case "KyberRefused": return new SignRefused({ step: "facts", issue: errorText(error.message) })
+    case "RouteMismatch": return new SignRefused({ step: "bytes", issue: error.issue })
+  }
+}
+
+export function activated(runtime: Runtime, intent: EvmIntent) {
+  switch (intent.kind) {
+    case "KyberApprove":
+    case "KyberSwap":
+    case "EvmClaimFees":
+      return intent.network === "Robinhood" ? buybackSigns(runtime, intent.network) : conversionSigns(runtime, intent.network)
+    case "DlnApprove":
+    case "DlnCreateOrder":
+    case "SlopBurn":
+      return buybackSigns(runtime, intent.network)
+    case "EvmReplacement":
+      return replacementSigns(runtime, intent.network)
+  }
+}
+
+effect function refuse(step: string, issue: string) {
+  throw new SignRefused({ step, issue })
+}
+
+effect function exact(value: bigint, what: string) {
+  const number = exactNumber(value)
+  if (number === undefined) return try refuse("limits", `${what} is outside the journal's exact range`)
+  return number
+}
+
+interface Planned { readonly transaction: Type2; readonly call: EvmCall | undefined }
+
+effect function planned(options: EvmWalletOptions, intent: EvmIntent) {
+  const chain = try FeeChain
+  if (intent.kind === "EvmReplacement") return { transaction: try replacementTransaction(intent, chain.wallet, chain.chainId, options.kyber), call: undefined } satisfies Planned
+  const call = try derivedCall(intent, chain.wallet, options.kyber)
+  const gas = try gasLimit(call.to, call.data, call.value)
+  const fees = try feesPerGas()
+  const transaction: Type2 = {
+    chainId: try exact(chain.chainId, "the chain id"),
+    nonce: try exact(call.nonce, "the nonce"),
+    to: call.to,
+    data: call.data,
+    value: call.value,
+    gas,
+    maxFeePerGas: fees.maxFeePerGas,
+    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+  }
+  return { transaction, call } satisfies Planned
+}
+
+effect function prepared(options: EvmWalletOptions, intent: EvmIntent) {
+  if (intent.network !== options.network) return try refuse("activation", `the intent is for ${intent.network}, not ${options.network}`)
+  if (!activated(options.runtime, intent)) return try refuse("activation", `${intent.kind} is not activated on ${options.network}`)
+  try chainPreflight()
+  const { transaction, call } = try planned(options, intent)
+  const unsigned = unsignedType2(transaction)
+  const extra = options.limits.additionalFeeReserve
+  const maximumWei = transaction.gas * transaction.maxFeePerGas + extra
+  if (maximumWei > options.limits.perTransaction) return try refuse("limits", "the worst-case native fee exceeds the per-transaction ceiling")
+  const posted = try dataOperatorFee((unsigned.serialized.length - 2) / 2, transaction.gas)
+  if (posted.data + posted.operator > extra) return try refuse("limits", "Base data/operator fees exceed the configured allowance")
+  if (transaction.value > 0n && (try nativeBalance("latest")) < transaction.value + maximumWei) return try refuse("limits", "Native conversion cannot cover its input and gas")
+  const priced = try nativeValue(options.network, maximumWei, options.kyber)
+  if (priced === undefined || priced * options.gasMultiple > intent.valueMicro) return try refuse("limits", "Final prepared native fee exceeds the gas-cost multiple or cannot be priced")
+  const gasUnits = try exact(transaction.gas, "the gas limit")
+  const maxFee = try exact(gweiCeiling(transaction.maxFeePerGas), "the maximum fee")
+  const priority = try exact(gweiCeiling(transaction.maxPriorityFeePerGas), "the priority fee")
+  const maximumUnits = gasUnits * maxFee
+  if (!Number.isSafeInteger(maximumUnits)) return try refuse("limits", "the worst-case fee is outside the journal's exact range")
+  const expiresAt = call?.deadline
+  return {
+    family: "evm",
+    intent,
+    unsigned,
+    nonce: transaction.nonce,
+    gasLimit: gasUnits,
+    feeUnits: { maxFee, priority },
+    maximumUnits,
+    maximumWei,
+    deadline: expiresAt === undefined ? maximumSafeValue : expiresAt * 1000,
+    expiresAt,
+    minimumOutput: call?.minimumOutput ?? 0n,
+    approvedAmount: call?.approvedAmount ?? 0n,
+  } satisfies EvmPrepared
+}
+
+effect function signedBytes(options: EvmWalletOptions, ready: EvmPrepared) {
+  if (options.key === undefined) return try refuse("key", `no fee-wallet key is loaded for ${options.network}`)
+  const key = evmKey(Redacted.value(options.key))
+  if (key === undefined) return try refuse("key", `Fee-wallet key for ${options.network} is malformed`)
+  if (key.address !== options.wallet.toLowerCase()) return try refuse("key", `Fee-wallet key for ${options.network} does not control the configured fee wallet`)
+  const rawTx = try tryPromise({ try: () => key.sign(ready.unsigned.transaction), catch: () => new SignRefused({ step: "sign", issue: "the fee-wallet key could not sign" }) })
+  const parsed = parsedType2(rawTx)
+  const signer = try tryPromise({ try: () => signerOf(rawTx), catch: () => new SignRefused({ step: "sign", issue: "the signed bytes cannot be recovered" }) })
+  const expected = ready.unsigned.transaction
+  if (parsed === undefined || !sameFields(parsed, expected) || parsed.maxFeePerGas !== expected.maxFeePerGas || parsed.maxPriorityFeePerGas !== expected.maxPriorityFeePerGas || signer !== options.wallet.toLowerCase())
+    return try refuse("sign", "the signed bytes differ from the prepared intent")
+  try Effect.annotateLogs(Effect.logInfo("fee_wallet_signed"), { signer: feeWalletEvmMarker, network: options.network, kind: ready.intent.kind })
+  return { family: "evm", prepared: ready, rawTx, txId: transactionId(rawTx) } satisfies EvmSigned
+}
+
+type ChainServices = FeeChain | EvmRpc | HttpClient.HttpClient
+
+effect function signWith<E, R>(options: EvmWalletOptions, services: Context.Context<ChainServices>, intent: FeeIntent, reserve: (prepared: Prepared) => void!E!R): Signed!(SignRefused | E)!R {
+  if (intent.network === "Solana") return try refuse("activation", "a Solana intent is signed by the Solana fee wallet")
+  const ready = try Effect.provideContext(Effect.mapError(prepared(options, intent), refusalOf), services)
+  try reserve(ready)
+  return try signedBytes(options, ready)
+}
+
+export function evmFeeWallet(options: EvmWalletOptions) {
+  return Layer.effect(FeeWallet, effect {
+    if (options.key !== undefined && evmKey(Redacted.value(options.key))?.address !== options.wallet.toLowerCase()) throw new KeyMismatch({ network: options.network })
+    const services = try Effect.context<ChainServices>()
+    const shape: FeeWallet.Shape = {
+      network: options.network,
+      address: options.wallet.toLowerCase(),
+      sign: (intent, reserve) => signWith(options, services, intent, reserve),
+    }
+    return shape
+  })
+}
+
+export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined {
+  const { prepared: ready } = signed
+  const kind = ready.intent.kind === "KyberApprove" ? "Approval" : ready.intent.kind === "KyberSwap" ? "Conversion" : undefined
+  const minimumOutput = exactNumber(ready.minimumOutput)
+  const approvedAmount = exactNumber(ready.approvedAmount)
+  if (kind === undefined || minimumOutput === undefined || approvedAmount === undefined) return undefined
+  return {
+    kind,
+    tx,
+    nonce: ready.nonce,
+    gasLimit: ready.gasLimit,
+    fees: ready.feeUnits,
+    inspection: "Inspected",
+    outputToFeeWallet: true,
+    minimumOutput,
+    deadline: ready.deadline,
+    blockhashSlot: 0,
+    router: swapRouter,
+    approvedAmount,
+  }
+}
+
+export function signedFacts(signed: EvmSigned): Facts {
+  return { txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.prepared.unsigned.intentHash, ...signed.prepared.expiresAt === undefined ? {} : { expiresAt: signed.prepared.expiresAt } }
+}
+
+export function reservationFacts(ready: EvmPrepared): Facts {
+  return { intentHash: ready.unsigned.intentHash }
+}

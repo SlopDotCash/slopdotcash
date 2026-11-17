@@ -1,0 +1,34 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type CheckResult, type Event, type OwnerRequest, type PlanKind, type ReviewFacts, type Submission, apply, decodeEvent, initial } from "../../gen/settlement__ownerTransactions.effect.vibe"
+
+export interface Capture {
+  readonly revision: number
+  readonly snapshotDigest: string
+}
+
+export type Outcome = "pending" | "failed" | "finalized"
+
+export function draft(capture: Capture): OwnerRequest {
+  return { ...initial, revision: capture.revision, snapshotDigest: capture.snapshotDigest }
+}
+
+export effect function reviewed(capture: Capture, kind: PlanKind, facts: ReviewFacts, message: string) {
+  return try apply(draft(capture), { type: "review", kind, facts, message })
+}
+
+export effect function submitted(request: OwnerRequest, submission: Submission, result: CheckResult) {
+  const pending = request.phase === "Reviewed" ? try apply(request, { type: "savePending", submission }) : try apply(request, { type: "recover" })
+  return try apply(pending, { type: "checkResult", result })
+}
+
+export function outcomeOf(request: OwnerRequest): Outcome {
+  return request.phase === "Finalized" ? "finalized" : request.phase === "Failed" ? "failed" : "pending"
+}
+
+export effect function send(request: OwnerRequest, event: Event) {
+  return try apply(request, event)
+}
+
+export effect function receive(request: OwnerRequest, input: unknown) {
+  return try apply(request, try decodeEvent(input))
+}

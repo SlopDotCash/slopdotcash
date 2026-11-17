@@ -1,0 +1,177 @@
+// spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import { type RetryCause, recollects } from "../../gen/points__census.effect.vibe"
+import { type UnavailableSource, ensureEstimatedBudget, executeNodeBatch, reviewDetailBatchSize } from "../ingestion/graphql.vibe"
+import type { Actor } from "../kernels/scoring/selection.ts"
+import { CensusBroken } from "./collect.vibe"
+import type { HeadState, HeadVote } from "./headDecision.ts"
+
+module verified {
+  import type { HeadVerdict, HeadVote } from "./headDecision.ts"
+  import { headDecision as decided } from "./headDecision.ts"
+  /** @throws {never} */
+  export function headDecision(votes: HeadVote[]): HeadVerdict { return decided(votes) }
+}
+import { headDecision } from verified
+
+export const reviewedPullRequestReferencesQuery = `
+  query LeaderboardReviewedPullRequestReferences($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest {
+        id
+        updatedAt
+        reviews(states: [APPROVED, CHANGES_REQUESTED]) { totalCount }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+const formalDecisions: ReadonlyArray<string> = ["APPROVED", "CHANGES_REQUESTED"]
+const headStates: Readonly<Record<string, HeadState | undefined>> = { APPROVED: "Approved", CHANGES_REQUESTED: "ChangesRequested", DISMISSED: "Dismissed" }
+const fullCommitSha = /^[a-f0-9]{40}$/iu
+
+export error ReviewCensusChanged { message: string }
+
+export interface ReviewCensusEntry {
+  readonly reviewCount: number
+  readonly updatedAt: string
+}
+
+export type ReviewCensus = ReadonlyMap<string, ReviewCensusEntry>
+
+export interface ReviewedPullRequest {
+  readonly id: string
+  readonly updatedAt: string
+  readonly reviews: ReadonlyArray<{ readonly state: string }>
+}
+
+export interface HeadReview {
+  readonly id: string
+  readonly state: string
+  readonly submittedAt: string | null
+  readonly commitId: string | null
+  readonly author: Actor | null
+}
+
+export type HeadDecision = "APPROVED" | "CHANGES_REQUESTED" | null
+
+schema ReviewedNode {
+  readonly __typename: string
+  readonly id: string
+  readonly updatedAt: string
+  readonly reviews: { readonly totalCount: number }
+}
+
+const decodeNode = Schema.decodeUnknownEffect(ReviewedNode)
+
+function chunks<T>(values: ReadonlyArray<T>, size: number) {
+  const result: ReadonlyArray<T>[] = []
+  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size))
+  return result
+}
+
+function formalDecisionCount(reviews: ReadonlyArray<{ readonly state: string }>) {
+  return reviews.filter((review) => formalDecisions.includes(review.state)).length
+}
+
+export effect function collectReviewCensus(references: ReadonlyArray<{ readonly id: string }>, reservedPasses = 1) {
+  const batches = chunks(references, reviewDetailBatchSize)
+  try ensureEstimatedBudget(batches.length * reservedPasses)
+  const census = new Map<string, ReviewCensusEntry>()
+  for (const batch of batches) {
+    const data = try executeNodeBatch(reviewedPullRequestReferencesQuery, batch.map((reference) => reference.id))
+    const nodes = data.nodes
+    if (!Array.isArray(nodes)) throw new CensusBroken({ message: "data.nodes must be an array" })
+    if (nodes.length !== batch.length) throw new CensusBroken({ message: `GitHub returned ${nodes.length} review census nodes for ${batch.length} requested IDs` })
+    for (const [index, reference] of batch.entries()) {
+      const path = `data.nodes[${index}]`
+      const node = decodeNode(nodes[index]) catch effect () => { throw new CensusBroken({ message: `${path} did not match the requested pull request` }) }
+      if (node.__typename !== "PullRequest" || node.id !== reference.id) throw new CensusBroken({ message: `${path} did not match the requested pull request` })
+      if (!Number.isSafeInteger(node.reviews.totalCount) || node.reviews.totalCount < 0) throw new CensusBroken({ message: `${path}.reviews.totalCount must be a non-negative integer` })
+      if (!Number.isFinite(Date.parse(node.updatedAt))) throw new CensusBroken({ message: `${path}.updatedAt must be an ISO timestamp` })
+      census.set(reference.id, { reviewCount: node.reviews.totalCount, updatedAt: node.updatedAt })
+    }
+  }
+  return census satisfies ReviewCensus
+}
+
+export effect function assertReviewCensusStable(before: ReviewCensus, after: ReviewCensus) {
+  if (before.size !== after.size) throw new ReviewCensusChanged({ message: "Review census changed identity before snapshot assembly" })
+  for (const [id, entry] of before) {
+    const current = after.get(id)
+    if (current === undefined || current.reviewCount !== entry.reviewCount || current.updatedAt !== entry.updatedAt) {
+      throw new ReviewCensusChanged({ message: `Review census changed for ${id} before snapshot assembly` })
+    }
+  }
+}
+
+export effect function reconcileReviewCensus(census: ReviewCensus, pullRequests: ReadonlyArray<ReviewedPullRequest>) {
+  const changed: ReviewedPullRequest[] = []
+  for (const pullRequest of pullRequests) {
+    const entry = census.get(pullRequest.id)
+    if (entry === undefined) throw new CensusBroken({ message: `Review census missing ${pullRequest.id} before detail reconciliation` })
+    if (formalDecisionCount(pullRequest.reviews) !== entry.reviewCount || pullRequest.updatedAt !== entry.updatedAt) changed.push(pullRequest)
+  }
+  if (changed.length === 0) return census
+  const refreshed = try collectReviewCensus(changed.map(({ id }) => ({ id })))
+  const reconciled = new Map(census)
+  for (const pullRequest of changed) {
+    const current = refreshed.get(pullRequest.id)
+    if (current === undefined || formalDecisionCount(pullRequest.reviews) !== current.reviewCount || pullRequest.updatedAt !== current.updatedAt) {
+      throw new CensusBroken({ message: `Review census changed for ${pullRequest.id} during detail hydration` })
+    }
+    reconciled.set(pullRequest.id, current)
+  }
+  return reconciled satisfies ReviewCensus
+}
+
+function sameActor(left: Actor, right: Actor) {
+  return left.id === right.id || left.login.toLowerCase() === right.login.toLowerCase()
+}
+
+export effect function currentHeadReviewDecision(headRefOid: string, author: Actor | null, reviews: ReadonlyArray<HeadReview>) {
+  if (!fullCommitSha.test(headRefOid)) throw new CensusBroken({ message: "Pull request headRefOid must be a full commit SHA" })
+  const head = headRefOid.toLowerCase()
+  const reviewers = new Map<string, number>()
+  const votes: HeadVote[] = []
+  for (const review of reviews) {
+    if (review.commitId !== null && !fullCommitSha.test(review.commitId)) throw new CensusBroken({ message: `Review ${review.id} commitId must be a full commit SHA` })
+    const selfReview = review.author !== null && author !== null && sameActor(review.author, author)
+    if (review.author?.kind === "Bot" || selfReview) continue
+    if (formalDecisions.includes(review.state) && !review.submittedAt) throw new CensusBroken({ message: `Review ${review.id} cannot prove a timestamped ${review.state} decision` })
+    const state = headStates[review.state]
+    if (state === undefined || !review.submittedAt || review.commitId === null) continue
+    const submittedAt = Date.parse(review.submittedAt)
+    if (!Number.isFinite(submittedAt)) throw new CensusBroken({ message: `Review ${review.id} has an invalid submittedAt value` })
+    const key = review.author === null ? `ghost:${review.id}` : `actor:${review.author.id}`
+    const reviewer = reviewers.get(key) ?? reviewers.size + 1
+    reviewers.set(key, reviewer)
+    votes.push({ reviewer, submittedAt, state, atHead: review.commitId.toLowerCase() === head })
+  }
+  const verdict = headDecision(votes)
+  return (verdict === "ChangesRequested" ? "CHANGES_REQUESTED" : verdict === "Approved" ? "APPROVED" : null) satisfies HeadDecision
+}
+
+export interface Recollection {
+  readonly attempt: number
+  readonly unavailableSources: ReadonlyArray<UnavailableSource>
+  readonly allowJointHolds: boolean
+}
+
+function causeOf(error: unknown): RetryCause {
+  const tag = typeof error === "object" && error !== null && "_tag" in error ? error._tag : undefined
+  return tag === "ReviewCensusChanged" ? "ReviewCensusChanged" : tag === "SourceNodeUnavailable" ? "SourceNodeUnavailable" : "OtherFailure"
+}
+
+function sourcesOf(error: unknown): ReadonlyArray<UnavailableSource> {
+  return typeof error === "object" && error !== null && "sources" in error && Array.isArray(error.sources) ? error.sources as ReadonlyArray<UnavailableSource> : []
+}
+
+export effect function recollectedOnce<A, E, R>(generate: (recollection: Recollection) => A!E!R) {
+  return generate({ attempt: 1, unavailableSources: [], allowJointHolds: false }) catch effect (error) => {
+    if (!recollects(1, causeOf(error))) throw error
+    try Console.error("[slop.cash] source census changed or a node became unavailable; recollecting once with the existing GraphQL budget")
+    return try generate({ attempt: 2, unavailableSources: sourcesOf(error), allowJointHolds: true })
+  }
+}

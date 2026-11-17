@@ -1,0 +1,110 @@
+// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+import { first, rows, sql } from "@repo/platform/d1"
+import { type PaymentEvidence, type SolanaGeneration, blockhashValidity } from "../../gen/backend__bindingConsent.effect.vibe"
+import { activeAuthorization } from "../../gen/backend__wallets.effect.vibe"
+import { type Loaded as Partition, claimAt, positionOf } from "../wallets/store.vibe"
+import type { AttesterPayment } from "./attester.vibe"
+import { type Found, nothingOutside } from "./store.vibe"
+
+schema ObligationRow {
+  readonly network: string
+  readonly vault: string
+  readonly state: string
+}
+
+schema AttemptRow {
+  readonly id: string
+  readonly claim_id: string
+}
+
+schema SettlementRow {
+  readonly case_id: string
+  readonly network: string
+  readonly vault: string
+}
+
+export type Ledger =
+  | { readonly kind: "absent" }
+  | { readonly kind: "ordinary"; readonly obligation: ObligationRow; readonly attempts: ReadonlyArray<AttemptRow> }
+  | { readonly kind: "private"; readonly settlement: SettlementRow; readonly obligation: ObligationRow | undefined; readonly attempts: ReadonlyArray<AttemptRow> }
+
+export interface Readiness {
+  readonly ledger: Ledger
+  readonly payment: AttesterPayment | undefined
+}
+
+export const modelObligation = 1
+const modelCase = 1
+
+export function ledgerFingerprint(obligationId: string) {
+  return sql`SELECT coalesce((SELECT state FROM payment_obligations WHERE id = ${obligationId}), '-')
+    || ':' || coalesce((SELECT group_concat(id || '=' || state || '=' || claim_id, ',') FROM (SELECT id, state, claim_id FROM payment_attempts WHERE obligation_id = ${obligationId} ORDER BY rowid)), '')
+    || ':' || coalesce((SELECT state FROM security_payment_obligations WHERE id = ${obligationId}), '-')
+    || ':' || coalesce((SELECT group_concat(id || '=' || state || '=' || claim_id, ',') FROM (SELECT id, state, claim_id FROM security_payment_attempts WHERE obligation_id = ${obligationId} ORDER BY rowid)), '')`
+}
+
+export effect function ledgerOf(actor: string, obligationId: string) {
+  const ordinary = try first(ObligationRow, sql`SELECT network, vault, state FROM payment_obligations WHERE id = ${obligationId} AND github_user_id = ${actor} AND chain = 'solana'`)
+  if (ordinary !== undefined) {
+    const attempts = try rows(AttemptRow, sql`SELECT id, claim_id FROM payment_attempts WHERE obligation_id = ${obligationId} AND state IN ('prepared', 'unknown', 'submitted') ORDER BY created_at, rowid`)
+    return { kind: "ordinary", obligation: ordinary, attempts } satisfies Ledger
+  }
+  const settlement = try first(SettlementRow, sql`SELECT s.case_id, s.network, s.vault FROM security_settlements s JOIN security_cases c ON c.id = s.case_id WHERE s.obligation_id = ${obligationId} AND c.reporter_github_id = ${actor}`)
+  if (settlement === undefined) return { kind: "absent" } satisfies Ledger
+  const obligation = try first(ObligationRow, sql`SELECT network, vault, state FROM security_payment_obligations WHERE id = ${obligationId} AND github_user_id = ${actor} AND chain = 'solana'`)
+  const attempts = try rows(AttemptRow, sql`SELECT id, claim_id FROM security_payment_attempts WHERE obligation_id = ${obligationId} AND state IN ('prepared', 'unknown', 'submitted') ORDER BY created_at, rowid`)
+  return { kind: "private", settlement, obligation, attempts } satisfies Ledger
+}
+
+function attemptFor(solana: Partition, attempts: ReadonlyArray<AttemptRow>) {
+  const authorized = activeAuthorization(solana.state).claim
+  return attempts.find((attempt) => authorized > 0 && positionOf(solana, attempt.claim_id) === authorized) ?? attempts[0]
+}
+
+function generationOf(evidence: PaymentEvidence): SolanaGeneration {
+  return { obligation: modelObligation, generation: 1, claim: evidence.attemptClaim, transaction: 1, status: "SolanaPrepared", expiryHeight: blockhashValidity, privateCase: evidence.privateCase }
+}
+
+export function caseOf(ledger: Ledger): string | undefined {
+  return ledger.kind === "private" ? ledger.settlement.case_id : undefined
+}
+
+export function readinessOf(ledger: Ledger, actor: string, obligationId: string, solana: Partition, generationLive: boolean): Found<Readiness> {
+  if (ledger.kind === "absent") return { outside: nothingOutside, found: { ledger, payment: undefined } }
+  const obligation = ledger.obligation
+  const placed = obligation ?? (ledger.kind === "private" ? ledger.settlement : undefined)
+  const attempt = attemptFor(solana, ledger.attempts)
+  const claim = attempt === undefined ? 0 : positionOf(solana, attempt.claim_id)
+  const wallet = claimAt(solana, claim)
+  const evidence: PaymentEvidence = {
+    obligation: modelObligation,
+    owner: actor,
+    network: placed?.network ?? "",
+    vault: placed?.vault ?? "",
+    reserved: obligation?.state === "reserved",
+    attemptClaim: claim,
+    attemptOpen: attempt !== undefined,
+    privateCase: ledger.kind === "private" ? modelCase : 0,
+  }
+  const payment = attempt === undefined || wallet === undefined ? undefined : {
+    obligationId,
+    network: evidence.network,
+    vault: evidence.vault,
+    githubUserId: actor,
+    claimId: attempt.claim_id,
+    claimDigest: wallet.record_sha256,
+    destination: wallet.wallet_address,
+    idempotencyKey: attempt.id,
+  } satisfies AttesterPayment
+  const live = generationLive && evidence.attemptOpen && claim > 0
+  return {
+    outside: {
+      payments: [evidence],
+      generations: live ? [generationOf(evidence)] : [],
+      lastGeneration: live ? 1 : 0,
+      finalizedHeight: 0,
+      cases: ledger.kind === "private" ? { [ledger.settlement.case_id]: modelCase } : {},
+    },
+    found: { ledger, payment },
+  }
+}

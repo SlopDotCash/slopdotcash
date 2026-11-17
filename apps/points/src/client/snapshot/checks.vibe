@@ -1,0 +1,249 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import type { ReceiptRegistry } from "@repo/contributor/client"
+import type { GitHubActor, RegisteredRepository, RepositoryRegistry } from "./schema.vibe"
+
+export type Problem = string | undefined
+
+export interface Registry {
+  readonly byId: ReadonlyMap<string, RegisteredRepository>
+  readonly targets: ReadonlyArray<RegisteredRepository>
+  readonly projectIds: ReadonlyArray<string>
+  readonly receipts: ReceiptRegistry
+}
+
+export function registryOf(registry: RepositoryRegistry): Registry {
+  const byId = new Map<string, RegisteredRepository>()
+  for (const repository of registry.registered) {
+    for (const id of [repository.id, ...repository.aliases]) {
+      const key = id.toLowerCase()
+      if (!byId.has(key)) byId.set(key, repository)
+    }
+  }
+  const receipts = registry.projects.map((project) => ({
+    id: project.id,
+    repositories: registry.registered.filter((repository) => repository.projectId === project.id).flatMap((repository) => [repository.id, ...repository.aliases]),
+    skillSourcePath: project.skillSourcePath,
+  }))
+  return { byId, targets: registry.targets, projectIds: [...new Set(registry.registered.map((repository) => repository.projectId))], receipts }
+}
+
+export function findRepository(registry: Registry, id: string): RegisteredRepository | undefined {
+  return registry.byId.get(id.toLowerCase())
+}
+
+export function findRepositoryPath(registry: Registry, owner: string, name: string): RegisteredRepository | undefined {
+  return findRepository(registry, `${owner}/${name}`)
+}
+
+export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+export function at(value: unknown, ...path: ReadonlyArray<string | number>): unknown {
+  let current = value
+  for (const key of path) {
+    if (typeof key === "number") current = Array.isArray(current) ? current[key] : undefined
+    else current = isRecord(current) ? current[key] : undefined
+  }
+  return current
+}
+
+export function sortedKeys(value: unknown): string {
+  return isRecord(value) ? Object.keys(value).sort().join(",") : ""
+}
+
+export function hasKeys(value: unknown, keys: ReadonlyArray<string>): boolean {
+  return sortedKeys(value) === [...keys].sort().join(",")
+}
+
+export function has(value: unknown, key: string): boolean {
+  return isRecord(value) && Object.hasOwn(value, key)
+}
+
+export function nonEmpty(value: string, path: string): Problem {
+  return value.length === 0 ? `${path} must be a non-empty string` : undefined
+}
+
+export function nonNegativeInteger(value: number, path: string): Problem {
+  return Number.isFinite(value) && Number.isInteger(value) && value >= 0 ? undefined : `${path} must be a non-negative integer`
+}
+
+export function positiveInteger(value: number, path: string): Problem {
+  return Number.isFinite(value) && Number.isInteger(value) && value > 0 ? undefined : `${path} must be a positive integer`
+}
+
+export function nonNegativeNumber(value: number, path: string): Problem {
+  return Number.isFinite(value) && value >= 0 ? undefined : `${path} must not be negative`
+}
+
+export function oneOf(value: string, allowed: ReadonlyArray<string>, path: string): Problem {
+  return allowed.includes(value) ? undefined : `${path} must be one of: ${allowed.join(", ")}`
+}
+
+const isoShape = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u
+
+export function isUtcIso(value: string): boolean {
+  if (!isoShape.test(value)) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 19) === value.slice(0, 19)
+}
+
+export function iso(value: string, path: string): Problem {
+  if (value.length === 0) return `${path} must be a non-empty string`
+  return isUtcIso(value) ? undefined : `${path} must be a UTC ISO-8601 timestamp`
+}
+
+export function millis(value: string): number {
+  return Date.parse(value)
+}
+
+export function isScoreThirds(value: number): boolean {
+  if (!Number.isFinite(value) || value < 0) return false
+  const points = Math.round(value * 10)
+  return Number.isSafeInteger(points) && points / 10 === value
+}
+
+export function pointsOf(thirds: number): number {
+  return Math.round(thirds * 10)
+}
+
+export function addThirds(left: number, right: number): number | undefined {
+  if (!isScoreThirds(left) || !isScoreThirds(right)) return undefined
+  const points = pointsOf(left) + pointsOf(right)
+  return Number.isSafeInteger(points) && pointsOf(points / 10) === points ? points / 10 : undefined
+}
+
+export function parsedUrl(value: string): URL | undefined {
+  try {
+    return new URL(value)
+  } catch {
+    return undefined
+  }
+}
+
+export function secureUrl(value: string, path: string): URL | string {
+  if (value.length === 0) return `${path} must be a non-empty string`
+  const parsed = parsedUrl(value)
+  if (parsed === undefined) return `${path} must be a valid web URL`
+  if (parsed.protocol !== "https:" || parsed.hostname === "" || parsed.username !== "" || parsed.password !== "" || parsed.port !== "") return `${path} must be a credential-free HTTPS URL`
+  return parsed
+}
+
+const itemPath = /^\/([^/]+)\/([^/]+)\/(issues|pull)\/([1-9][0-9]*)\/?$/u
+
+export type UrlKind = "comment" | "issue" | "pull-request" | "review"
+
+export function repositoryUrl(registry: Registry, value: string, path: string, kind?: UrlKind, number?: number, repository?: string): Problem {
+  const parsed = secureUrl(value, path)
+  if (typeof parsed === "string") return parsed
+  if (parsed.hostname.toLowerCase() !== "github.com" || parsed.search !== "") return `${path} must use the canonical GitHub repository origin`
+  const match = itemPath.exec(parsed.pathname)
+  const found = match === null ? undefined : findRepositoryPath(registry, match[1] ?? "", match[2] ?? "")
+  if (match === null || found === undefined) return `${path} must identify an issue or pull request in a registry repository`
+  if (repository !== undefined && found.id !== findRepository(registry, repository)?.id) return `${path} does not match its declared repository`
+  const actual = (match[3] ?? "").toLowerCase() === "issues" ? "issue" : "pull-request"
+  if (kind !== undefined && kind !== "comment" && (kind === "issue" ? actual !== "issue" : actual !== "pull-request")) return `${path} kind does not match its repository URL`
+  if (number !== undefined && Number(match[4]) !== number) return `${path} number does not match its repository URL`
+  if (kind === "comment") return /^#issuecomment-\d+$/iu.test(parsed.hash) ? undefined : `${path} comment URL must identify an exact GitHub issue or pull-request comment`
+  if (kind === "review") return /^#(?:pullrequestreview-|discussion_r)\d+$/iu.test(parsed.hash) ? undefined : `${path} review URL must identify a GitHub review or inline discussion`
+  if (parsed.hash !== "" && !/^#(?:issuecomment-|pullrequestreview-|discussion_r)\d+$/iu.test(parsed.hash)) return `${path} has an unsupported GitHub fragment`
+  return undefined
+}
+
+export function repositoryIdFromUrl(registry: Registry, url: string): string | undefined {
+  const parsed = parsedUrl(url)
+  if (parsed === undefined) return undefined
+  const segments = parsed.pathname.split("/").filter((segment) => segment !== "")
+  const fragmentAllowed = parsed.hash === "" || /^#(?:issuecomment-|pullrequestreview-|discussion_r)[0-9]+$/iu.test(parsed.hash)
+  if (parsed.origin !== "https://github.com" || parsed.username !== "" || parsed.password !== "" || parsed.search !== "" || !fragmentAllowed || segments.length < 2) return undefined
+  return findRepositoryPath(registry, segments[0] ?? "", segments[1] ?? "")?.id
+}
+
+export function sameActor(left: GitHubActor, right: GitHubActor): boolean {
+  return left.login === right.login && left.avatarUrl === right.avatarUrl && left.url === right.url && left.kind === right.kind
+}
+
+const actorKindNames: ReadonlyArray<string> = ["Bot", "Mannequin", "Organization", "User", "Unknown"]
+
+export function actorProblem(actor: GitHubActor, path: string, validated?: Map<string, GitHubActor>): Problem {
+  const known = validated?.get(actor.id)
+  if (known !== undefined && sameActor(known, actor)) return undefined
+  const empty = nonEmpty(actor.id, `${path}.id`) ?? nonEmpty(actor.login, `${path}.login`)
+  if (empty !== undefined) return empty
+  if (/\s/u.test(actor.login)) return `${path}.login must be a GitHub login`
+  const avatar = secureUrl(actor.avatarUrl, `${path}.avatarUrl`)
+  if (typeof avatar === "string") return avatar
+  if (avatar.hostname.toLowerCase() !== "avatars.githubusercontent.com") return `${path}.avatarUrl must use GitHub's avatar origin`
+  const profile = secureUrl(actor.url, `${path}.url`)
+  if (typeof profile === "string") return profile
+  const profilePath = profile.pathname.replace(/\/$/u, "")
+  const appProfile = actor.kind === "Bot" && /^\/apps\/[a-z0-9][a-z0-9-]*$/iu.test(profilePath)
+  if (profile.hostname.toLowerCase() !== "github.com" || profile.search !== "" || profile.hash !== "" || (!appProfile && profilePath.toLowerCase() !== `/${actor.login}`.toLowerCase())) {
+    return `${path}.url must match the actor's canonical GitHub profile`
+  }
+  const kind = oneOf(actor.kind, actorKindNames, `${path}.kind`)
+  if (kind !== undefined) return kind
+  validated?.set(actor.id, { id: actor.id, login: actor.login, avatarUrl: actor.avatarUrl, url: actor.url, kind: actor.kind })
+  return undefined
+}
+
+export function actorCoherence(actors: ReadonlyArray<GitHubActor>): Problem {
+  const byId = new Map<string, GitHubActor>()
+  const idByLogin = new Map<string, string>()
+  for (const actor of actors) {
+    const previous = byId.get(actor.id)
+    if (previous !== undefined && !sameActor(previous, actor)) return `GitHub actor ${actor.id} changes identity inside the snapshot`
+    const previousId = idByLogin.get(actor.login.toLowerCase())
+    if (previousId !== undefined && previousId !== actor.id) return `GitHub login ${actor.login} maps to multiple actor IDs`
+    byId.set(actor.id, actor)
+    idByLogin.set(actor.login.toLowerCase(), actor.id)
+  }
+  return undefined
+}
+
+export function stringList(values: ReadonlyArray<string>, path: string): Problem {
+  for (let index = 0; index < values.length; index++) {
+    const problem = nonEmpty(values[index] ?? "", `${path}[${index}]`)
+    if (problem !== undefined) return problem
+  }
+  return new Set(values).size === values.length ? undefined : `${path} must not contain duplicates`
+}
+
+const identityPattern = /^[@~]?[A-Za-z0-9](?:[A-Za-z0-9._:@/+~-]{0,126}[A-Za-z0-9])?$/u
+const commonPlaceholders = new Set(["na", "none", "null", "other", "placeholder", "tbd", "todo", "unknown", "unspecified"])
+const providerPlaceholders = new Set(["ai", "model", "provider"])
+const modelPlaceholders = new Set(["ai", "claude", "gemini", "gpt", "grok", "llama", "llm", "model"])
+
+function placeholder(value: string): string {
+  return value.toLowerCase().replaceAll(/[^a-z0-9]/gu, "")
+}
+
+function exactIdentity(value: string, maxLength: number, placeholders: ReadonlySet<string>): boolean {
+  if (value.length < 1 || value.length > maxLength || !identityPattern.test(value)) return false
+  const normalized = placeholder(value)
+  return !commonPlaceholders.has(normalized) && !placeholders.has(normalized)
+}
+
+export function isUnavailableModel(value: string): boolean {
+  return value.toLowerCase() === "unavailable"
+}
+
+export function isExactProviderModel(value: string): boolean {
+  for (let index = value.indexOf("/"); index >= 0; index = value.indexOf("/", index + 1)) {
+    const model = value.slice(index + 1)
+    if (exactIdentity(value.slice(0, index), 64, providerPlaceholders) && exactIdentity(model, 128, modelPlaceholders) && placeholder(model) !== "unavailable") return true
+  }
+  return false
+}
+
+export function exactIdentifier(provider: string, model: string): string {
+  return model.toLowerCase().startsWith(`${provider.toLowerCase()}/`) ? model : `${provider}/${model}`
+}
+
+export function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+export function uniqueSorted(values: Iterable<string>): ReadonlyArray<string> {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"))
+}

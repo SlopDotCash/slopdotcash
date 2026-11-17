@@ -1,0 +1,166 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"
+import { type BlockRef, EvmRpc } from "@repo/platform/chain/evm"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, escrowGetter, evmAddress, factoryGetter } from "../chain/evm/abi.ts"
+import { vaultKey, vaultsCall } from "../chain/evm/factories.ts"
+import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals, totalsRefusalMessage } from "../chain/evm/totals.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import type { EvmDeployment, UpgradeReview } from "./policy.vibe"
+
+export error DeploymentMismatch { message: string }
+
+export interface ChainTotals {
+  readonly readVault: string
+  readonly asset: string
+  readonly decimals: number
+  readonly block: bigint
+  readonly blockTime: number
+  readonly deposited: bigint
+  readonly paid: bigint
+  readonly payoutFees: bigint
+  readonly grossWithdrawn: bigint
+  readonly withdrawalFees: bigint
+  readonly free: bigint | undefined
+  readonly reservedPrincipal: bigint | undefined
+  readonly reservedFees: bigint | undefined
+  readonly accruedFees: bigint | undefined
+  readonly reserved: bigint | undefined
+}
+
+const WORD = /^0x[0-9a-fA-F]{64}$/u
+const CODE = /^0x(?:[0-9a-fA-F]{2})+$/u
+const ZERO_WORD = /^0x0{64}$/iu
+const LEGACY_ROTATION_DELAY = 604800n
+
+function word(address: string): string {
+  return `0x${address.slice(2).toLowerCase().padStart(64, "0")}`
+}
+
+function hexBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array((hex.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(hex.slice(2 + index * 2, 4 + index * 2), 16)
+  return bytes
+}
+
+effect function address(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) throw new DeploymentMismatch({ message: "Reviewed deployment identity is incomplete" })
+  return parsed
+}
+
+effect function getter(to: EvmAddress, data: `0x${string}`, block: BlockRef) {
+  const value = try (try EvmRpc).call({ to, data, block })
+  if (!WORD.test(value)) throw new DeploymentMismatch({ message: "Malformed escrow state" })
+  return value.toLowerCase()
+}
+
+effect function runtimeSha256(at: EvmAddress, block: BlockRef) {
+  const code = try (try EvmRpc).code(at, block)
+  if (!CODE.test(code)) throw new DeploymentMismatch({ message: "Escrow runtime code unavailable" })
+  return try sha256Hex(hexBytes(code))
+}
+
+effect function implementationSlot(at: EvmAddress, block: BlockRef) {
+  const slot = try (try EvmRpc).storageAt(at, IMPLEMENTATION_SLOT, block)
+  if (!WORD.test(slot)) throw new DeploymentMismatch({ message: "Invalid implementation slot" })
+  return slot.toLowerCase()
+}
+
+function sameUint(answer: string, expected: bigint | undefined): boolean {
+  const value = decodeUint(answer, U256_MAX)
+  return value !== undefined && expected !== undefined && value === expected
+}
+
+export effect function verifyEvmFactory(deployment: EvmDeployment, block: BlockRef, eventBlock?: bigint) {
+  const factory = try address(deployment.factory)
+  const upgrade = deployment.evmUpgrade
+  const reviews: ReadonlyArray<UpgradeReview> = upgrade === undefined ? [] : [upgrade, ...(eventBlock === undefined ? [] : upgrade.history.filter((review) => eventBlock < review.supersededAtBlock))]
+  const rpc = try EvmRpc
+  if ((try rpc.chainId()) !== deployment.chainId) throw new DeploymentMismatch({ message: "Wrong chain" })
+  if ((try runtimeSha256(factory, block)) !== deployment.factoryCodeSha256) throw new DeploymentMismatch({ message: "Escrow factory code does not match reviewed deployment" })
+  const slot = try implementationSlot(factory, block)
+  if (upgrade === undefined && !ZERO_WORD.test(slot)) throw new DeploymentMismatch({ message: "Proxy deployment has no reviewed implementation" })
+  if (upgrade !== undefined) {
+    const implementation = try address(`0x${slot.slice(-40)}`)
+    const digest = try runtimeSha256(implementation, block)
+    if (!reviews.some((review) => slot === word(review.factoryImplementation) && digest === review.factoryImplementationCodeSha256))
+      throw new DeploymentMismatch({ message: "Escrow implementation does not match reviewed deployment" })
+    const authority = try getter(factory, factoryGetter("upgradeAuthority"), block)
+    if (!reviews.some((review) => authority === word(review.authority)))
+      throw new DeploymentMismatch({ message: "Escrow upgrade authority does not match reviewed deployment" })
+  }
+  const registrar = try getter(factory, factoryGetter("registrar"), block)
+  const feeRecipient = try getter(factory, factoryGetter("feeRecipient"), block)
+  if (registrar !== word(deployment.registrar) || feeRecipient !== word(deployment.feeRecipient))
+    throw new DeploymentMismatch({ message: "Escrow asset, factory or registrar does not match reviewed deployment" })
+  const bindingDelay = try getter(factory, factoryGetter("bindingDelay"), block)
+  const rotationDelay = try getter(factory, factoryGetter("AUTHORITY_ROTATION_DELAY"), block)
+  if (!sameUint(bindingDelay, parseBaseUnits(deployment.bindingDelaySeconds)) || !sameUint(rotationDelay, upgrade === undefined ? LEGACY_ROTATION_DELAY : 0n))
+    throw new DeploymentMismatch({ message: "Escrow delays do not match reviewed deployment" })
+  return reviews
+}
+
+export effect function verifyEvmDeployment(deployment: EvmDeployment, block: BlockRef, eventBlock?: bigint) {
+  const reviews = try verifyEvmFactory(deployment, block, eventBlock)
+  const vault = try address(deployment.vault)
+  const owner = try address(deployment.owner)
+  const asset = try address(deployment.asset)
+  if ((try runtimeSha256(vault, block)) !== deployment.codeSha256) throw new DeploymentMismatch({ message: "Escrow runtime code does not match reviewed deployment" })
+  const slot = try implementationSlot(vault, block)
+  if (deployment.evmUpgrade === undefined && !ZERO_WORD.test(slot)) throw new DeploymentMismatch({ message: "Proxy deployment has no reviewed implementation" })
+  if (deployment.evmUpgrade !== undefined) {
+    const digest = try runtimeSha256(try address(`0x${slot.slice(-40)}`), block)
+    if (!reviews.some((review) => slot === word(review.vaultImplementation) && digest === review.vaultImplementationCodeSha256))
+      throw new DeploymentMismatch({ message: "Escrow implementation does not match reviewed deployment" })
+  }
+  for (const [name, expected] of [["token", deployment.asset], ["owner", deployment.owner], ["feeRecipient", deployment.feeRecipient], ["factory", deployment.factory]] as const) {
+    if ((try getter(vault, escrowGetter(name), block)) !== word(expected))
+      throw new DeploymentMismatch({ message: "Escrow asset, factory or registrar does not match reviewed deployment" })
+  }
+  if (!sameUint(try getter(vault, escrowGetter("bindingDelay"), block), parseBaseUnits(deployment.bindingDelaySeconds)))
+    throw new DeploymentMismatch({ message: "Escrow delays do not match reviewed deployment" })
+  const purpose = deployment.scope === "security-bounty" ? "BountyPurpose" : "OrdinaryPurpose"
+  if (!sameUint(try getter(vault, escrowGetter("purpose"), block), purpose === "BountyPurpose" ? 1n : 0n))
+    throw new DeploymentMismatch({ message: "Escrow purpose does not match the payout policy" })
+  const projectId = bytes32(try getter(vault, escrowGetter("projectId"), block))
+  if (projectId === undefined) throw new DeploymentMismatch({ message: "Malformed escrow state" })
+  const mapped = try getter(try address(deployment.factory), vaultsCall(vaultKey({ owner, projectId, asset, purpose })), block)
+  if (mapped !== word(deployment.vault)) throw new DeploymentMismatch({ message: "Escrow vault was not created by the reviewed factory" })
+}
+
+export effect function readEvmTotals(deployment: EvmDeployment) {
+  try verifyEvmDeployment(deployment, "finalized")
+  const vault = try address(deployment.vault)
+  const rpc = try EvmRpc
+  if ((try rpc.chainId()) !== deployment.chainId) throw new DeploymentMismatch({ message: "Wrong chain" })
+  const head = try rpc.head("finalized")
+  const block: BlockRef = head.number
+  const read = readTotals({
+    totals: try rpc.call({ to: vault, data: TOTALS_CALL, block }),
+    token: try getter(vault, TOKEN_CALL, block),
+    decimals: try getter(vault, DECIMALS_CALL, block),
+  })
+  if (typeof read === "string") throw new DeploymentMismatch({ message: totalsRefusalMessage(read) })
+  const nativeBalance = read.native ? try rpc.balance(vault, block) : undefined
+  const pendingMonthly = needsPendingMonthly(read.counters) ? try getter(vault, PENDING_MONTHLY_CALL, block) : undefined
+  const outcome = conservedTotals(read, { pendingMonthly, nativeBalance })
+  if (outcome.kind === "Refused") throw new DeploymentMismatch({ message: totalsRefusalMessage(outcome.refusal) })
+  const { counters } = outcome.totals
+  return {
+    readVault: vault,
+    asset: outcome.totals.asset,
+    decimals: outcome.totals.decimals,
+    block: head.number,
+    blockTime: head.timestamp,
+    deposited: counters.deposited,
+    paid: counters.paid,
+    payoutFees: counters.payoutFees,
+    grossWithdrawn: counters.grossWithdrawn,
+    withdrawalFees: counters.withdrawalFees,
+    free: counters.free,
+    reservedPrincipal: counters.reservedPrincipal,
+    reservedFees: counters.reservedFees,
+    accruedFees: counters.accruedFees,
+    reserved: outcome.totals.reserved,
+  } satisfies ChainTotals
+}

@@ -1,0 +1,81 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import { isoAt } from "@repo/platform/clock"
+
+export const searchSafeResultLimit = 950
+export const minimumSearchSliceMs = 1_000
+
+export error SearchIncomplete { message: string }
+export error SearchCountChanged { message: string; from: number; to: number; range: string }
+
+export interface SearchPage<R> {
+  readonly totalCount: number
+  readonly nodes: ReadonlyArray<R>
+  readonly hasNextPage: boolean
+  readonly endCursor: string | null
+}
+
+export interface SearchStats {
+  searchSliceCount: number
+}
+
+export interface SearchSlicing<R, E, Q> {
+  readonly read: (range: string, after: string | null) => SearchPage<R>!E!Q
+  readonly id: (node: R) => string
+  readonly stats: SearchStats
+}
+
+export effect function searchRange(from: number, to: number) {
+  return `${try isoAt(from)}..${try isoAt(to - 1_000)}`
+}
+
+export function midpoint(from: number, to: number) {
+  return from + Math.max(1, Math.floor((to - from) / 2_000)) * 1_000
+}
+
+export effect function dedupedByNodeId<R>(records: ReadonlyArray<R>, id: (node: R) => string) {
+  const byId = new Map<string, R>()
+  for (const node of records) {
+    const key = id(node)
+    if (key === "") throw new SearchIncomplete({ message: "GitHub record is missing its immutable node ID" })
+    if (!byId.has(key)) byId.set(key, node)
+  }
+  return [...byId.values()]
+}
+
+export effect function collectSearch<R, E, Q>(slicing: SearchSlicing<R, E, Q>, from: number, to: number): ReadonlyArray<R>!(E | SearchIncomplete | SearchCountChanged)!Q {
+  const range = try searchRange(from, to)
+  slicing.stats.searchSliceCount += 1
+  const first = try slicing.read(range, null)
+
+  effect function split(): ReadonlyArray<R>!(E | SearchIncomplete | SearchCountChanged)!Q {
+    if (to - from <= minimumSearchSliceMs) {
+      throw new SearchIncomplete({ message: `GitHub Search cannot reconcile ${first.totalCount} results in a minimum-size range (${range}); refusing a snapshot with incomplete or capped results` })
+    }
+    const middle = midpoint(from, to)
+    const left = try collectSearch(slicing, from, middle)
+    const right = try collectSearch(slicing, middle, to)
+    const combined = try dedupedByNodeId([...left, ...right], slicing.id)
+    if (combined.length !== first.totalCount) {
+      throw new SearchIncomplete({ message: `Split GitHub Search returned ${combined.length} unique references but parent reported ${first.totalCount} for ${range}` })
+    }
+    return combined
+  }
+
+  if (first.totalCount >= searchSafeResultLimit) return try split()
+  const references = [...first.nodes]
+  const visited = new Set<string>()
+  let page: SearchPage<R> = first
+  while (page.hasNextPage) {
+    const cursor = page.endCursor
+    if (cursor === null || cursor === "") throw new SearchIncomplete({ message: "GitHub Search reported another page without a cursor" })
+    if (visited.has(cursor)) throw new SearchIncomplete({ message: "GitHub Search cursor did not advance" })
+    visited.add(cursor)
+    page = try slicing.read(range, cursor)
+    if (page.totalCount !== first.totalCount) {
+      throw new SearchCountChanged({ message: `GitHub Search changed from ${first.totalCount} to ${page.totalCount} results while collecting ${range}; rerun for a coherent snapshot`, from: first.totalCount, to: page.totalCount, range })
+    }
+    references.push(...page.nodes)
+  }
+  const deduped = try dedupedByNodeId(references, slicing.id)
+  return deduped.length === first.totalCount ? deduped : try split()
+}

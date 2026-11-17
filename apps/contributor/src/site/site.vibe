@@ -1,0 +1,46 @@
+// spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { bootstrapFiles } from "./bootstrap.vibe"
+import { protocolFiles } from "./protocol.vibe"
+import { type SiteFile, buildCommit, refused, repositoryRoot } from "./sources.vibe"
+import { templateFiles } from "./templates.vibe"
+
+const ownedPaths = ["SKILL.md", "llms.txt", "skill-manifest.json", ".well-known/agent-skills", "skill-templates", "protocol"]
+
+effect function outDirectory(args: ReadonlyArray<string>) {
+  const [flag, out = "", ...rest] = args
+  if (flag !== "--out" || out === "" || rest.length > 0) throw refused("usage: site --out <dir>")
+  return (try Path.Path).resolve(out)
+}
+
+export effect function siteFiles(root: string) {
+  const commit = try buildCommit(root)
+  const protocol = try protocolFiles(root)
+  const bootstrap = try bootstrapFiles(root, commit)
+  const templates = try templateFiles(root, commit)
+  return { commit, files: [...protocol, ...bootstrap, ...templates] satisfies ReadonlyArray<SiteFile> }
+}
+
+effect function writing<A, E, R>(operation: A!E!R, target: string) {
+  const value = operation catch effect () => {
+    throw refused(`site output is unwritable: ${target}`)
+  }
+  return value
+}
+
+effect function written(out: string, files: ReadonlyArray<SiteFile>) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  for (const owned of ownedPaths) try writing(fs.remove(path.join(out, owned), { recursive: true, force: true }), owned)
+  for (const file of files) {
+    const target = path.join(out, file.path)
+    try writing(fs.makeDirectory(path.dirname(target), { recursive: true }), file.path)
+    try writing(fs.writeFile(target, file.bytes), file.path)
+  }
+}
+
+export effect function site(args: ReadonlyArray<string>) {
+  const out = try outDirectory(args)
+  const { commit, files } = try siteFiles(try repositoryRoot())
+  try written(out, files)
+  try Console.log(`[Slop] prepared the project skill templates from ${commit.slice(0, 12)}`)
+}

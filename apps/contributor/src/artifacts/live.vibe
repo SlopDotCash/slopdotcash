@@ -1,0 +1,79 @@
+// spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
+import { Registry } from "@repo/ports/backend"
+import { fullContentLimitBytes } from "./limits.ts"
+import { type Planned, type Reference, carriesGitHubCredential, planArtifacts, planCounts } from "./policy.ts"
+import { type ArtifactFinding, type ArtifactRequest, EvidenceArtifacts, type VerificationPurpose } from "./port.vibe"
+import { type Fetched, fetchArtifact } from "./transport.vibe"
+
+export interface ArtifactSettings {
+  readonly credential: Redacted.Redacted<string> | undefined
+}
+
+interface Purpose {
+  readonly uploadsOnly: boolean
+  readonly fullContentLimit: number | undefined
+  readonly timeoutMs: number
+  readonly concurrency: number
+}
+
+const purposes: Readonly<Record<VerificationPurpose, Purpose>> = {
+  ReviewCheck: { uploadsOnly: false, fullContentLimit: undefined, timeoutMs: 10_000, concurrency: 4 },
+  LedgerDigest: { uploadsOnly: true, fullContentLimit: fullContentLimitBytes, timeoutMs: 5_000, concurrency: 1 },
+}
+
+function selection(request: ArtifactRequest, repositories: ReadonlyArray<string>) {
+  return { body: request.body, rows: request.rows, uploadsOnly: purposes[request.purpose].uploadsOnly, repositories }
+}
+
+function finding(reference: Reference, fetched: Fetched): ArtifactFinding {
+  return { id: reference.id, label: reference.label, url: reference.url, artifactKind: reference.kind, ...fetched }
+}
+
+function limited(planned: Planned) {
+  return { ok: false, findings: planned.limits.map((limit) => ({ ...limit, transient: false }) satisfies ArtifactFinding) }
+}
+
+export function evidenceArtifacts(settings: ArtifactSettings) {
+  return Layer.effect(EvidenceArtifacts, effect {
+    const registry = try Registry
+    const client = try HttpClient.HttpClient
+    const crypto = try Experimental.Crypto.Crypto
+
+    effect function repositories() {
+      const projects = try registry.active()
+      return projects
+        .filter((project) => project.rowStatus === "Active" && project.manifestStatus === "Active")
+        .flatMap((project) => project.repositories.map((repository) => repository.fullName))
+    }
+
+    effect function fetched(reference: Reference, purpose: Purpose) {
+      const target = {
+        url: reference.url,
+        expectation: { rowId: reference.id, expectedKind: reference.expectedKind, extension: reference.extension, fullContentLimit: purpose.fullContentLimit },
+        credential: carriesGitHubCredential(reference.url) ? settings.credential : undefined,
+        timeoutMs: purpose.timeoutMs,
+      }
+      provide HttpClient.HttpClient = client, Experimental.Crypto.Crypto = crypto {
+        return try orDie(fetchArtifact(target))
+      }
+    }
+
+    return {
+      plan: (request) => effect {
+        return planCounts(selection(request, try repositories()))
+      },
+      verify: (request) => effect {
+        const purpose = purposes[request.purpose]
+        const planned = planArtifacts(selection(request, try repositories()))
+        if (planned.limits.length > 0) return limited(planned)
+        const results = try Effect.forEach(planned.artifacts, (artifact) => fetched(artifact, purpose), { concurrency: purpose.concurrency })
+        const byIdentity = new Map(planned.artifacts.map((artifact, index) => [artifact.identity, results[index]]))
+        const findings = planned.references.flatMap((reference) => {
+          const result = byIdentity.get(reference.identity)
+          return result === undefined ? [] : [finding(reference, result)]
+        })
+        return { ok: findings.every((entry) => entry.status === "ok"), findings }
+      },
+    } satisfies EvidenceArtifacts.Shape
+  })
+}

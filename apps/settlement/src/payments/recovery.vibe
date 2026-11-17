@@ -1,0 +1,189 @@
+// spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
+import { type Hex, EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { SolanaRpc, isSignature, solanaRpc } from "@repo/platform/chain/solana"
+import { isoNow } from "@repo/platform/clock"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { type Decision, load, update } from "@repo/platform/stored"
+import { type Dispatch, type Event as DispatchEvent, type ExecutorObservation, type Inspection, apply as applyDispatch, attempt } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { type AttemptIdentity, type AttemptStatus, PaymentExecutor, type ServedVault } from "./dispatch.vibe"
+import { projectionFor } from "./ledger.vibe"
+import { type ObligationRows, attemptStates, obligationAggregate, outboxStates, project } from "./obligation.vibe"
+import { type PaymentDeployment, failureTag } from "./terms.vibe"
+
+export error RecoveryFailed { failures: ReadonlyArray<string> }
+
+schema UncertainRow {
+  readonly id: string
+  readonly obligation_id: string
+}
+
+schema SubmittedRow {
+  readonly id: string
+  readonly obligation_id: string
+  readonly transaction_id: string
+}
+
+effect function stepped(current: Dispatch, event: DispatchEvent) {
+  return applyDispatch(current, event) catch () => undefined
+}
+
+interface Observed {
+  readonly served: ServedVault
+  readonly obligationId: string
+  readonly key: string
+}
+
+function identityOf(observed: Observed): AttemptIdentity {
+  return { idempotencyKey: observed.key, obligationId: observed.obligationId, network: observed.served.deployment.network, vault: observed.served.deployment.vault }
+}
+
+effect function deliveryOf(observed: Observed, rows: ObligationRows, inspections: ReadonlyArray<Inspection> = []) {
+  const row = rows.obligation
+  if (row === undefined || row.state !== "reserved") return undefined
+  const projection = { ...try projectionFor(observed.served.deployment, observed.served.asset, row.github_user_id), inspections }
+  return (try project(projection, rows)).settlement.delivery
+}
+
+function outboxWrite(before: Dispatch, after: Dispatch, obligationId: string, now: string): ReadonlyArray<Statement> {
+  if (after.queue === before.queue || after.queue === "Indexed" || after.queue === "NeedsWallet") return []
+  return [sql`UPDATE payment_outbox SET state = ${outboxStates[after.queue]}, lease_token = NULL, lease_until = NULL, updated_at = ${now} WHERE obligation_id = ${obligationId} AND state = ${outboxStates[before.queue === "NeedsWallet" || before.queue === "Indexed" ? "Ready" : before.queue]}`]
+}
+
+effect function recoverOne(observed: Observed, status: ObservationStatusOf, transaction: string, retiredBy: string | undefined) {
+  return try update(obligationAggregate(observed.obligationId), (rows) => effect {
+    const delivery = try deliveryOf(observed, rows)
+    if (delivery === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const prior = attempt(delivery, observed.key)
+    const observation: ExecutorObservation = { target: delivery.target, key: observed.key, tx: transaction, status }
+    const next = try stepped(delivery, { type: "recoverExecutor", observed: observation })
+    if (next === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const changed = attempt(next, observed.key)
+    if (changed.status === prior.status && changed.tx === prior.tx && next.queue === delivery.queue) return { value: false, writes: [] } satisfies Decision<boolean>
+    const now = try isoNow()
+    const writes: Statement[] = []
+    if (status === "UnsignedTombstone") writes.push(sql`INSERT INTO payment_attempt_failures (attempt_id, transaction_id, observed_at, evidence_json) VALUES (${observed.key}, NULL, ${now}, ${JSON.stringify({ kind: "unsigned-attempt-retired", successorClaimId: retiredBy ?? "" })}) ON CONFLICT(attempt_id) DO NOTHING`)
+    const tx = changed.tx === "" ? null : changed.tx
+    writes.push(sql`UPDATE payment_attempts SET state = ${attemptStates[changed.status === "NoAttempt" ? "Unknown" : changed.status]}, transaction_id = ${tx} WHERE id = ${observed.key} AND state = ${attemptStates[prior.status === "NoAttempt" ? "Unknown" : prior.status]} AND transaction_id IS ${prior.tx === "" ? null : prior.tx}`)
+    writes.push(...outboxWrite(delivery, next, observed.obligationId, now))
+    return { value: true, writes } satisfies Decision<boolean>
+  })
+}
+
+type ObservationStatusOf = ExecutorObservation["status"]
+
+effect function successorOf(observed: Observed) {
+  const { state } = try load(obligationAggregate(observed.obligationId))
+  const delivery = try deliveryOf(observed, state)
+  if (delivery === undefined) return undefined
+  const prior = attempt(delivery, observed.key)
+  return delivery.wallet.claim !== "" && prior.binding.claim !== delivery.wallet.claim ? delivery.wallet.claim : undefined
+}
+
+effect function statusOf(observed: Observed) {
+  const executor = try PaymentExecutor
+  const family = observed.served.deployment.family
+  const status = try executor.status(family, identityOf(observed))
+  if (status.transactionId !== null) return { status, retiredBy: undefined }
+  const successor = try successorOf(observed)
+  if (successor === undefined) return undefined
+  const outcome = try executor.cancelUnsubmitted(family, identityOf(observed))
+  if (outcome.retired && outcome.transactionId === null) return { status: { transactionId: null } satisfies AttemptStatus, retiredBy: successor }
+  if (outcome.retired) throw new RecoveryFailed({ failures: ["Invalid retirement result"] })
+  if (outcome.transactionId === null || outcome.transactionId === "") throw new RecoveryFailed({ failures: ["Invalid attempt transaction identity"] })
+  return { status: { transactionId: outcome.transactionId, submitted: outcome.submitted } satisfies AttemptStatus, retiredBy: undefined }
+}
+
+effect function recoverAttempt(observed: Observed) {
+  const read = try statusOf(observed)
+  if (read === undefined) return false
+  const { status, retiredBy } = read
+  if (status.transactionId === null) return try recoverOne(observed, "UnsignedTombstone", "", retiredBy)
+  if (status.transactionId === "") throw new RecoveryFailed({ failures: ["Invalid attempt transaction identity"] })
+  if (status.submitted === undefined) throw new RecoveryFailed({ failures: ["Missing submission observation"] })
+  return try recoverOne(observed, status.submitted ? "ChainObserved" : "SignedUnobserved", status.transactionId, undefined)
+}
+
+export effect function recoverUncertainAttempts(vaults: ReadonlyArray<ServedVault>) {
+  const failures: string[] = []
+  for (const served of vaults) {
+    const { deployment } = served
+    const uncertain = try rows(UncertainRow, sql`SELECT a.id, a.obligation_id FROM payment_attempts a JOIN payment_obligations o ON o.id = a.obligation_id WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND o.state = 'reserved' AND ((a.state IN ('unknown', 'prepared') AND a.transaction_id IS NULL) OR (o.chain = 'solana' AND a.state = 'submitted')) ORDER BY a.rowid`)
+    for (const row of uncertain) {
+      const outcome = recoverAttempt({ served, obligationId: row.obligation_id, key: row.id }) catch (error) => `${row.id}: ${failureTag(error)}`
+      if (typeof outcome === "string") failures.push(outcome)
+    }
+  }
+  if (failures.length > 0) throw new RecoveryFailed({ failures })
+}
+
+interface RevertProof {
+  readonly height: number
+  readonly evidence: string
+}
+
+effect function evmRevert(deployment: PaymentDeployment & { readonly family: "evm" }, transaction: string) {
+  if (!/^0x[0-9a-f]{64}$/u.test(transaction)) return undefined
+  provide evmRpc({ urls: deployment.rpc, chainId: deployment.chainId }) {
+    const receipt = try (try EvmRpc).finalizedReceipt(transaction as Hex)
+    if (receipt === undefined || receipt.status !== "reverted" || receipt.transactionHash.toLowerCase() !== transaction) return undefined
+    return { height: Number(receipt.blockNumber), evidence: JSON.stringify({ chain: deployment.chain, transactionId: transaction, blockHash: receipt.blockHash, status: "reverted", finality: "finalized" }) } satisfies RevertProof
+  }
+}
+
+effect function solanaRevert(deployment: PaymentDeployment & { readonly family: "solana" }, transaction: string) {
+  if (!isSignature(transaction)) return undefined
+  provide solanaRpc({ urls: deployment.rpc, genesis: deployment.genesis }) {
+    const fetched = try (try SolanaRpc).transaction(transaction, "finalized")
+    if (fetched === undefined || !fetched.meta.err) return undefined
+    return { height: fetched.slot, evidence: JSON.stringify({ chain: "solana", transactionId: transaction, slot: fetched.slot, error: true, finality: "finalized" }) } satisfies RevertProof
+  }
+}
+
+effect function finalizedRevert(deployment: PaymentDeployment, transaction: string) {
+  return deployment.family === "evm" ? try evmRevert(deployment, transaction) : try solanaRevert(deployment, transaction)
+}
+
+const inspectionId = 1
+
+effect function retireReverted(served: ServedVault, row: SubmittedRow) {
+  const observed = { served, obligationId: row.obligation_id, key: row.id } satisfies Observed
+  const { state } = try load(obligationAggregate(row.obligation_id))
+  const before = try deliveryOf(observed, state)
+  if (before === undefined) return false
+  const inspected = try stepped(before, { type: "inspectFailure", inspectionId, key: row.id })
+  if (inspected === undefined) return false
+  const captured = inspected.inspections.find((entry) => entry.id === inspectionId)
+  if (captured === undefined || captured.tx !== row.transaction_id) return false
+  const proof = try finalizedRevert(served.deployment, captured.tx)
+  if (proof === undefined || proof.height <= 0) return false
+  return try update(obligationAggregate(row.obligation_id), (rows) => effect {
+    const delivery = try deliveryOf(observed, rows, [captured])
+    if (delivery === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const prior = attempt(delivery, captured.key)
+    const next = try stepped(delivery, { type: "settleFailure", inspectionId, failure: { key: captured.key, tx: captured.tx, network: delivery.target.network, scope: delivery.target.scope, height: proof.height, finalized: true, reverted: true } })
+    if (next === undefined || attempt(next, captured.key).status !== "Failed" || prior.status === "Failed") return { value: false, writes: [] } satisfies Decision<boolean>
+    const now = try isoNow()
+    return {
+      value: true,
+      writes: [
+        sql`INSERT INTO payment_attempt_failures (attempt_id, transaction_id, observed_at, evidence_json) VALUES (${captured.key}, ${captured.tx}, ${now}, ${proof.evidence}) ON CONFLICT(attempt_id) DO NOTHING`,
+        sql`UPDATE payment_attempts SET state = 'failed' WHERE id = ${captured.key} AND state IN ('submitted', 'unknown') AND transaction_id = ${captured.tx}`,
+        ...outboxWrite(delivery, next, row.obligation_id, now),
+      ],
+    } satisfies Decision<boolean>
+  })
+}
+
+export effect function reconcileFailedAttempts(vaults: ReadonlyArray<ServedVault>) {
+  const failures: string[] = []
+  for (const served of vaults) {
+    const { deployment } = served
+    const submitted = try rows(SubmittedRow, sql`SELECT a.id, a.obligation_id, a.transaction_id FROM payment_attempts a JOIN payment_obligations o ON o.id = a.obligation_id WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND a.state IN ('submitted', 'unknown') AND a.transaction_id IS NOT NULL AND o.state = 'reserved' ORDER BY a.rowid`)
+    for (const row of submitted) {
+      const outcome = retireReverted(served, row) catch (error) => `${row.id}: ${failureTag(error)}`
+      if (typeof outcome === "string") failures.push(outcome)
+    }
+  }
+  if (failures.length > 0) throw new RecoveryFailed({ failures })
+}
+

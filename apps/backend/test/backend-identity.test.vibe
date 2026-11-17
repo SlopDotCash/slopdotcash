@@ -1,0 +1,311 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Request as WebRequest } from "miniflare"
+import { Started as StartedFlow } from "../src/client/identity.vibe"
+
+const identity = "https://identity.slop.test"
+const internal = "https://identity.internal"
+const site = "https://slop.test"
+const stateKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+const isoInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/u
+const pastCreated = "2026-01-01T00:00:00.000Z"
+const pastExpired = "2026-01-01T00:05:00.000Z"
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly text: string
+  readonly body: unknown
+}
+
+interface Fetching {
+  readonly method?: string
+  readonly json?: unknown
+  readonly headers?: Readonly<Record<string, string>>
+}
+
+service Identity {
+  readonly db: D1Database
+  readonly github: GitHubFake
+  readonly net: Internet
+  readonly outboundErrors: ReadonlyArray<string>
+  fetch(url: string, init?: Fetching): Answer!!
+  scheduled(cron: string): ScheduledOutcome!!
+}
+
+error MigrationFailed { file: string }
+
+const Started = Layer.effect(Identity, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })))
+  const net = internet({ github: github.handler })
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "identity" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { IDENTITY_DB: "slop-private" },
+    ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+    vars: {
+      SLOP_ENVIRONMENT: "local",
+      GITHUB_APP_CLIENT_ID: github.app.clientId,
+      GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+      IDENTITY_STATE_KEY: stateKey,
+      IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    },
+    outbound: net.handler,
+  })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "IDENTITY_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  const db = try promise(() => database(mf, "IDENTITY_DB"))
+  return {
+    db,
+    github,
+    net,
+    outboundErrors: mf.outboundErrors,
+    fetch: (url, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(url, {
+        method: init.method ?? (init.json === undefined ? "GET" : "POST"),
+        headers: { ...init.json === undefined ? {} : { "content-type": "application/json" }, ...init.headers },
+        redirect: "manual",
+        ...init.json === undefined ? {} : { body: JSON.stringify(init.json) },
+      })
+      const text = await response.text()
+      const json = (response.headers.get("content-type") ?? "").includes("json") && text !== ""
+      return { status: response.status, headers: Object.fromEntries(response.headers), text, body: json ? JSON.parse(text) as unknown : text }
+    }),
+    scheduled: (cron) => promise(() => scheduled(mf, cron)),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function call(url: string, init: Fetching = {}) {
+  return try (try Identity).fetch(url, init)
+}
+
+effect function sql(text: string, ...params: ReadonlyArray<string | number>) {
+  const { db } = try Identity
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function begin(path: string, json: unknown, headers: Readonly<Record<string, string>> = {}) {
+  const answer = try call(`${identity}${path}`, { json, headers })
+  const flow = try orDie(Schema.decodeUnknownEffect(StartedFlow)(answer.body))
+  return { answer, flow }
+}
+
+effect function poll(path: string, flow: { readonly flowId: string; readonly pollCapability: string }, audience: string, headers: Readonly<Record<string, string>> = {}) {
+  const answer = try call(`${identity}${path}`, { json: { flowId: flow.flowId, pollCapability: flow.pollCapability, audience }, headers })
+  return [answer.status, answer.body]
+}
+
+effect function authorized(flow: { readonly authorizationUrl: string }, login: string) {
+  const answer = try call(flow.authorizationUrl)
+  const state = /__Host-slop_oauth_state=([^;]+)/u.exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""
+  const consent = new URL(answer.headers.location ?? `${identity}/missing-location`)
+  consent.searchParams.set("login", login)
+  const { net } = try Identity
+  const consented = try promise(async () => net.handler(new WebRequest(consent.toString(), { redirect: "manual" })))
+  return { answer, state, consent, callback: consented.headers.get("location") ?? "" }
+}
+
+effect function callback(url: string, state: string) {
+  return try call(url, { headers: { cookie: `__Host-slop_oauth_state=${state}` } })
+}
+
+effect function consume(assertion: unknown, audience: string, origin = internal) {
+  const answer = try call(`${origin}/v1/assertions/consume`, { json: { audience }, headers: { authorization: `Bearer ${String(assertion)}` } })
+  return [answer.status, answer.body]
+}
+
+function assertionOf(answer: unknown) {
+  return typeof answer === "object" && answer !== null && "assertion" in answer ? answer.assertion : undefined
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Start and complete a GitHub sign-in flow for the web and the installed client (spec/backend/identity.md, "Story: Start and complete a GitHub sign-in flow"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
+    const browser = { origin: site, "cf-connecting-ip": "198.51.100.1" }
+    const web = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const waiting = try poll("/v1/oauth/poll", web.flow, "slop-points-web", browser)
+    const signIn = try authorized(web.flow, "octo")
+    const completed = try callback(signIn.callback, signIn.state)
+    const replayed = try callback(signIn.callback, signIn.state)
+    const issued = try call(`${identity}/v1/oauth/poll`, { json: { flowId: web.flow.flowId, pollCapability: web.flow.pollCapability, audience: "slop-points-web" }, headers: browser })
+    const reissued = try poll("/v1/oauth/poll", web.flow, "slop-points-web", browser)
+    const assertion = assertionOf(issued.body)
+    const consumption = [
+      try consume(assertion, "slop-points-web", identity),
+      try consume(assertion, "private-trace-api"),
+      try consume(assertion, "slop-points-web"),
+      try consume(assertion, "slop-points-web"),
+    ]
+
+    const cli = try begin("/v1/oauth/start", { audience: "private-trace-api" }, { "cf-connecting-ip": "198.51.100.2" })
+    const cliSignIn = try authorized(cli.flow, "octo")
+    const cliCompleted = try callback(cliSignIn.callback, cliSignIn.state)
+    const cliIssued = try call(`${identity}/v1/oauth/poll`, { json: { flowId: cli.flow.flowId, pollCapability: cli.flow.pollCapability, audience: "private-trace-api" } })
+    const cliConsumed = try consume(assertionOf(cliIssued.body), "private-trace-api")
+
+    const authorizeUrl = new URL(web.flow.authorizationUrl)
+    const consent = signIn.consent
+    const stored = try sql("SELECT status, encrypted_pkce_verifier, github_actor_id, github_login, github_node_id FROM identity_oauth_flows WHERE id = ?", web.flow.flowId)
+
+    try same({
+      started: [web.answer.status, web.answer.headers["access-control-allow-origin"], web.flow.flowId.startsWith("flow_"), authorizeUrl.origin, authorizeUrl.pathname, authorizeUrl.searchParams.get("flow_id") === web.flow.flowId, isoInstant.test(web.flow.expiresAt), web.flow.pollAfterSeconds],
+      waiting,
+      authorize: [signIn.answer.status, consent.origin, consent.pathname, consent.searchParams.get("redirect_uri"), consent.searchParams.get("code_challenge_method"), consent.searchParams.get("state") === signIn.state, (signIn.answer.headers["set-cookie"] ?? "").endsWith("; Path=/; Max-Age=300; Secure; HttpOnly; SameSite=Lax")],
+      completed: [completed.status, completed.text.includes("window.close();"), completed.headers["set-cookie"], (completed.headers["content-security-policy"] ?? "").startsWith("default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-")],
+      replayed: [replayed.status, replayed.text.includes("Sign-in expired")],
+      issued: [issued.status, typeof issued.body === "object" && issued.body !== null && "assertionType" in issued.body ? issued.body.assertionType : undefined, /^slop_assert_v1_[A-Za-z0-9_-]{43}$/u.test(String(assertion))],
+      reissued,
+      consumption,
+      cli: [cli.answer.status, cli.answer.headers["access-control-allow-origin"], cliCompleted.status, cliIssued.status],
+      cliConsumed,
+      stored,
+    }, {
+      started: [201, site, true, identity, "/v1/oauth/authorize", true, true, 2],
+      waiting: [202, { status: "pending", retryAfterSeconds: 2 }],
+      authorize: [302, "https://github.com", "/login/oauth/authorize", `${identity}/v1/oauth/callback`, "S256", true, true],
+      completed: [200, true, "__Host-slop_oauth_state=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax", true],
+      replayed: [410, true],
+      issued: [200, "SlopIdentity", true],
+      reissued: [410, { error: "flow_consumed", message: "Identity flow was already consumed" }],
+      consumption: [
+        [404, { error: "not_found" }],
+        [401, { error: "unauthorized", message: "Identity assertion is invalid, used, or expired" }],
+        [200, { githubActorId: "7", githubLogin: "octo", audience: "slop-points-web", githubNodeId: "U_octo" }],
+        [401, { error: "unauthorized", message: "Identity assertion is invalid, used, or expired" }],
+      ],
+      cli: [201, undefined, 200, 200],
+      cliConsumed: [200, { githubActorId: "7", githubLogin: "octo", audience: "private-trace-api", githubNodeId: "U_octo" }],
+      stored: [{ status: "assertion_issued", encrypted_pkce_verifier: null, github_actor_id: "7", github_login: "octo", github_node_id: "U_octo" }],
+    })
+  })
+
+  it.effect('A failed or expired sign-in ends its flow, and every start and poll counts in its client\'s window (spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally")', () => effect {
+    const browser = { origin: site, "cf-connecting-ip": "198.51.100.3" }
+    const denied = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const deniedSignIn = try authorized(denied.flow, "octo")
+    const deniedCallback = try callback(`${identity}/v1/oauth/callback?state=${deniedSignIn.state}&error=access_denied`, deniedSignIn.state)
+    const deniedPoll = try poll("/v1/oauth/poll", denied.flow, "slop-points-web", browser)
+
+    const broken = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    const brokenSignIn = try authorized(broken.flow, "octo")
+    const { github } = try Identity
+    try orDie(Effect.try(() => github.failNext(/access_token/u, { status: 500 })))
+    const brokenCallback = try callback(brokenSignIn.callback, brokenSignIn.state)
+    const brokenPoll = try poll("/v1/oauth/poll", broken.flow, "slop-points-web", browser)
+
+    const late = try begin("/v1/oauth/start", { audience: "slop-points-web" }, browser)
+    try sql("UPDATE identity_oauth_flows SET created_at = ?, expires_at = ? WHERE id = ?", pastCreated, pastExpired, late.flow.flowId)
+    const lateAuthorize = try call(late.flow.authorizationUrl)
+    const latePoll = try poll("/v1/oauth/poll", late.flow, "slop-points-web", browser)
+
+    const crowd = { "cf-connecting-ip": "203.0.113.9" }
+    const starts: number[] = []
+    for (let index = 0; index < 13; index++) starts.push((try call(`${identity}/v1/oauth/start`, { json: { audience: "private-trace-api" }, headers: crowd })).status)
+    const limited = try call(`${identity}/v1/oauth/start`, { json: { audience: "private-trace-api" }, headers: crowd })
+    const poller = { "cf-connecting-ip": "203.0.113.10" }
+    const unavailablePolls: unknown[] = []
+    for (let index = 0; index < 120; index++) unavailablePolls.push((try poll("/v1/oauth/poll", late.flow, "slop-points-web", poller))[0])
+    const pollLimited = try poll("/v1/oauth/poll", late.flow, "slop-points-web", poller)
+
+    const down = try sha256Hex(`slop-identity-rate:v1:${stateKey}:oauth-start:192.0.2.66`)
+    try sql(`CREATE TRIGGER identity_journey_limiter_down BEFORE INSERT ON identity_rate_limits WHEN NEW.key_hash = '${down}' BEGIN SELECT RAISE(ABORT, 'limiter down'); END`)
+    const unavailable = try call(`${identity}/v1/oauth/start`, { json: { audience: "private-trace-api" }, headers: { "cf-connecting-ip": "192.0.2.66" } })
+    try sql("DROP TRIGGER identity_journey_limiter_down")
+
+    const refusals = [
+      try call(`${identity}/v1/oauth/start`, { json: { audience: "nobody" }, headers: { "cf-connecting-ip": "198.51.100.4" } }),
+      try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://slop.cash" } }),
+      try call(`${identity}/v1/oauth/start`, { json: { audience: "slop-points-web" }, headers: { origin: "https://evil.test" } }),
+      try call("http://identity.slop.test/v1/oauth/authorize?flow_id=x&state=y"),
+      try call(`${identity}/v1/no-such-route`),
+    ].map((answer) => [answer.status, answer.body])
+    const preflight = try call(`${identity}/v1/oauth/start`, { method: "OPTIONS", headers: { origin: site, "access-control-request-method": "POST", "access-control-request-headers": "content-type" } })
+
+    try same({
+      denied: [deniedCallback.status, deniedCallback.text.includes("The sign-in response was invalid or expired."), deniedPoll],
+      broken: [brokenCallback.status, brokenCallback.text.includes("GitHub identity could not be verified."), brokenPoll],
+      late: [lateAuthorize.status, lateAuthorize.body, latePoll],
+      starts,
+      limited: [limited.status, limited.body, Number(limited.headers["retry-after"]) >= 1],
+      unavailablePolls,
+      pollLimited,
+      unavailable: [unavailable.status, unavailable.body, unavailable.headers["retry-after"]],
+      refusals,
+      preflight: [preflight.status, preflight.headers["access-control-allow-origin"], preflight.headers["access-control-allow-methods"]],
+    }, {
+      denied: [400, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
+      broken: [502, true, [410, { error: "callback_failed", message: "Identity sign-in failed; start again" }]],
+      late: [410, { error: "flow_expired", message: "Authorization flow is unavailable" }, [410, { error: "flow_unavailable", message: "Identity flow is unavailable" }]],
+      starts: [201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 201, 429],
+      limited: [429, { error: "rate_limited", message: "Too many requests. Try again later." }, true],
+      unavailablePolls: Array.from({ length: 120 }, () => 410),
+      pollLimited: [429, { error: "rate_limited", message: "Too many requests. Try again later." }],
+      unavailable: [503, { error: "service_unavailable", message: "Identity service is temporarily unavailable." }, "60"],
+      refusals: [
+        [400, { error: "invalid_request", message: "Invalid identity audience" }],
+        [403, { error: "origin_forbidden" }],
+        [403, { error: "origin_not_allowed", message: "This origin may not call this route" }],
+        [400, { error: "https_required" }],
+        [404, { error: "not_found" }],
+      ],
+      preflight: [204, site, "POST"],
+    })
+  })
+
+  it.effect('A loopback handoff returns its identity once to the local backend, and the hourly job removes only expired rows (spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/identity.md, "Every sign-in outcome is reachable")', () => effect {
+    const local = try begin("/v1/local/start", { audience: "slop-points-web", returnOrigin: "http://127.0.0.1:4466" })
+    const badOrigin = try call(`${identity}/v1/local/start`, { json: { audience: "slop-points-web", returnOrigin: "https://slop.cash" } })
+    const wrongRoute = try poll("/v1/oauth/poll", local.flow, "slop-points-web")
+    const signIn = try authorized(local.flow, "octo")
+    const completed = try callback(signIn.callback, signIn.state)
+    const delivered = try poll("/v1/local/poll", local.flow, "slop-points-web")
+    const again = try poll("/v1/local/poll", local.flow, "slop-points-web")
+    const assertions = try sql("SELECT count(*) AS count FROM identity_assertions WHERE github_actor_id = '7' AND audience = 'slop-points-web' AND consumed_at IS NULL")
+
+    const live = try begin("/v1/oauth/start", { audience: "private-trace-api" }, { "cf-connecting-ip": "198.51.100.5" })
+    try sql("INSERT INTO identity_oauth_flows (id, state_hash, poll_capability_hash, audience, status, created_at, expires_at) VALUES (?, ?, ?, 'slop-points-web', 'callback_failed', ?, ?)", "flow_expired_journey_00000000", "a".repeat(64), "b".repeat(64), pastCreated, pastExpired)
+    try sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, audience, created_at, expires_at, consumed_at, github_node_id) VALUES (?, '8', 'other', 'private-trace-api', ?, ?, NULL, NULL)", "c".repeat(64), "2026-01-01T00:00:00.000Z", "2026-01-01T00:01:30.000Z")
+    try sql("INSERT INTO identity_rate_limits (key_hash, request_count, window_started_at, expires_at) VALUES (?, 3, 1000, 1060)", "d".repeat(64))
+    const cron = try (try Identity).scheduled("17 * * * *")
+    const remaining = [
+      try sql("SELECT count(*) AS count FROM identity_oauth_flows WHERE id IN (?, ?)", "flow_expired_journey_00000000", live.flow.flowId),
+      try sql("SELECT count(*) AS count FROM identity_assertions WHERE token_hash = ?", "c".repeat(64)),
+      try sql("SELECT count(*) AS count FROM identity_rate_limits WHERE key_hash = ?", "d".repeat(64)),
+    ]
+    const { net, outboundErrors } = try Identity
+
+    try same({
+      local: [local.answer.status, /^flow_local_i_4466_[A-Za-z0-9_-]{32}$/u.test(local.flow.flowId)],
+      badOrigin: [badOrigin.status, badOrigin.body],
+      wrongRoute,
+      completed: [completed.status, completed.text.includes(JSON.stringify("http://127.0.0.1:4466/login"))],
+      delivered,
+      again,
+      assertions,
+      cron: cron.outcome,
+      remaining,
+      unexpected: [net.unexpected, outboundErrors],
+    }, {
+      local: [201, true],
+      badOrigin: [400, { error: "invalid_request", message: "Invalid local return origin" }],
+      wrongRoute: [403, { error: "wrong_flow", message: "This authorization belongs to another sign-in mode" }],
+      completed: [200, true],
+      delivered: [200, { status: "complete", returnOrigin: "http://127.0.0.1:4466", githubActorId: "7", githubLogin: "octo", githubNodeId: "U_octo" }],
+      again: [410, { error: "flow_consumed", message: "Identity flow was already consumed" }],
+      assertions: [{ count: 0 }],
+      cron: "ok",
+      remaining: [[{ count: 1 }], [{ count: 0 }], [{ count: 0 }]],
+      unexpected: [[], []],
+    })
+  })
+})

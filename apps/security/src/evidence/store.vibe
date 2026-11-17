@@ -1,0 +1,301 @@
+// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+import { D1, type Statement, decoded, first, rows as selected, sql } from "@repo/platform/d1"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
+import { type Evidence, type ScanResult, canCloseReference, canRegisterReference, canStartUpload, decodeState, initial } from "../../gen/security__evidence.effect.vibe"
+import { type EvidenceChunk, storedLayout } from "./layout.ts"
+import { type StorageRow, readPart, registrationStatement, verifySequence } from "./objects.vibe"
+import { refused, rows } from "./refused.vibe"
+
+export const permanentAdmissionSql = sql`a.state='clean'
+  AND json_extract(a.result,'$.schemaVersion')='slop-vetting-result-v2'
+  AND json_extract(a.result,'$.disposition')='clean'`
+
+const dayMillis = 86400000
+const retentionMillis = 90 * dayMillis
+export const maxDocumentBytes = 32 * 1024 * 1024
+
+export schema RunRow {
+  assessment_id: string
+  run_id: string
+  trace_sha256: string
+  assembly_sha256: string | null
+  manifest_sha256: string
+  manifest: string
+  policy: string
+  created_at: string
+  permanent_admission: number
+  case_closed_at: string | null
+}
+
+export schema ObjectRow {
+  assessment_id: string
+  run_id: string
+  sha256: string
+  size_bytes: number
+  kind: string
+  label: string
+  content_type: string
+  object_key: string
+  chunks: string | null
+  storage: string
+  storage_generation: string | null
+}
+
+export interface Run {
+  readonly row: RunRow
+  readonly expiresAt: string | undefined
+}
+
+const objectColumns = sql`assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation`
+
+export effect function run(assessment: string, runId: string) {
+  const row = try first(RunRow, sql`SELECT r.assessment_id,r.run_id,r.trace_sha256,r.assembly_sha256,r.manifest_sha256,r.manifest,r.policy,r.created_at,
+      c.closed_at AS case_closed_at, CASE WHEN ${permanentAdmissionSql} THEN 1 ELSE 0 END AS permanent_admission
+    FROM vetting_evidence_runs r
+    JOIN vetting_assessments a ON a.id=r.assessment_id
+    LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=r.assessment_id
+    WHERE r.assessment_id=${assessment} AND r.run_id=${runId}`)
+  if (row === undefined) throw refused(rows.runMissing)
+  const expiresAt = row.permanent_admission === 1 || row.case_closed_at === null ? undefined : try isoAt(millisOf(row.case_closed_at) + retentionMillis)
+  return { row, expiresAt } satisfies Run
+}
+
+export effect function readable(current: Run) {
+  if (current.expiresAt !== undefined && millisOf(current.expiresAt) <= (try Clock.currentTimeMillis)) throw refused(rows.expired)
+}
+
+export effect function object(assessment: string, runId: string, sha256: string) {
+  const row = try first(ObjectRow, sql`SELECT ${objectColumns} FROM vetting_evidence_objects WHERE assessment_id=${assessment} AND run_id=${runId} AND sha256=${sha256}`)
+  if (row === undefined) throw refused(rows.objectMissing)
+  return row
+}
+
+export effect function objectsOf(assessment: string, runId: string, order: "digest" | "kind" = "digest") {
+  return try selected(ObjectRow, order === "kind"
+    ? sql`SELECT ${objectColumns} FROM vetting_evidence_objects WHERE assessment_id=${assessment} AND run_id=${runId} ORDER BY kind,sha256`
+    : sql`SELECT ${objectColumns} FROM vetting_evidence_objects WHERE assessment_id=${assessment} AND run_id=${runId} ORDER BY sha256`)
+}
+
+export effect function layout(row: ObjectRow) {
+  const parts = storedLayout(row.chunks, row.size_bytes)
+  if (parts === undefined) throw refused(rows.layoutChanged)
+  return parts
+}
+
+schema Completion { completed_at: string }
+
+export effect function completed(row: ObjectRow) {
+  return (try first(Completion, sql`SELECT completed_at FROM vetting_evidence_completions WHERE assessment_id=${row.assessment_id} AND run_id=${row.run_id} AND sha256=${row.sha256}`)) !== undefined
+}
+
+export effect function bytes(row: ObjectRow, current: Run) {
+  try readable(current)
+  if (row.size_bytes > 8 * 1024 * 1024) throw refused(rows.oversize)
+  return try readPart(row satisfies StorageRow)
+}
+
+export effect function verify(row: ObjectRow, current: Run, requireComplete = true) {
+  try readable(current)
+  const parts = try layout(row)
+  if (parts === null) {
+    try bytes(row, current)
+    return
+  }
+  if (requireComplete && !(try completed(row))) throw refused(rows.pending)
+  try verifySequence(row, parts, () => Effect.void)
+}
+
+export effect function document(row: ObjectRow, current: Run) {
+  const parts = try layout(row)
+  if (parts === null) return try bytes(row, current)
+  if (row.size_bytes > maxDocumentBytes) throw refused(rows.oversize)
+  if (!(try completed(row))) throw refused(rows.pending)
+  try readable(current)
+  const whole = new Uint8Array(row.size_bytes)
+  let offset = 0
+  try verifySequence(row, parts, (part) => sync(() => {
+    whole.set(part, offset)
+    offset += part.length
+  }))
+  return whole
+}
+
+schema Reference { ref: number; sha256: string; assessment_id: string; closed_at: string | null; permanent: number; generation: string | null }
+schema GenerationRow { id: string; sha256: string; state: string }
+
+function digestsJson(shas: ReadonlyArray<string>) {
+  return JSON.stringify([...new Set(shas)])
+}
+
+export function referenceSet(shas: ReadonlyArray<string>): Aggregate<Readonly<Record<string, Evidence>>, never, never> {
+  const list = digestsJson(shas)
+  const scope = sql`o.sha256 IN (SELECT value FROM json_each(${list}))`
+  return {
+    name: `evidence references of ${shas.length} objects`,
+    version: sql`SELECT coalesce((SELECT group_concat(id || ':' || state, ',') FROM (SELECT id, state FROM vetting_evidence_generations WHERE sha256 IN (SELECT value FROM json_each(${list})) ORDER BY rowid)), '')
+      || '|' || coalesce((SELECT group_concat(o.rowid || ':' || coalesce(o.storage_generation, '-') || ':' || coalesce(c.closed_at, '-') || ':' || a.state || ':' || coalesce(a.result_sha256, '-'), ',')
+        FROM vetting_evidence_objects o JOIN vetting_assessments a ON a.id=o.assessment_id LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id WHERE ${scope} ORDER BY o.rowid), '') AS version`,
+    reads: [
+      sql`SELECT o.rowid AS ref, o.sha256, o.assessment_id, c.closed_at, CASE WHEN ${permanentAdmissionSql} THEN 1 ELSE 0 END AS permanent, o.storage_generation AS generation
+        FROM vetting_evidence_objects o JOIN vetting_assessments a ON a.id=o.assessment_id LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
+        WHERE ${scope} ORDER BY o.rowid`,
+      sql`SELECT id, sha256, state FROM vetting_evidence_generations WHERE sha256 IN (SELECT value FROM json_each(${list})) ORDER BY rowid`,
+    ],
+    decode: (found) => projections(shas, found),
+  }
+}
+
+effect function projections(shas: ReadonlyArray<string>, [references, generations]: ReadonlyArray<Rows>) {
+  const refs = try orDie(decoded(Reference, references ?? [], "evidence references"))
+  const physical = try orDie(decoded(GenerationRow, generations ?? [], "evidence generations"))
+  const day = Math.floor((try Clock.currentTimeMillis) / dayMillis)
+  const states: Record<string, Evidence> = {}
+  for (const sha of new Set(shas)) {
+    const versions = physical.filter((generation) => generation.sha256 === sha)
+    const current = versions.find((generation) => generation.state === "active")
+    const bound = refs.filter((ref) => ref.sha256 === sha && ref.generation !== null && ref.generation === current?.id)
+    const closeDays = Object.fromEntries(bound.flatMap((ref) => ref.closed_at === null ? [] : [[ref.ref, Math.floor(millisOf(ref.closed_at) / dayMillis)]]))
+    const permanent = bound.filter((ref) => ref.permanent === 1).map((ref) => ref.ref)
+    const expired = bound.filter((ref) => ref.permanent !== 1 && ref.closed_at !== null && day - Math.floor(millisOf(ref.closed_at) / dayMillis) >= 90).map((ref) => ref.ref)
+    states[sha] = try orDie(decodeState({
+      ...initial,
+      refs: bound.map((ref) => ref.ref),
+      permanent,
+      expired,
+      closeDays,
+      clockDay: day,
+      generation: Math.max(1, versions.length + (current === undefined ? 1 : 0)),
+    }))
+  }
+  return states as Readonly<Record<string, Evidence>>
+}
+
+export interface DeclaredObject {
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly kind: string
+  readonly label: string
+  readonly contentType: string
+  readonly chunks?: ReadonlyArray<EvidenceChunk>
+}
+
+export interface Registration {
+  readonly assessment: string
+  readonly runId: string
+  readonly traceSha256: string
+  readonly assemblySha256: string | undefined
+  readonly manifest: string
+  readonly manifestSha256: string
+  readonly policy: string
+  readonly objects: ReadonlyArray<DeclaredObject>
+  readonly actor: string
+  readonly at: string
+  readonly expiresAt: string
+}
+
+effect function registrationWrites(states: Readonly<Record<string, Evidence>>, registration: Registration) {
+  const writes: Statement[] = [
+    sql`INSERT INTO vetting_evidence_runs(assessment_id,run_id,trace_sha256,manifest_sha256,manifest,policy,created_at,expires_at,assembly_sha256)
+      VALUES(${registration.assessment},${registration.runId},${registration.traceSha256},${registration.manifestSha256},${registration.manifest},${registration.policy},${registration.at},${registration.expiresAt},${registration.assemblySha256 ?? null})`,
+  ]
+  for (const declared of registration.objects) {
+    const state = states[declared.sha256] ?? initial
+    const fresh = Math.max(0, ...state.refs) + 1
+    if (!canRegisterReference(state, fresh)) throw refused(rows.cleanup)
+    writes.push(try registrationStatement(declared.sha256, registration.at))
+    writes.push(sql`INSERT INTO vetting_evidence_objects(assessment_id,run_id,sha256,size_bytes,kind,label,content_type,object_key,chunks,storage,storage_generation)
+      VALUES(${registration.assessment},${registration.runId},${declared.sha256},${declared.sizeBytes},${declared.kind},${declared.label},${declared.contentType},
+        ${`vetting/${registration.assessment}/${registration.runId}/${declared.sha256}`},${declared.chunks === undefined ? null : JSON.stringify(declared.chunks)},'content',
+        (SELECT id FROM vetting_evidence_generations WHERE sha256=${declared.sha256} AND state='active'))`)
+  }
+  writes.push(sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,created_at) VALUES(${try randomId()},${registration.actor},'register',${registration.assessment},${registration.runId},${registration.at})`)
+  return { value: true, writes }
+}
+
+export effect function register(registration: Registration) {
+  return try update(referenceSet(registration.objects.map((declared) => declared.sha256)), (states) => registrationWrites(states, registration))
+}
+
+schema ManifestDigest { manifest_sha256: string }
+
+export effect function registeredManifest(assessment: string, runId: string) {
+  return (try first(ManifestDigest, sql`SELECT manifest_sha256 FROM vetting_evidence_runs WHERE assessment_id=${assessment} AND run_id=${runId}`))?.manifest_sha256
+}
+
+export effect function uploadAdmitted(row: ObjectRow) {
+  const state = (try load(referenceSet([row.sha256]))).state[row.sha256] ?? initial
+  if (state.refs.length > 0 && !canStartUpload(state)) throw refused(rows.uploadExpired)
+}
+
+schema AssessmentState { state: string }
+
+export effect function closeCase(assessment: string, actor: string, reason: string) {
+  const found = try first(AssessmentState, sql`SELECT state FROM vetting_assessments WHERE id=${assessment}`)
+  if (found === undefined) throw refused(rows.assessmentMissing)
+  if (found.state !== "incomplete" && found.state !== "malicious") throw refused(rows.notException)
+  const result: ScanResult = found.state === "malicious" ? "MaliciousScan" : "IncompleteScan"
+  const references = try selected(Reference, sql`SELECT o.rowid AS ref, o.sha256, o.assessment_id, c.closed_at, 0 AS permanent, o.storage_generation AS generation
+    FROM vetting_evidence_objects o LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id WHERE o.assessment_id=${assessment}`)
+  const states = references.length === 0 ? {} : (try load(referenceSet(references.map((reference) => reference.sha256)))).state
+  for (const reference of references) {
+    const state = states[reference.sha256] ?? initial
+    if (reference.closed_at === null && state.refs.includes(reference.ref) && !canCloseReference(state, reference.ref, Number(actor), result)) throw refused(rows.policyOwnerOnly)
+  }
+  const at = try isoAt(try Clock.currentTimeMillis)
+  try (try D1).batch([
+    sql`INSERT INTO vetting_evidence_case_closures(assessment_id,closed_at,closed_by,reason) VALUES(${assessment},${at},${actor},${reason}) ON CONFLICT(assessment_id) DO NOTHING`,
+    sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,reason,created_at) SELECT ${try randomId()},${actor},'close-case',${assessment},${reason},${at}
+      WHERE EXISTS (SELECT 1 FROM vetting_evidence_case_closures WHERE assessment_id=${assessment} AND closed_at=${at})
+        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_audit WHERE assessment_id=${assessment} AND action='close-case')`,
+  ])
+  const closure = try first(ClosureRow, sql`SELECT closed_at FROM vetting_evidence_case_closures WHERE assessment_id=${assessment}`)
+  if (closure === undefined) return try die(new Error("Case closure was not recorded"))
+  return { assessmentId: assessment, closedAt: closure.closed_at, expiresAt: try isoAt(millisOf(closure.closed_at) + retentionMillis) }
+}
+
+schema ClosureRow { closed_at: string }
+
+export effect function audit(actor: string, action: string, assessment: string, runId: string | null = null, sha256: string | null = null, reason: string | null = null) {
+  try (try D1).run(sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,reason,created_at) VALUES(${try randomId()},${actor},${action},${assessment},${runId},${sha256},${reason},${try isoAt(try Clock.currentTimeMillis)})`)
+}
+
+export effect function storedDigests(assessment: string, runId: string) {
+  const stored: string[] = []
+  for (const row of try objectsOf(assessment, runId)) {
+    const parts = layout(row) catch () => undefined
+    let complete = parts !== undefined
+    for (const part of parts ?? [undefined]) {
+      if (complete) complete = (readPart(row, part) catch () => undefined) !== undefined
+    }
+    if (complete) stored.push(row.sha256)
+  }
+  return stored
+}
+
+export interface Retained {
+  readonly assessmentId: string
+  readonly runId: string
+  readonly reportSha256: string
+  readonly required: ReadonlyArray<string>
+}
+
+export effect function retained(request: Retained) {
+  return checked(request) catch effect (error) => {
+    if (error._tag === "Refused") return false
+    throw error
+  }
+}
+
+effect function checked(request: Retained) {
+  const current = try run(request.assessmentId, request.runId)
+  if (current.row.trace_sha256 !== request.reportSha256) return false
+  const found = new Map((try objectsOf(request.assessmentId, request.runId)).map((row) => [row.sha256, row]))
+  for (const sha of new Set([request.reportSha256, ...request.required])) {
+    const row = found.get(sha)
+    if (row === undefined) return false
+    try verify(row, current)
+  }
+  return true
+}

@@ -1,0 +1,53 @@
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
+import { type Event, type Scored, enabled } from "../../gen/points__scoringPolicy.effect.vibe"
+import { unratifiedMergeScoreThirds } from "../kernels/scoring/legacyV2.ts"
+import { scoreTierBand, valueTierBand } from "../kernels/scoring/tiers.ts"
+import { Sources } from "./book.vibe"
+import { type ActorIndex, type Assessment, type Ratification, instantAtIso, millisAt } from "./facts.vibe"
+
+export interface AcceptedSource {
+  readonly key: string
+  readonly unit: number
+  readonly project: string
+  readonly head: string
+  readonly acceptedAt: string
+  readonly assessment: Assessment | null
+  readonly ratification: Ratification | null
+}
+
+export interface ScoredOutcome {
+  readonly scored: Scored
+  readonly assessed: boolean
+}
+
+effect function offered(key: string, current: Scored, event: Event) {
+  if (!enabled(current, event)) return current
+  return try (try Sources).send(key, event)
+}
+
+export function valueAssessed(scored: Scored) {
+  return scored.phase === "Assessed" && scored.policy === "ValueV1"
+}
+
+export effect function scoredSource(source: AcceptedSource, actors: ActorIndex) {
+  const acceptedAt = try instantAtIso(source.acceptedAt, source.key)
+  const legacyPoints = 10 * unratifiedMergeScoreThirds(try millisAt(source.acceptedAt, source.key))
+  const accepted = try (try Sources).send(source.key, { type: "accept", src: { project: source.project, unit: source.unit, head: source.head, acceptedAt }, legacyPoints })
+  const { assessment, ratification } = source
+  const assessed = assessment === null ? accepted : try offered(source.key, accepted, {
+    type: "assess",
+    x: { band: valueTierBand(assessment.tier), source: assessment.source, sourceDigest: assessment.digest, rubric: assessment.rubric, model: assessment.model, head: assessment.head },
+  })
+  if (ratification === null) return { scored: assessed, assessed: valueAssessed(assessed) } satisfies ScoredOutcome
+  const scored = try offered(source.key, assessed, {
+    type: "ratify",
+    rat: {
+      band: scoreTierBand(ratification.tier),
+      maintainer: actors.of(ratification.maintainer),
+      head: ratification.head,
+      record: ratification.record,
+      authority: { maintainer: actors.of(ratification.authority.maintainer), project: ratification.authority.project, permission: ratification.authority.permission },
+    },
+  })
+  return { scored, assessed: valueAssessed(assessed) } satisfies ScoredOutcome
+}

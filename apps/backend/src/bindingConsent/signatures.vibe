@@ -1,0 +1,105 @@
+// spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+import { type TypedDataDefinition, canonicalSignature, recoverTypedData } from "@repo/platform/chain/evm"
+import { base64Decode, decodeTransaction, publicKey, verifyMessageSignature } from "@repo/platform/chain/solana"
+import type { BindingTypedDataView } from "../client/bindingConsent.vibe"
+
+module verified {
+  import { isUint64Decimal as uint64Decimal } from "./eip712.ts"
+  /** @throws {never} */
+  export function isUint64Decimal(value: string): boolean { return uint64Decimal(value) }
+}
+import { isUint64Decimal } from verified
+
+export { isUint64Decimal }
+
+export interface BindingTerms {
+  readonly chainId: string
+  readonly vault: string
+  readonly actorId: string
+  readonly destination: string
+  readonly expectedVersion: string
+  readonly claimDigest: string
+  readonly expiresAt: string
+}
+
+export const escrowDomainName = "SlopProjectEscrow"
+export const escrowDomainVersion = "5"
+
+export function bindingTypedData(terms: BindingTerms) {
+  return {
+    types: {
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+      DestinationBinding: [
+        { name: "actorId", type: "uint64" },
+        { name: "destination", type: "address" },
+        { name: "expectedVersion", type: "uint64" },
+        { name: "claimDigest", type: "bytes32" },
+        { name: "expiresAt", type: "uint64" },
+      ],
+    },
+    primaryType: "DestinationBinding",
+    domain: { name: escrowDomainName, version: escrowDomainVersion, chainId: terms.chainId, verifyingContract: terms.vault },
+    message: { actorId: terms.actorId, destination: terms.destination, expectedVersion: terms.expectedVersion, claimDigest: terms.claimDigest, expiresAt: terms.expiresAt },
+  } satisfies BindingTypedDataView
+}
+
+const signaturePattern = /^0x[0-9a-fA-F]{130}$/u
+const halfOrder = "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0"
+const recoveryBytes = ["00", "01", "1b", "1c"]
+
+export interface ConsentSignature {
+  readonly stored: string
+  readonly recoveredSigner: string
+  readonly upperHalfS: boolean
+}
+
+effect function uint(text: string) {
+  return try orDie(Effect.try(() => BigInt(text)))
+}
+
+effect function signedDefinition(typed: BindingTypedDataView) {
+  return {
+    types: { EIP712Domain: typed.types.EIP712Domain, DestinationBinding: typed.types.DestinationBinding },
+    primaryType: "DestinationBinding",
+    domain: { name: typed.domain.name, version: typed.domain.version, chainId: try uint(typed.domain.chainId), verifyingContract: typed.domain.verifyingContract as `0x${string}` },
+    message: {
+      actorId: try uint(typed.message.actorId),
+      destination: typed.message.destination,
+      expectedVersion: try uint(typed.message.expectedVersion),
+      claimDigest: typed.message.claimDigest,
+      expiresAt: try uint(typed.message.expiresAt),
+    },
+  } satisfies TypedDataDefinition
+}
+
+export function wellFormedSignature(signature: string): boolean {
+  return signaturePattern.test(signature)
+}
+
+export effect function consentSignature(terms: BindingTerms, signature: string, claimWallet: string) {
+  const body = signature.slice(2).toLowerCase()
+  const upperHalfS = recoveryBytes.includes(body.slice(128)) && body.slice(64, 128) > halfOrder
+  const stored = canonicalSignature(signature)
+  if (stored === undefined) return { stored: "", recoveredSigner: "", upperHalfS } satisfies ConsentSignature
+  const recovered = recoverTypedData(try signedDefinition(bindingTypedData(terms)), stored)
+  const recoveredSigner = recovered !== undefined && recovered.toLowerCase() === claimWallet.toLowerCase() ? claimWallet : ""
+  return { stored, recoveredSigner, upperHalfS } satisfies ConsentSignature
+}
+
+export effect function walletSlotSigner(transaction: string, wallet: string) {
+  const bytes = base64Decode(transaction)
+  const key = publicKey(wallet)
+  if (bytes === undefined || key === undefined) return ""
+  const decoded = decodeTransaction(bytes)
+  if (decoded.kind !== "decoded") return ""
+  const { message, signatures, messageBytes } = decoded.value
+  const slot = message.accountKeys.findIndex((account) => account === wallet)
+  const signature = signatures[slot]
+  if (slot < 0 || slot >= message.header.requiredSignatures || signature === undefined) return ""
+  return (try verifyMessageSignature(key, messageBytes, signature)) ? wallet : ""
+}

@@ -1,0 +1,49 @@
+// spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+import type { Fetcher } from "@repo/platform/bindings"
+import { outboundVia } from "@repo/platform/http"
+import { fixedFailures } from "../route/route.vibe"
+
+export const spendNoticePath = "/v1/slopbot-spend"
+export const failureNoticePath = "/v1/slopbot-failure"
+
+export interface SpendNoticeBody {
+  readonly month: string
+  readonly thresholdMicroUsd: number
+  readonly recordedMicroUsd: number
+  readonly estimatedCalls: number
+}
+
+export interface FailureNoticeBody {
+  readonly callId: number
+  readonly model: string
+  readonly kind: "budget-exhausted" | "request-failed"
+  readonly occurredAt: string
+  readonly failure: string
+}
+
+export type Notice =
+  | { readonly path: typeof spendNoticePath; readonly body: SpendNoticeBody }
+  | { readonly path: typeof failureNoticePath; readonly body: FailureNoticeBody }
+
+export service SpendNotify {
+  deliver(notice: Notice): boolean!!
+}
+
+const knownFailures: ReadonlySet<string> = new Set(fixedFailures)
+
+export function safeFailure(failure: string | null) {
+  return failure !== null && (knownFailures.has(failure) || /^provider returned HTTP [1-5][0-9]{2}$/u.test(failure)) ? failure : "provider call failed"
+}
+
+export function spendNotify(fetcher: Fetcher) {
+  return Layer.provide(Layer.effect(SpendNotify, effect {
+    const client = try HttpClient.HttpClient
+    return {
+      deliver: (notice) => effect {
+        const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`https://notify.internal${notice.path}`), notice.body)
+        const response = client.execute(request) catch () => undefined
+        return response?.status === 202
+      },
+    }
+  }), outboundVia(fetcher))
+}

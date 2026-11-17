@@ -1,0 +1,394 @@
+// spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "An upload intent is a five-minute one-time capability that only its exact retry renews"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "Progress events are the owner's agent-source records, idempotent by key and refused once finalized"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type NonEmpty, type RowMismatch, type Statement, decoded, first, list, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { ReadFailure, Restrictions } from "@repo/ports/backend"
+import { type Event, type NotAState, type Put, type TraceServer, Rejected, apply, enabled, serverRuntime } from "../../gen/contributor__traceServer.effect.vibe"
+import { EventRow, IntentRow, KeyRow, ObjectRow, ReservationRow, RunRow, type RunRows, type StoredEventKind, type StoredSource, type TraceContentType, contentTypeOf, contentTypes, eventKindOf, modelOf, runStates, sameBlob, sourceOf } from "./codec.vibe"
+import { IntakeRow, bannedOf, intakeRead, intakeVersion, secondsAt } from "./facts.vibe"
+import { TraceObjects, objectKey } from "./objects.vibe"
+
+export type RunLocator = { readonly runId: string } | { readonly owner: string; readonly createKey: string }
+
+type Focus = "every" | { readonly intent?: string; readonly event?: string }
+
+interface Scope {
+  readonly run: RunLocator
+  readonly owner: string
+  readonly digests: ReadonlyArray<string>
+  readonly keys: Focus
+  readonly puts: ReadonlyArray<Put>
+}
+
+export interface Loaded {
+  readonly rows: RunRows
+  readonly owner: string
+  readonly model: TraceServer
+}
+
+export interface Settled {
+  readonly state: TraceServer
+  readonly run: RunRow | undefined
+  readonly intent?: IntentRow
+  readonly event?: EventRow
+  readonly put?: Put
+}
+
+export interface RunRequest {
+  readonly clientRunId: string
+  readonly projectId: string
+  readonly repository: string
+  readonly policyRevision: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly clientVersion: string
+}
+
+export interface CreateRun {
+  readonly run: RunLocator
+  readonly owner: string
+  readonly login: string
+  readonly key: string
+  readonly request: RunRequest
+}
+
+export interface CreateIntent {
+  readonly run: RunLocator
+  readonly by: number
+  readonly key: string
+  readonly digest: string
+  readonly byteCount: number
+  readonly contentType: TraceContentType
+  readonly tokenHash: string
+}
+
+export interface BeginPut {
+  readonly run: RunLocator
+  readonly key: string
+  readonly digest: string
+  readonly byteCount: number
+  readonly contentType: TraceContentType
+  readonly puts: ReadonlyArray<Put>
+}
+
+export interface WriteBytes {
+  readonly run: RunLocator
+  readonly by: number
+  readonly key: string
+  readonly bytes: Uint8Array
+  readonly puts: ReadonlyArray<Put>
+}
+
+export interface AttachPut {
+  readonly run: RunLocator
+  readonly key: string
+  readonly puts: ReadonlyArray<Put>
+}
+
+export interface Finalize {
+  readonly run: RunLocator
+  readonly by: number
+  readonly key: string
+}
+
+export interface AppendEvent {
+  readonly run: RunLocator
+  readonly by: number
+  readonly key: string
+  readonly kind: StoredEventKind
+  readonly source: StoredSource
+  readonly occurredAt: string
+  readonly githubObject: string | undefined
+  readonly githubUrl: string | undefined
+  readonly headSha: string | undefined
+}
+
+export interface Inspect {
+  readonly run: RunLocator
+  readonly owner: string
+  readonly digests: ReadonlyArray<string>
+  readonly puts: ReadonlyArray<Put>
+}
+
+schema Capability {
+  readonly run_id: string
+  readonly idempotency_key: string
+}
+
+function nonEmpty<T>(values: ReadonlyArray<T>): values is NonEmpty<T> {
+  return values.length > 0
+}
+
+function located(run: RunLocator): Statement {
+  return "runId" in run ? sql`id = ${run.runId}` : sql`github_user_id = ${run.owner} AND create_idempotency_key = ${run.createKey}`
+}
+
+function fallbackOwner(run: RunLocator, requester: string): string {
+  return "runId" in run ? requester : run.owner
+}
+
+function senderText(by: number): string {
+  return by > 0 ? String(by) : ""
+}
+
+function aggregate(scope: Scope): Aggregate<Loaded, RowMismatch | NotAState | ReadFailure, Restrictions> {
+  const where = located(scope.run)
+  const id = sql`(SELECT id FROM trace_runs WHERE ${where})`
+  const owner = sql`coalesce((SELECT github_user_id FROM trace_runs WHERE ${where}), ${scope.owner})`
+  const extra = nonEmpty(scope.digests) ? sql` OR sha256 IN ${list(scope.digests)}` : sql``
+  const objects = sql`(sha256 IN (SELECT trace_sha256 FROM trace_upload_intents WHERE run_id = ${id}) OR sha256 IN (SELECT trace_sha256 FROM trace_write_reservations WHERE run_id = ${id}) OR sha256 = (SELECT trace_sha256 FROM trace_runs WHERE ${where})${extra})`
+  const keys = scope.keys
+  const focus = (key: string | undefined) => keys === "every" ? sql`` : key === undefined ? sql` AND 0` : sql` AND idempotency_key = ${key}`
+  const otherIntents = sql`SELECT idempotency_key FROM trace_upload_intents WHERE github_user_id = ${owner} AND run_id IS NOT ${id}${focus(keys === "every" ? undefined : keys.intent)} ORDER BY rowid`
+  const otherEvents = sql`SELECT idempotency_key FROM run_progress_events WHERE github_user_id = ${owner} AND run_id IS NOT ${id}${focus(keys === "every" ? undefined : keys.event)} ORDER BY rowid`
+  return {
+    name: `trace run ${"runId" in scope.run ? scope.run.runId : `${scope.run.owner}/${scope.run.createKey}`}`,
+    version: sql`SELECT coalesce((SELECT id || ':' || state || ':' || coalesce(trace_sha256, '-') || ':' || coalesce(finalized_at, '-') FROM trace_runs WHERE ${where}), '-')
+      || '|' || coalesce((SELECT group_concat(token_hash || ':' || expires_at || ':' || coalesce(consumed_at, '-'), ',') FROM (SELECT token_hash, expires_at, consumed_at FROM trace_upload_intents WHERE run_id = ${id} ORDER BY rowid)), '')
+      || '|' || coalesce((SELECT trace_sha256 FROM trace_write_reservations WHERE run_id = ${id}), '-')
+      || '|' || coalesce((SELECT group_concat(sha256, ',') FROM (SELECT sha256 FROM trace_objects WHERE ${objects} ORDER BY rowid)), '')
+      || '|' || coalesce((SELECT group_concat(idempotency_key, ',') FROM (SELECT idempotency_key FROM run_progress_events WHERE run_id = ${id} ORDER BY rowid)), '')
+      || '|' || coalesce((SELECT group_concat(idempotency_key, ',') FROM (${otherIntents})), '')
+      || '|' || coalesce((SELECT group_concat(idempotency_key, ',') FROM (${otherEvents})), '')
+      || '|' || ${intakeVersion} AS version`,
+    reads: [
+      sql`SELECT id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, trace_sha256, created_at, finalized_at, create_idempotency_key FROM trace_runs WHERE ${where}`,
+      sql`SELECT token_hash, trace_sha256, size_bytes, content_type, idempotency_key, created_at, expires_at, consumed_at FROM trace_upload_intents WHERE run_id = ${id} ORDER BY rowid`,
+      sql`SELECT trace_sha256, r2_key, size_bytes, content_type, created_at FROM trace_write_reservations WHERE run_id = ${id}`,
+      sql`SELECT sha256, size_bytes, content_type FROM trace_objects WHERE ${objects} ORDER BY rowid`,
+      sql`SELECT id, idempotency_key, kind, source, occurred_at, github_object_id, github_url, head_sha, created_at FROM run_progress_events WHERE run_id = ${id} ORDER BY rowid`,
+      otherIntents,
+      otherEvents,
+      intakeRead,
+    ],
+    decode: (found) => effect {
+      const rows = try rowsOf(found)
+      const runOwner = rows.run?.github_user_id ?? scope.owner
+      const model = try modelOf(rows, { owner: runOwner, clock: try nowSeconds(), banned: try bannedOf(runOwner), puts: scope.puts })
+      return { rows, owner: runOwner, model } satisfies Loaded
+    },
+  }
+}
+
+effect function rowsOf(found: ReadonlyArray<Rows>) {
+  const [run, intents, reservation, objects, events, otherIntents, otherEvents, intake] = found
+  return {
+    run: (try decoded(RunRow, run ?? [], "trace run"))[0],
+    intents: try decoded(IntentRow, intents ?? [], "trace upload intents"),
+    reservation: (try decoded(ReservationRow, reservation ?? [], "trace write reservation"))[0],
+    objects: try decoded(ObjectRow, objects ?? [], "trace objects"),
+    events: try decoded(EventRow, events ?? [], "run progress events"),
+    otherIntentKeys: (try decoded(KeyRow, otherIntents ?? [], "other run intent keys")).map((row) => row.idempotency_key),
+    otherEventKeys: (try decoded(KeyRow, otherEvents ?? [], "other run event keys")).map((row) => row.idempotency_key),
+    intake: (try decoded(IntakeRow, intake ?? [], "private intake status"))[0],
+  } satisfies RunRows
+}
+
+function scopeOf(run: RunLocator, owner: string, keys: Focus = {}, digests: ReadonlyArray<string> = [], puts: ReadonlyArray<Put> = []): Scope {
+  return { run, owner, digests, keys, puts }
+}
+
+effect function recorded(loaded: Loaded) {
+  const run = loaded.rows.run
+  if (run === undefined) return try die(new Error("an accepted trace write needs its run row"))
+  return run
+}
+
+function patched(run: RunRow | undefined, next: TraceServer, at: string): RunRow | undefined {
+  if (run === undefined) return undefined
+  return {
+    ...run,
+    state: next.state === "NoRun" ? run.state : runStates[next.state],
+    trace_sha256: next.attached === "" ? null : next.attached,
+    finalized_at: next.state === "Finalized" ? run.finalized_at ?? at : null,
+  }
+}
+
+function unchanged(loaded: Loaded, next: TraceServer, extra: Partial<Settled> = {}): Decision<Settled> {
+  return { value: { state: next, run: loaded.rows.run, ...extra }, writes: [] }
+}
+
+export effect function inspect(input: Inspect) {
+  return (try load(aggregate(scopeOf(input.run, input.owner, "every", input.digests, input.puts)))).state
+}
+
+export effect function capability(tokenHash: string) {
+  const found = try first(Capability, sql`SELECT run_id, idempotency_key FROM trace_upload_intents WHERE token_hash = ${tokenHash}`)
+  return found === undefined ? undefined : { runId: found.run_id, key: found.idempotency_key }
+}
+
+export effect function createRun(input: CreateRun) {
+  const id = try randomId()
+  const by = Number(input.owner)
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, input.owner))), (loaded) => effect {
+    const stored = loaded.rows.run
+    const request = input.request
+    const project = request.projectId === "" ? 0 : stored === undefined || stored.project_id === request.projectId ? 1 : 2
+    const next = try apply(loaded.model, {
+      type: "createRun",
+      key: input.key,
+      request: { clientRun: request.clientRunId, project, repository: request.repository, policyRevision: request.policyRevision, provider: request.provider, model: request.model, client: request.client, clientVersion: request.clientVersion },
+    }, by)
+    if (next.reply !== "ReplyCreated") return unchanged(loaded, next)
+    const now = try isoAt(next.now * 1000)
+    const run: RunRow = {
+      id,
+      client_run_id: request.clientRunId,
+      github_user_id: input.owner,
+      github_login: input.login,
+      project_id: request.projectId,
+      repository: request.repository,
+      project_policy_revision: request.policyRevision,
+      provider: request.provider,
+      model: request.model,
+      client: request.client,
+      client_version: request.clientVersion,
+      state: "awaiting_trace",
+      trace_sha256: null,
+      created_at: now,
+      finalized_at: null,
+      create_idempotency_key: input.key,
+    }
+    return {
+      value: { state: next, run },
+      writes: [sql`INSERT INTO trace_runs (id, client_run_id, github_user_id, github_login, project_id, repository, project_policy_revision, provider, model, client, client_version, state, trace_sha256, created_at, finalized_at, create_idempotency_key) VALUES (${run.id}, ${run.client_run_id}, ${run.github_user_id}, ${run.github_login}, ${run.project_id}, ${run.repository}, ${run.project_policy_revision}, ${run.provider}, ${run.model}, ${run.client}, ${run.client_version}, 'awaiting_trace', NULL, ${run.created_at}, NULL, ${run.create_idempotency_key})`],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function createIntent(input: CreateIntent) {
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { intent: input.key })), (loaded) => effect {
+    const next = try apply(loaded.model, { type: "createIntent", key: input.key, digest: input.digest, byteCount: input.byteCount, contentType: contentTypeOf[input.contentType] }, input.by)
+    const prior = loaded.rows.intents.find((intent) => intent.idempotency_key === input.key)
+    if (next.reply !== "ReplyCreated" && next.reply !== "ReplyRenewed") return unchanged(loaded, next, prior === undefined ? {} : { intent: prior })
+    const run = try recorded(loaded)
+    const now = try isoAt(next.now * 1000)
+    const expiresAt = try isoAt((next.intents.find((intent) => intent.key === input.key)?.expiresAt ?? next.now) * 1000)
+    if (prior !== undefined) {
+      return {
+        value: { state: next, run, intent: { ...prior, expires_at: expiresAt } },
+        writes: [sql`UPDATE trace_upload_intents SET expires_at = ${expiresAt} WHERE token_hash = ${prior.token_hash} AND consumed_at IS NULL`],
+      } satisfies Decision<Settled>
+    }
+    const intent: IntentRow = {
+      token_hash: input.tokenHash,
+      trace_sha256: input.digest,
+      size_bytes: input.byteCount,
+      content_type: input.contentType,
+      idempotency_key: input.key,
+      created_at: now,
+      expires_at: expiresAt,
+      consumed_at: null,
+    }
+    return {
+      value: { state: next, run, intent },
+      writes: [sql`INSERT INTO trace_upload_intents (token_hash, run_id, github_user_id, trace_sha256, size_bytes, content_type, idempotency_key, created_at, expires_at, consumed_at) VALUES (${intent.token_hash}, ${run.id}, ${loaded.owner}, ${intent.trace_sha256}, ${intent.size_bytes}, ${intent.content_type}, ${intent.idempotency_key}, ${intent.created_at}, ${intent.expires_at}, NULL)`],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function beginPut(input: BeginPut) {
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [input.digest], input.puts)), (loaded) => effect {
+    const next = try apply(loaded.model, { type: "beginPut", key: input.key, digest: input.digest, byteCount: input.byteCount, contentType: contentTypeOf[input.contentType] }, serverRuntime)
+    const put = next.puts.length > loaded.model.puts.length ? next.puts[next.puts.length - 1] : undefined
+    if (put === undefined) return unchanged(loaded, next)
+    if (loaded.rows.reservation !== undefined) return unchanged(loaded, next, { put })
+    const run = try recorded(loaded)
+    const now = try isoAt(next.now * 1000)
+    return {
+      value: { state: next, run, put },
+      writes: [sql`INSERT INTO trace_write_reservations (run_id, github_user_id, trace_sha256, r2_key, size_bytes, content_type, created_at) VALUES (${run.id}, ${loaded.owner}, ${input.digest}, ${objectKey(input.digest)}, ${input.byteCount}, ${input.contentType}, ${now})`],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function writeBytes(input: WriteBytes) {
+  const scope = scopeOf(input.run, fallbackOwner(input.run, ""), {}, [], input.puts)
+  const attempt: Event = { type: "writeBytes", key: input.key, succeeds: true }
+  const current = (try load(aggregate(scope))).state
+  const reserved = current.model.puts.find((put) => put.key === input.key && put.stage === "PutReserved")
+  if (reserved === undefined || !enabled(current.model, attempt, input.by)) throw new Rejected({ event: attempt, state: current.model, by: input.by })
+  const conflicting = current.model.objects.some((object) => object.digest === reserved.blob.digest && !sameBlob(object, reserved.blob))
+  const succeeds = !conflicting && (try (try TraceObjects).store({ digest: reserved.blob.digest, size: reserved.blob.size, contentType: contentTypes[reserved.blob.contentType] }, input.bytes))
+  return try update(aggregate(scope), (loaded) => effect {
+    const next = try apply(loaded.model, { type: "writeBytes", key: input.key, succeeds }, input.by)
+    if (next.objects.length === loaded.model.objects.length) return unchanged(loaded, next)
+    const blob = reserved.blob
+    const now = try isoAt(next.now * 1000)
+    return {
+      value: { state: next, run: loaded.rows.run },
+      writes: [sql`INSERT INTO trace_objects (sha256, r2_key, size_bytes, content_type, created_by_github_id, created_at) VALUES (${blob.digest}, ${objectKey(blob.digest)}, ${blob.size}, ${contentTypes[blob.contentType]}, ${loaded.owner}, ${now})`],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function attachPut(input: AttachPut) {
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [], input.puts)), (loaded) => effect {
+    const written = loaded.model.puts.find((put) => put.key === input.key && put.stage === "PutWritten")
+    const next = try apply(loaded.model, { type: "attachPut", key: input.key }, serverRuntime)
+    const intent = loaded.rows.intents.find((row) => row.idempotency_key === input.key)
+    if (next.reply !== "ReplyCreated" || written === undefined || intent === undefined) return unchanged(loaded, next)
+    const run = try recorded(loaded)
+    const now = try isoAt(next.now * 1000)
+    const consumedAt = try isoAt(written.authorizedAt * 1000)
+    const digest = written.blob.digest
+    return {
+      value: { state: next, run: patched(run, next, now), intent: { ...intent, consumed_at: consumedAt } },
+      writes: [
+        sql`UPDATE trace_upload_intents SET consumed_at = ${consumedAt} WHERE token_hash = ${intent.token_hash} AND consumed_at IS NULL`,
+        sql`INSERT INTO trace_uploads (github_user_id, idempotency_key, run_id, trace_sha256, created_at) VALUES (${loaded.owner}, ${intent.token_hash}, ${run.id}, ${digest}, ${now})`,
+        sql`UPDATE trace_runs SET trace_sha256 = ${digest}, state = 'trace_uploaded' WHERE id = ${run.id} AND state != 'finalized'`,
+        sql`INSERT INTO trace_attachment_commits (token_hash, run_id, github_user_id, trace_sha256, consumed_at) VALUES (${intent.token_hash}, ${run.id}, ${loaded.owner}, ${digest}, ${consumedAt})`,
+      ],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function finalize(input: Finalize) {
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)))), (loaded) => effect {
+    const next = try apply(loaded.model, { type: "finalize", key: input.key }, input.by)
+    if (next.reply !== "ReplyCreated") return unchanged(loaded, next)
+    const run = try recorded(loaded)
+    const now = try isoAt(next.finalizedAt * 1000)
+    return {
+      value: { state: next, run: patched(run, next, now) },
+      writes: [sql`UPDATE trace_runs SET state = 'finalized', finalized_at = ${now} WHERE id = ${run.id} AND state = 'trace_uploaded' AND finalized_at IS NULL`],
+    } satisfies Decision<Settled>
+  })
+}
+
+export effect function appendEvent(input: AppendEvent) {
+  const id = try randomId()
+  const occurred = secondsAt(input.occurredAt)
+  const occurredAt = Number.isSafeInteger(occurred) ? occurred : -1
+  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { event: input.key })), (loaded) => effect {
+    const next = try apply(loaded.model, {
+      type: "appendEvent",
+      key: input.key,
+      kind: eventKindOf[input.kind],
+      source: sourceOf[input.source],
+      occurredAt,
+      githubObject: input.githubObject ?? "",
+    }, input.by)
+    const prior = loaded.rows.events.find((event) => event.idempotency_key === input.key)
+    if (next.reply !== "ReplyCreated") return unchanged(loaded, next, prior === undefined ? {} : { event: prior })
+    const run = try recorded(loaded)
+    const event: EventRow = {
+      id,
+      idempotency_key: input.key,
+      kind: input.kind,
+      source: input.source,
+      occurred_at: input.occurredAt,
+      github_object_id: input.githubObject === undefined || input.githubObject === "" ? null : input.githubObject,
+      github_url: input.githubUrl ?? null,
+      head_sha: input.headSha ?? null,
+      created_at: try isoAt(next.now * 1000),
+    }
+    return {
+      value: { state: next, run, event },
+      writes: [sql`INSERT INTO run_progress_events (id, run_id, github_user_id, kind, occurred_at, source, github_object_id, github_url, head_sha, created_at, idempotency_key) VALUES (${event.id}, ${run.id}, ${loaded.owner}, ${event.kind}, ${event.occurred_at}, ${event.source}, ${event.github_object_id}, ${event.github_url}, ${event.head_sha}, ${event.created_at}, ${event.idempotency_key})`],
+    } satisfies Decision<Settled>
+  })
+}

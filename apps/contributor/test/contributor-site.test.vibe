@@ -1,0 +1,176 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { repoRoot } from "@repo/platform/testing/paths"
+import { workerBuild } from "@repo/platform/vite"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { createBuilder } from "vite"
+import { sha256Hex } from "../src/render/templateIndex.ts"
+import { git, regularFiles, utf8Bytes, utf8Text } from "../src/site/sources.vibe"
+
+service Site {
+  readonly program: string
+  readonly repository: string
+  readonly out: string
+}
+
+interface Ran {
+  readonly code: number
+  readonly refusal: string | undefined
+}
+
+const legacyCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const fixedGeneratedAt = "2026-11-16T00:00:00.000Z"
+const author = ["-c", "user.name=Slop Site", "-c", "user.email=site@slop.invalid", "-c", "commit.gpgsign=false"]
+
+const copiedSources = [
+  "skills",
+  "scripts/render-install-guide.mjs",
+  "src/lib/install-command.ts",
+  "src/lib/project-skill-publication.mjs",
+  "src/lib/project-skill.mjs",
+  "src/lib/project-schema.mjs",
+  "apps/contributor/tools/quick_validate.py",
+  "apps/contributor/docs/private-trace-v1.md",
+]
+
+const requirements = "# Slop product requirements\n\n## 6. Funds and payments\n\nEarlier rules.\n\n## 7. Points, discovery, and clear pages\n\nPoints reward accepted work.\n\n### 7.1 Scoring\n\nEach merged pull request scores once.\n\n## 8. Security and private bounties\n\nLater rules.\n"
+
+function pointsDocument(name: string): string {
+  return `# Slop Points\n\nCurrent rules are published from [the canonical PRD, section 7](https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages).\n\nPoints reward accepted work.\n\n## 7.1 Scoring\n\nEach merged pull request scores once.\n\n## Historical protocol record\n\n[The former ${name} document](https://github.com/SlopDotCash/slopdotcash/blob/ebf468873147a7ec119858915deca6cb3177eb0d/protocol/${name}) is retained at an immutable source revision for historical rules and record formats. Current policy and historical preservation follow the PRD above.\n`
+}
+
+const legacyOutputs: Readonly<Record<string, string>> = {
+  ".well-known/agent-skills/index.json": "e123cd1b36d35b6dce1d937ec8b6210fd3c0c1d7898886d348139755d0cbe2fb",
+  ".well-known/agent-skills/slop/SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
+  "SKILL.md": "f3518d58c13d301c2a39884711134a7e60f6438c1858ed6fe37d47d551bec464",
+  "llms.txt": "5e064fda766258afdd6743d8ce5d525abfcbae200afa25a127e8b48b5e6ebe45",
+  "protocol/identity-v1.json": "5f78f4edc91349a8574c1049ec70c4791d97c52ed7a024e19ed12bc310684346",
+  "protocol/points-v1.md": sha256Hex(utf8Bytes(pointsDocument("points-v1.md"))),
+  "protocol/private-trace-v1.md": "0a5efbd3d7c08eaf77fb345bbbe100a4d8dd5b41f739795fd2724a9a3a3b4e61",
+  "protocol/scoring-v2.md": sha256Hex(utf8Bytes(pointsDocument("scoring-v2.md"))),
+  "skill-manifest.json": "a245a9987271300a5da1be5b835eb533a3d8e974eb0209623638feed489a5f14",
+  "skill-templates/index.json": "c572dac26cecea240094fc30c3da74f8f3732cbd6523ca4dde4569a9251f0144",
+  "skill-templates/skills/project-contributor-template/SKILL.md": "04a5f7e352c686f10f42f19bf1fad9ff2977877fb9d44e61f1cfbf40e72f2acb",
+  "skill-templates/skills/project-contributor-template/references/security-report.md": "aac70d663bfe0ff16a124d086588ceb164e466084810306ac607a45826dfea81",
+  "skill-templates/skills/project-contributor-template/scripts/live-report.mjs": "37f9a68890c23eb6a1988e57fe465df1c7ec4b7c80729f5bf9477e24b5270fa7",
+  "skill-templates/skills/project-contributor-template/scripts/run-receipt.mjs": "a887a6ffb39c6aff7074a87680f5c36c820c60dfccdc5f3a9ddb0d29486721e9",
+  "skill-templates/skills/project-contributor-template/scripts/skill-authority.d.mts": "cbb5b0466305c37007951b25c7d1fcdc0557de690ff93e2d8db59ed4e1b0d8f0",
+  "skill-templates/skills/project-contributor-template/scripts/skill-authority.mjs": "ae3fb3861657a4df365e6c12b6acb1607403bac4f3eedc0148f7b51840a64040",
+  "skill-templates/skills/project-contributor-template/scripts/terms-preflight.mjs": "1e9b2d54ccf2c6eb8f336094d56b7c29a7213804c2e3f524ee811614fe5afd99",
+  "skill-templates/skills/project-contributor-template/scripts/wallet-claim.mjs": "970b46dc1b21c8848b0dffa3913b47522d60e89ce220479d01906203eb2dd32f",
+  "skill-templates/skills/project-reviewer-template/SKILL.md": "704905acdf0d69c7a1ae93f8e93a336e3b04d6bb6547896b3005847c9c4b8aa3",
+}
+
+const Started = Layer.effect(Site, effect {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const scratch = try fs.makeTempDirectoryScoped({ prefix: "slop-site-" })
+  const packageRoot = new URL("..", import.meta.url).pathname
+  const build = workerBuild({ programs: { main: "src/programs/main.vibe" }, outDir: path.join(scratch, "dist") })
+  try promise(() => createBuilder({ root: packageRoot, configFile: false, logLevel: "error", ...build }).then((builder) => builder.buildApp()))
+  const repository = path.join(scratch, "repository")
+  for (const source of copiedSources) {
+    try fs.makeDirectory(path.dirname(path.join(repository, source)), { recursive: true })
+    try fs.copy(path.join(repoRoot, source), path.join(repository, source))
+  }
+  try fs.makeDirectory(path.join(repository, "docs"), { recursive: true })
+  try fs.writeFileString(path.join(repository, "docs/slop-product-requirements.md"), requirements)
+  try git(repository, ["-c", "init.defaultBranch=main", "init", "-q"])
+  try git(repository, ["add", "-A"])
+  try git(repository, [...author, "commit", "-q", "-m", "Site fixture"])
+  return { program: path.join(scratch, "dist/programs/main.js"), repository, out: path.join(scratch, "site") }
+})
+
+effect function runSite() {
+  const { program, repository, out } = try Site
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("node", [program, "site", "--out", out], { cwd: repository }))
+    const [, stderr, code] = try.all [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr)), handle.exitCode]
+    const status = Number(code)
+    return { code: status, refusal: status === 0 ? undefined : stderr.trim().split("\n").at(-1) } satisfies Ran
+  })
+}
+
+effect function outputText(path: string) {
+  const { out } = try Site
+  return try (try FileSystem.FileSystem).readFileString((try Path.Path).join(out, path))
+}
+
+effect function published() {
+  const { out, repository } = try Site
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const commit = (try utf8Text(try git(repository, ["rev-parse", "HEAD"]), "the fixture commit")).trim()
+  const legacy = (text: string) => text.replaceAll(commit, legacyCommit).replace(/"generatedAt": "[^"]*"/u, `"generatedAt": "${fixedGeneratedAt}"`)
+  const digests: Record<string, string> = {}
+  for (const file of (try regularFiles(out, ".")).paths) {
+    const bytes = try fs.readFile(path.join(out, file))
+    digests[file] = ["llms.txt", "skill-manifest.json", "skill-templates/index.json"].includes(file) ? sha256Hex(utf8Bytes(legacy(try outputText(file)))) : sha256Hex(bytes)
+  }
+  return digests
+}
+
+effect function statuses() {
+  const indexText = try outputText("skill-templates/index.json")
+  const manifestText = try outputText("skill-manifest.json")
+  const index = try Effect.try(() => JSON.parse(indexText) as { readonly revisionStatus: string; readonly renderer: { readonly revisionStatus: string } })
+  const manifest = try Effect.try(() => JSON.parse(manifestText) as { readonly revisionStatus: string })
+  const llms = /\((committed|working-tree)\)\./u.exec(try outputText("llms.txt"))?.[1]
+  return { templates: index.revisionStatus, renderer: index.renderer.revisionStatus, manifest: manifest.revisionStatus, llms }
+}
+
+effect function edited(file: string, bytes: Uint8Array) {
+  const { repository } = try Site
+  try (try FileSystem.FileSystem).writeFile((try Path.Path).join(repository, file), bytes)
+}
+
+effect function appended(file: string) {
+  const { repository } = try Site
+  const before = try (try FileSystem.FileSystem).readFile((try Path.Path).join(repository, file))
+  try edited(file, new Uint8Array([...before, 10]))
+}
+
+effect function restored() {
+  const { repository } = try Site
+  try git(repository, ["checkout", "-q", "--", "."])
+  try git(repository, ["clean", "-q", "-f", "--", "skills"])
+}
+
+layer(Layer.mergeAll(Layer.provide(Started, NodeServices.layer), NodeServices.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('The site program publishes the bootstrap skill, discovery files, template trees and protocol documents with the bytes of cc7cc3200, labels working-tree edits and refuses an invalid bootstrap (spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit\'s tracked tree are labelled committed"; spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"; spec/contributor/skillValidation.md, "A matching runtime and a clean inspection are both required")', () => effect {
+    const committedRun = try runSite()
+    const committedOutputs = try published()
+    const committedStatuses = try statuses()
+
+    try appended("skills/project-reviewer-template/SKILL.md")
+    try appended("skills/slop/SKILL.md")
+    const editedRun = try runSite()
+    const editedStatuses = try statuses()
+    const editedOutputs = try published()
+    try restored()
+
+    try edited("skills/project-reviewer-template/notes.md", utf8Bytes("untracked\n"))
+    const untrackedRun = try runSite()
+    try restored()
+
+    try edited("skills/slop/SKILL.md", utf8Bytes("---\nname: Not Valid\ndescription: A bootstrap the validator refuses.\n---\n\n# Not valid\n"))
+    const invalidRun = try runSite()
+    const afterRefusals = try published()
+    try restored()
+
+    try Effect.try(() => assert.deepStrictEqual(
+      { committedRun, committedOutputs, committedStatuses, editedRun, editedStatuses, untrackedRun, invalidRun, refusalsWroteNothing: JSON.stringify(afterRefusals) === JSON.stringify(editedOutputs) },
+      {
+        committedRun: { code: 0, refusal: undefined },
+        committedOutputs: legacyOutputs,
+        committedStatuses: { templates: "committed", renderer: "committed", manifest: "committed", llms: "committed" },
+        editedRun: { code: 0, refusal: undefined },
+        editedStatuses: { templates: "working-tree", renderer: "committed", manifest: "working-tree", llms: "working-tree" },
+        untrackedRun: { code: 1, refusal: "SiteRefused: [Slop] skill template skills/project-reviewer-template must be a bounded, tracked, exact file tree" },
+        invalidRun: { code: 1, refusal: "SiteRefused: [Slop] skill validation refused skills/slop" },
+        refusalsWroteNothing: true,
+      },
+    ))
+  })
+})

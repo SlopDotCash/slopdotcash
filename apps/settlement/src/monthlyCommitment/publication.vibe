@@ -1,0 +1,35 @@
+// spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"
+import { first, sql } from "@repo/platform/d1"
+import { handleRaw } from "@repo/platform/http"
+import { getPaymentsProjectsByIdMonthlyByPeriodAuthorizationByNetwork as refusals } from "../client/refusals.vibe"
+import { parityAnswer } from "../referrals/refusals.vibe"
+import { monthlyAuthorization } from "./client.vibe"
+
+schema CurrentRow { readonly authorization: string; readonly published_at: string }
+
+const projectPattern = /^[a-z0-9][a-z0-9-]*$/u
+const periodPattern = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const networkPattern = /^[a-z0-9-]+$/u
+
+effect function readPublished(projectId: string, period: string, network: string) {
+  const row = try first(CurrentRow, sql`SELECT authorization, published_at FROM monthly_payment_current_authorizations WHERE project_id = ${projectId} AND period = ${period} AND network = ${network}`)
+  if (row === undefined) return undefined
+  const authorization = try Effect.try(() => JSON.parse(row.authorization) as unknown)
+  return { authorization, publishedAt: row.published_at }
+}
+
+effect function published(params: Readonly<Record<string, string>>) {
+  const projectId = params.id ?? ""
+  const period = params.period ?? ""
+  const network = params.network ?? ""
+  if (!projectPattern.test(projectId) || !periodPattern.test(period) || !networkPattern.test(network)) return parityAnswer(refusals.notFoundPrivateNoStore)
+  const saved = readPublished(projectId, period, network) catch effect (error) => {
+    try Effect.logError("payments API failure", error._tag)
+    return null
+  }
+  if (saved === null) return parityAnswer(refusals.paymentsUnavailable)
+  if (saved === undefined) return parityAnswer(refusals.monthlyAuthorizationUnavailable)
+  return HttpServerResponse.jsonUnsafe(saved, { status: 200, headers: refusals.monthlyAuthorizationUnavailable.headers })
+}
+
+export const monthlyCommitmentRoutes = handleRaw(monthlyAuthorization, (input) => published(input.params))

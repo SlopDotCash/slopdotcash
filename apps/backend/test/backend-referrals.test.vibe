@@ -1,0 +1,276 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, type GitHubRequest, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+
+const codePath = "/api/v1/referrals/code"
+const projectsPath = "/api/v1/referrals/projects"
+const site = "https://slop.test"
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: 41, login: "own-login" })
+    github.world.addUser({ id: 999, login: "taken-login" })
+    github.world.addUser({ id: 5000, login: "slop-reader" })
+  }))
+  return { github, net: internet({ github: github.handler }) }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const { github, net } = try World
+  const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
+  return areaLayer({
+    root: new URL("..", import.meta.url).pathname,
+    entry: "worker",
+    d1: { SLOP_DB: "slop-private" },
+    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_GITHUB_READ_TOKEN: reader },
+    internet: net,
+  })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(answer: Answer, name: string): unknown {
+  const body = answer.body
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>)[name] : undefined
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer, "code") ?? field(answer, "error") ?? null]
+}
+
+effect function member(githubId: string) {
+  const area = try Area
+  const token = `referral-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+effect function choose(code: unknown, as: Session, headers: Readonly<Record<string, string>> = {}) {
+  return outcome(try (try Area).request(codePath, { json: { code }, as, headers }))
+}
+
+effect function follow(path: string, method = "GET") {
+  const answer = try (try Area).request(path, { method })
+  return [answer.status, answer.headers.location ?? answer.body, answer.headers["cache-control"] ?? null]
+}
+
+function lookedUp(request: GitHubRequest) {
+  return `${request.method} ${new URL(request.url).pathname} ${request.credential} ${String(request.status)}`
+}
+
+function manifest(id: string, status: string, listingTier: string, repositoryId: number) {
+  return JSON.stringify({
+    id,
+    status,
+    listingTier,
+    steward: { github: { actorId: "41", nodeId: "U_41", login: "member-41" } },
+    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
+    terms: { repositoryLicense: { state: "absent", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    repositories: [{ id: `owner/${id}` }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "none" },
+    funding: {},
+  })
+}
+
+effect function project(id: string, status: string, listingTier: string, createdAt: string, repositoryId: number, referrer: readonly [string, string] | undefined) {
+  const area = try Area
+  const text = manifest(id, status, listingTier, repositoryId)
+  const digest = try sha256Hex(text)
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, ?, ?)", id, text, digest, "Registered", createdAt)
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, referrer_github_id, referrer_github_login) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)", id, status, text, digest, createdAt, createdAt, referrer?.[0] ?? null, referrer?.[1] ?? null)
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A member chooses, replaces and reuses referral names, and a followed link opens the project form for the current active name (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "Story: Follow a referral link to the project form"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read")', () => effect {
+    const area = try Area
+    const { github, net } = try World
+    const alice = try member("41")
+    const bob = try member("42")
+    const admin = try member("7")
+
+    const admission = {
+      crossSite: outcome(try area.request(codePath, { json: { code: "valid-name" }, as: alice, origin: "https://elsewhere.test" })),
+      wrongMethod: outcome(try area.request(codePath, { method: "GET", as: alice })),
+      anonymous: outcome(try area.request(codePath, { json: { code: "valid-name" } })),
+      expectedMalformed: try choose("valid-name", alice, { "x-slop-expected-github-id": "041" }),
+      expectedOther: try choose("valid-name", alice, { "x-slop-expected-github-id": "42" }),
+      extraKey: outcome(try area.request(codePath, { json: { code: "valid-name", ref: "x" }, as: alice })),
+      missingCode: outcome(try area.request(codePath, { json: {}, as: alice })),
+      notText: try choose(5, alice),
+    }
+
+    try orDie(Effect.try(() => {
+      github.failNext("GET /users/down-login", { status: 502 })
+      github.failNext("GET /users/busy-login", { rateLimit: { secondary: false, retryAfterSeconds: 60 } })
+    }))
+    const steps = [
+      try choose("ab", alice),
+      try choose("Support-desk", alice),
+      try choose("Seventh", admin),
+      try choose("taken-login", alice),
+      try choose("down-login", alice),
+      try choose("busy-login", alice),
+      try choose("own-login", alice),
+      try choose("Fresh-name", alice),
+      try choose("fresh-name", bob),
+      try choose("FRESH-NAME", alice),
+      try choose("third", alice),
+      try choose("fourth", alice),
+      try choose("fifth", alice),
+      try choose("sixth", alice),
+      try choose("own-login", alice),
+    ]
+    const raced = try.all [choose("alpha1", bob), choose("bravo1", bob)]
+    const codes = try area.sql("SELECT code, github_id, retired_at IS NULL AS active FROM referral_codes ORDER BY rowid")
+    const bobActive = codes.find((row) => row.github_id === "42" && row.active === 1)?.code
+
+    const links = {
+      active: try follow("/referral/own-login"),
+      head: try follow("/referral/OWN-LOGIN/", "HEAD"),
+      replaced: try follow("/referral/fifth"),
+      unknown: try follow("/referral/nobody-here"),
+      malformed: try follow("/referral/a"),
+      unsafe: try follow("/referral/own-login", "POST"),
+      bare: try follow("/referral"),
+      bareSlash: try follow("/referral/"),
+      bareUnsafe: try follow("/referral/", "DELETE"),
+      bobBeforeClosure: try follow(`/referral/${String(bobActive)}`),
+    }
+    try area.sql("UPDATE points_members SET closed_at = ?, public = 0 WHERE actor_id = ?", "2026-11-03T00:00:00.000Z", "actor-42")
+    const closed = try follow(`/referral/${String(bobActive)}`)
+    try area.sql("ALTER TABLE referral_codes RENAME TO referral_codes_held")
+    const unreadable = try follow("/referral/own-login")
+    try area.sql("ALTER TABLE referral_codes_held RENAME TO referral_codes")
+    const recovered = try follow("/referral/own-login")
+
+    const form = `${site}/projects/new`
+    try same({
+      admission,
+      steps,
+      raced: raced.map(([status]) => status),
+      aliceCodes: codes.filter((row) => row.github_id === "41").map((row) => `${String(row.code)} ${row.active === 1 ? "active" : "retired"}`),
+      bobCodes: codes.filter((row) => row.github_id === "42").map((row) => String(row.code)).sort(),
+      bobActive: codes.filter((row) => row.github_id === "42" && row.active === 1).length,
+      links,
+      closed,
+      unreadable,
+      recovered,
+      lookups: github.requests.slice(0, 9).map(lookedUp),
+      racedLookups: github.requests.slice(9).map(lookedUp).sort(),
+      unexpected: net.unexpected,
+      outboundErrors: area.outboundErrors,
+    }, {
+      admission: {
+        crossSite: [403, "origin_forbidden"],
+        wrongMethod: [403, "origin_forbidden"],
+        anonymous: [401, "unauthorized"],
+        expectedMalformed: [400, "invalid_expected_actor"],
+        expectedOther: [403, "actor_changed"],
+        extraKey: [400, "invalid_request"],
+        missingCode: [400, "invalid_request"],
+        notText: [422, "invalid_code"],
+      },
+      steps: [
+        [422, "invalid_code"],
+        [422, "reserved_code"],
+        [422, "team_account"],
+        [409, "code_is_github_account"],
+        [502, "github_unavailable"],
+        [503, "github_rate_limited"],
+        [200, "own-login"],
+        [200, "Fresh-name"],
+        [409, "code_taken"],
+        [200, "FRESH-NAME"],
+        [200, "third"],
+        [200, "fourth"],
+        [200, "fifth"],
+        [409, "code_limit"],
+        [200, "own-login"],
+      ],
+      raced: [200, 200],
+      aliceCodes: ["own-login active", "FRESH-NAME retired", "third retired", "fourth retired", "fifth retired"],
+      bobCodes: ["alpha1", "bravo1"],
+      bobActive: 1,
+      links: {
+        active: [302, `${form}?ref=member-41`, "no-store"],
+        head: [302, `${form}?ref=member-41`, "no-store"],
+        replaced: [302, form, "no-store"],
+        unknown: [302, form, "no-store"],
+        malformed: [302, form, "no-store"],
+        unsafe: [405, "Method not allowed", "no-store"],
+        bare: [302, `${site}/account#referral`, "no-store"],
+        bareSlash: [302, `${site}/account#referral`, "no-store"],
+        bareUnsafe: [405, "Method not allowed", "no-store"],
+        bobBeforeClosure: [302, `${form}?ref=member-42`, "no-store"],
+      },
+      closed: [302, form, "no-store"],
+      unreadable: [503, "This referral link is unavailable. Retry.", "no-store"],
+      recovered: [302, `${form}?ref=member-41`, "no-store"],
+      lookups: [
+        "GET /users/taken-login user:slop-reader 200",
+        "GET /users/down-login user:slop-reader 502",
+        "GET /users/busy-login user:slop-reader 403",
+        "GET /users/own-login user:slop-reader 200",
+        "GET /users/Fresh-name user:slop-reader 404",
+        "GET /users/third user:slop-reader 404",
+        "GET /users/fourth user:slop-reader 404",
+        "GET /users/fifth user:slop-reader 404",
+        "GET /users/sixth user:slop-reader 404",
+      ],
+      racedLookups: ["GET /users/alpha1 user:slop-reader 404", "GET /users/bravo1 user:slop-reader 404"],
+      unexpected: [],
+      outboundErrors: [],
+    })
+  })
+
+  it.effect('Only public registrations with complete referral attribution are listed, in registry order, and a retired row carrying a referrer is not (spec/backend/referralProjects.md, "Story: Read immutable referral attribution for public registrations"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order")', () => effect {
+    const area = try Area
+    const empty = try area.request(projectsPath)
+    try project("referred-paused", "paused", "community", "2026-11-01T00:00:00.000Z", 7002, ["42", "member-42"])
+    try project("referred-active", "active", "featured", "2026-10-01T00:00:00.000Z", 7001, ["41", "member-41"])
+    try project("referred-retired", "paused", "retired", "2026-10-15T00:00:00.000Z", 7003, ["42", "member-42"])
+    try project("unreferred", "active", "community", "2026-09-01T00:00:00.000Z", 7004, undefined)
+    try project("referred-tie", "active", "community", "2026-11-01T00:00:00.000Z", 7005, ["41", "member-41"])
+
+    const listed = try area.request(projectsPath)
+    const slash = try area.request(`${projectsPath}/`)
+    const head = try area.request(projectsPath, { method: "HEAD" })
+    const child = try area.request(`${projectsPath}/referred-active`)
+    const write = try area.request(projectsPath, { method: "POST", json: {} })
+
+    const expected = {
+      schema: "slop-referred-projects-v1",
+      projects: [
+        { projectId: "referred-active", status: "active", listedAt: "2026-10-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+        { projectId: "referred-paused", status: "paused", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "42", githubLogin: "member-42" } },
+        { projectId: "referred-tie", status: "active", listedAt: "2026-11-01T00:00:00.000Z", referrer: { githubId: "41", githubLogin: "member-41" } },
+      ],
+    }
+    try same({
+      empty: [empty.status, empty.body, empty.headers["cache-control"]],
+      listed: [listed.status, listed.body, listed.headers["cache-control"]],
+      slash: [slash.status, slash.body],
+      head: [head.status, head.body, head.headers["cache-control"]],
+      child: [child.status, child.body, child.headers["cache-control"]],
+      write: [write.status, write.body, write.headers["cache-control"]],
+    }, {
+      empty: [200, { schema: "slop-referred-projects-v1", projects: [] }, "public, max-age=300"],
+      listed: [200, expected, "public, max-age=300"],
+      slash: [200, expected],
+      head: [200, "", "public, max-age=300"],
+      child: [404, { error: "not_found" }, "public, max-age=300"],
+      write: [405, { error: "method_not_allowed" }, "public, max-age=300"],
+    })
+  })
+})

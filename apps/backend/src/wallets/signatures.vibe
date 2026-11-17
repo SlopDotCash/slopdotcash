@@ -1,0 +1,169 @@
+// spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+import { recoverPersonalSign } from "@repo/platform/chain/evm"
+import { base64Decode, onCurve, publicKey } from "@repo/platform/chain/solana"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { ed25519Verify, utf8 } from "@repo/platform/crypto"
+import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
+
+module verified {
+  import { isCanonicalSignatureText as canonicalSignature, isEvmAccount as evmAccount, isSmallOrderEncoding as smallOrder, isSolanaAddressText as solanaText, isStrictPointEncoding as strictPoint } from "./verify.ts"
+  /** @throws {never} */
+  export function isEvmAccount(value: string): boolean { return evmAccount(value) }
+  /** @throws {never} */
+  export function isSolanaAddressText(value: string): boolean { return solanaText(value) }
+  /** @throws {never} */
+  export function isCanonicalSignatureText(value: string): boolean { return canonicalSignature(value) }
+  /** @throws {never} */
+  export function isStrictPointEncoding(bytes: Uint8Array): boolean { return strictPoint(bytes) }
+  /** @throws {never} */
+  export function isSmallOrderEncoding(bytes: Uint8Array): boolean { return smallOrder(bytes) }
+}
+import { isCanonicalSignatureText, isEvmAccount, isSmallOrderEncoding, isSolanaAddressText, isStrictPointEncoding } from verified
+
+export const possessionKind = "slop-wallet-possession"
+export const possessionSchemaVersion = "1"
+export const possessionAudience = "slop.cash"
+const possessionLifetimeMs = 15 * 60_000
+
+const challengeIdPattern = /^[0-9a-f]{32}$/u
+const claimIdPattern = /^[0-9a-zA-Z_-]{1,64}$/u
+const actorIdPattern = /^\d{1,20}$/u
+const canonicalKeys = "address,audience,challengeId,claimId,expiresAt,githubActorId,issuedAt,kind,schemaVersion"
+
+export interface PossessionChallenge {
+  readonly kind: typeof possessionKind
+  readonly schemaVersion: typeof possessionSchemaVersion
+  readonly audience: typeof possessionAudience
+  readonly challengeId: string
+  readonly claimId: string
+  readonly githubActorId: string
+  readonly address: string
+  readonly issuedAt: string
+  readonly expiresAt: string
+}
+
+error PossessionProofInvalid { message: string }
+
+export function solanaKey(address: string): Uint8Array | undefined {
+  return isSolanaAddressText(address) ? publicKey(address) : undefined
+}
+
+export function walletAddressValid(chain: WalletChain, address: string): boolean {
+  return chain === "Solana" ? solanaKey(address) !== undefined : isEvmAccount(address)
+}
+
+export function signableSolanaAddress(address: string): boolean {
+  const key = solanaKey(address)
+  return key !== undefined && isStrictPointEncoding(key) && onCurve(key)
+}
+
+function solanaSignature(text: string): Uint8Array | undefined {
+  if (!isCanonicalSignatureText(text)) return undefined
+  const bytes = base64Decode(text)
+  return bytes?.length === 64 ? bytes : undefined
+}
+
+effect function strictlyVerified(key: Uint8Array, message: string, signature: Uint8Array) {
+  if (!isStrictPointEncoding(key) || isSmallOrderEncoding(key)) return false
+  return try ed25519Verify(key, utf8(message), signature)
+}
+
+effect function solanaSigned(address: string, message: string, signature: string) {
+  const key = solanaKey(address)
+  const bytes = solanaSignature(signature)
+  if (key === undefined || bytes === undefined) return false
+  return try strictlyVerified(key, message, bytes)
+}
+
+export effect function paymentSigner(chain: WalletChain, address: string, message: string, signature: string) {
+  if (chain === "Solana") return (try solanaSigned(address, message, signature)) ? address : ""
+  const recovered = recoverPersonalSign(message, signature)
+  return recovered !== undefined && recovered.toLowerCase() === address.toLowerCase() ? address : ""
+}
+
+export function possessionMessage(challenge: PossessionChallenge): string {
+  const canonical = JSON.stringify({
+    address: challenge.address,
+    audience: challenge.audience,
+    challengeId: challenge.challengeId,
+    claimId: challenge.claimId,
+    expiresAt: challenge.expiresAt,
+    githubActorId: challenge.githubActorId,
+    issuedAt: challenge.issuedAt,
+    kind: challenge.kind,
+    schemaVersion: challenge.schemaVersion,
+  })
+  return `Slop wallet possession only; no payment authorization.\n${canonical}`
+}
+
+effect function canonicalInstant(value: unknown) {
+  if (typeof value !== "string") return undefined
+  const millis = millisOf(value)
+  if (!Number.isFinite(millis)) return undefined
+  return (try isoAt(millis)) === value ? millis : undefined
+}
+
+function invalid(message: string) {
+  return new PossessionProofInvalid({ message })
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function timestamp(value: unknown, field: string) {
+  const millis = try canonicalInstant(value)
+  if (millis === undefined) throw invalid(`Wallet possession challenge requires a canonical UTC ${field}`)
+  return millis
+}
+
+export effect function assertPossessionChallenge(value: unknown) {
+  if (!isRecord(value)) throw invalid("Wallet possession challenge must be an object")
+  if (Object.keys(value).sort().join(",") !== canonicalKeys) throw invalid("Wallet possession challenge has unexpected fields")
+  if (value.kind !== possessionKind || value.schemaVersion !== possessionSchemaVersion || value.audience !== possessionAudience) throw invalid("Wallet possession challenge has an unsupported identity")
+  const { challengeId, claimId, githubActorId, address } = value
+  if (typeof challengeId !== "string" || !challengeIdPattern.test(challengeId)) throw invalid("Wallet possession challenge id is invalid")
+  if (typeof claimId !== "string" || !claimIdPattern.test(claimId)) throw invalid("Wallet possession challenge claim id is invalid")
+  if (typeof githubActorId !== "string" || !actorIdPattern.test(githubActorId)) throw invalid("Wallet possession challenge actor id is invalid")
+  if (typeof address !== "string" || solanaKey(address) === undefined) throw invalid("Wallet possession challenge address is invalid")
+  const issuedAt = try timestamp(value.issuedAt, "issuedAt")
+  const expiresAt = try timestamp(value.expiresAt, "expiresAt")
+  if (expiresAt - issuedAt !== possessionLifetimeMs) throw invalid("Wallet possession challenge does not use the fixed challenge lifetime")
+  return {
+    kind: possessionKind,
+    schemaVersion: possessionSchemaVersion,
+    audience: possessionAudience,
+    challengeId,
+    claimId,
+    githubActorId,
+    address,
+    issuedAt: try isoAt(issuedAt),
+    expiresAt: try isoAt(expiresAt),
+  } satisfies PossessionChallenge
+}
+
+interface PossessionSubmission {
+  readonly challenge: unknown
+  readonly signature: unknown
+  readonly claimId: string
+  readonly githubActorId: string
+  readonly address: string
+  readonly now: number
+}
+
+export effect function verifyPossession(input: PossessionSubmission) {
+  const challenge = try assertPossessionChallenge(input.challenge)
+  if (challenge.claimId !== input.claimId) throw invalid("Wallet possession challenge is bound to another claim")
+  if (challenge.githubActorId !== input.githubActorId) throw invalid("Wallet possession challenge is bound to another actor")
+  if (challenge.address !== input.address) throw invalid("Wallet possession challenge is bound to another address")
+  if (millisOf(challenge.issuedAt) > input.now) throw invalid("Wallet possession challenge was issued in the future")
+  if (input.now >= millisOf(challenge.expiresAt)) throw invalid("Wallet possession challenge has expired")
+  if (!signableSolanaAddress(challenge.address)) throw invalid("Wallet possession challenge address is not on the Ed25519 curve")
+  const text = input.signature
+  const signature = typeof text === "string" ? solanaSignature(text) : undefined
+  if (typeof text !== "string" || signature === undefined) throw invalid("Wallet possession signature must be 64 bytes of canonical padded base64")
+  const key = solanaKey(challenge.address)
+  const valid = key !== undefined && (try strictlyVerified(key, possessionMessage(challenge), signature))
+  if (!valid) throw invalid("Wallet possession signature is invalid")
+  return { challenge, signature: text }
+}

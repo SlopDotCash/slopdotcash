@@ -1,0 +1,78 @@
+// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"
+import type { JournalRow } from "../../access/journal.vibe"
+import { type Loaded, activeBans, historyOf, projectAppeal, restrictionAppeal } from "../../access/store.vibe"
+import { awaitsMaliceDecision, foldRestriction } from "./reducers.vibe"
+
+type Records = Pick<Loaded, "journal" | "bans" | "releases">
+
+effect function parsedJson(text: string) {
+  return try orDie(Effect.try(() => JSON.parse(text) as unknown))
+}
+
+export effect function recordView(loaded: Records, row: JournalRow, shape: "listed" | "decided") {
+  const banned = loaded.bans.filter((ban) => ban.enforcement_id === row.id).map((ban) => ({ githubId: ban.github_id, githubLogin: ban.github_login }))
+  const reinstated = loaded.releases.filter((release) => release.enforcement_id === row.id).map((release) => ({
+    githubId: release.github_id,
+    githubLogin: loaded.bans.find((ban) => ban.enforcement_id === release.ban_enforcement_id && ban.github_id === release.github_id)?.github_login ?? "",
+    banEnforcementId: release.ban_enforcement_id,
+  }))
+  const review = row.review_assessment_id === null || row.review_malicious_assessment_ids === null ? undefined : { assessmentId: row.review_assessment_id, maliciousAssessmentIds: try parsedJson(row.review_malicious_assessment_ids) }
+  const base = {
+    id: row.id,
+    projectId: row.project_id,
+    sequence: row.sequence,
+    action: row.action,
+    stateAfter: row.state_after,
+    appealAfter: row.appeal_after,
+    reason: row.reason,
+    evidenceReference: row.evidence_reference,
+    repositoryGithubId: row.repository_github_id,
+    repositoryKeys: try parsedJson(row.repository_keys),
+    actor: row.actor_github_id === null || row.actor_github_login === null ? null : { githubId: row.actor_github_id, githubLogin: row.actor_github_login },
+    ...(row.system_issuer === null ? {} : { systemIssuer: try parsedJson(row.system_issuer) }),
+    actorRole: row.actor_role,
+    decisionSource: row.decision_source,
+    beforeRevision: row.before_revision,
+    beforeManifestSha256: row.before_manifest_sha256,
+    afterRevision: row.after_revision,
+    afterManifestSha256: row.after_manifest_sha256,
+    result: row.result,
+  }
+  const decisions = {
+    ...(review === undefined ? {} : { vettingReview: review }),
+    ...(banned.length > 0 ? { maintainerBans: banned } : {}),
+    ...(shape === "listed" || reinstated.length > 0 ? { accountReinstatements: reinstated } : {}),
+  }
+  return shape === "listed" ? { ...base, createdAt: row.created_at, ...decisions } : { ...base, ...decisions, createdAt: row.created_at }
+}
+
+export interface ListedManifest {
+  readonly status: string
+  readonly listingTier: string
+}
+
+export effect function enforcementState(loaded: Records, projectId: string, manifest: ListedManifest, moderation: "unconfigured" | "moderator" | "not-moderator") {
+  const rows = loaded.journal.filter((row) => row.project_id === projectId).toSorted((left, right) => left.sequence - right.sequence)
+  const history = historyOf(loaded, projectId)
+  const episode = foldRestriction(history)
+  const opening = episode.opening < 0 ? undefined : rows[episode.opening]
+  const bans = activeBans(loaded).filter((ban) => ban.projectId === projectId)
+  const records: unknown[] = []
+  for (const row of rows) records.push(try recordView(loaded, row, "listed"))
+  return {
+    state: episode.state,
+    appeal: restrictionAppeal(loaded, projectId),
+    projectAppeal: projectAppeal(loaded, projectId),
+    since: opening?.created_at ?? null,
+    restrictedBy: episode.restrictors.flatMap((index) => {
+      const row = rows[index]
+      return row === undefined || row.actor_github_id === null || row.actor_github_login === null ? [] : [{ githubId: row.actor_github_id, githubLogin: row.actor_github_login }]
+    }),
+    nextSequence: rows.length + 1,
+    revisionPending: episode.state !== "clear" && !(manifest.status === "paused" && manifest.listingTier === "retired"),
+    moderation,
+    decisionRequired: awaitsMaliceDecision(history, episode.state),
+    bannedMaintainers: bans.map((ban) => ({ githubId: ban.githubId, githubLogin: ban.login })),
+    records,
+  }
+}

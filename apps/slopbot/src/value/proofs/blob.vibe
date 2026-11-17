@@ -1,0 +1,73 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { gitObjectId } from "@repo/platform/git/bytes"
+import { type ObjectRead, blobByteLimit, blobReadLimit, objectVerified } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { base64Bytes, contentsPath, withoutWhitespace } from "./encoding.ts"
+import { isObjectId, isSafePath } from "./gitObject.ts"
+import { contentsLimitBytes, count, fields, fetched, text } from "./reads.vibe"
+
+export interface VerifiedBlob {
+  readonly sha: string
+  readonly bytes: Uint8Array
+}
+
+export interface Recovered {
+  readonly verified: (repository: string, ref: string, path: string) => VerifiedBlob | undefined
+  readonly intern: (text: string) => string
+}
+
+export const unrecovered: Recovered = { verified: () => undefined, intern: (text) => text }
+
+export interface ContentsFile {
+  readonly sha: string
+  readonly size: number
+  readonly bytes: Uint8Array
+}
+
+export effect function contentsFile(repository: string, ref: string, path: string) {
+  const location = contentsPath(repository, path, ref)
+  if (location === undefined) return undefined
+  const file = fields(try fetched(location, contentsLimitBytes))
+  const content = text(file, "content")
+  const size = count(file, "size")
+  const sha = text(file, "sha")
+  if (
+    text(file, "type") !== "file" || text(file, "encoding") !== "base64" || content === undefined ||
+    size === undefined || !Number.isSafeInteger(size) || size < 0 || sha === undefined || !isObjectId(sha)
+  ) return undefined
+  const bytes = base64Bytes(withoutWhitespace(content))
+  return bytes === undefined ? undefined : { sha, size, bytes } satisfies ContentsFile
+}
+
+export function verifiedBlob(repository: string, recovered: Recovered = unrecovered) {
+  let reads = 0
+  let totalBytes = 0
+  return effect (path: string, ref: string) => {
+    if (!isObjectId(ref) || !isSafePath(path)) return undefined
+    const reused = recovered.verified(repository, ref, path)
+    if (reused !== undefined) return reused
+    reads += 1
+    if (reads > blobReadLimit) return undefined
+    const file = try contentsFile(repository, ref, path)
+    if (file === undefined || file.size > blobByteLimit) return undefined
+    totalBytes += file.bytes.length
+    const computed = gitObjectId("blob", file.bytes)
+    const read: ObjectRead = {
+      objectKind: "BlobObject",
+      claimedSha: file.sha,
+      computedSha: computed,
+      claimedSha256: "",
+      computedSha256: "",
+      reportedSize: file.size,
+      bytesRead: file.bytes.length,
+      readNumber: reads,
+      bytesSoFar: totalBytes,
+      reused: false,
+    }
+    return objectVerified(read) ? { sha: computed, bytes: file.bytes } satisfies VerifiedBlob : undefined
+  }
+}
+
+export function verifiedBlobSha(repository: string, recovered: Recovered = unrecovered) {
+  const read = verifiedBlob(repository, recovered)
+  return effect (path: string, ref: string) => (try read(path, ref))?.sha
+}

@@ -1,0 +1,73 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/xConnection.md, "A start replaces the member's earlier flows and binds the originating session"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema MemberActor { readonly id: string; readonly login: string }
+
+export schema PublicMember {
+  readonly actor: MemberActor
+  readonly joinedAt: string
+  readonly public: boolean
+  readonly welcome: number
+  readonly socialPoints: number
+  readonly referralCode: string | null
+}
+
+export schema XProfile { readonly id: string; readonly username: string; readonly verifiedAt: string }
+
+export schema Person {
+  readonly actor: MemberActor
+  readonly welcome: number
+  readonly socialPoints: number
+  readonly x: XProfile | null
+}
+
+export schema People { readonly people: ReadonlyArray<Person>; readonly next: string | null }
+
+export schema LookedUpMember {
+  readonly actor: MemberActor
+  readonly joinedAt: string
+  readonly public: boolean
+  readonly welcome: number
+  readonly socialPoints: number
+}
+
+export schema JoinRequest { readonly assertion: string; readonly public: boolean; readonly reopen?: boolean }
+export schema Visibility { readonly public: boolean }
+export schema RevokeRequest { readonly id: string }
+export schema CloseRequest { readonly login: string }
+export const NoFields = Schema.Struct({})
+
+export schema SignedOut { readonly signedOut: boolean }
+export schema Revoked { readonly revoked: boolean }
+export schema Closed { readonly closed: boolean; readonly closedAt: string }
+
+export schema XAccount { readonly id: string; readonly username: string; readonly verifiedAt: string; readonly public: number }
+export schema XStatus { readonly configured: boolean; readonly account: XAccount | null }
+export schema XStarted { readonly authorizationUrl: string }
+export schema XDisconnected { readonly disconnected: boolean }
+export schema XUpdated { readonly updated: boolean }
+
+export schema WebSession { readonly githubId: string; readonly githubLogin: string; readonly admin: boolean }
+export schema ProjectSession { readonly session: WebSession | null }
+
+const points = { access: "public", rejected: "points_unavailable", cache: "no-store" } as const
+
+export const pointsPeople = route({ ...points, method: "GET", path: "/api/v1/points/people", limitKib: 1, request: undefined, answer: People })
+export const pointsMember = route({ ...points, method: "GET", path: "/api/v1/points/member", limitKib: 1, request: undefined, answer: Schema.NullOr(LookedUpMember) })
+export const pointsJoin = route({ ...points, method: "POST", path: "/api/v1/points/join", limitKib: 4, request: JoinRequest, answer: PublicMember })
+export const pointsMe = route({ ...points, method: "GET", path: "/api/v1/points/me", limitKib: 1, request: undefined, answer: Schema.NullOr(PublicMember) })
+export const pointsSignOut = route({ ...points, method: "POST", path: "/api/v1/points/signout", limitKib: 1, request: NoFields, answer: SignedOut })
+export const pointsRevokeSession = route({ ...points, method: "POST", path: "/api/v1/points/sessions/revoke", limitKib: 1, request: RevokeRequest, answer: Revoked })
+export const pointsVisibility = route({ ...points, method: "POST", path: "/api/v1/points/visibility", limitKib: 1, request: Visibility, answer: PublicMember })
+export const pointsClose = route({ ...points, method: "POST", path: "/api/v1/points/account/close", limitKib: 1, request: CloseRequest, answer: Closed })
+
+export const xProfile = route({ ...points, method: "GET", path: "/api/v1/points/x/profile", limitKib: 1, request: undefined, answer: Schema.NullOr(XProfile) })
+export const xCallbackRoute = route({ ...points, method: "GET", path: "/api/v1/points/x/callback", limitKib: 1, request: undefined, answer: Schema.String })
+export const xMe = route({ ...points, method: "GET", path: "/api/v1/points/x/me", limitKib: 1, request: undefined, answer: XStatus })
+export const xStart = route({ ...points, method: "POST", path: "/api/v1/points/x/start", limitKib: 1, request: Visibility, answer: XStarted })
+export const xDisconnect = route({ ...points, method: "POST", path: "/api/v1/points/x/disconnect", limitKib: 1, request: NoFields, answer: XDisconnected })
+export const xVisibility = route({ ...points, method: "POST", path: "/api/v1/points/x/visibility", limitKib: 1, request: Visibility, answer: XUpdated })
+
+export const projectSession = route({ method: "GET", path: "/api/v1/project-session", access: "public", limitKib: 1, request: undefined, answer: ProjectSession, rejected: "internal_error", cache: "no-store" })
+
+export const api: ReadonlyArray<AnyRoute> = [pointsPeople, pointsMember, pointsJoin, pointsMe, pointsSignOut, pointsRevokeSession, pointsVisibility, pointsClose, xProfile, xCallbackRoute, xMe, xStart, xDisconnect, xVisibility, projectSession]

@@ -1,0 +1,201 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { utf8, webCrypto } from "@repo/platform/crypto"
+import type { Handler } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { asFetch } from "@repo/platform/testing/quotes"
+import { type RepositoryRegistry, leaderboardMethodology, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, validatePaymentSnapshot, verificationWindowDays } from "@repo/points/client"
+import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { leaderboard } from "../../src/reads/snapshot.vibe"
+import { type ProjectTerms, projectCycleView } from "../../src/projections/projectView.ts"
+import { globalStandings, reviewerStandings, standingHistory, standingsFor } from "../../src/projections/standings.ts"
+
+const origin = "https://slop.test"
+const generatedAt = "2026-11-01T00:00:00.000Z"
+const generatedMs = 1_793_491_200_000
+const windowFrom = "2026-09-27T00:00:00.000Z"
+const repositoryId = "SlopDotCash/slopdotcash"
+const repositoryUrl = "https://github.com/SlopDotCash/slopdotcash"
+const repositoryNode = "R_kgDOslop"
+const published = { id: repositoryId, owner: "SlopDotCash", name: "slopdotcash", displayName: "Slop", githubUrl: repositoryUrl, description: "Accepted work, scored and paid", integrationBranch: "main", projectId: "slop" }
+const registry: RepositoryRegistry = {
+  registered: [{ ...published, nodeId: repositoryNode, aliases: [] }],
+  targets: [{ ...published, nodeId: repositoryNode, aliases: [] }],
+  projects: [{ id: "slop", skillSourcePath: "skills/slop" }],
+}
+const terms: ProjectTerms = {
+  id: "slop",
+  rewardStartAt: "2026-01-01T00:00:00.000Z",
+  repositories: [{ id: repositoryId }],
+  payoutExclusions: [],
+  reward: { kind: "monthly-pool", currency: "USDC", chain: "base", feeBasisPoints: 200, monthlyCapMinor: 1_000_000n, cycleCaps: [], fundingState: "committed", escrow: { effectiveCycle: "2026-10", chain: "base" } },
+}
+const coverage = { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 }
+const assessedDigest = "a".repeat(64)
+
+function actor(login: string, nodeId: string) {
+  return { id: nodeId, login, avatarUrl: `https://avatars.githubusercontent.com/u/${login}`, url: `https://github.com/${login}`, kind: "User" }
+}
+
+function pull(number: number) {
+  return { id: `PR_${number}`, kind: "pull-request", number, title: `Pull request ${number}`, url: `${repositoryUrl}/pull/${number}` }
+}
+
+function credit(id: string, who: ReturnType<typeof actor>, category: string, scoreThirds: number, occurredAt: string, source: ReturnType<typeof pull>) {
+  return { id, actor: who, category, points: scoreThirds / 3, scoreThirds, workUnitId: `wu_${id.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")}`, occurredAt, repository: repositoryId, source, reason: "Accepted work" }
+}
+
+function leader(rank: number, who: ReturnType<typeof actor>, merged: number, material: number, reviewed: number, outcomes: readonly [number, number, number], penaltyThirds?: number) {
+  const scoreThirds = merged + material + reviewed - (penaltyThirds ?? 0)
+  return {
+    rank,
+    actor: who,
+    score: Math.floor(scoreThirds / 3),
+    scoreThirds,
+    ...(penaltyThirds === undefined ? {} : { penaltyThirds }),
+    points: { mergedPullRequests: merged / 3, resolvedIssues: 0, materialTestChanges: material / 3, evidence: 0, substantiveReviews: reviewed / 3, evaluatedContributions: 0 },
+    pointThirds: { mergedPullRequests: merged, resolvedIssues: 0, materialTestChanges: material, evidence: 0, substantiveReviews: reviewed, evaluatedContributions: 0 },
+    acceptedOutcomes: { mergedPullRequests: outcomes[0], resolvedIssues: 0, materialTestChanges: outcomes[1], evidenceCategories: 0, substantiveReviews: outcomes[2], evaluatedContributions: 0 },
+    rawActivity: { comments: 0, reviews: 0, commits: 0, additions: 0, deletions: 0 },
+    reportedModels: [],
+  }
+}
+
+const alice = actor("alice", "U_kgDOAAAD6Q")
+const bob = actor("bob", "U_kgDOAAAD6g")
+const reviews = ["automated-review", "reviewer", "ratifier"].map((role, index) => credit(`PR_1:${role}:PRR_${index + 1}`, bob, "substantive-review", 9, `2026-10-0${index + 5}T00:00:00.000Z`, {
+  id: `PRR_${index + 1}`, kind: "review", number: 1, title: "Review of pull request 1", url: `${repositoryUrl}/pull/1#pullrequestreview-${index + 11}`,
+}))
+const leaders = [leader(1, alice, 36, 12, 0, [2, 1, 0], 6), leader(2, bob, 0, 0, 27, [0, 0, 3])]
+const debit = { id: "PR_3:penalty", actor: alice, repository: repositoryId, occurredAt: "2026-10-22T00:00:00.000Z", category: "unreviewable-change", tableVersion: "slopbot-penalties-v1", debitThirds: 6, source: pull(3) }
+
+const snapshot = {
+  schemaVersion,
+  repository: repositoryId,
+  repositories: [{ ...published, role: "primary" }],
+  ruleVersion,
+  generatedAt,
+  sourceUpdatedAt: generatedAt,
+  stale: false,
+  window: { days: scoreWindowDays, from: windowFrom, to: generatedAt },
+  methodology: leaderboardMethodology,
+  source: {
+    provider: "github-graphql",
+    fetchedAt: generatedAt,
+    cutoffAt: generatedAt,
+    repositoryId: repositoryNode,
+    repositories: [{ id: repositoryId, repositoryId: repositoryNode }],
+    requestCount: 1,
+    searchSliceCount: 1,
+    rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-01T01:00:00.000Z" },
+    counts: { mergedPullRequests: 1, detailedMergedPullRequests: 1, closedUnmergedPullRequests: 1, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+    verificationWindow: { days: verificationWindowDays, from: windowFrom, to: generatedAt },
+    evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 200, maxArtifacts: 600 },
+  },
+  leaders,
+  ledger: [
+    credit("PR_1:merged:alice", alice, "merged-pull-request", 30, "2026-10-20T00:00:00.000Z", pull(1)),
+    { ...credit("PR_2:joint:alice", alice, "merged-pull-request", 6, "2026-10-21T00:00:00.000Z", pull(2)), acceptanceKind: "indirect-integration", scoreDecisionSourceId: `value:${assessedDigest}`, scoreDecisionAt: "2026-10-21T00:00:00.000Z" },
+    credit("PR_1:material-test-change:alice", alice, "material-test-change", 12, "2026-10-20T00:00:00.000Z", pull(1)),
+    ...reviews,
+  ],
+  valueAssessmentCoverage: [
+    { pullRequestId: "PR_1", repository: repositoryId, pullRequestNumber: 1, status: "legacy-policy", recordDigest: null },
+    { pullRequestId: "PR_2", repository: repositoryId, pullRequestNumber: 2, status: "assessed", recordDigest: assessedDigest },
+  ],
+  reviewExclusions: [],
+  penalties: [debit],
+  paymentReviewBasis: {
+    policy: paymentReviewPolicy,
+    effectiveAt: paymentReviewPolicyAt,
+    leaders: leaders.slice(0, 1),
+    ledger: [],
+    removedEventIds: reviews.map((review) => review.id),
+    removedAttributionIds: [],
+    attributionOrder: [],
+    reviewExclusions: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage: coverage,
+    opportunities: [],
+  },
+  opportunities: [],
+  attributions: [],
+  invalidAttributionMarkers: [],
+  attributionCoverage: coverage,
+  workQueue: { issues: [], pullRequests: [] },
+}
+
+const september = { projectId: "slop", cycleId: "2026-09", contributors: [
+  { actor: { id: "U_kgDOAAAD6w", login: "carol" }, score: 2, state: "paid", paidMinor: "500000" },
+  { actor: { id: bob.id, login: bob.login }, score: 5, state: "paid", paidMinor: "750000" },
+] }
+
+const requests: string[] = []
+
+const serve: Handler = (request) => {
+  const url = new URL(request.url)
+  requests.push(url.pathname)
+  return url.pathname === "/data/leaderboard.json"
+    ? new Response(utf8(JSON.stringify(snapshot)), { headers: { "content-type": "application/json" } })
+    : new Response("not found", { status: 404 })
+}
+
+const deployment = Layer.succeed(Deployment, {
+  tier: "production",
+  origins: originsOf("production"),
+  pageOrigin: origin,
+  localBackendOrigin: undefined,
+  loginHref: (next: string) => Effect.succeed(`/login?next=${next}`),
+})
+
+const Browser = Layer.mergeAll(FetchHttpClient.layer, webCrypto, deployment, settableClock(generatedMs).layer)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Browser, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('A visitor reads the published leaderboard and sees project, reviewer and cross-project standings with equal ranks for equal totals (spec/frontend/projections.md, "Story: Read Points standings with equal ranks for equal totals"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/penalties.md, "Standing is the month\'s accepted-work credits minus active debits, never below zero, whatever the order"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division")', () => Effect.provideService(effect {
+    const { cache } = try leaderboard()
+    const read = try cache.read(cache.consumer(), registry, false)
+    const payment = try validatePaymentSnapshot(read.snapshot, registry)
+    const view = try Effect.try(() => projectCycleView({ snapshot: read.snapshot, payment, registry, project: terms, cycleId: "2026-10" }))
+    const published = { snapshot: read.snapshot, registry, projects: [terms], views: [view], cycles: [september] }
+    const global = try Effect.try(() => globalStandings(published))
+    const history = try Effect.try(() => standingHistory(published))
+    const reviewers = reviewerStandings(view.ledger)
+    const standings = (period: number) => standingsFor(history.entries, period).map((entry) => [history.actors[entry.actor]?.login, entry.points, entry.rank])
+
+    try same({
+      requests,
+      cycle: view.cycle,
+      ledger: view.ledger.map((event) => event.id),
+      leaders: view.kind === "monthly-pool" ? view.leaders.map((entry) => [entry.actor.login, entry.rank, entry.points, entry.penaltyPoints, entry.weight, entry.simulatedMinor, entry.projectedMinor, entry.categoryPoints["merged-pull-request"], entry.capUsage.substantiveReviews]) : [],
+      reward: view.reward,
+      reviewers: reviewers.map((entry) => [entry.actor.login, entry.rank, entry.reviewPoints, entry.reviewEventCount]),
+      global: global.map((entry) => [entry.actor.login, entry.actor.avatarUrl, entry.rank, entry.points, entry.paidMinor, entry.projects, entry.cycles]),
+      lifetime: standings(0),
+      september: standings(202609),
+      october: standings(202610),
+    }, {
+      requests: ["/data/leaderboard.json"],
+      cycle: { id: "2026-10", from: "2026-10-01T00:00:00.000Z", to: generatedAt, endsAt: generatedAt, status: "closed" },
+      ledger: ["PR_2:joint:alice", "PR_1:material-test-change:alice", "PR_1:merged:alice", "PR_1:ratifier:PRR_3", "PR_1:reviewer:PRR_2", "PR_1:automated-review:PRR_1"],
+      leaders: [
+        ["alice", 1, 420, 60, 420_000n, 980_000n, 0n, 12, { used: 0, cap: 10 }],
+        ["bob", 2, 270, 0, 0n, 0n, 0n, 0, { used: 3, cap: 10 }],
+      ],
+      reward: { kind: "monthly-pool", currency: "USDC", chain: "base", capMinor: 1_000_000n, projectedPrincipalMinor: 0n, platformFeeMinor: 0n, status: "simulation" },
+      reviewers: [["bob", 1, 270, 3]],
+      global: [
+        ["alice", alice.avatarUrl, 1, 420, 0n, 1, 1],
+        ["bob", bob.avatarUrl, 1, 420, 750_000n, 1, 2],
+        ["carol", "https://avatars.githubusercontent.com/carol?size=96", 3, 60, 500_000n, 1, 1],
+      ],
+      lifetime: [["bob", 420, 1], ["alice", 420, 1], ["carol", 60, 3]],
+      september: [["bob", 150, 1], ["carol", 60, 2]],
+      october: [["alice", 420, 1], ["bob", 270, 2]],
+    })
+  }, FetchHttpClient.Fetch, asFetch(serve)))
+})

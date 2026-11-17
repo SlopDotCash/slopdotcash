@@ -1,0 +1,211 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import type { RateLimit } from "@repo/platform/bindings"
+import { Refused, bytesBody, json, refuse } from "@repo/platform/http"
+import { type PollOutcome, type RateScope, Rejected } from "../../gen/backend__identity.effect.vibe"
+import { identityPostV1AssertionsConsume as bodyRows, identityPostV1LocalStart as localStartRows, identityPostV1OauthPoll as pollRows, identityPostV1OauthStart as startRows } from "../client/refusals.vibe"
+import { localFlowId, localFlowOrigin, returnOriginOf } from "../local/origin.vibe"
+import { IdentitySettings } from "./config.vibe"
+import { randomText } from "./pkce.vibe"
+import { audienceOf } from "./projection.vibe"
+import { principalOf } from "./rateWindow.vibe"
+import { FlowNotStored, LimiterFailed, OverLimit, type PollFacts, type Polled, WindowFull, countUnmodelled, issueAssertion, poll, refuseRateLimited, start } from "./store.vibe"
+
+export service EdgeLimiters {
+  readonly start: RateLimit
+  readonly poll: RateLimit
+}
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+export const flowShape = /^flow_[A-Za-z0-9_-]{20,64}$/u
+export const capabilityShape = /^[A-Za-z0-9_-]{40,128}$/u
+const pollAfterSeconds = 2
+const edgeRetryAfterSeconds = 60
+const bodyLimitBytes = 4096
+const bodyTypes: readonly [string, ...string[]] = ["application/json", "text/plain", ""]
+
+const pollRefusals: Readonly<Record<Exclude<PollOutcome, "PollPending" | "PollReady">, Row>> = {
+  PollUnavailable: pollRows.flowUnavailableIdentityFlowIsUnavailable,
+  PollWrongMode: pollRows.wrongFlow,
+  PollCallbackFailed: pollRows.callbackFailed,
+  PollConsumed: pollRows.flowConsumed,
+}
+
+export function refusedBy(row: Row) {
+  return refuse(row.status, row.error, row.message)
+}
+
+export function bare(row: { readonly status: number; readonly error: string }) {
+  return json({ error: row.error }, row.status)
+}
+
+function tooMany(retryAfterSeconds: number) {
+  const row = startRows.rateLimitedTooManyRequestsTry
+  return json({ error: row.error, message: row.message }, row.status, { "retry-after": String(retryAfterSeconds) })
+}
+
+function limiterDown() {
+  const row = startRows.serviceUnavailable
+  return json({ error: row.error, message: row.message }, row.status, { "retry-after": row.headers["retry-after"] })
+}
+
+effect function requestUrl() {
+  return new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+}
+
+export effect function httpsGate() {
+  const settings = try IdentitySettings
+  const url = try requestUrl()
+  return url.protocol !== "https:" && !(settings.loopback && url.origin === settings.publicOrigin) ? bare(bodyRows.httpsRequiredNoStore) : undefined
+}
+
+export effect function publicGate() {
+  const refused = try httpsGate()
+  if (refused !== undefined) return refused
+  const url = try requestUrl()
+  return url.host === new URL((try IdentitySettings).publicOrigin).host ? undefined : bare(bodyRows.notFoundNoStore)
+}
+
+effect function originGate() {
+  const origin = (try HttpServerRequest.HttpServerRequest).headers.origin
+  return origin !== undefined && !(try IdentitySettings).browserOrigins.has(origin) ? bare(startRows.originForbiddenNoStore) : undefined
+}
+
+effect function edgeLimited(scope: RateScope, principal: string) {
+  if ((try IdentitySettings).loopback) return undefined
+  const limiters = try EdgeLimiters
+  const binding = scope === "StartScope" ? limiters.start : limiters.poll
+  const outcome = try tryPromise({ try: () => binding.limit({ key: principal }), catch: () => new LimiterFailed() })
+  return outcome.success ? undefined : tooMany(edgeRetryAfterSeconds)
+}
+
+export effect function readJson() {
+  const bytes = bytesBody(bodyLimitBytes, bodyTypes) catch effect (refused) => {
+    throw refusedBy(refused.status === 413 ? bodyRows.requestTooLarge : bodyRows.invalidRequestRequestBodyMustBeUTF8JSON)
+  }
+  if (bytes.length === 0) throw refusedBy(bodyRows.invalidRequestRequestBodyIsRequired)
+  const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), catch: () => refusedBy(bodyRows.invalidRequestRequestBodyMustBeUTF8JSON) })
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw refusedBy(bodyRows.invalidRequestV4)
+  return value as Readonly<Record<string, unknown>>
+}
+
+effect function countedRefusal(scope: RateScope, principal: string, refusal: Refused) {
+  const counted = try countUnmodelled(scope, principal)
+  if (counted.over) throw new WindowFull({ retryAfterSeconds: counted.retryAfterSeconds })
+  throw refusal
+}
+
+effect function validated<A, E, R>(scope: RateScope, principal: string, request: A!E!R) {
+  const value = request catch effect (error) => {
+    if (error instanceof Refused) return try countedRefusal(scope, principal, error)
+    throw error
+  }
+  return value
+}
+
+effect function windowRefusal(scope: RateScope, principal: string) {
+  const retryAfterSeconds = refuseRateLimited(scope, principal) catch effect (error) => match (error) {
+    when Rejected: 1;
+    default: throw error;
+  }
+  return tooMany(retryAfterSeconds)
+}
+
+effect function admissionFailure(scope: RateScope, principal: string, rejected: Row, error: unknown) {
+  if (error instanceof OverLimit) return windowRefusal(scope, principal) catch effect (failure) => match (failure) {
+    when LimiterFailed: limiterDown();
+    default: throw failure;
+  }
+  if (error instanceof WindowFull) return tooMany(error.retryAfterSeconds)
+  if (error instanceof LimiterFailed) return limiterDown()
+  if (error instanceof FlowNotStored) throw refusedBy(startRows.flowUnavailable)
+  if (error instanceof Rejected) throw refusedBy(rejected)
+  throw error
+}
+
+effect function startRequest(local: boolean) {
+  const body = try readJson()
+  const returnOrigin = local ? returnOriginOf(body.returnOrigin) : undefined
+  if (local && (returnOrigin === undefined || body.audience !== "slop-points-web")) throw refusedBy(localStartRows.invalidRequestInvalidLocalReturnOrigin)
+  const audience = body.audience
+  if (audience !== "private-trace-api" && audience !== "slop-points-web") throw refusedBy(startRows.invalidRequestInvalidIdentityAudience)
+  if (Object.keys(body).sort().join() !== (local ? "audience,returnOrigin" : "audience")) throw refusedBy(startRows.invalidRequestInvalidIdentityAudience)
+  return { audience: audienceOf[audience], returnOrigin }
+}
+
+effect function startAdmitted(local: boolean, principal: string) {
+  const settings = try IdentitySettings
+  const { audience, returnOrigin } = try validated("StartScope", principal, startRequest(local))
+  const flowId = returnOrigin === undefined ? `flow_${try randomText(18)}` : localFlowId(returnOrigin, try randomText(24))
+  const secrets = { flowId, state: try randomText(32), capability: try randomText(32), verifier: try randomText(64) }
+  const { expiresAt } = try start(principal, audience, local ? "LocalHandoff" : "Production", secrets)
+  const authorizationUrl = new URL("/v1/oauth/authorize", settings.publicOrigin)
+  authorizationUrl.searchParams.set("flow_id", flowId)
+  authorizationUrl.searchParams.set("state", secrets.state)
+  return json({ flowId, authorizationUrl: authorizationUrl.toString(), pollCapability: secrets.capability, expiresAt, pollAfterSeconds }, 201)
+}
+
+effect function issued(facts: PollFacts, token: string) {
+  const assertion = issueAssertion(facts) catch effect (error) => match (error) {
+    when Rejected: throw refusedBy(pollRows.flowConsumed);
+    default: throw error;
+  }
+  return json({ status: "complete", assertion: token, assertionType: "SlopIdentity", expiresAt: assertion.expires_at })
+}
+
+effect function delivered(polled: Extract<Polled, { readonly kind: "pollLocal" }>) {
+  const { flow } = polled
+  const returnOrigin = localFlowOrigin(flow.id)
+  if (returnOrigin === undefined || flow.github_actor_id === null || flow.github_login === null || flow.github_node_id === null) throw refusedBy(pollRows.identityIncomplete)
+  return json({ status: "complete", returnOrigin, githubActorId: flow.github_actor_id, githubLogin: flow.github_login, githubNodeId: flow.github_node_id })
+}
+
+effect function answered(polled: Extract<Polled, { readonly kind: "pollAnswered" }>) {
+  const { outcome } = polled
+  if (outcome === "PollPending" || outcome === "PollReady") return json({ status: "pending", retryAfterSeconds: pollAfterSeconds }, 202, { "retry-after": String(pollAfterSeconds) })
+  throw refusedBy(pollRefusals[outcome])
+}
+
+effect function pollRequest(local: boolean) {
+  const body = try readJson()
+  const { flowId, pollCapability, audience } = body
+  if (typeof flowId !== "string" || !flowShape.test(flowId) || typeof pollCapability !== "string" || !capabilityShape.test(pollCapability)) throw refusedBy(pollRows.invalidRequestInvalidPollRequest)
+  if ((audience !== "private-trace-api" && audience !== "slop-points-web") || Object.keys(body).length !== 3) throw refusedBy(pollRows.invalidRequestInvalidPollRequest)
+  return { flowId, capability: pollCapability, audience: audienceOf[audience], localRoute: local } satisfies PollFacts
+}
+
+effect function pollAdmitted(local: boolean, principal: string) {
+  const facts = try validated("PollScope", principal, pollRequest(local))
+  const polled = try poll(principal, facts)
+  if (polled.kind === "pollAnswered") return try answered(polled)
+  if (polled.kind === "pollLocal") return try delivered(polled)
+  return try issued(facts, polled.token)
+}
+
+effect function admitted<E, R>(scope: RateScope, local: boolean, handle: (principal: string) => HttpServerResponse.HttpServerResponse!E!R) {
+  const gated = try publicGate()
+  if (gated !== undefined) return gated
+  if (!local) {
+    const forbidden = try originGate()
+    if (forbidden !== undefined) return forbidden
+  }
+  const principal = principalOf((try HttpServerRequest.HttpServerRequest).headers)
+  const edge = edgeLimited(scope, principal) catch () => limiterDown()
+  if (edge !== undefined) return edge
+  const answer = handle(principal) catch effect (error) => {
+    return try admissionFailure(scope, principal, scope === "StartScope" ? startRows.invalidRequestInvalidIdentityAudience : pollRows.assertionUnavailable, error)
+  }
+  return answer
+}
+
+export effect function startFlow(local: boolean) {
+  return try admitted("StartScope", local, (principal) => startAdmitted(local, principal))
+}
+
+export effect function pollFlow(local: boolean) {
+  return try admitted("PollScope", local, (principal) => pollAdmitted(local, principal))
+}

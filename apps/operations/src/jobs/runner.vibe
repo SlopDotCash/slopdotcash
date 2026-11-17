@@ -1,0 +1,179 @@
+// spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"; spec/operations/paymentJobs.md, "Dry runs can finish a read and cannot reach execution"; spec/operations/paymentJobs.md, "A completed summary preserves each network result and retries allocate a fresh run"
+import { randomId } from "@repo/platform/crypto"
+import { type JobKey, JobAdmission } from "@repo/ports/operations"
+import { type AuthorityCheck, type ExecutionResult, type Job, Machine, type Network, type ReleaseCheck, type ServiceConfig, canBegin, canSettleExecution, canSettleRead, canStartExecution, machine, rowStatus } from "../../gen/operations__paymentJobs.effect.vibe"
+
+export error NotCurrent { network: Network; runId: number }
+
+export interface Recheck {
+  readonly role: AuthorityCheck
+  readonly release: ReleaseCheck
+}
+
+export interface NetworkRun {
+  readonly network: Network
+  readonly runId: string
+}
+
+export interface NetworkWork<A, R> {
+  readonly read: (at: NetworkRun) => A!unknown!R
+  readonly recheck: (at: NetworkRun) => Recheck!unknown!R
+  readonly execute: (at: NetworkRun, read: A) => ExecutionResult!unknown!R
+}
+
+export type Scope = "job" | "network"
+
+export interface JobRun<A, R> {
+  readonly kind: string
+  readonly key: string
+  readonly scope: Scope
+  readonly config: ServiceConfig
+  readonly work: NetworkWork<A, R>
+}
+
+export type Outcome = "NotStarted" | "Busy" | "Reported"
+
+export interface Summary {
+  readonly runId: string
+  readonly kind: string
+  readonly key: string
+  readonly outcome: Outcome
+  readonly busy: ReadonlyArray<Network>
+  readonly job: Job
+}
+
+export error RunIncomplete {
+  kind: string
+  key: string
+  runId: string
+  refused: boolean
+  failed: ReadonlyArray<Network>
+  uncertain: ReadonlyArray<Network>
+}
+
+const firstRun = 1
+const unavailable: Recheck = { role: "AuthorityUnavailable", release: "NotReleased" }
+
+export function jobState() {
+  return machine()
+}
+
+export effect function observed() {
+  return try (try Machine).get()
+}
+
+export effect function configure(config: ServiceConfig) {
+  return try (try Machine).send({ type: "configure", config })
+}
+
+export effect function begin(runId: number) {
+  return try (try Machine).send({ type: "begin", runId })
+}
+
+export effect function refuseOverlap(runId: number) {
+  return try (try Machine).send({ type: "refuseOverlap", runId })
+}
+
+export effect function startRead(net: Network, runId: number) {
+  return try (try Machine).send({ type: "startRead", net, runId })
+}
+
+export effect function report() {
+  return try (try Machine).send({ type: "report" })
+}
+
+export effect function resetRun() {
+  return try (try Machine).send({ type: "resetRun" })
+}
+
+effect function awaited(net: Network, runId: number, waiting: (job: Job, net: Network, runId: number) => boolean) {
+  if (!waiting(try observed(), net, runId)) throw new NotCurrent({ network: net, runId })
+}
+
+export effect function settleRead<A, R>(net: Network, runId: number, read: A!unknown!R) {
+  try awaited(net, runId, canSettleRead)
+  const outcome = try exit(read)
+  if (Exit.isFailure(outcome)) try Effect.logWarning("payment job network read failed", { network: net, runId })
+  try (try Machine).send({ type: "settleRead", net, runId, read: Exit.isSuccess(outcome) ? "ReadOk" : "ReadFailed" })
+  return Exit.getSuccess(outcome)
+}
+
+export effect function startExecution<R>(net: Network, runId: number, recheck: Recheck!unknown!R) {
+  try awaited(net, runId, canStartExecution)
+  const { role, release } = Option.getOrElse(Exit.getSuccess(try exit(recheck)), () => unavailable)
+  return try (try Machine).send({ type: "startExecution", net, runId, role, release })
+}
+
+export effect function settleExecution<R>(net: Network, runId: number, execute: ExecutionResult!unknown!R) {
+  try awaited(net, runId, canSettleExecution)
+  const outcome = try exit(execute)
+  if (Exit.isFailure(outcome)) try Effect.logError("payment job execution outcome unknown", { network: net, runId })
+  const result = Option.getOrElse(Exit.getSuccess(outcome), (): ExecutionResult => "ExecutionUncertain")
+  return try (try Machine).send({ type: "settleExecution", net, runId, result })
+}
+
+effect function stillHeld(lease: JobKey, at: NetworkRun) {
+  const renewed = try exit((try JobAdmission).renew(lease, at.runId))
+  if (Exit.isSuccess(renewed) && renewed.value) return true
+  try Effect.logError("payment job lease lost before execution", { kind: lease.kind, key: lease.key, network: at.network, runId: at.runId })
+  return false
+}
+
+effect function settleNetwork<A, R>(lease: JobKey, at: NetworkRun, work: NetworkWork<A, R>) {
+  const net = at.network
+  try startRead(net, firstRun)
+  const read = try settleRead(net, firstRun, work.read(at))
+  if (Option.isNone(read) || !canStartExecution(try observed(), net, firstRun)) return
+  const recheck = (try stillHeld(lease, at)) ? work.recheck(at) : Effect.succeed(unavailable)
+  const started = try startExecution(net, firstRun, recheck)
+  if (!rowStatus(started, net, "Executing")) return
+  try settleExecution(net, firstRun, work.execute(at, read.value))
+}
+
+effect function released(leases: ReadonlyArray<JobKey>, lease: string) {
+  const admission = try JobAdmission
+  for (const key of leases) {
+    admission.finish(key, lease) catch effect (error) => {
+      try Effect.logError("payment job admission release failed", { kind: key.kind, key: key.key, network: key.network ?? "", failure: error._tag })
+    }
+  }
+}
+
+export effect function run<A, R>(job: JobRun<A, R>) {
+  const runId = try randomId()
+  const summary = (outcome: Outcome, busy: ReadonlyArray<Network>, state: Job): Summary => ({ runId, kind: job.kind, key: job.key, outcome, busy, job: state })
+  const jobKey: JobKey = { kind: job.kind, key: job.key }
+  const leaseOf = (network: Network): JobKey => job.scope === "network" ? { ...jobKey, network } : jobKey
+  provide jobState() {
+    const configured = try configure(job.config)
+    if (!canBegin(configured, firstRun)) return summary("NotStarted", [], configured)
+    const admission = try JobAdmission
+    const candidates = job.scope === "network" ? configured.rows.map((row) => leaseOf(row.network)) : [jobKey]
+    const held: JobKey[] = []
+    const busy: Network[] = []
+    for (const candidate of candidates) {
+      if ((try admission.admit(candidate, runId)) === "Admitted") held.push(candidate)
+      else if (candidate.network !== undefined) busy.push(candidate.network)
+    }
+    if (held.length === 0) {
+      try Effect.logWarning("payment job overlap refused", { kind: job.kind, key: job.key, runId })
+      return summary("Busy", job.scope === "network" ? configured.rows.map((row) => row.network) : [], configured)
+    }
+    if (busy.length > 0) try Effect.logWarning("payment job networks busy", { kind: job.kind, key: job.key, runId, busy })
+    return try ensuring(effect {
+      const admitted = busy.length === 0 ? configured : try configure({ ...job.config, networks: configured.rows.map((row) => row.network).filter((network) => !busy.includes(network)) })
+      try begin(firstRun)
+      for (const row of admitted.rows) try settleNetwork(leaseOf(row.network), { network: row.network, runId }, job.work)
+      return summary("Reported", busy, try report())
+    }, released(held, runId))
+  }
+}
+
+export effect function settled(summary: Summary) {
+  const networks = (status: "Failed" | "Uncertain") => summary.job.rows.filter((row) => row.status === status).map((row) => row.network)
+  const refused = summary.outcome === "NotStarted" && summary.job.mode !== "Off"
+  const failed = networks("Failed")
+  const uncertain = networks("Uncertain")
+  if (refused || failed.length > 0 || uncertain.length > 0) throw new RunIncomplete({ kind: summary.kind, key: summary.key, runId: summary.runId, refused, failed, uncertain })
+  return summary
+}

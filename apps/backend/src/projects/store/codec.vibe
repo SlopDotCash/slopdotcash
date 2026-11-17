@@ -1,0 +1,277 @@
+// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request, and an unchanged asset keeps its stored reading"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"
+import type { ApplicationRow, Manifest, ProjectRows, Revisioned } from "./rows.vibe"
+
+export type Kind = "Created" | "Activated" | "OwnerUpdate" | "RepositoryAppended" | "Removed" | "AdminHold" | "AdminDelist" | "AdminException" | "RestrictionRetirement" | "CommunityRestored" | "Placement" | "ConsentChanged"
+export type Status = "Active" | "Paused"
+export type Tier = "Community" | "Featured" | "Retired"
+export type Retirement = "NotRetired" | "OwnerRemoved" | "AdminDelisted" | "RestrictionRetired"
+export type SavedConsent = "Absent" | "Enabled" | "Disabled"
+export type Participation = "OpenParticipation" | "Archived" | "PermissionRequired"
+
+export interface Facts {
+  readonly administrators: ReadonlyArray<number>
+  readonly month: number
+}
+
+export const clockStart = 202611
+
+export const contributionFields = ["approvedScope", "contributionGuide", "supportedTasks", "requiredTests", "reviewExpectations", "securityContact", "closurePolicy", "maintainerNotes"] as const
+
+export const listedStablecoins: Readonly<Record<string, { readonly address: string; readonly decimals: number }>> = {
+  base: { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 },
+  ethereum: { address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", decimals: 6 },
+  robinhood: { address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", decimals: 6 },
+  solana: { address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6 },
+}
+
+export function idOf(text: string | number | null | undefined): number {
+  if (text === null || text === undefined) return 0
+  const value = typeof text === "number" ? text : /^[1-9][0-9]{0,19}$/u.test(text) ? Number(text) : 0
+  return Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+export function monthOf(iso: string): number {
+  return Number(iso.slice(0, 4)) * 100 + Number(iso.slice(5, 7))
+}
+
+export function nextMonth(month: number): number {
+  return month % 100 === 12 ? (Math.floor(month / 100) + 1) * 100 + 1 : month + 1
+}
+
+export function statusOf(text: string): Status {
+  return text === "active" ? "Active" : "Paused"
+}
+
+export function tierOf(text: string): Tier {
+  return text === "featured" ? "Featured" : text === "retired" ? "Retired" : "Community"
+}
+
+export function statusText(status: Status): string {
+  return status === "Active" ? "active" : "paused"
+}
+
+export function tierText(tier: Tier): string {
+  return tier === "Featured" ? "featured" : tier === "Retired" ? "retired" : "community"
+}
+
+export function participationOf(manifest: Manifest): Participation {
+  const state = manifest.participation?.state
+  return state === "archived" ? "Archived" : state === "permission-required" ? "PermissionRequired" : "OpenParticipation"
+}
+
+export function consentOf(manifest: Manifest): SavedConsent {
+  const saved = manifest.slopbot?.automaticClosure
+  return saved === undefined ? "Absent" : saved ? "Enabled" : "Disabled"
+}
+
+export function fieldsCompleteOf(manifest: Manifest): boolean {
+  const contribution = manifest.contribution
+  if (contribution === undefined) return false
+  return contributionFields.every((field) => {
+    const entry = contribution[field]
+    return typeof entry === "string" && entry.length >= (field === "approvedScope" ? 6 : 0) && entry.length <= 2000
+  })
+}
+
+export function repositoryIdsOf(manifest: Manifest): ReadonlyArray<number> {
+  return [idOf(manifest.authority.repositoryId), ...manifest.repositories.slice(1).map((repository) => idOf(repository.githubId))]
+}
+
+export function repositoryKeysOf(manifest: Manifest): ReadonlyArray<string> {
+  return [...new Set(manifest.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((path) => path.toLowerCase())))]
+}
+
+export function licenseOf(manifest: Manifest) {
+  const license = manifest.terms.repositoryLicense
+  const terms = license.state !== "verified" ? "UnknownTerms" : license.spdx === "mixed" ? "MixedTerms" : license.spdx === "unknown" || license.spdx === null ? "UnknownTerms" : "SpdxLicense"
+  return { terms, url: license.url ? 1 : 0, commit: license.commitSha ? 1 : 0, digest: license.fileSha256 ? 1 : 0 }
+}
+
+export interface RewardAsset {
+  readonly identity: string
+  readonly decimals: number
+}
+
+export function assetIdentity(network: string, address: string): string {
+  const chain = network.toLowerCase()
+  return `${chain}:${chain === "solana" ? address : address.toLowerCase()}`
+}
+
+export function assetOf(manifest: Manifest): RewardAsset {
+  if (manifest.rewardAsset !== undefined) return { identity: assetIdentity(manifest.rewardAsset.network, manifest.rewardAsset.address), decimals: manifest.rewardAsset.decimals }
+  const network = manifest.reward.chain ?? "base"
+  const listed = listedStablecoins[network] ?? listedStablecoins.base
+  return { identity: assetIdentity(network, listed.address), decimals: listed.decimals }
+}
+
+export function assetKeyIn(manifests: ReadonlyArray<Manifest>, identity: string): number {
+  const seen = [...new Set(manifests.map((manifest) => assetOf(manifest).identity))]
+  const index = seen.indexOf(identity)
+  return index < 0 ? seen.length + 1 : index + 1
+}
+
+export function fundedOf(manifest: Manifest): boolean {
+  return manifest.reward.fundingState === "committed" || /^[0-9]*[1-9][0-9]*$/u.test(manifest.reward.committedMinor) || manifest.reward.paymentMode === "enabled" || (manifest.escrow?.deployments ?? []).length > 0 || (manifest.funding.addresses ?? []).length > 0 || (manifest.funding.commitments ?? []).length > 0
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+}
+
+export function retirementAfter(retirement: Retirement, kind: Kind): Retirement {
+  return kind === "Removed" ? "OwnerRemoved" : kind === "AdminDelist" ? "AdminDelisted" : kind === "RestrictionRetirement" ? "RestrictionRetired" : kind === "CommunityRestored" ? "NotRetired" : retirement
+}
+
+export function retirementOf(revisions: ReadonlyArray<Revisioned>): Retirement {
+  return revisions.reduce<Retirement>((retirement, { kind }) => retirementAfter(retirement, kind), "NotRetired")
+}
+
+function creationApplication(rows: ProjectRows): ApplicationRow | undefined {
+  return rows.applications.filter((row) => row.expected_revision === null).at(-1)
+}
+
+function updateApplication(rows: ProjectRows): ApplicationRow | undefined {
+  return rows.applications.filter((row) => row.expected_revision !== null).at(-1)
+}
+
+function applicationPhase(rows: ProjectRows) {
+  const row = creationApplication(rows)
+  if (row === undefined) return { application: "NoApplication", applicant: 0 }
+  const applicant = idOf(row.applicant_github_id)
+  if (row.status === "pending") return { application: "ApplicationPending", applicant }
+  if (row.applicant_cancelled_at !== null) return { application: "ApplicationCancelled", applicant }
+  const published = row.status === "approved" && rows.project?.source_application_id === row.id && row.decided_by_github_id === row.applicant_github_id
+  return { application: published ? "ApplicationPublished" : "ApplicationDecidedLegacy", applicant }
+}
+
+function updatePhase(rows: ProjectRows) {
+  const row = updateApplication(rows)
+  if (row === undefined) return { update: "NoUpdate", updateApplicant: 0, updateBase: 0 }
+  const update = row.status === "pending" ? "UpdatePending" : row.status === "approved" ? "UpdatePublished" : "UpdateCancelled"
+  return { update, updateApplicant: idOf(row.applicant_github_id), updateBase: row.expected_revision ?? 0 }
+}
+
+function startsOf(revisions: ReadonlyArray<Revisioned>) {
+  const starts: Array<{ repositoryId: number; month: number }> = []
+  for (const entry of revisions) {
+    for (const repositoryId of repositoryIdsOf(entry.manifest)) {
+      if (starts.some((start) => start.repositoryId === repositoryId)) continue
+      const created = monthOf(entry.row.created_at)
+      starts.push({ repositoryId, month: starts.length === 0 ? created : nextMonth(created) })
+    }
+  }
+  return starts
+}
+
+function economicOf(revisions: ReadonlyArray<Revisioned>) {
+  return revisions.flatMap((entry, index) => {
+    const previous = revisions[index - 1]?.manifest
+    if (entry.kind !== "OwnerUpdate" || previous === undefined) return []
+    if (sameJson(previous.reward, entry.manifest.reward) && sameJson(previous.rewardAsset, entry.manifest.rewardAsset)) return []
+    const fromMonth = nextMonth(monthOf(entry.row.created_at))
+    return fromMonth > clockStart ? [{ fromMonth, revision: entry.row.revision }] : []
+  })
+}
+
+export function byOf(kind: Kind, actor: string | null): number {
+  return kind === "RestrictionRetirement" || kind === "CommunityRestored" ? 0 : idOf(actor)
+}
+
+export function referrerOf(rows: ProjectRows): number {
+  if (rows.project !== undefined) return idOf(rows.project.referrer_github_id)
+  return idOf(creationApplication(rows)?.referrer_github_id ?? null)
+}
+
+export function projectState(rows: ProjectRows, facts: Facts) {
+  const history = rows.revisions
+  const first = history[0]
+  const manifest = rows.current
+  const reward = manifest === undefined ? undefined : assetOf(manifest)
+  const asset = reward === undefined ? 0 : assetKeyIn(history.map((entry) => entry.manifest), reward.identity)
+  return {
+    creator: first === undefined ? 0 : idOf(first.row.actor_github_id),
+    steward: manifest === undefined ? 0 : idOf(manifest.steward.github.actorId),
+    referrer: referrerOf(rows),
+    administrators: [...facts.administrators],
+    participation: manifest === undefined ? "OpenParticipation" : participationOf(manifest),
+    ...applicationPhase(rows),
+    ...updatePhase(rows),
+    revision: rows.project?.revision ?? 0,
+    history: history.map(({ row, manifest: revised, kind }) => ({ number: row.revision, kind, status: statusOf(revised.status), tier: tierOf(revised.listingTier), by: byOf(kind, row.actor_github_id) })),
+    status: manifest === undefined ? "Paused" : statusOf(manifest.status),
+    tier: manifest === undefined ? "Community" : tierOf(manifest.listingTier),
+    retirement: retirementOf(history),
+    repositories: manifest === undefined ? [] : [...repositoryIdsOf(manifest)],
+    starts: startsOf(history),
+    fieldsComplete: manifest === undefined ? false : fieldsCompleteOf(manifest),
+    branch: manifest === undefined ? 0 : branchOf(manifest),
+    license: manifest === undefined ? { terms: "UnknownTerms", url: 0, commit: 0, digest: 0 } : licenseOf(manifest),
+    consent: manifest === undefined ? "Absent" : consentOf(manifest),
+    month: facts.month,
+    economic: economicOf(history),
+    asset,
+    assetReading: reward === undefined ? { asset: 0, decimals: 0, result: "ChainReadUnreachable" } : { asset, decimals: reward.decimals, result: "ChainReadDone" },
+    funded: manifest === undefined ? false : fundedOf(manifest),
+  }
+}
+
+export function branchOf(manifest: Manifest): number {
+  return (manifest.repositories[0]?.integrationBranch ?? "") === "" ? 0 : 1
+}
+
+export interface License {
+  readonly terms: string
+  readonly url: number
+  readonly commit: number
+  readonly digest: number
+}
+
+export interface ProjectFacts {
+  readonly status: Status
+  readonly tier: Tier
+  readonly steward: number
+  readonly participation: Participation
+  readonly repositories: ReadonlyArray<number>
+  readonly fieldsComplete: boolean
+  readonly consent: SavedConsent
+  readonly asset: number
+  readonly assetReading: { readonly asset: number; readonly decimals: number; readonly result: string }
+  readonly branch: number
+  readonly license: License
+}
+
+export interface Submitted {
+  readonly assetKey: number
+  readonly previous: Manifest | undefined
+  readonly previousAsset: number
+}
+
+function presence(value: number): number {
+  return value > 0 ? 1 : 0
+}
+
+function sameRewardAsset(left: Manifest["rewardAsset"], right: Manifest["rewardAsset"]): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.network === right.network && left.address === right.address && left.decimals === right.decimals
+}
+
+function sameLicense(left: License, right: License): boolean {
+  return left.terms === right.terms && presence(left.url) === presence(right.url) && presence(left.commit) === presence(right.commit) && presence(left.digest) === presence(right.digest)
+}
+
+export function mismatchOf(manifest: Manifest, projectId: string, expected: ProjectFacts, submitted: Submitted): string | undefined {
+  if (manifest.id !== projectId) return "id"
+  if (statusOf(manifest.status) !== expected.status || manifest.status !== statusText(expected.status)) return "status"
+  if (tierOf(manifest.listingTier) !== expected.tier || manifest.listingTier !== tierText(expected.tier)) return "listingTier"
+  if (idOf(manifest.steward.github.actorId) !== expected.steward) return "steward"
+  if (participationOf(manifest) !== expected.participation) return "participation"
+  if (JSON.stringify(repositoryIdsOf(manifest)) !== JSON.stringify(expected.repositories)) return "repositories"
+  if (fieldsCompleteOf(manifest) !== expected.fieldsComplete) return "contribution"
+  if (consentOf(manifest) !== expected.consent) return "slopbot"
+  if (branchOf(manifest) !== presence(expected.branch)) return "integrationBranch"
+  if (!sameLicense(licenseOf(manifest), expected.license)) return "repositoryLicense"
+  if (submitted.assetKey !== expected.asset) return "rewardAsset"
+  if (submitted.previous !== undefined && expected.asset === submitted.previousAsset && !sameRewardAsset(submitted.previous.rewardAsset, manifest.rewardAsset)) return "rewardAsset"
+  if (expected.assetReading.result === "ChainReadDone" && assetOf(manifest).decimals !== expected.assetReading.decimals) return "rewardAsset.decimals"
+  return undefined
+}

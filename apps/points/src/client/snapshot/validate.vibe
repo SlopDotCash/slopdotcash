@@ -1,0 +1,1138 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
+import { parseRunReceipt } from "@repo/contributor/client"
+import { mergedPullRequestCredit } from "../../kernels/scoring/legacyV2.ts"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import {
+  type Problem, type Registry, actorCoherence, actorProblem, addThirds, at, compareCodeUnits, exactIdentifier, findRepository, findRepositoryPath,
+  has, hasKeys, parsedUrl, iso, isExactProviderModel, isRecord, isScoreThirds, isUnavailableModel, millis,
+  nonEmpty, nonNegativeInteger, nonNegativeNumber, oneOf, pointsOf, positiveInteger, registryOf, repositoryIdFromUrl, repositoryUrl, secureUrl,
+  sortedKeys, stringList, uniqueSorted,
+} from "./checks.vibe"
+import { externalEvidenceProblem, externalSourceId, externalUrlProblem } from "./external.vibe"
+import { implementationShares, penaltyDeductions } from "./shares.vibe"
+import {
+  type AttributionCoverage, type GitHubActor, LeaderboardSnapshot, type LeaderboardEntry, type ModelAttribution, type PublishedPenalty,
+  type RepositoryRegistry, type ReviewExclusion, type ScoreEvent, type ScoreOpportunity, type SourceMetadata, type WorkItem,
+  actionabilities, candidateExclusions, claimSources, coverageStatuses, evidenceCategories, evidenceWeights, externalPlatforms, externalSourceNumber,
+  materialTestAdditions, materialTestChurn, minValueMergeThirds, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt,
+  priorities, publishedRepositoryKeys, reviewExclusionReasons, ruleVersion, schemaVersion, scoreCaps, scoreCategories, scoreV2EffectiveAt,
+  scoreWindowDays, usageNeutralEvidencePolicyAt, valueCoverageStatuses, valueScoringApprovedHistoryFrom, verificationWindowDays,
+} from "./schema.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+export error SnapshotInvalid { message: string }
+
+type ExternalIds = ReadonlyMap<string, string>
+
+const dayMillis = 24 * 60 * 60 * 1000
+const digest = /^[a-f0-9]{64}$/u
+const valueDecision = /^value:[a-f0-9]{64}$/u
+const workUnit = /^wu_[a-z0-9][a-z0-9_-]{2,255}$/u
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const blockedLabel = /^(?:blocked|do[- ]not[- ]merge|human[- ]only|needs[- ]human(?:[- ](?:input|review|verify|verification))?|needs[- ]shaw|status\s*[:/]\s*(?:blocked|proposal|human[- ]only|needs[- ]human(?:[- ](?:input|review|verify|verification))?|needs[- ]shaw))$/iu
+const epicTitle = /^\s*(?:\[[^\]]*\bepic\b[^\]]*\]|epic\s*:)/iu
+const epicLabel = /^epic(?:\s+\d+)?$/iu
+const securityLabel = /(?:^|[-_ ])(?:security|vulnerability|credential[-_ ]?leak|secret[-_ ]?leak|cve)(?:$|[-_ ])/iu
+const issueClaimLabel = /^(?:(?:claimed|in[- ]progress|working)(?:\s*:\s*[a-z0-9][a-z0-9._/-]*)?|status:\s*(?:claimed|in[- ]progress))$/iu
+const reviewClaimLabel = /^(?:(?:review[- ]claimed|review[- ]in[- ]progress)(?:\s*:\s*[a-z0-9][a-z0-9._/-]*)?|review:\s*claimed)$/iu
+const urgentLabels = new Set(["blocker", "critical", "p0", "priority: critical", "priority: urgent", "urgent"])
+const highLabels = new Set(["high priority", "p1", "priority: high"])
+const lowLabels = new Set(["low priority", "p3", "p4", "priority: low"])
+const contributorReadyLabels = new Set(["bug-confirmed", "demo-blocker", "good first issue", "help wanted", "launch-qa", "mission-ready", "needs-review", "needs testing", "p0", "p1", "p2", "priority: high", "triage-reviewed"])
+const nearTestHints = ["Test the behavior changed by this pull request. Do not add tests or lines merely to increase a score."]
+const reviewHints = ["Add at least 20 characters of review rationale or an inline comment before merge.", "Explain a concrete correctness finding or why the change is ready. Padding the review does not make it useful."]
+const reviewSplit = /:(?:automated-review|ratifier|reviewer|value-review):/u
+
+function label(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function priorityOf(labels: ReadonlyArray<string>): string {
+  const names = labels.map(label)
+  if (names.some((name) => urgentLabels.has(name))) return "urgent"
+  if (names.some((name) => highLabels.has(name))) return "high"
+  if (names.some((name) => lowLabels.has(name))) return "low"
+  return "normal"
+}
+
+function actionabilityOf(labels: ReadonlyArray<string>, isDraft: boolean, filesAvailable: boolean): string {
+  if (isDraft) return "draft"
+  return !filesAvailable || labels.some((name) => blockedLabel.test(label(name))) ? "blocked" : "actionable"
+}
+
+function exclusionReasons(item: WorkItem, kind: string, claimStatus: string): ReadonlyArray<string> {
+  const reasons: string[] = []
+  const contributorReady = kind === "pull-request" || (!(epicTitle.test(item.title) || item.labels.some((name) => epicLabel.test(name.trim()))) && item.labels.some((name) => contributorReadyLabels.has(label(name))))
+  if (item.author === null || item.author.kind === "Unknown") reasons.push("unknown-author")
+  else if (item.author.kind === "Bot") reasons.push("bot-authored")
+  if (item.labels.some((name) => securityLabel.test(name))) reasons.push("security-sensitive")
+  if (kind === "issue" && !contributorReady) reasons.push("untriaged")
+  if (claimStatus === "claimed") reasons.push("claimed")
+  if (item.actionability === "blocked") reasons.push("blocked")
+  if (item.actionability === "draft") reasons.push("draft")
+  if (kind === "pull-request" && item.activeReviewRequestCount !== null && item.activeReviewRequestCount > 0) reasons.push("active-review-request")
+  if (item.reviewDecision === "APPROVED") reasons.push("already-approved")
+  if (item.reviewDecision === "CHANGES_REQUESTED") reasons.push("changes-requested")
+  return reasons
+}
+
+function coverageProblem(value: AttributionCoverage, path: string): Problem {
+  const counts = [["eligibleSourceCount", value.eligibleSourceCount], ["validSourceCount", value.validSourceCount], ["missingSourceCount", value.missingSourceCount], ["invalidSourceCount", value.invalidSourceCount], ["humanOnlySourceCount", value.humanOnlySourceCount]] as const
+  for (const [key, count] of counts) {
+    const problem = nonNegativeInteger(count, `${path}.${key}`)
+    if (problem !== undefined) return problem
+  }
+  const status = oneOf(value.status, coverageStatuses, `${path}.status`)
+  if (status !== undefined) return status
+  if (value.validSourceCount > value.eligibleSourceCount || value.invalidSourceCount > value.eligibleSourceCount || value.humanOnlySourceCount > value.validSourceCount || value.missingSourceCount !== value.eligibleSourceCount - value.validSourceCount) {
+    return `${path} source counts are internally inconsistent`
+  }
+  const expected = value.eligibleSourceCount > 0 && value.validSourceCount === value.eligibleSourceCount && value.invalidSourceCount === 0 ? "complete" : value.validSourceCount > 0 ? "partial" : value.invalidSourceCount > 0 ? "invalid" : "missing"
+  return value.status === expected ? undefined : `${path}.status does not match its source coverage`
+}
+
+function leaderProblem(entry: LeaderboardEntry, path: string, actors: Map<string, GitHubActor>): Problem {
+  const basic = positiveInteger(entry.rank, `${path}.rank`) ?? actorProblem(entry.actor, `${path}.actor`, actors) ?? nonNegativeInteger(entry.score, `${path}.score`)
+  if (basic !== undefined) return basic
+  if (!isScoreThirds(entry.scoreThirds)) return `${path}.scoreThirds must represent non-negative whole Points`
+  if (Math.floor(entry.scoreThirds / 3) !== entry.score) return `${path}.score does not equal rounded-down scoreThirds`
+  let total: number | undefined = 0
+  for (const key of ["mergedPullRequests", "resolvedIssues", "materialTestChanges", "evidence", "substantiveReviews", "evaluatedContributions"] as const) {
+    const problem = nonNegativeNumber(entry.points[key], `${path}.points.${key}`)
+    if (problem !== undefined) return problem
+    if (!isScoreThirds(entry.pointThirds[key])) return `${path}.pointThirds.${key} must represent non-negative whole Points`
+    if (Math.abs(entry.points[key] - entry.pointThirds[key] / 3) > 1e-12) return `${path}.points.${key} does not match integer thirds`
+    total = total === undefined ? undefined : addThirds(total, entry.pointThirds[key])
+  }
+  if (total === undefined) return `${path}.scoreThirds does not equal its point breakdown`
+  if (entry.penaltyThirds !== undefined) {
+    if (!isScoreThirds(entry.penaltyThirds)) return `${path}.penaltyThirds must represent non-negative whole Points`
+    if (entry.penaltyThirds <= 0) return "penaltyThirds must be positive"
+    total = (pointsOf(total) - pointsOf(entry.penaltyThirds)) / 10
+  }
+  if (total !== entry.scoreThirds) return `${path}.scoreThirds does not equal its point breakdown`
+  for (const key of ["mergedPullRequests", "resolvedIssues", "materialTestChanges", "evidenceCategories", "substantiveReviews", "evaluatedContributions"] as const) {
+    const problem = nonNegativeInteger(entry.acceptedOutcomes[key], `${path}.acceptedOutcomes.${key}`)
+    if (problem !== undefined) return problem
+  }
+  for (const key of ["comments", "reviews", "commits", "additions", "deletions"] as const) {
+    const problem = nonNegativeInteger(entry.rawActivity[key], `${path}.rawActivity.${key}`)
+    if (problem !== undefined) return problem
+  }
+  const models = stringList(entry.reportedModels, `${path}.reportedModels`)
+  if (models !== undefined) return models
+  const inexact = entry.reportedModels.findIndex((identifier) => !isExactProviderModel(identifier))
+  return inexact < 0 ? undefined : `${path}.reportedModels[${inexact}] must be an exact provider/model identifier`
+}
+
+function workItemProblem(registry: Registry, item: WorkItem, path: string, kind: "issue" | "pull-request", repositoryIds: ReadonlyArray<string>): Problem {
+  const basic = nonEmpty(item.id, `${path}.id`) ?? oneOf(item.kind, ["issue", "pull-request"], `${path}.kind`)
+  if (basic !== undefined) return basic
+  if (item.kind !== kind) return `${path}.kind must be ${kind}`
+  const identity = positiveInteger(item.number, `${path}.number`) ?? nonEmpty(item.title, `${path}.title`) ?? oneOf(item.repository, repositoryIds, `${path}.repository`)
+    ?? repositoryUrl(registry, item.url, `${path}.url`, kind, item.number, item.repository)
+    ?? (item.author === null ? undefined : actorProblem(item.author, `${path}.author`))
+    ?? iso(item.createdAt, `${path}.createdAt`) ?? iso(item.updatedAt, `${path}.updatedAt`) ?? stringList(item.labels, `${path}.labels`)
+    ?? oneOf(item.priority, priorities, `${path}.priority`) ?? oneOf(item.actionability, actionabilities, `${path}.actionability`)
+  if (identity !== undefined) return identity
+  if (item.filesAvailable !== undefined && kind !== "pull-request") return `${path}.filesAvailable must be a boolean for pull requests`
+  if (item.priority !== priorityOf(item.labels)) return `${path}.priority does not match its labels`
+  if (item.actionability !== actionabilityOf(item.labels, kind === "pull-request" && item.isDraft === true, item.filesAvailable !== false)) {
+    return `${path}.actionability does not match its labels, draft state, and file availability`
+  }
+  if (kind === "issue") {
+    if (item.isDraft !== null || item.reviewDecision !== null || item.activeReviewRequestCount !== null) return `${path} issue draft, review-decision, and review-request fields must be null`
+    if (item.actionability === "draft") return `${path} issue cannot have draft actionability`
+  } else {
+    if (item.isDraft === null) return `${path}.isDraft must be a boolean for pull requests`
+    if (item.reviewDecision !== null) {
+      const decision = oneOf(item.reviewDecision, ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"], `${path}.reviewDecision`)
+      if (decision !== undefined) return decision
+    }
+    const requests = item.activeReviewRequestCount === null ? `${path}.activeReviewRequestCount must be a non-negative integer` : nonNegativeInteger(item.activeReviewRequestCount, `${path}.activeReviewRequestCount`)
+    if (requests !== undefined) return requests
+    if ((item.isDraft && item.actionability !== "draft") || (!item.isDraft && item.actionability === "draft")) return `${path}.actionability must match its draft state`
+  }
+  const comments = nonNegativeInteger(item.commentCount, `${path}.commentCount`)
+  if (comments !== undefined) return comments
+  const claim = item.claim
+  const claimShape = oneOf(claim.status, ["claimed", "unclaimed"], `${path}.claim.status`) ?? oneOf(claim.source, claimSources, `${path}.claim.source`)
+    ?? (claim.kind === null ? undefined : oneOf(claim.kind, ["implementation", "review"], `${path}.claim.kind`))
+    ?? claim.actors.map((actor, index) => actorProblem(actor, `${path}.claim.actors[${index}]`)).find((problem) => problem !== undefined)
+    ?? (claim.claimedAt === null ? undefined : iso(claim.claimedAt, `${path}.claim.claimedAt`))
+  if (claimShape !== undefined) return claimShape
+  const claimKind = kind === "issue" ? "implementation" : "review"
+  const claimLabel = item.labels.some((name) => (claimKind === "implementation" ? issueClaimLabel : reviewClaimLabel).test(label(name)))
+  if ((claim.status === "unclaimed" && (claim.source !== "none" || claim.kind !== null || claim.actors.length !== 0 || claim.claimedAt !== null))
+    || (claim.status === "claimed" && (claim.source === "none" || claim.kind !== claimKind))
+    || (claim.source === "assignee" && claim.actors.length === 0)
+    || (claim.source === "pull-request" && kind !== "issue")
+    || (claim.source === "claim-comment" && (claim.actors.length !== 1 || claim.claimedAt === null))
+    || (claim.source !== "claim-comment" && claim.claimedAt !== null)
+    || (claimLabel && claim.status !== "claimed")
+    || (claim.source === "label" && !claimLabel)) {
+    return `${path}.claim fields do not describe one valid claim`
+  }
+  const selection = oneOf(item.selection.status, ["candidate", "excluded"], `${path}.selection.status`) ?? stringList(item.selection.reasons, `${path}.selection.reasons`)
+    ?? item.selection.reasons.map((reason, index) => oneOf(reason, candidateExclusions, `${path}.selection.reasons[${index}]`)).find((problem) => problem !== undefined)
+  if (selection !== undefined) return selection
+  const expected = exclusionReasons(item, kind, claim.status)
+  if (item.selection.status !== (expected.length === 0 ? "candidate" : "excluded") || item.selection.reasons.join("\0") !== expected.join("\0")) {
+    return `${path}.selection does not match the shared work-candidate safety contract`
+  }
+  const evidence = item.evidence
+  const evidenceShape = oneOf(evidence.status, ["complete", "partial", "missing"], `${path}.evidence.status`) ?? nonNegativeInteger(evidence.points, `${path}.evidence.points`)
+    ?? (evidence.maxPoints === 6 ? undefined : `${path}.evidence.maxPoints must be 6`) ?? (evidence.points > 6 ? `${path}.evidence.points cannot exceed 6` : undefined)
+    ?? stringList(evidence.categories, `${path}.evidence.categories`)
+    ?? evidence.categories.map((category, index) => oneOf(category, evidenceCategories, `${path}.evidence.categories[${index}]`)).find((problem) => problem !== undefined)
+  if (evidenceShape !== undefined) return evidenceShape
+  if ((evidence.status === "missing" && (evidence.points !== 0 || evidence.categories.length !== 0)) || (evidence.status === "partial" && (evidence.points <= 0 || evidence.points >= 6)) || (evidence.status === "complete" && evidence.points !== 6)) {
+    return `${path}.evidence status does not match its evidence points`
+  }
+  const model = item.model
+  const modelShape = oneOf(model.status, coverageStatuses, `${path}.model.status`) ?? stringList(model.identifiers, `${path}.model.identifiers`)
+    ?? model.identifiers.map((identifier, index) => (isExactProviderModel(identifier) ? undefined : `${path}.model.identifiers[${index}] must be an exact provider/model identifier`)).find((problem) => problem !== undefined)
+    ?? nonNegativeInteger(model.machineMarkerCount, `${path}.model.machineMarkerCount`) ?? nonNegativeInteger(model.invalidMarkerCount, `${path}.model.invalidMarkerCount`)
+    ?? oneOf(model.provenance, ["self-reported", "none"], `${path}.model.provenance`) ?? coverageProblem(model, `${path}.model`)
+  if (modelShape !== undefined) return modelShape
+  if ((model.machineMarkerCount > 0 && model.validSourceCount === 0) || (model.identifiers.length > 0 && model.validSourceCount === 0) || model.invalidMarkerCount < model.invalidSourceCount) {
+    return `${path}.model declarations do not match source coverage`
+  }
+  if ((model.validSourceCount > 0 && model.provenance !== "self-reported") || (model.validSourceCount === 0 && model.provenance !== "none")) return `${path}.model provenance does not match its model identifiers`
+  return undefined
+}
+
+function legacyPointsValid(event: ScoreEvent, isV2: boolean): boolean {
+  const points = event.points
+  return (!isV2 && event.category === "merged-pull-request" && Number.isInteger(points) && points >= 1 && points <= 10)
+    || (event.category === "resolved-issue" && points === 4)
+    || (event.category === "material-test-change" && points === 4)
+    || (event.category === "substantive-review" && points === 3)
+    || (event.category === "evaluated-contribution" && Number.isInteger(points) && points >= 1 && points <= 8)
+    || (event.category === "evidence" && (points === 1 || points === 2))
+}
+
+function v2PointsValid(event: ScoreEvent, isV2: boolean): boolean {
+  const thirds = event.scoreThirds
+  if (!isV2 || thirds === undefined) return false
+  const shape = event.category === "merged-pull-request" ? isScoreThirds(thirds) : Number.isSafeInteger(thirds)
+  const positive = thirds > 0 || (thirds === 0 && event.category === "merged-pull-request" && valueDecision.test(event.scoreDecisionSourceId ?? ""))
+  return shape && positive && event.points === thirds / 3 && workUnit.test(event.workUnitId ?? "")
+}
+
+function reviewHistoryProblem(registry: Registry, event: ScoreEvent, raw: unknown, path: string): Problem {
+  const history = event.reviewHistory ?? []
+  if (event.category !== "substantive-review" || event.source.kind !== "review") return `${path}.reviewHistory is reserved for formal review awards`
+  if (history.length < 2) return `${path}.reviewHistory must include a later decision`
+  const ids = new Set<string>()
+  const heads = new Set<string>()
+  let previousTime = ""
+  let previousId = ""
+  for (let index = 0; index < history.length; index++) {
+    const decision = history[index]
+    const decisionPath = `${path}.reviewHistory[${index}]`
+    if (decision === undefined || !hasKeys(at(raw, "reviewHistory", index), ["commitId", "sourceId", "state", "submittedAt", "url"])) return `${decisionPath} has unexpected or missing fields`
+    const shape = nonEmpty(decision.sourceId, `${decisionPath}.sourceId`) ?? oneOf(decision.state, ["APPROVED", "CHANGES_REQUESTED"], `${decisionPath}.state`)
+      ?? (/^[a-f0-9]{40}$/u.test(decision.commitId) ? undefined : `${decisionPath}.commitId must be an exact commit`)
+      ?? iso(decision.submittedAt, `${decisionPath}.submittedAt`) ?? repositoryUrl(registry, decision.url, `${decisionPath}.url`, "review", event.source.number, event.repository)
+    if (shape !== undefined) return shape
+    if (index === 0 && (decision.sourceId !== event.source.id || decision.url !== event.source.url || decision.submittedAt !== event.occurredAt)) return `${decisionPath} must identify the awarded source`
+    if (ids.has(decision.sourceId) || heads.has(decision.commitId)) return `${decisionPath} repeats a source or reviewed commit`
+    if (decision.submittedAt < previousTime || (decision.submittedAt === previousTime && decision.sourceId <= previousId)) return `${decisionPath} is not in deterministic review order`
+    ids.add(decision.sourceId)
+    heads.add(decision.commitId)
+    previousTime = decision.submittedAt
+    previousId = decision.sourceId
+  }
+  return undefined
+}
+
+function evaluationProblem(registry: Registry, event: ScoreEvent, raw: unknown, path: string): Problem {
+  if (event.reason.length < 40) return `${path}.reason must explain the evaluated contribution`
+  const evaluation = event.evaluation
+  if (evaluation === undefined || !hasKeys(at(raw, "evaluation"), ["decisionUrl", "manifestPath", "manifestSha256", "reviewedAt", "reviewer"])) return `${path}.evaluation has unexpected or missing fields`
+  const reviewed = iso(evaluation.reviewedAt, `${path}.evaluation.reviewedAt`)
+  if (reviewed !== undefined) return reviewed
+  if (millis(evaluation.reviewedAt) < millis(event.occurredAt)) return `${path}.evaluation review cannot precede the contribution`
+  if (!githubLogin.test(evaluation.reviewer)) return `${path}.evaluation.reviewer must be a GitHub login`
+  const decision = secureUrl(evaluation.decisionUrl, `${path}.evaluation.decisionUrl`)
+  if (typeof decision === "string") return decision
+  if (decision.hostname !== "github.com" || !/^\/(?:elizaOS\/(?:slopdotcash|army)|SlopDotCash\/slopdotcash)\/pull\/[1-9]\d*$/iu.test(decision.pathname) || decision.search !== "" || decision.hash !== "") {
+    return `${path}.evaluation.decisionUrl must be a Slop review pull request`
+  }
+  if (!/^[0-9a-f]{64}$/u.test(evaluation.manifestSha256)) return `${path}.evaluation.manifestSha256 must be a SHA-256 digest`
+  const projectId = findRepository(registry, event.repository)?.projectId
+  const escaped = projectId?.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
+  if (escaped === undefined || !new RegExp(`^evaluations/${escaped}/award-[a-z0-9][a-z0-9-]*\\.json$`, "u").test(evaluation.manifestPath)) return `${path}.evaluation.manifestPath is outside its project`
+  return undefined
+}
+
+function externalSourceProblem(event: ScoreEvent, raw: unknown, path: string, externalIds: ExternalIds): Problem {
+  const source = event.source
+  if (event.category !== "evaluated-contribution") return `${path}.source external sources are reserved for evaluated contributions`
+  if (source.number !== externalSourceNumber) return `${path}.source.number must be 0 for external sources`
+  const platform = oneOf(source.platform ?? "", externalPlatforms, `${path}.source.platform`) ?? externalUrlProblem(source.url, source.platform ?? "", `${path}.source.url`)
+  if (platform !== undefined) return platform
+  if (source.id !== externalIds.get(source.url)) return `${path}.source.id does not match its external URL`
+  return externalEvidenceProblem(at(raw, "source", "evidence"), source.url, `${path}.source.evidence`)
+}
+
+function ledgerProblem(registry: Registry, event: ScoreEvent, raw: unknown, path: string, repositoryIds: ReadonlyArray<string>, actors: Map<string, GitHubActor>, externalIds: ExternalIds): Problem {
+  const basic = nonEmpty(event.id, `${path}.id`) ?? actorProblem(event.actor, `${path}.actor`, actors) ?? oneOf(event.category, scoreCategories, `${path}.category`) ?? nonNegativeNumber(event.points, `${path}.points`)
+  if (basic !== undefined) return basic
+  const isV2 = Number.isFinite(millis(event.occurredAt)) && millis(event.occurredAt) >= millis(scoreV2EffectiveAt)
+  if (event.evidenceBonusBasisPoints !== undefined && (!isV2 || ![0, 1_000, 1_500, 2_500].includes(event.evidenceBonusBasisPoints))) return `${path}.evidenceBonusBasisPoints must be an allowed v2 outcome bonus`
+  if (!v2PointsValid(event, isV2) && !legacyPointsValid(event, isV2)) return `${path}.points does not match its scoring category`
+  const timing = iso(event.occurredAt, `${path}.occurredAt`) ?? (event.scoreDecisionAt === undefined ? undefined : iso(event.scoreDecisionAt, `${path}.scoreDecisionAt`))
+  if (timing !== undefined) return timing
+  if ((event.scoreDecisionSourceId ?? "").startsWith("value:") && event.scoreDecisionAt === undefined) return "Value score event requires its decision time"
+  if (event.acceptanceKind !== undefined && (event.acceptanceKind !== "indirect-integration" || event.category !== "merged-pull-request" || !valueDecision.test(event.scoreDecisionSourceId ?? "") || !event.id.includes(":joint:"))) {
+    return "Indirect acceptance requires a joint value award"
+  }
+  const reason = nonEmpty(event.reason, `${path}.reason`)
+  if (reason !== undefined) return reason
+  if (event.continuity !== undefined) {
+    if (event.category !== "substantive-review" || event.source.kind !== "review") return `${path}.continuity is reserved for retained reviews`
+    if (!hasKeys(at(raw, "continuity"), ["decisionUrl", "sourceSnapshotSha256"])) return `${path}.continuity has unexpected or missing fields`
+    if (!/^[0-9a-f]{64}$/u.test(event.continuity.sourceSnapshotSha256)) return `${path}.continuity source digest is invalid`
+    const decision = secureUrl(event.continuity.decisionUrl, `${path}.continuity.decisionUrl`)
+    if (typeof decision === "string") return decision
+    if (decision.hostname !== "github.com" || !/^\/SlopDotCash\/slopdotcash\/issues\/[1-9]\d*$/u.test(decision.pathname) || decision.search !== "" || decision.hash !== "") return `${path}.continuity decision URL is invalid`
+  }
+  const source = oneOf(event.repository, repositoryIds, `${path}.repository`) ?? nonEmpty(event.source.id, `${path}.source.id`)
+    ?? oneOf(event.source.kind, ["comment", "external", "issue", "pull-request", "review"], `${path}.source.kind`) ?? nonEmpty(event.source.title, `${path}.source.title`)
+  if (source !== undefined) return source
+  if (event.reviewHistory !== undefined) {
+    const history = reviewHistoryProblem(registry, event, raw, path)
+    if (history !== undefined) return history
+  }
+  if (event.source.kind === "external") {
+    const external = externalSourceProblem(event, raw, path, externalIds)
+    if (external !== undefined) return external
+  } else {
+    if (has(at(raw, "source"), "platform") || has(at(raw, "source"), "evidence")) return `${path}.source platform and evidence are reserved for external sources`
+    const located = positiveInteger(event.source.number, `${path}.source.number`) ?? repositoryUrl(registry, event.source.url, `${path}.source.url`, event.source.kind as "comment" | "issue" | "pull-request" | "review", event.source.number, event.repository)
+    if (located !== undefined) return located
+  }
+  if (event.category !== "evaluated-contribution") return event.evaluation === undefined ? undefined : `${path}.evaluation is reserved for evaluated contributions`
+  return evaluationProblem(registry, event, raw, path)
+}
+
+function opportunityProblem(registry: Registry, opportunity: ScoreOpportunity, path: string, repositoryIds: ReadonlyArray<string>): Problem {
+  const basic = nonEmpty(opportunity.id, `${path}.id`) ?? actorProblem(opportunity.actor, `${path}.actor`)
+    ?? oneOf(opportunity.kind, ["near-material-test", "expand-review", "missing-evidence", "partial-evidence"], `${path}.kind`) ?? oneOf(opportunity.category, scoreCategories, `${path}.category`)
+    ?? (opportunity.potentialPoints === null ? undefined : positiveInteger(opportunity.potentialPoints, `${path}.potentialPoints`))
+  if (basic !== undefined) return basic
+  const { kind, category } = opportunity
+  const potential = opportunity.potentialPoints
+  const pair = (kind === "near-material-test" && category === "material-test-change" && (potential === null || potential === 4))
+    || (kind === "expand-review" && category === "substantive-review" && (potential === null || potential === 3))
+    || ((kind === "missing-evidence" || kind === "partial-evidence") && category === "evidence" && (potential === null || (potential >= 1 && potential <= 6)))
+  if (!pair) return `${path} kind/category/potentialPoints combination is invalid`
+  const text = iso(opportunity.occurredAt, `${path}.occurredAt`) ?? nonEmpty(opportunity.reason, `${path}.reason`) ?? nonEmpty(opportunity.hint, `${path}.hint`)
+  if (text !== undefined) return text
+  const hint = opportunity.hint
+  const actionable = (kind === "near-material-test" && (hint.startsWith("Add recognized test coverage") || nearTestHints.includes(hint)))
+    || (kind === "missing-evidence" && hint === "Add verified screenshot, video, or log evidence before merge.")
+    || (kind === "partial-evidence" && hint === "Finish verified evidence categories before merge.")
+    || (kind === "expand-review" && reviewHints.includes(hint))
+  if (opportunity.reason.length > 1000 || hint.length > 256 || !actionable) return `${path}.hint must be an actionable next step`
+  const source = oneOf(opportunity.repository, repositoryIds, `${path}.repository`) ?? nonEmpty(opportunity.source.id, `${path}.source.id`)
+    ?? oneOf(opportunity.source.kind, ["issue", "pull-request", "review"], `${path}.source.kind`) ?? positiveInteger(opportunity.source.number, `${path}.source.number`)
+    ?? nonEmpty(opportunity.source.title, `${path}.source.title`) ?? (opportunity.source.title.length > 256 ? `${path}.source.title is too long` : undefined)
+    ?? repositoryUrl(registry, opportunity.source.url, `${path}.source.url`, opportunity.source.kind as "issue" | "pull-request" | "review", opportunity.source.number, opportunity.repository)
+  if (source !== undefined) return source
+  if (kind === "expand-review" && opportunity.source.kind !== "review") return `${path}.source.kind must be review for expand-review`
+  if (kind !== "expand-review" && opportunity.source.kind !== "pull-request") return `${path}.source.kind must be pull-request for ${kind}`
+  return undefined
+}
+
+function runProblem(registry: Registry, raw: unknown): Problem {
+  const parsed = parseRunReceipt(raw, registry.receipts)
+  return parsed.kind === "invalid" ? parsed.reason : undefined
+}
+
+function attributionProblem(registry: Registry, attribution: ModelAttribution, raw: unknown, path: string, actors: Map<string, GitHubActor>): Problem {
+  return nonEmpty(attribution.id, `${path}.id`) ?? nonEmpty(attribution.sourceId, `${path}.sourceId`) ?? repositoryUrl(registry, attribution.sourceUrl, `${path}.sourceUrl`)
+    ?? nonEmpty(attribution.artifactId, `${path}.artifactId`) ?? (attribution.actor === null ? undefined : actorProblem(attribution.actor, `${path}.actor`, actors))
+    ?? nonEmpty(attribution.provider, `${path}.provider`) ?? nonEmpty(attribution.model, `${path}.model`) ?? nonEmpty(attribution.identifier, `${path}.identifier`)
+    ?? (attribution.identifier === exactIdentifier(attribution.provider, attribution.model) ? undefined : `${path}.identifier must match provider and model`)
+    ?? (attribution.client === null ? undefined : nonEmpty(attribution.client, `${path}.client`))
+    ?? (attribution.skillRevision === null ? undefined : nonEmpty(attribution.skillRevision, `${path}.skillRevision`))
+    ?? (attribution.run === null ? undefined : runProblem(registry, at(raw, "run")))
+    ?? oneOf(attribution.format, ["machine-marker", "visible-declaration"], `${path}.format`)
+    ?? (attribution.status === "self-reported" ? undefined : `${path}.status must be self-reported`)
+}
+
+function exclusionProblem(registry: Registry, exclusion: ReviewExclusion, raw: unknown, path: string, repositoryIds: ReadonlyArray<string>): Problem {
+  const keys = isRecord(raw) ? Object.keys(raw).filter((key) => key !== "reviewer").sort().join(",") : ""
+  if (keys !== "id,pullRequestId,pullRequestNumber,reason,repository,reviewId,url") return `${path} must contain exactly the review exclusion fields`
+  const shape = (exclusion.reviewer === undefined ? undefined : actorProblem(exclusion.reviewer, `${path}.reviewer`)) ?? nonEmpty(exclusion.id, `${path}.id`)
+    ?? nonEmpty(exclusion.pullRequestId, `${path}.pullRequestId`) ?? positiveInteger(exclusion.pullRequestNumber, `${path}.pullRequestNumber`) ?? nonEmpty(exclusion.reviewId, `${path}.reviewId`)
+  if (shape !== undefined) return shape
+  if (exclusion.id !== `${exclusion.pullRequestId}:review-exclusion:${exclusion.reviewId}`) return `${path}.id must bind the pull request and review IDs`
+  return oneOf(exclusion.reason, reviewExclusionReasons, `${path}.reason`) ?? oneOf(exclusion.repository, repositoryIds, `${path}.repository`)
+    ?? repositoryUrl(registry, exclusion.url, `${path}.url`, "review", exclusion.pullRequestNumber, exclusion.repository)
+}
+
+function penaltiesProblem(registry: Registry, penalties: ReadonlyArray<PublishedPenalty>, raw: unknown, repositoryIds: ReadonlyArray<string>, from: string, to: string): Problem {
+  const ids = new Set<string>()
+  for (let index = 0; index < penalties.length; index++) {
+    const penalty = penalties[index]
+    const path = `snapshot.penalties[${index}]`
+    if (penalty === undefined || !hasKeys(at(raw, index), ["actor", "category", "debitThirds", "id", "occurredAt", "repository", "source", "tableVersion"])) return `${path} must contain exactly the penalty fields`
+    const actor = actorProblem(penalty.actor, `${path}.actor`)
+    if (actor !== undefined) return actor
+    if (penalty.actor.kind === "Bot") return `${path}.actor cannot be a bot`
+    const shape = oneOf(penalty.repository, repositoryIds, `${path}.repository`) ?? iso(penalty.occurredAt, `${path}.occurredAt`)
+    if (shape !== undefined) return shape
+    if (millis(penalty.occurredAt) < millis(from) || millis(penalty.occurredAt) > millis(to)) return `${path}.occurredAt is outside the snapshot window`
+    const fields = nonEmpty(penalty.category, `${path}.category`) ?? nonEmpty(penalty.tableVersion, `${path}.tableVersion`) ?? positiveInteger(penalty.debitThirds, `${path}.debitThirds`)
+      ?? nonEmpty(penalty.source.id, `${path}.source.id`) ?? nonEmpty(penalty.source.title, `${path}.source.title`) ?? positiveInteger(penalty.source.number, `${path}.source.number`)
+    if (fields !== undefined) return fields
+    const rawSource = at(raw, index, "source")
+    if (!isRecord(rawSource) || Object.keys(rawSource).length !== 5 || penalty.source.kind !== "pull-request" || penalty.id !== `${penalty.source.id}:penalty` || ids.has(penalty.id)) return `${path} must bind one unique pull request`
+    ids.add(penalty.id)
+    const url = repositoryUrl(registry, penalty.source.url, `${path}.source.url`, "pull-request", penalty.source.number, penalty.repository)
+    if (url !== undefined) return url
+  }
+  return undefined
+}
+
+function exactIsoTime(value: string | null): boolean {
+  return value !== null && Number.isFinite(millis(value)) && new Date(millis(value)).toISOString() === value
+}
+
+function penaltyHistoryProblem(snapshot: LeaderboardSnapshot, raw: unknown, projectIds: ReadonlyArray<string>): Problem {
+  const seen = new Set<string>()
+  const history = snapshot.penaltyHistory ?? []
+  const through = snapshot.generatedAt
+  for (let index = 0; index < history.length; index++) {
+    const row = history[index]
+    if (row === undefined || !hasKeys(at(raw, "penaltyHistory", index), ["projectId", "itemNodeId", "authorGithubId", "category", "tableVersion", "debitThirds", "period", "recordedAt", "reversedAt", "reversal"])) return "Invalid penalty history record"
+    const reversal = row.reversedAt === null
+      ? row.reversal !== null
+      : !exactIsoTime(row.reversedAt) || row.reversedAt < row.recordedAt || row.reversedAt > through || !["appeal_upheld", "maintainer_reopen"].includes(row.reversal ?? "")
+    if (!projectIds.includes(row.projectId) || !/^[A-Za-z0-9_=-]{1,100}$/u.test(row.itemNodeId) || !/^[1-9][0-9]*$/u.test(row.authorGithubId) || !/^[a-z_]{1,40}$/u.test(row.category)
+      || !/^slopbot-penalties-v[1-9][0-9]*$/u.test(row.tableVersion) || !Number.isSafeInteger(row.debitThirds) || row.debitThirds < 1 || !Number.isSafeInteger(row.debitThirds * 10)
+      || !exactIsoTime(row.recordedAt) || row.period !== row.recordedAt.slice(0, 7) || row.recordedAt > through || reversal) {
+      return "Invalid penalty history record"
+    }
+    const key = `${row.projectId}\0${row.itemNodeId}`
+    if (seen.has(key)) return "Penalty history repeats a pull request"
+    seen.add(key)
+  }
+  return undefined
+}
+
+function sourceProblem(snapshot: LeaderboardSnapshot, raw: unknown): Problem {
+  const path = "snapshot.source"
+  const source: SourceMetadata = snapshot.source
+  const repositories = snapshot.repositories
+  if (source.provider !== "github-graphql") return `${path}.provider must be github-graphql`
+  const times = iso(source.fetchedAt, `${path}.fetchedAt`) ?? iso(source.cutoffAt, `${path}.cutoffAt`)
+  if (times !== undefined) return times
+  if (repositories.length === 0 && source.repositoryId !== null) return `${path}.repositoryId must be null without repositories`
+  if (repositories.length > 0 && (source.repositoryId === null || source.repositoryId === "")) return `${path}.repositoryId must be a non-empty string`
+  if (source.repositories.length !== repositories.length) return `${path}.repositories must record a GraphQL node ID for every registry repository`
+  const nodeIds = new Set<string>()
+  for (let index = 0; index < source.repositories.length; index++) {
+    const entry = source.repositories[index]
+    const entryPath = `${path}.repositories[${index}]`
+    if (entry === undefined || entry.id !== repositories[index]?.id) return `${entryPath}.id must follow the target repository registry order`
+    const empty = nonEmpty(entry.repositoryId, `${entryPath}.repositoryId`)
+    if (empty !== undefined) return empty
+    if (nodeIds.has(entry.repositoryId)) return `${entryPath}.repositoryId must be unique per repository`
+    nodeIds.add(entry.repositoryId)
+    if (repositories[index]?.role === "primary" && entry.repositoryId !== source.repositoryId) return `${path}.repositoryId must match the primary registry repository`
+  }
+  const requests = positiveInteger(source.requestCount, `${path}.requestCount`)
+    ?? (repositories.length === 0 ? nonNegativeInteger(source.searchSliceCount, `${path}.searchSliceCount`) : positiveInteger(source.searchSliceCount, `${path}.searchSliceCount`))
+    ?? nonNegativeInteger(source.rateLimit.cost, `${path}.rateLimit.cost`)
+    ?? (source.rateLimit.consumedDuringRun === undefined ? undefined : nonNegativeInteger(source.rateLimit.consumedDuringRun, `${path}.rateLimit.consumedDuringRun`))
+    ?? positiveInteger(source.rateLimit.limit, `${path}.rateLimit.limit`) ?? nonNegativeInteger(source.rateLimit.remaining, `${path}.rateLimit.remaining`)
+    ?? (source.rateLimit.remaining > source.rateLimit.limit ? `${path}.rateLimit.remaining cannot exceed its limit` : undefined)
+    ?? iso(source.rateLimit.resetAt, `${path}.rateLimit.resetAt`)
+  if (requests !== undefined) return requests
+  const counts = source.counts
+  const unavailable = new Set<string>()
+  if (source.unavailableSources !== undefined) {
+    for (let index = 0; index < source.unavailableSources.length; index++) {
+      const row = source.unavailableSources[index]
+      if (row === undefined || row.nodeId === "") return "unavailable source nodeId must be a non-empty string"
+      const keys = sortedKeys(at(raw, "source", "unavailableSources", index))
+      if (!["nodeId,reason", "nodeId,reason,unavailableInMergedCensus"].includes(keys) || (row.unavailableInMergedCensus !== undefined && row.unavailableInMergedCensus !== true) || row.reason !== "NOT_FOUND" || unavailable.has(row.nodeId)) {
+        return "Unavailable source must have a unique identity and explicit NOT_FOUND reason"
+      }
+      unavailable.add(row.nodeId)
+    }
+    if (counts.unavailableSources !== unavailable.size || counts.unavailableMergedPullRequests !== source.unavailableSources.filter((row) => row.unavailableInMergedCensus === true).length) return "Unavailable source count does not reconcile"
+  } else if (counts.unavailableSources !== undefined || counts.unavailableMergedPullRequests !== undefined) return "Unavailable source count lacks its records"
+  if (source.heldWorkUnits !== undefined) {
+    const digests = new Set<string>()
+    for (let index = 0; index < source.heldWorkUnits.length; index++) {
+      const row = source.heldWorkUnits[index]
+      if (row === undefined || sortedKeys(at(raw, "source", "heldWorkUnits", index)) !== "recordDigest,sourceNodeIds,unavailableNodeIds" || !digest.test(row.recordDigest) || digests.has(row.recordDigest)) return "Held work unit must bind a unique journal digest"
+      digests.add(row.recordDigest)
+      for (const ids of [row.sourceNodeIds, row.unavailableNodeIds]) {
+        if (ids.length === 0 || ids.some((id) => id === "") || new Set(ids).size !== ids.length) return "Held work unit must bind distinct source identities"
+      }
+      if (row.unavailableNodeIds.some((id) => !unavailable.has(id) || !row.sourceNodeIds.includes(id))) return "Held work unit lacks its unavailable source observation"
+    }
+    if (counts.heldWorkUnits !== digests.size) return "Held work unit count does not reconcile"
+  } else if (counts.heldWorkUnits !== undefined) return "Held work unit count lacks its records"
+  for (const key of ["mergedPullRequests", "detailedMergedPullRequests", "closedIssues", "detailedClosedIssues", "resolvedIssues", "openIssues", "openPullRequests"] as const) {
+    const problem = nonNegativeInteger(counts[key], `${path}.counts.${key}`)
+    if (problem !== undefined) return problem
+  }
+  if (counts.detailedMergedPullRequests > counts.mergedPullRequests || counts.detailedClosedIssues > counts.closedIssues || counts.resolvedIssues > counts.detailedClosedIssues) return `${path}.counts detail coverage exceeds its source count`
+  const window = source.verificationWindow
+  if (window.days !== verificationWindowDays) return `${path}.verificationWindow.days must be ${verificationWindowDays}`
+  const windowTimes = iso(window.from, `${path}.verificationWindow.from`) ?? iso(window.to, `${path}.verificationWindow.to`)
+  if (windowTimes !== undefined) return windowTimes
+  const evidence = source.evidenceVerification
+  const evidenceShape = oneOf(evidence.status, ["complete", "suppressed-limit"], `${path}.evidenceVerification.status`)
+    ?? nonNegativeInteger(evidence.sourceCount, `${path}.evidenceVerification.sourceCount`) ?? nonNegativeInteger(evidence.artifactCount, `${path}.evidenceVerification.artifactCount`)
+    ?? nonNegativeInteger(evidence.maxSources, `${path}.evidenceVerification.maxSources`) ?? nonNegativeInteger(evidence.maxArtifacts, `${path}.evidenceVerification.maxArtifacts`)
+  if (evidenceShape !== undefined) return evidenceShape
+  const exceeds = evidence.sourceCount > evidence.maxSources || evidence.artifactCount > evidence.maxArtifacts
+  if (evidence.status === "complete" && exceeds) return `${path}.evidenceVerification complete status exceeds a verification limit`
+  if (evidence.status === "suppressed-limit" && !exceeds) return `${path}.evidenceVerification suppressed status must exceed a verification limit`
+  return undefined
+}
+
+function methodologyProblem(snapshot: LeaderboardSnapshot): Problem {
+  const path = "snapshot.methodology"
+  const methodology = snapshot.methodology
+  const summary = nonEmpty(methodology.summary, `${path}.summary`)
+  if (summary !== undefined) return summary
+  if (methodology.scoringRules.length !== 6) return `${path}.scoringRules must contain all six scoring rules`
+  const seen = new Set<string>()
+  for (let index = 0; index < methodology.scoringRules.length; index++) {
+    const rule = methodology.scoringRules[index]
+    const rulePath = `${path}.scoringRules[${index}]`
+    if (rule === undefined) return `${path}.scoringRules must contain all six scoring rules`
+    const id = oneOf(rule.id, scoreCategories, `${rulePath}.id`)
+    if (id !== undefined) return id
+    if (seen.has(rule.id)) return `${path}.scoringRules must not repeat rule IDs`
+    seen.add(rule.id)
+    const text = nonEmpty(rule.points, `${rulePath}.points`) ?? nonEmpty(rule.cap, `${rulePath}.cap`) ?? nonEmpty(rule.qualification, `${rulePath}.qualification`)
+    if (text !== undefined) return text
+  }
+  if (seen.size !== scoreCategories.length) return `${path}.scoringRules must publish every scoring rule`
+  for (const [category, expected] of Object.entries(evidenceWeights)) {
+    if (methodology.evidenceWeights[category as keyof typeof evidenceWeights] !== expected) return `${path}.evidenceWeights.${category} must be ${expected}`
+  }
+  const threshold = methodology.materialTestThreshold
+  const counts = nonNegativeInteger(threshold.minimumAdditions, `${path}.materialTestThreshold.minimumAdditions`) ?? nonNegativeInteger(threshold.minimumTotalChurn, `${path}.materialTestThreshold.minimumTotalChurn`)
+  if (counts !== undefined) return counts
+  if (threshold.minimumAdditions !== materialTestAdditions) return `${path}.materialTestThreshold.minimumAdditions must be ${materialTestAdditions}`
+  if (threshold.minimumTotalChurn !== materialTestChurn) return `${path}.materialTestThreshold.minimumTotalChurn must be ${materialTestChurn}`
+  return nonEmpty(threshold.cap, `${path}.materialTestThreshold.cap`) ?? stringList(methodology.exclusions, `${path}.exclusions`)
+    ?? stringList(methodology.nonScoringActivity, `${path}.nonScoringActivity`) ?? nonEmpty(methodology.provenancePolicy, `${path}.provenancePolicy`)
+    ?? nonEmpty(methodology.collectionPolicy, `${path}.collectionPolicy`)
+}
+
+function githubWorkKey(registry: Registry, repository: string, source: ScoreEvent["source"]): string | undefined {
+  if (source.kind === "external") return undefined
+  const hash = parsedUrl(source.url)?.hash.toLowerCase() ?? ""
+  return JSON.stringify([findRepository(registry, repository)?.nodeId ?? repository, source.number, hash])
+}
+
+function compareRanked(left: LeaderboardEntry, right: LeaderboardEntry): number {
+  return right.scoreThirds - left.scoreThirds || compareCodeUnits(left.actor.id, right.actor.id)
+}
+
+function compareLegacyRanked(left: LeaderboardEntry, right: LeaderboardEntry): number {
+  return right.scoreThirds - left.scoreThirds || compareCodeUnits(left.actor.login.toLowerCase(), right.actor.login.toLowerCase()) || compareCodeUnits(left.actor.login, right.actor.login) || compareCodeUnits(left.actor.id, right.actor.id)
+}
+
+export function orderingProblem(leaders: ReadonlyArray<LeaderboardEntry>, allowLegacy: boolean): Problem {
+  const orderedBy = (compare: (left: LeaderboardEntry, right: LeaderboardEntry) => number) => leaders.every((entry, index) => index === 0 || compare(leaders[index - 1] ?? entry, entry) <= 0)
+  return orderedBy(compareRanked) || (allowLegacy && orderedBy(compareLegacyRanked)) ? undefined : "snapshot.leaders must follow score and actor ID ordering"
+}
+
+export function ranksProblem(leaders: ReadonlyArray<LeaderboardEntry>, allowLegacy: boolean): Problem {
+  let rank = 0
+  const competition = leaders.every((entry, index) => {
+    if (entry.scoreThirds !== leaders[index - 1]?.scoreThirds) rank = index + 1
+    return entry.rank === rank
+  })
+  const legacy = allowLegacy && leaders.every((entry, index) => entry.rank === index + 1)
+  return competition || legacy ? undefined : "snapshot.leaders must use equal-score competition ranks"
+}
+
+function compareExclusions(left: ReviewExclusion, right: ReviewExclusion): number {
+  return left.pullRequestId.localeCompare(right.pullRequestId, "en") || left.reviewId.localeCompare(right.reviewId, "en")
+}
+
+function compareOpportunities(left: ScoreOpportunity, right: ScoreOpportunity): number {
+  return millis(right.occurredAt) - millis(left.occurredAt) || left.source.number - right.source.number || left.id.localeCompare(right.id)
+}
+
+const actionabilityRank: Readonly<Record<string, number>> = { actionable: 0, blocked: 1, draft: 2 }
+const priorityRank: Readonly<Record<string, number>> = { urgent: 0, high: 1, normal: 2, low: 3 }
+
+function compareWorkItems(left: WorkItem, right: WorkItem): number {
+  return Number(left.selection.status === "excluded") - Number(right.selection.status === "excluded")
+    || (actionabilityRank[left.actionability] ?? 0) - (actionabilityRank[right.actionability] ?? 0)
+    || Number(left.claim.status === "claimed") - Number(right.claim.status === "claimed")
+    || (priorityRank[left.priority] ?? 0) - (priorityRank[right.priority] ?? 0)
+    || millis(right.updatedAt) - millis(left.updatedAt)
+    || right.number - left.number
+}
+
+function repositoriesProblem(registry: Registry, snapshot: LeaderboardSnapshot, raw: unknown): Problem {
+  const canonical = new Set<string>()
+  for (let index = 0; index < snapshot.repositories.length; index++) {
+    const published = snapshot.repositories[index]
+    const path = `snapshot.repositories[${index}]`
+    if (published === undefined) return `${path} must publish exactly the registry fields`
+    for (const key of publishedRepositoryKeys) {
+      const empty = nonEmpty(published[key], `${path}.${key}`)
+      if (empty !== undefined) return empty
+    }
+    const rawEntry = at(raw, "repositories", index)
+    if (!isRecord(rawEntry) || Object.keys(rawEntry).length !== 9) return `${path} must publish exactly the registry fields`
+    const known = findRepository(registry, published.id)
+    const byUrl = findRepositoryPath(registry, published.owner, published.name)
+    if (known === undefined || known.projectId !== published.projectId || byUrl === undefined || byUrl.id !== known.id || byUrl.projectId !== known.projectId || published.githubUrl !== `https://github.com/${published.owner}/${published.name}`) {
+      return `${path} must identify a known repository and its project`
+    }
+    if (canonical.has(known.id)) return `${path}.id duplicates a repository identity`
+    canonical.add(known.id)
+    if (published.role !== (index === 0 ? "primary" : "member")) return `${path}.role must follow the collected inventory order`
+  }
+  return snapshot.repository === (snapshot.repositories[0]?.id ?? null) ? undefined : "snapshot.repository must match its collected primary repository"
+}
+
+function windowProblem(snapshot: LeaderboardSnapshot): Problem {
+  if (snapshot.ruleVersion !== ruleVersion) return `snapshot.ruleVersion must be ${ruleVersion}`
+  if (snapshot.stale !== false) return "A freshly generated snapshot must set stale=false"
+  const times = iso(snapshot.generatedAt, "snapshot.generatedAt") ?? iso(snapshot.sourceUpdatedAt, "snapshot.sourceUpdatedAt")
+  if (times !== undefined) return times
+  const generatedAt = millis(snapshot.generatedAt)
+  if (millis(snapshot.sourceUpdatedAt) > generatedAt) return "snapshot.sourceUpdatedAt cannot follow generatedAt"
+  const window = snapshot.window
+  if (!Number.isFinite(window.days)) return "snapshot.window.days must be a finite number"
+  if (window.days !== scoreWindowDays) return `snapshot.window.days must be ${scoreWindowDays}`
+  const bounds = iso(window.from, "snapshot.window.from") ?? iso(window.to, "snapshot.window.to")
+  if (bounds !== undefined) return bounds
+  if (millis(window.from) >= millis(window.to)) return "snapshot.window.from must precede snapshot.window.to"
+  if (millis(window.to) > generatedAt || millis(window.to) - millis(window.from) !== scoreWindowDays * dayMillis) return "snapshot.window must be the exact rolling window ending no later than generation"
+  return undefined
+}
+
+function each<T>(values: ReadonlyArray<T>, check: (value: T, index: number) => Problem): Problem {
+  for (let index = 0; index < values.length; index++) {
+    const problem = check(values[index] as T, index)
+    if (problem !== undefined) return problem
+  }
+  return undefined
+}
+
+function unique<T>(values: ReadonlyArray<T>, key: (value: T) => string): boolean {
+  return new Set(values.map(key)).size === values.length
+}
+
+function sorted<T>(values: ReadonlyArray<T>, compare: (left: T, right: T) => number): boolean {
+  return values.every((value, index) => index === 0 || compare(values[index - 1] as T, value) <= 0)
+}
+
+function creditProblem(registry: Registry, ledger: ReadonlyArray<ScoreEvent>): Problem {
+  const evaluatedSources = new Set<string>()
+  const evaluatedReviews = new Set<string>()
+  const otherIds = new Set<string>()
+  const otherUrls = new Set<string>()
+  const otherWork = new Set<string>()
+  for (const event of ledger) {
+    if (event.category === "evaluated-contribution" && event.source.kind === "review") {
+      const key = `${event.repository}\0${event.source.number}\0${event.actor.id}`
+      if (evaluatedReviews.has(key)) return "snapshot.ledger repeats evaluated reviewer/pull-request credit"
+      evaluatedReviews.add(key)
+    }
+    if (event.category !== "evaluated-contribution") {
+      otherIds.add(`${event.repository}\0${event.source.id}`)
+      otherUrls.add(`${event.repository}\0${event.source.url}`)
+      const work = githubWorkKey(registry, event.repository, event.source)
+      if (work !== undefined) otherWork.add(work)
+    }
+  }
+  const merged = new Map<string, ScoreEvent[]>()
+  const usage = new Map<string, { evidencePoints: number; evaluatedContributions: number; materialTestChanges: number; resolvedIssues: number; substantiveReviews: number }>()
+  const legacyFrom = millis(scoreV2EffectiveAt)
+  for (const event of ledger) {
+    const repository = findRepository(registry, event.repository)
+    if (repository === undefined) return `snapshot.ledger event ${event.id} has no project`
+    const key = `${event.actor.id}\0${repository.projectId}\0${event.occurredAt.slice(0, 7)}`
+    const counted = usage.get(key) ?? { evidencePoints: 0, evaluatedContributions: 0, materialTestChanges: 0, resolvedIssues: 0, substantiveReviews: 0 }
+    if (event.category === "substantive-review" && evaluatedReviews.has(`${event.repository}\0${event.source.number}\0${event.actor.id}`)) return `snapshot.ledger review event ${event.id} duplicates evaluated reviewer/pull-request credit`
+    if (event.category === "merged-pull-request") merged.set(key, [...(merged.get(key) ?? []), event])
+    else if (event.category === "resolved-issue") counted.resolvedIssues += 1
+    else if (event.category === "material-test-change") counted.materialTestChanges += 1
+    else if (event.category === "evidence") counted.evidencePoints += event.points
+    else if (event.category === "substantive-review") counted.substantiveReviews += 1
+    else {
+      counted.evaluatedContributions += 1
+      const source = `${event.repository}\0${event.source.id}`
+      const work = githubWorkKey(registry, event.repository, event.source)
+      if (evaluatedSources.has(source) || (work !== undefined && evaluatedSources.has(work))) return "snapshot.ledger repeats evaluated source credit"
+      evaluatedSources.add(source)
+      if (work !== undefined) evaluatedSources.add(work)
+      if (otherIds.has(source) || otherUrls.has(`${event.repository}\0${event.source.url}`) || (work !== undefined && otherWork.has(work))) return `snapshot.ledger evaluated event ${event.id} duplicates another score source`
+    }
+    if (millis(event.occurredAt) < legacyFrom && (counted.resolvedIssues > scoreCaps.resolvedIssues || counted.materialTestChanges > scoreCaps.materialTestChanges || counted.evidencePoints > scoreCaps.evidencePoints || counted.substantiveReviews > scoreCaps.substantiveReviews || counted.evaluatedContributions > scoreCaps.evaluatedContributions)) {
+      return `snapshot.ledger actor ${event.actor.login} exceeds a per-project score cap`
+    }
+    usage.set(key, counted)
+  }
+  for (const events of merged.values()) {
+    const legacy = events.filter((event) => millis(event.occurredAt) < legacyFrom)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.source.number - left.source.number || left.id.localeCompare(right.id))
+    const wrong = legacy.findIndex((event, index) => event.points !== mergedPullRequestCredit(index + 1))
+    if (wrong >= 0) return `snapshot.ledger merged event ${legacy[wrong]?.id ?? ""} must award ${mergedPullRequestCredit(wrong + 1)} points at ordinal ${wrong + 1}`
+  }
+  return undefined
+}
+
+function totalsProblem(registry: Registry, snapshot: LeaderboardSnapshot): Problem {
+  const penalties = penaltyDeductions(registry, snapshot.ledger, snapshot.penalties ?? []).byActor
+  const leaders = new Set(snapshot.leaders.map((entry) => entry.actor.id))
+  const missing = snapshot.ledger.find((event) => !leaders.has(event.actor.id))
+  if (missing !== undefined) return `snapshot.ledger event ${missing.id} has no corresponding leader`
+  const byActor = new Map<string, ScoreEvent[]>()
+  for (const event of snapshot.ledger) byActor.set(event.actor.id, [...(byActor.get(event.actor.id) ?? []), event])
+  const keyOf: Readonly<Record<string, readonly [keyof LeaderboardEntry["pointThirds"], keyof LeaderboardEntry["acceptedOutcomes"]]>> = {
+    "merged-pull-request": ["mergedPullRequests", "mergedPullRequests"],
+    "resolved-issue": ["resolvedIssues", "resolvedIssues"],
+    "material-test-change": ["materialTestChanges", "materialTestChanges"],
+    evidence: ["evidence", "evidenceCategories"],
+    "substantive-review": ["substantiveReviews", "substantiveReviews"],
+    "evaluated-contribution": ["evaluatedContributions", "evaluatedContributions"],
+  }
+  for (const leader of snapshot.leaders) {
+    const events = byActor.get(leader.actor.id) ?? []
+    const thirds: Record<string, number | undefined> = { mergedPullRequests: 0, resolvedIssues: 0, materialTestChanges: 0, evidence: 0, substantiveReviews: 0, evaluatedContributions: 0 }
+    const outcomes: Record<string, number> = { mergedPullRequests: 0, resolvedIssues: 0, materialTestChanges: 0, evidenceCategories: 0, substantiveReviews: 0, evaluatedContributions: 0 }
+    let points = 0
+    for (const event of events) {
+      const [pointKey, outcomeKey] = keyOf[event.category] ?? keyOf["evaluated-contribution"] ?? ["evaluatedContributions", "evaluatedContributions"]
+      const current = thirds[pointKey]
+      thirds[pointKey] = current === undefined ? undefined : addThirds(current, event.scoreThirds ?? event.points * 3)
+      outcomes[outcomeKey] = (outcomes[outcomeKey] ?? 0) + 1
+      points += pointsOf(event.scoreThirds ?? event.points * 3)
+    }
+    const applied = penalties.get(leader.actor.id) ?? 0
+    const ledgerThirds = (points - pointsOf(applied)) / 10
+    const mismatch = (leader.penaltyThirds ?? 0) !== applied || Math.floor(ledgerThirds / 3) !== leader.score || ledgerThirds !== leader.scoreThirds
+      || Object.entries(thirds).some(([key, value]) => value !== leader.pointThirds[key as keyof LeaderboardEntry["pointThirds"]])
+      || Object.entries(outcomes).some(([key, value]) => value !== leader.acceptedOutcomes[key as keyof LeaderboardEntry["acceptedOutcomes"]])
+    if (mismatch) return `snapshot.leaders actor ${leader.actor.login} does not match the public ledger`
+  }
+  return undefined
+}
+
+function attributionsProblem(registry: Registry, snapshot: LeaderboardSnapshot, raw: unknown, repositoryIds: ReadonlyArray<string>, actors: Map<string, GitHubActor>): Problem {
+  const attributions = snapshot.attributions
+  const shape = each(attributions, (attribution, index) => attributionProblem(registry, attribution, at(raw, "attributions", index), `snapshot.attributions[${index}]`, actors))
+  if (shape !== undefined) return shape
+  if (!unique(attributions, (attribution) => attribution.id)) return "snapshot.attributions must contain unique IDs"
+  const claims = new Map<string, string>()
+  for (const attribution of attributions) {
+    const upload = attribution.run?.traceUpload
+    if (attribution.run === null || upload === null || upload === undefined) continue
+    for (const [kind, value] of [["client run", attribution.run.runId], ["server run", upload.serverRunId], ["trace object", upload.objectId]] as const) {
+      const prior = claims.get(`${kind}:${value}`)
+      if (prior !== undefined) return `snapshot attribution ${attribution.id} reuses ${kind} already claimed by ${prior}`
+      claims.set(`${kind}:${value}`, attribution.id)
+    }
+  }
+  const causal = new Set<string>()
+  const resolved = new Set<string>()
+  for (const event of snapshot.ledger) {
+    if (event.source.kind === "pull-request") causal.add(`${event.actor.id}\0artifact\0${event.source.id}`)
+    if ((event.category === "substantive-review" || event.category === "evaluated-contribution") && (event.source.kind === "review" || event.source.kind === "comment")) causal.add(`${event.actor.id}\0source\0${event.source.id}`)
+    const separator = event.id.lastIndexOf(":resolved-by:")
+    if (event.category === "resolved-issue" && separator >= 0) resolved.add(`${event.actor.id}\0${event.id.slice(separator + ":resolved-by:".length)}`)
+  }
+  for (const attribution of attributions) {
+    if (!repositoryIds.includes(repositoryIdFromUrl(registry, attribution.sourceUrl) ?? "")) return "snapshot attribution must reference a collected repository"
+    const actorId = attribution.actor?.id
+    const linked = actorId !== undefined && (causal.has(`${actorId}\0artifact\0${attribution.artifactId}`) || causal.has(`${actorId}\0source\0${attribution.sourceId}`) || resolved.has(`${actorId}\0${attribution.artifactId}`))
+    if (!linked) return `snapshot attribution ${attribution.id} is not causally linked to a public ledger event by the same actor`
+  }
+  const legacyUsage = millis(snapshot.generatedAt) < millis(usageNeutralEvidencePolicyAt)
+  for (const event of snapshot.ledger) {
+    const published = event.evidenceBonusBasisPoints ?? 0
+    if (published === 0) continue
+    const run = attributions.find((attribution) => attribution.actor?.id === event.actor.id && (attribution.artifactId === event.source.id || attribution.sourceId === event.source.id) && attribution.run !== null)?.run ?? null
+    const expected = run === null ? 0 : (run.traceUpload !== null && run.traceUpload !== undefined ? 1_500 : 0) + (legacyUsage && ["exact", "bounded"].includes(run.usage.confidence) && run.usage.totalTokens > 0 ? 1_000 : 0)
+    if (published !== expected) return `snapshot.ledger event ${event.id} has no exact receipt for its evidence bonus`
+  }
+  const models = new Map<string, Set<string>>()
+  for (const attribution of attributions) {
+    if (attribution.actor === null || isUnavailableModel(attribution.model)) continue
+    const identifiers = models.get(attribution.actor.id) ?? new Set<string>()
+    identifiers.add(attribution.identifier)
+    models.set(attribution.actor.id, identifiers)
+  }
+  for (const leader of snapshot.leaders) {
+    if (uniqueSorted(models.get(leader.actor.id) ?? []).join("\0") !== leader.reportedModels.join("\0")) return `snapshot.leaders actor ${leader.actor.login} has untraceable reported models`
+  }
+  const markers = each(snapshot.invalidAttributionMarkers, (marker, index) => {
+    const path = `snapshot.invalidAttributionMarkers[${index}]`
+    return nonEmpty(marker.sourceId, `${path}.sourceId`) ?? repositoryUrl(registry, marker.sourceUrl, `${path}.sourceUrl`)
+      ?? (repositoryIds.includes(repositoryIdFromUrl(registry, marker.sourceUrl) ?? "") ? undefined : `${path}.sourceUrl must reference a collected repository`)
+      ?? nonEmpty(marker.reason, `${path}.reason`)
+  })
+  if (markers !== undefined) return markers
+  const coverage = coverageProblem(snapshot.attributionCoverage, "snapshot.attributionCoverage")
+  if (coverage !== undefined) return coverage
+  const attributed = new Set(attributions.map((attribution) => attribution.sourceId))
+  const invalid = new Set(snapshot.invalidAttributionMarkers.map((marker) => marker.sourceId))
+  return attributed.size > snapshot.attributionCoverage.validSourceCount || invalid.size !== snapshot.attributionCoverage.invalidSourceCount ? "snapshot attribution records do not match attributionCoverage" : undefined
+}
+
+function workQueueProblem(registry: Registry, snapshot: LeaderboardSnapshot, repositoryIds: ReadonlyArray<string>): Problem {
+  const { issues, pullRequests } = snapshot.workQueue
+  const items = each(issues, (item, index) => workItemProblem(registry, item, `snapshot.workQueue.issues[${index}]`, "issue", repositoryIds))
+    ?? each(pullRequests, (item, index) => workItemProblem(registry, item, `snapshot.workQueue.pullRequests[${index}]`, "pull-request", repositoryIds))
+  if (items !== undefined) return items
+  const open = new Set(pullRequests.map((pull) => pull.id))
+  for (const opportunity of snapshot.opportunities) {
+    const pullId = opportunity.source.kind === "pull-request" ? opportunity.source.id : pullRequests.find((pull) => pull.repository === opportunity.repository && pull.number === opportunity.source.number)?.id
+    if (pullId === undefined || !open.has(pullId)) return `snapshot opportunity ${opportunity.id} has no corresponding open pull request`
+  }
+  const generatedAt = millis(snapshot.generatedAt)
+  for (const [name, queue] of [["issues", issues], ["pullRequests", pullRequests]] as const) {
+    if (!sorted(queue, compareWorkItems)) return `snapshot.workQueue.${name} must prioritize actionable, unclaimed, labeled, recent work`
+    if (queue.some((item) => millis(item.createdAt) > millis(item.updatedAt) || millis(item.updatedAt) > generatedAt)) return `snapshot.workQueue.${name} contains impossible item timestamps`
+  }
+  return undefined
+}
+
+function allocationProblem(snapshot: LeaderboardSnapshot, raw: unknown, index: number, actors: Map<string, GitHubActor>): Problem {
+  const row = snapshot.valueAssessmentCoverage?.[index]
+  const allocation = row?.implementationAllocation
+  if (row === undefined || allocation === undefined) return undefined
+  const rawAllocation = at(raw, "valueAssessmentCoverage", index, "implementationAllocation")
+  if (sortedKeys(rawAllocation) !== "rule,totalScoreThirds,weights" || allocation.rule !== "changed-lines-v1" || !Number.isSafeInteger(allocation.totalScoreThirds) || allocation.totalScoreThirds < 1 || allocation.weights.length === 0 || !["legacy-policy", "missing", "assessed", "human-ratified"].includes(row.status)) {
+    return "Implementation allocation is invalid"
+  }
+  const ids: string[] = []
+  const logins = new Map<string, string>()
+  const weights = new Map<string, number>()
+  for (let position = 0; position < allocation.weights.length; position++) {
+    const weight = allocation.weights[position]
+    if (weight === undefined) return "Implementation allocation weight is invalid"
+    const lower = weight.actorLogin.toLowerCase()
+    if (sortedKeys(at(rawAllocation, "weights", position)) !== "actorLogin,actorNodeId,changedLines" || githubUserIdFromNodeId(weight.actorNodeId) === 0n
+      || !isCreditEligibleCommitAuthor({ id: weight.actorNodeId, kind: "User" }) || weights.has(weight.actorNodeId) || !githubLogin.test(weight.actorLogin)
+      || [...logins.values()].some((login) => login.toLowerCase() === lower) || !/^(0|[1-9][0-9]*)$/u.test(weight.changedLines)) {
+      return "Implementation allocation weight is invalid"
+    }
+    const observed = actors.get(weight.actorNodeId)
+    if ((observed !== undefined && (observed.kind !== "User" || observed.login !== weight.actorLogin)) || [...actors.values()].some((actor) => actor.login.toLowerCase() === lower && actor.id !== weight.actorNodeId)) {
+      return "Implementation allocation actor is inconsistent"
+    }
+    ids.push(weight.actorNodeId)
+    logins.set(weight.actorNodeId, weight.actorLogin)
+    weights.set(weight.actorNodeId, Number(weight.changedLines))
+  }
+  const shares = implementationShares(allocation.totalScoreThirds, ids.map((actorNodeId) => ({ actorNodeId, lines: weights.get(actorNodeId) ?? 0 })))
+  const events = snapshot.ledger.filter((event) => event.category === "merged-pull-request" && event.source.id === row.pullRequestId)
+  const wrong = shares === undefined || events.length !== shares.filter((share) => share > 0).length || ids.some((id, position) => {
+    const event = events.find((candidate) => candidate.actor.id === id)
+    return shares[position] === 0 ? event !== undefined : event === undefined || event.scoreThirds !== shares[position] || event.actor.login !== logins.get(id) || event.repository !== row.repository || event.source.number !== row.pullRequestNumber
+  })
+  return wrong ? "Implementation allocation does not match its score events" : undefined
+}
+
+function valueCoverageProblem(snapshot: LeaderboardSnapshot, raw: unknown, actors: Map<string, GitHubActor>): Problem {
+  if (snapshot.valueAssessmentCoverage === undefined && snapshot.ledger.some((event) => (event.scoreDecisionSourceId ?? "").startsWith("value:"))) return "Value score events require assessment coverage"
+  if (snapshot.valuePolicyEffectiveAt !== undefined) {
+    const at = iso(snapshot.valuePolicyEffectiveAt, "snapshot.valuePolicyEffectiveAt")
+    if (at !== undefined) return at
+    if (new Date(millis(snapshot.valuePolicyEffectiveAt)).toISOString() !== snapshot.valuePolicyEffectiveAt || millis(snapshot.valuePolicyEffectiveAt) < millis(valueScoringApprovedHistoryFrom)) return "The value policy cannot reinterpret earlier policy periods"
+  }
+  if (snapshot.valuePolicyEffectiveAt === undefined && (snapshot.reviewExclusions ?? []).some((exclusion) => exclusion.reason === "review-credit-before-policy")) return "Review policy omissions require the selected policy boundary"
+  const coverage = snapshot.valueAssessmentCoverage
+  if (coverage === undefined) return undefined
+  const allowedKeys = [
+    "pullRequestId,pullRequestNumber,recordDigest,repository,status",
+    "pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
+    "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status",
+    "implementationAllocation,pullRequestId,pullRequestNumber,recordDigest,repository,status,verifiedImplementationActorNodeIds",
+  ]
+  const repositoryIds = snapshot.repositories.map((repository) => repository.id)
+  const seen = new Set<string>()
+  for (let index = 0; index < coverage.length; index++) {
+    const row = coverage[index]
+    if (row === undefined || !allowedKeys.includes(sortedKeys(at(raw, "valueAssessmentCoverage", index)))) return "Value coverage has unexpected fields"
+    const shape = nonEmpty(row.pullRequestId, "value coverage pullRequestId") ?? oneOf(row.repository, repositoryIds, "value coverage repository")
+      ?? positiveInteger(row.pullRequestNumber, "value coverage pullRequestNumber") ?? oneOf(row.status, valueCoverageStatuses, "value coverage status")
+    if (shape !== undefined) return shape
+    if (seen.has(row.pullRequestId)) return "Value coverage repeats a source"
+    seen.add(row.pullRequestId)
+    if (row.recordDigest !== null && !digest.test(row.recordDigest)) return "Value coverage digest is invalid"
+    if (row.status === "assessed" && row.recordDigest === null) return "Assessed coverage requires a journal digest"
+    const allocation = allocationProblem(snapshot, raw, index, actors)
+    if (allocation !== undefined) return allocation
+    const verified = row.verifiedImplementationActorNodeIds
+    if (verified !== undefined) {
+      const sourceActors = snapshot.ledger.filter((event) => event.category === "merged-pull-request" && event.source.id === row.pullRequestId).map((event) => event.actor.id)
+      if (row.status !== "missing" || row.recordDigest !== null || verified.length === 0 || new Set(verified).size !== verified.length || verified.some((id) => githubUserIdFromNodeId(id) === 0n || !sourceActors.includes(id)) || sourceActors.length !== verified.length) {
+        return "Verified implementation attribution is invalid"
+      }
+    }
+  }
+  if (coverage.length !== snapshot.source.counts.mergedPullRequests + (snapshot.source.counts.closedUnmergedPullRequests ?? 0)) return "Value coverage must retain every closed source"
+  const rows = new Map(coverage.map((row, index) => [row.pullRequestId, { row, index }]))
+  const coverageFor = (eventId: string) => {
+    let match: { readonly row: (typeof coverage)[number]; readonly index: number } | undefined = undefined
+    for (let end = eventId.indexOf(":"); end !== -1; end = eventId.indexOf(":", end + 1)) {
+      const candidate = rows.get(eventId.slice(0, end))
+      if (candidate !== undefined && (match === undefined || candidate.index < match.index)) match = candidate
+    }
+    return match?.row
+  }
+  for (const event of snapshot.ledger) {
+    if (!(event.scoreDecisionSourceId ?? "").startsWith("value:")) continue
+    if (snapshot.valuePolicyEffectiveAt !== undefined && event.category === "substantive-review" && millis(event.occurredAt) < millis(snapshot.valuePolicyEffectiveAt)) return "Value review event predates its selected policy"
+    if (millis(event.occurredAt) < millis(snapshot.window.from) || millis(event.occurredAt) >= millis(snapshot.window.to)) return "Value score event is outside the scoring window"
+    const row = coverageFor(event.id)
+    if (!(row?.status === "assessed" || (row?.status === "human-ratified" && event.category === "substantive-review")) || `value:${row.recordDigest}` !== event.scoreDecisionSourceId) return "Value score event is not bound to its assessment coverage"
+  }
+  return undefined
+}
+
+function coverageCountsProblem(snapshot: LeaderboardSnapshot): Problem {
+  const { source, window, workQueue, ledger } = snapshot
+  if (source.fetchedAt !== snapshot.generatedAt || source.cutoffAt !== window.to) return "snapshot source timestamps must match generatedAt and the scoring cutoff"
+  for (const unit of source.heldWorkUnits ?? []) {
+    for (const id of unit.sourceNodeIds) {
+      const coverage = snapshot.valueAssessmentCoverage?.find((row) => row.pullRequestId === id)
+      if (coverage !== undefined && (coverage.status !== "unresolved" || coverage.recordDigest !== unit.recordDigest)) return "Held source must retain unresolved joint assessment coverage"
+      const retained = (event: ScoreEvent) => event.category === "merged-pull-request" && !event.id.includes(":joint:") && !(event.scoreDecisionSourceId ?? "").startsWith("value:") && (event.scoreDecisionSourceId !== undefined || event.scoreThirds === minValueMergeThirds)
+      if (ledger.some((event) => event.id.startsWith(`${id}:`) && event.category !== "evaluated-contribution" && !retained(event))) return "Held joint source can retain only its independent merge minimum or human ratification"
+    }
+  }
+  const verification = source.verificationWindow
+  if (verification.to !== window.to || millis(verification.to) - millis(verification.from) !== verificationWindowDays * dayMillis || millis(verification.from) < millis(window.from)) {
+    return "snapshot.source.verificationWindow must equal the full 35-day rolling window"
+  }
+  const counts = source.counts
+  if (counts.openIssues !== workQueue.issues.length) return "snapshot.source.counts.openIssues must match the issue queue length"
+  if (counts.openPullRequests !== workQueue.pullRequests.length) return "snapshot.source.counts.openPullRequests must match the pull request queue length"
+  const direct = new Set(ledger.filter((event) => event.category === "merged-pull-request" && event.acceptanceKind !== "indirect-integration").map((event) => event.source.id))
+  const indirect = new Set(ledger.filter((event) => event.acceptanceKind === "indirect-integration").map((event) => event.source.id))
+  const detailed = new Set(ledger.filter((event) => event.category === "material-test-change" || event.category === "evidence").map((event) => event.source.id))
+  const reviewed = new Set(ledger.filter((event) => event.category === "substantive-review" && event.continuity === undefined).map((event) => event.id.split(reviewSplit)[0] ?? event.id))
+  const resolved = ledger.filter((event) => event.category === "resolved-issue").length
+  const closedUnmerged = counts.closedUnmergedPullRequests ?? 0
+  if (counts.closedUnmergedPullRequests !== undefined) {
+    const problem = nonNegativeInteger(counts.closedUnmergedPullRequests, "snapshot.source.counts.closedUnmergedPullRequests")
+    if (problem !== undefined) return problem
+  }
+  if (direct.size > counts.mergedPullRequests || indirect.size > closedUnmerged || [...indirect].some((id) => direct.has(id)) || detailed.size > counts.detailedMergedPullRequests || reviewed.size > counts.mergedPullRequests + closedUnmerged || resolved > counts.resolvedIssues) {
+    return "snapshot ledger exceeds the collection coverage published in source.counts"
+  }
+  return undefined
+}
+
+function omissionProblem(snapshot: LeaderboardSnapshot, raw: unknown): Problem {
+  const omitted = snapshot.paymentReviewBasisOmitted
+  if (omitted === undefined) return undefined
+  if (!hasKeys(at(raw, "paymentReviewBasisOmitted"), ["effectiveAt", "policy", "reason"])) return "snapshot.paymentReviewBasisOmitted must contain exactly policy, effectiveAt, and reason"
+  if (omitted.policy !== paymentReviewPolicy || omitted.effectiveAt !== paymentReviewPolicyAt || omitted.reason !== paymentReviewBasisOmittedReason) {
+    return "Payment basis omission must name the production-release policy, cutoff, and no-pre-policy-reviews reason"
+  }
+  const cutoff = millis(paymentReviewPolicyAt)
+  return snapshot.ledger.some((event) => event.category === "substantive-review" && millis(event.occurredAt) < cutoff)
+    ? "snapshot.paymentReviewBasisOmitted cannot omit the payment basis while the score ledger retains a pre-cutoff review"
+    : undefined
+}
+
+function snapshotProblem(registry: Registry, snapshot: LeaderboardSnapshot, raw: unknown, externalIds: ExternalIds): Problem {
+  if (snapshot.schemaVersion !== schemaVersion) return `snapshot.schemaVersion must be ${schemaVersion}`
+  const head = repositoriesProblem(registry, snapshot, raw) ?? windowProblem(snapshot)
+  if (head !== undefined) return head
+  const repositoryIds = snapshot.repositories.map((repository) => repository.id)
+  const actors = new Map<string, GitHubActor>()
+  const leaders = each(snapshot.leaders, (entry, index) => leaderProblem(entry, `snapshot.leaders[${index}]`, actors))
+    ?? (unique(snapshot.leaders, (entry) => entry.actor.id) ? undefined : "snapshot.leaders must contain unique actors")
+    ?? orderingProblem(snapshot.leaders, true) ?? ranksProblem(snapshot.leaders, true)
+  if (leaders !== undefined) return leaders
+  const ledger = each(snapshot.ledger, (event, index) => ledgerProblem(registry, event, at(raw, "ledger", index), `snapshot.ledger[${index}]`, repositoryIds, actors, externalIds))
+    ?? (unique(snapshot.ledger, (event) => event.id) ? undefined : "snapshot.ledger must contain unique score event IDs")
+  if (ledger !== undefined) return ledger
+  const exclusions = snapshot.reviewExclusions
+  if (exclusions !== undefined) {
+    const shape = each(exclusions, (exclusion, index) => exclusionProblem(registry, exclusion, at(raw, "reviewExclusions", index), `snapshot.reviewExclusions[${index}]`, repositoryIds))
+      ?? (unique(exclusions, (exclusion) => exclusion.id) ? undefined : "snapshot.reviewExclusions must contain unique IDs")
+    if (shape !== undefined) return shape
+    const scoredIds = new Set(snapshot.ledger.map((event) => `${event.repository}\0${event.source.id}`))
+    const scoredUrls = new Set(snapshot.ledger.map((event) => `${event.repository}\0${event.source.url}`))
+    if (exclusions.some((exclusion) => scoredIds.has(`${exclusion.repository}\0${exclusion.reviewId}`) || scoredUrls.has(`${exclusion.repository}\0${exclusion.url}`))) return "snapshot.reviewExclusions cannot contain a score-bearing review source"
+    if (!sorted(exclusions, compareExclusions)) return "snapshot.reviewExclusions must be ordered by pull request and review ID"
+  }
+  const opportunities = each(snapshot.opportunities, (opportunity, index) => opportunityProblem(registry, opportunity, `snapshot.opportunities[${index}]`, repositoryIds))
+    ?? (unique(snapshot.opportunities, (opportunity) => opportunity.id) ? undefined : "snapshot.opportunities must contain unique IDs")
+    ?? (sorted(snapshot.opportunities, compareOpportunities) ? undefined : "snapshot.opportunities must be ordered newest-first by occurredAt")
+  if (opportunities !== undefined) return opportunities
+  const credit = creditProblem(registry, snapshot.ledger)
+    ?? penaltiesProblem(registry, snapshot.penalties ?? [], at(raw, "penalties"), repositoryIds, snapshot.window.from, snapshot.window.to)
+    ?? penaltyHistoryProblem(snapshot, raw, registry.projectIds)
+    ?? totalsProblem(registry, snapshot)
+    ?? attributionsProblem(registry, snapshot, raw, repositoryIds, actors)
+    ?? workQueueProblem(registry, snapshot, repositoryIds)
+  if (credit !== undefined) return credit
+  const identities = actorCoherence([
+    ...snapshot.leaders.map((entry) => entry.actor),
+    ...snapshot.ledger.map((event) => event.actor),
+    ...(exclusions ?? []).flatMap((exclusion) => (exclusion.reviewer === undefined ? [] : [exclusion.reviewer])),
+    ...snapshot.attributions.flatMap((attribution) => (attribution.actor === null ? [] : [attribution.actor])),
+    ...[...snapshot.workQueue.issues, ...snapshot.workQueue.pullRequests].flatMap((item) => [...(item.author === null ? [] : [item.author]), ...item.claim.actors]),
+  ])
+  if (identities !== undefined) return identities
+  const tail = sourceProblem(snapshot, raw) ?? valueCoverageProblem(snapshot, raw, actors) ?? coverageCountsProblem(snapshot) ?? methodologyProblem(snapshot)
+  if (tail !== undefined) return tail
+  if (snapshot.paymentReviewBasis !== undefined && snapshot.paymentReviewBasisOmitted !== undefined) return "snapshot cannot publish both paymentReviewBasis and paymentReviewBasisOmitted"
+  const omission = omissionProblem(snapshot, raw)
+  if (omission !== undefined) return omission
+  const basis = snapshot.paymentReviewBasis
+  if (basis !== undefined && (basis.policy !== paymentReviewPolicy || basis.effectiveAt !== paymentReviewPolicyAt)) return "snapshot payment review policy must match the approved production cutoff"
+  return undefined
+}
+
+type Json = Readonly<Record<string, unknown>>
+
+const basisChangesRefusal = "Payment basis changes must contain unique records and removals"
+const basisRequired = "Payment allocation requires the production-release review basis; regenerate the source snapshot"
+
+function recordsOf(value: unknown): ReadonlyArray<Json> | undefined {
+  return Array.isArray(value) && value.every(isRecord) ? value : undefined
+}
+
+function idsOf(value: unknown): ReadonlyArray<string> | undefined {
+  return Array.isArray(value) && value.every((id): id is string => typeof id === "string") ? value : undefined
+}
+
+function applyRecords(original: unknown, changes: unknown, removed: unknown): ReadonlyArray<Json> | string {
+  const before = recordsOf(original)
+  const changed = recordsOf(changes)
+  const removedIds = idsOf(removed)
+  if (before === undefined || changed === undefined || removedIds === undefined || new Set(removedIds).size !== removedIds.length || new Set(changed.map((record) => record.id)).size !== changed.length) return basisChangesRefusal
+  const byId = new Map<unknown, Json>(before.map((record) => [record.id, record]))
+  for (const id of removedIds) {
+    if (!byId.delete(id) || changed.some((record) => record.id === id)) return "Payment basis removal must name an existing unchanged record"
+  }
+  for (const record of changed) byId.set(record.id, record)
+  return [...byId.values()]
+}
+
+type PaymentView = { readonly kind: "refused"; readonly message: string } | { readonly kind: "view"; readonly snapshot: Json }
+
+function refusedView(message: string): PaymentView {
+  return { kind: "refused", message }
+}
+
+function paymentView(snapshot: LeaderboardSnapshot, raw: Json): PaymentView {
+  const basis = raw.paymentReviewBasis
+  const omitted = raw.paymentReviewBasisOmitted
+  if (basis !== undefined && omitted !== undefined) return refusedView("Payment snapshot cannot carry both a review basis and an omission marker")
+  if (basis === undefined) {
+    if (omitted === undefined) return refusedView(basisRequired)
+    const omission = omissionProblem(snapshot, raw)
+    if (omission !== undefined) return refusedView(omission)
+    const { paymentReviewBasisOmitted: _omitted, ...rest } = raw
+    return { kind: "view", snapshot: rest }
+  }
+  if (!isRecord(basis) || basis.policy !== paymentReviewPolicy || basis.effectiveAt !== paymentReviewPolicyAt) return refusedView(basisRequired)
+  const attributions = applyRecords(raw.attributions, basis.attributions, basis.removedAttributionIds)
+  if (typeof attributions === "string") return refusedView(attributions)
+  const byId = new Map<unknown, Json>(attributions.map((record) => [record.id, record]))
+  const order = idsOf(basis.attributionOrder)
+  if (order === undefined || order.length !== byId.size || new Set(order).size !== byId.size || order.some((id) => !byId.has(id))) return refusedView("Payment attribution order must name each reconstructed record once")
+  const ledger = applyRecords(raw.ledger, basis.ledger, basis.removedEventIds)
+  if (typeof ledger === "string") return refusedView(ledger)
+  const ordered = [...ledger].sort((left, right) => Number(right.points) - Number(left.points) || Number(at(left, "source", "number")) - Number(at(right, "source", "number")) || String(left.id).localeCompare(String(right.id)))
+  const { paymentReviewBasis: _basis, paymentReviewBasisOmitted: _marker, ...rest } = raw
+  return {
+    kind: "view",
+    snapshot: {
+      ...rest,
+      leaders: basis.leaders,
+      ledger: ordered,
+      reviewExclusions: basis.reviewExclusions,
+      attributions: order.map((id) => byId.get(id)),
+      invalidAttributionMarkers: basis.invalidAttributionMarkers,
+      attributionCoverage: basis.attributionCoverage,
+      opportunities: basis.opportunities,
+    },
+  }
+}
+
+effect function externalIdsOf(snapshot: LeaderboardSnapshot) {
+  const ids = new Map<string, string>()
+  for (const event of snapshot.ledger) {
+    if (event.source.kind === "external" && !ids.has(event.source.url)) ids.set(event.source.url, try externalSourceId(event.source.url))
+  }
+  return ids
+}
+
+export effect function decodeSnapshot(raw: unknown) {
+  Schema.decodeUnknownEffect(LeaderboardSnapshot)(raw) catch effect () => {
+    throw new SnapshotInvalid({ message: `snapshot does not match schema ${schemaVersion}` })
+  }
+  return raw as LeaderboardSnapshot
+}
+
+export effect function validateSnapshot(raw: unknown, repositories: RepositoryRegistry): LeaderboardSnapshot!SnapshotInvalid!Experimental.Crypto.Crypto {
+  if (!isRecord(raw)) throw new SnapshotInvalid({ message: "snapshot must be an object" })
+  if (raw.schemaVersion !== schemaVersion) throw new SnapshotInvalid({ message: `snapshot.schemaVersion must be ${schemaVersion}` })
+  const snapshot = try decodeSnapshot(raw)
+  const registry = registryOf(repositories)
+  const problem = snapshotProblem(registry, snapshot, raw, try externalIdsOf(snapshot))
+  if (problem !== undefined) throw new SnapshotInvalid({ message: problem })
+  if (snapshot.paymentReviewBasis !== undefined) {
+    const payment = paymentView(snapshot, raw)
+    if (payment.kind === "refused") throw new SnapshotInvalid({ message: payment.message })
+    try validateSnapshot(payment.snapshot, repositories)
+  }
+  return snapshot
+}
+
+export effect function validatePaymentSnapshot(raw: unknown, repositories: RepositoryRegistry) {
+  const snapshot = try validateSnapshot(raw, repositories)
+  const payment = paymentView(snapshot, isRecord(raw) ? raw : {})
+  if (payment.kind === "refused") throw new SnapshotInvalid({ message: payment.message })
+  return try validateSnapshot(payment.snapshot, repositories)
+}
+export effect function validatePublishable(raw: unknown, repositories: RepositoryRegistry, now: number) {
+  const snapshot = try validateSnapshot(raw, repositories)
+  const order = orderingProblem(snapshot.leaders, false) ?? ranksProblem(snapshot.leaders, false)
+  if (order !== undefined) throw new SnapshotInvalid({ message: order })
+  const targets = repositories.targets
+  if (snapshot.repositories.length !== targets.length || snapshot.repositories.some((repository, index) => repository.id !== targets[index]?.id)) {
+    throw new SnapshotInvalid({ message: "snapshot.repositories must list the complete target repository registry for publication" })
+  }
+  for (let index = 0; index < snapshot.repositories.length; index++) {
+    const published = snapshot.repositories[index]
+    const current = targets[index]
+    if (published === undefined || current === undefined) continue
+    const expected = { ...current, role: index === 0 ? "primary" : "member" }
+    for (const key of publishedRepositoryKeys) {
+      if (published[key] !== expected[key]) throw new SnapshotInvalid({ message: `snapshot.repositories[${index}].${key} does not match the target repository registry` })
+    }
+  }
+  if (!Number.isFinite(now)) throw new SnapshotInvalid({ message: "publication time must be finite" })
+  if (millis(snapshot.generatedAt) > now + 5 * 60 * 1000) throw new SnapshotInvalid({ message: "snapshot.generatedAt cannot be in the future" })
+  return snapshot
+}

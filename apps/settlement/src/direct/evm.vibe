@@ -1,0 +1,386 @@
+// spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"
+import { isoAt } from "@repo/platform/clock"
+import { type Address, EvmRpc, type Hex, type Receipt, type Transaction, evmRpc, recoverDigest } from "@repo/platform/chain/evm"
+import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
+import { ConfigInvalid, jsonVar } from "@repo/platform/config"
+import type { Network } from "../../gen/settlement__directBounty.ts"
+import { reviewedFactory } from "../chain/evm/factories.ts"
+import { executionGasCost, nativeFeeTotal } from "../kernels/budget.ts"
+import { EVM_NATIVE_ASSET, NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { BalancesDiffer, ProofUnavailable, assertNativeProofAvailable, assertTokenProofAvailable, verifyNativeBalanceChanges, verifyTokenBalanceChanges } from "./evmBalances.vibe"
+import { planEvmRecovery } from "./recoveryPlan.ts"
+
+module evmWords {
+  import type { Address, Hex } from "viem"
+  import { hashAuthorization } from "viem/utils"
+
+  /** @throws {never} */
+  export function big(value: number): bigint {
+    return Number.isSafeInteger(value) ? BigInt(value) : 0n
+  }
+
+  /** @throws {never} */
+  export function addressWord(address: string): string {
+    return address.toLowerCase().replace(/^0x/u, "").padStart(64, "0")
+  }
+
+  /** @throws {never} */
+  export function hexQuantity(value: unknown): bigint | undefined {
+    return typeof value === "string" && /^0x[\da-f]{1,64}$/iu.test(value) ? BigInt(value) : undefined
+  }
+
+  /** @throws {never} */
+  export function decimal(value: string): bigint | undefined {
+    return /^(?:0|[1-9]\d{0,77})$/u.test(value) ? BigInt(value) : undefined
+  }
+
+  /** @throws {never} */
+  export function word(value: bigint): string {
+    return value.toString(16).padStart(64, "0")
+  }
+
+  /** @throws {never} */
+  export function authorizationDigest(chainId: bigint, address: string, nonce: bigint): Hex | undefined {
+    try {
+      return hashAuthorization({ chainId: Number(chainId), address: address as Address, nonce: Number(nonce) })
+    } catch {
+      return undefined
+    }
+  }
+}
+import { addressWord, authorizationDigest, big, decimal, hexQuantity, word } from evmWords
+
+export { BalancesDiffer, ProofUnavailable }
+
+export error LegUnverified { reason: string }
+export error RetirementUnverified { reason: string }
+
+export interface EvmDirectRail {
+  readonly network: NetworkKey
+  readonly model: Network
+  readonly chainId: bigint
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly feeRecipient: string
+}
+
+const defaultRpcUrls: Readonly<Partial<Record<NetworkKey, string>>> = {
+  "base-mainnet": "https://mainnet.base.org",
+  ethereum: "https://ethereum-rpc.publicnode.com",
+  "robinhood-mainnet": "https://rpc.mainnet.chain.robinhood.com",
+}
+
+const modelNetworks: Readonly<Record<"base" | "ethereum" | "robinhood", Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood" }
+
+export function modelOfChain(chain: string): Network | undefined {
+  return chain === "base" || chain === "ethereum" || chain === "robinhood" ? modelNetworks[chain] : undefined
+}
+
+export function evmModel(network: string): Network | undefined {
+  if (!isNetworkKey(network)) return undefined
+  const definition = NETWORKS[network]
+  return definition.family === "evm" && !definition.testnet ? modelNetworks[definition.chain] : undefined
+}
+
+export service EvmDirectRails {
+  rail(network: string): (EvmDirectRail | undefined)!ConfigInvalid
+}
+
+const UrlTable = Schema.Record(Schema.String, Schema.String)
+
+export function evmDirectRails(paymentRpcUrls: string | undefined) {
+  return Layer.succeed(EvmDirectRails, {
+    rail: (network) => effect {
+      if (!isNetworkKey(network)) return undefined
+      const definition = NETWORKS[network]
+      const factory = reviewedFactory(network)
+      if (definition.family !== "evm" || definition.testnet || factory === undefined) return undefined
+      const overrides = try jsonVar("PAYMENT_RPC_URLS", paymentRpcUrls ?? "{}", UrlTable)
+      const url = overrides[network] ?? defaultRpcUrls[network]
+      if (url === undefined) return undefined
+      return { network, model: modelNetworks[definition.chain], chainId: big(definition.chainId), urls: Redacted.make([url]), feeRecipient: factory.feeRecipient } satisfies EvmDirectRail
+    },
+  })
+}
+
+export interface DirectAsset {
+  readonly address: string
+  readonly decimals: number
+  readonly symbol: string
+}
+
+export interface DirectTransfer {
+  readonly recipient: string
+  readonly amountBase: string
+}
+
+export interface EvmTransactionRequest {
+  readonly chainId: string
+  readonly from: string
+  readonly nonce: string
+  readonly to: string
+  readonly value: string
+  readonly data: string
+}
+
+function native(asset: DirectAsset) {
+  return asset.address.toLowerCase() === EVM_NATIVE_ASSET
+}
+
+function quantityText(value: bigint) {
+  return `0x${value.toString(16)}`
+}
+
+export function transferData(recipient: string, amount: bigint) {
+  return `0xa9059cbb${addressWord(recipient)}${word(amount)}`
+}
+
+export function evmTransactions(rail: EvmDirectRail, payer: string, asset: DirectAsset, transfers: ReadonlyArray<DirectTransfer>, nonces: ReadonlyArray<bigint>): ReadonlyArray<EvmTransactionRequest> {
+  return transfers.map((transfer, index) => {
+    const amount = decimal(transfer.amountBase) ?? 0n
+    return {
+      chainId: quantityText(rail.chainId),
+      from: payer,
+      nonce: quantityText(nonces[index] ?? 0n),
+      to: native(asset) ? transfer.recipient : asset.address,
+      value: native(asset) ? quantityText(amount) : "0x0",
+      data: native(asset) ? "0x" : transferData(transfer.recipient, amount),
+    }
+  })
+}
+
+effect function traces(rail: EvmDirectRail) {
+  return try jsonRpc({
+    urls: rail.urls,
+    timeoutMs: 15_000,
+    maxBytes: 16 * 1024 * 1024,
+    identity: { method: "eth_chainId", expected: rail.chainId.toString(), read: (answer) => hexQuantity(answer)?.toString() },
+  })
+}
+
+export effect function proofAvailable(rail: EvmDirectRail, asset: DirectAsset, payer: string) {
+  const rpc = try traces(rail)
+  if (native(asset)) try assertNativeProofAvailable(rpc, payer)
+  else try assertTokenProofAvailable(rpc, asset.address, payer)
+}
+
+export interface PayerChain {
+  readonly head: bigint
+  readonly pendingNonce: bigint
+}
+
+export effect function payerChain(rail: EvmDirectRail, payer: string) {
+  provide evmRpc({ urls: rail.urls, chainId: rail.chainId }) {
+    const evm = try EvmRpc
+    const pendingNonce = try evm.nonce(payer as Address, "pending")
+    const head = try evm.head("latest")
+    return { head: head.number, pendingNonce } satisfies PayerChain
+  }
+}
+
+export interface LegProof {
+  readonly legIndex: number
+  readonly transactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+  readonly finalizedAt: string
+}
+
+export interface LegCheck {
+  readonly payer: string
+  readonly asset: DirectAsset
+  readonly transfers: ReadonlyArray<DirectTransfer>
+  readonly transactions: ReadonlyArray<EvmTransactionRequest>
+  readonly afterBlocks: ReadonlyArray<string>
+  readonly transactionIds: ReadonlyArray<string>
+}
+
+schema RawReceipt {
+  transactionHash: string
+  blockHash: string
+  type?: string
+  blobGasUsed?: string
+  blobGasPrice?: string
+  l1Fee?: string
+}
+
+const baseOperatorFeeOracle = "0x420000000000000000000000000000000000000f"
+
+effect function unverified(reason: string): never!LegUnverified {
+  throw new LegUnverified({ reason })
+}
+
+effect function nativeCost(rpc: JsonRpc, evm: EvmRpc.Shape, rail: EvmDirectRail, receipt: Receipt) {
+  if (receipt.effectiveGasPrice === undefined) return try unverified("The finalized gas price is unavailable")
+  const raw = try rpc.call("eth_getTransactionReceipt", [receipt.transactionHash], Schema.NullOr(RawReceipt))
+  if (raw === null || raw.transactionHash.toLowerCase() !== receipt.transactionHash || raw.blockHash.toLowerCase() !== receipt.blockHash.toLowerCase()) return try unverified("The finalized receipt changed")
+  const blobGas = hexQuantity(raw.blobGasUsed)
+  const blobPrice = hexQuantity(raw.blobGasPrice)
+  if (raw.type === "0x3" && (blobGas === undefined || blobPrice === undefined)) return try unverified("Finalized blob fee is unavailable")
+  const blob = raw.type === "0x3" ? executionGasCost(blobGas ?? 0n, blobPrice ?? 0n) : 0n
+  const base = rail.chainId === 8453n
+  if (!base) return nativeFeeTotal(executionGasCost(receipt.gasUsed, receipt.effectiveGasPrice), blob, 0n, 0n)
+  const data = hexQuantity(raw.l1Fee)
+  if (data === undefined) return try unverified("Finalized Base data fee is unavailable")
+  const operator = try evm.call({ to: baseOperatorFeeOracle as Address, data: `0x275aedd2${word(receipt.gasUsed)}` as Hex, block: receipt.blockNumber })
+  const operatorFee = operator.length === 66 ? hexQuantity(operator) : undefined
+  if (operatorFee === undefined) return try unverified("Base operator fee evidence is unavailable")
+  return nativeFeeTotal(executionGasCost(receipt.gasUsed, receipt.effectiveGasPrice), blob, data, operatorFee)
+}
+
+const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+function topicAddress(topic: string | undefined) {
+  return topic === undefined ? "" : `0x${topic.slice(-40)}`.toLowerCase()
+}
+
+function sameRequest(transaction: Transaction, request: EvmTransactionRequest) {
+  return transaction.to?.toLowerCase() === request.to.toLowerCase() && transaction.value === hexQuantity(request.value) && transaction.input.toLowerCase() === request.data.toLowerCase()
+}
+
+effect function verifyLeg(rpc: JsonRpc, evm: EvmRpc.Shape, rail: EvmDirectRail, check: LegCheck, finalized: bigint, hash: Hex, used: ReadonlyArray<number>) {
+  const [transaction, receipt] = try.all [evm.transaction(hash), evm.finalizedReceipt(hash)]
+  if (transaction === undefined || receipt === undefined) return try unverified("The transfer is not finalized")
+  const index = check.transactions.findIndex((request, position) => !used.includes(position) && sameRequest(transaction, request))
+  const request = check.transactions[index]
+  const transfer = check.transfers[index]
+  const anchor = decimal(check.afterBlocks[index] ?? "")
+  if (request === undefined || transfer === undefined || anchor === undefined) return try unverified("Transfer is not an unpaid distinct award leg")
+  const amount = decimal(transfer.amountBase) ?? -1n
+  const exact = receipt.status === "success" && receipt.blockNumber > anchor && receipt.blockNumber <= finalized
+    && transaction.blockHash === receipt.blockHash && transaction.blockNumber === receipt.blockNumber
+    && transaction.from.toLowerCase() === check.payer.toLowerCase() && transaction.nonce === hexQuantity(request.nonce)
+  if (!exact) return try unverified("Payment is not the exact successful finalized transfer")
+  if (native(check.asset)) {
+    try verifyNativeBalanceChanges(rpc, { payer: check.payer, recipient: transfer.recipient, amount, transaction: hash, gasCost: try nativeCost(rpc, evm, rail, receipt) })
+  } else {
+    const moved = receipt.logs.filter((log) => log.address.toLowerCase() === check.asset.address.toLowerCase() && log.topics[0] === transferTopic && log.topics.length === 3 && topicAddress(log.topics[1]) === check.payer.toLowerCase())
+    const [only] = moved
+    if (moved.length !== 1 || only === undefined || topicAddress(only.topics[2]) !== transfer.recipient.toLowerCase() || hexQuantity(only.data) !== amount) return try unverified("Token receipt does not deliver the exact approved amount")
+    try verifyTokenBalanceChanges(rpc, { token: check.asset.address, payer: check.payer, recipient: transfer.recipient, amount, transaction: hash, blockHash: receipt.blockHash })
+  }
+  const block = try evm.blockByNumber(receipt.blockNumber)
+  if (block === undefined || block.hash !== receipt.blockHash) return try unverified("The transfer block is not canonical")
+  return { legIndex: index, transactionId: hash.toLowerCase(), blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString(), finalizedAt: try isoAt(block.timestamp * 1000) } satisfies LegProof
+}
+
+export effect function verifyEvmLegs(rail: EvmDirectRail, check: LegCheck) {
+  const distinct = new Set(check.transactionIds.map((id) => id.toLowerCase()))
+  if (check.transactionIds.length < 1 || check.transactionIds.length > check.transfers.length || distinct.size !== check.transactionIds.length || check.transactions.length !== check.transfers.length) return try unverified("Provide one distinct transaction for each exact transfer")
+  if (check.transactionIds.some((id) => !/^0x[\da-fA-F]{64}$/u.test(id))) return try unverified("Invalid transaction id")
+  const rpc = try traces(rail)
+  provide evmRpc({ urls: rail.urls, chainId: rail.chainId }) {
+    const evm = try EvmRpc
+    const finalized = (try evm.head("finalized")).number
+    const proofs: LegProof[] = []
+    for (const id of check.transactionIds) proofs.push(try verifyLeg(rpc, evm, rail, check, finalized, id.toLowerCase() as Hex, proofs.map((proof) => proof.legIndex)))
+    return proofs
+  }
+}
+
+export interface CancellationCheck {
+  readonly payer: string
+  readonly nonce: bigint
+  readonly transactionId: string
+  readonly afterBlock: bigint
+}
+
+export interface EvmRetirementProof {
+  readonly kind: "evm-nonce-retired"
+  readonly transactionId: string
+  readonly nonce: string
+  readonly blockHash: string
+  readonly blockNumber: string
+  readonly reverted: boolean
+}
+
+schema RawAuthorization {
+  chainId: string
+  address: string
+  nonce: string
+  r: string
+  s: string
+  yParity?: string
+  v?: string
+}
+
+schema RawTransaction {
+  hash: string
+  type?: string
+  authorizationList?: ReadonlyArray<RawAuthorization>
+}
+
+schema RawBlock {
+  transactions: ReadonlyArray<RawTransaction>
+}
+
+function signatureOf(authorization: RawAuthorization) {
+  const parity = hexQuantity(authorization.yParity ?? authorization.v)
+  const r = hexQuantity(authorization.r)
+  const s = hexQuantity(authorization.s)
+  return parity === undefined || r === undefined || s === undefined ? undefined : `0x${word(r)}${word(s)}${parity === 0n || parity === 27n ? "1b" : "1c"}`
+}
+
+function authorizedBy(authorization: RawAuthorization, payer: string) {
+  const chainId = hexQuantity(authorization.chainId)
+  const nonce = hexQuantity(authorization.nonce)
+  const signature = signatureOf(authorization)
+  const digest = chainId === undefined || nonce === undefined ? undefined : authorizationDigest(chainId, authorization.address, nonce)
+  return digest === undefined || signature === undefined || recoverDigest(digest, signature)?.toLowerCase() === payer.toLowerCase()
+}
+
+effect function retirementUnverified(reason: string): never!RetirementUnverified {
+  throw new RetirementUnverified({ reason })
+}
+
+export effect function verifyEvmCancellation(rail: EvmDirectRail, check: CancellationCheck) {
+  if (!/^0x[\da-f]{64}$/iu.test(check.transactionId)) return try retirementUnverified("Invalid cancellation transaction")
+  const hash = check.transactionId.toLowerCase() as Hex
+  const rpc = try traces(rail)
+  provide evmRpc({ urls: rail.urls, chainId: rail.chainId }) {
+    const evm = try EvmRpc
+    const [transaction, receipt] = try.all [evm.transaction(hash), evm.finalizedReceipt(hash)]
+    if (transaction === undefined || receipt === undefined || transaction.blockHash !== receipt.blockHash || transaction.blockNumber !== receipt.blockNumber || transaction.transactionIndex !== receipt.transactionIndex
+      || receipt.blockNumber <= check.afterBlock || transaction.from.toLowerCase() !== check.payer.toLowerCase() || transaction.nonce !== check.nonce
+      || (receipt.status !== "reverted" && (transaction.to?.toLowerCase() !== check.payer.toLowerCase() || transaction.value !== 0n || transaction.input !== "0x")))
+      return try retirementUnverified("The reserved nonce has not been retired by a finalized cancellation")
+    if (receipt.status === "success") {
+      const raw = try rpc.call("eth_getTransactionByHash", [hash], Schema.NullOr(RawTransaction))
+      if (raw === null || raw.type === "0x4" || (raw.authorizationList?.length ?? 0) > 0) return try retirementUnverified("A delegated transaction cannot prove a plain self-cancellation")
+      const [code, earlier] = try.all [evm.code(check.payer as Address, receipt.blockNumber), evm.code(check.payer as Address, receipt.blockNumber - 1n)]
+      if (code !== "0x" || earlier !== "0x") return try retirementUnverified("A coded payer cannot prove a plain self-cancellation")
+      const block = try rpc.call("eth_getBlockByNumber", [`0x${receipt.blockNumber.toString(16)}`, true], Schema.NullOr(RawBlock))
+      if (block === null) return try retirementUnverified("The cancellation block is unavailable")
+      if (block.transactions.some((sibling) => (sibling.authorizationList ?? []).some((authorization) => authorizedBy(authorization, check.payer)))) return try retirementUnverified("The payer's code changed within the cancellation block")
+    }
+    return { kind: "evm-nonce-retired", transactionId: hash, nonce: check.nonce.toString(), blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString(), reverted: receipt.status === "reverted" } satisfies EvmRetirementProof
+  }
+}
+
+export interface RecoveryLegs {
+  readonly nonces: ReadonlyArray<bigint>
+  readonly paid: ReadonlyArray<boolean>
+  readonly researcherPaid: boolean
+  readonly targetChanged: boolean
+}
+
+export interface EvmRecoveryState {
+  readonly legIndex: number | undefined
+  readonly consumed: boolean
+  readonly payerReview: boolean
+  readonly blockedByLower: boolean
+}
+
+export effect function evmRecoveryState(rail: EvmDirectRail, payer: string, legs: RecoveryLegs) {
+  const read = effect {
+    provide evmRpc({ urls: rail.urls, chainId: rail.chainId }) {
+      const evm = try EvmRpc
+      const [nonce, code] = try.all [evm.nonce(payer as Address, "finalized"), evm.code(payer as Address, "latest")]
+      return { finalized: nonce, payerReview: code !== "0x" }
+    }
+  }
+  const observed = read catch () => ({ finalized: -1n, payerReview: true })
+  const fallback = !legs.researcherPaid && legs.targetChanged
+  const nonces = observed.finalized < 0n && !fallback ? [] : legs.nonces.map((nonce, index) => (legs.paid[index] ?? false) && !(index === 0 && fallback) ? -1n : nonce)
+  const plan = planEvmRecovery(nonces, nonces.map((_, index) => legs.paid[index] ?? false), observed.finalized, legs.researcherPaid, legs.targetChanged)
+  return { legIndex: plan.legIndex < 0 ? undefined : plan.legIndex, consumed: plan.consumed, payerReview: observed.payerReview, blockedByLower: plan.blockedByLower } satisfies EvmRecoveryState
+}

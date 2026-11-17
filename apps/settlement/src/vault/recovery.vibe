@@ -1,0 +1,114 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"
+import { first, sql } from "@repo/platform/d1"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { registryDeployments } from "./deployments.vibe"
+import { refreshDeployment } from "./refresh.vibe"
+
+export error RecoveryRefused { message: string }
+
+export interface ReleaseEnvironment {
+  readonly actions: string
+  readonly repository: string
+  readonly ref: string
+  readonly workflowRef: string
+  readonly eventName: string
+  readonly sha: string
+  readonly rpcUrls: string
+  readonly cloudflareAccount: string
+  readonly cloudflareToken: boolean
+}
+
+export interface Recovered {
+  readonly stored: number
+  readonly retained: number
+}
+
+schema Present { readonly present: number }
+
+const TRUSTED_REPOSITORY = "SlopDotCash/slopdotcash"
+const TRUSTED_WORKFLOW = "SlopDotCash/slopdotcash/.github/workflows/deploy.yml@refs/heads/main"
+const SHA = /^[0-9a-f]{40}$/u
+const CLOUDFLARE_ACCOUNT = /^[0-9a-f]{32}$/u
+
+export function trustedRelease(environment: ReleaseEnvironment, checkout: string): boolean {
+  return environment.actions === "true"
+    && environment.repository === TRUSTED_REPOSITORY
+    && environment.ref === "refs/heads/main"
+    && environment.workflowRef === TRUSTED_WORKFLOW
+    && ["push", "workflow_dispatch"].includes(environment.eventName)
+    && SHA.test(checkout)
+    && environment.sha === checkout
+}
+
+export function protectedSolanaConfiguration(environment: ReleaseEnvironment): boolean {
+  const parsed = parsedJson(environment.rpcUrls)
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false
+  const entries = Object.entries(parsed)
+  const [network, url] = entries[0] ?? ["", undefined]
+  return entries.length === 1 && network === "solana-mainnet" && typeof url === "string" && URL.canParse(url) && new URL(url).protocol === "https:"
+    && CLOUDFLARE_ACCOUNT.test(environment.cloudflareAccount) && environment.cloudflareToken
+}
+
+function parsedJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+effect function variable(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function releaseEnvironment() {
+  return {
+    actions: try variable("GITHUB_ACTIONS"),
+    repository: try variable("GITHUB_REPOSITORY"),
+    ref: try variable("GITHUB_REF"),
+    workflowRef: try variable("GITHUB_WORKFLOW_REF"),
+    eventName: try variable("GITHUB_EVENT_NAME"),
+    sha: try variable("GITHUB_SHA"),
+    rpcUrls: try variable("PAYMENT_RPC_URLS"),
+    cloudflareAccount: try variable("CLOUDFLARE_ACCOUNT_ID"),
+    cloudflareToken: (try variable("CLOUDFLARE_API_TOKEN")) !== "",
+  } satisfies ReleaseEnvironment
+}
+
+export effect function checkedOut() {
+  const head = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("git", ["rev-parse", "HEAD"], { stdin: "ignore", stderr: "ignore" }))
+    const decoder = new TextDecoder()
+    let text = ""
+    for try (const chunk of handle.stdout) text += decoder.decode(chunk, { stream: true })
+    return Number(try handle.exitCode) === 0 ? text.trim() : ""
+  })
+  return head catch () => ""
+}
+
+export effect function recoverMissingObservations(environment: ReleaseEnvironment, checkout: string) {
+  if (!trustedRelease(environment, checkout)) throw new RecoveryRefused({ message: "The exact trusted main release is required" })
+  if (!protectedSolanaConfiguration(environment)) throw new RecoveryRefused({ message: "Protected Solana observation configuration is required" })
+  const registry = try registryDeployments(["solana-mainnet"], "ordinary")
+  if (registry.failures.length > 0) throw new RecoveryRefused({ message: "Current vault registry cannot be reconciled" })
+  let stored = 0
+  let retained = 0
+  for (const deployment of registry.deployments) {
+    const prior = try first(Present, sql`SELECT 1 AS present FROM vault_snapshots WHERE project_id = ${deployment.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`)
+    if (prior !== undefined) {
+      retained++
+      continue
+    }
+    const refreshed = try refreshDeployment(deployment, "RecoveryRead")
+    if (refreshed.result === "ObservationStored") stored++
+    else if (refreshed.result === "ObservationOlder") retained++
+    else throw new RecoveryRefused({ message: "Vault observation recovery failed; no provider data or credentials are logged." })
+  }
+  return { stored, retained } satisfies Recovered
+}
+
+export effect function recoverObservationsCommand() {
+  const recovered = try recoverMissingObservations(try releaseEnvironment(), try checkedOut())
+  try Console.log(`Vault observations: ${recovered.stored} stored, ${recovered.retained} retained`)
+}

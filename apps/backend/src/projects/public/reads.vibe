@@ -1,0 +1,56 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"
+import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import type { ProjectFacts } from "../../listing/view.vibe"
+
+schema ListedRow { id: string; revision: number; manifest: string }
+schema RevisionListRow { project_id: string; revision: number; manifest: string; manifest_sha256: string; reason: string; created_at: string }
+schema ProjectReadRow { id: string; revision: number; manifest: string; manifest_sha256: string; updated_at: string; listing_tier: string | null; skill_source: string | null; contribution: string | null }
+schema ReceiptRow { manifest: string; manifest_sha256: string }
+
+export interface ProjectRead extends ProjectFacts {
+  readonly manifestSha256: string
+  readonly updatedAt: string
+}
+
+export effect function manifestJson(text: string, label: string) {
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: label, issue: "manifest is not JSON" }) })
+}
+
+export effect function listedProjects() {
+  return try rows(ListedRow, sql`SELECT id, revision, manifest FROM projects ORDER BY id`)
+}
+
+export effect function listedRevisions() {
+  const found = try rows(RevisionListRow, sql`SELECT project_id, revision, manifest, manifest_sha256, reason, created_at FROM project_revisions ORDER BY project_id, revision`)
+  const revisions: Array<{ projectId: string; revision: number; manifest: unknown; manifestSha256: string; reason: string; createdAt: string }> = []
+  for (const row of found) {
+    revisions.push({
+      projectId: row.project_id,
+      revision: row.revision,
+      manifest: try manifestJson(row.manifest, `project ${row.project_id} revision ${row.revision}`),
+      manifestSha256: row.manifest_sha256,
+      reason: row.reason,
+      createdAt: row.created_at,
+    })
+  }
+  return revisions
+}
+
+export effect function projectRead(projectId: string) {
+  const row = try first(ProjectReadRow, sql`SELECT id, revision, manifest, manifest_sha256, updated_at, json_extract(manifest, '$.listingTier') AS listing_tier, json_extract(manifest, '$.skill.sourcePath') AS skill_source, json_type(manifest, '$.contribution') AS contribution FROM projects WHERE id = ${projectId}`)
+  if (row === undefined) return undefined
+  return {
+    id: row.id,
+    revision: row.revision,
+    manifest: row.manifest,
+    manifestSha256: row.manifest_sha256,
+    updatedAt: row.updated_at,
+    listingTier: row.listing_tier ?? "",
+    skillSource: row.skill_source,
+    contribution: row.contribution !== null,
+  } satisfies ProjectRead
+}
+
+export effect function storedRevision(projectId: string, revision: number) {
+  return try first(ReceiptRow, sql`SELECT manifest, manifest_sha256 FROM project_revisions WHERE project_id = ${projectId} AND revision = ${revision}`)
+}

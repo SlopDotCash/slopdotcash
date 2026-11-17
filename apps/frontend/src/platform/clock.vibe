@@ -1,0 +1,25 @@
+// spec/frontend/views.md, "Recent Points sum each UTC day of the last days including today"
+import { isoAt } from "@repo/platform/clock"
+
+export const longestTimerMillis = 2_147_483_647
+const dayMillis = 86_400_000
+
+export effect function untilTime(at: number) {
+  while (true) {
+    const remaining = at - (try Clock.currentTimeMillis)
+    if (remaining <= 0) return
+    try sleep(Math.min(remaining, longestTimerMillis))
+  }
+}
+
+export effect function utcDay() {
+  return (try isoAt(try Clock.currentTimeMillis)).slice(0, 10)
+}
+
+export effect function nextUtcDayAt() {
+  return (Math.floor((try Clock.currentTimeMillis) / dayMillis) + 1) * dayMillis
+}
+
+export effect function untilNextUtcDay() {
+  try untilTime(try nextUtcDayAt())
+}

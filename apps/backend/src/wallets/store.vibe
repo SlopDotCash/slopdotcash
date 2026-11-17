@@ -1,0 +1,366 @@
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/backend/wallets.md, "Claim and proof history remains bound to one partition"; spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { Json } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { Audit } from "@repo/ports/security"
+import { type Event, type VerifiedRead, type WalletChain, type WalletClaim, type WalletRegistration, NotAState, apply, challengeLifetime, decodeState, possessionLifetime, possessionMatches, sameRegistryWallet } from "../../gen/backend__wallets.effect.vibe"
+import { chainName } from "./records.vibe"
+
+schema ClaimRow {
+  readonly id: string
+  readonly github_user_id: string
+  readonly github_login: string
+  readonly wallet_address: string
+  readonly chain: string
+  readonly source: string
+  readonly issue_repository: string | null
+  readonly issue_number: number | null
+  readonly source_body_sha256: string
+  readonly observed_at: string
+  readonly record_sha256: string
+  readonly supersedes_claim_id: string | null
+  readonly created_at: string
+}
+
+schema PaymentChallengeRow {
+  readonly id: string
+  readonly claim_id: string
+  readonly message: string
+  readonly expires_at: string
+  readonly consumed_at: string | null
+}
+
+schema AuthorizationRow {
+  readonly claim_id: string
+  readonly challenge_id: string
+  readonly authorized_at: string
+}
+
+schema PossessionChallengeRow {
+  readonly challenge_id: string
+  readonly claim_id: string
+  readonly wallet_address: string
+  readonly issued_at: string
+  readonly expires_at: string
+  readonly consumed_at: string | null
+}
+
+schema AttestationRow {
+  readonly claim_id: string
+  readonly challenge_id: string
+  readonly github_user_id: string
+  readonly wallet_address: string
+  readonly signature: string
+  readonly message_sha256: string
+  readonly attested_at: string
+}
+
+export interface Partition {
+  readonly actor: string
+  readonly chain: WalletChain
+}
+
+export interface Context {
+  readonly clock: number
+  readonly reads: Readonly<Record<number, VerifiedRead>>
+  readonly finished: ReadonlyArray<number>
+  readonly consumers: Readonly<Record<number, number>>
+}
+
+export interface Loaded {
+  readonly state: WalletRegistration
+  readonly claims: ReadonlyArray<ClaimRow>
+  readonly challenges: ReadonlyArray<PaymentChallengeRow>
+  readonly possession: ReadonlyArray<PossessionChallengeRow>
+  readonly attestations: ReadonlyArray<AttestationRow>
+}
+
+interface AuditFacts {
+  readonly actorGithubId: string
+  readonly action: string
+  readonly requestId: string
+  readonly details: { readonly [key: string]: Json }
+}
+
+export interface ClaimFacts {
+  readonly kind: "claim"
+  readonly id: string
+  readonly login: string
+  readonly sourceBodySha256: string
+  readonly issueRepository: string | null
+  readonly issueNumber: number | null
+  readonly observedAt: string
+  readonly audit: AuditFacts
+}
+
+export interface AttestationFacts {
+  readonly kind: "attestation"
+  readonly id: string
+  readonly signature: string
+  readonly messageSha256: string
+  readonly audit: AuditFacts
+}
+
+export type Facts =
+  | { readonly kind: "none" }
+  | ClaimFacts
+  | { readonly kind: "challenge"; readonly id: string; readonly message: string }
+  | { readonly kind: "authorization"; readonly signature: string }
+  | { readonly kind: "possessionChallenge"; readonly id: string }
+  | AttestationFacts
+
+export interface Step {
+  readonly event: Event
+  readonly by: string
+  readonly facts: Facts
+}
+
+export interface Sent {
+  readonly loaded: Loaded
+  readonly state: WalletRegistration
+}
+
+export const noFacts: Facts = { kind: "none" }
+
+export function freshContext(clock: number): Context {
+  return { clock, reads: {}, finished: [], consumers: {} }
+}
+
+export function contextOf(state: WalletRegistration): Context {
+  return { clock: state.clock, reads: state.reads, finished: state.finished, consumers: Object.fromEntries(state.consumptions.map((used) => [used.challengeId, used.requestId])) }
+}
+
+function lineOf(claims: ReadonlyArray<ClaimRow>): ReadonlyArray<ClaimRow> | undefined {
+  const successors = new Map(claims.flatMap((claim) => claim.supersedes_claim_id === null ? [] : [[claim.supersedes_claim_id, claim] as const]))
+  const ordered: ClaimRow[] = []
+  let at = claims.find((claim) => claim.supersedes_claim_id === null)
+  while (at !== undefined && ordered.length < claims.length) {
+    ordered.push(at)
+    at = successors.get(at.id)
+  }
+  return ordered.length === claims.length ? ordered : undefined
+}
+
+function positions<T>(rows: ReadonlyArray<T>, id: (row: T) => string): ReadonlyMap<string, number> {
+  return new Map(rows.map((row, index) => [id(row), index + 1]))
+}
+
+function millis(text: string | null): number {
+  return text === null ? 0 : millisOf(text)
+}
+
+effect function partitionState(partition: Partition, context: Context, found: ReadonlyArray<Rows>) {
+  const [claimRows, challengeRows, authorizationRows, possessionRows, attestationRows] = found
+  const claims = lineOf(try decoded(ClaimRow, claimRows ?? [], "wallet claims"))
+  if (claims === undefined) throw new NotAState({ input: claimRows })
+  const challenges = try decoded(PaymentChallengeRow, challengeRows ?? [], "payment wallet challenges")
+  const authorizations = try decoded(AuthorizationRow, authorizationRows ?? [], "payment wallet authorizations")
+  const possession = try decoded(PossessionChallengeRow, possessionRows ?? [], "wallet possession challenges")
+  const attestations = try decoded(AttestationRow, attestationRows ?? [], "wallet possession attestations")
+  const claimAt = positions(claims, (claim) => claim.id)
+  const challengeAt = positions(challenges, (challenge) => challenge.id)
+  const possessionAt = positions(possession, (challenge) => challenge.challenge_id)
+  const claimOf = (id: string) => claims[(claimAt.get(id) ?? 0) - 1]
+  const consumptions = challenges.flatMap((row, index) => row.consumed_at === null ? [] : [{
+    challengeId: index + 1,
+    requestId: context.consumers[index + 1] ?? 0,
+    claim: claimAt.get(row.claim_id) ?? 0,
+    at: millis(row.consumed_at),
+  }])
+  const possessionChallenges = possession.map((row, index) => ({
+    id: index + 1,
+    claim: claimAt.get(row.claim_id) ?? 0,
+    wallet: row.wallet_address,
+    issuedAt: millis(row.issued_at),
+    expiresAt: millis(row.expires_at),
+    consumed: row.consumed_at !== null,
+    consumedAt: millis(row.consumed_at),
+  }))
+  const state = try decodeState({
+    actor: partition.actor,
+    chain: partition.chain,
+    clock: Math.max(context.clock, ...possessionChallenges.map((challenge) => challenge.issuedAt)),
+    claims: claims.map((row, index) => ({ predecessor: index, wallet: row.wallet_address, digest: row.record_sha256, source: row.source === "d1_registry" ? "Registry" : "Historical" }) satisfies WalletClaim),
+    challenges: Object.fromEntries(challenges.map((row, index) => [index + 1, {
+      claim: claimAt.get(row.claim_id) ?? 0,
+      claimDigest: claimOf(row.claim_id)?.record_sha256 ?? "",
+      wallet: claimOf(row.claim_id)?.wallet_address ?? "",
+      issuedAt: millis(row.expires_at) - challengeLifetime,
+      expiresAt: millis(row.expires_at),
+      messageDigest: row.message,
+    }])),
+    reads: context.reads,
+    consumptions: consumptions.sort((left, right) => left.at - right.at || left.challengeId - right.challengeId),
+    finished: context.finished,
+    authorizations: authorizations.map((row) => ({ claim: claimAt.get(row.claim_id) ?? 0, challengeId: challengeAt.get(row.challenge_id) ?? 0, authorizedAt: millis(row.authorized_at) })),
+    operatorRecords: [],
+    walletChangedNotices: [],
+    historicalProposals: [1],
+    possessionChallenges,
+    lastPossessionChallenge: possession.length,
+    attestations: attestations.map((row) => ({ claim: claimAt.get(row.claim_id) ?? 0, challenge: possessionAt.get(row.challenge_id) ?? 0, wallet: row.wallet_address, attestedAt: millis(row.attested_at) })),
+  })
+  return { state, claims, challenges, possession, attestations } satisfies Loaded
+}
+
+function owned(partition: Partition): Statement {
+  return sql`JOIN wallet_claims w ON w.id = x.claim_id WHERE w.github_user_id = ${partition.actor} AND w.chain = ${chainName(partition.chain)} AND x.github_user_id = ${partition.actor}`
+}
+
+function aggregate(partition: Partition, context: Context): Aggregate<Loaded, NotAState | RowMismatch, never> {
+  const actor = partition.actor
+  const chain = chainName(partition.chain)
+  const scope = owned(partition)
+  return {
+    name: `payout wallets of ${actor} on ${chain}`,
+    version: sql`SELECT (SELECT count(*) FROM wallet_claims WHERE github_user_id = ${actor} AND chain = ${chain})
+      || '|' || coalesce((SELECT group_concat(id || '=' || coalesce(consumed_at, '-'), ',') FROM (SELECT x.id, x.consumed_at FROM payment_wallet_challenges x ${scope} ORDER BY x.rowid)), '')
+      || '|' || (SELECT count(*) FROM payment_wallet_authorizations x ${scope})
+      || '|' || coalesce((SELECT group_concat(challenge_id || '=' || coalesce(consumed_at, '-'), ',') FROM (SELECT x.challenge_id, x.consumed_at FROM wallet_possession_challenges x ${scope} ORDER BY x.rowid)), '')
+      || '|' || (SELECT count(*) FROM wallet_possession_attestations x ${scope}) AS version`,
+    reads: [
+      sql`SELECT id, github_user_id, github_login, wallet_address, chain, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at FROM wallet_claims WHERE github_user_id = ${actor} AND chain = ${chain} ORDER BY rowid`,
+      sql`SELECT x.id, x.claim_id, x.message, x.expires_at, x.consumed_at FROM payment_wallet_challenges x ${scope} ORDER BY x.rowid`,
+      sql`SELECT x.claim_id, x.challenge_id, x.authorized_at FROM payment_wallet_authorizations x ${scope} ORDER BY x.rowid`,
+      sql`SELECT x.challenge_id, x.claim_id, x.wallet_address, x.issued_at, x.expires_at, x.consumed_at FROM wallet_possession_challenges x ${scope} ORDER BY x.rowid`,
+      sql`SELECT x.claim_id, x.challenge_id, x.github_user_id, x.wallet_address, x.signature, x.message_sha256, x.attested_at FROM wallet_possession_attestations x ${scope} ORDER BY x.rowid`,
+    ],
+    decode: (found) => partitionState(partition, context, found),
+  }
+}
+
+effect function missing(what: string) {
+  return try die(new Error(`a wallet step arrived without ${what}`))
+}
+
+effect function audited(audit: AuditFacts, claimId: string) {
+  return try (try Audit).statements({ actorGithubId: audit.actorGithubId, action: audit.action, target: `wallet-claim:${claimId}`, requestId: audit.requestId, details: audit.details })
+}
+
+effect function claimWrites(loaded: Loaded, before: WalletRegistration, partition: Partition, claim: WalletClaim, facts: Facts, source: "github_issue" | "d1_registry") {
+  if (facts.kind !== "claim") return try missing("claim facts")
+  const createdAt = try isoAt(before.clock)
+  const chain = chainName(partition.chain)
+  const predecessor = claim.predecessor === 0 ? null : loaded.claims[claim.predecessor - 1]?.id ?? null
+  const notices = try (try Notices).statements({
+    notices: [{ eventKey: `wallet-claim:${facts.id}`, recipientGithubId: partition.actor, kind: "WalletChanged", subject: chain, actionPath: "/account#wallets", sourceAt: createdAt }],
+  })
+  return [
+    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, chain, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at) VALUES (${facts.id}, ${partition.actor}, ${facts.login}, ${claim.wallet}, ${chain}, ${source}, ${facts.issueRepository}, ${facts.issueNumber}, ${facts.sourceBodySha256}, ${facts.observedAt}, ${claim.digest}, ${predecessor}, ${createdAt})`,
+    ...(try audited(facts.audit, facts.id)),
+    ...notices,
+  ]
+}
+
+function releaseHeld(claimId: string, actor: string, at: string): Statement {
+  return sql`INSERT INTO payment_outbox (obligation_id, state, updated_at) SELECT o.id, 'ready', ${at} FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id = o.github_user_id AND w.chain = o.chain JOIN payment_wallet_authorizations a ON a.claim_id = w.id WHERE w.id = ${claimId} AND w.github_user_id = ${actor} AND o.state = 'reserved' AND NOT EXISTS (SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id = o.id AND attempt.state IN ('prepared', 'unknown', 'submitted') AND attempt.claim_id <> w.id) ON CONFLICT (obligation_id) DO UPDATE SET state = 'ready', updated_at = excluded.updated_at WHERE payment_outbox.state = 'held'`
+}
+
+function rowAt<T>(rows: ReadonlyArray<T>, position: number): T | undefined {
+  return position > 0 ? rows[position - 1] : undefined
+}
+
+effect function authorizationWrites(loaded: Loaded, before: WalletRegistration, after: WalletRegistration, partition: Partition, requestId: number, facts: Facts) {
+  if (after.authorizations.length === before.authorizations.length) return []
+  if (facts.kind !== "authorization") return try missing("the authorization signature")
+  const read = before.reads[requestId]
+  const claim = rowAt(loaded.claims, read?.claim ?? 0)
+  const challenge = rowAt(loaded.challenges, read?.challengeId ?? 0)
+  if (read === undefined || claim === undefined || challenge === undefined) return try missing("the stored claim and challenge it authorizes")
+  const at = try isoAt(read.capturedAt)
+  return [
+    sql`INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (${claim.id}, ${partition.actor}, ${at}, ${challenge.id}, ${facts.signature})`,
+    releaseHeld(claim.id, partition.actor, at),
+  ]
+}
+
+effect function attestationWrites(loaded: Loaded, before: WalletRegistration, partition: Partition, claimPosition: number, challengePosition: number, recoveredSigner: string, facts: Facts) {
+  const claim = rowAt(loaded.claims, claimPosition)
+  const challenge = rowAt(loaded.possession, challengePosition)
+  if (claim === undefined || challenge === undefined) return try missing("the stored claim and possession challenge")
+  const at = try isoAt(before.clock)
+  const consumed = sql`UPDATE wallet_possession_challenges SET consumed_at = ${at} WHERE challenge_id = ${challenge.challenge_id} AND consumed_at IS NULL`
+  if (!possessionMatches(before, claimPosition, challengePosition, recoveredSigner)) return [consumed]
+  if (facts.kind !== "attestation") return try missing("attestation facts")
+  return [
+    consumed,
+    sql`INSERT INTO wallet_possession_attestations (id, claim_id, challenge_id, github_user_id, wallet_address, signature, message_sha256, attested_at, created_at) VALUES (${facts.id}, ${claim.id}, ${challenge.challenge_id}, ${partition.actor}, ${claim.wallet_address}, ${facts.signature}, ${facts.messageSha256}, ${at}, ${at})`,
+    ...(try audited(facts.audit, claim.id)),
+  ]
+}
+
+effect function writesOf(loaded: Loaded, partition: Partition, before: WalletRegistration, after: WalletRegistration, step: Step) {
+  const { event, facts } = step
+  const last = after.claims[after.claims.length - 1]
+  if (event.type === "register" || event.type === "registerByBearer") {
+    if (sameRegistryWallet(before, event.registration.wallet) || last === undefined) return []
+    return try claimWrites(loaded, before, partition, last, facts, "d1_registry")
+  }
+  if (event.type === "operatorClaim") {
+    if (last === undefined) return try missing("the operator claim")
+    return try claimWrites(loaded, before, partition, last, facts, event.request.source === "FromGithubIssue" ? "github_issue" : "d1_registry")
+  }
+  if (event.type === "issue") {
+    const claim = rowAt(loaded.claims, event.claim)
+    if (facts.kind !== "challenge" || facts.message !== event.messageDigest || claim === undefined) return try missing("the challenge message")
+    return [sql`INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at) VALUES (${facts.id}, ${claim.id}, ${partition.actor}, ${facts.message}, ${try isoAt(before.clock + challengeLifetime)}, NULL)`]
+  }
+  if (event.type === "consume") {
+    const read = before.reads[event.requestId]
+    const challenge = rowAt(loaded.challenges, read?.challengeId ?? 0)
+    if (read === undefined || challenge === undefined) return try missing("the stored challenge it consumes")
+    return [sql`UPDATE payment_wallet_challenges SET consumed_at = ${try isoAt(read.capturedAt)} WHERE id = ${challenge.id} AND consumed_at IS NULL`]
+  }
+  if (event.type === "commitAuthorization") return try authorizationWrites(loaded, before, after, partition, event.requestId, facts)
+  if (event.type === "issuePossessionChallenge") {
+    const claim = rowAt(loaded.claims, event.claim)
+    if (facts.kind !== "possessionChallenge" || claim === undefined) return try missing("the possession challenge id")
+    const issuedAt = try isoAt(before.clock)
+    return [sql`INSERT INTO wallet_possession_challenges (challenge_id, claim_id, github_user_id, wallet_address, issued_at, expires_at, consumed_at, created_at) VALUES (${facts.id}, ${claim.id}, ${partition.actor}, ${claim.wallet_address}, ${issuedAt}, ${try isoAt(before.clock + possessionLifetime)}, NULL, ${issuedAt})`]
+  }
+  if (event.type === "attestPossession") return try attestationWrites(loaded, before, partition, event.claim, event.challengeId, event.recoveredSigner, facts)
+  return []
+}
+
+effect function decide(loaded: Loaded, partition: Partition, steps: ReadonlyArray<Step>) {
+  let state = loaded.state
+  const writes: Statement[] = []
+  for (const step of steps) {
+    const next = try apply(state, step.event, step.by)
+    writes.push(...(try writesOf(loaded, partition, state, next, step)))
+    state = next
+  }
+  return { value: { loaded, state }, writes } satisfies Decision<Sent>
+}
+
+export effect function loadPartition(partition: Partition, context: Context) {
+  return (try load(aggregate(partition, context))).state
+}
+
+export effect function send(partition: Partition, steps: (loaded: Loaded) => ReadonlyArray<Step>, context: Context) {
+  return try update(aggregate(partition, context), (loaded) => decide(loaded, partition, steps(loaded)))
+}
+
+const claimColumns = sql`id, github_user_id, github_login, wallet_address, chain, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at`
+
+export effect function claimById(id: string) {
+  return try first(ClaimRow, sql`SELECT ${claimColumns} FROM wallet_claims WHERE id = ${id}`)
+}
+
+export effect function claimByDigest(digest: string) {
+  return try first(ClaimRow, sql`SELECT ${claimColumns} FROM wallet_claims WHERE record_sha256 = ${digest}`)
+}
+
+export effect function attestationOf(claimId: string) {
+  return try first(AttestationRow, sql`SELECT claim_id, challenge_id, github_user_id, wallet_address, signature, message_sha256, attested_at FROM wallet_possession_attestations WHERE claim_id = ${claimId}`)
+}
+
+export function claimAt(loaded: Loaded, position: number): ClaimRow | undefined {
+  return rowAt(loaded.claims, position)
+}
+
+export function positionOf(loaded: Loaded, claimId: string): number {
+  return loaded.claims.findIndex((claim) => claim.id === claimId) + 1
+}

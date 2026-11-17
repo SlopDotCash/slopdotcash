@@ -1,0 +1,198 @@
+// spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "The wallet registries move underneath through their own guarded events"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type D1, type D1Error, type RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Binding, type CaseAccess, type Consent, type Deployment, type Event, type EvmConsentSignature, type PaymentEvidence, type SolanaGeneration, NotAState, apply, decodeState } from "../../gen/backend__bindingConsent.effect.vibe"
+import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
+import { type Context, type Loaded as Partition, claimAt, loadPartition, positionOf } from "../wallets/store.vibe"
+
+schema ConsentRow {
+  readonly claim_id: string
+  readonly network: string
+  readonly vault: string
+  readonly chain_id: string
+  readonly expected_version: string
+  readonly expires_at: string
+  readonly created_at: string
+}
+
+schema AccessRow {
+  readonly case_id: string
+  readonly actor_github_id: string
+}
+
+export interface Outside {
+  readonly payments: ReadonlyArray<PaymentEvidence>
+  readonly generations: ReadonlyArray<SolanaGeneration>
+  readonly lastGeneration: number
+  readonly finalizedHeight: number
+  readonly cases: Readonly<Record<string, number>>
+}
+
+export interface Found<X> {
+  readonly outside: Outside
+  readonly found: X
+}
+
+export interface Contexts {
+  readonly evm: Context
+  readonly solana: Context
+}
+
+export interface Scope<X, E, R> {
+  readonly actor: string
+  readonly chain: WalletChain
+  readonly contexts: Contexts
+  readonly deployments: ReadonlyArray<Deployment>
+  readonly fingerprint: Statement
+  readonly outside: (solana: Partition) => Found<X>!E!R
+}
+
+export interface Loaded<X> {
+  readonly state: Binding
+  readonly evm: Partition
+  readonly solana: Partition
+  readonly found: X
+}
+
+export type Facts =
+  | { readonly kind: "none" }
+  | { readonly kind: "consent"; readonly signature: string }
+  | { readonly kind: "access"; readonly caseId: string }
+
+export interface Step {
+  readonly event: Event
+  readonly by: string
+  readonly facts: Facts
+}
+
+export interface Sent<X> {
+  readonly loaded: Loaded<X>
+  readonly state: Binding
+}
+
+export const noFacts: Facts = { kind: "none" }
+
+export const nothingOutside: Outside = { payments: [], generations: [], lastGeneration: 0, finalizedHeight: 0, cases: {} }
+
+const reporterWrites = (actor: string) => sql`FROM security_case_access_log l JOIN security_cases c ON c.id = l.case_id WHERE c.reporter_github_id = ${actor} AND l.actor_role = 'reporter' AND l.action = 'write'`
+
+function consentOf(evm: Partition, row: ConsentRow): ReadonlyArray<Consent> {
+  const claim = positionOf(evm, row.claim_id)
+  const wallet = claimAt(evm, claim)
+  if (claim === 0 || wallet === undefined) return []
+  return [{
+    claim,
+    network: row.network,
+    vault: row.vault,
+    chainId: Number(row.chain_id),
+    version: Number(row.expected_version),
+    expiresAt: Number(row.expires_at),
+    signer: wallet.wallet_address,
+    createdAt: Math.floor(millisOf(row.created_at) / 1000),
+  }]
+}
+
+function accessOf(cases: Readonly<Record<string, number>>, row: AccessRow): ReadonlyArray<CaseAccess> {
+  const privateCase = Object.hasOwn(cases, row.case_id) ? cases[row.case_id] : undefined
+  return privateCase === undefined ? [] : [{ privateCase, actor: row.actor_github_id }]
+}
+
+effect function bindingOf<X, E, R>(scope: Scope<X, E, R>, [consentRows, accessRows]: ReadonlyArray<Rows>) {
+  const evm = try loadPartition({ actor: scope.actor, chain: scope.chain }, scope.contexts.evm)
+  const solana = try loadPartition({ actor: scope.actor, chain: "Solana" }, scope.contexts.solana)
+  const { outside, found } = try scope.outside(solana)
+  const consents = (try decoded(ConsentRow, consentRows ?? [], "payment binding authorizations")).flatMap((row) => consentOf(evm, row))
+  const caseAccessLog = (try decoded(AccessRow, accessRows ?? [], "private case access log")).flatMap((row) => accessOf(outside.cases, row))
+  const state = try decodeState({
+    wallet: evm.state,
+    solanaWallet: solana.state,
+    deployments: scope.deployments,
+    consents,
+    generations: outside.generations,
+    lastGeneration: outside.lastGeneration,
+    payments: outside.payments,
+    finalizedHeight: outside.finalizedHeight,
+    caseAccessLog,
+  })
+  return { state, evm, solana, found } satisfies Loaded<X>
+}
+
+function aggregate<X, E, R>(scope: Scope<X, E, R>): Aggregate<Loaded<X>, NotAState | RowMismatch | D1Error | E, D1 | R> {
+  const actor = scope.actor
+  return {
+    name: `binding consent of ${actor}`,
+    version: sql`SELECT (SELECT count(*) || ':' || coalesce(max(rowid), 0) FROM wallet_claims WHERE github_user_id = ${actor})
+      || '|' || (SELECT count(*) FROM payment_wallet_authorizations WHERE github_user_id = ${actor})
+      || '|' || (SELECT count(*) FROM payment_binding_authorizations WHERE github_user_id = ${actor})
+      || '|' || (SELECT count(*) ${reporterWrites(actor)})
+      || '|' || coalesce((${scope.fingerprint}), '') AS version`,
+    reads: [
+      sql`SELECT claim_id, network, vault, chain_id, expected_version, expires_at, created_at FROM payment_binding_authorizations WHERE github_user_id = ${actor} ORDER BY rowid`,
+      sql`SELECT l.case_id, l.actor_github_id ${reporterWrites(actor)} ORDER BY l.id`,
+    ],
+    decode: (found) => bindingOf(scope, found),
+  }
+}
+
+effect function missing(what: string) {
+  return try die(new Error(`a binding step arrived without ${what}`))
+}
+
+effect function consentWrite<X>(loaded: Loaded<X>, signed: EvmConsentSignature, step: Step, at: string) {
+  const claim = claimAt(loaded.evm, signed.claim)
+  if (step.facts.kind !== "consent" || claim === undefined) return try missing("the stored claim and its signature")
+  return [sql`INSERT INTO payment_binding_authorizations (claim_id, github_user_id, network, vault, chain_id, expected_version, expires_at, signature, created_at) VALUES (${claim.id}, ${step.by}, ${signed.network}, ${signed.vault}, ${String(signed.chainId)}, ${String(signed.version)}, ${String(signed.expiresAt)}, ${step.facts.signature}, ${at}) ON CONFLICT (claim_id, network, vault, chain_id, expected_version, expires_at) DO NOTHING`]
+}
+
+function accessWrite(step: Step, at: string): ReadonlyArray<Statement> {
+  return step.facts.kind === "access" ? [sql`INSERT INTO security_case_access_log (case_id, actor_github_id, actor_role, action, at) VALUES (${step.facts.caseId}, ${step.by}, 'reporter', 'write', ${at})`] : []
+}
+
+effect function writesOf<X>(loaded: Loaded<X>, before: Binding, step: Step) {
+  const event = step.event
+  const at = try isoAt(before.wallet.clock)
+  switch (event.type) {
+    case "bindAuthorize": return try consentWrite(loaded, event.signature, step, at)
+    case "solanaPrepare":
+    case "solanaComplete":
+    case "solanaRefused":
+      return accessWrite(step, at)
+    case "observePayment":
+    case "observeHeight":
+    case "solanaExpire":
+      return []
+    case "observeTime":
+    case "register":
+    case "issue":
+    case "readProof":
+    case "consume":
+    case "commitAuthorization":
+    case "solanaRegister":
+    case "solanaOperatorClaim":
+    case "solanaIssue":
+    case "solanaReadProof":
+    case "solanaConsume":
+    case "solanaCommitAuthorization":
+      return try die(new Error(`the wallet event ${event.type} is written by the wallet store`))
+  }
+}
+
+effect function decide<X>(loaded: Loaded<X>, steps: ReadonlyArray<Step>) {
+  let state = loaded.state
+  const writes: Statement[] = []
+  for (const step of steps) {
+    const next = try apply(state, step.event, step.by)
+    writes.push(...(try writesOf(loaded, state, step)))
+    state = next
+  }
+  return { value: { loaded, state }, writes } satisfies Decision<Sent<X>>
+}
+
+export effect function loadBinding<X, E, R>(scope: Scope<X, E, R>) {
+  return (try load(aggregate(scope))).state
+}
+
+export effect function sendBinding<X, E, R>(scope: Scope<X, E, R>, steps: (loaded: Loaded<X>) => ReadonlyArray<Step>) {
+  return try update(aggregate(scope), (loaded) => decide(loaded, steps(loaded)))
+}

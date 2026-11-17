@@ -1,0 +1,261 @@
+// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/installation.md, "An older or tied change cannot revive a removed or suspended installation"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { InstallEvent, InstallEventKind } from "../../gen/slopbot__installation.effect.vibe"
+import { type Body, type GithubEvent, type JobKind, type ReopenSource, type ValueSource, noBody, noChange, noReopen, noValue } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import type { Account } from "../installation/store.vibe"
+import { AppealJob, type Job, appealCommands } from "../jobs/job.vibe"
+
+export const qualityMarker = "<!-- slopbot:quality-evidence:v1 -->"
+
+const reviewActions: Readonly<Record<string, ReadonlySet<string>>> = {
+  issues: new Set(["opened", "edited"]),
+  pull_request: new Set(["opened", "edited", "synchronize", "ready_for_review"]),
+}
+
+const valueActions: Readonly<Record<string, ReadonlySet<string>>> = {
+  pull_request: new Set(["closed", "reopened", "edited", "synchronize"]),
+  pull_request_review: new Set(["submitted", "edited", "dismissed"]),
+  pull_request_review_comment: new Set(["created", "edited", "deleted"]),
+  issue_comment: new Set(["created", "edited", "deleted"]),
+}
+
+const events: Readonly<Record<string, GithubEvent>> = {
+  installation: "Installation",
+  pull_request: "PullRequest",
+  issues: "Issue",
+  pull_request_review: "PullReview",
+  pull_request_review_comment: "ReviewComment",
+  issue_comment: "IssueComment",
+}
+
+export function githubEvent(name: string): GithubEvent {
+  return events[name] ?? "Other"
+}
+
+const installActions: Readonly<Record<string, InstallEventKind>> = {
+  created: "Created",
+  new_permissions_accepted: "PermissionsAccepted",
+  deleted: "Deleted",
+  suspend: "Suspend",
+  unsuspend: "Unsuspend",
+}
+
+const jobKinds: Readonly<Record<Job["kind"], JobKind>> = {
+  review: "Review",
+  appeal: "Appeal",
+  appeal_command: "AppealCommand",
+  human_reopen: "HumanReopen",
+  appeal_due: "NoJob",
+  maintainer_hold: "NoJob",
+}
+
+schema Owner { login: string }
+schema RepositoryPart { id: number; name: string; private: boolean; owner: Owner }
+schema Identified { id: number }
+schema AccountPart { id: number; login: string; type: string }
+schema Numbered { number: number }
+schema CommentPart { body: string }
+schema ReopenPart { node_id: string; updated_at: string }
+schema HeadPart { head: { sha: string } }
+schema IssueText { title: string; body: string | null }
+schema RepositoryList { repositories: ReadonlyArray<Identified> }
+
+function part<A>(schema: Schema.Decoder<A>, value: unknown): A | undefined {
+  return Option.getOrUndefined(Schema.decodeUnknownOption(schema)(value))
+}
+
+function positive(value: number | undefined) {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+export interface InstallationChange {
+  readonly installationId: number
+  readonly account: Account | undefined
+  readonly hasAccount: boolean
+  readonly repositories: ReadonlyArray<number>
+}
+
+interface ValueRequest {
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly number: number
+}
+
+export interface Parsed {
+  readonly body: Body
+  readonly job: Job | undefined
+  readonly reopen: string | undefined
+  readonly strictSource: boolean
+  readonly installation: InstallationChange | undefined
+}
+
+interface Base {
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+}
+
+interface Shape {
+  readonly action: string | undefined
+  readonly installation: number | undefined
+  readonly repository: typeof RepositoryPart.Type | undefined
+  readonly sender: number | undefined
+  readonly issue: Record<string, unknown> | undefined
+  readonly pull: Record<string, unknown> | undefined
+  readonly comment: string | undefined
+  readonly commentId: number | undefined
+}
+
+function objectAt(payload: Readonly<Record<string, unknown>>, key: string) {
+  const value = payload[key]
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function shapeOf(payload: Readonly<Record<string, unknown>>): Shape {
+  const comment = objectAt(payload, "comment")
+  return {
+    action: typeof payload.action === "string" ? payload.action : undefined,
+    installation: part(Identified, payload.installation)?.id,
+    repository: part(RepositoryPart, payload.repository),
+    sender: part(Identified, payload.sender)?.id,
+    issue: objectAt(payload, "issue"),
+    pull: objectAt(payload, "pull_request"),
+    comment: part(CommentPart, comment)?.body,
+    commentId: part(Identified, comment)?.id,
+  }
+}
+
+function itemOf(event: string, shape: Shape) {
+  if (event === "pull_request" && shape.pull !== undefined) {
+    const found = part(Numbered, shape.pull)
+    return found === undefined ? undefined : { itemKind: "pull_request" as const, number: found.number, raw: shape.pull }
+  }
+  if (shape.issue === undefined) return undefined
+  const found = part(Numbered, shape.issue)
+  return found === undefined ? undefined : { itemKind: shape.issue.pull_request === undefined ? "issue" as const : "pull_request" as const, number: found.number, raw: shape.issue }
+}
+
+const disputeCommand = /(?:^|\r?\n)\s*\/slopbot\s+dispute(?::|\s|$)/u
+const appealCommand = /(?:^|\r?\n)\s*\/slopbot\s+appeal(?::|\s|$)/u
+const decisionCommand = /(?:^|\r?\n)\s*\/slopbot\s+(accept|reject|uphold|deny)(?=\s|$)/u
+const appealKeyPrefix = /^(?:appeal|value-appeal):/u
+const appealKey = /^(?:appeal|value-appeal):[A-Za-z0-9_:=.-]{1,180}$/u
+
+function qualityReceiptOf(event: string, shape: Shape) {
+  return event === "issue_comment" && shape.action === "created" && shape.comment !== undefined && shape.comment.startsWith(`${qualityMarker}\n`) && shape.commentId !== undefined && Number.isSafeInteger(shape.commentId) && shape.commentId > 0
+}
+
+function commentJob(base: Base, item: { readonly itemKind: "issue" | "pull_request"; readonly number: number }, shape: Shape, senderId: number, qualityReceipt: boolean): Job | undefined {
+  if (qualityReceipt && item.itemKind === "pull_request" && shape.commentId !== undefined) return { kind: "review", ...base, itemKind: item.itemKind, number: item.number, qualityCommentId: shape.commentId }
+  if (shape.action !== "created") return undefined
+  const text = (shape.comment ?? "").trim()
+  const commentId = shape.commentId !== undefined && Number.isSafeInteger(shape.commentId) && shape.commentId > 0 ? { appealCommentId: shape.commentId } : {}
+  if (disputeCommand.test(text)) return { kind: "appeal", subject: "value", ...commentId, ...base, itemKind: item.itemKind, number: item.number, senderId }
+  if (appealCommand.test(text)) return { kind: "appeal", ...base, itemKind: item.itemKind, number: item.number, senderId, ...commentId }
+  const match = decisionCommand.exec(text)
+  const command = appealCommands.find((name) => name === match?.[1])
+  if (command === undefined || match === null) return undefined
+  const target = text.slice(match.index + match[0].length).trim().split(/\s+/u)[0] ?? ""
+  if (appealKeyPrefix.test(target) && !appealKey.test(target)) return undefined
+  return { kind: "appeal_command", command, ...appealKey.test(target) ? { appealKey: target } : {}, ...base, itemKind: item.itemKind, number: item.number, senderId }
+}
+
+function candidateJob(event: string, deliveryId: string, shape: Shape, qualityReceipt: boolean): Job | undefined {
+  const { installation, repository, sender, action } = shape
+  if (installation === undefined || repository === undefined || sender === undefined || action === undefined) return undefined
+  const base = { deliveryId, installationId: installation, repositoryId: repository.id, owner: repository.owner.login, repo: repository.name }
+  const item = itemOf(event, shape)
+  if (item === undefined) return undefined
+  if (event === "issue_comment") return commentJob(base, item, shape, sender, qualityReceipt)
+  if (action === "reopened") return { kind: "human_reopen", ...base, itemKind: item.itemKind, number: item.number, senderId: sender }
+  if (reviewActions[event]?.has(action) === true) return { kind: "review", ...base, itemKind: item.itemKind, number: item.number }
+  return undefined
+}
+
+function valueRequestOf(event: string, deliveryId: string, shape: Shape): ValueRequest | undefined {
+  const valueNumber = event === "issue_comment"
+    ? shape.issue?.pull_request ? part(Numbered, shape.issue)?.number : undefined
+    : shape.pull === undefined ? undefined : part(Numbered, shape.pull)?.number
+  if (shape.action === undefined || valueActions[event]?.has(shape.action) !== true || shape.installation === undefined || shape.repository === undefined || valueNumber === undefined) return undefined
+  return { deliveryId, installationId: shape.installation, repositoryId: shape.repository.id, owner: shape.repository.owner.login, repo: shape.repository.name, number: valueNumber }
+}
+
+function valueSourceOf(request: ValueRequest | undefined): ValueSource {
+  if (request === undefined) return noValue
+  const named = /^[A-Za-z0-9-]+$/u.test(request.owner) && /^[A-Za-z0-9_.-]+$/u.test(request.repo)
+  return { installation: positive(request.installationId), repository: positive(request.repositoryId), owner: named ? request.owner : "", repo: named ? request.repo : "", pull: positive(request.number) }
+}
+
+effect function canonicalTime(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)) return undefined
+  const millis = millisOf(value)
+  if (!Number.isSafeInteger(millis) || millis <= 0) return undefined
+  const canonical = value.endsWith("Z") && !value.includes(".") ? `${value.slice(0, -1)}.000Z` : value
+  return (try isoAt(millis)) === canonical ? millis : undefined
+}
+
+effect function reopenOf(job: typeof AppealJob.Type, raw: Record<string, unknown>) {
+  const item = part(ReopenPart, raw)
+  const occurred = item === undefined || item.node_id === "" || item.node_id.length > 200 ? undefined : try canonicalTime(item.updated_at)
+  const head = job.itemKind === "pull_request" ? part(HeadPart, raw)?.head.sha : undefined
+  const text = job.itemKind === "issue" ? part(IssueText, raw) : undefined
+  const revision = job.itemKind === "pull_request"
+    ? head !== undefined && /^[a-f0-9]{40}$/u.test(head) ? head : undefined
+    : text === undefined ? undefined : try sha256Hex(`${text.title}\n${text.body ?? ""}`)
+  if (item === undefined || occurred === undefined || revision === undefined) return { source: { ...noReopen, installation: positive(job.installationId), repository: positive(job.repositoryId), kind: job.itemKind === "issue" ? "IssueItem" : "PullItem", number: positive(job.number), sender: positive(job.senderId) } satisfies ReopenSource, serialized: undefined }
+  const serialized = JSON.stringify({ installationId: job.installationId, repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number, senderId: job.senderId, itemNodeId: item.node_id, revision, occurredAt: item.updated_at })
+  return {
+    source: { installation: positive(job.installationId), repository: positive(job.repositoryId), kind: job.itemKind === "issue" ? "IssueItem" : "PullItem", number: positive(job.number), sender: positive(job.senderId), node: item.node_id, revision, occurred } satisfies ReopenSource,
+    serialized,
+  }
+}
+
+function sourceTimeOf(value: unknown) {
+  const millis = typeof value === "number" ? value * 1000 : typeof value === "string" ? millisOf(value) : Number.NaN
+  return Number.isSafeInteger(millis) && millis >= 0 ? millis : undefined
+}
+
+function installationOf(payload: Readonly<Record<string, unknown>>, action: string | undefined) {
+  const raw = objectAt(payload, "installation")
+  const sourceTime = sourceTimeOf(raw?.updated_at)
+  const hasAccount = raw?.account !== undefined
+  const change: InstallEvent = { delivery: 1, kind: installActions[action ?? ""] ?? "OtherInstallAction", sourceTime: sourceTime ?? 0, hasAccount, validTime: sourceTime !== undefined }
+  return {
+    change,
+    installation: {
+      installationId: positive(part(Identified, raw)?.id),
+      account: part(AccountPart, raw?.account),
+      hasAccount,
+      repositories: (part(RepositoryList, payload)?.repositories ?? []).map((repository) => repository.id).filter((id) => Number.isSafeInteger(id) && id > 0),
+    } satisfies InstallationChange,
+  }
+}
+
+export effect function parse(event: string, deliveryId: string, payload: Readonly<Record<string, unknown>>, appUserId: string) {
+  const shape = shapeOf(payload)
+  const qualityReceipt = qualityReceiptOf(event, shape)
+  const job = candidateJob(event, deliveryId, shape, qualityReceipt)
+  const valueRequest = valueRequestOf(event, deliveryId, shape)
+  const reopen = job?.kind === "human_reopen" ? try reopenOf(job, itemOf(event, shape)?.raw ?? {}) : undefined
+  const installed = event === "installation" ? installationOf(payload, shape.action) : undefined
+  const body: Body = {
+    ...noBody,
+    event: githubEvent(event),
+    deliveryId,
+    valueCandidate: valueRequest !== undefined,
+    value: valueSourceOf(valueRequest),
+    job: job === undefined ? "NoJob" : jobKinds[job.kind],
+    reopen: reopen?.source ?? noReopen,
+    publicRepo: shape.repository?.private === false,
+    selfSender: shape.sender !== undefined && String(shape.sender) === appUserId,
+    qualityReceipt,
+    change: installed?.change ?? noChange,
+  }
+  return { body, job, reopen: reopen?.serialized, strictSource: reopen?.serialized !== undefined, installation: installed?.installation } satisfies Parsed
+}

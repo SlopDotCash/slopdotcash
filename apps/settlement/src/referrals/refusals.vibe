@@ -1,0 +1,30 @@
+// spec/settlement/referralFiles.md, "A malformed or unfiled period is not found and only GET and HEAD are answered"; spec/settlement/referralFiles.md, "Every answer is publicly cacheable for five minutes and a read failure is an explicit error, never an empty index"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"
+import { getReferralsAccruals, getReferralsAccrualsByPeriod, getReferralsMe } from "../client/refusals.vibe"
+
+interface ParityRow {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+export const publicFileHeaders = getReferralsAccrualsByPeriod.notFoundPublicMaxAge300.headers
+
+export const privateAccountHeaders = getReferralsMe.signInRequired.headers
+
+export const accrualRefusals = {
+  methodNotAllowed: getReferralsAccruals.otherMethods.methodNotAllowedPublicMaxAge300,
+  notFound: getReferralsAccrualsByPeriod.notFoundPublicMaxAge300,
+  readFailed: getReferralsAccruals.internalErrorPrivateNoStore,
+} as const
+
+export const accountRefusals = {
+  methodNotAllowed: getReferralsMe.otherMethods.methodNotAllowed,
+  signInRequired: getReferralsMe.signInRequired,
+  readFailed: getReferralsMe.internalErrorInternalError,
+} as const
+
+export function parityAnswer(row: ParityRow) {
+  const body = row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }
+  return HttpServerResponse.jsonUnsafe(body, { status: row.status, headers: row.headers })
+}

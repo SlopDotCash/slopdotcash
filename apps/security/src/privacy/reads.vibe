@@ -1,0 +1,137 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+import type { R2Bucket } from "@repo/platform/bindings"
+import { D1, first, sql } from "@repo/platform/d1"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { refuse } from "@repo/platform/http"
+import { StorageFailure } from "@repo/platform/r2"
+import type { AppealState, PrivateCase, RelatedReview, Submission } from "../../gen/security__cases.ts"
+import { type Event, decodeState, initial, machineOver, receivedCase } from "../../gen/security__privacy.effect.vibe"
+import { type CaseAuthority, type ProgramApprovers, caseAuthority, sameRoles } from "../caseAuthority/snapshot.vibe"
+import { getSecuritySubmissionsById as submissionRead } from "../client/refusals.vibe"
+
+export service ReportBucket { readonly binding: R2Bucket }
+
+export function reportBucket(binding: R2Bucket) {
+  return Layer.succeed(ReportBucket, { binding })
+}
+
+export const maxReportBytes = 262144
+const minuteMillis = 60000
+
+export error ReportUnreadable { caseId: string }
+export error ReadAborted { caseId: string }
+
+export interface ReportRead {
+  readonly caseId: string
+  readonly viewerGithubId: string
+  readonly version?: number
+  readonly program: ProgramApprovers | undefined
+}
+
+export interface ReportBody {
+  readonly submissionId: string
+  readonly version: number
+  readonly bytes: Uint8Array
+}
+
+schema CaseRow { project_id: string; reporter_github_id: string; submission_state: string; appeal_state: string; related_party_review: string }
+schema IntakeRow { submission_id: string; report_version: number }
+schema ReportReference { object_key: string; content_sha256: string; byte_count: number }
+
+const submissions: Readonly<Record<string, Submission>> = { claimed: "Claimed", verified: "Verified", "link-rejected": "LinkRejected" }
+const appeals: Readonly<Record<string, AppealState>> = { none: "NoAppeal", open: "AppealOpen", upheld: "Upheld", returned: "Returned" }
+const reviews: Readonly<Record<string, RelatedReview>> = { "not-applicable": "ReviewNotApplicable", pending: "ReviewPending", approved: "ReviewApproved", refused: "ReviewRefused" }
+
+export function githubNumber(id: string) {
+  const value = /^[1-9][0-9]{0,15}$/u.test(id) ? Number(id) : Number.NaN
+  return Number.isSafeInteger(value) ? value : 0
+}
+
+function caseOf(row: CaseRow, roles: CaseAuthority): PrivateCase {
+  return {
+    ...receivedCase,
+    reporter: githubNumber(row.reporter_github_id),
+    submission: submissions[row.submission_state] ?? "NotReceived",
+    authority: roles.authority,
+    triagers: [...roles.triagers],
+    appeal: appeals[row.appeal_state] ?? "NoAppeal",
+    relatedReview: reviews[row.related_party_review] ?? "ReviewNotApplicable",
+  }
+}
+
+function unavailable() {
+  const row = submissionRead.reportUnavailable
+  return refuse(row.status, row.error, row.message)
+}
+
+export effect function reportBytes(submissionId: string, version: number) {
+  const reference = try first(ReportReference, sql`SELECT object_key,content_sha256,byte_count FROM security_intake_reports WHERE submission_id=${submissionId} AND version=${version}`)
+  if (reference === undefined || !reference.object_key.startsWith("security-reports/")) throw unavailable()
+  const { binding } = try ReportBucket
+  const key = reference.object_key
+  const found = try tryPromise({ try: () => binding.get(key), catch: (cause) => new StorageFailure({ operation: "get", key, message: String(cause) }) })
+  if (found === null || found.size !== reference.byte_count || found.size > maxReportBytes) throw unavailable()
+  const bytes = new Uint8Array(try tryPromise({ try: () => found.arrayBuffer(), catch: (cause) => new StorageFailure({ operation: "get", key, message: String(cause) }) }))
+  if (bytes.length !== reference.byte_count || (try sha256Hex(bytes)) !== reference.content_sha256) throw unavailable()
+  return bytes
+}
+
+export effect function readReport(request: ReportRead) {
+  const unreadable = new ReportUnreadable({ caseId: request.caseId })
+  const found = try first(CaseRow, sql`SELECT project_id,reporter_github_id,submission_state,appeal_state,related_party_review FROM security_cases WHERE id=${request.caseId}`)
+  const intake = try first(IntakeRow, sql`SELECT submission_id,report_version FROM security_submission_intake WHERE case_id=${request.caseId}`)
+  const viewer = githubNumber(request.viewerGithubId)
+  if (found === undefined || intake === undefined || viewer === 0) throw unreadable
+  const scope = { caseId: request.caseId, projectId: found.project_id, reporterGithubId: found.reporter_github_id, viewerGithubId: request.viewerGithubId, program: request.program }
+  const roles = try caseAuthority(scope, 1)
+  const start = try orDie(decodeState({ ...initial, report: caseOf(found, roles) }))
+  const db = try D1
+  const at = try isoNow()
+  const machine = try machineOver(start, (next) => next.phase === "Audited"
+    ? Effect.asVoid(orDie(db.run(sql`INSERT INTO security_intake_access_log(submission_id,actor_github_id,action,at) VALUES(${intake.submission_id},${request.viewerGithubId},'read',${at})`)))
+    : Effect.void)
+  const send = (event: Event) => effect { return machine.send(event, viewer) catch effect () => { throw unreadable } }
+  try send({ type: "requestRead", kind: "ReportBody" })
+  try send({ type: "recordAudit" })
+  try send({ type: "startStream" })
+  const version = request.version ?? intake.report_version
+  const bytes = try reportBytes(intake.submission_id, version)
+  const again = caseAuthority(scope, 2) catch () => undefined
+  const changed = again === undefined || !sameRoles(again.authority, roles.authority) || JSON.stringify(again.triagers) !== JSON.stringify(roles.triagers)
+  if (changed) {
+    try send({ type: "observeAuthority", snapshot: again?.authority ?? { ...roles.authority, epoch: 2 } })
+    try send({ type: "abortStream" })
+    throw new ReadAborted({ caseId: request.caseId })
+  }
+  try send({ type: "finishStream" })
+  return { submissionId: intake.submission_id, version, bytes } satisfies ReportBody
+}
+
+export interface ScannerGrant {
+  readonly operatorGithubId: string
+  readonly expiresAt: string
+  readonly durationSeconds: number
+}
+
+function minuteOf(millis: number) {
+  return Math.floor(millis / minuteMillis)
+}
+
+export effect function scannerRead(grant: ScannerGrant) {
+  const operator = githubNumber(grant.operatorGithubId)
+  const grantedAt = Date.parse(grant.expiresAt) - grant.durationSeconds * 1000
+  const machine = try machineOver({ ...initial, clockMinute: minuteOf(grantedAt) }, () => Effect.void)
+  try machine.send({ type: "requestRead", kind: "ScannerBody" }, operator)
+  try machine.send({ type: "recordAudit" }, operator)
+  return {
+    operator,
+    machine,
+    effect current() {
+      const state = try machine.get()
+      const elapsed = minuteOf(try Clock.currentTimeMillis) - state.clockMinute
+      if (elapsed > 0) try machine.send({ type: "advanceClock", minutes: elapsed }, operator)
+      return try machine.get()
+    },
+  }
+}

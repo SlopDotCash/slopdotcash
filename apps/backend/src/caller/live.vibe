@@ -1,0 +1,30 @@
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import { D1 } from "@repo/platform/d1"
+import { ActorChanged, Caller, Unauthenticated, refuse } from "@repo/platform/http"
+import { getProjectSetup } from "../client/refusals.vibe"
+import { sessionMember } from "../session.vibe"
+
+const githubIdPattern = /^[1-9][0-9]{0,19}$/u
+
+effect function current() {
+  const member = sessionMember() catch effect (error) => {
+    if (error._tag === "RowMismatch") return try Effect.die(error)
+    throw error
+  }
+  if (member === undefined) throw new Unauthenticated()
+  const expected = (try HttpServerRequest.HttpServerRequest).headers["x-slop-expected-github-id"]
+  if (expected !== undefined) {
+    const malformed = getProjectSetup.invalidExpectedActor
+    if (!githubIdPattern.test(expected)) throw refuse(malformed.status, malformed.error, malformed.message)
+    if (expected !== member.github_id) throw new ActorChanged({ expected })
+  }
+  return { githubId: member.github_id, login: member.login, actorId: member.actor_id }
+}
+
+export const CallerLive = Layer.effect(Caller, effect {
+  const db = try D1
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    current: () => current().pipe(Effect.provideService(D1, db), Effect.provideService(Experimental.Crypto.Crypto, crypto)),
+  } satisfies Caller.Shape
+})

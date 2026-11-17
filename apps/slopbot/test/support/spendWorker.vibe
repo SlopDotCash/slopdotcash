@@ -1,0 +1,107 @@
+// spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/budgetBlocks.md, "Story: Block a review on a Surplus spending denial and resume it once"; spec/slopbot/spendAlerts.md, "Story: Email each crossed monthly milestone once"
+import type { D1Database, Fetcher, Queue, QueueMessage } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated, handle, outbound } from "@repo/platform/http"
+import { route } from "@repo/platform/route"
+import { byCron, worker } from "@repo/platform/worker"
+import { budgetJobs, recordBudgetBlock } from "../../src/budget/store.vibe"
+import { type Job, JobQueue, ReviewJob, decodeJob, jobQueue } from "../../src/jobs/job.vibe"
+import { recordCalls } from "../../src/route/calls.vibe"
+import { type CallRecord, routeProviders, runRoute } from "../../src/route/route.vibe"
+import { spendJobs } from "../../src/spend/jobs.vibe"
+import { SpendNotify, spendNotify } from "../../src/spend/notify.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly SLOPBOT_QUEUE: Queue<Job>
+  readonly SLOP_NOTIFY: Fetcher
+  readonly ORBIO_API_KEY?: string
+  readonly SURPLUS_API_KEY?: string
+}
+
+export const testPrompt = { system: "Review the one item you are shown.", policy: "Spam is unsolicited promotion.", item: "Buy cheap tokens now." }
+
+schema TestVerdict { category: string }
+
+schema ReviewRequest {
+  reviewKey: string
+  claimToken: string
+  kind: "triage" | "confirm"
+  allowedSteps: number
+  job: ReviewJob
+}
+
+schema RecordedCall {
+  routeStep: number
+  gateway: string
+  requestedModel: string
+  servedModel: string | null
+  outcome: string
+  failure: string | null
+  providerCostMicroUsd: number | null
+  providerRequestId: string | null
+}
+
+schema ReviewAnswer {
+  outcome: string
+  verdict: string | null
+  calls: ReadonlyArray<RecordedCall>
+  blockedUntil: string | null
+}
+
+const verdictOutput = {
+  schema: { type: "object", properties: { category: { type: "string" } }, required: ["category"], additionalProperties: false },
+  validate: (value: unknown) => Schema.is(TestVerdict)(value) ? value : undefined,
+}
+
+const review = route({ method: "POST", path: "/test/spend/review", access: "public", limitKib: 8, request: ReviewRequest, answer: ReviewAnswer, rejected: "rejected", cache: "no-store" })
+
+function recorded(call: CallRecord) {
+  return {
+    routeStep: call.routeStep,
+    gateway: call.gateway,
+    requestedModel: call.requestedModel,
+    servedModel: call.servedModel,
+    outcome: call.outcome,
+    failure: call.failure,
+    providerCostMicroUsd: call.providerCostMicroUsd,
+    providerRequestId: call.providerRequestId,
+  }
+}
+
+effect function reviewed(input: typeof ReviewRequest.Type) {
+  let rechecks = 0
+  const outcome = try runRoute(testPrompt, input.kind === "triage" ? "medium" : "high", verdictOutput, () => effect {
+    rechecks += 1
+    return rechecks <= input.allowedSteps
+  })
+  try recordCalls(input.reviewKey, input.job.installationId, input.kind, outcome.calls)
+  const blockedUntil = outcome.kind === "budgetBlocked" ? try recordBudgetBlock({ reviewKey: input.reviewKey, token: input.claimToken }, input.job, outcome.denial) : null
+  return { outcome: outcome.kind, verdict: outcome.kind === "answered" ? outcome.verdict.category : null, calls: outcome.calls.map(recorded), blockedUntil }
+}
+
+effect function resumed(message: QueueMessage) {
+  const job = try decodeJob(message.body)
+  try (try D1).run(sql`INSERT INTO spend_resumed (delivery_id, number) VALUES (${job.deliveryId}, ${job.number})`)
+}
+
+const callerFixture = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
+
+function services(env: Env) {
+  return Layer.mergeAll(
+    d1(env.SLOPBOT_DB),
+    webCrypto,
+    Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
+    jobQueue(env.SLOPBOT_QUEUE),
+    spendNotify(env.SLOP_NOTIFY),
+    callerFixture,
+  )
+}
+
+export default worker({
+  services,
+  routes: handle(review, (input) => reviewed(input.body)),
+  scheduled: byCron<D1 | JobQueue | SpendNotify>({ "*/5 * * * *": [...budgetJobs, ...spendJobs] }),
+  queue: (message) => resumed(message),
+})

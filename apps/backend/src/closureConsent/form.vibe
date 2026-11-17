@@ -1,0 +1,45 @@
+// spec/backend/closureConsent.md, "The new form starts unchecked and an existing form reflects only its exact saved setting"; spec/backend/closureConsent.md, "A saved edit records an explicit No only after an explicit Yes"; spec/backend/projects.md, "Automatic-closure consent changes only by an owner revision"
+import { type FundingChoice, type SavedConsent, newProjectConsent, savedEdit } from "../../gen/backend__closureConsent.effect.vibe"
+
+type Json = { readonly [key: string]: unknown }
+
+function objectOf(value: unknown): Json | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Json : undefined
+}
+
+export function savedConsentOf(manifest: Json): SavedConsent {
+  const saved = objectOf(manifest.slopbot)?.automaticClosure
+  return saved === true ? "Enabled" : saved === false ? "Disabled" : "Absent"
+}
+
+export function fundingChoiceOf(manifest: Json): FundingChoice {
+  return objectOf(manifest.securityBounty)?.rewardMode === "bounty-only" ? "BountyOnly" : "OrdinarySetup"
+}
+
+export function checkedIn(manifest: Json): boolean {
+  return objectOf(manifest.slopbot)?.automaticClosure === true
+}
+
+export function withConsent(manifest: Json, saved: SavedConsent): Json {
+  const slopbot = objectOf(manifest.slopbot) ?? {}
+  const others = Object.fromEntries(Object.entries(slopbot).filter(([key]) => key !== "automaticClosure"))
+  const { slopbot: _dropped, ...rest } = manifest
+  if (saved === "Absent") return Object.keys(others).length === 0 ? rest : { ...rest, slopbot: others }
+  return { ...rest, slopbot: { ...others, automaticClosure: saved === "Enabled" } }
+}
+
+export function newProjectManifest(manifest: Json): Json {
+  return withConsent(manifest, newProjectConsent(fundingChoiceOf(manifest), checkedIn(manifest)))
+}
+
+export interface ConsentChange {
+  readonly checked: boolean
+  readonly saved: SavedConsent
+  readonly manifest: Json
+}
+
+export function editedConsent(previous: Json, submitted: Json): ConsentChange {
+  const checked = checkedIn(submitted)
+  const saved = savedEdit(savedConsentOf(previous), checked)
+  return { checked, saved, manifest: withConsent(submitted, saved) }
+}

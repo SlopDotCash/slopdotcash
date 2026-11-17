@@ -1,0 +1,18 @@
+// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"
+import { currentUser, exchangeCode } from "@repo/platform/github/oauth"
+import { IdentitySettings } from "./config.vibe"
+import type { ResolvedIdentity } from "./store.vibe"
+
+const userAgent = "slop-identity"
+const timeoutMs = 10_000
+
+export function callbackUrl(publicOrigin: string) {
+  return `${publicOrigin}/v1/oauth/callback`
+}
+
+export effect function resolveIdentity(code: string, verifier: string) {
+  const settings = try IdentitySettings
+  const token = try exchangeCode({ clientId: Redacted.value(settings.clientId), clientSecret: settings.clientSecret, code, verifier, redirectUri: callbackUrl(settings.publicOrigin), userAgent, timeoutMs })
+  const user = try currentUser(token, { userAgent, timeoutMs })
+  return { actorId: user.id, login: user.login, nodeId: user.nodeId } satisfies ResolvedIdentity
+}

@@ -1,0 +1,182 @@
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/authorship.md, "A fresh complete re-read resolves a held conflict"
+import { Graphql, type GraphqlFailure, type JsonRecord, graphqlPageSize } from "../../ingestion/graphql.vibe"
+import type { Actor } from "../../score/facts.vibe"
+import { type MergedOutcome, MergedRecordInvalid, type NodeReference, type OutcomeCommit, type OutcomeCommitIdentity, OutcomeCommitConnection, arrayAt, chunks, commitSha, decoded, moreOutcomeCommitsQuery, outcomeCommitLinesQuery, outcomeCommitsOf, recordAt } from "./wire.vibe"
+
+export const pullRequestCommitListLimit = 250
+
+export interface RecoveredStatistics {
+  readonly additions: number
+  readonly deletions: number
+  readonly author: Actor | null
+}
+
+export type RecoverStatistics<E, R> = (repositoryNodeId: string, commit: OutcomeCommitIdentity) => RecoveredStatistics!E!R
+
+export interface CompareTarget {
+  readonly owner: string
+  readonly name: string
+}
+
+interface Cached {
+  readonly repositoryNodeId: string
+  readonly outcome: OutcomeCommit
+}
+
+schema CommitLinesNode { readonly __typename: string; readonly id: string; readonly oid: string; readonly additions: number; readonly deletions: number; readonly repository: { readonly id: string } }
+schema MoreCommitsNode { readonly id: string; readonly state: string; readonly mergedAt: string | null; readonly baseRefName: string; readonly baseRefOid: string; readonly headRefOid: string; readonly commits: OutcomeCommitConnection }
+schema ComparedAuthor { readonly type: string; readonly node_id: string; readonly login: string; readonly avatar_url: string; readonly html_url: string }
+schema ComparedCommit { readonly node_id: string; readonly sha: string; readonly parents: ReadonlyArray<{ readonly sha: string }>; readonly author: ComparedAuthor | null }
+schema Comparison { readonly total_commits: number; readonly base_commit: { readonly sha: string }; readonly commits: ReadonlyArray<ComparedCommit> }
+
+export effect function mergedCommitAuthor(earlier: Actor | null, current: Actor | null) {
+  if (earlier !== null && current !== null && (earlier.id !== current.id || earlier.kind !== current.kind)) throw new MergedRecordInvalid({ message: "Commit statistics changed linked commit author" })
+  return current ?? earlier
+}
+
+function sameIdentity(left: Pick<OutcomeCommit, "oid" | "parentCount">, right: OutcomeCommitIdentity) {
+  return left.oid === right.oid && left.parentCount === right.parentCount
+}
+
+export function commitLineLoader<E = never, R = never>(recover?: RecoverStatistics<E, R>) {
+  const byId = new Map<string, Cached>()
+  const idBySha = new Map<string, string>()
+  return {
+    effect hydrate(repositoryNodeId: string, commits: ReadonlyArray<OutcomeCommitIdentity>) {
+      const pending = new Map<string, OutcomeCommitIdentity>()
+      const pendingBySha = new Map<string, string>()
+      const authorUpdates = new Map<string, Actor | null>()
+      for (const commit of commits) {
+        try commitSha(commit.oid, "commit statistics SHA")
+        if (!Number.isSafeInteger(commit.parentCount) || commit.parentCount < 0) throw new MergedRecordInvalid({ message: "Commit parent count must be a non-negative integer" })
+        const shaKey = `${repositoryNodeId}\0${commit.oid}`
+        const knownId = idBySha.get(shaKey) ?? pendingBySha.get(shaKey)
+        if (knownId !== undefined && knownId !== commit.id) throw new MergedRecordInvalid({ message: "Commit statistics identity changed for an immutable SHA" })
+        const cached = byId.get(commit.id)
+        if (cached !== undefined) {
+          if (cached.repositoryNodeId !== repositoryNodeId || !sameIdentity(cached.outcome, commit)) throw new MergedRecordInvalid({ message: "Commit statistics changed immutable commit metadata" })
+          const prior = authorUpdates.has(commit.id) ? authorUpdates.get(commit.id) ?? null : cached.outcome.author
+          authorUpdates.set(commit.id, try mergedCommitAuthor(prior, commit.author))
+          continue
+        }
+        const earlier = pending.get(commit.id)
+        if (earlier !== undefined && (earlier.oid !== commit.oid || earlier.parentCount !== commit.parentCount)) throw new MergedRecordInvalid({ message: "Commit statistics changed immutable commit metadata" })
+        pending.set(commit.id, { ...commit, author: try mergedCommitAuthor(earlier?.author ?? null, commit.author) })
+        pendingBySha.set(shaKey, commit.id)
+      }
+      const staged = new Map<string, Cached>()
+      const recoveredAuthors = new Map<string, Actor | null>()
+      effect function statisticsBatch(ids: ReadonlyArray<string>): JsonRecord!(GraphqlFailure | MergedRecordInvalid | E)!(Graphql | R) {
+        const client = try Graphql
+        return client.execute(outcomeCommitLinesQuery, { ids }, { commitStatistics: true }) catch effect (error) => {
+          if (error._tag === "SourceNodeUnavailable") throw new MergedRecordInvalid({ message: "Commit statistics are unavailable" })
+          if (error._tag === "GraphqlUpstream" && ids.length >= 2) {
+            const middle = Math.ceil(ids.length / 2)
+            const head = try statisticsBatch(ids.slice(0, middle))
+            const tail = try statisticsBatch(ids.slice(middle))
+            return { ...tail, nodes: [...try arrayAt(head.nodes, "data.nodes"), ...try arrayAt(tail.nodes, "data.nodes")] }
+          }
+          if (error._tag !== "CommitStatisticsUnavailable" || recover === undefined) throw error
+          if (JSON.stringify(error.ids) !== JSON.stringify(ids)) throw new MergedRecordInvalid({ message: "Unavailable commit statistics changed request identity" })
+          const nodes = [...try arrayAt(error.data.nodes, "commit statistics.nodes")]
+          for (const index of error.indices) {
+            const expected = pending.get(error.ids[index] ?? "")
+            if (expected === undefined) throw new MergedRecordInvalid({ message: "Unavailable commit statistics are outside the requested batch" })
+            const recovered = try recover(repositoryNodeId, expected)
+            recoveredAuthors.set(expected.id, try mergedCommitAuthor(expected.author, recovered.author))
+            nodes[index] = { __typename: "Commit", id: expected.id, oid: expected.oid, repository: { id: repositoryNodeId }, additions: recovered.additions, deletions: recovered.deletions }
+          }
+          return { ...error.data, nodes }
+        }
+      }
+      for (const batch of chunks([...pending.values()], graphqlPageSize)) {
+        const data = try statisticsBatch(batch.map((commit) => commit.id))
+        const nodes = try arrayAt(data.nodes, "data.nodes")
+        if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: "Commit statistics are incomplete" })
+        for (const [index, expected] of batch.entries()) {
+          const path = `data.nodes[${index}]`
+          const node = try decoded(CommitLinesNode, nodes[index], path)
+          if (node.__typename !== "Commit" || node.id !== expected.id || node.oid !== expected.oid || node.repository.id !== repositoryNodeId) throw new MergedRecordInvalid({ message: "Commit statistics identity changed" })
+          if (!Number.isSafeInteger(node.additions) || node.additions < 0 || !Number.isSafeInteger(node.deletions) || node.deletions < 0) throw new MergedRecordInvalid({ message: "Commit line counts must be non-negative integers" })
+          staged.set(expected.id, {
+            repositoryNodeId,
+            outcome: { oid: expected.oid, parentCount: expected.parentCount, author: recoveredAuthors.has(expected.id) ? recoveredAuthors.get(expected.id) ?? null : expected.author, additions: node.additions, deletions: node.deletions },
+          })
+        }
+      }
+      for (const [id, author] of authorUpdates) {
+        const cached = byId.get(id)
+        if (cached !== undefined) cached.outcome.author = author
+      }
+      for (const [id, value] of staged) {
+        byId.set(id, value)
+        idBySha.set(`${repositoryNodeId}\0${value.outcome.oid}`, id)
+      }
+      const hydrated: OutcomeCommit[] = []
+      for (const commit of commits) {
+        const cached = byId.get(commit.id)
+        if (cached === undefined) throw new MergedRecordInvalid({ message: "Commit statistics are incomplete" })
+        hydrated.push(cached.outcome)
+      }
+      return hydrated
+    },
+  }
+}
+
+effect function comparedCommits(outcome: MergedOutcome, repository: CompareTarget, base: string, head: string, totalCount: number) {
+  const compared: OutcomeCommitIdentity[] = []
+  for (let page = 1; page <= Math.ceil(totalCount / graphqlPageSize); page += 1) {
+    const raw = try (try Graphql).compareCommitPage(repository.owner, repository.name, base, head, page)
+    const comparison = try decoded(Comparison, raw, "comparison")
+    if (comparison.total_commits !== totalCount || comparison.base_commit.sha !== base) throw new MergedRecordInvalid({ message: `PR #${outcome.number} comparison does not match its commit range` })
+    const edges = comparison.commits.map((commit) => ({
+      commit: {
+        id: commit.node_id,
+        oid: commit.sha,
+        parents: { totalCount: commit.parents.length },
+        author: { user: commit.author === null ? null : { __typename: commit.author.type, id: commit.author.node_id, login: commit.author.login, avatarUrl: commit.author.avatar_url, url: commit.author.html_url } },
+      },
+    }))
+    compared.push(...try outcomeCommitsOf(edges, "comparison"))
+  }
+  return compared
+}
+
+export type CommitLineLoader<E = never, R = never> = ReturnType<typeof commitLineLoader<E, R>>
+
+export effect function completeOutcomeCommits(reference: NodeReference, repository: CompareTarget) {
+  const outcome = reference.outcome
+  const firstPage = reference.commitPage
+  if (outcome === null || firstPage === null) return null
+  if (!Number.isSafeInteger(firstPage.totalCount) || firstPage.totalCount < 0) throw new MergedRecordInvalid({ message: `PR #${outcome.number} commit count is invalid` })
+  let commits: OutcomeCommitIdentity[] = [...firstPage.commits]
+  if (firstPage.totalCount > pullRequestCommitListLimit) {
+    const compared = try comparedCommits(outcome, repository, firstPage.baseRefOid, firstPage.headRefOid, firstPage.totalCount)
+    const known = new Map(compared.map((commit) => [commit.oid, commit]))
+    if (!known.has(firstPage.headRefOid) || commits.some((commit) => !known.has(commit.oid))) throw new MergedRecordInvalid({ message: `PR #${outcome.number} comparison omitted known commits` })
+    for (const commit of commits) {
+      const hydrated = known.get(commit.oid)
+      if (hydrated === undefined || hydrated.id !== commit.id || hydrated.parentCount !== commit.parentCount) throw new MergedRecordInvalid({ message: `PR #${outcome.number} comparison changed immutable commit metadata` })
+      known.set(commit.oid, { ...hydrated, author: try mergedCommitAuthor(commit.author, hydrated.author) })
+    }
+    commits = compared.map((commit) => known.get(commit.oid) ?? commit)
+  }
+  let pageInfo = firstPage.totalCount > pullRequestCommitListLimit ? { hasNextPage: false, endCursor: null } : firstPage.pageInfo
+  const cursors = new Set<string>()
+  while (pageInfo.hasNextPage) {
+    const cursor = pageInfo.endCursor
+    if (cursor === null || cursor === "" || cursors.has(cursor)) throw new MergedRecordInvalid({ message: `PR #${outcome.number} commits cursor is missing or repeated` })
+    cursors.add(cursor)
+    const data = try (try Graphql).execute(moreOutcomeCommitsQuery, { id: outcome.id, after: cursor })
+    const node = try decoded(MoreCommitsNode, (try recordAt(data, "data")).node, "data.node")
+    if (node.id !== outcome.id || node.state !== "MERGED" || node.mergedAt !== outcome.mergedAt || node.baseRefName !== outcome.baseRefName || node.baseRefOid !== firstPage.baseRefOid || node.headRefOid !== firstPage.headRefOid || node.commits.totalCount !== firstPage.totalCount) {
+      throw new MergedRecordInvalid({ message: `PR #${outcome.number} changed during commit collection` })
+    }
+    commits.push(...try outcomeCommitsOf(node.commits.nodes, "data.node.commits"))
+    pageInfo = node.commits.pageInfo
+  }
+  if (commits.length !== firstPage.totalCount || new Set(commits.map((commit) => commit.oid)).size !== firstPage.totalCount || new Set(commits.map((commit) => commit.id)).size !== firstPage.totalCount) {
+    throw new MergedRecordInvalid({ message: `PR #${outcome.number} commit totals do not match complete unique evidence` })
+  }
+  return commits
+}

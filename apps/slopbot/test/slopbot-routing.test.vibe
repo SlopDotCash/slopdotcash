@@ -1,0 +1,180 @@
+// spec/slopbot/routing.md, "Story: Route each item by the published precedence"; spec/slopbot/routing.md, "Story: Limit reviews of a new author without a verified merge"; spec/slopbot/reviewLease.md, "Story: Claim a review and allow only its current owner to finish"
+import { assert, layer } from "@effect/vitest"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { installationId, leaseAuthor, leaseRepository } from "./support/routingWorker.vibe"
+
+type Fake = ReturnType<typeof githubFake>
+
+function policy(file: unknown) {
+  return { "README.md": "Keep changes small.\n", ".github/slopbot.json": JSON.stringify(file) }
+}
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada" })
+  world.addUser({ id: 300, login: "newbie" })
+  world.addUser({ id: 301, login: "regular" })
+  const repositories = {
+    invalid: world.addRepo({ id: 7001, owner: "ada", name: "invalid", files: policy({ version: 1, audience: "protection", surprise: true }) }).id,
+    optOut: world.addRepo({ id: 7002, owner: "ada", name: "optout", files: policy({ version: 1, audience: "protection", closure: false, categories: { spam: "off" } }) }).id,
+    circle: world.addRepo({ id: 7003, owner: "ada", name: "circle", files: policy({ version: 1, audience: "participants" }) }).id,
+    quiet: world.addRepo({ id: 7004, owner: "ada", name: "quiet", files: policy({ version: 1, audience: "protection", issues: false, pullRequests: false }) }).id,
+    plain: world.addRepo({ id: 7005, owner: "ada", name: "plain", files: { "README.md": "Plain.\n" } }).id,
+    busy: world.addRepo({ id: 7006, owner: "ada", name: "busy", files: { "README.md": "Busy.\n" } }).id,
+  }
+  const filed = { title: "Saving fails", body: "It breaks on save." }
+  const items = {
+    invalid: world.addIssue({ repo: "ada/invalid", author: "newbie", ...filed }),
+    optOut: world.addIssue({ repo: "ada/optout", author: "newbie", ...filed }),
+    circleStranger: world.addIssue({ repo: "ada/circle", author: "newbie", ...filed }),
+    circleMarked: world.addIssue({ repo: "ada/circle", author: "newbie", title: filed.title, body: `${filed.body}\n\nMade via @slopdotcash` }),
+    circleMember: world.addIssue({ repo: "ada/circle", author: "regular", ...filed }),
+    quiet: world.addIssue({ repo: "ada/quiet", author: "newbie", ...filed }),
+    plain: world.addIssue({ repo: "ada/plain", author: "newbie", ...filed }),
+    busy: world.addIssue({ repo: "ada/busy", author: "newbie", ...filed }),
+  }
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "read", pull_requests: "read" } })
+  return { fake, repositories, items, net: internet({ github: fake.handler }), token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly net: Seeded["net"]
+  readonly repositories: Seeded["repositories"]
+  readonly items: Seeded["items"]
+}
+
+const Routing = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.merge(
+    areaLayer({
+      root: new URL("..", import.meta.url).pathname,
+      entry: "routing",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: { GITHUB_API: seeded.fake.authority, GITHUB_TOKEN: seeded.token, TEST_MEMBERS: "301" },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+  )
+})
+
+interface Asked {
+  readonly repositoryId: number
+  readonly number: number
+  readonly consent?: "Absent" | "Enabled" | "Disabled"
+  readonly claim?: string
+}
+
+effect function routed(area: AreaShape, ask: Asked) {
+  const answer = try area.post("/test/route", { kind: "issue", consent: "Enabled", ...ask })
+  return answer.body as { readonly route: string; readonly file: string; readonly config: { readonly closure: boolean; readonly audience: string; readonly issues: boolean; readonly pullRequests: boolean; readonly dailyCloseCap: number; readonly categories: Readonly<Record<string, string>> }; readonly established: boolean; readonly claim: string }
+}
+
+effect function leaseStep(area: AreaShape, step: Readonly<Record<string, unknown>>) {
+  return (try area.post("/test/lease", step)).body
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function installed(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+}
+
+layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Repository files, saved consent and the audience decide the route of each item (spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closure.md, "A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200")', () => effect {
+    const area = try Area
+    const { net, repositories, items } = try World
+    try installed(area)
+    const invalid = try routed(area, { repositoryId: repositories.invalid, number: items.invalid })
+    const optOut = try routed(area, { repositoryId: repositories.optOut, number: items.optOut })
+    const consented = try routed(area, { repositoryId: repositories.plain, number: items.plain })
+    const unconsented = try routed(area, { repositoryId: repositories.plain, number: items.plain, consent: "Absent" })
+    const stranger = try routed(area, { repositoryId: repositories.circle, number: items.circleStranger })
+    const marked = try routed(area, { repositoryId: repositories.circle, number: items.circleMarked })
+    const member = try routed(area, { repositoryId: repositories.circle, number: items.circleMember })
+    const quiet = try routed(area, { repositoryId: repositories.quiet, number: items.quiet })
+    try same({
+      invalid: [invalid.route, invalid.file, invalid.config.closure, invalid.config.categories.spam, invalid.config.dailyCloseCap],
+      optOut: [optOut.route, optOut.file, optOut.config.closure, optOut.config.categories.spam, optOut.config.categories.scam],
+      absent: [consented.file, consented.config.closure, unconsented.config.closure],
+      audience: [stranger.route, marked.route, member.route, stranger.config.audience],
+      switches: [quiet.route, quiet.config.issues, quiet.config.pullRequests],
+      outbound: [net.unexpected.length, area.outboundErrors.length],
+    }, {
+      invalid: ["AdvisoryReview", "FileInvalid", false, "label", 25],
+      optOut: ["AdvisoryReview", "FileValid", false, "off", "close"],
+      absent: ["FileAbsent", true, false],
+      audience: ["SkipAudience", "AdvisoryReview", "AdvisoryReview", "participants"],
+      switches: ["SkipIssuesOff", false, false],
+      outbound: [0, 0],
+    })
+  })
+
+  it.effect('A fourth review of a new author in a day is limited, and only a verified merged pull request lifts the cap (spec/slopbot/routing.md, "Story: Limit reviews of a new author without a verified merge"; spec/slopbot/reviewLease.md, "An expired claim can be replaced and cannot finalize while waiting for takeover")', () => effect {
+    const area = try Area
+    const { fake, repositories, items } = try World
+    try installed(area)
+    const hourAgo = try isoAt(millisOf(try isoNow()) - 3_600_000)
+    for (const slot of [1, 2, 3]) {
+      try area.sql("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, completed_at) VALUES (?, ?, ?, 'issue', ?, ?, 300, 'r', 'c', 'p', 'completed', ?, ?)",
+        `busy-${slot}`, installationId, repositories.busy, 100 + slot, `I_busy_${slot}`, hourAgo, hourAgo)
+    }
+    try Effect.try(() => fake.failNext(/search\/issues/u, { status: 422 }))
+    const unknown = try routed(area, { repositoryId: repositories.busy, number: items.busy, claim: "token-unknown" })
+    const none = try routed(area, { repositoryId: repositories.busy, number: items.busy, claim: "token-none" })
+    const reviewsBefore = try area.sql("SELECT COUNT(*) AS n FROM slopbot_reviews WHERE repository_id = ?", repositories.busy)
+    try Effect.try(() => fake.world.addPull({ repo: "ada/busy", author: "newbie", title: "An earlier fix", mergedAt: "2026-01-02T00:00:00Z" }))
+    const merged = try routed(area, { repositoryId: repositories.busy, number: items.busy, claim: "token-merged" })
+    const reviewsAfter = try area.sql("SELECT status, claim_token FROM slopbot_reviews WHERE repository_id = ? AND claim_token = 'token-merged'", repositories.busy)
+    const costs = try area.sql("SELECT COUNT(*) AS n FROM slopbot_costs WHERE installation_id = ?", installationId)
+    try same({
+      unknown: [unknown.route, unknown.established, unknown.claim],
+      none: [none.route, none.established, none.claim],
+      reviewsBefore,
+      merged: [merged.route, merged.established, merged.claim],
+      reviewsAfter,
+      costs,
+    }, {
+      unknown: ["SkipAuthorCap", false, "none"],
+      none: ["SkipAuthorCap", false, "none"],
+      reviewsBefore: [{ n: 3 }],
+      merged: ["AdvisoryReview", true, "First"],
+      reviewsAfter: [{ status: "running", claim_token: "token-merged" }],
+      costs: [{ n: 0 }],
+    })
+  })
+
+  it.effect('An expired claim is taken over and the late worker cannot finish (spec/slopbot/reviewLease.md, "Story: Claim a review and allow only its current owner to finish"; spec/slopbot/reviewLease.md, "A late worker cannot publish a failed, skipped or complete review")', () => effect {
+    const area = try Area
+    const start = millisOf("2026-11-16T12:00:00Z")
+    const steps = [
+      try leaseStep(area, { op: "claim", key: "lease-a", token: "worker-a", at: start }),
+      try leaseStep(area, { op: "claim", key: "lease-a", token: "worker-b", at: start + 60_000 }),
+      try leaseStep(area, { op: "claim", key: "lease-a", token: "worker-b", at: start + 1_201_000 }),
+      try leaseStep(area, { op: "finish", key: "lease-a", token: "worker-a", start: "First", status: "completed", at: start + 1_202_000 }),
+      try leaseStep(area, { op: "finish", key: "lease-a", token: "worker-b", start: "Retry", status: "completed", at: start + 1_203_000 }),
+      try leaseStep(area, { op: "claim", key: "lease-a", token: "worker-c", at: start + 1_204_000 }),
+    ]
+    const row = try area.sql("SELECT repository_id, author_id, status, claim_token, lease_expires_at, completed_at FROM slopbot_reviews WHERE review_key = 'lease-a'")
+    try same({ steps, row }, {
+      steps: [
+        { kind: "claimed", start: "First" },
+        { kind: "busy", remainingSeconds: 1140 },
+        { kind: "claimed", start: "Retry" },
+        { kind: "lost" },
+        { kind: "finished", status: "Completed" },
+        { kind: "completed" },
+      ],
+      row: [{ repository_id: leaseRepository, author_id: leaseAuthor, status: "completed", claim_token: "worker-b", lease_expires_at: null, completed_at: "2026-11-16T12:20:03.000Z" }],
+    })
+  })
+})
+

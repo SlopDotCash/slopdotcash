@@ -1,0 +1,375 @@
+// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"
+import { isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Access, type Appeal, type Ban, type Event, apply, decodeEvent, initial, latestRecord, vettingService } from "../../gen/backend__access.effect.vibe"
+import { type HistoryRow, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from "../projects/enforcement/reducers.vibe"
+import { AccessJournal, type AccountAction, JournalRow } from "./journal.vibe"
+
+schema ProjectNumber { row: number; id: string }
+schema BanRow { enforcement_id: string; github_id: string; github_login: string }
+schema ReleaseRow { enforcement_id: string; ban_enforcement_id: string; github_id: string }
+schema TablesRow { tables: string }
+
+export interface GithubActor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export interface Loaded {
+  readonly state: Access
+  readonly journal: ReadonlyArray<JournalRow>
+  readonly numbers: ReadonlyMap<string, number>
+  readonly bans: ReadonlyArray<BanRow>
+  readonly releases: ReadonlyArray<ReleaseRow>
+  readonly tables: string
+  readonly nextDecision: number
+}
+
+export interface Context {
+  readonly actor: GithubActor
+  readonly reason: string
+  readonly evidenceReference: string
+  readonly logins: Readonly<Record<string, string>>
+  readonly moderators: ReadonlyArray<string>
+}
+
+export interface Settled {
+  readonly before: Access
+  readonly after: Access
+  readonly recordId: string | undefined
+}
+
+export error RecordedByEnforcement { event: string }
+export error AwardsUnobserved { event: string }
+export error DenialUnrecordable { projectId: string; reason: string }
+export error DecisionNotNext { decision: number; next: number }
+export error ProjectUnknown { project: number }
+export error LoginMissing { githubId: string }
+
+const decisionScale = 1000
+const staleMarker = "stale aggregate version"
+
+export function decisionOf(row: number, index = 0): number {
+  return row * decisionScale + index
+}
+
+const tablesVersion = sql`(SELECT COUNT(*) FROM project_maintainer_bans) || ':' || (SELECT COUNT(*) FROM project_account_reinstatements) || ':' || (SELECT COUNT(*) FROM projects)`
+
+function numberOf(text: string | null): number {
+  if (text === null || !/^[1-9][0-9]{0,15}$/u.test(text)) return 0
+  return Number(text)
+}
+
+function grouped<R extends { readonly enforcement_id: string }>(rows: ReadonlyArray<R>): ReadonlyMap<string, ReadonlyArray<R>> {
+  const groups = new Map<string, R[]>()
+  for (const row of rows) groups.set(row.enforcement_id, [...(groups.get(row.enforcement_id) ?? []), row])
+  return groups
+}
+
+export function historyOf(loaded: Pick<Loaded, "journal" | "bans" | "releases">, projectId: string, through = Number.POSITIVE_INFINITY): HistoryRow[] {
+  const bans = grouped(loaded.bans)
+  const releases = grouped(loaded.releases)
+  return loaded.journal
+    .filter((row) => row.project_id === projectId && row.sequence <= through)
+    .toSorted((left, right) => left.sequence - right.sequence)
+    .map((row) => ({
+      action: row.action,
+      stateAfter: row.state_after,
+      appealAfter: row.appeal_after,
+      actorId: row.actor_github_id ?? "",
+      actorRole: row.actor_role,
+      sequence: row.sequence,
+      bannedAccounts: (bans.get(row.id) ?? []).map((ban) => ban.github_id),
+      reinstatedAccounts: (releases.get(row.id) ?? []).map((release) => release.github_id),
+    }))
+}
+
+interface Sent {
+  readonly event: Event
+  readonly by: number
+}
+
+function eligibleBans(state: Access, project: number, target: number): ReadonlyArray<Ban> {
+  return state.bans.filter((ban) => ban.project === project && ban.target === target && !state.releases.some((release) => release.enforcement === ban.enforcement && release.target === target) && !state.appeals.some((appeal) => appeal.enforcement === ban.enforcement && appeal.target === target && appeal.status === "AppealOpen"))
+}
+
+function openAccountAppealsOf(state: Access, project: number): ReadonlyArray<Appeal> {
+  return state.appeals.filter((appeal) => appeal.status === "AppealOpen" && state.bans.some((ban) => ban.enforcement === appeal.enforcement && ban.target === appeal.target && ban.project === project))
+}
+
+interface Journal {
+  readonly bans: ReadonlyMap<string, ReadonlyArray<BanRow>>
+  readonly releases: ReadonlyMap<string, ReadonlyArray<ReleaseRow>>
+  readonly history: Pick<Loaded, "journal" | "bans" | "releases">
+}
+
+effect function sentFor(state: Access, journal: Journal, row: JournalRow, project: number) {
+  const actor = numberOf(row.actor_github_id)
+  const decision = decisionOf(row.row)
+  const latest = latestRecord(state, project)
+  const recordBans = journal.bans.get(row.id) ?? []
+  const confirming = row.action === "ban" && row.actor_role === "project-moderator" && latest.role === "VettingRole" && latest.kind === "BanAction" && latest.stateAfter === "ProjectBanned"
+  if (recordBans.length > 0 && !confirming) throw new RowMismatch({ text: "maintainer bans", issue: `record ${row.id} bans accounts without a confirmed-malice decision` })
+  if (row.action === "ban" && row.actor_role === "vetting-service") return [{ event: { type: "recordVettingBan", project, decision }, by: vettingService }] satisfies ReadonlyArray<Sent>
+  if (confirming) return [{ event: { type: "decideProjectBan", project, decision }, by: actor } satisfies Sent, ...recordBans.map((ban) => ({ event: { type: "ban", enforcement: decision, target: numberOf(ban.github_id) }, by: actor }) satisfies Sent)]
+  if (row.action === "reinstate" && row.actor_role === "project-moderator" && latest.stateAfter === "ProjectBanned") return [{ event: { type: "reinstateProject", project, decision }, by: actor }] satisfies ReadonlyArray<Sent>
+  if (row.action === "request_reinstatement" && row.actor_role === "banned-account") return eligibleBans(state, project, actor).map((ban) => ({ event: { type: "appeal", enforcement: ban.enforcement }, by: actor }) satisfies Sent)
+  if (row.action === "reinstate_accounts") return [{ event: { type: "reinstateAccounts", decision, project, targets: [...new Set((journal.releases.get(row.id) ?? []).map((release) => numberOf(release.github_id)))] }, by: actor }] satisfies ReadonlyArray<Sent>
+  if (row.action === "deny_reinstatement" && row.actor_role === "project-moderator" && openProjectAppeals(historyOf(journal.history, row.project_id, row.sequence), false, row.sequence).length === 0) {
+    return openAccountAppealsOf(state, project).map((appeal, index) => ({ event: { type: "denyAppeal", appealId: appeal.id, decision: decisionOf(row.row, index) }, by: actor }) satisfies Sent)
+  }
+  return [] satisfies ReadonlyArray<Sent>
+}
+
+function releasedBy(state: Access, decision: number): ReadonlyArray<string> {
+  return state.releases.filter((release) => release.decision === decision).map((release) => `${release.enforcement}:${release.target}`).toSorted()
+}
+
+effect function replayed(state: Access, sent: Sent, row: JournalRow) {
+  return apply(state, sent.event, sent.by) catch effect () => { throw new RowMismatch({ text: "access journal", issue: `record ${row.id} is not a ${sent.event.type} the rules admit` }) }
+}
+
+export effect function accessOf([journalRows, projectRows, banRows, releaseRows, tablesRows]: ReadonlyArray<Rows>) {
+  const rows = (try decoded(JournalRow, journalRows ?? [], "access journal")).toSorted((left, right) => left.row - right.row)
+  const projects = try decoded(ProjectNumber, projectRows ?? [], "project numbers")
+  const bans = try decoded(BanRow, banRows ?? [], "maintainer bans")
+  const releases = try decoded(ReleaseRow, releaseRows ?? [], "account reinstatements")
+  const [tables] = try decoded(TablesRow, tablesRows ?? [], "access tables")
+  const numbers = new Map(projects.map((project) => [project.id, project.row]))
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  const journal: Journal = { bans: grouped(bans), releases: grouped(releases), history: { journal: rows, bans, releases } }
+  let state = initial
+  for (const row of rows) {
+    const project = numbers.get(row.project_id)
+    if (project === undefined) throw new RowMismatch({ text: "access journal", issue: `record ${row.id} names an unknown project` })
+    for (const sent of try sentFor(state, journal, row, project)) state = try replayed(state, sent, row)
+    if (row.action !== "reinstate_accounts") continue
+    const stored = (journal.releases.get(row.id) ?? []).map((release) => `${decisionOf(byId.get(release.ban_enforcement_id)?.row ?? 0)}:${numberOf(release.github_id)}`).toSorted()
+    if (stored.join(",") !== releasedBy(state, decisionOf(row.row)).join(",")) throw new RowMismatch({ text: "account reinstatements", issue: `record ${row.id} releases other bans than its decision` })
+  }
+  const nextRow = rows.reduce((highest, row) => Math.max(highest, row.row), 0) + 1
+  return { state, journal: rows, numbers, bans, releases, tables: tables?.tables ?? "", nextDecision: decisionOf(nextRow) } satisfies Loaded
+}
+
+effect function aggregate() {
+  const journal = try AccessJournal
+  return {
+    name: "account bans and appeals",
+    version: sql`SELECT ${tablesVersion} || '#' || coalesce(${try journal.version()}, '') AS version`,
+    reads: [
+      try journal.rows(),
+      sql`SELECT rowid AS row, id FROM projects ORDER BY rowid`,
+      sql`SELECT enforcement_id, github_id, github_login FROM project_maintainer_bans ORDER BY rowid`,
+      sql`SELECT enforcement_id, ban_enforcement_id, github_id FROM project_account_reinstatements ORDER BY rowid`,
+      sql`SELECT ${tablesVersion} AS tables`,
+    ],
+    decode: accessOf,
+  }
+}
+
+export effect function loadAccess() {
+  return (try load(try aggregate())).state
+}
+
+function projectIdOf(loaded: Loaded, project: number): string | undefined {
+  return [...loaded.numbers].find(([, number]) => number === project)?.[0]
+}
+
+function nextSequence(loaded: Loaded, projectId: string): number {
+  return loaded.journal.filter((row) => row.project_id === projectId).reduce((highest, row) => Math.max(highest, row.sequence), 0) + 1
+}
+
+export function restrictionStateOf(loaded: Pick<Loaded, "journal" | "bans" | "releases">, projectId: string): string {
+  return foldRestriction(historyOf(loaded, projectId)).state
+}
+
+function recordIdOf(enforcement: number, loaded: Loaded): string | undefined {
+  return loaded.journal.find((row) => decisionOf(row.row) === enforcement)?.id
+}
+
+effect function loginOf(context: Context, githubId: string) {
+  const login = context.logins[githubId]
+  if (login === undefined) throw new LoginMissing({ githubId })
+  return login
+}
+
+interface Planned {
+  readonly events: ReadonlyArray<Event>
+  readonly projectId: string
+  readonly action: AccountAction | "ban"
+}
+
+effect function planned(loaded: Loaded, event: Event, by: number) {
+  const state = loaded.state
+  switch (event.type) {
+    case "recordVettingBan": throw new RecordedByEnforcement({ event: event.type })
+    case "decideProjectBan": throw new RecordedByEnforcement({ event: event.type })
+    case "reinstateProject": throw new RecordedByEnforcement({ event: event.type })
+    case "reserveAward": throw new AwardsUnobserved({ event: event.type })
+    case "payAward": throw new AwardsUnobserved({ event: event.type })
+    case "ban": {
+      const record = state.enforcements.find((entry) => entry.id === event.enforcement)
+      return { events: [event], projectId: record === undefined ? "" : projectIdOf(loaded, record.project) ?? "", action: "ban" } satisfies Planned
+    }
+    case "appeal": {
+      const ban = state.bans.find((entry) => entry.enforcement === event.enforcement && entry.target === by)
+      if (ban === undefined) return { events: [event], projectId: "", action: "request_reinstatement" } satisfies Planned
+      const others = eligibleBans(state, ban.project, by).filter((entry) => entry.enforcement !== event.enforcement)
+      return { events: [event, ...others.map((entry) => ({ type: "appeal", enforcement: entry.enforcement }) satisfies Event)], projectId: projectIdOf(loaded, ban.project) ?? "", action: "request_reinstatement" } satisfies Planned
+    }
+    case "reinstateAccounts": {
+      if (event.decision > 0 && !state.decisions.includes(event.decision) && event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
+      return { events: [event], projectId: projectIdOf(loaded, event.project) ?? "", action: "reinstate_accounts" } satisfies Planned
+    }
+    case "denyAppeal": {
+      if (event.decision > 0 && !state.decisions.includes(event.decision) && event.decision !== loaded.nextDecision) throw new DecisionNotNext({ decision: event.decision, next: loaded.nextDecision })
+      const target = state.appeals.find((appeal) => appeal.id === event.appealId)
+      const project = state.bans.find((ban) => ban.enforcement === target?.enforcement && ban.target === target?.target)?.project ?? 0
+      const projectId = projectIdOf(loaded, project) ?? ""
+      if (target?.status !== "AppealOpen") return { events: [event], projectId, action: "deny_reinstatement" } satisfies Planned
+      if (restrictionStateOf(loaded, projectId) === "clear") throw new DenialUnrecordable({ projectId, reason: "the project is clear" })
+      if (openProjectAppeals(historyOf(loaded, projectId), false, 0).length > 0) throw new DenialUnrecordable({ projectId, reason: "a project appeal is open" })
+      if (state.decisions.includes(event.decision)) return { events: [event], projectId, action: "deny_reinstatement" } satisfies Planned
+      const open = openAccountAppealsOf(state, project)
+      return { events: open.map((appeal, index) => ({ type: "denyAppeal", appealId: appeal.id, decision: event.decision + index }) satisfies Event), projectId, action: "deny_reinstatement" } satisfies Planned
+    }
+  }
+}
+
+effect function applied(state: Access, events: ReadonlyArray<Event>, by: number) {
+  let next = state
+  for (const event of events) next = try apply(next, event, by)
+  return next
+}
+
+function appealAfter(loaded: Loaded, projectId: string, after: Access, action: AccountAction): string {
+  if (action === "request_reinstatement") return "requested"
+  if (action === "deny_reinstatement") return "denied"
+  const project = loaded.numbers.get(projectId) ?? 0
+  const projectAppealKept = restrictionStateOf(loaded, projectId) !== "clear" && openProjectAppeals(historyOf(loaded, projectId), true, 0).length > 0
+  return projectAppealKept || openAccountAppealsOf(after, project).length > 0 ? "requested" : "granted"
+}
+
+function reviewersOf(loaded: Loaded, projectId: string, context: Context): ReadonlyArray<string> {
+  const banners = new Set(activeBans(loaded).filter((ban) => ban.projectId === projectId && ban.githubId === context.actor.githubId).map((ban) => ban.bannedBy))
+  return context.moderators.filter((moderator) => !banners.has(moderator))
+}
+
+export effect function dryRun(loaded: Loaded, event: Event, by: number) {
+  const plan = try planned(loaded, event, by)
+  return try applied(loaded.state, plan.events, by)
+}
+
+effect function decide(loaded: Loaded, event: Event, by: number, context: Context) {
+  const plan = try planned(loaded, event, by)
+  const after = try applied(loaded.state, plan.events, by)
+  if (plan.action === "ban") {
+    const githubId = String(event.type === "ban" ? event.target : 0)
+    const recordId = event.type === "ban" ? recordIdOf(event.enforcement, loaded) ?? "" : ""
+    const login = try loginOf(context, githubId)
+    return { value: { before: loaded.state, after, recordId }, writes: [sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) VALUES (${recordId}, ${githubId}, ${login})`] } satisfies Decision<Settled>
+  }
+  const recordId = `enf_${(try randomId()).replaceAll("-", "")}`
+  const record = try (try AccessJournal).append({
+    id: recordId,
+    projectId: plan.projectId,
+    sequence: nextSequence(loaded, plan.projectId),
+    action: plan.action,
+    role: plan.action === "request_reinstatement" ? "banned-account" : "project-moderator",
+    actor: context.actor,
+    stateAfter: restrictionStateOf(loaded, plan.projectId),
+    appealAfter: appealAfter(loaded, plan.projectId, after, plan.action),
+    reason: context.reason,
+    evidenceReference: context.evidenceReference,
+    reviewers: plan.action === "request_reinstatement" ? reviewersOf(loaded, plan.projectId, context) : [],
+    at: try isoNow(),
+  })
+  const releases = event.type === "reinstateAccounts"
+    ? after.releases.filter((release) => release.decision === event.decision).map((release) => sql`INSERT INTO project_account_reinstatements (enforcement_id, ban_enforcement_id, github_id) VALUES (${recordId}, ${recordIdOf(release.enforcement, loaded) ?? ""}, ${String(release.target)})`)
+    : []
+  return { value: { before: loaded.state, after, recordId }, writes: [...record, ...releases] } satisfies Decision<Settled>
+}
+
+export effect function send(event: Event, by: number, context: Context) {
+  return try update(try aggregate(), (loaded) => decide(loaded, event, by, context))
+}
+
+export effect function eventOf(input: unknown) {
+  return try decodeEvent(input)
+}
+
+export effect function admitted(event: Event, by: number) {
+  const loaded = (try load(try aggregate())).state
+  try apply(loaded.state, event, by)
+  return loaded
+}
+
+export interface Malice {
+  readonly after: Access
+  readonly writes: ReadonlyArray<Statement>
+}
+
+export effect function maliceDecision(loaded: Loaded, by: number, projectId: string, sequence: number, accounts: ReadonlyArray<GithubActor>) {
+  const project = loaded.numbers.get(projectId)
+  if (project === undefined) throw new ProjectUnknown({ project: 0 })
+  const decision = loaded.nextDecision
+  const events: ReadonlyArray<Event> = [
+    { type: "decideProjectBan", project, decision },
+    ...accounts.map((account) => ({ type: "ban", enforcement: decision, target: numberOf(account.githubId) }) satisfies Event),
+  ]
+  const after = try applied(loaded.state, events, by)
+  const record = try (try AccessJournal).recordAt(projectId, sequence)
+  return {
+    after,
+    writes: [
+      sql`SELECT CASE WHEN (${tablesVersion}) IS ${loaded.tables} THEN 1 ELSE json(${staleMarker}) END AS fresh`,
+      ...accounts.map((account) => sql`INSERT INTO project_maintainer_bans (enforcement_id, github_id, github_login) SELECT (${record}), ${account.githubId}, ${account.login}`),
+    ],
+  } satisfies Malice
+}
+
+export interface AccountBan {
+  readonly projectId: string
+  readonly recordId: string
+  readonly githubId: string
+  readonly login: string
+  readonly bannedAt: string
+  readonly bannedBy: string
+}
+
+export function activeBans(loaded: Pick<Loaded, "journal" | "bans" | "releases">): ReadonlyArray<AccountBan> {
+  const records = new Map(loaded.journal.map((row) => [row.id, row]))
+  const keys = new Map<string, number>()
+  const keyOf = (key: string) => {
+    const known = keys.get(key)
+    if (known !== undefined) return known
+    keys.set(key, keys.size)
+    return keys.size - 1
+  }
+  const releases = loaded.releases.map((release) => keyOf(`${release.ban_enforcement_id}:${release.github_id}`))
+  const bans = loaded.bans.map((ban) => keyOf(`${ban.enforcement_id}:${ban.github_id}`))
+  return unreleasedBans(keys.size, bans, releases).flatMap((index) => {
+    const ban = loaded.bans[index]
+    const record = ban === undefined ? undefined : records.get(ban.enforcement_id)
+    if (ban === undefined || record === undefined) return []
+    return [{ projectId: record.project_id, recordId: record.id, githubId: ban.github_id, login: ban.github_login, bannedAt: record.created_at, bannedBy: record.actor_github_id ?? "" }]
+  })
+}
+
+export function projectAppeal(loaded: Pick<Loaded, "journal" | "bans" | "releases">, projectId: string): string {
+  const history = historyOf(loaded, projectId)
+  if (foldRestriction(history).state === "clear") return "none"
+  return openProjectAppeals(history, false, 0).length > 0 ? "requested" : "none"
+}
+
+export function accountAppeal(loaded: Pick<Loaded, "journal" | "bans" | "releases">, projectId: string, githubId: string): string {
+  const banned = activeBans(loaded).some((ban) => ban.projectId === projectId && ban.githubId === githubId)
+  return banned && openAccountAppeal(historyOf(loaded, projectId), githubId) >= 0 ? "requested" : "none"
+}
+
+export function restrictionAppeal(loaded: Pick<Loaded, "journal" | "bans" | "releases">, projectId: string): string {
+  const accounts = activeBans(loaded).filter((ban) => ban.projectId === projectId).map((ban) => ban.githubId)
+  return effectiveAppeal(historyOf(loaded, projectId), [...new Set(accounts)])
+}

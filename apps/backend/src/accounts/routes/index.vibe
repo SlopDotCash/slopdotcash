@@ -1,0 +1,8 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/xConnection.md, "A start replaces the member's earlier flows and binds the originating session"; spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"
+import { EmailRoutes } from "../../email/routes.vibe"
+import { XRoutes } from "../../xConnection/routes.vibe"
+import { MembershipRoutes } from "./membership.vibe"
+
+export { AccountSettings, type AccountVars, accountSettings, pointsAnswer, pointsOrigin } from "./admission.vibe"
+
+export const AccountRoutes = Layer.mergeAll(MembershipRoutes, XRoutes, EmailRoutes)

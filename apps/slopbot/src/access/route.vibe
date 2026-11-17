@@ -1,0 +1,92 @@
+// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
+import { handleRaw, json } from "@repo/platform/http"
+import { route } from "@repo/platform/route"
+import type { AccessAnswer, AccessQuery, GrantedPermission } from "../../gen/slopbot__reportingReadiness.ts"
+import { accessAnswer, accessQueryValid } from "../../gen/slopbot__reportingReadiness.effect.vibe"
+import { slopbotGetV1RepositoryAccess, slopbotPostGithubWebhook } from "../client/refusals.vibe"
+import { type AccessRequest, type Gathered, RepositoryIdentity, accessFacts, unavailableFacts } from "./facts.vibe"
+
+export const repositoryAccessOrigin = "https://slopbot.internal"
+
+schema AccessMissing { installation: "missing" }
+schema AccessSuspended { installation: "suspended"; installationId: number }
+schema AccessInstalled {
+  installation: "installed"
+  installationId: number
+  permission: "admin" | "write" | "read" | "none"
+  roleName: string | null
+  repository?: RepositoryIdentity
+}
+
+export const RepositoryAccess = Schema.Union([AccessMissing, AccessSuspended, AccessInstalled])
+
+export const repositoryAccess = route({
+  method: "GET",
+  path: "/v1/repository-access",
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: RepositoryAccess,
+  rejected: slopbotGetV1RepositoryAccess.unavailableNoStore.error,
+  cache: "no-store",
+})
+
+const repositoryPattern = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
+const numericId = /^[1-9][0-9]{0,19}$/u
+const noStore = { "cache-control": "no-store" }
+
+const permissionNames: Readonly<Record<Exclude<GrantedPermission, "PermissionUnknown">, AccessInstalled["permission"]>> = {
+  PermissionAdmin: "admin",
+  PermissionWrite: "write",
+  PermissionRead: "read",
+  PermissionNone: "none",
+}
+
+function refusal(row: { readonly status: number; readonly error: string }) {
+  return json({ error: row.error }, row.status, noStore)
+}
+
+function answered(decided: AccessAnswer, gathered: Gathered, includeRepository: boolean) {
+  switch (decided.accessKind) {
+    case "InvalidRequest": return refusal(slopbotGetV1RepositoryAccess.invalidRequestNoStore)
+    case "AccessUnavailable": return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
+    case "NotInstalled": return json({ installation: "missing" }, 200, noStore)
+    case "InstallationSuspended": return json({ installation: "suspended", installationId: decided.answeredInstallation }, 200, noStore)
+    case "Installed": {
+      if (decided.answeredPermission === "PermissionUnknown" || (includeRepository && gathered.repository === undefined)) return refusal(slopbotGetV1RepositoryAccess.unavailableNoStore)
+      return json({
+        installation: "installed",
+        installationId: decided.answeredInstallation,
+        permission: permissionNames[decided.answeredPermission],
+        roleName: gathered.roleName,
+        ...includeRepository ? { repository: gathered.repository } : {},
+      }, 200, noStore)
+    }
+  }
+}
+
+effect function repositoryAccessAnswer() {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  if (url.origin !== repositoryAccessOrigin) {
+    const notFound = slopbotPostGithubWebhook.otherMethods.notFound
+    return HttpServerResponse.text(notFound.text, { status: notFound.status, contentType: notFound.headers["content-type"] })
+  }
+  const parts = repositoryPattern.exec(url.searchParams.get("repository") ?? "")
+  const repositoryId = url.searchParams.get("repositoryId") ?? ""
+  const githubId = url.searchParams.get("githubId") ?? ""
+  const login = url.searchParams.get("login") ?? ""
+  const includeRepository = url.searchParams.get("includeRepository") === "1"
+  const query: AccessQuery = {
+    repositoryWellFormed: parts !== null,
+    repositoryId: numericId.test(repositoryId) ? Number(repositoryId) : 0,
+    githubId: numericId.test(githubId) ? Number(githubId) : 0,
+    loginWellFormed: loginPattern.test(login),
+  }
+  if (!accessQueryValid(query)) return answered(accessAnswer(query, unavailableFacts), { facts: unavailableFacts, roleName: null, repository: undefined }, false)
+  const request: AccessRequest = { owner: parts?.[1] ?? "", repo: parts?.[2] ?? "", repositoryId, login, githubId, includeRepository }
+  const gathered = try accessFacts(request)
+  return answered(accessAnswer(query, gathered.facts), gathered, includeRepository)
+}
+
+export const repositoryAccessRoutes = handleRaw(repositoryAccess, () => repositoryAccessAnswer())

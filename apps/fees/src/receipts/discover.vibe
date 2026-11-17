@@ -1,0 +1,141 @@
+// spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"
+import { rows, sql } from "@repo/platform/d1"
+import { type Address, EvmRpc, checksum, scanPage } from "@repo/platform/chain/evm"
+import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
+import { type AssetKind, type Fee, apply, initial } from "../../gen/fees__conversion.effect.vibe"
+import type { Instance, Observed } from "../journal/codec.vibe"
+import { networkNames } from "../journal/codec.vibe"
+import type { EnabledNetwork } from "../runtime/config.vibe"
+import type { Held } from "../runtime/config.vibe"
+import type { TokenFact, VaultFact } from "../runtime/reviewed.vibe"
+import { safeNumber } from "../conversion/chain.vibe"
+
+module verified {
+  import { isAmountWord as word, wordValue as valued } from "./transferLog.ts"
+  /** @throws {never} */
+  export function isAmountWord(data: string): boolean { return word(data) }
+  /** @throws {never} */
+  export function wordValue(data: string): bigint { return valued(data, 2, 0n) }
+}
+import { isAmountWord, wordValue } from verified
+
+const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+function addressTopic(wallet: Address): `0x${string}` {
+  return `0x${"0".repeat(24)}${wallet.slice(2).toLowerCase()}`
+}
+
+function receiptId(transactionHash: string, logIndex: number) {
+  return `${transactionHash.toLowerCase()}:${logIndex}`
+}
+
+export error ReceiptUnreadable { token: string; issue: string }
+export error ReceiptUnrepresentable { token: string; receipt: string }
+
+export interface Transfer { readonly receipt: string; readonly token: string; readonly amount: bigint }
+
+export interface TopUp { readonly token: string; readonly amount: bigint }
+
+export interface VaultCounter { readonly token: string; readonly vault: string; readonly accruedTotal: bigint }
+
+export interface Income {
+  readonly transfers: ReadonlyArray<Transfer>
+  readonly topUps: ReadonlyArray<TopUp>
+  readonly counters: ReadonlyArray<VaultCounter>
+  readonly allowances: ReadonlyMap<string, bigint>
+}
+
+export interface EvmScan { readonly fromBlock: bigint; readonly pageBlocks: bigint }
+
+schema JournalToken { token: string }
+
+function assetOf(network: EnabledNetwork, address: string): AssetKind {
+  if (network.definition.target.kind === "usdc" && network.definition.target.address === address) return "TargetStable"
+  return isNativeAssetAddress(network.definition.name, address) ? "NativeAsset" : "ProjectToken"
+}
+
+export effect function candidateTokens(network: EnabledNetwork, reviewed: ReadonlyArray<TokenFact>, scope: string) {
+  const found = try rows(JournalToken, sql`SELECT DISTINCT token FROM fee_conversions WHERE network = ${networkNames[network.network]} AND substr(run_id, 1, ${scope.length}) = ${scope} AND kind IN ('conversion', 'approval', 'claim') ORDER BY rowid`)
+  const known = new Set(reviewed.map((token) => token.address))
+  const journaled = found.map((row) => row.token).filter((token) => !known.has(token))
+  return [...reviewed, ...[...new Set(journaled)].map((address) => ({ address, asset: assetOf(network, address) }) satisfies TokenFact)]
+}
+
+effect function tokenTransfers(token: string, wallet: Address, scan: EvmScan, finalizedHead: bigint) {
+  const address = checksum(token)
+  if (address === undefined) throw new ReceiptUnreadable({ token, issue: "the token is not an EVM address" })
+  const recipient = addressTopic(wallet)
+  const found: Array<Transfer> = []
+  let cursor = scan.fromBlock - 1n
+  while (true) {
+    const page = try scanPage({ address, topics: [transferTopic, null, recipient], cursor, pageBlocks: scan.pageBlocks, finalizedHead })
+    if (page === "caughtUp") return found
+    for (const log of page.logs) {
+      if (!isAmountWord(log.data)) throw new ReceiptUnreadable({ token, issue: `transfer ${log.transactionHash} has no single amount word` })
+      if (log.topics[2]?.toLowerCase() !== recipient) throw new ReceiptUnreadable({ token, issue: `transfer ${log.transactionHash} is not to the fee wallet` })
+      const amount = wordValue(log.data)
+      if (amount > 0n) found.push({ receipt: receiptId(log.transactionHash, log.logIndex), token, amount })
+    }
+    cursor = page.to
+  }
+}
+
+export effect function evmTransfers(network: EnabledNetwork, tokens: ReadonlyArray<TokenFact>, scan: EvmScan) {
+  const wallet = checksum(network.feeWallet)
+  if (wallet === undefined) throw new ReceiptUnreadable({ token: "", issue: "the fee wallet is not an EVM address" })
+  const rpc = try EvmRpc
+  const head = try rpc.head("finalized")
+  const found: Array<Transfer> = []
+  for (const token of tokens) {
+    if (token.asset === "NativeAsset") continue
+    for (const transfer of try tokenTransfers(token.address, wallet, scan, head.number)) found.push(transfer)
+  }
+  return found
+}
+
+effect function exact(value: bigint, token: string, receipt: string) {
+  const number = safeNumber(value)
+  if (number === undefined) throw new ReceiptUnrepresentable({ token, receipt })
+  return number
+}
+
+export effect function observed(network: EnabledNetwork, held: Held, tokens: ReadonlyArray<TokenFact>, income: Income) {
+  const position = new Map(tokens.map((token, index) => [token.address, index + 1]))
+  let state: Fee = { ...initial, network: network.network, runtime: held.runtime }
+  for (const token of tokens) state = try apply(state, { type: "addToken", asset: token.asset }, "Worker")
+  const counted: Array<string> = []
+  for (const transfer of income.transfers) {
+    const token = position.get(transfer.token) ?? 0
+    const receipt = counted.indexOf(transfer.receipt) + 1 || counted.length + 1
+    const fact = { receipt, token, amount: try exact(transfer.amount, transfer.token, transfer.receipt), toFeeWallet: true, sameAsset: token > 0, finalized: true }
+    const next = apply(state, { type: "receiveFee", transfer: fact }, "Worker") catch () => undefined
+    if (next === undefined) continue
+    state = next
+    counted.push(transfer.receipt)
+  }
+  for (const topUp of income.topUps) {
+    const token = position.get(topUp.token) ?? 0
+    const next = apply(state, { type: "receiveTopUp", token, amount: try exact(topUp.amount, topUp.token, "top-up") }, "Worker") catch () => undefined
+    if (next !== undefined) state = next
+  }
+  const observed: Array<Observed> = []
+  for (const token of tokens) {
+    const index = position.get(token.address) ?? 0
+    const holding = state.holdings[index - 1]
+    const counter = income.counters.find((entry) => entry.token === token.address)
+    observed.push({
+      address: token.address,
+      asset: token.asset,
+      received: holding?.feeIncome ?? 0,
+      topUps: holding?.topUps ?? 0,
+      vault: counter?.vault,
+      vaultObserved: counter === undefined ? 0 : try exact(counter.accruedTotal, token.address, counter.vault),
+      allowance: try exact(income.allowances.get(token.address) ?? 0n, token.address, "allowance"),
+    })
+  }
+  return { tokens: observed, receipts: counted }
+}
+
+export function reviewedVaults(vaults: ReadonlyArray<VaultFact>): Instance["vaults"] {
+  return vaults.map((vault) => ({ vault: vault.vault, deployment: JSON.stringify(vault.deployment), token: vault.token }))
+}

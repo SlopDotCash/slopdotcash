@@ -1,0 +1,251 @@
+// spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "The attester re-reads the signing facts at the same finalized height and refuses without signing"; spec/settlement/monthlyCommitment.md, "Every attempt is within the frozen allocation and the cap"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division"
+import { address } from "@repo/platform/chain/solana"
+import { sha256Hex } from "@repo/platform/crypto"
+import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import type { FundedMonth, Leaf } from "../../gen/settlement__monthlyCommitment.ts"
+import { bytes32, evmAddress } from "../chain/evm/abi.ts"
+import { type MonthlyEntry, allocationRoot, monthlyDigest } from "../chain/evm/monthlyRoot.ts"
+import { type MonthlyEntry as SolanaEntry, solanaAllocationRoot } from "../chain/solana/allocationRoot.ts"
+import { digest, hex, i64, u64 } from "../chain/solana/bytes.ts"
+import { solanaMonthlyMessage } from "../chain/solana/messages.ts"
+import { MAX_BASE_UNITS, MAX_SOLANA_BASE_UNITS, parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, automaticCutoffAt, parsePeriod, shiftPeriod } from "../kernels/calendar.ts"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { type Loaded, type MonthKey, type MonthlyManifest, ManifestInvalid, amountOf, awardSource, executionSnapshot, exclusionsOf, feePolicyOf, loadMonth, manifestOf } from "../monthly/store.vibe"
+import { type ChainAward, chainAwards, holdsAward } from "../payments/chainAwards.vibe"
+
+export interface AttestationRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly snapshotSha256: string
+}
+
+export interface PlanEntry {
+  readonly githubUserId: string
+  readonly grossMicro: string
+  readonly sourceDigest: string
+}
+
+export interface AttestationPlan {
+  readonly request: AttestationRequest
+  readonly deployment: unknown
+  readonly family: "evm" | "solana"
+  readonly allocationRoot: string
+  readonly messageHex: string
+  readonly totalGrossBase: string
+  readonly frozenAt?: string
+  readonly entries: ReadonlyArray<PlanEntry>
+}
+
+export interface PlanOptions {
+  readonly served: ReadonlySet<string>
+  readonly now: number
+  readonly frozenAt?: string
+  readonly retainEvmSources?: boolean
+}
+
+export interface Planned {
+  readonly plan: AttestationPlan
+  readonly funded: FundedMonth
+}
+
+export error PlanRefused { code: string; message: string }
+
+function refuse(code: string, message: string) {
+  return new PlanRefused({ code, message })
+}
+
+export schema SnapshotAward {
+  readonly githubUserId: string
+  readonly login: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly sourceDigest: string
+}
+
+export schema StoredSnapshot {
+  readonly schemaVersion: "1"
+  readonly kind: "monthly-execution-snapshot"
+  readonly projectId: string
+  readonly period: string
+  readonly trigger: "owner" | "automatic"
+  readonly baseManifestSha256: string
+  readonly manifestSha256: string
+  readonly sourceSnapshotSha256: string
+  readonly allocationSequence: number
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+  readonly capBase: string
+  readonly totalGrossBase: string
+  readonly frozenAt: string
+  readonly awards: ReadonlyArray<SnapshotAward>
+}
+
+schema RunSnapshotRow { readonly snapshot: string; readonly snapshot_sha256: string; readonly network: string; readonly vault: string; readonly frozen_at: string; readonly obligations_created_at: string | null }
+schema RevisionRow { readonly manifest: string }
+schema ExcludedRow { readonly github_user_id: string; readonly source_digest: string; readonly network: string; readonly vault: string }
+schema FundedRow { readonly github_user_id: string; readonly gross_base: string; readonly fee_base: string; readonly source_digest: string; readonly network: string; readonly vault: string }
+schema PublishedRow { readonly authorization: string }
+schema PublishedEntries { readonly plan: { readonly entries: ReadonlyArray<{ readonly sourceDigest: string }> } }
+
+effect function rawDeployment(projectId: string, text: string, network: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ManifestInvalid({ projectId, issue: "not JSON" }) })
+  const escrow = typeof parsed === "object" && parsed !== null ? (parsed as { readonly escrow?: { readonly deployments?: ReadonlyArray<unknown> } }).escrow : undefined
+  return escrow?.deployments?.find((entry) => typeof entry === "object" && entry !== null && (entry as { readonly network?: unknown }).network === network)
+}
+
+effect function windowOf(period: Period) {
+  const next = try orDie(Effect.try(() => shiftPeriod(period, 1)))
+  const opensAt = automaticCutoffAt(period)
+  const closesAt = automaticCutoffAt(next)
+  if (opensAt === undefined || closesAt === undefined) throw refuse("monthly_window_closed", "This month is outside its commitment window.")
+  return { opensAt, closesAt }
+}
+
+function sameRow(award: SnapshotAward, row: FundedRow, network: string, vault: string) {
+  return row.github_user_id === award.githubUserId && row.gross_base === award.grossBase && row.fee_base === award.feeBase && row.source_digest === award.sourceDigest && row.network === network && row.vault === vault
+}
+
+effect function evmMessage(network: string, vault: string, period: Period, entries: ReadonlyArray<SnapshotAward>) {
+  const key = isNetworkKey(network) ? NETWORKS[network] : undefined
+  const domainVault = evmAddress(vault)
+  if (key === undefined || key.family !== "evm" || domainVault === undefined) throw refuse("invalid_deployment", "EVM chain identity is missing.")
+  const leaves: MonthlyEntry[] = []
+  for (const award of entries) {
+    const source = bytes32(`0x${award.sourceDigest}`)
+    if (source === undefined) throw refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.")
+    leaves.push({ actor: try orDie(Effect.try(() => BigInt(award.githubUserId))), gross: try orDie(Effect.try(() => BigInt(award.grossBase))), sourceDigest: source })
+  }
+  const root = try Effect.try({ try: () => allocationRoot(leaves), catch: () => refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.") })
+  const message = try Effect.try({ try: () => monthlyDigest({ chainId: BigInt(key.chainId), vault: domainVault }, period, root), catch: () => refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.") })
+  return { root, messageHex: message.slice(2) }
+}
+
+schema SolanaDeployment { readonly programId: string; readonly projectPda: string; readonly networkDomain: string }
+
+effect function solanaMessage(deployment: unknown, period: Period, entries: ReadonlyArray<SnapshotAward>, total: bigint, frozenAt: string | undefined, window: { readonly opensAt: number; readonly closesAt: number }, now: number) {
+  const identity = Schema.decodeUnknownEffect(SolanaDeployment)(deployment) catch effect () => {
+    throw refuse("invalid_deployment", "Solana deployment identity is missing.")
+  }
+  const leaves: SolanaEntry[] = []
+  for (const award of entries) {
+    const actor = u64(try orDie(Effect.try(() => BigInt(award.githubUserId))))
+    const gross = u64(try orDie(Effect.try(() => BigInt(award.grossBase))))
+    const source = digest(award.sourceDigest)
+    if (actor === undefined || gross === undefined || source === undefined) throw refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.")
+    leaves.push({ actor, gross, source })
+  }
+  const built = solanaAllocationRoot(leaves)
+  if (built.kind === "refused") throw refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.")
+  if (frozenAt === undefined) return { root: built.tree.root as string, messageHex: "" }
+  const at = /^[1-9][0-9]{0,15}$/u.test(frozenAt) ? Number(frozenAt) : Number.NaN
+  if (!(at >= window.opensAt) || !(at < window.closesAt) || at > now) throw refuse("invalid_freeze", "The freeze time is outside the commitment window.")
+  const program = address(identity.programId)
+  const project = address(identity.projectPda)
+  const domain = digest(identity.networkDomain)
+  const sum = u64(total)
+  const frozen = i64(try orDie(Effect.try(() => BigInt(frozenAt))))
+  if (program === undefined || project === undefined || domain === undefined || sum === undefined || frozen === undefined) throw refuse("invalid_deployment", "Solana deployment identity is missing.")
+  return { root: built.tree.root as string, messageHex: hex(solanaMonthlyMessage({ program, project, period, root: built.tree.root, total: sum, frozenAt: frozen, network: domain })) }
+}
+
+effect function snapshotOf(text: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refuse("snapshot_changed", "The requested frozen allocation is unavailable.") })
+  return Schema.decodeUnknownEffect(StoredSnapshot)(parsed) catch effect () => {
+    throw refuse("snapshot_changed", "The requested frozen allocation is unavailable.")
+  }
+}
+
+export effect function preparePlan(request: AttestationRequest, options: PlanOptions) {
+  const period = parsePeriod(request.period)
+  if (period === undefined) throw refuse("monthly_window_closed", "This month is outside its commitment window.")
+  const window = try windowOf(period)
+  if (options.now < window.opensAt || options.now >= window.closesAt) throw refuse("monthly_window_closed", "This month is outside its commitment window.")
+  const key: MonthKey = { projectId: request.projectId, period }
+  const loaded: Loaded = try loadMonth(key)
+  const current = loaded.facts.current
+  if (!loaded.facts.eligibility.active || loaded.facts.eligibility.restricted || current === undefined) throw refuse("project_restricted", "The project cannot create new commitments.")
+  const manifest = try manifestOf(request.projectId, current.manifest)
+  const deployment = manifest.escrow?.deployments.find((entry) => entry.network === request.network)
+  if (deployment === undefined || !options.served.has(request.network)) throw refuse("vault_not_served", "The project's vault is not served by this attester.")
+  if (!loaded.state.automatic) throw refuse("automatic_off", "The owner disabled automatic monthly commitments.")
+  const run = try first(RunSnapshotRow, sql`SELECT snapshot, snapshot_sha256, network, vault, frozen_at, obligations_created_at FROM monthly_payment_runs WHERE project_id = ${request.projectId} AND period = ${request.period}`)
+  const base = loaded.rows.base
+  if (run === undefined || base === undefined || !/^[a-f0-9]{64}$/u.test(request.snapshotSha256) || run.snapshot_sha256 !== request.snapshotSha256 || (try sha256Hex(run.snapshot)) !== request.snapshotSha256) throw refuse("snapshot_changed", "The requested frozen allocation is unavailable.")
+  if (run.obligations_created_at === null) throw refuse("award_unfunded", "The month has not qualified for funded obligations.")
+  const snapshot = try snapshotOf(run.snapshot)
+  if (snapshot.projectId !== request.projectId || snapshot.period !== request.period || snapshot.network !== request.network || run.network !== request.network || snapshot.vault !== deployment.vault || run.vault !== deployment.vault || snapshot.asset !== deployment.asset || snapshot.baseManifestSha256 !== base.manifest_sha256 || snapshot.sourceSnapshotSha256 !== base.source_snapshot_sha256 || snapshot.capBase !== base.cap_base || snapshot.frozenAt !== run.frozen_at) throw refuse("snapshot_changed", "The frozen allocation does not match the current project and proposal.")
+  const revision = try first(RevisionRow, sql`SELECT manifest FROM project_revisions WHERE project_id = ${request.projectId} AND manifest_sha256 = ${snapshot.manifestSha256}`)
+  if (revision === undefined || (try sha256Hex(revision.manifest)) !== snapshot.manifestSha256) throw refuse("snapshot_changed", "The frozen allocation's project revision is unavailable.")
+  const proposed: MonthlyManifest = try manifestOf(request.projectId, base.manifest)
+  if (manifest.escrow === undefined || proposed.escrow === undefined || feePolicyOf(manifest) !== feePolicyOf(proposed)) throw refuse("financial_policy_changed", "The project's payment terms changed after this month was proposed.")
+  if (snapshot.awards.length === 0) throw refuse("empty_allocation", "An empty month needs no chain commitment.")
+  const excludedNow = new Set(exclusionsOf(manifest).filter((entry) => entry.fromPeriod <= period && (entry.untilPeriod === 0 || period < entry.untilPeriod)).map((entry) => String(entry.actor)))
+  const chainMaximum = NETWORKS[request.network as keyof typeof NETWORKS]?.family === "solana" ? MAX_SOLANA_BASE_UNITS : MAX_BASE_UNITS
+  const ids = new Set<string>()
+  for (const award of snapshot.awards) {
+    const gross = parseBaseUnits(award.grossBase)
+    const actor = Number(award.githubUserId)
+    const source = Number.isSafeInteger(actor) ? try awardSource(request.projectId, period, actor) : ""
+    if (gross === undefined || gross === 0n || gross > chainMaximum || ids.has(award.githubUserId) || award.sourceDigest !== source) throw refuse("invalid_allocation", "The frozen allocation contains an invalid or repeated award.")
+    ids.add(award.githubUserId)
+    if (excludedNow.has(award.githubUserId)) throw refuse("recipient_restricted", "An allocation recipient is excluded.")
+  }
+  const rebuilt = executionSnapshot({
+    base: { projectId: request.projectId, period: request.period, manifestSha256: base.manifest_sha256, sourceSnapshotSha256: base.source_snapshot_sha256, capBase: base.cap_base },
+    rows: snapshot.awards.map((award) => ({ githubUserId: award.githubUserId, login: award.login, grossBase: parseBaseUnits(award.grossBase) ?? 0n, sourceDigest: award.sourceDigest })),
+    allocationSequence: snapshot.allocationSequence,
+    trigger: snapshot.trigger,
+    manifestSha256: snapshot.manifestSha256,
+    network: request.network,
+    vault: deployment.vault,
+    asset: deployment.asset,
+    frozenAt: run.frozen_at,
+  }) catch effect () => {
+    throw refuse("invalid_allocation", "The frozen allocation is not canonical.")
+  }
+  if (JSON.stringify(rebuilt) !== run.snapshot) throw refuse("invalid_allocation", "The frozen allocation is not canonical.")
+  const omitted = try rows(ExcludedRow, sql`SELECT github_user_id, source_digest, network, vault FROM monthly_payment_exclusions WHERE project_id = ${request.projectId} AND period = ${request.period}`)
+  if (omitted.some((row) => row.network !== request.network || row.vault !== deployment.vault || !snapshot.awards.some((award) => award.githubUserId === row.github_user_id && award.sourceDigest === row.source_digest))) throw refuse("obligations_changed", "An exclusion does not match the frozen allocation.")
+  const omittedSources = new Set(omitted.map((row) => row.source_digest))
+  const eligible = snapshot.awards.filter((award) => !omittedSources.has(award.sourceDigest))
+  if (eligible.length === 0) throw refuse("empty_allocation", "No eligible award needs a chain commitment.")
+  const funded = try rows(FundedRow, sql`SELECT github_user_id, gross_base, fee_base, source_digest, network, vault FROM monthly_payment_obligations WHERE project_id = ${request.projectId} AND period = ${request.period}`)
+  if (funded.length !== eligible.length || eligible.some((award) => !funded.some((row) => sameRow(award, row, request.network, deployment.vault)))) throw refuse("obligations_changed", "The funded obligations do not match the frozen allocation.")
+  const others = try rows(PublishedRow, sql`SELECT authorization FROM monthly_payment_authorizations WHERE project_id = ${request.projectId} AND network = ${request.network} AND period <> ${request.period}`)
+  const sources = new Set(eligible.map((award) => award.sourceDigest.toLowerCase()))
+  for (const other of others) {
+    const parsed = try Effect.try({ try: () => JSON.parse(other.authorization) as unknown, catch: () => new RowMismatch({ text: "monthly authorization", issue: "not JSON" }) })
+    const entries = Schema.decodeUnknownEffect(PublishedEntries)(parsed) catch effect () => {
+      throw new RowMismatch({ text: "monthly authorization", issue: "no plan entries" })
+    }
+    if (entries.plan.entries.some((entry) => sources.has(entry.sourceDigest.replace(/^0x/u, "").toLowerCase()))) throw refuse("source_repeated", "An award source already appears in another month.")
+  }
+  const solana = NETWORKS[request.network as keyof typeof NETWORKS]?.family === "solana"
+  const held = solana || options.retainEvmSources !== true ? try chainAwards(request.network, deployment.vault) : new Map<string, ChainAward>()
+  const committable = eligible.filter((award) => {
+    const chain = held.get(award.sourceDigest)
+    return chain === undefined || holdsAward(chain, award)
+  })
+  if (committable.length === 0) throw refuse("empty_allocation", "No eligible award needs a chain commitment.")
+  const total = committable.reduce((sum, award) => sum + (parseBaseUnits(award.grossBase) ?? 0n), 0n)
+  const raw = try rawDeployment(request.projectId, current.manifest, request.network)
+  const signed = solana ? try solanaMessage(raw, period, committable, total, options.frozenAt, window, options.now) : try evmMessage(request.network, deployment.vault, period, committable)
+  const plan: AttestationPlan = {
+    request,
+    deployment: raw,
+    family: solana ? "solana" : "evm",
+    allocationRoot: signed.root,
+    messageHex: signed.messageHex,
+    totalGrossBase: total.toString(),
+    ...(solana && options.frozenAt !== undefined ? { frozenAt: options.frozenAt } : {}),
+    entries: committable.map((award) => ({ githubUserId: award.githubUserId, grossMicro: award.grossBase, sourceDigest: solana ? award.sourceDigest : `0x${award.sourceDigest}` })),
+  }
+  const leaves: Leaf[] = eligible.map((award) => ({ source: award.sourceDigest, actor: Number(award.githubUserId), gross: amountOf(parseBaseUnits(award.grossBase) ?? 0n) }))
+  const wholeGross = eligible.reduce((sum, award) => sum + (parseBaseUnits(award.grossBase) ?? 0n), 0n)
+  const fundedMonth: FundedMonth = { project: request.projectId, period, snapshotDigest: run.snapshot_sha256, wholeGross: amountOf(wholeGross), leaves, cap: amountOf(parseBaseUnits(base.cap_base) ?? 0n) }
+  return { plan, funded: fundedMonth } satisfies Planned
+}

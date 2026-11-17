@@ -1,0 +1,84 @@
+// spec/settlement/reserveRelease.md, "A reserve retains the admitted root and complete allocation"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import type { DurableObjectStorage } from "@repo/platform/bindings"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Event, Machine, stored } from "../../gen/settlement__reserveRelease.effect.vibe"
+
+export interface ReleaseScope {
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+}
+
+export error PlanUnreadable { planId: string }
+
+export function releaseKey(scope: ReleaseScope): string {
+  return `monthly-release-state:${scope.network}:${scope.vault.toLowerCase()}:${scope.period}`
+}
+
+function planKey(planId: string): string {
+  return `monthly-release-plan:${planId}`
+}
+
+function attemptKey(scope: ReleaseScope, attempt: number): string {
+  return `${releaseKey(scope)}:attempt:${attempt}`
+}
+
+export effect function release(scope: ReleaseScope) {
+  provide stored(releaseKey(scope)) {
+    return try (try Machine).get()
+  }
+}
+
+export effect function send(scope: ReleaseScope, event: Event, by: string) {
+  provide stored(releaseKey(scope)) {
+    return try (try Machine).send(event, by)
+  }
+}
+
+export effect function receive(scope: ReleaseScope, input: unknown, by: string) {
+  provide stored(releaseKey(scope)) {
+    return try (try Machine).receive(input, by)
+  }
+}
+
+export effect function retainPlan<P>(plan: P) {
+  const text = JSON.stringify(plan)
+  const planId = try sha256Hex(text)
+  try (try KeyValueStore.KeyValueStore).set(planKey(planId), text)
+  return planId
+}
+
+export effect function planOf(planId: string) {
+  const text = try (try KeyValueStore.KeyValueStore).get(planKey(planId))
+  if (text === undefined) return undefined
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new PlanUnreadable({ planId }) })
+}
+
+export effect function recordAttempt(scope: ReleaseScope, attempt: number, transaction: string) {
+  const values = try KeyValueStore.KeyValueStore
+  const previous = try values.get(attemptKey(scope, attempt))
+  if (previous === undefined) try values.set(attemptKey(scope, attempt), transaction.toLowerCase())
+  return previous ?? transaction.toLowerCase()
+}
+
+export effect function attemptTransaction(scope: ReleaseScope, attempt: number) {
+  return try (try KeyValueStore.KeyValueStore).get(attemptKey(scope, attempt))
+}
+
+type JournalStorage = Pick<DurableObjectStorage, "get" | "put" | "list">
+
+function failure(method: string, key: string | undefined, cause: unknown) {
+  return new KeyValueStore.KeyValueStoreError({ message: `signer journal ${method} failed`, method, key, cause })
+}
+
+export function durableValues(storage: JournalStorage) {
+  return Layer.succeed(KeyValueStore.KeyValueStore, KeyValueStore.makeStringOnly({
+    get: (key) => tryPromise({ try: () => storage.get<string>(key), catch: (cause) => failure("get", key, cause) }),
+    set: (key, value) => tryPromise({ try: () => storage.put(key, value), catch: (cause) => failure("set", key, cause) }),
+    remove: (key) => Effect.fail(failure("remove", key, "signer journal entries are never removed")),
+    clear: Effect.fail(failure("clear", undefined, "the signer journal is never cleared")),
+    size: tryPromise({ try: () => storage.list<string>({ prefix: "monthly-release-" }).then((found) => found.size), catch: (cause) => failure("size", undefined, cause) }),
+    keys: tryPromise({ try: () => storage.list<string>({ prefix: "monthly-release-" }).then((found) => [...found.keys()]), catch: (cause) => failure("keys", undefined, cause) }),
+  }))
+}

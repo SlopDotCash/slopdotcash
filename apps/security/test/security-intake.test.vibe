@@ -1,0 +1,238 @@
+import { assert, layer } from "@effect/vitest"
+import { type Answer, type World, admissions, banned, digest, faults, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
+
+service Intake { readonly world: World }
+
+const Started = Layer.effect(Intake, effect {
+  const world = try acquireRelease(promise(() => started()), (running) => promise(() => running.mf.dispose()))
+  return { world }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function shown(answer: Answer) {
+  return { status: answer.status, body: answer.body }
+}
+
+function refusal(status: number, error: string, message: string) {
+  return { status, body: { error, message } }
+}
+
+const report = { summary: "  Vault drain through stale price  ", description: "A stale oracle read lets any caller withdraw more than their balance.", severity: "high" }
+const normalised = JSON.stringify({ summary: "Vault drain through stale price", description: report.description, severity: "high" })
+
+function submit(world: World, key: string, project = "intake-fixture", body: unknown = report, as = reporter) {
+  return promise(() => request(world, "/api/v1/security-submissions", { as, json: { projectId: project, idempotencyKey: key, origin: "slop", report: body } }))
+}
+
+function submissionOf(answer: Answer) {
+  return (answer.body as { readonly submission: { readonly id: string; readonly caseId: string; readonly intake: { readonly revision: number } } }).submission
+}
+
+effect function receiptRows(world: World, submissionId: string) {
+  return {
+    submissions: try promise(() => rows(world, "SELECT state, origin, revision, repository FROM security_submissions WHERE id=?", submissionId)),
+    intake: try promise(() => rows(world, "SELECT screening_state, report_version, revision FROM security_submission_intake WHERE submission_id=?", submissionId)),
+    reports: try promise(() => rows(world, "SELECT version, object_key, content_sha256, byte_count FROM security_intake_reports WHERE submission_id=? ORDER BY version", submissionId)),
+    intakeEvents: try promise(() => rows(world, "SELECT revision, kind FROM security_intake_events WHERE submission_id=? ORDER BY revision", submissionId)),
+    submissionEvents: try promise(() => rows(world, "SELECT revision, kind, detail FROM security_submission_events WHERE submission_id=?", submissionId)),
+  }
+}
+
+effect function caseRows(world: World, caseId: string) {
+  return {
+    cases: try promise(() => rows(world, "SELECT submission_state, received_at_source, policy_revision, terms, award_state, owner_github_id, revision FROM security_cases WHERE id=?", caseId)),
+    events: try promise(() => rows(world, "SELECT case_revision, kind, actor_role FROM security_case_events WHERE case_id=? ORDER BY case_revision", caseId)),
+    inbox: try promise(() => rows(world, "SELECT recipient_github_id, kind, subject FROM notifications WHERE event_key=?", `security-receipt:${caseId}`)),
+  }
+}
+
+effect function counts(world: World, githubId: string) {
+  const [found] = try promise(() => rows(world, "SELECT (SELECT COUNT(*) FROM security_intake_rate_admissions WHERE actor_github_id=?) AS admissions, (SELECT COUNT(*) FROM security_submissions WHERE reporter_github_id=?) AS submissions, (SELECT COUNT(*) FROM security_cases WHERE reporter_github_id=?) AS cases", githubId, githubId, githubId))
+  return found
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Submit report: exact bytes in R2, digest verified, case and Inbox receipt atomic (spec/security/intake.md, "Story: Submit and recover one private report"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program\'s terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset")', () => effect {
+    const world = (try Intake).world
+    const anonymous = try promise(() => request(world, "/api/v1/security-submissions", { json: { projectId: "intake-fixture", idempotencyKey: "anonymous-key-0001", origin: "slop", report } }))
+    const extra = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-fixture", idempotencyKey: "extra-key-00000001", origin: "slop", report, note: "x" } }))
+    const changed = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-fixture", idempotencyKey: "changed-key-000001", origin: "slop", report, expectedReporterGithubId: other } }))
+    const short = try submit(world, "short-key-00000001", "intake-fixture", { ...report, summary: "short" })
+    const missing = try promise(() => request(world, "/api/v1/security-submissions", { as: reporter, json: { projectId: "intake-fixture", idempotencyKey: "missing-key-000001", origin: "slop" } }))
+    const created = try submit(world, "paid-report-key-0001")
+    const saved = submissionOf(created)
+    const sha = try promise(() => digest(normalised))
+    const object = try promise(() => storedObject(world, `security-reports/${saved.id}/1-${sha}.json`))
+    const replay = try submit(world, "paid-report-key-0001")
+    const conflict = try submit(world, "paid-report-key-0001", "intake-fixture", { ...report, description: `${report.description} Also the fee path.` })
+    const unpaid = try submit(world, "unpaid-report-key-01", "intake-unpaid")
+    try same({
+      refused: [anonymous, extra, changed, short, missing].map(shown),
+      created: [created.status, created.cache, saved.intake.revision],
+      object,
+      receipt: try receiptRows(world, saved.id),
+      record: try caseRows(world, saved.caseId),
+      replay: [replay.status, (replay.body as { readonly replayed: boolean }).replayed, submissionOf(replay).id],
+      conflict: shown(conflict),
+      unpaid: [unpaid.status, (try caseRows(world, submissionOf(unpaid).caseId)).cases],
+    }, {
+      refused: [
+        refusal(401, "unauthorized", "Sign in with GitHub"),
+        refusal(400, "invalid_request", "Request body has unexpected fields"),
+        refusal(403, "reporter_changed", "Your account changed. Sign in again before submitting this report."),
+        refusal(400, "invalid_report", "summary must be 8 to 1024 characters"),
+        refusal(400, "report_required", "Submit the complete private report through Slop."),
+      ],
+      created: [201, "private, no-store", 1],
+      object: { size: normalised.length, sha256: sha, text: normalised },
+      receipt: {
+        submissions: [{ state: "draft", origin: "slop", revision: 1, repository: "slop-test/intake" }],
+        intake: [{ screening_state: "queued", report_version: 1, revision: 1 }],
+        reports: [{ version: 1, object_key: `security-reports/${saved.id}/1-${sha}.json`, content_sha256: sha, byte_count: normalised.length }],
+        intakeEvents: [{ revision: 1, kind: "receive" }],
+        submissionEvents: [{ revision: 1, kind: "create", detail: JSON.stringify({ origin: "slop", durable: true }) }],
+      },
+      record: {
+        cases: [{ submission_state: "verified", received_at_source: "slop-received", policy_revision: 1, terms: JSON.stringify({ grossMinor: "1000000", researcherMinor: "750000", slopMinor: "250000", currency: "USDC", decimals: 6, network: "base", capacityAwards: 3, eligibility: "in-scope-security", fundingPolicy: "after-approval" }), award_state: "pending", owner_github_id: "701", revision: 1 }],
+        events: [{ case_revision: 1, kind: "submit", actor_role: "reporter" }],
+        inbox: [{ recipient_github_id: reporter, kind: "security_report_received", subject: saved.caseId }],
+      },
+      replay: [200, true, saved.id],
+      conflict: refusal(409, "idempotency_conflict", "That request key was already used."),
+      unpaid: [201, [{ submission_state: "verified", received_at_source: "slop-received", policy_revision: 1, terms: null, award_state: "not-applicable", owner_github_id: "701", revision: 1 }]],
+    })
+  })
+
+  it.effect('Interrupted upload or lost response retried with the same key creates one case (spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key")', () => effect {
+    const world = (try Intake).world
+    const before = try counts(world, other)
+    try promise(() => faults(world, { lostPuts: 0, failedPuts: 1 }))
+    const interrupted = try submit(world, "interrupted-key-0001", "intake-fixture", report, other)
+    const afterInterrupt = try counts(world, other)
+    const retried = try submit(world, "interrupted-key-0001", "intake-fixture", report, other)
+    try promise(() => faults(world, { lostPuts: 1, failedPuts: 0 }))
+    const lost = try submit(world, "lost-response-key-01", "intake-fixture", { ...report, summary: "Second vault drain path" }, other)
+    const afterLoss = try counts(world, other)
+    const recovered = try submit(world, "lost-response-key-01", "intake-fixture", { ...report, summary: "Second vault drain path" }, other)
+    const replay = try submit(world, "lost-response-key-01", "intake-fixture", { ...report, summary: "Second vault drain path" }, other)
+    const otherBytes = try submit(world, "lost-response-key-01", "intake-fixture", { ...report, summary: "A different drain path" }, other)
+    try same({
+      interrupted: shown(interrupted),
+      afterInterrupt: [Number(afterInterrupt?.admissions) - Number(before?.admissions), Number(afterInterrupt?.cases) - Number(before?.cases)],
+      retried: retried.status,
+      lost: shown(lost),
+      afterLoss: [Number(afterLoss?.admissions) - Number(before?.admissions), Number(afterLoss?.cases) - Number(before?.cases)],
+      recovered: [recovered.status, replay.status, submissionOf(replay).id === submissionOf(recovered).id],
+      otherBytes: shown(otherBytes),
+      final: [Number((try counts(world, other))?.cases) - Number(before?.cases), Number((try counts(world, other))?.admissions) - Number(before?.admissions)],
+    }, {
+      interrupted: refusal(503, "report_unavailable", "Internal error"),
+      afterInterrupt: [1, 0],
+      retried: 201,
+      lost: refusal(503, "report_unavailable", "Internal error"),
+      afterLoss: [2, 1],
+      recovered: [201, 200, true],
+      otherBytes: refusal(409, "idempotency_conflict", "That request key was already used."),
+      final: [2, 2],
+    })
+  })
+
+  it.effect('Eleventh attempt in an hour refused before any write (spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing")', () => effect {
+    const world = (try Intake).world
+    const busy = "4242"
+    try promise(() => admissions(world, busy, 10))
+    const eleventh = try submit(world, "eleventh-key-000001", "intake-fixture", report, busy)
+    const oversized = try promise(() => request(world, "/api/v1/security-submissions", { as: other, raw: JSON.stringify({ projectId: "intake-fixture", idempotencyKey: "oversized-key-00001", origin: "slop", report: { ...report, description: "x".repeat(300 * 1024) } }) }))
+    const stored = try promise(() => rows(world, "SELECT COUNT(*) AS objects FROM security_intake_reports r JOIN security_submissions s ON s.id=r.submission_id WHERE s.reporter_github_id=?", busy))
+    try same({
+      eleventh: shown(eleventh),
+      oversized: shown(oversized),
+      busy: try counts(world, busy),
+      stored,
+    }, {
+      eleventh: refusal(429, "intake_rate_limited", "Please wait before requesting more private report work."),
+      oversized: refusal(400, "invalid_request", "Request body must be a JSON object"),
+      busy: { admissions: 10, submissions: 0, cases: 0 },
+      stored: [{ objects: 0 }],
+    })
+  })
+
+  it.effect('Unavailable, stale or restricted intake keeps the draft and creates nothing; restricted reports wait for the owner (spec/security/intake.md, "A restricted project\'s new reports wait for an owner decision"; spec/security/intake.md, "The private-reporting handoff reads the repository\'s cached reporting observation, and an observation older than its interval is StaleAccess")', () => effect {
+    const world = (try Intake).world
+    const restricted = try submit(world, "restricted-key-00001", "intake-restricted", report, "5150")
+    const blocked = try submit(world, "banned-key-000000001", "intake-fixture", report, banned)
+    const unknown = try submit(world, "unknown-key-0000001", "no-such-project", report, "5150")
+    const readiness = (project: string) => promise(() => request(world, `/api/v1/security-programs/${project}/intake`))
+    const unobserved = try readiness("intake-fixture")
+    try promise(() => reportingStatus(world, "intake-fixture", { enabled: true, verifiedAt: new Date(Date.now() - 60_000).toISOString(), failure: null }))
+    const fresh = try readiness("intake-fixture")
+    try promise(() => reportingStatus(world, "intake-fixture", { enabled: true, verifiedAt: new Date(Date.now() - 7_200_000).toISOString(), failure: null }))
+    const stale = try readiness("intake-fixture")
+    try promise(() => reportingStatus(world, "intake-unpaid", { enabled: false, verifiedAt: new Date(Date.now() - 60_000).toISOString(), failure: null }))
+    const disabled = try readiness("intake-unpaid")
+    const closed = try readiness("intake-restricted")
+    const pick = (answer: Answer) => {
+      const body = answer.body as Record<string, unknown>
+      return [answer.status, answer.cache, body.state, body.stale, body.automatic, body.storedIntake, body.paidParticipation, body.handoffUrl]
+    }
+    try same({
+      refused: [restricted, blocked, unknown].map(shown),
+      nothing: [try counts(world, "5150"), try counts(world, banned)],
+      readiness: [pick(unobserved), pick(fresh), pick(stale), pick(disabled)],
+      closed: shown(closed),
+    }, {
+      refused: [
+        refusal(404, "project_not_found", "This project is not available for private reporting"),
+        refusal(403, "participation_banned", "This account cannot submit a new report."),
+        refusal(404, "project_not_found", "This project is not available for private reporting"),
+      ],
+      nothing: [{ admissions: 0, submissions: 0, cases: 0 }, { admissions: 0, submissions: 0, cases: 0 }],
+      readiness: [
+        [200, "public, max-age=0, s-maxage=30", "unavailable", true, "off", true, "open", null],
+        [200, "public, max-age=0, s-maxage=30", "ready", false, "off", true, "open", "https://github.com/slop-test/intake/security/advisories/new"],
+        [200, "public, max-age=0, s-maxage=30", "ready", true, "off", true, "open", "https://github.com/slop-test/intake/security/advisories/new"],
+        [200, "public, max-age=0, s-maxage=30", "disabled", false, "off", true, "closed", null],
+      ],
+      closed: refusal(404, "program_not_found", "No security program"),
+    })
+  })
+
+  it.effect('A reporter revises a report that needs information and every version advances together (spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together")', () => effect {
+    const world = (try Intake).world
+    const author = "6060"
+    const created = submissionOf(try submit(world, "revision-key-000001", "intake-fixture", report, author))
+    const path = `/api/v1/security-submissions/${created.id}/report`
+    const revised = { ...report, description: `${report.description} The fee path is affected as well.` }
+    const notYet = try promise(() => request(world, path, { as: author, json: { expectedRevision: 1, report: revised } }))
+    try promise(() => rows(world, "UPDATE security_submission_intake SET screening_state='needs-information',screening_reason='Provide the affected component.',revision=revision+1 WHERE submission_id=?", created.id))
+    const stranger = try promise(() => request(world, path, { as: "7070", json: { expectedRevision: 2, report: revised } }))
+    const stale = try promise(() => request(world, path, { as: author, json: { expectedRevision: 1, report: revised } }))
+    const unchanged = try promise(() => request(world, path, { as: author, json: { expectedRevision: 2, report } }))
+    const accepted = try promise(() => request(world, path, { as: author, json: { expectedRevision: 2, report: revised } }))
+    const revisedText = JSON.stringify({ summary: "Vault drain through stale price", description: revised.description, severity: "high" })
+    const revisedSha = try promise(() => digest(revisedText))
+    try same({
+      refused: [notYet, stranger, stale, unchanged].map(shown),
+      accepted: accepted.status,
+      intake: try promise(() => rows(world, "SELECT screening_state, report_version, revision FROM security_submission_intake WHERE submission_id=?", created.id)),
+      reports: try promise(() => rows(world, "SELECT version, content_sha256 FROM security_intake_reports WHERE submission_id=? ORDER BY version", created.id)),
+      object: (try promise(() => storedObject(world, `security-reports/${created.id}/2-${revisedSha}.json`)))?.text,
+      events: try promise(() => rows(world, "SELECT case_revision, kind FROM security_case_events WHERE case_id=? ORDER BY case_revision", created.caseId)),
+    }, {
+      refused: [
+        refusal(409, "report_not_editable", "This report cannot be revised now."),
+        refusal(404, "not_found", "Report not found"),
+        refusal(409, "stale_revision", "The report changed. Reload it before acting."),
+        refusal(409, "report_unchanged", "Update the report before submitting it again."),
+      ],
+      accepted: 200,
+      intake: [{ screening_state: "queued", report_version: 2, revision: 3 }],
+      reports: [{ version: 1, content_sha256: try promise(() => digest(normalised)) }, { version: 2, content_sha256: revisedSha }],
+      object: revisedText,
+      events: [{ case_revision: 1, kind: "submit" }, { case_revision: 2, kind: "report-revised" }],
+    })
+  })
+})

@@ -1,0 +1,223 @@
+// spec/settlement/signer.md, "One binding consent spends at most one nonce per vault and actor"; spec/settlement/signer.md, "Both possible winners stay retained"
+import { type Hex, keccak, recoverDigest } from "@repo/platform/chain/evm"
+import { type ConsentBudget, consentBudgetMatches, consentNonceReservable, initial as unbound } from "../../gen/settlement__signer.effect.vibe"
+import { type Bytes32, type EvmAddress, escrowAbi } from "../chain/evm/abi.ts"
+import { bindingDigest } from "../chain/evm/typedData.ts"
+import { readSignedType2 } from "../chain/evm/transactions.ts"
+import { parseNativeCostLimit } from "../kernels/amounts.ts"
+import { gasEnvelope } from "../kernels/attesterLimits.ts"
+import { nativeCostCeiling } from "../kernels/budget.ts"
+import { Attempt, AttemptHeld, type Deployment, transactionAllowed } from "../signer/evm.vibe"
+import { advance, fresh, loadBinding, withAttempt, withAuthority } from "./bindings.vibe"
+import type { Entries } from "./journal.vibe"
+import { decodeFunctionData } from "viem"
+
+export const STORED_BINDING = "bind:stored:"
+export const PENDING_BINDINGS = "pending-stored-bindings"
+const CONSENT_BUDGET = "bind:consent-nonce:"
+const OBSERVED = "binding-observed:"
+const consentHistoryLimit = 1000
+
+export function cancellationKey(attempt: Attempt) {
+  return `binding-cancel:${attempt.transactionId.toLowerCase()}`
+}
+
+export function observationKey(transactionId: string) {
+  return `${OBSERVED}${transactionId.toLowerCase()}`
+}
+
+export function revertedKey(key: string, transactionId: string) {
+  return `${key}:reverted:${transactionId}`
+}
+
+export function checkedKey(network: string, vault: string, actor: string) {
+  return `binding-checked:${network}:${vault.toLowerCase()}:${actor}`
+}
+
+export function textDigest(text: string) {
+  return keccak(new TextEncoder().encode(text))
+}
+
+const PendingKeys = Schema.Array(Schema.String)
+
+export effect function pendingKeys(entries: Entries) {
+  const stored = try entries.get(PENDING_BINDINGS)
+  if (stored === undefined) return [] as ReadonlyArray<string>
+  return Schema.decodeUnknownEffect(PendingKeys)(stored) catch effect () => { throw new AttemptHeld({ reason: "Pending binding list is malformed" }) }
+}
+
+export effect function addPending(entries: Entries, key: string) {
+  const keys = try pendingKeys(entries)
+  if (!keys.includes(key)) try entries.put(PENDING_BINDINGS, [...keys, key])
+}
+
+export effect function removePending(entries: Entries, key: string) {
+  const keys = try pendingKeys(entries)
+  try entries.put(PENDING_BINDINGS, keys.filter((item) => item !== key))
+}
+
+export interface BindingArguments {
+  readonly actor: bigint
+  readonly destination: string
+  readonly version: bigint
+  readonly claimDigest: string
+  readonly expiresAt: bigint
+  readonly walletSignature: string
+}
+
+export effect function bindingArguments(data: Hex) {
+  const decodedCall = try Effect.try({ try: () => decodeFunctionData({ abi: escrowAbi, data }), catch: () => new AttemptHeld({ reason: "Binding consent transaction unavailable" }) })
+  if (decodedCall.functionName !== "bindDestination") throw new AttemptHeld({ reason: "Binding consent transaction unavailable" })
+  const [actor, destination, version, claimDigest, expiresAt, walletSignature] = decodedCall.args
+  if (actor === 0n) throw new AttemptHeld({ reason: "Binding consent actor unavailable" })
+  return { actor, destination, version, claimDigest, expiresAt, walletSignature } satisfies BindingArguments
+}
+
+export interface ConsentIdentity {
+  readonly identity: ReadonlyArray<string>
+  readonly fingerprint: string
+  readonly key: string
+}
+
+export effect function consentIdentity(deployment: Deployment, data: Hex) {
+  const call = try bindingArguments(data)
+  const identity = [deployment.network, deployment.chainId.toString(), deployment.vault, call.actor.toString(), call.destination.toLowerCase(), call.version.toString(), call.claimDigest.toLowerCase(), call.expiresAt.toString()]
+  const fingerprint = textDigest(JSON.stringify(identity))
+  return { identity, fingerprint, key: `${CONSENT_BUDGET}${fingerprint.slice(2)}` } satisfies ConsentIdentity
+}
+
+export schema ConsentBudgetRecord {
+  readonly schema: "binding-consent-nonce-v1"
+  readonly identity: ReadonlyArray<string>
+  readonly fingerprint: string
+  readonly nonce: number
+  readonly transactionId: string
+  readonly nativeCeilingWei: string
+}
+
+function budgetOf(record: ConsentBudgetRecord): ConsentBudget {
+  return { vault: record.identity[2] ?? "", actor: Number(record.identity[3] ?? "0"), consent: record.fingerprint, nonce: record.nonce, transaction: record.transactionId.toLowerCase() }
+}
+
+effect function budgetRecord(entries: Entries, key: string) {
+  const stored = try entries.get(key)
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(ConsentBudgetRecord)(stored) catch effect () => { throw new AttemptHeld({ reason: "Binding consent history malformed" }) }
+}
+
+export effect function unusedConsent(entries: Entries, deployment: Deployment, data: Hex) {
+  const consent = try consentIdentity(deployment, data)
+  if ((try entries.get(consent.key)) !== undefined) throw new AttemptHeld({ reason: "Binding consent nonce already consumed; operator review required" })
+  return consent
+}
+
+const PriorAttempt = Schema.NullOr(Attempt)
+
+schema ObservedAttempt {
+  readonly key: string
+  readonly attempt: Attempt
+}
+
+function malformed() {
+  return new AttemptHeld({ reason: "Binding consent history malformed" })
+}
+
+effect function priorAttempts(entries: Entries) {
+  const prior = try entries.list(STORED_BINDING, consentHistoryLimit)
+  if (prior.length >= consentHistoryLimit) throw new AttemptHeld({ reason: "Binding consent history exceeds review bound" })
+  const room = consentHistoryLimit - prior.length
+  const observed = try entries.list(OBSERVED, room)
+  if (observed.length >= room) throw new AttemptHeld({ reason: "Binding consent history exceeds review bound" })
+  const observations: ObservedAttempt[] = []
+  for (const entry of observed) observations.push(Schema.decodeUnknownEffect(ObservedAttempt)(entry.value) catch effect () => { throw malformed() })
+  const attempts: Attempt[] = []
+  for (const entry of prior) {
+    const attempt = Schema.decodeUnknownEffect(PriorAttempt)(entry.value) catch effect () => { throw malformed() }
+    if (attempt !== null) attempts.push(attempt)
+    else if (!prior.some((other) => other.key.startsWith(`${entry.key}:reverted:`)) && !observations.some((record) => record.key === entry.key)) throw new AttemptHeld({ reason: "Retired binding consent history unavailable" })
+  }
+  return [...attempts, ...observations.map((record) => record.attempt)]
+}
+
+export effect function reserveConsent(entries: Entries, deployment: Deployment, data: Hex, nonce: number, transactionId: string) {
+  const consent = try unusedConsent(entries, deployment, data)
+  if (!deployment.consentNonceLimit) return undefined
+  for (const attempt of try priorAttempts(entries)) {
+    if (attempt.network !== deployment.network || attempt.vault.toLowerCase() !== deployment.vault) continue
+    const signed = readSignedType2(attempt.rawTransaction as Hex)
+    if (signed === undefined) throw malformed()
+    if ((try consentIdentity(deployment, signed.request.data)).identity[3] === consent.identity[3]) try retainedConsent(entries, deployment, attempt, true)
+  }
+  const listed = try entries.list(CONSENT_BUDGET, consentHistoryLimit)
+  const history: ConsentBudget[] = []
+  for (const entry of listed) history.push(budgetOf(Schema.decodeUnknownEffect(ConsentBudgetRecord)(entry.value) catch effect () => { throw malformed() }))
+  const budget = { vault: deployment.vault, actor: Number(consent.identity[3]), consent: consent.fingerprint, nonce, transaction: transactionId.toLowerCase() } satisfies ConsentBudget
+  if (!consentNonceReservable(history, budget)) throw new AttemptHeld({ reason: "Binding consent history exceeds review bound" })
+  const envelope = gasEnvelope(deployment.gasCeiling)
+  try entries.put(consent.key, {
+    schema: "binding-consent-nonce-v1",
+    identity: consent.identity,
+    fingerprint: consent.fingerprint,
+    nonce,
+    transactionId: transactionId.toLowerCase(),
+    nativeCeilingWei: (deployment.maxNativeCost === undefined ? envelope : nativeCostCeiling(deployment.maxNativeCost, envelope)).toString(),
+  } satisfies ConsentBudgetRecord)
+  return consent
+}
+
+export effect function retainedConsent(entries: Entries, deployment: Deployment, attempt: Attempt, required: boolean) {
+  if (attempt.bindingConsentBudgetKey === undefined) {
+    if (required) throw new AttemptHeld({ reason: "Legacy binding consent budget requires operator review" })
+    return undefined
+  }
+  const signed = readSignedType2(attempt.rawTransaction as Hex)
+  if (signed === undefined) throw new AttemptHeld({ reason: "Binding consent transaction unavailable" })
+  const consent = try consentIdentity(deployment, signed.request.data)
+  const record = try budgetRecord(entries, consent.key)
+  const ceiling = record === undefined ? undefined : parseNativeCostLimit(record.nativeCeilingWei)
+  const expected = { vault: deployment.vault, actor: Number(consent.identity[3]), consent: consent.fingerprint, nonce: signed.request.nonce, transaction: attempt.transactionId.toLowerCase() } satisfies ConsentBudget
+  const matches = record !== undefined && ceiling !== undefined
+    && attempt.bindingConsentBudgetKey === consent.key && attempt.fingerprint === consent.fingerprint
+    && JSON.stringify(record.identity) === JSON.stringify(consent.identity) && record.fingerprint === consent.fingerprint
+    && consentBudgetMatches([budgetOf(record)], expected) && signed.id === attempt.transactionId.toLowerCase()
+    && signed.request.chainId === Number(deployment.chainId) && signed.request.to === deployment.vault && signed.request.value === 0n
+    && signed.request.gas * signed.request.maxFeePerGas <= ceiling
+  if (!matches) throw new AttemptHeld({ reason: "Binding consent budget differs from signed attempt" })
+  return ceiling
+}
+
+export interface Candidate {
+  readonly nonce: number
+  readonly gas: bigint
+  readonly maxFeePerGas: bigint
+  readonly maxPriorityFeePerGas: bigint
+}
+
+export effect function consentCandidate(entries: Entries, deployment: Deployment, attempt: Attempt, candidate: Candidate) {
+  const ceiling = try retainedConsent(entries, deployment, attempt, false)
+  if (ceiling === undefined) return
+  const signed = readSignedType2(attempt.rawTransaction as Hex)
+  if (signed === undefined || candidate.nonce !== signed.request.nonce) throw new AttemptHeld({ reason: "Binding candidate differs from its retained nonce budget" })
+  if (!(try transactionAllowed({ gas: candidate.gas, maxFeePerGas: candidate.maxFeePerGas, maxPriorityFeePerGas: candidate.maxPriorityFeePerGas, value: 0n }, deployment.gasCeiling, [ceiling]))) throw new AttemptHeld({ reason: "Binding candidate differs from its retained nonce budget" })
+}
+
+export effect function adoptedBinding(entries: Entries, deployment: Deployment, key: string, attempt: Attempt | null | undefined) {
+  const found = try loadBinding(entries, key)
+  if (found !== undefined || attempt === null || attempt === undefined) return found
+  const signed = readSignedType2(attempt.rawTransaction as Hex)
+  if (signed === undefined) throw new AttemptHeld({ reason: "Stored binding identity differs" })
+  const call = try bindingArguments(signed.request.data)
+  const destination = call.destination.toLowerCase()
+  const digest = try Effect.try({
+    try: () => bindingDigest({ chainId: deployment.chainId, vault: deployment.vault }, { actor: call.actor, destination: destination as EvmAddress, expectedVersion: call.version, claimDigest: call.claimDigest.toLowerCase() as Bytes32, expiresAt: call.expiresAt }),
+    catch: () => new AttemptHeld({ reason: "Stored binding identity differs" }),
+  })
+  const signer = recoverDigest(digest, call.walletSignature)?.toLowerCase() ?? ""
+  const authorized = withAuthority(fresh({ ...unbound, actor: Number(call.actor), wallet: destination }), signed.sender)
+  const signedAttempt = withAttempt(authorized.record, attempt.transactionId)
+  return try advance(entries, key, signedAttempt.record, [
+    { event: { type: "recordIntent", intent: 1 }, by: "account" },
+    { event: { type: "authorize", actor: Number(call.actor), signature: { wallet: destination, signer, intent: 1, expiresAt: Number(call.expiresAt) } }, by: "account" },
+    { event: { type: "signBinding", nonce: signed.request.nonce, attempt: signedAttempt.attempt, authority: authorized.authority }, by: "attester" },
+  ])
+}

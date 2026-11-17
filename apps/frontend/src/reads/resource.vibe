@@ -1,0 +1,144 @@
+// spec/frontend/requests.md, "Changing a resource clears its data and invalidates in-flight results"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data"
+import { type Event, type ReadResult, type ReadState, Machine, initial, machineOver } from "../../gen/frontend__requests.effect.vibe"
+import { type CallFailure, NetworkError, readResultOf } from "../platform/api.vibe"
+import type { BodyTooLarge, BodyUnreadable } from "../platform/bounded.vibe"
+
+export const loadTimeoutMs = 12_000
+
+export error Unreadable { message: string }
+
+export type ReadFailure = CallFailure | Unreadable | BodyTooLarge | BodyUnreadable
+
+export function resultOf(failed: ReadFailure): ReadResult {
+  switch (failed._tag) {
+    case "Unreadable":
+    case "BodyTooLarge":
+    case "BodyUnreadable":
+      return "BadData"
+    default:
+      return readResultOf(failed)
+  }
+}
+
+type Settled<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly failure: ReadFailure }
+
+interface Loading<T> {
+  readonly state: ReadState
+  readonly fiber: Fiber.Fiber<Settled<T>>
+}
+
+export interface Resource<T> {
+  readonly machine: Machine.Shape
+  value(): T | undefined
+  failure(): ReadFailure | undefined
+  dispatch(event: Event): boolean!!
+  select(key: string): boolean!!
+  load(): ReadState!!
+  cancel(): boolean!!
+}
+
+export effect function resource<T, R>(loader: (key: string, attempt: number) => T!ReadFailure!R, count: (value: T) => number, timeoutMs: number = loadTimeoutMs) {
+  const services = try Effect.context<R>()
+  const lock = try Semaphore.make(1)
+  const ids = new Map<string, number>()
+  const keys: string[] = []
+  let value: T | undefined = undefined
+  let staged: T | undefined = undefined
+  let failure: ReadFailure | undefined = undefined
+  let running: Fiber.Fiber<Settled<T>> | undefined = undefined
+  const machine = try machineOver(initial, (next) => sync(() => {
+    value = next.hasSnapshot ? staged ?? value : undefined
+  }))
+
+  const locked = <A>(work: A!!) => Semaphore.withPermit(lock, work)
+
+  effect function send(event: Event) {
+    const sent = machine.send(event) catch () => undefined
+    return sent !== undefined
+  }
+
+  effect function stop() {
+    const fiber = running
+    running = undefined
+    if (fiber !== undefined) try Fiber.interrupt(fiber)
+  }
+
+  effect function settle(state: ReadState, settled: Settled<T>) {
+    const result: ReadResult = settled.ok ? (count(settled.value) > 0 ? "HasRows" : "NoRows") : resultOf(settled.failure)
+    const rows = settled.ok ? count(settled.value) : 0
+    staged = settled.ok ? settled.value : undefined
+    const accepted = try send({ type: "receive", resourceId: state.resource, lifetimeId: state.lifetime, responseId: state.requestId, result, count: rows })
+    staged = undefined
+    if (accepted) failure = settled.ok ? undefined : settled.failure
+  }
+
+  effect function timed(key: string, attempt: number) {
+    const loaded = try Effect.timeoutOrElse(loader(key, attempt), {
+      duration: timeoutMs,
+      orElse: () => Effect.fail(new NetworkError({ timedOut: true, message: "Request timed out" })),
+    })
+    return { ok: true, value: loaded } satisfies Settled<T>
+  }
+
+  effect function begin() {
+    if (!(try send({ type: "request" }))) return undefined
+    const state = try machine.get()
+    const key = keys[state.resource - 1] ?? ""
+    const work: Settled<T>!!R = effect {
+      return timed(key, state.requestId) catch (failed) => ({ ok: false, failure: failed }) satisfies Settled<T>
+    }
+    const fiber = try Effect.forkDetach(Effect.provideContext(work, services))
+    running = fiber
+    return { state, fiber } satisfies Loading<T>
+  }
+
+  effect function abandon(loading: Loading<T>) {
+    try locked(effect {
+      if (running !== loading.fiber) return
+      try send({ type: "cancel" })
+      try stop()
+    })
+  }
+
+  effect function finish(loading: Loading<T>, exit: Exit.Exit<Settled<T>>) {
+    if (running !== loading.fiber) return
+    running = undefined
+    if (Exit.isSuccess(exit)) try settle(loading.state, exit.value)
+  }
+
+  return {
+    machine,
+    value: () => value,
+    failure: () => failure,
+    dispatch: (event: Event) => locked(send(event)),
+    effect select(key: string) {
+      const known = ids.get(key)
+      const id = known ?? keys.length + 1
+      if (known === undefined) {
+        ids.set(key, id)
+        keys.push(key)
+      }
+      return try locked(effect {
+        const chosen = try send({ type: "selectResource", resourceId: id })
+        if (chosen) {
+          failure = undefined
+          try stop()
+        }
+        return chosen
+      })
+    },
+    effect load() {
+      const loading = try locked(begin())
+      if (loading === undefined) return try machine.get()
+      const exit = try Effect.onInterrupt(Fiber.await(loading.fiber), () => abandon(loading))
+      if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return try Effect.failCause(exit.cause)
+      try locked(finish(loading, exit))
+      return try machine.get()
+    },
+    cancel: () => locked(effect {
+      const cancelled = try send({ type: "cancel" })
+      if (cancelled) try stop()
+      return cancelled
+    }),
+  } satisfies Resource<T>
+}

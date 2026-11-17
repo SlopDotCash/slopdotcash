@@ -1,25 +1,34 @@
-// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
-import type { D1Database, R2Bucket } from "@repo/platform/bindings"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
-import { outbound } from "@repo/platform/http"
+import { outbound, preflight } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
+import { AccountRoutes } from "./accounts/routes/index.vibe"
+import { BindingRoutes } from "./bindingConsent/routes.vibe"
+import { CallerLive } from "./caller/live.vibe"
+import { api } from "./client/index.vibe"
 import { purgeExpired } from "./identity/maintenance.vibe"
-import { ReferralRoutes, TeamAccounts } from "./referrals/routes.vibe"
+import { EnforcementRoutes } from "./projects/enforcement/routes.vibe"
+import { OwnerProjectRoutes } from "./projects/owner/routes.vibe"
+import { RegistryReadRoutes } from "./projects/public/routes.vibe"
+import { ReferralRoutes } from "./referrals/routes.vibe"
+import { WalletRoutes } from "./wallets/routes.vibe"
 
 export interface Env {
   readonly SLOP_DB: D1Database
-  readonly PRIVATE_TRACES: R2Bucket
   readonly ADMIN_GITHUB_IDS: string
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly OPERATOR_GITHUB_IDS?: string
 }
 
-function ids(...lists: ReadonlyArray<string>) {
-  return new Set(lists.flatMap((list) => list.split(",")).map((id) => id.trim()).filter((id) => id !== ""))
+function base(env: Env) {
+  return Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))
 }
 
 export default worker({
-  services: (env: Env) => Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, Layer.succeed(TeamAccounts, { ids: ids(env.ADMIN_GITHUB_IDS, env.PROJECT_MODERATOR_GITHUB_IDS) })),
-  routes: ReferralRoutes,
+  services: (env: Env) => Layer.provideMerge(CallerLive, base(env)),
+  routes: Layer.mergeAll(AccountRoutes, RegistryReadRoutes, OwnerProjectRoutes, EnforcementRoutes, WalletRoutes, BindingRoutes, ReferralRoutes, preflight(api)),
   scheduled: () => purgeExpired(),
 })

@@ -1,0 +1,22 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+import { type Statement, sql } from "@repo/platform/d1"
+import { isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { Audit, type AuditEvent } from "@repo/ports/security"
+
+effect function statements(event: AuditEvent) {
+  const id = try randomId()
+  const at = try isoNow()
+  const guard = event.onlyIf === undefined ? sql`1` : event.onlyIf
+  return [
+    sql`INSERT INTO private_audit_events (id, actor_github_id, action, target, request_id, created_at, details_json)
+      SELECT ${id}, ${event.actorGithubId}, ${event.action}, ${event.target}, ${event.requestId}, ${at}, ${JSON.stringify(event.details)} WHERE ${guard}`,
+  ] satisfies ReadonlyArray<Statement>
+}
+
+export const AuditLive = Layer.effect(Audit, effect {
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    statements: (event: AuditEvent) => provideService(statements(event), Experimental.Crypto.Crypto, crypto),
+  } satisfies Audit.Shape
+})

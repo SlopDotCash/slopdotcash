@@ -1,0 +1,27 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import { EdgeCache, cacheKey } from "@repo/platform/cache"
+import { RowMismatch, first, sql } from "@repo/platform/d1"
+import { EnforcementRows } from "../store/enforcementRows.vibe"
+
+schema Generations { enforcement: number; registry: number }
+
+export const edgeSeconds = 30
+
+effect function generations() {
+  const enforcement = try (try EnforcementRows).generation()
+  const found = try first(Generations, sql`SELECT ${enforcement} AS enforcement, (SELECT COALESCE(MAX(rowid), 0) FROM project_revisions) AS registry`)
+  if (found === undefined) throw new RowMismatch({ text: "public cache generations", issue: "no generation row" })
+  return found
+}
+
+export effect function cachedPublic<E, R>(build: HttpServerResponse.HttpServerResponse!E!R) {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  const { enforcement, registry } = try generations()
+  const key = cacheKey(`${url.origin}/r${registry}${url.pathname}${url.search}`, enforcement)
+  const cache = try EdgeCache
+  const found = try cache.match(key)
+  if (found !== undefined) return HttpServerResponse.setHeader(found, "x-slop-cache", "hit")
+  const built = try build
+  if (built.status !== 200) return built
+  return try cache.put(key, HttpServerResponse.setHeader(built, "x-slop-cache", "miss"), edgeSeconds)
+}

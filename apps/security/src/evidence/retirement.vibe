@@ -1,0 +1,140 @@
+// spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+import { D1, type Statement, first, rows as selected, sql } from "@repo/platform/d1"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { StorageFailure } from "@repo/platform/r2"
+import { EvidenceBucket, retirementMetadataKey, retirementMetadataValue, verifiedPart } from "./objects.vibe"
+import { refused, rows } from "./refused.vibe"
+import { permanentAdmissionSql } from "./store.vibe"
+
+export type RetirementOutcome = "backed" | "changed" | "missing"
+
+export interface BackupCopy {
+  readonly key: string
+  readonly sha256: string
+  readonly sizeBytes: number
+}
+
+interface RetiredSlot {
+  readonly targetKey: string
+  readonly partIndex: number
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly backupDay: string
+}
+
+export type RetirementReceipt =
+  | RetiredSlot & { readonly outcome: "missing" }
+  | RetiredSlot & { readonly outcome: "backed" | "changed"; readonly backup: BackupCopy }
+
+export error RetirementUnrecorded { targetKey: string; issue: string }
+
+export schema GenerationTarget { target_key: string; generation_id: string; part_index: number; sha256: string; size_bytes: number }
+schema GenerationState { state: string }
+schema RecordedRetirement { outcome: string; backup_day: string; backup_key: string | null; observed_sha256: string | null; observed_size_bytes: number | null }
+
+const markerKey = /^vetting\/generations\/[A-Za-z0-9_-]{1,100}\/[A-Za-z0-9_-]{1,100}$/u
+
+export effect function retirementBytes(targetKey: string) {
+  if (!markerKey.test(targetKey)) throw refused(rows.targetIdentity)
+  return utf8(JSON.stringify({ schemaVersion: "slop-evidence-retirement-v1", targetKey }))
+}
+
+export effect function verifyMarker(targetKey: string, outcome?: RetirementOutcome) {
+  const bytes = try retirementBytes(targetKey)
+  const { binding } = try EvidenceBucket
+  const head = try tryPromise({ try: () => binding.head(targetKey), catch: (cause) => new StorageFailure({ operation: "head", key: targetKey, message: String(cause) }) })
+  if (head?.customMetadata?.[retirementMetadataKey] !== retirementMetadataValue) throw new RetirementUnrecorded({ targetKey, issue: "Evidence retirement marker is absent" })
+  if (outcome !== undefined && head.customMetadata?.retirementOutcome !== outcome) throw new RetirementUnrecorded({ targetKey, issue: "Evidence retirement marker outcome differs" })
+  try verifiedPart(targetKey, try sha256Hex(bytes), bytes.length, true)
+}
+
+export effect function writeMarker(targetKey: string, outcome: RetirementOutcome, createOnly: boolean) {
+  const bytes = try retirementBytes(targetKey)
+  const digest = try sha256Hex(bytes)
+  const { binding } = try EvidenceBucket
+  tryPromise({
+    try: () => binding.put(targetKey, bytes, {
+      customMetadata: { sha256: digest, [retirementMetadataKey]: retirementMetadataValue, retirementOutcome: outcome },
+      httpMetadata: { contentType: "application/octet-stream" },
+      ...(createOnly ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
+    }),
+    catch: (cause) => new StorageFailure({ operation: "put", key: targetKey, message: String(cause) }),
+  }) catch effect (error) => {
+    verifyMarker(targetKey, outcome) catch effect () => { throw error }
+    return null
+  }
+  try verifyMarker(targetKey, outcome)
+}
+
+export effect function freezeStatement(generation: string) {
+  return sql`UPDATE vetting_evidence_generations SET state='retiring'
+    WHERE id=${generation} AND state='active' AND NOT EXISTS (
+      SELECT 1 FROM vetting_evidence_objects o
+      JOIN vetting_assessments a ON a.id=o.assessment_id
+      LEFT JOIN vetting_evidence_case_closures c ON c.assessment_id=o.assessment_id
+      WHERE o.storage_generation=vetting_evidence_generations.id
+        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_deletions d WHERE d.assessment_id=o.assessment_id AND d.run_id=o.run_id AND d.sha256=o.sha256)
+        AND (c.closed_at IS NULL OR julianday(c.closed_at,'+90 days') IS NULL OR julianday(c.closed_at,'+90 days') > julianday('now') OR COALESCE((${permanentAdmissionSql}),0)=1)
+    )` satisfies Statement
+}
+
+export effect function finishStatement(generation: string) {
+  return sql`UPDATE vetting_evidence_generations SET state='retired',retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE id=${generation} AND state='retiring' AND NOT EXISTS (
+      SELECT 1 FROM vetting_evidence_targets t WHERE t.generation_id=vetting_evidence_generations.id
+        AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
+    )` satisfies Statement
+}
+
+export effect function generationState(generation: string) {
+  const found = try first(GenerationState, sql`SELECT state FROM vetting_evidence_generations WHERE id=${generation}`)
+  if (found === undefined) throw new RetirementUnrecorded({ targetKey: generation, issue: "Evidence generation is missing" })
+  return found.state
+}
+
+export effect function pendingTargets(generation: string, limit = 16) {
+  return try selected(GenerationTarget, sql`SELECT t.target_key,t.generation_id,t.part_index,t.sha256,t.size_bytes
+    FROM vetting_evidence_targets t WHERE t.generation_id=${generation}
+      AND NOT EXISTS (SELECT 1 FROM vetting_evidence_target_retirements r WHERE r.target_key=t.target_key)
+    ORDER BY t.target_key LIMIT ${limit}`)
+}
+
+export effect function freeze(generation: string) {
+  try (try D1).run(try freezeStatement(generation))
+  return try generationState(generation)
+}
+
+effect function bound(target: GenerationTarget, receipt: RetirementReceipt) {
+  if (receipt.targetKey !== target.target_key || receipt.partIndex !== target.part_index || receipt.sha256 !== target.sha256 || receipt.sizeBytes !== target.size_bytes) {
+    throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Retirement target differs from its receipt" })
+  }
+  if (receipt.outcome === "missing") return undefined
+  const same = receipt.backup.sha256 === target.sha256 && receipt.backup.sizeBytes === target.size_bytes
+  if (same !== (receipt.outcome === "backed")) throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Invalid retirement backup receipt" })
+  return receipt.backup
+}
+
+export effect function retireTarget<E, R>(target: GenerationTarget, receipt: RetirementReceipt, verifyBackup: (copy: BackupCopy) => void!E!R) {
+  const backup = try bound(target, receipt)
+  if (backup === undefined) try verifyMarker(target.target_key, "missing")
+  else {
+    try verifyBackup(backup)
+    try writeMarker(target.target_key, receipt.outcome, false)
+  }
+  const recorded = { key: backup?.key ?? null, sha256: backup?.sha256 ?? null, sizeBytes: backup?.sizeBytes ?? null }
+  try (try D1).run(sql`INSERT OR IGNORE INTO vetting_evidence_target_retirements
+    (target_key,outcome,backup_day,backup_key,observed_sha256,observed_size_bytes,observed_at)
+    VALUES(${target.target_key},${receipt.outcome},${receipt.backupDay},${recorded.key},${recorded.sha256},${recorded.sizeBytes},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+  const found = try first(RecordedRetirement, sql`SELECT outcome,backup_day,backup_key,observed_sha256,observed_size_bytes FROM vetting_evidence_target_retirements WHERE target_key=${target.target_key}`)
+  if (
+    found === undefined || found.outcome !== receipt.outcome || found.backup_day !== receipt.backupDay ||
+    found.backup_key !== recorded.key || found.observed_sha256 !== recorded.sha256 || found.observed_size_bytes !== recorded.sizeBytes
+  ) throw new RetirementUnrecorded({ targetKey: target.target_key, issue: "Target retirement was not recorded exactly" })
+}
+
+export effect function finish(generation: string) {
+  try (try D1).run(try finishStatement(generation))
+  return try generationState(generation)
+}
+
+export const evidenceRetirement = { freeze, pendingTargets, retireTarget, finish, writeMarker, verifyMarker, freezeStatement, finishStatement }

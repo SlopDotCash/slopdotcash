@@ -1,0 +1,301 @@
+import { assert, layer } from "@effect/vitest"
+import { ExperimentalNodeFileSystem } from "vibelang-runtime/experimental/platform-node"
+import { Response } from "miniflare"
+import { type Address, type Hex, decodeFunctionData, encodeFunctionData, maxUint256, parseAbi } from "viem"
+import type { EvmRpc } from "@repo/platform/chain/evm"
+import { type Handler, bundle } from "@repo/platform/testing"
+import { type Anvil, anvil, artifact, forgeBuild, forward, refuseMainnet } from "@repo/platform/testing/chains"
+import { internet } from "@repo/platform/testing/internet"
+import { asFetch, kyberNative, parsedJson, quotesFake } from "@repo/platform/testing/quotes"
+import { type Fee, type Row, initial, maximumSafeValue, noRow } from "../gen/fees__conversion.effect.vibe"
+import type { Runtime } from "../gen/fees__runtime.effect.vibe"
+import { approveCalldata, decodedApproval, parsedType2, unsignedType2 } from "../src/evm/abi.ts"
+import { approvalSettled } from "../src/evm/approval.vibe"
+import { FeeChain, attemptStatus, broadcast, credited, dataOperatorFee, feeChain } from "../src/evm/client.vibe"
+import { decodedSwap, kyberRouterAbi } from "../src/kyber/swap.ts"
+import { replaceSend, replacementPlan } from "../src/replacement/step.vibe"
+import { type EvmSigned, FeeWallet, type Prepared, evmFeeWallet, modelSend } from "../src/signer/feeWallet.vibe"
+import { evmKey, feeWalletEvmMarker } from "../src/signer/evmKey.ts"
+import type { EvmNetwork, FeeIntent } from "../src/signer/intents.ts"
+import { circleUsdc, kyberswap } from "../src/runtime/pins.ts"
+import type { NativeLimits } from "../src/runtime/config.vibe"
+
+type Tamper = "none" | "receiver" | "router" | "feeReceiver"
+
+interface Fixture { readonly chain: Anvil; readonly token: Address; readonly usdc: Address }
+
+service Chains {
+  readonly ethereum: Fixture
+  readonly base: Fixture
+  readonly fetch: typeof globalThis.fetch
+  tamper(mode: Tamper): void!!
+}
+
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const attacker = "0x000000000000000000000000000000000000a77a" as Address
+const router = kyberswap.router as Address
+const tokenAbi = parseAbi(["function mint(address to, uint256 amount)"])
+const unit = 1_000_000_000_000_000_000n
+const deadSwapCaller = "0x0000000000000000000000000000000000000001" as Address
+
+const live: Runtime = {
+  environment: "Production", variableEnabled: true, published: true, source: 1, converterMode: "Live", buybackMode: "Off",
+  networks: ["Base", "Ethereum"], keys: ["Base", "Ethereum"], nativeLimits: ["Base", "Ethereum"], evmWallet: 1, solanaWallet: 2,
+  ready: { base: true, ethereum: true, robinhood: false, solana: false }, replacementActive: true, publications: 1,
+}
+
+const limitsOf: Readonly<Record<"Base" | "Ethereum", NativeLimits>> = {
+  Ethereum: { perTransaction: 1_000_000_000_000_000n, perDay: 10_000_000_000_000_000n, additionalFeeReserve: 0n },
+  Base: { perTransaction: 10_000_000_000_000_000n, perDay: 100_000_000_000_000_000n, additionalFeeReserve: 50_000_000_000_000n },
+}
+
+function wordCode(value: bigint) {
+  return `0x7f${value.toString(16).padStart(64, "0")}60005260206000f3`
+}
+
+function adapted(handler: Handler, mode: () => Tamper): Handler {
+  return async (request) => {
+    const answer = await handler(request)
+    if (!new URL(request.url).pathname.endsWith("/route/build")) return answer
+    try {
+      const body = parsedJson(await answer.text()) as { code: number; message: string; data: { data: Hex; routerAddress: string } }
+      const decoded = decodeFunctionData({ abi: kyberRouterAbi, data: body.data.data })
+      if (decoded.functionName !== "swap") return Response.json(body, { status: answer.status })
+      const tamper = mode()
+      const { desc } = decoded.args[0]
+      const changed = {
+        ...desc,
+        dstReceiver: tamper === "receiver" ? attacker : desc.dstReceiver,
+        feeReceivers: tamper === "feeReceiver" ? [attacker] : desc.feeReceivers,
+        feeAmounts: tamper === "feeReceiver" ? [1n] : desc.feeAmounts,
+      }
+      const data = encodeFunctionData({ abi: kyberRouterAbi, functionName: "swapSimpleMode", args: [deadSwapCaller, changed, "0x", "0x"] })
+      return Response.json({ ...body, data: { ...body.data, data, routerAddress: tamper === "router" ? attacker : body.data.routerAddress } }, { status: answer.status })
+    } catch {
+      return new Response("unreadable build", { status: 500 })
+    }
+  }
+}
+
+async function fixture(chain: Anvil, out: string, usdcAt: Address): Promise<Fixture> {
+  await refuseMainnet({ url: chain.url, family: "evm" })
+  const [deployer, wallet] = chain.accounts
+  if (deployer === undefined || wallet === undefined) throw new Error("anvil has too few accounts")
+  const created = async (name: string) => {
+    const { bytecode } = await artifact(`${out}/FeeConverterFixture.sol/${name}.json`)
+    const receipt = await chain.transact({ from: deployer.address, data: bytecode })
+    if (receipt.contractAddress === undefined) throw new Error(`${name} was not deployed`)
+    return receipt.contractAddress
+  }
+  const token = await created("FeeConverterToken")
+  const usdcCode = await chain.rpc("eth_getCode", [await created("FeeConverterUSDC"), "latest"])
+  await chain.rpc("anvil_setCode", [usdcAt, usdcCode])
+  await chain.rpc("anvil_setCode", [router, await chain.rpc("eth_getCode", [await created("FeeConverterRouter"), "latest"])])
+  await chain.transact({ from: deployer.address, to: token, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [wallet.address, 2_000n * unit] }) })
+  await chain.transact({ from: deployer.address, to: usdcAt, data: encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [router, 10_000_000_000n] }) })
+  return { chain, token: token.toLowerCase() as Address, usdc: usdcAt }
+}
+
+const Started = Layer.effect(Chains, effect {
+  const ethereum = try acquireRelease(promise(() => anvil({ chainId: 1 })), (chain) => promise(() => chain.close()))
+  const base = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (chain) => promise(() => chain.close()))
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["test/FeeConverterFixture.sol"])), (output) => promise(() => output.close()))
+  const eth = try promise(() => fixture(ethereum, built.out, circleUsdc.ethereum as Address))
+  const onBase = try promise(() => fixture(base, built.out, circleUsdc.base as Address))
+  const quotes = quotesFake()
+  for (const [chain, fixed] of [["ethereum", eth], ["base", onBase]] as const) {
+    quotes.kyberswap.route({ chain, tokenIn: fixed.token, tokenOut: fixed.usdc, amountOut: (amountIn) => amountIn / 2_000_000_000_000n, routerAddress: router, amountInUsd: "500", amountOutUsd: "500", gasUsd: "0.5", l1FeeUsd: chain === "base" ? "0" : null })
+    quotes.kyberswap.route({ chain, tokenIn: kyberNative, tokenOut: fixed.usdc, amountOut: (wei) => (wei * 3n) / 1_000_000_000n, routerAddress: router, gasUsd: "0", l1FeeUsd: chain === "base" ? "0" : null })
+  }
+  let mode: Tamper = "none"
+  const net = try orDie(Effect.try(() => internet({ quotes: adapted(quotes.handler, () => mode), rpc: { [ethereum.url]: forward(ethereum.url), [base.url]: forward(base.url) } })))
+  return {
+    ethereum: eth,
+    base: onBase,
+    fetch: asFetch(net.handler),
+    tamper: (next) => sync(() => { mode = next }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+interface Signer { readonly network: EvmNetwork; readonly keyIndex?: number; readonly runtime?: Runtime }
+
+effect function onChain<A, E>(program: A!E!(FeeWallet | FeeChain | EvmRpc | HttpClient.HttpClient), signer: Signer) {
+  const chains = try Chains
+  const fixed = signer.network === "Base" ? chains.base : chains.ethereum
+  const wallet = fixed.chain.accounts[1]
+  const key = fixed.chain.accounts[signer.keyIndex ?? 1]
+  if (wallet === undefined || key === undefined) return try die(new Error("anvil has too few accounts"))
+  const chain = feeChain({ network: signer.network, wallet: wallet.address, urls: Redacted.make([fixed.chain.url]), timeoutMs: 10_000 })
+  const signing = Layer.provideMerge(evmFeeWallet({
+    network: signer.network,
+    wallet: wallet.address,
+    key: Redacted.make(key.privateKey),
+    runtime: signer.runtime ?? live,
+    limits: limitsOf[signer.network === "Base" ? "Base" : "Ethereum"],
+    gasMultiple: 10n,
+    kyber: { clientId: kyberswap.clientId, buyback: false },
+  }), chain)
+  return try Effect.provideService(Effect.provide(Effect.provide(program, signing), FetchHttpClient.layer), FetchHttpClient.Fetch, chains.fetch)
+}
+
+effect function signed(intent: FeeIntent, reserved: Prepared[]) {
+  const result = try (try FeeWallet).sign(intent, (prepared) => sync(() => { reserved.push(prepared) }))
+  if (result.family !== "evm") return try die(new Error("an EVM intent signed as Solana"))
+  return result
+}
+
+function issueOf(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error ? { tag: (error as { _tag: string })._tag, issue: (error as { issue?: string }).issue } : { tag: "unexpected", issue: String(error) }
+}
+
+effect function finalize(chain: Anvil) {
+  try promise(() => chain.mine(65))
+}
+
+effect function walletOf(network: EvmNetwork) {
+  const chains = try Chains
+  const fixed = network === "Base" ? chains.base : chains.ethereum
+  return (fixed.chain.accounts[1]?.address ?? "").toLowerCase() as Address
+}
+
+layer(Layer.merge(Started, ExperimentalNodeFileSystem.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('An EVM conversion approves exactly its input, swaps only through the pinned router to the fee wallet, and refuses every tampered build (spec/fees/conversion.md, "Story: Sign only a reserved, inspected, same-wallet send"; spec/fees/conversion.md, "A conversion approval grants exactly the intent\'s input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const chains = try Chains
+    const { chain, token, usdc } = chains.ethereum
+    const wallet = try walletOf("Ethereum")
+    const amount = 1_000n * unit
+    const reserved: Prepared[] = []
+    const approve = { kind: "KyberApprove", network: "Ethereum", token, amount, nonceFloor: 0n, valueMicro: 500_000_000n } as const
+    const approval = try onChain(signed(approve, reserved), { network: "Ethereum" })
+    const approvalSent = try onChain(broadcast(approval.rawTx), { network: "Ethereum" })
+    try finalize(chain)
+    const landed = try onChain(attemptStatus([approval.txId]), { network: "Ethereum" })
+    if (landed.kind !== "Landed") return try die(new Error("the approval did not land"))
+    const settled = try onChain(approvalSettled(landed, { token, spender: "Router", amount, nonce: 0n }), { network: "Ethereum" })
+    const again = onChain(signed(approve, reserved), { network: "Ethereum" }) catch (error) => issueOf(error)
+    const swap = { kind: "KyberSwap", network: "Ethereum", token, target: usdc, amountIn: amount, minimumOutput: 495_000_000n, slippageBps: 100, nonceFloor: 1n, valueMicro: 500_000_000n } as const
+    const tampered: unknown[] = []
+    for (const mode of ["receiver", "router", "feeReceiver"] as const) {
+      try (try Chains).tamper(mode)
+      tampered.push(onChain(signed(swap, reserved), { network: "Ethereum" }) catch (error) => issueOf(error))
+    }
+    try chains.tamper("none")
+    const below = onChain(signed({ ...swap, minimumOutput: 600_000_000n }, reserved), { network: "Ethereum" }) catch (error) => issueOf(error)
+    const reservedBeforeSwap = reserved.length
+    const swapped = try onChain(signed(swap, reserved), { network: "Ethereum" })
+    const description = decodedSwap(parsedType2(swapped.rawTx)?.data ?? "0x")
+    const swapSent = try onChain(broadcast(swapped.rawTx), { network: "Ethereum" })
+    try finalize(chain)
+    const swapLanded = try onChain(attemptStatus([swapped.txId]), { network: "Ethereum" })
+    if (swapLanded.kind !== "Landed") return try die(new Error("the swap did not land"))
+    const output = try onChain(credited(swapLanded.receipt, usdc), { network: "Ethereum" })
+    const mismatch = onChain(Effect.succeed("built"), { network: "Ethereum", keyIndex: 2 }) catch (error) => issueOf(error)
+    try same({
+      approval: { reserved: reserved[0]?.family, nonce: modelSend(approval, 1)?.nonce, kind: modelSend(approval, 1)?.kind, approvedAmount: modelSend(approval, 1)?.approvedAmount, calldata: decodedApproval(parsedType2(approval.rawTx)?.data ?? "0x"), to: parsedType2(approval.rawTx)?.to },
+      approvalSent: approvalSent.kind,
+      settled,
+      again,
+      tampered,
+      below,
+      swap: { reservedOnce: reserved.length === reservedBeforeSwap + 1, to: parsedType2(swapped.rawTx)?.to, receiver: description?.dstReceiver, fees: description?.feeReceivers, minimum: (description?.minReturnAmount ?? 0n) >= 495_000_000n, kind: modelSend(swapped, 2)?.kind, nonce: modelSend(swapped, 2)?.nonce },
+      swapSent: swapSent.kind,
+      output,
+      mismatch,
+    }, {
+      approval: { reserved: "evm", nonce: 0, kind: "Approval", approvedAmount: undefined, calldata: { spender: router, amount }, to: token },
+      approvalSent: "Accepted",
+      settled: { succeeded: true, allowance: amount },
+      again: { tag: "SignRefused", issue: "the finalized allowance already covers the input" },
+      tampered: [
+        { tag: "SignRefused", issue: "KyberSwap calldata does not match the order" },
+        { tag: "SignRefused", issue: "KyberSwap build names an unexpected router" },
+        { tag: "SignRefused", issue: "KyberSwap calldata does not match the order" },
+      ],
+      below: { tag: "SignRefused", issue: "price moved below the recorded minimum" },
+      swap: { reservedOnce: true, to: router, receiver: wallet, fees: 0, minimum: true, kind: "Conversion", nonce: 1 },
+      swapSent: "Accepted",
+      output: 500_000_000n,
+      mismatch: { tag: "KeyMismatch", issue: undefined },
+    })
+  })
+
+  it.effect('A stuck send is replaced at the same nonce with only its fees stepped, after three minutes and journaled before broadcast, and a recorded unlimited approval is never re-signed (spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling")', () => effect {
+    const chains = try Chains
+    const { chain, token } = chains.ethereum
+    const owner = chain.accounts[1]
+    if (owner === undefined) return try die(new Error("anvil has too few accounts"))
+    const key = evmKey(owner.privateKey)
+    if (key === undefined) return try die(new Error("the anvil key is malformed"))
+    const counted = try promise(() => chain.rpc("eth_getTransactionCount", [owner.address, "pending"]))
+    const nonce = Number(counted)
+    try promise(() => chain.setNextBaseFee(1_000_000_000n))
+    try promise(() => chain.mine(1))
+    const amount = 7n * unit
+    const stuck = unsignedType2({ chainId: 1, nonce, to: token, data: approveCalldata(router, amount), value: 0n, gas: 100_000n, maxFeePerGas: 500_000_000n, maxPriorityFeePerGas: 400_000_000n })
+    const raw = try promise(() => key.sign(stuck.transaction))
+    const firstSend = try onChain(broadcast(raw), { network: "Ethereum" })
+    const recorded = { kind: "KyberApprove", network: "Ethereum", token, amount, nonceFloor: 0n, valueMicro: 500_000_000n } as const
+    const row: Row = { ...noRow, id: 1, token: 1, kind: "Approval", live: true, state: "Submitted", wallet: 1, amountIn: 7, valueMicro: 500_000_000, nonce, gasLimit: 100_000, deadline: maximumSafeValue, attempts: [{ tx: 1, maxFee: 1, priority: 1, at: 0 }] }
+    const fee = (clock: number, runtime: Runtime): Fee => ({ ...initial, network: "Ethereum", runtime, clock, rows: [row] })
+    const settings = { limits: limitsOf.Ethereum, kyber: { clientId: kyberswap.clientId, buyback: false } }
+    const input = (clock: number, runtime = live) => ({ fee: fee(clock, runtime), runId: 1, rowId: 1, recorded, attempts: [raw] as const })
+    const early = try onChain(replacementPlan(input(100_000), settings), { network: "Ethereum" })
+    const inactive = try onChain(replacementPlan(input(180_000, { ...live, replacementActive: false }), settings), { network: "Ethereum" })
+    const order: string[] = []
+    const replaced = try onChain(replaceSend(input(180_000), settings, (step) => sync(() => { order.push(`journaled ${step.signed.txId}`) })), { network: "Ethereum" })
+    if (replaced.kind !== "Replaced") return try die(new Error(`no replacement: ${replaced.reason}`))
+    order.push(`broadcast ${replaced.broadcast.kind}`)
+    const original = parsedType2(raw)
+    const next = parsedType2(replaced.signed.rawTx)
+    const unlimited = unsignedType2({ ...stuck.transaction, data: approveCalldata(router, maxUint256) })
+    const unlimitedRaw = try promise(() => key.sign(unlimited.transaction))
+    const reSigned = onChain(signed({ kind: "EvmReplacement", network: "Ethereum", recorded, attempts: [unlimitedRaw], maxFeePerGas: 1_000_000_001n, maxPriorityFeePerGas: 1_000_000_001n, valueMicro: 500_000_000n }, []), { network: "Ethereum" }) catch (error) => issueOf(error)
+    try same({
+      firstSend: firstSend.kind === "Accepted" || firstSend.kind === "FeeCapTooLow",
+      early,
+      inactive,
+      order: order.map((line) => line.split(" ")[0]),
+      content: next === undefined || original === undefined ? undefined : { nonce: next.nonce === original.nonce, to: next.to === original.to, data: next.data === original.data, gas: next.gas === original.gas, value: next.value === original.value },
+      fees: [next?.maxFeePerGas, next?.maxPriorityFeePerGas],
+      networkFee: { maxFeeNeeded: replaced.networkFee.maxFeeNeeded >= 1, observedAt: replaced.networkFee.observedAt, priced: replaced.networkFee.worstCaseMicro > 0 },
+      reSigned,
+    }, {
+      firstSend: true,
+      early: { kind: "Wait", reason: "the latest attempt has waited less than three minutes" },
+      inactive: { kind: "Wait", reason: "same-nonce replacement is not activated for this network" },
+      order: ["journaled", "broadcast"],
+      content: { nonce: true, to: true, data: true, gas: true, value: true },
+      fees: [1_000_000_001n, 1_000_000_001n],
+      networkFee: { maxFeeNeeded: true, observedAt: 180_000, priced: true },
+      reSigned: { tag: "SignRefused", issue: "Recorded send differs from its intent" },
+    })
+  })
+
+  it.effect('On Base the GasPriceOracle data and operator fees must fit the configured allowance before anything signs (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")', () => effect {
+    const chains = try Chains
+    const { chain, token } = chains.base
+    const approve = { kind: "KyberApprove", network: "Base", token, amount: unit, nonceFloor: 0n, valueMicro: 1_000_000_000_000n } as const
+    const posted = try onChain(dataOperatorFee(200, 60_000n), { network: "Base" })
+    const reserved: Prepared[] = []
+    const fits = try onChain(signed(approve, reserved), { network: "Base" })
+    try promise(() => chain.rpc("anvil_setCode", ["0x420000000000000000000000000000000000000f", wordCode(30_000_000_000_000n)]))
+    const over = onChain(signed(approve, reserved), { network: "Base" }) catch (error) => issueOf(error)
+    try same({ posted, fits: parsedType2(fits.rawTx)?.to, reserved: reserved.length, over }, {
+      posted: { data: 0n, operator: 0n },
+      fits: token,
+      reserved: 1,
+      over: { tag: "SignRefused", issue: "Base data/operator fees exceed the configured allowance" },
+    })
+  })
+
+  it.effect('Only the fee Worker bundle carries the EVM fee-wallet signer (spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+    const fs = try FileSystem.FileSystem
+    const fees = try fs.readFileString(try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "feeConverter" })))
+    const backend = try fs.readFileString(try promise(() => bundle(new URL("../../backend", import.meta.url).pathname, { entry: "worker" })))
+    try same({ fees: fees.split(feeWalletEvmMarker).length - 1, backend: backend.includes(feeWalletEvmMarker) }, { fees: 1, backend: false })
+  })
+})

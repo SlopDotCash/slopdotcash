@@ -1,0 +1,295 @@
+import { assert, layer } from "@effect/vitest"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { type Hex, checksum, personalMessageDigest, recoverDigest, typedDataDigest } from "@repo/platform/chain/evm"
+import { address, base64Encode, encodeMessage, encodeTransaction, isBlockhash } from "@repo/platform/chain/solana"
+import { ed25519Sign, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import type { Handler } from "@repo/platform/testing"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { internet } from "@repo/platform/testing/internet"
+import { Response } from "miniflare"
+import { BindingChallenge } from "../src/client/bindingConsent.vibe"
+
+const evmVault = "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+const solanaVault = "Gq2rk4nHSZZFpw9Lx4H9rwzEwLmFJYQAQHX4Lr4n9rCX"
+const programId = "BPFLoaderUpgradeab1e11111111111111111111111"
+const projectPda = "SysvarRent111111111111111111111111111111111"
+const networkDomain = "d".repeat(64)
+const rpcOrigin = "https://rpc.base-sepolia.test/"
+const chainVersion = 3
+const halfOrder = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+
+const evmKey = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+const otherKey = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+const solanaWallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+  address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+}
+const attesterAddress = "586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5"
+
+const rpcCalls: string[] = []
+const attested: Array<{ readonly path: string; readonly key: string | null; readonly body: unknown }> = []
+const prepared: { transaction: string } = { transaction: "" }
+let completions = 0
+
+function jsonAnswer(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+}
+
+const rpc: Handler = async (request) => {
+  const message = (await request.json()) as { readonly id: number; readonly method: string }
+  rpcCalls.push(message.method)
+  const version = `${"0".repeat(63)}${chainVersion}`
+  const result = message.method === "eth_chainId" ? "0x14a34" : `0x${"0".repeat(64)}${version}${"0".repeat(192)}`
+  return jsonAnswer({ jsonrpc: "2.0", id: message.id, result })
+}
+
+const attester: Handler = async (request) => {
+  const path = new URL(request.url).pathname
+  attested.push({ path, key: request.headers.get("idempotency-key"), body: await request.json() })
+  if (path.endsWith("/complete-bind")) {
+    completions += 1
+    return completions === 1 ? jsonAnswer({ transactionId: "binding-transaction-1" }) : jsonAnswer({ error: "execution_pending_or_rejected" }, 409)
+  }
+  return jsonAnswer({ transactionId: "binding-transaction-1", transaction: prepared.transaction })
+}
+
+const net = internet({ rpc: { [rpcOrigin]: rpc } })
+
+const Backend = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "worker",
+  d1: { SLOP_DB: "slop-private" },
+  vars: {
+    ADMIN_GITHUB_IDS: "7",
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    PAYMENT_NETWORKS: JSON.stringify(["base-sepolia", "solana-devnet"]),
+    PAYMENT_RPC_URLS: JSON.stringify({ "base-sepolia": rpcOrigin }),
+  },
+  services: { SOLANA_IDENTITY_ATTESTER: attester, SECURITY_SOLANA_IDENTITY_ATTESTER: attester },
+  internet: net,
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(answer: Answer, name: string): unknown {
+  const body = answer.body
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>)[name] : undefined
+}
+
+function text(answer: Answer, name: string): string {
+  const value = field(answer, name)
+  return typeof value === "string" ? value : ""
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer, "error") ?? null]
+}
+
+function hexOf(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+function bytesOf(hex: string): Uint8Array {
+  const body = hex.startsWith("0x") ? hex.slice(2) : hex
+  const bytes = new Uint8Array(body.length / 2)
+  for (let index = 0; index < bytes.length; index += 1) bytes[index] = Number.parseInt(body.slice(index * 2, index * 2 + 2), 16)
+  return bytes
+}
+
+effect function evmSign(key: string, digest: string) {
+  const raw = try Effect.try(() => secp256k1.sign(bytesOf(digest), bytesOf(key), { prehash: false, format: "recovered" }))
+  return `0x${hexOf(raw.slice(1))}${hexOf(raw.slice(0, 1))}`
+}
+
+effect function upperHalf(signature: string) {
+  const s = try Effect.try(() => BigInt(`0x${signature.slice(66, 130)}`))
+  const flipped = (Number.parseInt(signature.slice(130), 16) % 2) === 0 ? "01" : "00"
+  return `${signature.slice(0, 66)}${(halfOrder - s).toString(16).padStart(64, "0")}${flipped}`
+}
+
+effect function evmAddressOf(key: string) {
+  const digest: Hex = `0x${"1".repeat(64)}`
+  return recoverDigest(digest, try evmSign(key, digest))?.toLowerCase() ?? ""
+}
+
+effect function signIn(githubId: string) {
+  const area = try Area
+  const token = `binding-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+effect function pay(member: Session, action: string, json: unknown) {
+  return try (try Area).request(`/api/v1/payments/wallets/${action}`, { json, as: member })
+}
+
+effect function seedRegistry() {
+  const area = try Area
+  const manifest = JSON.stringify({
+    id: "binding-journey",
+    status: "active",
+    escrow: { deployments: [{ network: "base-sepolia", vault: evmVault }, { network: "solana-devnet", vault: solanaVault, programId, projectPda, networkDomain }] },
+  })
+  try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('binding-journey', 1, ?, ?, 'Listed', '2026-11-01T00:00:00.000Z')", manifest, "c".repeat(64))
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('binding-journey', 'active', 1, ?, ?, '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')", manifest, "c".repeat(64))
+}
+
+effect function evmWallet(member: Session, key: string) {
+  const registered = try pay(member, "register", { chain: "base", address: checksum(try evmAddressOf(key)) ?? "" })
+  const claimId = text(registered, "claimId")
+  const challenged = try pay(member, "challenge", { claimId })
+  const signature = try evmSign(key, personalMessageDigest(text(challenged, "message")))
+  const authorized = try pay(member, "authorize", { claimId, challengeId: text(challenged, "challengeId"), signature })
+  return { claimId, authorized: outcome(authorized) }
+}
+
+effect function solanaWalletClaim(member: Session) {
+  const registered = try pay(member, "register", { chain: "solana", address: solanaWallet.address })
+  const claimId = text(registered, "claimId")
+  const challenged = try pay(member, "challenge", { claimId })
+  const signature = base64Encode(try ed25519Sign(Redacted.make(solanaWallet.jwk), utf8(text(challenged, "message"))))
+  const authorized = try pay(member, "authorize", { claimId, challengeId: text(challenged, "challengeId"), signature })
+  return { claimId, authorized: outcome(authorized) }
+}
+
+effect function consentDigest(answer: Answer) {
+  const challenge = try Schema.decodeUnknownEffect(BindingChallenge)(answer.body)
+  const typed = challenge.typedData
+  const uint = (value: string) => Effect.try(() => BigInt(value))
+  return try typedDataDigest({
+    types: { EIP712Domain: typed.types.EIP712Domain, DestinationBinding: typed.types.DestinationBinding },
+    primaryType: "DestinationBinding",
+    domain: { name: typed.domain.name, version: typed.domain.version, chainId: try uint(typed.domain.chainId), verifyingContract: typed.domain.verifyingContract as Hex },
+    message: { actorId: try uint(typed.message.actorId), destination: typed.message.destination, expectedVersion: try uint(typed.message.expectedVersion), claimDigest: typed.message.claimDigest, expiresAt: try uint(typed.message.expiresAt) },
+  })
+}
+
+effect function bindingTransaction(walletSigned: boolean) {
+  const attesterKey = address(attesterAddress)
+  const walletKey = address(solanaWallet.address)
+  const system = address("11111111111111111111111111111111")
+  const blockhash = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+  if (attesterKey === undefined || walletKey === undefined || system === undefined || !isBlockhash(blockhash)) return try die(new Error("the binding fixture keys are not addresses"))
+  const message = {
+    version: "legacy",
+    header: { requiredSignatures: 2, readonlySigned: 0, readonlyUnsigned: 1 },
+    accountKeys: [attesterKey, walletKey, system],
+    recentBlockhash: blockhash,
+    instructions: [{ programIndex: 2, accounts: [0, 1], data: new Uint8Array([7]) }],
+  } as const
+  const messageBytes = encodeMessage(message)
+  if (messageBytes === undefined) return try die(new Error("the binding fixture message does not encode"))
+  const walletSignature = walletSigned ? try ed25519Sign(Redacted.make(solanaWallet.jwk), messageBytes) : new Uint8Array(64)
+  const wire = encodeTransaction({ signatures: [new Uint8Array(64).fill(9), walletSignature], message })
+  if (wire === undefined) return try die(new Error("the binding fixture transaction does not encode"))
+  return base64Encode(wire)
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Consent to bind the authorized payout wallet to a project vault on an EVM chain (spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version")', () => effect {
+    const area = try Area
+    try seedRegistry()
+    const member = try signIn("301")
+    const wallet = try evmWallet(member, evmKey)
+    const destination = try evmAddressOf(evmKey)
+    const request = { claimId: wallet.claimId, network: "base-sepolia", vault: evmVault }
+
+    const unknownVault = try pay(member, "bind-challenge", { ...request, vault: `0x${"9".repeat(40)}` })
+    const foreignClaim = try pay(member, "bind-challenge", { ...request, claimId: "not-a-claim" })
+    const extraField = try pay(member, "bind-challenge", { ...request, chainId: "1" })
+    const challenged = try pay(member, "bind-challenge", request)
+    const typed = field(challenged, "typedData") as { readonly domain: Record<string, unknown>; readonly message: Record<string, string> }
+    const expiresAt = typed.message.expiresAt ?? ""
+    const signature = try evmSign(evmKey, try consentDigest(challenged))
+    const consent = { ...request, expectedVersion: String(chainVersion), expiresAt, signature }
+
+    const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+    const tooSoon = try pay(member, "bind-authorize", { ...consent, expiresAt: String(now + 300) })
+    const tooLate = try pay(member, "bind-authorize", { ...consent, expiresAt: String(now + 90 * 86400 + 7200) })
+    const otherSigner = try pay(member, "bind-authorize", { ...consent, signature: try evmSign(otherKey, try consentDigest(challenged)) })
+    const highS = try pay(member, "bind-authorize", { ...consent, signature: try upperHalf(signature) })
+    const authorized = try pay(member, "bind-authorize", consent)
+    const repeated = try pay(member, "bind-authorize", consent)
+    const stored = try area.sql("SELECT claim_id, network, vault, chain_id, expected_version, expires_at, substr(signature, 131) AS v FROM payment_binding_authorizations WHERE github_user_id = ? ORDER BY rowid", "301")
+
+    try same({
+      wallet: wallet.authorized,
+      refused: [outcome(unknownVault), outcome(foreignClaim), outcome(extraField), outcome(tooSoon), outcome(tooLate), outcome(otherSigner), outcome(highS)],
+      challenged: [challenged.status, field(challenged, "claimId"), typed.domain, { ...typed.message, expiresAt: Number(expiresAt) - now >= 90 * 86400 - 60 }],
+      authorized: [authorized.status, authorized.body, repeated.status],
+      stored: stored.map((row) => ({ ...row, v: ["1b", "1c"].includes(String(row.v)) })),
+      chain: [...new Set(rpcCalls)],
+    }, {
+      wallet: [200, null],
+      refused: [[400, "unknown_deployment"], [409, "claim_not_current"], [400, "invalid_request"], [400, "authorization_expires_too_soon"], [400, "authorization_expires_too_late"], [403, "wallet_signature_required"], [403, "wallet_signature_required"]],
+      challenged: [200, wallet.claimId, { name: "SlopProjectEscrow", version: "5", chainId: "84532", verifyingContract: evmVault }, { actorId: "301", destination, expectedVersion: "3", claimDigest: typed.message.claimDigest, expiresAt: true }],
+      authorized: [200, { authorized: true, expiresAt }, 200],
+      stored: [{ claim_id: wallet.claimId, network: "base-sepolia", vault: evmVault, chain_id: "84532", expected_version: "3", expires_at: expiresAt, v: true }],
+      chain: ["eth_chainId", "eth_call"],
+    })
+    try same(net.unexpected, [])
+  })
+
+  it.effect('Complete a Solana binding with the wallet\'s own signature on the attester\'s half-signed transaction (spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes")', () => effect {
+    const area = try Area
+    const member = try signIn("302")
+    const wallet = try solanaWalletClaim(member)
+    const obligation = "e".repeat(64)
+    const claimDigest = (try area.sql("SELECT record_sha256 FROM wallet_claims WHERE id = ?", wallet.claimId))[0]?.record_sha256
+    try area.sql("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at) VALUES (?, 'binding-journey', '302', 'solana-devnet', 'solana', ?, '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', 6, '1000', '20', ?, 'reserved', '2026-11-01T00:00:00.000Z')", obligation, solanaVault, "f".repeat(64))
+    const notReady = try pay(member, "solana-bind/prepare", { obligationId: obligation })
+    try area.sql("INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, transaction_id, state) VALUES ('binding-attempt-1', ?, ?, '2026-11-01T00:00:01.000Z', NULL, 'prepared')", obligation, wallet.claimId)
+    prepared.transaction = try bindingTransaction(false)
+
+    const foreign = try pay(member, "solana-bind/prepare", { obligationId: "a".repeat(64) })
+    const malformed = try pay(member, "solana-bind/complete", { obligationId: obligation, transaction: "not base64!" })
+    const prepare = try pay(member, "solana-bind/prepare", { obligationId: obligation })
+    const unsigned = try pay(member, "solana-bind/complete", { obligationId: obligation, transaction: prepared.transaction })
+    const signed = try bindingTransaction(true)
+    const completed = try pay(member, "solana-bind/complete", { obligationId: obligation, transaction: signed })
+    const again = try pay(member, "solana-bind/complete", { obligationId: obligation, transaction: signed })
+    const payment = { obligationId: obligation, network: "solana-devnet", vault: solanaVault, githubUserId: "302", claimId: wallet.claimId, claimDigest, destination: solanaWallet.address, idempotencyKey: "binding-attempt-1" }
+
+    try same({
+      wallet: wallet.authorized,
+      refused: [outcome(notReady), outcome(foreign), outcome(malformed), outcome(unsigned), outcome(again)],
+      prepare: [prepare.status, prepare.body],
+      completed: [completed.status, completed.body],
+      attested: attested.map((call) => [call.path, call.key, call.body]),
+    }, {
+      wallet: [200, null],
+      refused: [[409, "binding_not_ready"], [409, "binding_not_ready"], [400, "invalid_request"], [409, "binding_pending_or_rejected"], [409, "binding_pending_or_rejected"]],
+      prepare: [200, { transactionId: "binding-transaction-1", transaction: prepared.transaction, bindingContext: { vault: solanaVault, programId, projectPda, networkDomain, githubUserId: "302", destination: solanaWallet.address, claimDigest } }],
+      completed: [200, { transactionId: "binding-transaction-1" }],
+      attested: [
+        ["/v1/pay", "binding-attempt-1", payment],
+        ["/v1/complete-bind", "binding-attempt-1", { ...payment, transaction: signed }],
+        ["/v1/complete-bind", "binding-attempt-1", { ...payment, transaction: signed }],
+      ],
+    })
+  })
+
+  it.effect('A private bounty reporter\'s refused binding request is logged on the case (spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"; spec/backend/bindingConsent.md, "Renewal, replacement, expiry, private completion and a replaced Solana claim are reachable")', () => effect {
+    const area = try Area
+    const member = try signIn("303")
+    const obligation = "b".repeat(64)
+    const caseId = "sc_binding_journey_1"
+    try area.sql(`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state,
+        receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
+      VALUES (?, 'binding-journey', 'example/bindings', 'GHSA-aaaa-bbbb-cccc', '303', 'member-303', 'claimed', 'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')`, caseId)
+    try area.sql(`INSERT INTO security_settlements (case_id, obligation_id, source_digest, network, vault, asset, asset_decimals, gross_base, fee_base, reporter_github_id, approved_by, approved_at, case_revision, deployment)
+      VALUES (?, ?, ?, 'solana-devnet', ?, '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', 6, '1000', '250', '303', '7', '2026-11-01T00:00:00.000Z', 1, '{}')`, caseId, obligation, "a".repeat(64), solanaVault)
+    const before = attested.length
+    const refused = try pay(member, "solana-bind/prepare", { obligationId: obligation })
+    const stranger = try pay(try signIn("304"), "solana-bind/prepare", { obligationId: obligation })
+    const logged = try area.sql("SELECT case_id, actor_github_id, actor_role, action FROM security_case_access_log WHERE case_id = ? ORDER BY id", caseId)
+    try same({ refused: [outcome(refused), outcome(stranger)], logged, attested: attested.length - before }, {
+      refused: [[409, "binding_not_ready"], [409, "binding_not_ready"]],
+      logged: [{ case_id: caseId, actor_github_id: "303", actor_role: "reporter", action: "write" }],
+      attested: 0,
+    })
+  })
+})

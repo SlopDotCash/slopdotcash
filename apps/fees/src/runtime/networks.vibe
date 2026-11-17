@@ -1,0 +1,155 @@
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+import type { Environment, Network } from "../../gen/fees__runtime.ts"
+import { chainIds, circleUsdc, kyberswap, robinhoodUsdg } from "./pins.ts"
+
+export const varNames = [
+  "SLOP_ENVIRONMENT",
+  "FEE_CONVERTER_MODE",
+  "FEE_CONVERTER_NETWORKS",
+  "FEE_CONVERTER_ALLOWLIST",
+  "FEE_CONVERTER_MIN_VALUE_MICRO",
+  "FEE_CONVERTER_GAS_MULTIPLE",
+  "FEE_CONVERTER_MAX_SLIPPAGE_BPS",
+  "FEE_CONVERTER_MAX_PRICE_IMPACT_BPS",
+  "FEE_CONVERTER_RUN_CAP_MICRO",
+  "FEE_CONVERTER_DAILY_CAP_MICRO",
+  "FEE_CONVERTER_SOLANA_FEE_MICRO",
+  "FEE_CONVERTER_NATIVE_BUDGETS",
+  "FEE_WALLET_BASE",
+  "FEE_WALLET_ETHEREUM",
+  "FEE_WALLET_ROBINHOOD",
+  "FEE_WALLET_SOLANA",
+  "KYBERSWAP_CLIENT_ID",
+  "JUPITER_API_URL",
+  "BUYBACK_MODE",
+  "BUYBACK_START_AT",
+  "BUYBACK_SHARE_BPS",
+  "BUYBACK_BURN_BPS",
+  "BUYBACK_MIN_BRIDGE_MICRO",
+  "BUYBACK_MAX_BRIDGE_COST_BPS",
+  "BUYBACK_MAX_BRIDGE_NATIVE_FEE",
+  "BUYBACK_SOLANA_BRIDGE_NATIVE",
+  "BUYBACK_MIN_BUY_MICRO",
+  "BUYBACK_MIN_BURN_MICRO",
+  "BUYBACK_MAX_SLIPPAGE_BPS",
+  "BUYBACK_MAX_PRICE_IMPACT_BPS",
+  "BUYBACK_RUN_CAP_MICRO",
+  "BUYBACK_DAILY_CAP_MICRO",
+  "BUYBACK_UNFILLED_ALERT_SECONDS",
+  "FEE_READY",
+  "FEE_REPLACEMENT_ACTIVE",
+] as const
+
+export type VarName = typeof varNames[number]
+export type FeeVars = { readonly [K in VarName]?: string }
+
+export const keySecrets = ["FEE_WALLET_KEY_BASE", "FEE_WALLET_KEY_ETHEREUM", "FEE_WALLET_KEY_ROBINHOOD", "FEE_WALLET_KEY_SOLANA"] as const
+export const rpcSecrets = ["RPC_URL_BASE", "RPC_URL_ETHEREUM", "RPC_URL_ROBINHOOD", "RPC_URL_SOLANA"] as const
+export const serviceSecrets = ["JUPITER_API_KEY", "SOLANA_RECOVERY_RPC_URL"] as const
+export const secretNames = [...keySecrets, ...rpcSecrets, ...serviceSecrets] as const
+
+export type SecretName = typeof secretNames[number]
+export type FeeSecrets = { readonly [K in SecretName]?: string }
+
+export const databaseBinding = "FEE_DB"
+
+export type Family = "evm" | "solana"
+export type ChainName = "base" | "ethereum" | "robinhood" | "solana"
+export type Target = { readonly kind: "usdc"; readonly address: string } | { readonly kind: "not_converted" }
+
+export interface NetworkDefinition {
+  readonly network: Network
+  readonly name: ChainName
+  readonly family: Family
+  readonly chainId: number | undefined
+  readonly escrowNetworks: ReadonlyArray<string>
+  readonly target: Target
+  readonly stable: string | undefined
+  readonly defaultRpcUrl: string
+  readonly kyberChain: string | undefined
+  readonly router: string | undefined
+  readonly walletVar: "FEE_WALLET_BASE" | "FEE_WALLET_ETHEREUM" | "FEE_WALLET_ROBINHOOD" | "FEE_WALLET_SOLANA"
+  readonly keySecret: typeof keySecrets[number]
+  readonly rpcSecret: typeof rpcSecrets[number]
+}
+
+export const networkOrder: ReadonlyArray<Network> = ["Base", "Ethereum", "Robinhood", "Solana"]
+export const evmNetworks: ReadonlyArray<Network> = ["Base", "Ethereum", "Robinhood"]
+
+export const definitions: { readonly [N in Network]: NetworkDefinition } = {
+  Base: {
+    network: "Base",
+    name: "base",
+    family: "evm",
+    chainId: chainIds.base,
+    escrowNetworks: ["base-mainnet"],
+    target: { kind: "usdc", address: circleUsdc.base },
+    stable: undefined,
+    defaultRpcUrl: "https://mainnet.base.org",
+    kyberChain: "base",
+    router: kyberswap.router,
+    walletVar: "FEE_WALLET_BASE",
+    keySecret: "FEE_WALLET_KEY_BASE",
+    rpcSecret: "RPC_URL_BASE",
+  },
+  Ethereum: {
+    network: "Ethereum",
+    name: "ethereum",
+    family: "evm",
+    chainId: chainIds.ethereum,
+    escrowNetworks: ["ethereum"],
+    target: { kind: "usdc", address: circleUsdc.ethereum },
+    stable: undefined,
+    defaultRpcUrl: "https://ethereum-rpc.publicnode.com",
+    kyberChain: "ethereum",
+    router: kyberswap.router,
+    walletVar: "FEE_WALLET_ETHEREUM",
+    keySecret: "FEE_WALLET_KEY_ETHEREUM",
+    rpcSecret: "RPC_URL_ETHEREUM",
+  },
+  Robinhood: {
+    network: "Robinhood",
+    name: "robinhood",
+    family: "evm",
+    chainId: chainIds.robinhood,
+    escrowNetworks: ["robinhood-mainnet"],
+    target: { kind: "not_converted" },
+    stable: robinhoodUsdg,
+    defaultRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+    kyberChain: "robinhood",
+    router: kyberswap.router,
+    walletVar: "FEE_WALLET_ROBINHOOD",
+    keySecret: "FEE_WALLET_KEY_ROBINHOOD",
+    rpcSecret: "RPC_URL_ROBINHOOD",
+  },
+  Solana: {
+    network: "Solana",
+    name: "solana",
+    family: "solana",
+    chainId: undefined,
+    escrowNetworks: ["solana-mainnet"],
+    target: { kind: "usdc", address: circleUsdc.solana },
+    stable: undefined,
+    defaultRpcUrl: "https://api.mainnet-beta.solana.com",
+    kyberChain: undefined,
+    router: undefined,
+    walletVar: "FEE_WALLET_SOLANA",
+    keySecret: "FEE_WALLET_KEY_SOLANA",
+    rpcSecret: "RPC_URL_SOLANA",
+  },
+}
+
+const evmAddress = /^0x[0-9a-f]{40}$/u
+const solanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
+
+export function networkNamed(name: string) {
+  return networkOrder.find((network) => definitions[network].name === name)
+}
+
+export function isTokenAddress(network: Network, value: string) {
+  return definitions[network].family === "evm" ? evmAddress.test(value) : solanaAddress.test(value)
+}
+
+export function expectedSecrets(environment: Environment): ReadonlyArray<SecretName> {
+  return environment === "Staging" ? [...rpcSecrets, ...serviceSecrets] : secretNames
+}

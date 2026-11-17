@@ -1,0 +1,114 @@
+// spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"
+import { sha256Hex } from "@repo/platform/crypto"
+import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
+import { ValueHistoryPage, WorkUnitHistoryPage, WorkUnitHistoryRow, historyOrigin, maximumPageRecords, valueHistoryPath, valueHistoryVersion, workUnitHistoryPath, workUnitHistoryVersion } from "./wire.vibe"
+
+const valueFeed = "value history"
+const pageRefused = "Value history page has invalid identity or pagination"
+const boundaryRefused = "Joint value history has an invalid snapshot boundary"
+const digest = /^[0-9a-f]{64}$/u
+
+export interface HistorySource {
+  readonly repository: string
+  readonly pinnedNodeId: string | null
+}
+
+export interface HistoryPage {
+  readonly records: ReadonlyArray<unknown>
+  readonly nextAfter: number | null
+}
+
+export interface JointPage extends HistoryPage {
+  readonly throughSequence: number
+  readonly totalRecords: number
+}
+
+export interface JointHistory {
+  readonly rows: ReadonlyArray<WorkUnitHistoryRow>
+  readonly throughSequence: number
+  readonly totalRecords: number
+}
+
+interface PageQuery {
+  readonly joint: boolean
+  readonly source: HistorySource
+  readonly pull: number
+  readonly after: number
+  readonly through: number | null
+  readonly repositoryNodeId: string | undefined
+  readonly timeoutMs: number
+}
+
+function safeCount(value: number) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+effect function refuse(reason: string) {
+  throw new FeedRefused({ feed: valueFeed, reason })
+}
+
+effect function pageOf(query: PageQuery) {
+  const { joint, source, pull, after, through, repositoryNodeId } = query
+  if (!Number.isSafeInteger(pull) || pull < 1 || !safeCount(after) || (joint && after > 0 && through === null) || (through !== null && (!Number.isSafeInteger(through) || through < after))) try refuse("Invalid value-history source query")
+  if (repositoryNodeId !== undefined && source.pinnedNodeId !== null && repositoryNodeId !== source.pinnedNodeId) try refuse("Value-history repository identity differs from the registry")
+  const immutable = repositoryNodeId !== undefined && source.pinnedNodeId !== null
+  const url = new URL(joint ? workUnitHistoryPath : valueHistoryPath, historyOrigin)
+  url.searchParams.set(immutable ? "repositoryNodeId" : "repository", immutable ? repositoryNodeId ?? "" : source.repository)
+  url.searchParams.set("pull", String(pull))
+  url.searchParams.set("after", String(after))
+  if (through !== null) url.searchParams.set("through", String(through))
+  const body = try feedJson({ feed: valueFeed, url: url.href, unavailable: "Authoritative value history is unavailable", oversized: "Value history response exceeds its page bound", notFoundIsOutage: false, timeoutMs: query.timeoutMs })
+  const page = try decodedFeed(ValueHistoryPage, body, valueFeed, pageRefused)
+  const identityMatches = immutable ? page.repositoryNodeId === repositoryNodeId : page.repository === source.repository
+  const nextAfter = page.nextAfter
+  if (page.schemaVersion !== (joint ? workUnitHistoryVersion : valueHistoryVersion) || !identityMatches || page.pullRequestNumber !== pull || page.records.length > maximumPageRecords || !(nextAfter === null || (Number.isSafeInteger(nextAfter) && nextAfter > after))) try refuse(pageRefused)
+  return { page, body }
+}
+
+export effect function valueHistoryPage(source: HistorySource, pull: number, after: number, repositoryNodeId?: string, timeoutMs = feedTimeoutMs) {
+  const { page } = try pageOf({ joint: false, source, pull, after, through: null, repositoryNodeId, timeoutMs })
+  return { records: page.records, nextAfter: page.nextAfter } satisfies HistoryPage
+}
+
+export effect function workUnitHistoryPage(source: HistorySource, pull: number, after: number, through: number | null, repositoryNodeId?: string, timeoutMs = feedTimeoutMs) {
+  const { body } = try pageOf({ joint: true, source, pull, after, through, repositoryNodeId, timeoutMs })
+  const page = try decodedFeed(WorkUnitHistoryPage, body, valueFeed, boundaryRefused)
+  if (!Number.isSafeInteger(page.throughSequence) || page.throughSequence < after || (through !== null && page.throughSequence !== through) || !Number.isSafeInteger(page.totalRecords) || page.totalRecords < page.records.length) try refuse(boundaryRefused)
+  return { records: page.records, nextAfter: page.nextAfter, throughSequence: page.throughSequence, totalRecords: page.totalRecords } satisfies JointPage
+}
+
+export effect function valueHistoryRecords(source: HistorySource, pull: number, repositoryNodeId?: string, timeoutMs = feedTimeoutMs) {
+  const records: unknown[] = []
+  let after = 0
+  while (true) {
+    const page = try valueHistoryPage(source, pull, after, repositoryNodeId, timeoutMs)
+    records.push(...page.records)
+    if (page.nextAfter === null) return records
+    after = page.nextAfter
+  }
+}
+
+export effect function workUnitHistory(source: HistorySource, pull: number, repositoryNodeId?: string, timeoutMs = feedTimeoutMs) {
+  const rows: WorkUnitHistoryRow[] = []
+  const digests = new Set<string>()
+  let after = 0
+  let through: number | null = null
+  let total: number | null = null
+  while (true) {
+    const page = try workUnitHistoryPage(source, pull, after, through, repositoryNodeId, timeoutMs)
+    if (page.throughSequence < after || page.totalRecords < 0 || (through !== null && through !== page.throughSequence) || (total !== null && total !== page.totalRecords)) try refuse("Joint history pagination boundary changed")
+    through = page.throughSequence
+    total = page.totalRecords
+    for (const raw of page.records) {
+      const row = try decodedFeed(WorkUnitHistoryRow, raw, valueFeed, "Joint history has invalid bytes or sequence")
+      if (!Number.isSafeInteger(row.sequence) || row.sequence <= after || row.sequence > through || !digest.test(row.record_digest) || (try sha256Hex(row.record_json)) !== row.record_digest || !Number.isFinite(Date.parse(row.recorded_at)) || digests.has(row.record_digest)) try refuse("Joint history has invalid bytes or sequence")
+      digests.add(row.record_digest)
+      rows.push(row)
+      after = row.sequence
+    }
+    if (page.nextAfter === null) break
+    if (page.records.length === 0 || page.nextAfter !== after) try refuse("Joint history cursor did not advance")
+  }
+  if (rows.length !== total) try refuse("Joint history coverage is incomplete")
+  return { rows, throughSequence: through ?? 0, totalRecords: total ?? 0 } satisfies JointHistory
+}

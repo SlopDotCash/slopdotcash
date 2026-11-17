@@ -1,0 +1,185 @@
+// spec/slopbot/valueEvidence.md, "Story: Value only evidence that is complete and hash-verified"
+module compression {
+  import { gzipSync } from "node:zlib"
+  /** @throws {never} */
+  export function gzipBase64(bytes: Uint8Array): string { return gzipSync(bytes).toString("base64") }
+}
+import { gzipBase64 } from compression
+import { Response as WorkerResponse } from "miniflare"
+import type { Fetcher } from "@repo/platform/bindings"
+import { gitObjectId, sha256Of } from "@repo/platform/git/bytes"
+import { type FileRecovery, type FileRequest, fileRequestsSha256 } from "@repo/platform/git/evidence"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type GitHubFake, type ScriptedFailure, githubFake } from "@repo/platform/testing/github"
+
+export const repository = "ada/widgets"
+export const fixText = "export const fixed = true;\n"
+export const fixGzipBase64 = "H4sIAAAAAAACE0utKMgvKlFIzs8rLlFIy6xITVGwVSgpKk215gIAc5LtVhsAAAA="
+export const fixSha256 = "445a3c759c6d0f99edea93d5e21ee535becd492ad32f0ae790c50ef58cb27744"
+export const fixBlobSha = "e2cdb50ddada890d99546a5910b19f00580edfdc"
+export const logoBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0xff, 0xfe, 0x00, 0x0a])
+export const repositoryDatabaseId = 7001
+export const addedTexts: ReadonlyArray<string> = ["", "one", "one\n", "one\n\n", "\n", "a\r\nb\n"]
+export const captureNames: ReadonlyArray<string> = ["capture-0.gz", "capture-1.gz", "capture-2.gz", "capture-3.gz", "capture-4.gz"]
+export const captureSize = 450 * 1024
+export const oversizedSize = 513 * 1024
+
+export function captureBytes(index: number, size: number) {
+  const bytes = new Uint8Array(size).fill(index + 1)
+  bytes[0] = 0
+  return bytes
+}
+
+export function textName(index: number) {
+  return `text-${index}.txt`
+}
+
+export interface Seeded {
+  readonly fake: GitHubFake
+  readonly token: string
+  readonly nodeId: string
+  readonly base: string
+  readonly head: string
+  readonly acceptedParent: string
+  readonly accepted: string
+  readonly tampered: string
+  readonly pull: number
+  readonly retainedParent: string
+  readonly retainedMerge: string
+  readonly changedMerge: string
+  readonly texts: string
+  readonly moved: string
+}
+
+export interface Captures {
+  readonly submitted: string
+  readonly merged: string
+  readonly oversized: string
+  readonly bytes: ReadonlyMap<string, Uint8Array>
+}
+
+type Alter = Parameters<GitHubFake["alterNext"]>[1]
+type Answer = Awaited<ReturnType<Alter>>
+
+export effect function seeded() {
+  const fake = try Effect.try(() => githubFake())
+  const world = fake.world
+  try Effect.try(() => world.addUser({ id: 101, login: "ada" }))
+  const created = try Effect.try(() => world.addRepo({
+    id: 7001,
+    owner: "ada",
+    name: "widgets",
+    files: { "README.md": "hello\n", "app.ts": "keep\nold\n", "src/util.ts": "export const one = 1;\n", "src/deep/leaf.ts": "leaf\n" },
+  }))
+  const base = try Effect.try(() => world.addCommit(repository, { message: "Base", author: "ada", files: { "notes.md": "notes\n" } }))
+  const head = try Effect.try(() => world.addCommit(repository, {
+    branch: "feature",
+    parents: [base],
+    message: "Fix",
+    author: "ada",
+    files: { "app.ts": "keep\nnew\nmore\n", "fix.ts": fixText, "logo.bin": logoBytes, "README.md": "hello\nworld\nagain\n" },
+  }))
+  const acceptedParent = try Effect.try(() => world.addCommit(repository, { parents: [base], message: "Header", author: "ada", files: { "app.ts": "header\nkeep\nold\n" } }))
+  const accepted = try Effect.try(() => world.addCommit(repository, {
+    parents: [acceptedParent],
+    message: "Fix (#1)",
+    author: "ada",
+    files: { "app.ts": "header\nkeep\nnew\nmore\n", "fix.ts": fixText },
+  }))
+  const tampered = try Effect.try(() => world.addCommit(repository, {
+    branch: "tampered",
+    parents: [acceptedParent],
+    message: "Fix (#2)",
+    author: "ada",
+    files: { "app.ts": "header\nkeep\nnew\nmore\nextra\n", "fix.ts": fixText },
+  }))
+  const retainedParent = try Effect.try(() => world.addCommit(repository, { branch: "retained", parents: [base], message: "Logo", author: "ada", files: { "logo.bin": logoBytes } }))
+  const retainedMerge = try Effect.try(() => world.addCommit(repository, { branch: "retained", parents: [retainedParent, head], message: "Merge feature", author: "ada" }))
+  const changedMerge = try Effect.try(() => world.addCommit(repository, {
+    branch: "retained-changed",
+    parents: [retainedParent, head],
+    message: "Merge feature with a new logo",
+    author: "ada",
+    files: { "logo.bin": Uint8Array.from([0x00, 0x02, 0x03]) },
+  }))
+  const texts = try Effect.try(() => world.addCommit(repository, {
+    branch: "texts",
+    parents: [base],
+    message: "Texts",
+    author: "ada",
+    files: Object.fromEntries(addedTexts.map((text, index) => [textName(index), text])),
+  }))
+  const moved = try Effect.try(() => world.addCommit(repository, {
+    branch: "moved",
+    parents: [base],
+    message: "Move",
+    author: "ada",
+    files: { "notes.md": null, "guide.md": "notes\n", "README.md": null, "src/util.ts": null, "src/helper.ts": "export const two = 2;\n" },
+  }))
+  const pull = try Effect.try(() => world.addPull({ repo: repository, author: "ada", title: "Fix", headSha: head, commits: [head] }))
+  const token = try Effect.try(() => fake.tokens.user("ada"))
+  return { fake, token, nodeId: created.nodeId, base, head, acceptedParent, accepted, tampered, pull, retainedParent, retainedMerge, changedMerge, texts, moved } satisfies Seeded
+}
+
+export effect function captures(world: Seeded) {
+  const bytes = new Map(captureNames.map((name, index) => [name, captureBytes(index, captureSize)]))
+  const files = Object.fromEntries(bytes)
+  const submitted = try Effect.try(() => world.fake.world.addCommit(repository, { branch: "captures", parents: [world.base], message: "Captures", author: "ada", files }))
+  const merged = try Effect.try(() => world.fake.world.addCommit(repository, { branch: "captures-merged", parents: [world.base], message: "Captures (#3)", author: "ada", files }))
+  const oversized = try Effect.try(() => world.fake.world.addCommit(repository, {
+    branch: "oversized",
+    parents: [world.base],
+    message: "Oversized",
+    author: "ada",
+    files: { "huge.gz": captureBytes(9, oversizedSize) },
+  }))
+  return { submitted, merged, oversized, bytes } satisfies Captures
+}
+
+export function recoveryOf(requests: ReadonlyArray<FileRequest>, contents: ReadonlyMap<string, Uint8Array>, treeSha: string): FileRecovery {
+  const blobs = new Map<string, FileRecovery["blobs"][number]>()
+  const entries = requests.map((request) => {
+    const bytes = contents.get(request.path) ?? new Uint8Array()
+    const sha = gitObjectId("blob", bytes)
+    blobs.set(sha, { sha, sha256: sha256Of(bytes), size: bytes.length, gzipBase64: gzipBase64(bytes) })
+    return { ...request, treeSha, mode: "100644" as const, blobSha: sha }
+  })
+  return { inputSha256: fileRequestsSha256(requests), entries, blobs: [...blobs.values()] }
+}
+
+function fetcherOf(fake: GitHubFake): Fetcher {
+  return {
+    fetch: async (request) => {
+      try {
+        return await fake.fetch(request)
+      } catch (cause) {
+        throw cause
+      }
+    },
+  }
+}
+
+export function gitHubOver(world: Seeded) {
+  return Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-proofs" }), outboundVia(fetcherOf(world.fake)))
+}
+
+export effect function failNext(fake: GitHubFake, match: string | RegExp, failure: ScriptedFailure) {
+  try Effect.try(() => fake.failNext(match, failure))
+}
+
+export effect function rewriteNext(fake: GitHubFake, match: string | RegExp, change: (body: Readonly<Record<string, unknown>>) => unknown) {
+  const alter: Alter = async (response) => {
+    try {
+      const body = await response.json() as Readonly<Record<string, unknown>>
+      return new WorkerResponse(JSON.stringify(change(body)), { status: response.status, headers: { "content-type": "application/json; charset=utf-8" } }) as unknown as Answer
+    } catch (cause) {
+      throw cause
+    }
+  }
+  try Effect.try(() => fake.alterNext(match, alter))
+}
+
+export function requestCount(fake: GitHubFake, match: RegExp = /^/u) {
+  return fake.requests.filter((request) => match.test(new URL(request.url).pathname)).length
+}

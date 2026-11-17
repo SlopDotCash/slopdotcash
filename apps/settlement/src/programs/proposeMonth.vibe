@@ -1,0 +1,51 @@
+// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"
+import { nowSeconds } from "@repo/platform/clock"
+import { Registry } from "@repo/ports/backend"
+import { monthEnd } from "../../gen/settlement__monthly.effect.vibe"
+import { type Period, formatPeriod, parsePeriod, periodContaining, shiftPeriod } from "../kernels/calendar.ts"
+import { type Proposed, proposeProject } from "../monthly/propose.vibe"
+
+export error ProposalArguments { message: string }
+export error ProposalsFailed { message: string }
+
+effect function lastClosedPeriod(now: number) {
+  return try orDie(Effect.try(() => shiftPeriod(periodContaining(now), -1)))
+}
+
+effect function periodFrom(args: ReadonlyArray<string>, now: number) {
+  if (args.length === 0) return try lastClosedPeriod(now)
+  const [flag, value, ...rest] = args
+  if (flag !== "--cycle" || value === undefined || rest.length > 0) throw new ProposalArguments({ message: "usage: propose-month [--cycle YYYY-MM]" })
+  const period = parsePeriod(value)
+  if (period === undefined) throw new ProposalArguments({ message: "cycle must be YYYY-MM" })
+  return period
+}
+
+function line(period: Period, outcome: Proposed) {
+  const month = formatPeriod(period)
+  if (outcome.kind === "Proposed") return `[Slop] proposed ${month} allocation of ${outcome.projectId}: ${outcome.recipients} recipients from snapshot ${outcome.snapshotSha256}`
+  if (outcome.kind === "AlreadyProposed") return `[Slop] ${month} allocation of ${outcome.projectId} was already proposed`
+  if (outcome.kind === "Incomplete") return `[Slop] ${month} allocation of ${outcome.projectId} is incomplete and differs from the closed ledger`
+  if (outcome.kind === "Failed") return `[Slop] failed ${month} allocation of ${outcome.projectId}: ${outcome.reason}`
+  return `[Slop] skipped ${month} allocation of ${outcome.projectId}: ${outcome.reason}`
+}
+
+export effect function proposeMonth(args: ReadonlyArray<string>) {
+  const now = try nowSeconds()
+  const period = try periodFrom(args, now)
+  if (now < monthEnd(period)) throw new ProposalArguments({ message: `cycle ${formatPeriod(period)} has not closed` })
+  const projects = try (try Registry).active()
+  const failed: string[] = []
+  for (const project of projects) {
+    const outcome = proposeProject({ projectId: project.projectId, period }) catch effect (error) => {
+      try Effect.logError("monthly proposal failed", { projectId: project.projectId, error: error._tag })
+      return undefined
+    }
+    if (outcome === undefined) failed.push(project.projectId)
+    else {
+      try Console.log(line(period, outcome))
+      if (outcome.kind === "Incomplete" || outcome.kind === "Failed") failed.push(project.projectId)
+    }
+  }
+  if (failed.length > 0) throw new ProposalsFailed({ message: `monthly allocation proposal refused for ${failed.join(", ")}` })
+}

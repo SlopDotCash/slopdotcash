@@ -1,0 +1,118 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { boundedBytes } from "@repo/platform/browser"
+import { randomId } from "@repo/platform/crypto"
+import { maxPartBytes, maxSnapshotBytes, readParts } from "../client/snapshot/parts.vibe"
+import { atomicWrite, attempt } from "./files.vibe"
+
+export error RestoreRefused { message: string }
+export error PublishedReadFailed { status: number; url: string }
+export error RestoreTimedOut { limitMs: number }
+
+export interface RestoreOptions {
+  readonly attemptTimeoutMs?: number
+  readonly totalTimeoutMs?: number
+  readonly retryDelayMs?: number
+}
+
+export const publishedOrigins: ReadonlyArray<string> = ["https://slop.cash", "https://staging.slop.cash"]
+export const publishedPath = "/data/leaderboard.json"
+
+const readInit: globalThis.RequestInit = { redirect: "error", cache: "no-store" }
+const maxAttempts = 3
+
+error AttemptTimedOut
+error AttemptFailed
+
+function sourceUrl(source: string): URL | undefined {
+  try {
+    return new URL(source)
+  } catch {
+    return undefined
+  }
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index])
+}
+
+effect function exchange(url: URL, maximum: number, timeoutMs: number) {
+  const request = HttpClientRequest.get(url.toString(), { headers: { accept: "application/json, application/octet-stream" } })
+  const answered = effect {
+    const response = HttpClient.execute(request) catch effect () => {
+      throw new AttemptFailed()
+    }
+    if (response.status < 200 || response.status > 299) throw new PublishedReadFailed({ status: response.status, url: url.pathname })
+    const bytes = boundedBytes(response, maximum, "leaderboard") catch effect (error) => {
+      if (error._tag === "BodyTooLarge") throw error
+      throw new AttemptFailed()
+    }
+    return bytes
+  }
+  return try Effect.timeoutOrElse(provideService(answered, FetchHttpClient.RequestInit, readInit), {
+    duration: timeoutMs,
+    orElse: () => Effect.fail(new AttemptTimedOut()),
+  })
+}
+
+effect function read(url: URL, maximum: number, options: RestoreOptions) {
+  let failure = new AttemptFailed() as PublishedReadFailed | AttemptTimedOut | AttemptFailed
+  for (let index = 0; index < maxAttempts; index++) {
+    if (index > 0) try sleep(options.retryDelayMs ?? 2_000)
+    const bytes = exchange(url, maximum, options.attemptTimeoutMs ?? 180_000) catch effect (error) => {
+      if (error._tag === "BodyTooLarge") throw error
+      failure = error
+      return undefined
+    }
+    if (bytes !== undefined) return bytes
+  }
+  throw failure._tag === "PublishedReadFailed" ? failure : new PublishedReadFailed({ status: 0, url: url.pathname })
+}
+
+effect function fresh(root: URL) {
+  const next = new URL(root.toString())
+  next.searchParams.set("snapshot", try randomId())
+  return next
+}
+
+effect function assemble(root: URL, options: RestoreOptions) {
+  let index = try fresh(root)
+  let manifest = try read(index, maxSnapshotBytes, options)
+  for (let restart = 0; ; restart++) {
+    let missing = undefined as PublishedReadFailed | undefined
+    const reader = (path: string) => effect {
+      const part = new URL(path, index)
+      if (part.origin !== index.origin) throw new RestoreRefused({ message: "Leaderboard part changed origin" })
+      return try read(part, maxPartBytes, options)
+    }
+    const bytes = readParts(manifest, reader) catch effect (error) => {
+      if (restart === 0 && error._tag === "PublishedReadFailed" && error.status === 404) {
+        missing = error
+        return undefined
+      }
+      throw error
+    }
+    if (bytes !== undefined) return bytes
+    index = try fresh(root)
+    const current = try read(index, maxSnapshotBytes, options)
+    if (sameBytes(current, manifest)) throw missing ?? new PublishedReadFailed({ status: 404, url: root.pathname })
+    manifest = current
+  }
+}
+
+export effect function restoreSnapshot(source: string, output: string, options: RestoreOptions = {}) {
+  const root = sourceUrl(source)
+  if (root === undefined || !publishedOrigins.includes(root.origin) || root.pathname !== publishedPath || root.username !== "" || root.password !== "" || root.hash !== "") {
+    throw new RestoreRefused({ message: "Use the published production or staging leaderboard" })
+  }
+  const limitMs = options.totalTimeoutMs ?? 600_000
+  const bytes = try Effect.timeoutOrElse(assemble(root, options), {
+    duration: limitMs,
+    orElse: () => Effect.fail(new RestoreTimedOut({ limitMs })),
+  })
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const target = files.resolve(output)
+  try attempt(fs.makeDirectory(files.dirname(target), { recursive: true }), target, "Leaderboard output directory could not be created")
+  try atomicWrite(target, bytes)
+  return bytes.byteLength
+}

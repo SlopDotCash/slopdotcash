@@ -1,0 +1,226 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { MergeResolution } from "@repo/platform/git/evidence"
+import { AcceptedPatchReplay } from "../proofs/acceptedReplay.vibe"
+import { FileChange } from "../proofs/changes.vibe"
+import { namesRepository, recordMatchesRegistration, sourceMatchesPolicy } from "./policy.ts"
+
+export error EvidenceRefused { reason: string }
+
+export const Limitation = Schema.String
+export type Limitation = string
+
+export schema Actor { readonly node_id: string; readonly login: string; readonly type: string }
+export schema Head { readonly sha: string }
+export schema Base { readonly sha: string; readonly ref: string }
+
+export schema Pull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly title: string
+  readonly body: string | null
+  readonly user: Actor
+  readonly merged_by: Actor | null
+  readonly state: string
+  readonly merged_at: string | null
+  readonly closed_at: string | null
+  readonly merge_commit_sha: string | null
+  readonly updated_at: string
+  readonly head: Head
+  readonly base: Base
+  readonly changed_files: number
+  readonly comments: number
+  readonly review_comments: number
+  readonly commits: number
+}
+
+export schema Review {
+  readonly node_id: string
+  readonly id: number
+  readonly html_url: string
+  readonly body: string
+  readonly user: Actor | null
+  readonly submitted_at: string | null
+  readonly state: string
+  readonly commit_id: string
+}
+
+export schema Comment {
+  readonly node_id: string
+  readonly html_url: string
+  readonly body: string
+  readonly user: Actor | null
+  readonly created_at: string
+  readonly updated_at: string
+  readonly pull_request_review_id?: number | null
+}
+
+export schema Dated { readonly date: string }
+export schema CommitMessage { readonly message: string; readonly author: Dated; readonly committer: Dated }
+
+export schema Commit {
+  readonly sha: string
+  readonly html_url: string
+  readonly author: Actor | null
+  readonly committer: Actor | null
+  readonly parents: ReadonlyArray<Head>
+  readonly commit: CommitMessage
+}
+
+export schema Stats { readonly total: number; readonly additions: number; readonly deletions: number }
+
+export schema CommitChanges {
+  readonly sha: string
+  readonly html_url: string
+  readonly parents: ReadonlyArray<Head>
+  readonly stats: Stats
+  readonly files: ReadonlyArray<FileChange>
+}
+
+export schema CommitAttribution {
+  readonly sha: string
+  readonly actorNodeIds: ReadonlyArray<string>
+  readonly changedPaths: ReadonlyArray<string> | null
+  readonly files?: ReadonlyArray<FileChange>
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+export schema RelatedPullRequest { readonly id: string; readonly number: number; readonly url: string; readonly repository: string }
+export schema UnavailableReference { readonly repository: string; readonly repositoryNodeId: string; readonly number: number }
+
+export schema RepositoryPolicy {
+  readonly id: string
+  readonly projectId: string
+  readonly integrationBranch: string
+  readonly expectedNodeId: string | null
+}
+
+export schema BranchPolicy { readonly baseSha: string; readonly path: "CONTRIBUTING.md"; readonly text: string }
+
+export schema NoChangePromotion {
+  readonly schemaVersion: "slop-no-change-promotion:v1"
+  readonly baseSha: string
+  readonly headSha: string
+  readonly mergeSha: string
+  readonly treeSha: string
+}
+
+export schema RangeFile { readonly path: string; readonly blobSha: string | null; readonly mode?: string; readonly alreadyPresent: boolean }
+export schema AcceptedRange { readonly headSha: string; readonly mergeSha: string; readonly parentSha: string; readonly files: ReadonlyArray<RangeFile> }
+
+export schema TextVersion { readonly blobSha: string; readonly mode: string; readonly text: string }
+export schema RetainedFile {
+  readonly sourcePath: string
+  readonly acceptedPath: string
+  readonly historical: TextVersion | null
+  readonly accepted: TextVersion | null
+}
+
+export schema IndirectAcceptance {
+  readonly historicalHeadSha: string
+  readonly integrationSha: string
+  readonly integrationParentSha: string
+  readonly acceptedTipSha: string
+  readonly branch: string
+  readonly observedOnBranchAt: string
+  readonly observationRunId: number
+  readonly observationUrl: string
+  readonly acceptedCommitShas: ReadonlyArray<string>
+  readonly alreadyPresentCommitShas: ReadonlyArray<string>
+  readonly laterCommitShas: ReadonlyArray<string>
+  readonly integrationFiles: ReadonlyArray<FileChange>
+  readonly retainedFiles: ReadonlyArray<RetainedFile>
+}
+
+export schema Carrier { readonly pullRequestId: string; readonly headSha: string; readonly mergeSha: string; readonly mergedAt: string }
+export schema TreeListingEntry { readonly path: string; readonly mode: string; readonly type: string; readonly sha: string }
+export schema TreeListing { readonly commitSha: string; readonly treeSha: string; readonly entries: ReadonlyArray<TreeListingEntry> }
+
+export schema NativeMergeAcceptance {
+  readonly schemaVersion: 1
+  readonly headSha: string
+  readonly mergeSha: string
+  readonly parentSha: string
+  readonly integratedHeadSha: string
+  readonly carrier?: Carrier
+  readonly ancestry: ReadonlyArray<Commit>
+  readonly trees: ReadonlyArray<TreeListing>
+  readonly retainedFiles: ReadonlyArray<RetainedFile>
+}
+
+export schema RetainedMergeReference {
+  readonly commentNodeId: string
+  readonly acknowledgementSha256: string
+  readonly abbreviation: string
+  readonly commitSha: string
+}
+
+export schema RepairActor { readonly id?: string; readonly type: string }
+export schema RepairBodyEdit {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: RepairActor | null
+  readonly author: RepairActor
+}
+
+export schema ContextFile { readonly path: string; readonly ref: string; readonly blobSha: string; readonly text: string; readonly url: string }
+
+export schema Evidence {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly repositoryPolicy: RepositoryPolicy | null
+  readonly collectedAt: string
+  readonly pull: Pull
+  readonly files: ReadonlyArray<FileChange>
+  readonly mergeCommitEvidence: CommitChanges | null
+  readonly nativeMergeAcceptance?: NativeMergeAcceptance
+  readonly acceptedRange?: AcceptedRange
+  readonly acceptedPatchReplay?: AcceptedPatchReplay
+  readonly indirectAcceptance?: IndirectAcceptance
+  readonly commits: ReadonlyArray<Commit>
+  readonly reviews: ReadonlyArray<Review>
+  readonly comments: ReadonlyArray<Comment>
+  readonly reviewComments: ReadonlyArray<Comment>
+  readonly retainedMergeReferences?: ReadonlyArray<RetainedMergeReference>
+  readonly limitations: ReadonlyArray<Limitation>
+  readonly evidenceUrls: ReadonlyArray<string>
+  readonly eligibleReviewIds: ReadonlyArray<string>
+  readonly implementationActorNodeIds: ReadonlyArray<string>
+  readonly historicalBranchPolicy?: BranchPolicy
+  readonly noChangePromotion?: NoChangePromotion
+  readonly commitAttribution: ReadonlyArray<CommitAttribution>
+  readonly relatedPullRequests: ReadonlyArray<RelatedPullRequest>
+  readonly unavailablePublicReferences?: ReadonlyArray<UnavailableReference>
+  readonly repairBodyEdit?: RepairBodyEdit
+  readonly contextFiles?: ReadonlyArray<ContextFile>
+  readonly mergeResolutions?: ReadonlyArray<MergeResolution>
+}
+
+export interface RegisteredRepository {
+  readonly id: string
+  readonly projectId: string
+  readonly integrationBranch: string
+  readonly expectedNodeId: string | null
+  readonly aliases: ReadonlyArray<string>
+}
+
+function registeredNames(repository: RegisteredRepository) {
+  return [repository.id, ...repository.aliases]
+}
+
+export function findRepository(repositories: ReadonlyArray<RegisteredRepository>, id: string) {
+  return repositories.find((repository) => namesRepository(registeredNames(repository), id))
+}
+
+export function sourceMatchesRegistration(repository: RegisteredRepository, name: string, nodeId: string) {
+  return sourceMatchesPolicy(registeredNames(repository), repository.expectedNodeId, name, nodeId)
+}
+
+export function evidenceMatchesRepository(evidence: Evidence, repository: RegisteredRepository) {
+  return recordMatchesRegistration(evidence.repositoryPolicy, repository, registeredNames(repository), evidence.repository, evidence.repositoryNodeId)
+}

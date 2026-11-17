@@ -1,0 +1,138 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { outboundVia } from "@repo/platform/http"
+import { systemGit } from "@repo/platform/git"
+import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { collectSearchReferences } from "../src/collect/merged/census.vibe"
+import { commitLineLoader } from "../src/collect/merged/commits.vibe"
+import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
+import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf, repeatFirst, requestsMatching, seeded, start } from "./support/u5/github.ts"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function githubLayer(world: ReturnType<typeof seeded>) {
+  return Layer.mergeAll(
+    Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcherOf(world))),
+    NodeServices.layer,
+    Layer.provide(systemGit, NodeServices.layer),
+  )
+}
+
+function target(world: ReturnType<typeof seeded>) {
+  return { id: "widgets", projectId: "widgets", owner: "ada", name: "widgets", expectedNodeId: world.repositoryNodeId }
+}
+
+function sorted(ids: ReadonlyArray<string>) {
+  return [...ids].sort()
+}
+
+function actor(login: string) {
+  return { id: `U_${login}`, login, avatarUrl: `https://avatars.example/${login}`, url: `https://github.com/${login}`, kind: "User" }
+}
+
+it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const work = try Effect.provide(effect {
+    const collected = try collectMergedWork({
+      targets: [target(world)],
+      nowMs: start,
+      windowFromMs: start - 35 * day,
+      verificationFromMs: start - 35 * day,
+      valuePolicyFromMs: start - 10 * day,
+      evaluatedReviewKeys: new Set(),
+      recollection: { attempt: 1, unavailableSources: [], allowJointHolds: false },
+    })
+    try confirmReviewCensus(collected)
+    return collected
+  }, githubLayer(world))
+  const outcome = (id: string) => work.outcomes.find((entry) => entry.id === id)
+  const paired = outcome(world.ids.paired)
+  const stacked = outcome(world.ids.stacked)
+  const merged = [world.ids.paired, world.ids.stacked, world.ids.bulk]
+  try same({
+    outcomes: sorted(work.outcomes.map((entry) => entry.id)),
+    detailed: sorted(work.mergedPullRequests.map((pull) => pull.id)),
+    reviewed: work.reviewedMergedPullRequests.length,
+    closed: work.closedUnmergedPullRequests.map((pull) => [pull.id, pull.mergedAt, pull.closedAt]),
+    closedIssues: [work.closedIssueCount, work.closedIssues.length],
+    pairedCommits: paired?.commits?.map((commit) => [commit.oid, commit.parentCount, commit.author?.login ?? null]),
+    sharedOnce: paired?.commits?.[1] === stacked?.commits?.[0],
+    bulk: outcome(world.ids.bulk)?.commits?.length,
+    lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines"),
+    commitPages: requestsMatching(world, "LeaderboardOutcomeCommits"),
+    slices: work.searchSliceCount,
+    unavailable: work.unavailableSources,
+  }, {
+    outcomes: sorted(merged),
+    detailed: sorted(merged),
+    reviewed: 0,
+    closed: [[world.ids.closed, null, closedAt]],
+    closedIssues: [0, 0],
+    pairedCommits: [[world.commits.grace, 1, "grace"], [world.commits.shared, 1, "linus"]],
+    sharedOnce: true,
+    bulk: bulkCommits,
+    lineBatches: 2,
+    commitPages: 1,
+    slices: 4,
+    unavailable: [],
+  })
+})
+
+it.live('Merge deduplication: one merged work unit per immutable GitHub id across split or related pull requests (spec/points/workUnits.md, "Story: Value one logical work unit once"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass")', () => effect {
+  const world = try Effect.try(() => seeded())
+  alterNextSearch(world.fake, dropLast)
+  alterNextSearch(world.fake, repeatFirst)
+  alterNextSearch(world.fake, repeatFirst)
+  const stats = { searchSliceCount: 0 }
+  const references = try Effect.provide(collectSearchReferences({
+    target: target(world),
+    fromMs: start - 35 * day,
+    toMs: start,
+    qualifier: "merged",
+    kindQualifier: "is:pr is:merged",
+    expectedKind: "PullRequest",
+    stats,
+    commitLines: commitLineLoader(),
+    repositoryNodeId: world.repositoryNodeId,
+  }), githubLayer(world))
+  const ids = references.map((reference) => reference.id)
+  const shared = references.flatMap((reference) => reference.outcome?.commits ?? []).filter((commit) => commit.oid === world.commits.shared)
+  try same({
+    ids: sorted(ids),
+    unique: new Set(ids).size === ids.length,
+    slices: stats.searchSliceCount,
+    sharedCommit: [shared.length, shared[0] === shared[1]],
+    lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines"),
+  }, {
+    ids: sorted([world.ids.paired, world.ids.stacked, world.ids.bulk]),
+    unique: true,
+    slices: 3,
+    sharedCommit: [2, true],
+    lineBatches: 2,
+  })
+})
+
+it.live('A conflicting author link or changed commit metadata fails the read and never chooses a recipient (spec/points/authorship.md, "A fresh complete re-read resolves a held conflict"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together")', () => effect {
+  const world = try Effect.try(() => seeded())
+  const loader = commitLineLoader()
+  const identity = { id: world.sharedCommitNodeId, oid: world.commits.shared, parentCount: 1 }
+  const refused = (error: { readonly _tag: string; readonly message?: string }) => error._tag === "MergedRecordInvalid" ? error.message ?? "" : error._tag
+  const steps = try Effect.provide(effect {
+    const unlinked = try loader.hydrate(world.repositoryNodeId, [{ ...identity, author: null }])
+    const linked = try loader.hydrate(world.repositoryNodeId, [{ ...identity, author: actor("linus") }])
+    const conflicting = loader.hydrate(world.repositoryNodeId, [{ ...identity, author: actor("grace") }]) catch (error) => refused(error)
+    const changed = loader.hydrate(world.repositoryNodeId, [{ ...identity, parentCount: 2, author: null }]) catch (error) => refused(error)
+    const aliased = loader.hydrate(world.repositoryNodeId, [{ ...identity, id: "C_other", author: null }]) catch (error) => refused(error)
+    return { repaired: unlinked[0]?.author?.login ?? null, same: unlinked[0] === linked[0], conflicting, changed, aliased }
+  }, githubLayer(world))
+  try same({ ...steps, lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines") }, {
+    repaired: "linus",
+    same: true,
+    conflicting: "Commit statistics changed linked commit author",
+    changed: "Commit statistics changed immutable commit metadata",
+    aliased: "Commit statistics identity changed for an immutable SHA",
+    lineBatches: 1,
+  })
+})

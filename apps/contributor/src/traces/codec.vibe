@@ -1,0 +1,206 @@
+// spec/contributor/traceServer.md, "The run, its intents, reservation, objects and events are separate records"; spec/contributor/traceServer.md, "The clock, private-intake observation and ban state come from their owning services"
+import { type ContentType, type EventKind, type EventSource, type Put, type RunState, type TraceObject, intentLifetime, noRequest, decodeState } from "../../gen/contributor__traceServer.effect.vibe"
+import { type IntakeRow, intakeOf, secondsAt } from "./facts.vibe"
+
+export schema TraceContentType = "text/plain" | "application/x-ndjson"
+
+export schema StoredRunState = "awaiting_trace" | "trace_uploaded" | "finalized"
+
+export schema StoredEventKind = "run_started" | "task_selected" | "work_started" | "checkpoint" | "pull_request_opened" | "review_requested" | "merged" | "run_completed" | "run_failed"
+
+export schema StoredSource = "agent" | "github"
+
+export schema RunRow {
+  readonly id: string
+  readonly client_run_id: string
+  readonly github_user_id: string
+  readonly github_login: string
+  readonly project_id: string
+  readonly repository: string
+  readonly project_policy_revision: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly client_version: string
+  readonly state: StoredRunState
+  readonly trace_sha256: string | null
+  readonly created_at: string
+  readonly finalized_at: string | null
+  readonly create_idempotency_key: string
+}
+
+export schema IntentRow {
+  readonly token_hash: string
+  readonly trace_sha256: string
+  readonly size_bytes: number
+  readonly content_type: TraceContentType
+  readonly idempotency_key: string
+  readonly created_at: string
+  readonly expires_at: string
+  readonly consumed_at: string | null
+}
+
+export schema ReservationRow {
+  readonly trace_sha256: string
+  readonly r2_key: string
+  readonly size_bytes: number
+  readonly content_type: TraceContentType
+  readonly created_at: string
+}
+
+export schema ObjectRow {
+  readonly sha256: string
+  readonly size_bytes: number
+  readonly content_type: TraceContentType
+}
+
+export schema EventRow {
+  readonly id: string
+  readonly idempotency_key: string
+  readonly kind: StoredEventKind
+  readonly source: StoredSource
+  readonly occurred_at: string
+  readonly github_object_id: string | null
+  readonly github_url: string | null
+  readonly head_sha: string | null
+  readonly created_at: string
+}
+
+export schema KeyRow {
+  readonly idempotency_key: string
+}
+
+export const contentTypes: Readonly<Record<ContentType, TraceContentType>> = { TextPlain: "text/plain", Ndjson: "application/x-ndjson" }
+
+export const contentTypeOf: Readonly<Record<TraceContentType, ContentType>> = { "text/plain": "TextPlain", "application/x-ndjson": "Ndjson" }
+
+export const runStates: Readonly<Record<Exclude<RunState, "NoRun">, StoredRunState>> = {
+  AwaitingTrace: "awaiting_trace",
+  TraceUploaded: "trace_uploaded",
+  Finalized: "finalized",
+}
+
+const runStateOf: Readonly<Record<StoredRunState, RunState>> = {
+  awaiting_trace: "AwaitingTrace",
+  trace_uploaded: "TraceUploaded",
+  finalized: "Finalized",
+}
+
+export const eventKinds: Readonly<Record<EventKind, StoredEventKind>> = {
+  RunStarted: "run_started",
+  TaskSelected: "task_selected",
+  WorkStarted: "work_started",
+  Checkpoint: "checkpoint",
+  PullRequestOpened: "pull_request_opened",
+  ReviewRequested: "review_requested",
+  Merged: "merged",
+  RunCompleted: "run_completed",
+  RunFailed: "run_failed",
+}
+
+export const eventKindOf: Readonly<Record<StoredEventKind, EventKind>> = {
+  run_started: "RunStarted",
+  task_selected: "TaskSelected",
+  work_started: "WorkStarted",
+  checkpoint: "Checkpoint",
+  pull_request_opened: "PullRequestOpened",
+  review_requested: "ReviewRequested",
+  merged: "Merged",
+  run_completed: "RunCompleted",
+  run_failed: "RunFailed",
+}
+
+export const eventSources: Readonly<Record<EventSource, StoredSource>> = { AgentSource: "agent", GitHubSource: "github" }
+
+export const sourceOf: Readonly<Record<StoredSource, EventSource>> = { agent: "AgentSource", github: "GitHubSource" }
+
+export interface RunRows {
+  readonly run: RunRow | undefined
+  readonly intents: ReadonlyArray<IntentRow>
+  readonly reservation: ReservationRow | undefined
+  readonly objects: ReadonlyArray<ObjectRow>
+  readonly events: ReadonlyArray<EventRow>
+  readonly otherIntentKeys: ReadonlyArray<string>
+  readonly otherEventKeys: ReadonlyArray<string>
+  readonly intake: IntakeRow | undefined
+}
+
+export interface Observations {
+  readonly owner: string
+  readonly clock: number
+  readonly banned: boolean
+  readonly puts: ReadonlyArray<Put>
+}
+
+export function blobOf(digest: string, size: number, contentType: TraceContentType): TraceObject {
+  return { digest, size, contentType: contentTypeOf[contentType] }
+}
+
+export function sameBlob(a: TraceObject, b: TraceObject): boolean {
+  return a.digest === b.digest && a.size === b.size && a.contentType === b.contentType
+}
+
+function latestRecorded(rows: RunRows): number {
+  const run = rows.run
+  return Math.max(
+    0,
+    ...(run === undefined ? [] : [secondsAt(run.created_at)]),
+    ...(run?.finalized_at == null ? [] : [secondsAt(run.finalized_at)]),
+    ...rows.intents.map((intent) => secondsAt(intent.expires_at) - intentLifetime),
+    ...rows.events.map((event) => secondsAt(event.created_at)),
+  )
+}
+
+function reservationOf(rows: RunRows): ReadonlyArray<TraceObject> {
+  if (rows.reservation !== undefined) return [blobOf(rows.reservation.trace_sha256, rows.reservation.size_bytes, rows.reservation.content_type)]
+  const attached = rows.objects.find((object) => object.sha256 === rows.run?.trace_sha256)
+  return attached === undefined ? [] : [blobOf(attached.sha256, attached.size_bytes, attached.content_type)]
+}
+
+export effect function modelOf(rows: RunRows, seen: Observations) {
+  const run = rows.run
+  const now = Math.max(seen.clock, latestRecorded(rows))
+  return try decodeState({
+    owner: Number(run?.github_user_id ?? seen.owner),
+    now,
+    banned: seen.banned,
+    standingEpoch: 0,
+    intake: intakeOf(rows.intake, now),
+    createKey: run?.create_idempotency_key ?? "",
+    request: run === undefined ? noRequest : {
+      clientRun: run.client_run_id,
+      project: run.project_id === "" ? 0 : 1,
+      repository: run.repository,
+      policyRevision: run.project_policy_revision,
+      provider: run.provider,
+      model: run.model,
+      client: run.client,
+      clientVersion: run.client_version,
+    },
+    state: run === undefined ? "NoRun" : runStateOf[run.state],
+    intents: rows.intents.map((intent) => ({
+      key: intent.idempotency_key,
+      digest: intent.trace_sha256,
+      size: intent.size_bytes,
+      contentType: contentTypeOf[intent.content_type],
+      expiresAt: secondsAt(intent.expires_at),
+      consumed: intent.consumed_at !== null,
+    })),
+    reservation: reservationOf(rows),
+    objects: rows.objects.map((object) => blobOf(object.sha256, object.size_bytes, object.content_type)),
+    attached: run?.trace_sha256 ?? "",
+    finalizedAt: run?.finalized_at == null ? 0 : secondsAt(run.finalized_at),
+    puts: seen.puts,
+    events: rows.events.map((event) => ({
+      key: event.idempotency_key,
+      kind: eventKindOf[event.kind],
+      source: sourceOf[event.source],
+      occurredAt: secondsAt(event.occurred_at),
+      githubObject: event.github_object_id ?? "",
+      recordedAt: secondsAt(event.created_at),
+    })),
+    otherRunIntentKeys: rows.otherIntentKeys,
+    otherRunEventKeys: rows.otherEventKeys,
+    reply: "ReplyNone",
+  })
+}

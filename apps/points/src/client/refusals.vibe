@@ -1,0 +1,95 @@
+// spec/points/disputes.md, "Only the recipient opens a dispute of the latest retained revision"
+
+const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonPublicMaxAge300 = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+
+const withOriginForbiddenV2 = {
+  originForbidden: { status: 403, error: "origin_forbidden", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenAndPointsUnavailableV2 = {
+  ...withOriginForbiddenV2,
+  pointsUnavailable: { status: 503, error: "points_unavailable", headers: jsonNoStore },
+} as const
+
+const withInternalError = {
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenAndPointsUnavailable = {
+  ...withOriginForbiddenAndPointsUnavailableV2,
+  notSignedIn: { status: 401, error: "not_signed_in", headers: jsonNoStore },
+  accountChanged: { status: 409, error: "account_changed", headers: jsonNoStore },
+  ...withInternalError,
+} as const
+
+const withOriginForbidden = {
+  ...withOriginForbiddenAndPointsUnavailable,
+  notFound: { status: 404, error: "not_found", message: "Points record not found.", headers: jsonPrivateNoStore },
+} as const
+
+const withRateLimited = {
+  rateLimited: { status: 429, error: "rate_limited", headers: jsonNoStore, headersFrom: { "retry-after": "String(admission.retryAfterSeconds)" } },
+} as const
+
+const withNotFoundPointsDisputeNotFound = {
+  notFoundPointsDisputeNotFound: { status: 404, error: "not_found", message: "Points dispute not found.", headers: jsonPrivateNoStore },
+} as const
+
+export const getMergeActivity = {
+  ...withInternalError,
+  otherMethods: {
+    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
+  },
+} as const
+
+export const getPointsDisputes = {
+  ...withOriginForbiddenAndPointsUnavailable,
+  invalidCursor: { status: 400, error: "invalid_cursor", message: "Invalid Points page.", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postPointsDisputes = {
+  ...withOriginForbidden,
+  ...withRateLimited,
+  invalidRequest: { status: 400, error: "invalid_request", message: "Select a Points record and enter a reason.", headers: jsonPrivateNoStore },
+  notAuthorized: { status: 403, error: "not_authorized", message: "Only the recipient can dispute this Points record.", headers: jsonPrivateNoStore },
+  superseded: { status: 409, error: "superseded", message: "This Points record has a newer revision. Dispute the current record instead.", headers: jsonPrivateNoStore },
+  alreadySubmitted: { status: 409, error: "already_submitted", message: "This Points record already has a dispute. Open it in Inbox.", headers: jsonPrivateNoStore },
+} as const
+
+export const getPointsDisputesByKey = {
+  ...withOriginForbidden,
+  ...withNotFoundPointsDisputeNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postPointsDisputesByKey = {
+  ...withOriginForbiddenAndPointsUnavailable,
+  ...withRateLimited,
+  ...withNotFoundPointsDisputeNotFound,
+  alreadyResolved: { status: 409, error: "already_resolved", message: "The dispute is resolved.", headers: jsonPrivateNoStore },
+  notAuthorizedAnIndependentModeratorMust: { status: 403, error: "not_authorized", message: "An independent moderator must decide.", headers: jsonPrivateNoStore },
+  invalidRequestEnterADecisionAnd: { status: 400, error: "invalid_request", message: "Enter a decision and reason.", headers: jsonPrivateNoStore },
+  alreadyResolvedADecisionHasAlready: { status: 409, error: "already_resolved", message: "A decision has already been recorded.", headers: jsonPrivateNoStore },
+  otherMethods: {
+    methodNotAllowedPrivateNoStore: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStore },
+  },
+} as const
+
+export const getPointsJournal = {
+  ...withOriginForbiddenAndPointsUnavailableV2,
+  invalidCursorNoStore: { status: 400, error: "invalid_cursor", headers: jsonNoStore },
+  pointsNotPublished: { status: 503, error: "points_not_published", headers: jsonNoStore },
+  journalChanged: { status: 409, error: "journal_changed", headers: jsonNoStore },
+  otherMethods: {
+    ...withOriginForbiddenV2,
+    ...withRateLimited,
+    notFoundNoStore: { status: 404, error: "not_found", headers: jsonNoStore },
+  },
+} as const

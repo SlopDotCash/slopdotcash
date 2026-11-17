@@ -1,0 +1,92 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate"
+import { type AnyRoute, route } from "@repo/platform/route"
+import { policyOwner } from "../../gen/security__evidence.ts"
+import { scannerOperators } from "../../gen/security__privacy.ts"
+
+export const evidencePolicy = {
+  version: "slop-scanner-evidence-2026-10-28",
+  policyAuthorityGithubId: String(policyOwner),
+  operatorGithubIds: scannerOperators.map(String),
+  postClosureRetentionSeconds: 90 * 86400,
+  admissionEvidenceRetention: "permanent",
+  readGrantDurationSeconds: 900,
+  objectStorage: "content-addressed",
+  maxPartBytes: 8 * 1024 * 1024,
+  maxObjects: 1024,
+  accessPolicyReference: "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6379712530",
+  retentionPolicyReference: "https://github.com/SlopDotCash/slopdotcash/issues/1467#issuecomment-6438784205",
+  recoveryPolicyReference: "https://github.com/SlopDotCash/slopdotcash/issues/909#issuecomment-6380038965",
+} as const
+
+export const retentionBoundary = "Access expiry is enforced here. Backups, raw-evidence deletion and legal holds are separate from this console; it does not verify or execute them."
+
+export schema EvidencePolicy {
+  version: string
+  policyAuthorityGithubId: string
+  operatorGithubIds: ReadonlyArray<string>
+  postClosureRetentionSeconds: number
+  admissionEvidenceRetention: string
+  readGrantDurationSeconds: number
+  objectStorage: string
+  maxPartBytes: number
+  maxObjects: number
+  accessPolicyReference: string
+  retentionPolicyReference: string
+  recoveryPolicyReference: string
+}
+
+export schema Registered { manifestSha256: string; replayed?: boolean; stored: ReadonlyArray<string> }
+export schema Uploaded { sha256: string; sizeBytes: number }
+export schema ChunkUploaded { sha256: string; index: number; sizeBytes: number }
+export schema Finalized { sha256: string; sizeBytes: number; replayed: boolean }
+export schema Reason { reason: string }
+export schema Closed { assessmentId: string; closedAt: string; expiresAt: string }
+export schema Granted { grant: string; expiresInSeconds: number }
+export schema DownloadGranted { expiresInSeconds: number }
+export schema AssemblyView { retained: boolean; state: string; scanReady: boolean; reason: string }
+export schema ObjectView { sha256: string; sizeBytes: number; kind: string; label: string; contentType: string; streamed: boolean; state: string }
+export const RunView = Schema.Struct({
+  assembly: AssemblyView,
+  assessmentId: Schema.String,
+  runId: Schema.String,
+  traceSha256: Schema.String,
+  manifestSha256: Schema.String,
+  createdAt: Schema.String,
+  expiresAt: Schema.NullOr(Schema.String),
+  permanentAdmissionEvidence: Schema.Boolean,
+  policy: Schema.Unknown,
+  objects: Schema.Array(ObjectView),
+})
+export const Overview = Schema.Struct({ runs: Schema.Array(RunView), policy: EvidencePolicy, retentionBoundary: Schema.String })
+
+const service = "/api/v1/vetting/evidence"
+const operator = "/api/v1/operator/vetting-evidence"
+
+export const registerEvidence = route({ method: "POST", path: `${service}/:assessment/:run`, access: "service", limitKib: 1024, request: undefined, answer: Registered, rejected: "evidence_conflict", cache: "private" })
+export const uploadEvidence = route({ method: "PUT", path: `${service}/:assessment/:run/:sha`, access: "service", limitKib: 8192, request: undefined, answer: Uploaded, rejected: "evidence_conflict", cache: "private" })
+export const uploadEvidenceChunk = route({ method: "PUT", path: `${service}/:assessment/:run/:sha/chunks/:index`, access: "service", limitKib: 8192, request: undefined, answer: ChunkUploaded, rejected: "evidence_conflict", cache: "private" })
+export const finalizeEvidence = route({ method: "POST", path: `${service}/:assessment/:run/:sha/finalize`, access: "service", limitKib: 1, request: undefined, answer: Finalized, rejected: "evidence_conflict", cache: "private" })
+export const evidenceOverview = route({ method: "GET", path: operator, access: "session", limitKib: 1, request: undefined, answer: Overview, rejected: "forbidden", cache: "private" })
+export const closeEvidenceCase = route({ method: "POST", path: `${operator}/:assessment/close`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Closed, rejected: "case_not_exception", cache: "private" })
+export const grantEvidenceRead = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: Granted, rejected: "grant_invalid", cache: "private", status: 201 })
+export const grantEvidenceDownload = route({ method: "POST", path: `${operator}/:assessment/:run/:sha/download-grant`, access: "sessionWrite", limitKib: 64, request: Reason, answer: DownloadGranted, rejected: "grant_invalid", cache: "private", status: 201 })
+export const readEvidenceBody = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/body`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private" })
+export const downloadEvidence = route({ method: "GET", path: `${operator}/:assessment/:run/:sha/download`, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "grant_invalid", cache: "private" })
+
+const downloadPath = `${operator}/:assessment/:run/:sha/download` as const
+export const downloadOtherMethods = (["POST", "PUT", "DELETE"] as const).map((method) =>
+  route({ method, path: downloadPath, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "no-store" }))
+
+export const evidenceApi: ReadonlyArray<AnyRoute> = [
+  registerEvidence,
+  uploadEvidence,
+  uploadEvidenceChunk,
+  finalizeEvidence,
+  evidenceOverview,
+  closeEvidenceCase,
+  grantEvidenceRead,
+  grantEvidenceDownload,
+  readEvidenceBody,
+  downloadEvidence,
+  ...downloadOtherMethods,
+]

@@ -1,0 +1,65 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, areaLayer } from "@repo/platform/testing/area"
+
+const live = "l".repeat(48)
+const expired = "e".repeat(48)
+const closed = "c".repeat(48)
+const unknown = "u".repeat(48)
+const path = "/api/v1/project-setup"
+
+const Backend = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "worker",
+  d1: { SLOP_DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
+})
+
+effect function member(actor: string, githubId: string, token: string, expiresAt: string) {
+  const area = try Area
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actor, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), actor, expiresAt)
+}
+
+effect function asked(cookie: string | undefined, expected?: string) {
+  const answer = try (try Area).request(path, { headers: { ...cookie === undefined ? {} : { cookie: `__Host-slop_points=${cookie}` }, ...expected === undefined ? {} : { "x-slop-expected-github-id": expected } } })
+  const body = answer.body as { readonly error?: string } | undefined
+  return [answer.status, answer.status === 200 ? "ok" : body?.error ?? ""] as const
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A session cookie names one open member until it expires, and the expected-actor header only narrows it (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents")', () => effect {
+    const area = try Area
+    try member("actor-live", "41", live, "2099-01-01T00:00:00.000Z")
+    try member("actor-expired", "42", expired, "2020-01-01T00:00:00.000Z")
+    try member("actor-closed", "43", closed, "2099-01-01T00:00:00.000Z")
+    try area.sql("UPDATE points_members SET closed_at = ?, public = 0 WHERE actor_id = ?", "2026-11-02T00:00:00.000Z", "actor-closed")
+    const answers = {
+      none: try asked(undefined),
+      malformed: try asked("short"),
+      unknown: try asked(unknown),
+      expired: try asked(expired),
+      closed: try asked(closed),
+      live: try asked(live),
+      expectedSelf: try asked(live, "41"),
+      expectedMalformed: try asked(live, "041"),
+      expectedOther: try asked(live, "42"),
+      expectedOtherWithoutSession: try asked(undefined, "41"),
+    }
+    try Effect.try(() => assert.deepStrictEqual({ answers, outbound: area.outboundErrors }, {
+      answers: {
+        none: [401, "unauthorized"],
+        malformed: [401, "unauthorized"],
+        unknown: [401, "unauthorized"],
+        expired: [401, "unauthorized"],
+        closed: [401, "unauthorized"],
+        live: [200, "ok"],
+        expectedSelf: [200, "ok"],
+        expectedMalformed: [400, "invalid_expected_actor"],
+        expectedOther: [403, "actor_changed"],
+        expectedOtherWithoutSession: [401, "unauthorized"],
+      },
+      outbound: [],
+    }))
+  })
+})

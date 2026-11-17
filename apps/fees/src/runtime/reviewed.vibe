@@ -1,0 +1,54 @@
+// spec/fees/conversion.md, "The Worker configuration and the reviewed vaults are published components"
+import { ConfigInvalid } from "@repo/platform/config"
+import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
+import type { AssetKind } from "../../gen/fees__conversion.ts"
+import type { EnabledNetwork } from "./config.vibe"
+import { isTokenAddress } from "./networks.vibe"
+
+export schema ReviewedVaultEntry { vault: string; projectId: string; payoutPolicy: "ordinary" | "security-bounty"; asset: string; deployment: Schema.Unknown }
+export schema ReviewedNetworkEntry { tokens: ReadonlyArray<string>; vaults: ReadonlyArray<ReviewedVaultEntry> }
+export schema ReviewedSnapshot { base?: ReviewedNetworkEntry; ethereum?: ReviewedNetworkEntry; robinhood?: ReviewedNetworkEntry; solana?: ReviewedNetworkEntry }
+
+export interface TokenFact { readonly address: string; readonly asset: AssetKind }
+
+export interface VaultFact {
+  readonly vault: string
+  readonly projectId: string
+  readonly payoutPolicy: "ordinary" | "security-bounty"
+  readonly token: string
+  readonly deployment: unknown
+}
+
+export interface ReviewedFacts { readonly tokens: ReadonlyArray<TokenFact>; readonly vaults: ReadonlyArray<VaultFact> }
+
+const name = "reviewed snapshot"
+
+export effect function decodeReviewed(input: unknown) {
+  return Schema.decodeUnknownEffect(ReviewedSnapshot)(input) catch effect () => {
+    throw new ConfigInvalid({ name, issue: "does not match its schema" })
+  }
+}
+
+function assetKind(network: EnabledNetwork, address: string): AssetKind {
+  if (network.definition.target.kind === "usdc" && network.definition.target.address === address) return "TargetStable"
+  return isNativeAssetAddress(network.definition.name, address) ? "NativeAsset" : "ProjectToken"
+}
+
+export effect function reviewedFacts(snapshot: ReviewedSnapshot, network: EnabledNetwork) {
+  const entry = snapshot[network.definition.name] ?? { tokens: [], vaults: [] }
+  const named = [...entry.tokens, ...entry.vaults.flatMap((vault) => [vault.vault, vault.asset])]
+  if (named.some((address) => !isTokenAddress(network.network, address))) throw new ConfigInvalid({ name, issue: `a stored ${network.definition.name} address is malformed` })
+  const addresses = [...new Set([...entry.tokens, ...entry.vaults.map((vault) => vault.asset), ...network.allowlist])]
+  const keys = new Set<string>()
+  const vaults: Array<VaultFact> = []
+  for (const vault of entry.vaults) {
+    const key = `${vault.payoutPolicy}\u0000${try Effect.try({ try: () => JSON.stringify(vault.deployment), catch: () => new ConfigInvalid({ name, issue: "a deployment record is not JSON" }) })}`
+    if (keys.has(key)) continue
+    keys.add(key)
+    vaults.push({ vault: vault.vault, projectId: vault.projectId, payoutPolicy: vault.payoutPolicy, token: vault.asset, deployment: vault.deployment })
+  }
+  return {
+    tokens: addresses.map((address) => ({ address, asset: assetKind(network, address) })),
+    vaults,
+  } satisfies ReviewedFacts
+}

@@ -1,0 +1,33 @@
+// spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema PendingVerification { readonly email: string; readonly expiresAt: string; readonly state: string }
+
+export schema Availability = "unavailable" | "verified" | "unverified"
+
+export schema EmailView {
+  readonly enabled: boolean
+  readonly securityEnabled: boolean
+  readonly enrollmentAvailable: boolean
+  readonly pending: PendingVerification | null
+  readonly availability: Availability
+  readonly email?: string
+  readonly destinationVersion?: string
+}
+
+export schema ConsentRequest { readonly enabled: boolean; readonly securityEnabled?: boolean; readonly destinationVersion?: string }
+export schema ConsentSaved { readonly enabled: boolean; readonly securityEnabled?: boolean }
+export schema VerificationRequest { readonly email: string; readonly enabled: boolean; readonly idempotencyKey: string; readonly securityEnabled: boolean }
+export schema VerifyRequest { readonly token: string }
+export schema UnsubscribeRequest { readonly token: string }
+export schema Unsubscribed { readonly enabled: boolean; readonly securityEnabled: boolean }
+
+const email = { access: "public", limitKib: 2, rejected: "email_unavailable", cache: "private" } as const
+
+export const emailPreference = route({ ...email, method: "GET", path: "/api/v1/notifications/email", request: undefined, answer: EmailView })
+export const emailConsent = route({ ...email, method: "POST", path: "/api/v1/notifications/email", request: ConsentRequest, answer: ConsentSaved })
+export const emailVerification = route({ ...email, method: "POST", path: "/api/v1/notifications/email/verification", request: VerificationRequest, answer: EmailView, status: 202 })
+export const emailVerify = route({ ...email, method: "POST", path: "/api/v1/notifications/email/verify", request: VerifyRequest, answer: EmailView })
+export const emailUnsubscribe = route({ ...email, method: "POST", path: "/api/v1/notifications/email/unsubscribe", request: UnsubscribeRequest, answer: Unsubscribed })
+
+export const api: ReadonlyArray<AnyRoute> = [emailPreference, emailConsent, emailVerification, emailVerify, emailUnsubscribe]

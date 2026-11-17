@@ -1,0 +1,40 @@
+// spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"
+import { AccountSettings, exchangedVia, okStatus, postJson } from "../accounts/routes/admission.vibe"
+
+export type Eligibility =
+  | { readonly available: false }
+  | { readonly available: true; readonly email: string; readonly destinationVersion: string }
+
+const notify = "https://notify.internal"
+const answerBytes = 2048
+const destinationVersionShape = /^[a-f0-9]{64}$/u
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function asked(path: string, body: unknown) {
+  const service = (try AccountSettings).notify
+  if (service === undefined) return undefined
+  return try exchangedVia(service, postJson(`${notify}${path}`, body), answerBytes)
+}
+
+export effect function enrollmentAvailable() {
+  const outcome = try asked("/v1/email/capabilities", {})
+  if (outcome === undefined || outcome.kind !== "answered" || !okStatus(outcome.status) || !isRecord(outcome.value)) return false
+  return outcome.value.enrollmentAvailable === true
+}
+
+export effect function sendVerification(githubId: string, id: string, token: string) {
+  const outcome = try asked("/v1/email/verification", { githubId, id, token })
+  return outcome !== undefined && outcome.kind !== "unreachable" && okStatus(outcome.status)
+}
+
+export effect function eligibility(githubId: string) {
+  const outcome = try asked("/v1/activity-notifications/eligibility", { githubId })
+  if (outcome === undefined || outcome.kind !== "answered" || !okStatus(outcome.status) || !isRecord(outcome.value)) return undefined
+  const { available, email, destinationVersion } = outcome.value
+  if (available === false) return { available: false } satisfies Eligibility
+  if (available !== true || typeof email !== "string" || typeof destinationVersion !== "string" || !destinationVersionShape.test(destinationVersion)) return undefined
+  return { available: true, email, destinationVersion } satisfies Eligibility
+}

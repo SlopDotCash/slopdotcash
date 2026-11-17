@@ -1,0 +1,166 @@
+// spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { type CommitLines, type FileLines, commitLinesComplete, fileLinesComplete } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type LineCounts, myersCounts } from "./counts.ts"
+import { isObjectId } from "./gitObject.ts"
+import { addedPatch, patchCounts, removedPatch, textLineCount } from "./patch.ts"
+
+export schema TextSide { readonly blobSha: string; readonly text: string }
+export schema FullComparison { readonly baseSha: string; readonly headSha: string; readonly before: TextSide; readonly after: TextSide }
+export schema RemovedComparison { readonly baseSha: string; readonly headSha: string; readonly before: TextSide }
+export schema AddedComparison { readonly baseSha: string; readonly headSha: string; readonly after: TextSide }
+export schema UnchangedRename { readonly baseSha: string; readonly headSha: string; readonly blobSha: string }
+export schema RetainedAtMerge { readonly mergeSha: string; readonly parentSha: string; readonly mergeTreeSha: string; readonly parentTreeSha: string }
+export schema AddedBinaryProof {
+  readonly schemaVersion: 1
+  readonly path: string
+  readonly baseSha: string
+  readonly headSha: string
+  readonly baseTreeSha: string
+  readonly headTreeSha: string
+  readonly mode: "100644"
+  readonly blobSha: string
+  readonly size: number
+  readonly sha256: string
+  readonly contentBase64: string
+  readonly contentReview: "unviewed"
+  readonly retainedAtMerge?: RetainedAtMerge
+}
+export schema FileChange {
+  readonly filename: string
+  readonly previous_filename?: string
+  readonly status: string
+  readonly additions: number
+  readonly deletions: number
+  readonly patch?: string
+  readonly blob_url: string | null
+  readonly fullComparison?: FullComparison
+  readonly removedComparison?: RemovedComparison
+  readonly addedComparison?: AddedComparison
+  readonly unchangedRename?: UnchangedRename
+  readonly addedBinary?: AddedBinaryProof
+}
+
+const manifestPath = /(^|\/)package\.json$/u
+
+function isManifest(path: string) {
+  return manifestPath.test(path)
+}
+
+export function verifiedText(text: string, blobSha: string) {
+  return !text.includes("\0") && isObjectId(blobSha) && gitObjectId("blob", textBytes(text)) === blobSha
+}
+
+export function hasVerifiedFullComparison(file: FileChange) {
+  const comparison = file.fullComparison
+  return comparison !== undefined && isObjectId(comparison.baseSha) && isObjectId(comparison.headSha) &&
+    verifiedText(comparison.before.text, comparison.before.blobSha) && verifiedText(comparison.after.text, comparison.after.blobSha)
+}
+
+interface Counted { readonly before: string; readonly after: string; readonly beforeSha: string; readonly afterSha: string; readonly result: LineCounts }
+const counted = new WeakMap<FullComparison, Counted>()
+
+export function fullComparisonCounts(file: FileChange): LineCounts | undefined {
+  const comparison = file.fullComparison
+  if (
+    file.status !== "modified" || file.previous_filename !== undefined || file.additions !== 0 || file.deletions !== 0 ||
+    comparison === undefined || !isObjectId(comparison.baseSha) || !isObjectId(comparison.headSha)
+  ) return undefined
+  const cached = counted.get(comparison)
+  if (
+    cached !== undefined && cached.before === comparison.before.text && cached.after === comparison.after.text &&
+    cached.beforeSha === comparison.before.blobSha && cached.afterSha === comparison.after.blobSha
+  ) return cached.result.complete ? cached.result : undefined
+  if (!verifiedText(comparison.before.text, comparison.before.blobSha) || !verifiedText(comparison.after.text, comparison.after.blobSha)) return undefined
+  const result = myersCounts(comparison.before.text, comparison.after.text)
+  counted.set(comparison, { before: comparison.before.text, after: comparison.after.text, beforeSha: comparison.before.blobSha, afterSha: comparison.after.blobSha, result })
+  return result.complete ? result : undefined
+}
+
+export function addedText(file: FileChange): string | undefined {
+  return file.status === "added" && file.previous_filename === undefined && file.additions === 0 && file.deletions === 0 &&
+    file.patch === undefined && file.addedComparison !== undefined ? file.addedComparison.after.text : undefined
+}
+
+export function removedText(file: FileChange): string | undefined {
+  return file.status === "removed" && file.previous_filename === undefined && file.additions === 0 && file.removedComparison !== undefined
+    ? file.removedComparison.before.text
+    : undefined
+}
+
+export function valueAdditionCount(file: FileChange) {
+  const added = addedText(file)
+  return added !== undefined ? textLineCount(added) : fullComparisonCounts(file)?.additions ?? file.additions
+}
+
+export function valueDeletionCount(file: FileChange) {
+  const removed = removedText(file)
+  return removed !== undefined ? textLineCount(removed) : fullComparisonCounts(file)?.deletions ?? file.deletions
+}
+
+export function valuePatch(file: FileChange) {
+  const added = addedText(file)
+  if (added !== undefined) return addedPatch(added)
+  const removed = removedText(file)
+  return removed !== undefined ? removedPatch(removed) : file.patch
+}
+
+export function hasCompleteValuePatch(file: FileChange) {
+  const patch = valuePatch(file)
+  if (patch === undefined) return false
+  const signs = patchCounts(patch)
+  return fileLinesComplete({
+    lineSource: "ExactPatch",
+    patchAdded: signs.additions,
+    patchRemoved: signs.deletions,
+    additions: valueAdditionCount(file),
+    deletions: valueDeletionCount(file),
+    textVerified: false,
+  })
+}
+
+export function fileLines(file: FileChange): FileLines {
+  const additions = valueAdditionCount(file)
+  const deletions = valueDeletionCount(file)
+  const added = file.addedComparison
+  if (addedText(file) !== undefined && added !== undefined)
+    return { lineSource: "AddedText", patchAdded: 0, patchRemoved: 0, additions, deletions, textVerified: verifiedText(added.after.text, added.after.blobSha) }
+  const removed = file.removedComparison
+  if (removedText(file) !== undefined && removed !== undefined)
+    return { lineSource: "RemovedText", patchAdded: 0, patchRemoved: 0, additions, deletions, textVerified: verifiedText(removed.before.text, removed.before.blobSha) }
+  if (fullComparisonCounts(file) !== undefined)
+    return { lineSource: "ComparedText", patchAdded: 0, patchRemoved: 0, additions, deletions, textVerified: true }
+  const patch = file.patch
+  if (patch === undefined) return { lineSource: "NoLineSource", patchAdded: 0, patchRemoved: 0, additions, deletions, textVerified: false }
+  const signs = patchCounts(patch)
+  return { lineSource: "ExactPatch", patchAdded: signs.additions, patchRemoved: signs.deletions, additions, deletions, textVerified: false }
+}
+
+export function commitLines(files: ReadonlyArray<FileChange>, stats: { readonly additions: number; readonly deletions: number }): CommitLines {
+  return { fileLines: files.map(fileLines), statAdditions: stats.additions, statDeletions: stats.deletions }
+}
+
+export function commitLinesAgree(files: ReadonlyArray<FileChange>, stats: { readonly additions: number; readonly deletions: number }) {
+  return commitLinesComplete(commitLines(files, stats))
+}
+
+export function needsFullValueComparison(file: FileChange) {
+  if (file.status === "renamed")
+    return typeof file.previous_filename === "string" && file.previous_filename !== file.filename && !hasCompleteValuePatch(file)
+  return file.status === "modified" && file.previous_filename === undefined && (!hasCompleteValuePatch(file) || isManifest(file.filename))
+}
+
+export function needsAddedValueComparison(file: FileChange) {
+  return file.status === "added" && file.previous_filename === undefined && file.additions === 0 && file.deletions === 0 &&
+    file.patch === undefined && !hasCompleteValuePatch(file)
+}
+
+export function needsRemovedValueComparison(file: FileChange) {
+  return file.status === "removed" && file.previous_filename === undefined && file.additions === 0 && !hasCompleteValuePatch(file)
+}
+
+export function needsAddedBinaryProof(file: FileChange) {
+  return file.status === "added" && file.previous_filename === undefined && file.additions === 0 && file.deletions === 0 &&
+    file.patch === undefined && file.fullComparison === undefined && file.addedComparison === undefined &&
+    file.removedComparison === undefined && file.unchangedRename === undefined
+}

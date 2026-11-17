@@ -1,0 +1,412 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+
+export const schemaVersion = "6"
+export const ruleVersion = "slop-score-v2"
+export const scoreWindowDays = 35
+export const verificationWindowDays = 35
+export const scoreV2EffectiveAt = "2026-08-01T00:00:00.000Z"
+export const usageNeutralEvidencePolicyAt = "2026-08-19T00:00:00.000Z"
+export const valueScoringApprovedHistoryFrom = "2026-09-01T00:00:00.000Z"
+export const paymentReviewPolicy = "scr-05-payments-production-v1"
+export const paymentReviewPolicyAt = "2026-10-09T23:21:35.388Z"
+export const paymentReviewBasisOmittedReason = "no-pre-policy-reviews"
+export const materialTestAdditions = 10
+export const materialTestChurn = 20
+export const minValueMergeThirds = 1
+export const externalSourceNumber = 0
+export const scoreCaps = { resolvedIssues: 5, materialTestChanges: 5, evidencePoints: 30, substantiveReviews: 10, evaluatedContributions: 3 } as const
+export const evidenceWeights = { screenshot: 1, video: 2, logs: 1, trajectory: 1, "domain-artifact": 1 } as const
+
+export const actorKinds = ["Bot", "Mannequin", "Organization", "User", "Unknown"] as const
+export const scoreCategories = ["merged-pull-request", "resolved-issue", "material-test-change", "evidence", "substantive-review", "evaluated-contribution"] as const
+export const evidenceCategories = ["screenshot", "video", "logs", "trajectory", "domain-artifact"] as const
+export const coverageStatuses = ["complete", "partial", "missing", "invalid"] as const
+export const claimSources = ["assignee", "label", "claim-comment", "pull-request", "none"] as const
+export const candidateExclusions = ["active-review-request", "already-approved", "blocked", "bot-authored", "changes-requested", "claimed", "draft", "security-sensitive", "untriaged", "unknown-author"] as const
+export const priorities = ["urgent", "high", "normal", "low"] as const
+export const actionabilities = ["actionable", "blocked", "draft"] as const
+export const reviewExclusionReasons = [
+  "missing-reviewer", "bot-reviewer", "missing-pull-request-author", "bot-pull-request-author", "self-review", "missing-submission-time",
+  "unmerged-pull-request", "post-merge", "non-decision", "insufficient-substance", "already-awarded-reviewer", "evaluated-contribution-award",
+  "external-prize-policy", "reviewer-cycle-cap", "unchanged-outcome", "pull-request-review-awarded", "review-credit-reviewer-limit",
+  "review-credit-zero-share", "review-credit-outside-window", "review-credit-before-policy", "review-credit-account-banned",
+] as const
+export const valueCoverageStatuses = ["human-ratified", "legacy-policy", "missing", "incomplete", "stale", "unresolved", "assessed"] as const
+export const externalPlatforms = ["discord", "web", "x", "youtube"] as const
+
+export schema GitHubActor { readonly id: string; readonly login: string; readonly avatarUrl: string; readonly url: string; readonly kind: string }
+
+export schema PublishedRepository {
+  readonly id: string
+  readonly owner: string
+  readonly name: string
+  readonly displayName: string
+  readonly githubUrl: string
+  readonly description: string
+  readonly integrationBranch: string
+  readonly projectId: string
+  readonly role: string
+}
+
+export schema ExternalSourceEvidence { readonly archiveUrl: string; readonly contentSha256: string; readonly capturedAt: string }
+
+export schema EventSource {
+  readonly id: string
+  readonly kind: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly platform?: string
+  readonly evidence?: ExternalSourceEvidence
+}
+
+export schema ReviewDecision { readonly sourceId: string; readonly state: string; readonly commitId: string; readonly submittedAt: string; readonly url: string }
+export schema Continuity { readonly sourceSnapshotSha256: string; readonly decisionUrl: string }
+export schema Evaluation { readonly decisionUrl: string; readonly reviewedAt: string; readonly reviewer: string; readonly manifestPath: string; readonly manifestSha256: string }
+
+export schema ScoreEvent {
+  readonly id: string
+  readonly actor: GitHubActor
+  readonly category: string
+  readonly points: number
+  readonly scoreThirds?: number
+  readonly evidenceBonusBasisPoints?: number
+  readonly workUnitId?: string
+  readonly scoreDecisionSourceId?: string
+  readonly scoreDecisionAt?: string
+  readonly acceptanceKind?: string
+  readonly occurredAt: string
+  readonly repository: string
+  readonly source: EventSource
+  readonly reason: string
+  readonly reviewHistory?: ReadonlyArray<ReviewDecision>
+  readonly continuity?: Continuity
+  readonly evaluation?: Evaluation
+}
+
+export schema PublishedPenalty {
+  readonly id: string
+  readonly actor: GitHubActor
+  readonly repository: string
+  readonly occurredAt: string
+  readonly category: string
+  readonly tableVersion: string
+  readonly debitThirds: number
+  readonly source: EventSource
+}
+
+export schema PenaltyHistoryRecord {
+  readonly itemNodeId: string
+  readonly authorGithubId: string
+  readonly category: string
+  readonly tableVersion: string
+  readonly debitThirds: number
+  readonly period: string
+  readonly recordedAt: string
+  readonly projectId: string
+  readonly reversedAt: string | null
+  readonly reversal: string | null
+}
+
+export schema ScoreOpportunity {
+  readonly id: string
+  readonly actor: GitHubActor
+  readonly kind: string
+  readonly category: string
+  readonly potentialPoints: number | null
+  readonly occurredAt: string
+  readonly repository: string
+  readonly source: EventSource
+  readonly reason: string
+  readonly hint: string
+}
+
+export schema CategoryCounts {
+  readonly mergedPullRequests: number
+  readonly resolvedIssues: number
+  readonly materialTestChanges: number
+  readonly evidence: number
+  readonly substantiveReviews: number
+  readonly evaluatedContributions: number
+}
+
+export schema AcceptedOutcomes {
+  readonly mergedPullRequests: number
+  readonly resolvedIssues: number
+  readonly materialTestChanges: number
+  readonly evidenceCategories: number
+  readonly substantiveReviews: number
+  readonly evaluatedContributions: number
+}
+
+export schema RawActivity { readonly comments: number; readonly reviews: number; readonly commits: number; readonly additions: number; readonly deletions: number }
+
+export schema LeaderboardEntry {
+  readonly rank: number
+  readonly actor: GitHubActor
+  readonly score: number
+  readonly scoreThirds: number
+  readonly points: CategoryCounts
+  readonly pointThirds: CategoryCounts
+  readonly acceptedOutcomes: AcceptedOutcomes
+  readonly rawActivity: RawActivity
+  readonly penaltyThirds?: number
+  readonly reportedModels: ReadonlyArray<string>
+}
+
+export schema RunUsage {
+  readonly source: string
+  readonly confidence: string
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheCreationTokens: number
+  readonly cacheReadTokens: number
+  readonly totalTokens: number
+  readonly costMicroUsd: string
+  readonly sessionCount: number
+}
+
+export schema TraceUpload { readonly authority: string; readonly serverRunId: string; readonly objectId: string; readonly sha256: string }
+
+export schema PolicyAcknowledgement {
+  readonly policyRevision: string
+  readonly licenseSha256: string | null
+  readonly inboundTermsSha256: string | null
+  readonly prizeRulesSha256: string | null
+  readonly acknowledgedAt: string
+}
+
+export schema RunReceipt {
+  readonly schemaVersion: string
+  readonly runId: string
+  readonly projectId: string
+  readonly repositoryId: string
+  readonly startedAt: string
+  readonly completedAt: string
+  readonly provider: string
+  readonly model: string
+  readonly client: string
+  readonly skillRevision: string
+  readonly skillSha256: string
+  readonly policyAcknowledgement?: PolicyAcknowledgement
+  readonly usage: RunUsage
+  readonly trajectorySha256: string | null
+  readonly traceUpload?: TraceUpload | null
+  readonly signatureAlgorithm: string
+  readonly devicePublicKey: string
+  readonly deviceKeyId: string
+  readonly deviceSignature: string
+}
+
+export schema ModelAttribution {
+  readonly id: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly artifactId: string
+  readonly actor: GitHubActor | null
+  readonly provider: string
+  readonly model: string
+  readonly identifier: string
+  readonly client: string | null
+  readonly skillRevision: string | null
+  readonly run: RunReceipt | null
+  readonly format: string
+  readonly status: string
+}
+
+export schema InvalidAttributionMarker { readonly sourceId: string; readonly sourceUrl: string; readonly reason: string }
+
+export schema AttributionCoverage {
+  readonly status: string
+  readonly eligibleSourceCount: number
+  readonly validSourceCount: number
+  readonly missingSourceCount: number
+  readonly invalidSourceCount: number
+  readonly humanOnlySourceCount: number
+}
+
+export schema ReviewExclusion {
+  readonly id: string
+  readonly reviewId: string
+  readonly pullRequestId: string
+  readonly pullRequestNumber: number
+  readonly repository: string
+  readonly url: string
+  readonly reason: string
+  readonly reviewer?: GitHubActor
+}
+
+export schema WorkItemClaim { readonly status: string; readonly source: string; readonly kind: string | null; readonly actors: ReadonlyArray<GitHubActor>; readonly claimedAt: string | null }
+export schema WorkItemSelection { readonly status: string; readonly reasons: ReadonlyArray<string> }
+export schema WorkItemEvidence { readonly status: string; readonly points: number; readonly maxPoints: number; readonly categories: ReadonlyArray<string> }
+
+export schema WorkItemModel {
+  readonly status: string
+  readonly identifiers: ReadonlyArray<string>
+  readonly machineMarkerCount: number
+  readonly invalidMarkerCount: number
+  readonly eligibleSourceCount: number
+  readonly validSourceCount: number
+  readonly missingSourceCount: number
+  readonly invalidSourceCount: number
+  readonly humanOnlySourceCount: number
+  readonly provenance: string
+}
+
+export schema WorkItem {
+  readonly id: string
+  readonly kind: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly repository: string
+  readonly author: GitHubActor | null
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly labels: ReadonlyArray<string>
+  readonly priority: string
+  readonly actionability: string
+  readonly isDraft: boolean | null
+  readonly filesAvailable?: boolean
+  readonly reviewDecision: string | null
+  readonly activeReviewRequestCount: number | null
+  readonly commentCount: number
+  readonly claim: WorkItemClaim
+  readonly selection: WorkItemSelection
+  readonly evidence: WorkItemEvidence
+  readonly model: WorkItemModel
+}
+
+export schema ScoringRule { readonly id: string; readonly points: string; readonly cap: string; readonly qualification: string }
+export schema EvidenceWeights { readonly screenshot: number; readonly video: number; readonly logs: number; readonly trajectory: number; readonly "domain-artifact": number }
+export schema MaterialTestThreshold { readonly minimumAdditions: number; readonly minimumTotalChurn: number; readonly cap: string }
+
+export schema Methodology {
+  readonly summary: string
+  readonly scoringRules: ReadonlyArray<ScoringRule>
+  readonly evidenceWeights: EvidenceWeights
+  readonly materialTestThreshold: MaterialTestThreshold
+  readonly exclusions: ReadonlyArray<string>
+  readonly nonScoringActivity: ReadonlyArray<string>
+  readonly provenancePolicy: string
+  readonly collectionPolicy: string
+}
+
+export schema UnavailableSource { readonly nodeId: string; readonly reason: string; readonly unavailableInMergedCensus?: boolean }
+export schema HeldWorkUnit { readonly recordDigest: string; readonly sourceNodeIds: ReadonlyArray<string>; readonly unavailableNodeIds: ReadonlyArray<string> }
+export schema SourceRepository { readonly id: string; readonly repositoryId: string }
+export schema RateLimit { readonly cost: number; readonly consumedDuringRun?: number; readonly limit: number; readonly remaining: number; readonly resetAt: string }
+
+export schema SourceCounts {
+  readonly unavailableSources?: number
+  readonly unavailableMergedPullRequests?: number
+  readonly heldWorkUnits?: number
+  readonly closedUnmergedPullRequests?: number
+  readonly mergedPullRequests: number
+  readonly detailedMergedPullRequests: number
+  readonly closedIssues: number
+  readonly detailedClosedIssues: number
+  readonly resolvedIssues: number
+  readonly openIssues: number
+  readonly openPullRequests: number
+}
+
+export schema SnapshotWindow { readonly days: number; readonly from: string; readonly to: string }
+export schema EvidenceVerification { readonly status: string; readonly sourceCount: number; readonly artifactCount: number; readonly maxSources: number; readonly maxArtifacts: number }
+
+export schema SourceMetadata {
+  readonly provider: string
+  readonly fetchedAt: string
+  readonly cutoffAt: string
+  readonly repositoryId: string | null
+  readonly repositories: ReadonlyArray<SourceRepository>
+  readonly requestCount: number
+  readonly searchSliceCount: number
+  readonly unavailableSources?: ReadonlyArray<UnavailableSource>
+  readonly heldWorkUnits?: ReadonlyArray<HeldWorkUnit>
+  readonly rateLimit: RateLimit
+  readonly counts: SourceCounts
+  readonly verificationWindow: SnapshotWindow
+  readonly evidenceVerification: EvidenceVerification
+}
+
+export schema AllocationWeight { readonly actorNodeId: string; readonly actorLogin: string; readonly changedLines: string }
+export schema ImplementationAllocation { readonly rule: string; readonly totalScoreThirds: number; readonly weights: ReadonlyArray<AllocationWeight> }
+
+export schema ValueCoverage {
+  readonly pullRequestId: string
+  readonly repository: string
+  readonly pullRequestNumber: number
+  readonly status: string
+  readonly recordDigest: string | null
+  readonly verifiedImplementationActorNodeIds?: ReadonlyArray<string>
+  readonly implementationAllocation?: ImplementationAllocation
+}
+
+export schema PaymentReviewBasis {
+  readonly policy: string
+  readonly effectiveAt: string
+  readonly leaders: ReadonlyArray<LeaderboardEntry>
+  readonly ledger: ReadonlyArray<ScoreEvent>
+  readonly removedEventIds: ReadonlyArray<string>
+  readonly removedAttributionIds: ReadonlyArray<string>
+  readonly attributionOrder: ReadonlyArray<string>
+  readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+  readonly invalidAttributionMarkers: ReadonlyArray<InvalidAttributionMarker>
+  readonly attributionCoverage: AttributionCoverage
+  readonly opportunities: ReadonlyArray<ScoreOpportunity>
+}
+
+export schema PaymentReviewBasisOmitted { readonly policy: string; readonly effectiveAt: string; readonly reason: string }
+export schema WorkQueue { readonly issues: ReadonlyArray<WorkItem>; readonly pullRequests: ReadonlyArray<WorkItem> }
+
+export schema LeaderboardSnapshot {
+  readonly schemaVersion: string
+  readonly repository: string | null
+  readonly repositories: ReadonlyArray<PublishedRepository>
+  readonly ruleVersion: string
+  readonly generatedAt: string
+  readonly sourceUpdatedAt: string
+  readonly stale: boolean
+  readonly window: SnapshotWindow
+  readonly methodology: Methodology
+  readonly source: SourceMetadata
+  readonly leaders: ReadonlyArray<LeaderboardEntry>
+  readonly ledger: ReadonlyArray<ScoreEvent>
+  readonly valuePolicyEffectiveAt?: string
+  readonly valueAssessmentCoverage?: ReadonlyArray<ValueCoverage>
+  readonly reviewExclusions?: ReadonlyArray<ReviewExclusion>
+  readonly penalties?: ReadonlyArray<PublishedPenalty>
+  readonly penaltyHistory?: ReadonlyArray<PenaltyHistoryRecord>
+  readonly paymentReviewBasis?: PaymentReviewBasis
+  readonly paymentReviewBasisOmitted?: PaymentReviewBasisOmitted
+  readonly opportunities: ReadonlyArray<ScoreOpportunity>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+  readonly invalidAttributionMarkers: ReadonlyArray<InvalidAttributionMarker>
+  readonly attributionCoverage: AttributionCoverage
+  readonly workQueue: WorkQueue
+}
+
+export schema RegisteredRepository {
+  readonly id: string
+  readonly owner: string
+  readonly name: string
+  readonly displayName: string
+  readonly githubUrl: string
+  readonly description: string
+  readonly integrationBranch: string
+  readonly projectId: string
+  readonly nodeId: string
+  readonly aliases: ReadonlyArray<string>
+}
+
+export schema RegisteredProject { readonly id: string; readonly skillSourcePath: string }
+
+export schema RepositoryRegistry {
+  readonly registered: ReadonlyArray<RegisteredRepository>
+  readonly targets: ReadonlyArray<RegisteredRepository>
+  readonly projects: ReadonlyArray<RegisteredProject>
+}
+
+export const publishedRepositoryKeys = ["id", "owner", "name", "displayName", "githubUrl", "description", "integrationBranch", "projectId", "role"] as const

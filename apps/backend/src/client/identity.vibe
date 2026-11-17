@@ -1,0 +1,42 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export interface Origins {
+  readonly identity: string
+  readonly site: string
+  readonly browserOrigins: ReadonlyArray<string>
+}
+
+export const deploymentOrigins = {
+  production: { identity: "https://identity.slop.cash", site: "https://slop.cash", browserOrigins: ["https://slop.cash", "https://slop.tech", "https://eliza.army"] },
+  staging: { identity: "https://identity-staging.slop.cash", site: "https://staging.slop.cash", browserOrigins: ["https://staging.slop.cash"] },
+  local: { identity: "https://identity.slop.test", site: "https://slop.test", browserOrigins: ["https://slop.test"] },
+} satisfies Readonly<Record<"production" | "staging" | "local", Origins>>
+
+const browserOrigins: ReadonlyArray<string> = [...new Set(Object.values(deploymentOrigins).flatMap((origins) => origins.browserOrigins))]
+
+export const identityInternalHost = "identity.internal"
+
+export schema IdentityAudience = "private-trace-api" | "slop-points-web"
+
+export schema StartRequest { readonly audience: IdentityAudience }
+export schema LocalStartRequest { readonly audience: "slop-points-web"; readonly returnOrigin: string }
+export schema Started { readonly flowId: string; readonly authorizationUrl: string; readonly pollCapability: string; readonly expiresAt: string; readonly pollAfterSeconds: number }
+export schema PollRequest { readonly flowId: string; readonly pollCapability: string; readonly audience: IdentityAudience }
+export schema PollPending { readonly status: "pending"; readonly retryAfterSeconds: number }
+export schema AssertionIssued { readonly status: "complete"; readonly assertion: string; readonly assertionType: "SlopIdentity"; readonly expiresAt: string }
+export schema IdentityDelivered { readonly status: "complete"; readonly returnOrigin: string; readonly githubActorId: string; readonly githubLogin: string; readonly githubNodeId: string }
+export schema Polled = PollPending | AssertionIssued
+export schema LocalPolled = PollPending | IdentityDelivered
+export schema ConsumeRequest { readonly audience: IdentityAudience }
+export schema ConsumedIdentity { readonly githubActorId: string; readonly githubLogin: string; readonly audience: IdentityAudience; readonly githubNodeId?: string }
+
+export const oauthStart = route({ method: "POST", path: "/v1/oauth/start", access: "public", limitKib: 4, request: StartRequest, answer: Started, rejected: "invalid_request", cache: "no-store", status: 201, cors: browserOrigins })
+export const oauthAuthorize = route({ method: "GET", path: "/v1/oauth/authorize", access: "public", limitKib: 1, request: undefined, answer: Schema.String, rejected: "invalid_request", cache: "no-store" })
+export const oauthCallback = route({ method: "GET", path: "/v1/oauth/callback", access: "public", limitKib: 1, request: undefined, answer: Schema.String, rejected: "invalid_request", cache: "no-store" })
+export const oauthPoll = route({ method: "POST", path: "/v1/oauth/poll", access: "public", limitKib: 4, request: PollRequest, answer: Polled, rejected: "invalid_request", cache: "no-store", cors: browserOrigins })
+export const localStart = route({ method: "POST", path: "/v1/local/start", access: "public", limitKib: 4, request: LocalStartRequest, answer: Started, rejected: "invalid_request", cache: "no-store", status: 201 })
+export const localPoll = route({ method: "POST", path: "/v1/local/poll", access: "public", limitKib: 4, request: PollRequest, answer: LocalPolled, rejected: "invalid_request", cache: "no-store" })
+export const assertionsConsume = route({ method: "POST", path: "/v1/assertions/consume", access: "public", limitKib: 4, request: ConsumeRequest, answer: ConsumedIdentity, rejected: "invalid_request", cache: "no-store" })
+
+export const identityApi: ReadonlyArray<AnyRoute> = [oauthStart, oauthAuthorize, oauthCallback, oauthPoll, localStart, localPoll, assertionsConsume]

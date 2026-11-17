@@ -1,0 +1,148 @@
+// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import type { Kind } from "./codec.vibe"
+import { recordedKind } from "./legacyKinds.vibe"
+
+export schema ProjectRow {
+  id: string
+  status: string
+  revision: number
+  manifest: string
+  manifest_sha256: string
+  created_at: string
+  updated_at: string
+  source_application_id: string | null
+  referrer_github_id: string | null
+  referrer_github_login: string | null
+}
+
+export schema RevisionRow {
+  revision: number
+  manifest: string
+  manifest_sha256: string
+  reason: string
+  actor_github_id: string | null
+  actor_github_login: string | null
+  created_at: string
+  kind: string | null
+}
+
+export schema ApplicationRow {
+  id: string
+  repository_key: string
+  manifest: string
+  manifest_sha256: string
+  applicant_github_id: string
+  applicant_github_login: string
+  status: string
+  decided_by_github_id: string | null
+  applicant_cancelled_at: string | null
+  expected_revision: number | null
+  referrer_github_id: string | null
+  referrer_github_login: string | null
+}
+
+export schema ManifestRepository {
+  id: string
+  aliases?: ReadonlyArray<string>
+  integrationBranch?: string
+  githubId?: string
+  nodeId?: string
+}
+
+export schema StewardGithub { actorId: string; nodeId: string; login: string }
+export schema Steward { github: StewardGithub }
+export schema Authority { repositoryId: string | number; repositoryNodeId: string }
+export schema RepositoryLicense { state: string; spdx: string | null; url: string | null; commitSha: string | null; fileSha256: string | null }
+export schema Terms { repositoryLicense: RepositoryLicense }
+export schema Participation { state: string }
+export schema Slopbot { automaticClosure: boolean }
+export schema Contribution {
+  approvedScope?: string
+  contributionGuide?: string
+  supportedTasks?: string
+  requiredTests?: string
+  reviewExpectations?: string
+  securityContact?: string
+  closurePolicy?: string
+  maintainerNotes?: string
+}
+export schema RewardAsset { network: string; address: string; decimals: number }
+export schema Reward { chain: string | null; fundingState: string; committedMinor: string; paymentMode: string }
+export schema Entry {}
+export schema Escrow { deployments?: ReadonlyArray<Entry> }
+export schema Funding { addresses?: ReadonlyArray<Entry>; commitments?: ReadonlyArray<Entry> }
+
+export schema Manifest {
+  id: string
+  status: string
+  listingTier: string
+  participation?: Participation
+  steward: Steward
+  authority: Authority
+  terms: Terms
+  contribution?: Contribution
+  slopbot?: Slopbot
+  repositories: ReadonlyArray<ManifestRepository>
+  rewardAsset?: RewardAsset
+  reward: Reward
+  escrow?: Escrow
+  funding: Funding
+}
+
+export interface Revisioned {
+  readonly row: RevisionRow
+  readonly manifest: Manifest
+  readonly kind: Kind
+}
+
+export interface ProjectRows {
+  readonly projectId: string
+  readonly project: ProjectRow | undefined
+  readonly current: Manifest | undefined
+  readonly revisions: ReadonlyArray<Revisioned>
+  readonly applications: ReadonlyArray<ApplicationRow>
+}
+
+export effect function manifestOf(text: string, label: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: label, issue: "manifest is not JSON" }) })
+  return Schema.decodeUnknownEffect(Manifest)(parsed) catch effect (error) => { throw new RowMismatch({ text: label, issue: String(error) }) }
+}
+
+export function projectReads(projectId: string): ReadonlyArray<Statement> {
+  return [
+    sql`SELECT id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login FROM projects WHERE id = ${projectId}`,
+    revisionRead(projectId),
+    sql`SELECT id, repository_key, manifest, manifest_sha256, applicant_github_id, applicant_github_login, status, decided_by_github_id, applicant_cancelled_at, expected_revision, referrer_github_id, referrer_github_login FROM project_applications WHERE project_id = ${projectId} ORDER BY rowid`,
+  ]
+}
+
+export function revisionRead(projectId: string): Statement {
+  return sql`SELECT r.revision, r.manifest, r.manifest_sha256, r.reason, r.actor_github_id, r.actor_github_login, r.created_at, k.kind FROM project_revisions r LEFT JOIN project_revision_kinds k ON k.project_id = r.project_id AND k.revision = r.revision WHERE r.project_id = ${projectId} ORDER BY r.revision`
+}
+
+export effect function revisionsOf(projectId: string, rows: Rows) {
+  const revisioned: Revisioned[] = []
+  for (const row of try decoded(RevisionRow, rows, "project revisions")) {
+    const kind = recordedKind(projectId, row)
+    if (kind === undefined) throw new RowMismatch({ text: "project revisions", issue: `revision ${row.revision} of ${projectId} has no recorded kind` })
+    revisioned.push({ row, manifest: try manifestOf(row.manifest, `project ${projectId} revision ${row.revision}`), kind })
+  }
+  return revisioned
+}
+
+export function projectVersion(projectId: string): Statement {
+  return sql`(coalesce((SELECT revision || ':' || manifest_sha256 || ':' || status FROM projects WHERE id = ${projectId}), '-') || '|' || coalesce((SELECT group_concat(id || ':' || status || ':' || coalesce(applicant_cancelled_at, '-'), ',') FROM (SELECT id, status, applicant_cancelled_at FROM project_applications WHERE project_id = ${projectId} ORDER BY rowid)), ''))`
+}
+
+export effect function projectRows(projectId: string, [projects, revisions, applications]: ReadonlyArray<Rows>) {
+  const [project] = try decoded(ProjectRow, projects ?? [], "projects")
+  return {
+    projectId,
+    project,
+    current: project === undefined ? undefined : try manifestOf(project.manifest, `project ${projectId}`),
+    revisions: try revisionsOf(projectId, revisions ?? []),
+    applications: try decoded(ApplicationRow, applications ?? [], "project applications"),
+  } satisfies ProjectRows
+}

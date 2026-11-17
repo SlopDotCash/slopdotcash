@@ -1,0 +1,81 @@
+// spec/settlement/signer.md, "Story: Journal one binding intent and keep both possible winners"; spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/signer.md, "Both possible winners stay retained"
+import { type Binding, type Event, apply, decodeEvent, decodeState, initial } from "../../gen/settlement__signer.effect.vibe"
+import { type Entries, JournalValueInvalid } from "./journal.vibe"
+
+export interface BindingRecord {
+  readonly state: Binding
+  readonly transactions: ReadonlyArray<string>
+  readonly authorities: ReadonlyArray<string>
+}
+
+export type Sender = "account" | "attester" | "operator"
+
+export interface Step {
+  readonly event: Event
+  readonly by: string
+}
+
+const StoredRecord = Schema.Struct({
+  schema: Schema.Literal("binding-state-v1"),
+  state: Schema.Unknown,
+  transactions: Schema.Array(Schema.String),
+  authorities: Schema.Array(Schema.String),
+})
+
+export function stateKey(key: string) {
+  return `binding-state:${key}`
+}
+
+export function fresh(start: Binding = initial): BindingRecord {
+  return { state: start, transactions: [], authorities: [] }
+}
+
+export effect function loadBinding(entries: Entries, key: string) {
+  const stored = try entries.get(stateKey(key))
+  if (stored === undefined) return undefined
+  const record = Schema.decodeUnknownEffect(StoredRecord)(stored) catch effect () => { throw new JournalValueInvalid({ key: stateKey(key) }) }
+  return { state: try decodeState(record.state), transactions: record.transactions, authorities: record.authorities } satisfies BindingRecord
+}
+
+export function attemptOf(record: BindingRecord, transactionId: string) {
+  return record.transactions.indexOf(transactionId.toLowerCase()) + 1
+}
+
+export function withAttempt(record: BindingRecord, transactionId: string) {
+  const known = attemptOf(record, transactionId)
+  if (known > 0) return { record, attempt: known }
+  const transactions = [...record.transactions, transactionId.toLowerCase()]
+  return { record: { ...record, transactions }, attempt: transactions.length }
+}
+
+export function authorityOf(record: BindingRecord, address: string) {
+  return record.authorities.indexOf(address.toLowerCase()) + 1
+}
+
+export function withAuthority(record: BindingRecord, address: string) {
+  const known = authorityOf(record, address)
+  if (known > 0) return { record, authority: known }
+  const authorities = [...record.authorities, address.toLowerCase()]
+  return { record: { ...record, authorities }, authority: authorities.length }
+}
+
+export effect function advance(entries: Entries, key: string, record: BindingRecord, steps: ReadonlyArray<Step>) {
+  let state = record.state
+  for (const step of steps) state = try apply(state, step.event, step.by)
+  const next = { ...record, state } satisfies BindingRecord
+  try entries.put(stateKey(key), { schema: "binding-state-v1", state: next.state, transactions: next.transactions, authorities: next.authorities })
+  return next
+}
+
+export effect function sendBinding(entries: Entries, key: string, event: Event, by: string) {
+  const record = (try loadBinding(entries, key)) ?? fresh()
+  return (try advance(entries, key, record, [{ event, by }])).state
+}
+
+export effect function receiveBinding(entries: Entries, key: string, input: unknown, by: string) {
+  return try sendBinding(entries, key, try decodeEvent(input), by)
+}
+
+export effect function observeBinding(entries: Entries, key: string) {
+  return ((try loadBinding(entries, key)) ?? fresh()).state
+}

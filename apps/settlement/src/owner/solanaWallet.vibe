@@ -1,0 +1,165 @@
+// spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type Address, type Blockhash, type FetchedTransaction, type Message, type Signature, SYSTEM_PROGRAM, SolanaRpc, base58Decode, base64Encode, decodeMessage } from "@repo/platform/chain/solana"
+import { concat, readU64, sameBytes } from "../chain/solana/bytes.ts"
+import { type Instruction, compileLegacy, signedBy, unsignedTransaction } from "../chain/solana/transactions.ts"
+
+export error WalletActionRefused { message: string }
+
+export interface PreparedWalletTransaction {
+  readonly blockhash: Blockhash
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly networkFee: bigint
+}
+
+export type WalletPrefix = "" | "compute-budget"
+
+export type WalletCheck =
+  | { readonly status: "pending"; readonly expired: boolean }
+  | { readonly status: "failed"; readonly prefix: WalletPrefix }
+  | { readonly status: "finalized"; readonly prefix: WalletPrefix; readonly fetched: FetchedTransaction; readonly accountKeys: ReadonlyArray<Address> }
+
+export interface WalletMessage {
+  readonly payer: Address
+  readonly blockhash: Blockhash
+  readonly bytes: Uint8Array
+}
+
+const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111"
+const LIGHTHOUSE = "L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95"
+const mismatchMessage = "This transaction does not match the pending wallet action. Check its signature in your wallet."
+
+function refused(message: string) {
+  return new WalletActionRefused({ message })
+}
+
+export effect function walletMessage(payer: Address, blockhash: Blockhash, instructions: ReadonlyArray<Instruction>) {
+  const compiled = compileLegacy({ payer, blockhash, instructions })
+  if (compiled.kind === "refused") throw refused("The wallet action could not be compiled.")
+  return { payer, blockhash, bytes: compiled.bytes } satisfies WalletMessage
+}
+
+export effect function prepareWalletTransaction(payer: Address, instructions: ReadonlyArray<Instruction>) {
+  const rpc = try SolanaRpc
+  const latest = try rpc.blockhash("finalized")
+  const compiled = compileLegacy({ payer, blockhash: latest.blockhash, instructions })
+  const wire = compiled.kind === "compiled" ? unsignedTransaction(compiled.message) : undefined
+  if (compiled.kind === "refused" || wire === undefined) throw refused("The wallet action could not be compiled.")
+  const fee = try rpc.feeForMessage(compiled.bytes, "finalized")
+  if (fee === undefined || fee < 0n) throw refused("The network fee could not be calculated. Review again.")
+  const native = try rpc.account(payer, "finalized")
+  if ((native?.lamports ?? 0n) < fee) throw refused("Your wallet needs SOL for the network fee.")
+  const simulation = try rpc.simulate(wire, [], "finalized")
+  if (simulation.err)
+    throw refused("This action could not be simulated. Check the token balance and SOL for network fees and account rent, then review again.")
+  return { blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, transaction: base64Encode(wire), networkFeeLamports: fee.toString(), networkFee: fee } satisfies PreparedWalletTransaction
+}
+
+interface Parsed {
+  readonly keys: ReadonlyArray<Address>
+  readonly blockhash: Blockhash
+  readonly writable: (index: number) => boolean
+  readonly instructions: ReadonlyArray<{ readonly program: Address; readonly accounts: ReadonlyArray<Address>; readonly data: Uint8Array }>
+}
+
+function singleSigner(message: Message): Parsed | undefined {
+  const { header, accountKeys } = message
+  if (message.version !== "legacy" || header.requiredSignatures !== 1 || header.readonlySigned !== 0 || new Set(accountKeys).size !== accountKeys.length) return undefined
+  const instructions = message.instructions.map((instruction) => ({
+    program: accountKeys[instruction.programIndex],
+    accounts: instruction.accounts.map((index) => accountKeys[index]),
+    data: instruction.data,
+  }))
+  if (instructions.some((instruction) => instruction.program === undefined || instruction.accounts.some((account) => account === undefined))) return undefined
+  return {
+    keys: accountKeys,
+    blockhash: message.recentBlockhash,
+    writable: (index) => index < accountKeys.length - header.readonlyUnsigned,
+    instructions: instructions as Parsed["instructions"],
+  }
+}
+
+effect function parsedMessage(bytes: Uint8Array) {
+  const decoded = decodeMessage(bytes)
+  const parsed = decoded.kind === "decoded" ? singleSigner(decoded.value) : undefined
+  if (parsed === undefined) throw refused(mismatchMessage)
+  return parsed
+}
+
+function computeBudget(instruction: Parsed["instructions"][number]): number | undefined {
+  const kind = instruction.data[0]
+  if (instruction.program !== COMPUTE_BUDGET || instruction.accounts.length !== 0) return undefined
+  return (kind === 2 && instruction.data.length === 5) || (kind === 3 && instruction.data.length === 9) ? kind : undefined
+}
+
+function sameAction(actual: Parsed["instructions"][number] | undefined, wanted: Parsed["instructions"][number]): boolean {
+  return actual !== undefined && actual.program === wanted.program && actual.accounts.join("\0") === wanted.accounts.join("\0") && sameBytes(actual.data, wanted.data)
+}
+
+function lighthouseAssertion(assertion: Parsed["instructions"][number], wallet: Address): boolean {
+  const data = assertion.data
+  return assertion.program === LIGHTHOUSE && assertion.accounts.length === 1 && assertion.accounts[0] === wallet && data.length === 26
+    && data[0] === 6 && data[1] === 4 && data[2] === 3 && data[3] === 0 && data[12] === 4 && data[13] === 3 && data[14] === 0 && data[15] === 0 && data[16] === 1
+    && data.slice(17).every((byte) => byte === 0)
+}
+
+effect function guardedKeys(wallet: Address, expectedBytes: Uint8Array, fetched: FetchedTransaction) {
+  const expected = try parsedMessage(expectedBytes)
+  const actual = try parsedMessage(fetched.transaction.messageBytes)
+  if (actual.keys[0] !== wallet || expected.keys[0] !== wallet || actual.blockhash !== expected.blockhash) throw refused(mismatchMessage)
+  const additional = new Set<string>()
+  const kinds = new Set<number>()
+  let start = 0
+  for (let next = actual.instructions[start]; next !== undefined && next.program === COMPUTE_BUDGET; next = actual.instructions[start]) {
+    const kind = computeBudget(next)
+    if (kind === undefined || kinds.has(kind)) throw refused(mismatchMessage)
+    kinds.add(kind)
+    additional.add(COMPUTE_BUDGET)
+    start++
+  }
+  const end = start + expected.instructions.length
+  if (!expected.instructions.every((wanted, index) => sameAction(actual.instructions[start + index], wanted))) throw refused(mismatchMessage)
+  if (actual.instructions.length === end + 1) {
+    const assertion = actual.instructions[end]
+    const floor = assertion === undefined || assertion.data.length !== 26 ? undefined : readU64(assertion.data, 4)
+    const innerAtAssertion = fetched.meta.innerInstructions.some((inner) => inner.index === end && inner.instructions.length > 0)
+    const postPayer = fetched.meta.postBalances[0]
+    if (assertion === undefined || floor === undefined || !lighthouseAssertion(assertion, wallet) || innerAtAssertion || postPayer === undefined || postPayer < floor) throw refused(mismatchMessage)
+    const payer = try (try SolanaRpc).account(wallet, "finalized")
+    if (payer === undefined || payer.owner !== SYSTEM_PROGRAM || payer.executable || payer.data.length !== 0) throw refused(mismatchMessage)
+    additional.add(LIGHTHOUSE)
+  } else if (actual.instructions.length !== end) throw refused(mismatchMessage)
+  const positions = new Map(expected.keys.map((entry, index) => [entry, index] as const))
+  for (const [index, entry] of actual.keys.entries()) {
+    const previous = positions.get(entry)
+    if (previous === undefined ? !additional.has(entry) || actual.writable(index) : actual.writable(index) !== expected.writable(previous)) throw refused(mismatchMessage)
+  }
+  if (expected.keys.some((entry) => !actual.keys.includes(entry))) throw refused(mismatchMessage)
+  return { keys: actual.keys, prefix: (kinds.size > 0 ? "compute-budget" : "") as WalletPrefix }
+}
+
+export effect function checkWalletTransaction(wallet: Address, message: WalletMessage, transactionId: string, allowGuards: boolean) {
+  const signature = base58Decode(transactionId)
+  if (signature === undefined || signature.length !== 64) throw refused("Enter a Solana transaction signature from your wallet.")
+  if (!signedBy(message.bytes, signature, wallet) && !allowGuards) throw refused(mismatchMessage)
+  const rpc = try SolanaRpc
+  const [seen] = try rpc.signatureStatuses([transactionId as Signature])
+  const expired = seen === undefined && !(try rpc.blockhashValid(message.blockhash, "finalized")).value
+  const [status] = expired ? try rpc.signatureStatuses([transactionId as Signature]) : [seen]
+  if (status === undefined) return { status: "pending", expired } satisfies WalletCheck
+  if (status.confirmationStatus !== "finalized") return { status: "pending", expired: false } satisfies WalletCheck
+  const fetched = try rpc.transaction(transactionId as Signature, "finalized")
+  if (fetched === undefined) return { status: "pending", expired: false } satisfies WalletCheck
+  if (fetched.slot !== status.slot) throw refused("The finalized transaction could not be verified.")
+  const expected = concat(Uint8Array.of(1), signature, message.bytes)
+  const exact = sameBytes(fetched.wire, expected)
+  if (!exact && !allowGuards) throw refused("The finalized transaction differs from the reviewed action.")
+  const wire = fetched.wire
+  const resigned = exact || (wire[0] === 1 && wire.length > 65 && sameBytes(wire.slice(1, 65), signature) && signedBy(wire.slice(65), signature, wallet))
+  if (!resigned) throw refused(mismatchMessage)
+  const checked = exact ? { keys: (try parsedMessage(message.bytes)).keys, prefix: "" as WalletPrefix } : try guardedKeys(wallet, message.bytes, fetched)
+  if (fetched.meta.err) return { status: "failed", prefix: checked.prefix } satisfies WalletCheck
+  if (status.err) throw refused("Finalized transaction status disagrees with its receipt.")
+  return { status: "finalized", prefix: checked.prefix, fetched, accountKeys: checked.keys } satisfies WalletCheck
+}

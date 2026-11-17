@@ -1,0 +1,99 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/evmScan.md, "A reviewed deployment record fixes the chain, page size and origin"
+import { ConfigInvalid } from "@repo/platform/config"
+import type { ReadFailure } from "@repo/ports/backend"
+import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import { PolicyInvalid, type PolicyScope, type ReviewedDeployment, reviewedPolicy, vaultKeyOf } from "./policy.vibe"
+
+export schema RegistryManifest {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifest: string
+}
+
+export service RegistryManifests {
+  current(): ReadonlyArray<RegistryManifest>!ReadFailure
+  project(projectId: string): (RegistryManifest | undefined)!ReadFailure
+}
+
+export type RegisteredDeployment = ReviewedDeployment & { readonly revision: number }
+
+export interface DeploymentFailure {
+  readonly projectId: string | undefined
+  readonly message: string
+}
+
+export interface RegistryDeployments {
+  readonly deployments: ReadonlyArray<RegisteredDeployment>
+  readonly failures: ReadonlyArray<DeploymentFailure>
+}
+
+export error VaultShared { message: string }
+
+const SCOPES: ReadonlyArray<PolicyScope> = ["ordinary", "security-bounty"]
+
+type Fields = Readonly<Record<string, unknown>>
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+effect function manifestOf(text: string) {
+  return fieldsOf(Effect.try(() => JSON.parse(text) as unknown) catch () => undefined)
+}
+
+function policyValue(manifest: Fields, scope: PolicyScope): unknown {
+  return scope === "security-bounty" ? fieldsOf(manifest.securityBounty)?.settlement : manifest.escrow
+}
+
+export effect function servedNetworks(text: string | undefined) {
+  const names = Effect.try(() => JSON.parse(text ?? "") as unknown) catch () => undefined
+  if (!Array.isArray(names) || names.length === 0 || new Set(names).size !== names.length || !names.every((name) => typeof name === "string" && isNetworkKey(name)))
+    throw new ConfigInvalid({ name: "PAYMENT_NETWORKS", issue: "must be a JSON array of unique registry networks" })
+  return names.filter((name): name is NetworkKey => typeof name === "string" && isNetworkKey(name))
+}
+
+export effect function projectDeployments(project: RegistryManifest, scope: PolicyScope) {
+  const manifest = try manifestOf(project.manifest)
+  if (manifest === undefined || manifest.id !== project.projectId) throw new PolicyInvalid({ message: "Project manifest identity mismatch" })
+  const policy = policyValue(manifest, scope)
+  if (policy === undefined) return []
+  return try reviewedPolicy(project.projectId, policy, scope)
+}
+
+export effect function registryDeployments(networks: ReadonlyArray<NetworkKey>, scope: PolicyScope) {
+  const inventory = [...try (try RegistryManifests).current()].sort((left, right) => left.projectId < right.projectId ? -1 : left.projectId > right.projectId ? 1 : 0)
+  const failures: DeploymentFailure[] = []
+  const vaultScopes = new Map<string, string>()
+  for (const project of inventory) {
+    const manifest = try manifestOf(project.manifest)
+    if (manifest === undefined) continue
+    for (const scopeName of SCOPES) {
+      const policy = policyValue(manifest, scopeName)
+      if (policy === undefined) continue
+      const reviewed = reviewedPolicy(project.projectId, policy, scopeName) catch () => undefined
+      if (reviewed === undefined) {
+        if (scopeName !== scope) failures.push({ projectId: project.projectId, message: `Project ${project.projectId} ${scopeName} policy invalid` })
+        continue
+      }
+      for (const deployment of reviewed) {
+        const key = vaultKeyOf(deployment)
+        if (vaultScopes.has(key)) throw new VaultShared({ message: "A payment vault cannot be shared between registry programs" })
+        vaultScopes.set(key, `${project.projectId}:${scopeName}`)
+      }
+    }
+  }
+  const selected = new Set<string>(networks)
+  const deployments: RegisteredDeployment[] = []
+  for (const project of inventory) {
+    const approved = projectDeployments(project, scope) catch () => undefined
+    if (approved === undefined) {
+      failures.push({ projectId: project.projectId, message: `Project ${project.projectId} escrow deployments unavailable` })
+      continue
+    }
+    for (const deployment of approved) if (selected.has(deployment.network)) deployments.push({ ...deployment, revision: project.revision })
+  }
+  for (const network of networks)
+    if (!deployments.some((deployment) => deployment.network === network))
+      failures.push({ projectId: undefined, message: `Project registry has no escrow deployment for served network ${network}` })
+  return { deployments, failures } satisfies RegistryDeployments
+}

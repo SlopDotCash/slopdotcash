@@ -1,0 +1,10 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+import { ConfigInvalid } from "@repo/platform/config"
+
+export effect function actionsToken() {
+  const primary = (try Config.withDefault(Config.String("GITHUB_TOKEN"), "")).trim()
+  const secondary = (try Config.withDefault(Config.String("GH_TOKEN"), "")).trim()
+  const token = primary !== "" ? primary : secondary
+  if (token === "") throw new ConfigInvalid({ name: "GITHUB_TOKEN", issue: "GITHUB_TOKEN is unset in the Actions environment" })
+  return Redacted.make(token)
+}

@@ -1,0 +1,207 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { type NonEmpty, type Statement, chunked, list, sql } from "@repo/platform/d1"
+
+export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
+export type SendKindName = "conversion" | "approval" | "claim" | "bridge" | "buyback" | "burn"
+export type StateName = "quoted" | "pending" | "skipped" | "no_route" | "submitted" | "finalized" | "failed" | "unknown"
+export type RouteName = "kyberswap" | "jupiter" | "debridge"
+export type Purpose = "fees" | "bridge"
+
+export const releasedAt = "1970-01-01T00:00:00.000Z"
+
+export function inScope(network: NetworkName, scope: string): Statement {
+  return sql`network = ${network} AND substr(run_id, 1, ${scope.length}) = ${scope}`
+}
+
+function confirmed(check: Statement, refusal: string): Statement {
+  return sql`SELECT CASE WHEN ${check} THEN 1 ELSE json(${refusal}) END AS confirmed`
+}
+
+export function acquireLease(network: NetworkName, runId: string, expiresAt: string, now: string): ReadonlyArray<Statement> {
+  return [
+    sql`INSERT INTO fee_converter_locks (network, run_id, expires_at) VALUES (${network}, ${runId}, ${expiresAt}) ON CONFLICT(network) DO UPDATE SET run_id = excluded.run_id, expires_at = excluded.expires_at WHERE fee_converter_locks.expires_at < ${now}`,
+    confirmed(sql`EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${network} AND run_id = ${runId} AND expires_at = ${expiresAt})`, "fee lease not acquired"),
+  ]
+}
+
+export function renewLease(network: NetworkName, runId: string, expiresAt: string, now: string): ReadonlyArray<Statement> {
+  return [
+    sql`UPDATE fee_converter_locks SET expires_at = ${expiresAt} WHERE network = ${network} AND run_id = ${runId} AND expires_at >= ${now}`,
+    confirmed(sql`EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${network} AND run_id = ${runId} AND expires_at = ${expiresAt})`, "fee lease not renewed"),
+  ]
+}
+
+export function releaseLease(network: NetworkName, runId: string, now: string): Statement {
+  return sql`UPDATE fee_converter_locks SET expires_at = ${releasedAt} WHERE network = ${network} AND run_id = ${runId} AND expires_at >= ${now}`
+}
+
+export function abandonReserved(network: NetworkName, scope: string): Statement {
+  return sql`UPDATE fee_native_gas SET state = 'abandoned' WHERE ${inScope(network, scope)} AND state = 'reserved'`
+}
+
+export function abandonReservation(id: string): Statement {
+  return sql`UPDATE fee_native_gas SET state = 'abandoned' WHERE id = ${id} AND state = 'reserved'`
+}
+
+export interface Reservation {
+  readonly id: string
+  readonly network: NetworkName
+  readonly wallet: string
+  readonly nonce: number
+  readonly intentHash: string
+  readonly runId: string
+  readonly maximumWei: string
+  readonly perTransactionWei: string
+  readonly perDayWei: string
+  readonly createdAt: string
+  readonly blockhashSlot: number | null
+  readonly accountProof: string | null
+  readonly purpose: Purpose
+}
+
+export function reserve(entry: Reservation): Statement {
+  return sql`INSERT INTO fee_native_gas (id, network, fee_wallet, nonce, intent_hash, run_id, maximum_wei, per_transaction_wei, per_day_wei, state, created_at, solana_blockhash_slot, solana_account_proof, purpose) SELECT ${entry.id}, ${entry.network}, ${entry.wallet}, ${entry.nonce}, ${entry.intentHash}, ${entry.runId}, ${entry.maximumWei}, ${entry.perTransactionWei}, ${entry.perDayWei}, 'reserved', ${entry.createdAt}, ${entry.blockhashSlot}, ${entry.accountProof}, ${entry.purpose} WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${entry.network} AND run_id = ${entry.runId} AND expires_at >= ${entry.createdAt})`
+}
+
+export interface Evaluation {
+  readonly id: string
+  readonly runId: string
+  readonly network: NetworkName
+  readonly live: boolean
+  readonly wallet: string
+  readonly token: string
+  readonly targetToken: string
+  readonly amountIn: string
+  readonly route: RouteName | null
+  readonly quoteAmountOut: string | null
+  readonly minAmountOut: string
+  readonly quoteValueMicro: number | null
+  readonly priceImpactBps: number | null
+  readonly quote: string | null
+  readonly tokenBalanceBefore: string
+  readonly targetBalanceBefore: string | null
+  readonly state: StateName
+  readonly reason: string | null
+  readonly createdAt: string
+}
+
+export function evaluation(entry: Evaluation): Statement {
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, quote, token_balance_before, target_balance_before, state, reason, created_at, updated_at) VALUES ('conversion', ${entry.id}, ${entry.runId}, ${entry.network}, ${entry.live ? "live" : "dry_run"}, ${entry.wallet}, ${entry.token}, ${entry.targetToken}, ${entry.amountIn}, ${entry.route}, ${entry.quoteAmountOut}, ${entry.minAmountOut}, ${entry.quoteValueMicro}, ${entry.priceImpactBps}, ${entry.quote}, ${entry.tokenBalanceBefore}, ${entry.targetBalanceBefore}, ${entry.state}, ${entry.reason}, ${entry.createdAt}, ${entry.createdAt})`
+}
+
+export interface Signed {
+  readonly kind: "conversion" | "approval"
+  readonly txId: string
+  readonly rawTx: string
+  readonly nonce: number | null
+  readonly expiresAt: number | null
+  readonly minAmountOut: string | null
+  readonly journal: string
+  readonly gasId: string
+  readonly now: string
+}
+
+export function signed(intent: Evaluation, entry: Signed): Statement {
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, quote, approval_tx_id, tx_id, raw_tx, evm_nonce, expires_at, token_balance_before, target_balance_before, state, created_at, updated_at, submitted_at, native_gas_id) SELECT ${entry.kind}, ${intent.id}, ${intent.runId}, ${intent.network}, 'live', ${intent.wallet}, ${intent.token}, ${intent.targetToken}, ${intent.amountIn}, ${intent.route}, ${intent.quoteAmountOut}, ${entry.minAmountOut}, ${intent.quoteValueMicro}, ${intent.priceImpactBps}, json_set(coalesce(${intent.quote}, '{}'), '$.journal', json(${entry.journal})), ${entry.kind === "approval" ? entry.txId : null}, ${entry.txId}, ${entry.rawTx}, ${entry.nonce}, ${entry.expiresAt}, ${intent.tokenBalanceBefore}, ${intent.targetBalanceBefore}, 'submitted', ${intent.createdAt}, ${entry.now}, ${entry.now}, ${entry.gasId} WHERE EXISTS (SELECT 1 FROM fee_converter_locks WHERE network = ${intent.network} AND run_id = ${intent.runId} AND expires_at >= ${entry.now})`
+}
+
+export interface Claimed {
+  readonly id: string
+  readonly runId: string
+  readonly network: NetworkName
+  readonly wallet: string
+  readonly token: string
+  readonly amountIn: string
+  readonly quoteValueMicro: number
+  readonly vault: string
+  readonly journal: string
+  readonly txId: string
+  readonly rawTx: string
+  readonly nonce: number | null
+  readonly expiresAt: number | null
+  readonly gasId: string
+  readonly now: string
+}
+
+export function claimed(entry: Claimed): Statement {
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, quote_value_micro, quote, tx_id, raw_tx, evm_nonce, expires_at, state, created_at, updated_at, submitted_at, native_gas_id) VALUES ('claim', ${entry.id}, ${entry.runId}, ${entry.network}, 'live', ${entry.wallet}, ${entry.token}, ${entry.token}, ${entry.amountIn}, ${entry.quoteValueMicro}, json_set(${entry.vault}, '$.journal', json(${entry.journal})), ${entry.txId}, ${entry.rawTx}, ${entry.nonce}, ${entry.expiresAt}, 'submitted', ${entry.now}, ${entry.now}, ${entry.now}, ${entry.gasId})`
+}
+
+export function transition(id: string, from: NonEmpty<StateName>, state: StateName, reason: string | null, now: string): Statement {
+  return sql`UPDATE fee_conversions SET state = ${state}, reason = ${reason}, updated_at = ${now} WHERE id = ${id} AND state IN ${list(from)}`
+}
+
+export interface Finalized {
+  readonly id: string
+  readonly amountOut: string
+  readonly reason: string | null
+  readonly landedTxId: string
+  readonly targetBalanceAfter: string | null
+  readonly now: string
+}
+
+export function finalized(entry: Finalized): Statement {
+  return sql`UPDATE fee_conversions SET state = 'finalized', amount_out = ${entry.amountOut}, reason = ${entry.reason}, landed_tx_id = ${entry.landedTxId}, target_balance_after = ${entry.targetBalanceAfter}, finalized_at = ${entry.now}, updated_at = ${entry.now} WHERE id = ${entry.id} AND state IN ('submitted', 'unknown')`
+}
+
+export function reverted(id: string, reason: string, landedTxId: string, now: string): Statement {
+  return sql`UPDATE fee_conversions SET state = 'failed', reason = ${reason}, landed_tx_id = ${landedTxId}, updated_at = ${now} WHERE id = ${id} AND state IN ('submitted', 'unknown')`
+}
+
+export interface Settlement {
+  readonly ids: ReadonlyArray<string>
+  readonly landedTxId: string
+  readonly actualWei: string
+  readonly day: string
+  readonly blockHash: string
+}
+
+export function settled(entry: Settlement): ReadonlyArray<Statement> {
+  return chunked(entry.ids, (ids) => sql`UPDATE fee_native_gas SET actual_wei = CASE WHEN tx_id = ${entry.landedTxId} THEN ${entry.actualWei} ELSE '0' END, settled_day = ${entry.day}, receipt_block_hash = ${entry.blockHash} WHERE id IN ${list(ids)} AND state = 'signed' AND actual_wei IS NULL`)
+}
+
+export interface Replacement {
+  readonly id: string
+  readonly conversionId: string
+  readonly network: NetworkName
+  readonly attempt: number
+  readonly nonce: number
+  readonly txId: string
+  readonly rawTx: string
+  readonly maxFeePerGas: string
+  readonly maxPriorityFeePerGas: string
+  readonly gasId: string
+  readonly now: string
+}
+
+export function replacement(entry: Replacement): Statement {
+  return sql`INSERT INTO fee_send_replacements (id, conversion_id, network, attempt, evm_nonce, tx_id, raw_tx, max_fee_per_gas, max_priority_fee_per_gas, created_at, native_gas_id) VALUES (${entry.id}, ${entry.conversionId}, ${entry.network}, ${entry.attempt}, ${entry.nonce}, ${entry.txId}, ${entry.rawTx}, ${entry.maxFeePerGas}, ${entry.maxPriorityFeePerGas}, ${entry.now}, ${entry.gasId})`
+}
+
+export interface ScanStep {
+  readonly txId: string
+  readonly operator: string
+  readonly revision: number
+  readonly wallet: string
+  readonly runId: string
+  readonly scan: string
+  readonly page: string
+  readonly now: string
+}
+
+export function scanStep(entry: ScanStep): Statement {
+  return sql`INSERT INTO fee_solana_expiry_scan_steps (tx_id, operator, prior_revision, revision, fee_wallet, run_id, scan_json, page_json, observed_at) VALUES (${entry.txId}, ${entry.operator}, ${entry.revision - 1}, ${entry.revision}, ${entry.wallet}, ${entry.runId}, ${entry.scan}, ${entry.page}, ${entry.now})`
+}
+
+export interface Proof {
+  readonly txId: string
+  readonly wallet: string
+  readonly runId: string
+  readonly proof: string
+  readonly sha256: string
+  readonly now: string
+}
+
+export function expiryProof(entry: Proof): Statement {
+  return sql`INSERT INTO fee_solana_expiry_proofs (tx_id, fee_wallet, run_id, proof_json, proof_sha256, observed_at) VALUES (${entry.txId}, ${entry.wallet}, ${entry.runId}, ${entry.proof}, ${entry.sha256}, ${entry.now})`
+}

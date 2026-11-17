@@ -1,0 +1,285 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "Telegram stays retired and historical participation awards stay frozen"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
+import { type Statement, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
+import { type Accounts, type Event, apply } from "../../../gen/backend__accounts.effect.vibe"
+import { type DeliveryState, type Enrollment, type SecurityChoice, needsVerifiedVersion } from "../../../gen/backend__email.ts"
+import { type Facts, type Loaded, type Names, accountReads, accountVersion, decodeAccounts, issued, known, named, noFacts, requestKeyOf } from "./codec.vibe"
+
+export schema GitHubAssertion { githubId: string; login: string; nodeId: string }
+
+export schema Intent =
+  | { kind: "signIn"; assertion: GitHubAssertion; reopen: boolean; sessionHash: string }
+  | { kind: "signOut" }
+  | { kind: "revokeSession"; prefix: string }
+  | { kind: "publishMembership"; requestPublic: boolean }
+  | { kind: "close"; confirmation: string }
+  | { kind: "startX"; stateHash: string; browserHash: string; verifier: string; iv: string }
+  | { kind: "claimXCallback"; stateHash: string; browserHash: string }
+  | { kind: "commitX"; stateHash: string; xId: string; username: string; wellFormed: boolean }
+  | { kind: "failX"; stateHash: string }
+  | { kind: "disconnectX" }
+  | { kind: "publishX" }
+  | { kind: "requestEmail"; requestKey: string; address: string; addressKey: string; activity: boolean; security: boolean; verificationId: string; tokenHash: string }
+  | { kind: "markEmailDelivery"; githubId: string; verificationId: string; nextState: "Queued" | "Sending" | "Sent" | "DeliveryUnknown" }
+  | { kind: "verifyEmail"; tokenHash: string; checkedRevision: number; destinationVersion: string }
+  | { kind: "setEmailConsent"; activity: boolean; choice: "KeepSecurity" | "SecurityOn" | "SecurityOff"; suppliedVersion: string; checkedRevision: number }
+  | { kind: "issueUnsubscribe"; githubId: string; tokenHash: string }
+  | { kind: "unsubscribe"; tokenHash: string }
+  | { kind: "purgeExpired" }
+
+export type Sender =
+  | { readonly kind: "session"; readonly hash: string }
+  | { readonly kind: "service"; readonly id: number }
+
+export error EmailUnavailable
+
+export interface Settled {
+  readonly event: Event
+  readonly next: Accounts
+  readonly before: Loaded
+}
+
+const sessionSeconds = 3600
+const verificationSeconds = 1800
+const flowSeconds = 600
+const hourSeconds = 3600
+
+const storedDelivery: Readonly<Record<DeliveryState, string>> = { Queued: "queued", Sending: "sending", Sent: "sent", DeliveryUnknown: "unknown" }
+
+function flag(value: boolean) {
+  return value ? 1 : 0
+}
+
+function asciiFolded(text: string) {
+  return text.replace(/[A-Z]/gu, (letter) => letter.toLowerCase())
+}
+
+effect function scopeOf(intent: Intent, sender: Sender, now: number) {
+  const sessionHash = sender.kind === "session" ? sender.hash : ""
+  const nowIso = try isoAt(now * 1000)
+  const caller = sql`SELECT actor_id FROM points_sessions WHERE token_hash = ${sessionHash}`
+  switch (intent.kind) {
+    case "signIn": return sql`SELECT actor_id FROM points_members WHERE github_id = ${intent.assertion.githubId} OR actor_id = ${intent.assertion.nodeId}`
+    case "claimXCallback":
+    case "failX": return sql`SELECT actor_id FROM points_x_flows WHERE state_hash = ${intent.stateHash}`
+    case "commitX": return sql`SELECT actor_id FROM points_x_flows WHERE state_hash = ${intent.stateHash} UNION SELECT actor_id FROM points_x_claims WHERE x_id = ${intent.xId}`
+    case "requestEmail": return sql`${caller} UNION SELECT m.actor_id FROM points_members m JOIN notification_email_verifications v ON v.github_id = m.github_id WHERE v.address_key = ${intent.addressKey} AND v.created_at > ${try isoAt((now - hourSeconds) * 1000)}`
+    case "markEmailDelivery":
+    case "issueUnsubscribe": return sql`SELECT actor_id FROM points_members WHERE github_id = ${intent.githubId}`
+    case "unsubscribe": return sql`SELECT actor_id FROM points_members WHERE github_id IN (SELECT github_id FROM notification_email_destinations WHERE destination_version = (SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash = ${intent.tokenHash}) UNION SELECT github_id FROM notification_email_preferences WHERE destination_version = (SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash = ${intent.tokenHash}))`
+    case "purgeExpired": return sql`SELECT actor_id FROM points_sessions WHERE expires_at <= ${nowIso} UNION SELECT actor_id FROM points_x_flows WHERE expires_at <= ${nowIso}`
+    default: return caller
+  }
+}
+
+function accounts(scope: Statement, now: number, facts: Facts): Aggregate<Loaded, unknown, never> {
+  return { name: "accounts", version: accountVersion(scope), reads: accountReads(scope), decode: decodeAccounts(now, facts) }
+}
+
+function senderOf(sender: Sender, loaded: Loaded) {
+  if (sender.kind === "service") return sender.id
+  const id = known(loaded.names, "session", sender.hash)
+  return loaded.state.sessions.some((session) => session.id === id) ? id : 0
+}
+
+function senderActor(state: Accounts, by: number) {
+  return state.sessions.find((session) => session.id === by)?.actor ?? 0
+}
+
+function senderMember(loaded: Loaded, by: number) {
+  const actor = senderActor(loaded.state, by)
+  return loaded.members.find((row) => known(loaded.names, "actor", row.actor_id) === actor && actor > 0)
+}
+
+function senderEnrollment(state: Accounts, by: number): Enrollment | undefined {
+  const actor = senderActor(state, by)
+  return state.members.find((member) => member.actor === actor && actor > 0)?.email
+}
+
+function versionText(names: Names, version: number, supplied: string) {
+  return version === 0 ? "" : named(names, "version", version) ?? supplied
+}
+
+function eventOf(intent: Intent, loaded: Loaded, by: number): Event {
+  const { state, names } = loaded
+  const member = senderMember(loaded, by)
+  switch (intent.kind) {
+    case "signIn": {
+      const prior = loaded.members.find((row) => row.github_id === intent.assertion.githubId)
+      if (prior === undefined || prior.closed_at === null) return { type: "signIn", token: 1 }
+      return intent.reopen ? { type: "reopen", token: 1 } : { type: "refuseClosedSignIn", token: 1 }
+    }
+    case "signOut": return { type: "signOut" }
+    case "revokeSession": {
+      const owner = member === undefined ? 0 : known(names, "actor", member.actor_id)
+      const found = state.sessions.find((session) => intent.prefix !== "" && session.actor === owner && (named(names, "session", session.id) ?? "").startsWith(intent.prefix))
+      return { type: "revokeSession", target: found?.id ?? state.lastSession + 1 }
+    }
+    case "publishMembership": return { type: "publishMembership", requestPublic: intent.requestPublic }
+    case "close": {
+      const login = member?.login ?? ""
+      return { type: "close", confirmation: login !== "" && asciiFolded(intent.confirmation) === asciiFolded(login) ? login : intent.confirmation }
+    }
+    case "startX": return { type: "startX" }
+    case "claimXCallback": {
+      const flow = loaded.flows.find((row) => row.state_hash === intent.stateHash)
+      const flowId = flow === undefined ? state.xRegistry.lastFlow + 1 : known(names, "xFlow", flow.state_hash)
+      return { type: "claimXCallback", flowId, browserCap: flow !== undefined && flow.browser_hash === intent.browserHash ? flowId : 0 }
+    }
+    case "commitX": return { type: "commitX", flowId: known(names, "xFlow", intent.stateHash) || state.xRegistry.lastFlow + 1, xIdentity: { xId: intent.xId, username: intent.username, wellFormed: intent.wellFormed } }
+    case "failX": return { type: "failX", flowId: known(names, "xFlow", intent.stateHash) || state.xRegistry.lastFlow + 1 }
+    case "disconnectX": return { type: "disconnectX" }
+    case "publishX": return { type: "publishX" }
+    case "requestEmail": {
+      const requestKey = intent.requestKey === "" || member === undefined ? 0 : known(names, "requestKey", requestKeyOf(member.github_id, intent.requestKey)) || issued(names, "requestKey") + 1
+      return { type: "requestEmail", requestKey, address: intent.address, addressKey: intent.addressKey, activity: intent.activity, security: intent.security }
+    }
+    case "markEmailDelivery": return { type: "markEmailDelivery", githubId: known(names, "github", intent.githubId), id: known(names, "verification", intent.verificationId) || state.lastEmailId + 1, nextState: intent.nextState }
+    case "verifyEmail": {
+      const verification = loaded.verifications.find((row) => row.token_hash === intent.tokenHash && row.github_id === member?.github_id)
+      return { type: "verifyEmail", token: verification === undefined ? state.lastEmailId + 1 : known(names, "verification", verification.id), checkedRevision: intent.checkedRevision }
+    }
+    case "setEmailConsent": {
+      const suppliedVersion = intent.suppliedVersion === "" ? 0 : known(names, "version", intent.suppliedVersion) || state.lastVersion + 1
+      return { type: "setEmailConsent", activity: intent.activity, choice: intent.choice satisfies SecurityChoice, suppliedVersion, checkedRevision: intent.checkedRevision }
+    }
+    case "issueUnsubscribe": return { type: "issueUnsubscribe", githubId: known(names, "github", intent.githubId) }
+    case "unsubscribe": return { type: "unsubscribe", token: known(names, "unsubscribe", intent.tokenHash) || state.lastUnsubscribe + 1 }
+    case "purgeExpired": return { type: "purgeExpired" }
+  }
+}
+
+effect function writesOf(intent: Intent, event: Event, loaded: Loaded, next: Accounts, by: number, now: number) {
+  const at = try isoAt(now * 1000)
+  const member = senderMember(loaded, by)
+  const actor = member?.actor_id ?? ""
+  const githubId = member?.github_id ?? ""
+  switch (intent.kind) {
+    case "signIn": {
+      if (event.type === "refuseClosedSignIn") return []
+      const prior = loaded.members.find((row) => row.github_id === intent.assertion.githubId)
+      const subject = prior?.actor_id ?? intent.assertion.nodeId
+      return [
+        prior === undefined
+          ? sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public) VALUES (${subject}, ${intent.assertion.githubId}, ${intent.assertion.login}, ${at}, 1)`
+          : sql`UPDATE points_members SET login = ${intent.assertion.login}, public = 1, closed_at = NULL WHERE actor_id = ${subject} AND github_id = ${intent.assertion.githubId}`,
+        sql`UPDATE points_x_links SET public = 1 WHERE actor_id = ${subject}`,
+        sql`DELETE FROM points_sessions WHERE expires_at <= ${at}`,
+        sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${intent.sessionHash}, ${subject}, ${try isoAt((now + sessionSeconds) * 1000)})`,
+      ]
+    }
+    case "signOut": return [sql`DELETE FROM points_sessions WHERE token_hash = ${named(loaded.names, "session", by) ?? ""}`]
+    case "revokeSession": {
+      const target = event.type === "revokeSession" ? named(loaded.names, "session", event.target) : undefined
+      return target === undefined ? [] : [sql`DELETE FROM points_sessions WHERE actor_id = ${actor} AND token_hash = ${target}`]
+    }
+    case "publishMembership": return [sql`UPDATE points_members SET public = 1 WHERE actor_id = ${actor}`]
+    case "close": return [
+      sql`UPDATE points_members SET closed_at = ${at}, public = 0 WHERE actor_id = ${actor} AND closed_at IS NULL`,
+      sql`DELETE FROM points_x_flows WHERE actor_id = ${actor}`,
+      sql`DELETE FROM points_x_links WHERE actor_id = ${actor}`,
+      sql`DELETE FROM points_telegram_flows WHERE actor_id = ${actor}`,
+      sql`DELETE FROM points_telegram_links WHERE actor_id = ${actor}`,
+      sql`UPDATE notification_email_preferences SET enabled = 0, security_enabled = 0, destination_version = '', updated_at = ${at} WHERE github_id = ${githubId}`,
+      sql`UPDATE notification_email_verifications SET cancelled_at = ${at} WHERE github_id = ${githubId} AND consumed_at IS NULL AND cancelled_at IS NULL`,
+      sql`DELETE FROM points_sessions WHERE actor_id = ${actor}`,
+    ]
+    case "startX": return [
+      sql`DELETE FROM points_x_flows WHERE actor_id = ${actor} OR expires_at <= ${at}`,
+      sql`INSERT INTO points_x_flows (state_hash, browser_hash, session_hash, actor_id, verifier, iv, expires_at, public, status) VALUES (${intent.stateHash}, ${intent.browserHash}, ${named(loaded.names, "session", by) ?? ""}, ${actor}, ${intent.verifier}, ${intent.iv}, ${try isoAt((now + flowSeconds) * 1000)}, 1, 'pending')`,
+    ]
+    case "claimXCallback": return [sql`UPDATE points_x_flows SET status = 'processing' WHERE state_hash = ${intent.stateHash} AND status = 'pending'`]
+    case "commitX": {
+      const owner = loaded.flows.find((row) => row.state_hash === intent.stateHash)?.actor_id ?? ""
+      const claimed = loaded.state.xRegistry.claims.some((claim) => claim.xId === intent.xId)
+      return [
+        ...claimed ? [] : [sql`INSERT INTO points_x_claims (x_id, actor_id, claimed_at) VALUES (${intent.xId}, ${owner}, ${at})`],
+        sql`INSERT INTO points_x_links (actor_id, x_id, username, verified_at, public) VALUES (${owner}, ${intent.xId}, ${intent.username}, ${at}, 1) ON CONFLICT(actor_id) DO UPDATE SET x_id = excluded.x_id, username = excluded.username, verified_at = excluded.verified_at, public = excluded.public`,
+        sql`DELETE FROM points_x_flows WHERE state_hash = ${intent.stateHash}`,
+      ]
+    }
+    case "failX": return [sql`DELETE FROM points_x_flows WHERE state_hash = ${intent.stateHash}`]
+    case "disconnectX": return [sql`DELETE FROM points_x_links WHERE actor_id = ${actor}`, sql`DELETE FROM points_x_flows WHERE actor_id = ${actor}`]
+    case "publishX": return [sql`UPDATE points_x_links SET public = 1 WHERE actor_id = ${actor}`]
+    case "requestEmail": return [
+      sql`UPDATE notification_email_verifications SET cancelled_at = ${at} WHERE github_id = ${githubId} AND consumed_at IS NULL AND cancelled_at IS NULL`,
+      sql`INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at) VALUES (${intent.verificationId}, ${githubId}, ${intent.requestKey}, ${intent.address}, ${intent.addressKey}, ${intent.tokenHash}, ${flag(intent.activity)}, ${flag(intent.security)}, 'queued', ${at}, ${try isoAt((now + verificationSeconds) * 1000)})`,
+    ]
+    case "markEmailDelivery": return [sql`UPDATE notification_email_verifications SET state = ${storedDelivery[intent.nextState]} WHERE id = ${intent.verificationId} AND github_id = ${intent.githubId}`]
+    case "verifyEmail": {
+      const enrollment = senderEnrollment(next, by)
+      const verification = event.type === "verifyEmail" ? loaded.verifications.find((row) => row.id === named(loaded.names, "verification", event.token)) : undefined
+      if (enrollment === undefined || verification === undefined) return []
+      const destinationVersion = versionText(loaded.names, enrollment.destination.version, intent.destinationVersion)
+      const { preference } = enrollment
+      return [
+        sql`UPDATE notification_email_verifications SET consumed_at = ${at}, destination_version = ${destinationVersion} WHERE id = ${verification.id}`,
+        sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${githubId}, ${enrollment.destination.address}, ${destinationVersion}, ${at}) ON CONFLICT(github_id) DO UPDATE SET email = excluded.email, destination_version = excluded.destination_version, verified_at = excluded.verified_at`,
+        sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${githubId}, ${flag(preference.activity)}, ${flag(preference.security)}, ${versionText(loaded.names, preference.version, intent.destinationVersion)}, ${at}) ON CONFLICT(github_id) DO UPDATE SET enabled = excluded.enabled, security_enabled = excluded.security_enabled, destination_version = excluded.destination_version, updated_at = excluded.updated_at`,
+      ]
+    }
+    case "setEmailConsent": {
+      const preference = senderEnrollment(next, by)?.preference
+      if (preference === undefined) return []
+      const security = intent.choice === "KeepSecurity" ? null : flag(preference.security)
+      return [
+        sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${githubId}, ${flag(preference.activity)}, ${security}, ${versionText(loaded.names, preference.version, intent.suppliedVersion)}, ${at})
+          ON CONFLICT(github_id) DO UPDATE SET enabled = excluded.enabled,
+            security_enabled = COALESCE(excluded.security_enabled, notification_email_preferences.security_enabled),
+            destination_version = CASE WHEN excluded.destination_version = '' THEN notification_email_preferences.destination_version ELSE excluded.destination_version END,
+            updated_at = excluded.updated_at`,
+      ]
+    }
+    case "issueUnsubscribe": {
+      const destination = loaded.destinations.find((row) => row.github_id === intent.githubId)
+      return destination === undefined ? [] : [sql`INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) VALUES (${intent.tokenHash}, ${destination.destination_version}, ${at}) ON CONFLICT(token_hash) DO NOTHING`]
+    }
+    case "unsubscribe": {
+      const holder = event.type === "unsubscribe" ? next.members.find((candidate) => candidate.email.unsubscribeTokens.some((token) => token.token === event.token)) : undefined
+      const holderGithub = holder === undefined ? undefined : named(loaded.names, "github", holder.githubId)
+      return holder === undefined || holderGithub === undefined ? [] : [sql`UPDATE notification_email_preferences SET enabled = ${flag(holder.email.preference.activity)}, security_enabled = ${flag(holder.email.preference.security)}, updated_at = ${at} WHERE github_id = ${holderGithub}`]
+    }
+    case "purgeExpired": return [sql`DELETE FROM points_sessions WHERE expires_at <= ${at}`, sql`DELETE FROM points_x_flows WHERE expires_at <= ${at}`]
+  }
+}
+
+function eligibilityUnread(loaded: Loaded, event: Event, by: number, facts: Facts) {
+  if (event.type !== "setEmailConsent" || event.suppliedVersion === 0) return false
+  const enrollment = senderEnrollment(loaded.state, by)
+  const githubId = senderMember(loaded, by)?.github_id
+  return enrollment !== undefined && enrollment.destination.version === 0 && facts.pilot?.githubId !== githubId
+    && needsVerifiedVersion(enrollment, event.activity, event.choice, event.suppliedVersion)
+}
+
+effect function decide(loaded: Loaded, intent: Intent, sender: Sender, facts: Facts, now: number) {
+  const by = senderOf(sender, loaded)
+  const event = eventOf(intent, loaded, by)
+  if (eligibilityUnread(loaded, event, by, facts)) throw new EmailUnavailable()
+  const next = try apply(loaded.state, event, by)
+  if (intent.kind === "issueUnsubscribe" && known(loaded.names, "unsubscribe", intent.tokenHash) > 0) {
+    return { value: { event, next: loaded.state, before: loaded } satisfies Settled, writes: [] } satisfies Decision<Settled>
+  }
+  return { value: { event, next, before: loaded } satisfies Settled, writes: try writesOf(intent, event, loaded, next, by, now) } satisfies Decision<Settled>
+}
+
+export effect function send(intent: Intent, sender: Sender, facts: Facts = noFacts) {
+  const now = try nowSeconds()
+  const scope = try scopeOf(intent, sender, now)
+  const supplied = intent.kind === "signIn" ? { ...facts, assertion: intent.assertion } : facts
+  return try update(accounts(scope, now, supplied), (loaded) => decide(loaded, intent, sender, supplied, now))
+}
+
+export effect function receive(input: unknown, sender: Sender, facts: Facts = noFacts) {
+  return try send(try Schema.decodeUnknownEffect(Intent)(input), sender, facts)
+}
+
+export effect function account(sessionHash: string, facts: Facts = noFacts) {
+  const now = try nowSeconds()
+  return (try load(accounts(sql`SELECT actor_id FROM points_sessions WHERE token_hash = ${sessionHash}`, now, facts))).state.state
+}
+
+export effect function everyAccount(facts: Facts = noFacts) {
+  const now = try nowSeconds()
+  return (try load(accounts(sql`SELECT actor_id FROM points_members`, now, facts))).state.state
+}

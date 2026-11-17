@@ -1,0 +1,43 @@
+// spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "A reserved upload is eventually stored or failed, and a stored one attached or failed"
+import type { R2Bucket } from "@repo/platform/bindings"
+import { AlreadyStored, type Bucket, StorageFailure, bucket } from "@repo/platform/r2"
+import type { TraceContentType } from "./codec.vibe"
+
+export interface StoredTrace {
+  readonly digest: string
+  readonly size: number
+  readonly contentType: TraceContentType
+}
+
+export service TraceObjects {
+  store(trace: StoredTrace, bytes: Uint8Array): boolean!!
+}
+
+export function objectKey(digest: string): string {
+  return `traces/sha256/${digest.slice(0, 2)}/${digest}`
+}
+
+effect function kept(objects: Bucket, key: string, trace: StoredTrace) {
+  const verified = objects.getVerified(key, trace.digest, trace.size) catch () => undefined
+  return verified !== undefined
+}
+
+effect function storeOnce(objects: Bucket, trace: StoredTrace, bytes: Uint8Array) {
+  if (bytes.length !== trace.size) return false
+  const key = objectKey(trace.digest)
+  const written = Effect.map(objects.put(key, bytes, { sha256: trace.digest, contentType: trace.contentType, once: true }), (stored) => stored.size === trace.size)
+  return written catch effect (error) => match (error) {
+    when StorageFailure: false;
+    when AlreadyStored: try kept(objects, key, trace);
+  }
+}
+
+export function traceObjects(binding: R2Bucket) {
+  return Layer.effect(TraceObjects, effect {
+    const crypto = try Experimental.Crypto.Crypto
+    const objects = bucket(binding)
+    return {
+      store: (trace, bytes) => provideService(storeOnce(objects, trace, bytes), Experimental.Crypto.Crypto, crypto),
+    } satisfies TraceObjects.Shape
+  })
+}

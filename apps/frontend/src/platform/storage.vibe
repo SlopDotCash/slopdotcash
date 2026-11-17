@@ -1,0 +1,55 @@
+// spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"; spec/frontend/drafts.md, "Editing keeps storage failures visible and invalidates the reviewed content"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { type StorageArea, webStorage } from "./webStorage.ts"
+
+export type { StorageArea }
+
+export interface BrowserStore {
+  readonly area: StorageArea
+  readonly durable: boolean
+  readonly values: KeyValueStore.KeyValueStore
+}
+
+export service SessionStore: BrowserStore {}
+export service LocalStore: BrowserStore {}
+
+export interface StorageKey {
+  readonly area: StorageArea
+  readonly key: string
+}
+
+export const storageKeys = {
+  localSignIn: { area: "session", key: "slop-local-signin" },
+  reportCompose: { area: "session", key: "slop-report-compose:" },
+  intakeDraft: { area: "session", key: "slop-intake-draft:" },
+  emailAction: { area: "session", key: "slop:email-action:v1" },
+  adminProject: { area: "session", key: "slop:admin-project:" },
+  projectDraft: { area: "local", key: "slop:project-draft:v3:" },
+  projectDraftTab: { area: "session", key: "slop:project-draft:v3:" },
+  projectProposal: { area: "local", key: "slop:project-proposal:v1" },
+  projectProposalStep: { area: "local", key: "slop:project-proposal:v1:step" },
+  projectProposalStepV2: { area: "local", key: "slop:project-proposal:v1:step:v2" },
+  projectReferrer: { area: "local", key: "slop:project-referrer:v1" },
+  projectUpdate: { area: "local", key: "slop:project-update:v2:" },
+  vaultSetup: { area: "session", key: "slop:vault-setup:v1:" },
+  vaultAction: { area: "session", key: "slop:vault-action:v1:" },
+  vaultMonthly: { area: "session", key: "slop:vault-monthly:v1:" },
+  monthlyRelease: { area: "session", key: "slop:monthly-release:v1:" },
+  awardCommitment: { area: "session", key: "slop:award-commitment:v2:" },
+  bountySend: { area: "session", key: "slop:bounty-send:v1:" },
+  bountySolana: { area: "session", key: "slop:bounty-solana:v1:" },
+  bountyHistory: { area: "session", key: "slop:bounty-history:v1:" },
+} as const satisfies Readonly<Record<string, StorageKey>>
+
+export effect function storeOver(area: StorageArea, storage: Storage | undefined) {
+  const backing = storage === undefined ? KeyValueStore.layerMemory : KeyValueStore.layerStorage(() => storage)
+  provide backing {
+    return { area, durable: storage !== undefined, values: try KeyValueStore.KeyValueStore } satisfies BrowserStore
+  }
+}
+
+export const sessionStore = Layer.effect(SessionStore, effect { return try storeOver("session", webStorage("session")) })
+export const localStore = Layer.effect(LocalStore, effect { return try storeOver("local", webStorage("local")) })
+
+export const sessionValues = Layer.effect(KeyValueStore.KeyValueStore, effect { return (try SessionStore).values })
+export const localValues = Layer.effect(KeyValueStore.KeyValueStore, effect { return (try LocalStore).values })

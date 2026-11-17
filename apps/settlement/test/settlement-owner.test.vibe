@@ -1,0 +1,485 @@
+import { assert, layer } from "@effect/vitest"
+import { ed25519 } from "@noble/curves/ed25519.js"
+import { hexToBytes } from "@noble/hashes/utils.js"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { Request as WebRequest } from "miniflare"
+import { privateKeyToAccount } from "viem/accounts"
+import type { D1Database, ExecutionContext } from "@repo/platform/bindings"
+import { type Hex, evmRpc } from "@repo/platform/chain/evm"
+import { type Address, type Blockhash, SYSTEM_PROGRAM, TOKEN_PROGRAM, SolanaRpc, base64Decode, solanaRpc } from "@repo/platform/chain/solana"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated, outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { anvil } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { worker } from "@repo/platform/worker"
+import { Authority, type Permission, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import type { ReviewFacts } from "../gen/settlement__ownerTransactions.effect.vibe"
+import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { type MonthlyEntry, type MonthlyReservation, type SumTree, SOURCE_SEQUENCE_CALL, commitMonthlyLeafCalldata, decodeMonthlyReserve, monthlyReserveCall, monthlyRootCall, reserveMonthlyCalldata, reserveStruct, sumTree } from "../src/chain/evm/monthlyRoot.ts"
+import { walletTypedData } from "../src/chain/evm/typedData.ts"
+import { type U64, concat, digestBytes, i64, i64le, u64, u64le } from "../src/chain/solana/bytes.ts"
+import { anchorData, meta } from "../src/chain/solana/instructions.ts"
+import { PURPOSE_BYTE, configAddress, keyBytes, programDataAddress, projectAddress, vaultAddress } from "../src/chain/solana/pda.ts"
+import { type Instruction, compileLegacy, unsignedTransaction, withSignature } from "../src/chain/solana/transactions.ts"
+import type { NetworkKey } from "../src/kernels/networks.ts"
+import { paymentNetworks } from "../src/owner/networks.vibe"
+import { type FundingOperation, fundingInstructions, registryProjectDigest } from "../src/owner/ownerInstructions.ts"
+import { ownerRoutes } from "../src/owner/routes.vibe"
+import { type VerifiedDeployment, finalizedFunds, verifiedDeployment } from "../src/owner/solanaDeployment.vibe"
+import { type FundingIntent, checkFunding, reviewFunding } from "../src/owner/solanaFunding.vibe"
+import { type ApprovalRequest, type OwnerReleaseRequest, ReleaseApprover, checkRelease, prepareRelease } from "../src/reserveRelease/release.vibe"
+import { type RegistryManifest, RegistryManifests, registryDeployments } from "../src/vault/deployments.vibe"
+import type { SolanaDeployment } from "../src/vault/policy.vibe"
+import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
+import { type Deployment, escrowDeployment } from "./support/solana/escrow.ts"
+import { type Keypair, submit, submitWire } from "./support/solana/program.ts"
+
+service Escrow {
+  readonly deployment: Deployment
+}
+
+const Started = Layer.effect(Escrow, effect {
+  const deployment = try acquireRelease(promise(() => escrowDeployment()), (started) => promise(() => started.close()))
+  return { deployment }
+})
+
+const capture = { revision: 1, snapshotDigest: "" }
+const depositFacts: ReviewFacts = { steward: false, repositoryAuthority: false, revision: 1, restricted: false, networkServed: true, snapshotDigest: "", obligationFunded: false }
+const ownerFacts: ReviewFacts = { ...depositFacts, steward: true, repositoryAuthority: true }
+const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111" as Address
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function amount(value: bigint) {
+  const parsed = u64(value)
+  if (parsed === undefined) return try die(new Error(`${value} is outside u64`))
+  return parsed
+}
+
+effect function opened(projectId: string) {
+  const { deployment } = try Escrow
+  const { chain } = deployment
+  const owner = chain.holder
+  const noDelay = i64(0n)
+  if (noDelay === undefined) return try die(new Error("zero is outside i64"))
+  const digest = registryProjectDigest(projectId)
+  const project = projectAddress(chain.program, owner.address, digest, "Ordinary")
+  const vault = vaultAddress(chain.program, project)
+  const initialize: Instruction = {
+    program: chain.program,
+    accounts: [meta(owner.address, true, true), meta(project, true), meta(chain.mints.classic, false), meta(vault, true), meta(TOKEN_PROGRAM, false), meta(SYSTEM_PROGRAM, false), meta(configAddress(chain.program), false)],
+    data: anchorData("initialize", digestBytes(digest), digestBytes(deployment.network), keyBytes(deployment.identity.address), keyBytes(deployment.feeRecipient.address), i64le(noDelay), i64le(noDelay), Uint8Array.of(PURPOSE_BYTE.Ordinary)),
+  }
+  const created = try promise(() => submit(chain, owner, [initialize]))
+  const programData = try (try SolanaRpc).account(programDataAddress(chain.program), "finalized")
+  if (programData === undefined) return try die(new Error("program data missing"))
+  const record: SolanaDeployment = {
+    projectId,
+    scope: "ordinary",
+    network: "solana-devnet",
+    vault,
+    asset: chain.mints.classic,
+    owner: owner.address,
+    identityAuthority: deployment.identity.address,
+    feeRecipient: deployment.feeRecipient.address,
+    deploymentTransaction: created,
+    sourceCommit: "0".repeat(40),
+    codeSha256: try sha256Hex(programData.data.slice(45)),
+    bindingDelaySeconds: "0",
+    family: "solana",
+    chain: "solana",
+    genesisHash: chain.validator.genesis,
+    programId: chain.program,
+    upgradeAuthority: chain.upgradeAuthority.address,
+    projectPda: project,
+    networkDomain: deployment.network,
+    rotationAuthority: deployment.rotationAuthority.address,
+    rotationDelaySeconds: "0",
+  }
+  return { verified: try verifiedDeployment(record), owner }
+}
+
+effect function signed(wallet: Keypair, wire: Uint8Array) {
+  const signature = try Effect.try(() => ed25519.sign(wire.slice(65), wallet.seed))
+  const filled = withSignature(wire, wallet.address, signature)
+  if (filled === undefined) return try die(new Error("the signature did not encode"))
+  const { deployment } = try Escrow
+  return try promise(() => submitWire(deployment.chain, filled))
+}
+
+effect function sentPlan(wallet: Keypair, transaction: string) {
+  const wire = base64Decode(transaction)
+  if (wire === undefined) return try die(new Error("the plan is not base64"))
+  return try signed(wallet, wire)
+}
+
+effect function sentOwn(wallet: Keypair, blockhash: Blockhash, instructions: ReadonlyArray<Instruction>) {
+  const compiled = compileLegacy({ payer: wallet.address, blockhash, instructions })
+  const wire = compiled.kind === "compiled" ? unsignedTransaction(compiled.message) : undefined
+  if (wire === undefined) return try die(new Error("the wallet transaction did not compile"))
+  return try signed(wallet, wire)
+}
+
+function intentOf(operation: FundingOperation, wallet: Keypair, gross: U64): FundingIntent {
+  return { operation, wallet: wallet.address, gross }
+}
+
+function instructionsOf(verified: VerifiedDeployment, intent: FundingIntent): ReadonlyArray<Instruction> {
+  return fundingInstructions({ program: verified.program, project: verified.project, owner: verified.owner, asset: verified.asset, operation: intent.operation, wallet: intent.wallet, gross: intent.gross })
+}
+
+effect function refusalOf<A, E extends { readonly _tag: string }, R>(run: A!E!R) {
+  return run catch (error) => "message" in error && typeof error.message === "string" && error.message !== "" ? `${error._tag}: ${error.message}` : error._tag
+}
+
+effect function onChain<A, E, R>(run: A!E!R) {
+  const { deployment } = try Escrow
+  const { validator } = deployment.chain
+  provide solanaRpc({ urls: Redacted.make([validator.url]), genesis: validator.genesis }) {
+    return try run
+  }
+}
+
+const mismatch = "WalletActionRefused: This transaction does not match the pending wallet action. Check its signature in your wallet."
+
+layer(Layer.mergeAll(Started, outbound, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('A Solana deposit and a withdrawal are reviewed into fixed plans, signed in the wallet and checked exactly once at finality (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+    const { verified, owner } = try opened("owner-funding-journey")
+    const deposit = intentOf("deposit", owner, try amount(1_000_000n))
+    const depositPlan = try reviewFunding(verified, deposit, capture, depositFacts)
+    const depositSent = try sentPlan(owner, depositPlan.transaction)
+    const deposited = try checkFunding(verified, deposit, depositPlan.blockhash, depositSent, capture, depositFacts)
+    const recheck = try checkFunding(verified, deposit, depositPlan.blockhash, depositSent, capture, depositFacts)
+    const withdrawal = intentOf("withdraw", owner, try amount(500_000n))
+    const strangerReview = try refusalOf(reviewFunding(verified, withdrawal, capture, { ...ownerFacts, steward: false }))
+    const restrictedReview = try refusalOf(reviewFunding(verified, withdrawal, capture, { ...ownerFacts, restricted: true }))
+    const withdrawalPlan = try reviewFunding(verified, withdrawal, capture, ownerFacts)
+    const tooMuch = try refusalOf(reviewFunding(verified, intentOf("withdraw", owner, try amount(600_000n)), capture, ownerFacts))
+    const withdrawalSent = try sentPlan(owner, withdrawalPlan.transaction)
+    const strangerCheck = try refusalOf(checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, { ...ownerFacts, steward: false }))
+    const withdrawn = try checkFunding(verified, withdrawal, withdrawalPlan.blockhash, withdrawalSent, capture, ownerFacts)
+    const funds = try finalizedFunds(verified)
+    try same({
+      deposit: { gross: depositPlan.gross, fee: depositPlan.fee, net: depositPlan.net, freeBefore: depositPlan.freeBalance, tokenProgram: depositPlan.tokenProgram, decimals: depositPlan.decimals },
+      checks: [deposited, recheck, withdrawn],
+      withdrawal: { gross: withdrawalPlan.gross, fee: withdrawalPlan.fee, net: withdrawalPlan.net, freeBefore: withdrawalPlan.freeBalance },
+      refused: { stranger: strangerReview, restricted: restrictedReview, tooMuch, strangerCheck },
+      free: funds.free,
+    }, {
+      deposit: { gross: "1000000", fee: "0", net: "1000000", freeBefore: "0", tokenProgram: TOKEN_PROGRAM, decimals: 6 },
+      checks: ["finalized", "finalized", "finalized"],
+      withdrawal: { gross: "500000", fee: "10000", net: "490000", freeBefore: "1000000" },
+      refused: { stranger: "Rejected", restricted: "Rejected", tooMuch: "WalletActionRefused: The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.", strangerCheck: "Rejected" },
+      free: 500_000n,
+    })
+  }))
+
+  it.effect('A finalized transaction with other signed bytes or an unreviewed instruction before the plan is refused, and only a compute-budget prefix is accepted (spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request")', () => onChain(effect {
+    const { verified, owner } = try opened("owner-funding-refusals")
+    const deposit = intentOf("deposit", owner, try amount(1_000_000n))
+    const plan = try reviewFunding(verified, deposit, capture, depositFacts)
+    const blockhash = plan.blockhash as Blockhash
+    const otherAmount = try sentOwn(owner, blockhash, instructionsOf(verified, intentOf("deposit", owner, try amount(2_000_000n))))
+    const otherBytes = try refusalOf(checkFunding(verified, deposit, plan.blockhash, otherAmount, capture, depositFacts))
+    const price: Instruction = { program: COMPUTE_BUDGET, accounts: [], data: concat(Uint8Array.of(3), u64le(try amount(1n))) }
+    const budgeted = try sentOwn(owner, blockhash, [price, ...instructionsOf(verified, deposit)])
+    const budgetedCheck = try checkFunding(verified, deposit, plan.blockhash, budgeted, capture, depositFacts)
+    const { deployment } = try Escrow
+    const transfer: Instruction = { program: SYSTEM_PROGRAM, accounts: [meta(owner.address, true, true), meta(deployment.feeRecipient.address, true)], data: concat(Uint8Array.of(2, 0, 0, 0), u64le(try amount(1n))) }
+    const prefixed = try sentOwn(owner, blockhash, [transfer, ...instructionsOf(verified, deposit)])
+    const prefixedCheck = try refusalOf(checkFunding(verified, deposit, plan.blockhash, prefixed, capture, depositFacts))
+    const malformedId = try refusalOf(checkFunding(verified, deposit, plan.blockhash, "not-a-signature", capture, depositFacts))
+    try same({ otherBytes, budgetedCheck, prefixedCheck, malformedId }, {
+      otherBytes: mismatch,
+      budgetedCheck: "finalized",
+      prefixedCheck: mismatch,
+      malformedId: "WalletActionRefused: Enter a Solana transaction signature from your wallet.",
+    })
+  }))
+})
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+const steward = "77"
+const repository = { id: "501", nodeId: "R_501", fullName: "owner/release", integrationBranch: "main", aliases: [] }
+
+function viewOf(projectId: string, manifestSha256: string): ProjectView {
+  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: steward, repositories: [repository], closureConsent: false }
+}
+
+function ports(views: ReadonlyArray<ProjectView>) {
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => effect { return views.find((view) => view.projectId === projectId) },
+      byRepository: () => effect { return undefined },
+      byPath: () => effect { return undefined },
+      active: () => effect { return views },
+      fence: () => effect { return sql`SELECT 1` },
+    }),
+    Layer.succeed(Authority, {
+      repository: (read) => effect {
+        const permission: Permission = read.actorGithubId === steward && read.repositoryId === repository.id ? "PermissionVerified" : "PermissionDenied"
+        return { ...read, permission, installation: "Installed" as const }
+      },
+    }),
+    Layer.succeed(Restrictions, {
+      account: () => effect { return { banned: false } },
+      project: () => effect { return { restricted: false } },
+    }),
+  )
+}
+
+const routeOutbound: string[] = []
+const fundingSite = worker({
+  services: (_env: object) => Layer.mergeAll(
+    paymentNetworks({ PAYMENT_NETWORKS: '["solana-devnet"]', PAYMENT_RPC_URLS: '{"solana-devnet":"https://solana-devnet.invalid"}' }),
+    Layer.succeed(RegistryManifests, { current: () => effect { return [] }, project: () => effect { return undefined } }),
+    Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } }),
+    Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+      routeOutbound.push(request.url)
+      return try die(new Error("a refusal before the chain must not call an RPC endpoint"))
+    })),
+    ports([viewOf("route-project", "0".repeat(64))]),
+    webCrypto,
+  ),
+  routes: ownerRoutes,
+})
+
+effect function funding(body: unknown, origin?: string) {
+  const headers: Record<string, string> = origin === undefined ? { "content-type": "application/json" } : { "content-type": "application/json", origin }
+  const request = try orDie(Effect.try(() => new WebRequest("https://slop.test/api/v1/payments/projects/route-project/solana-funding", { method: "POST", headers, body: JSON.stringify(body) })))
+  const response = try promise(() => fundingSite.fetch(request as unknown as globalThis.Request, {}, context))
+  const text = try promise(() => response.text())
+  return { status: response.status, body: try orDie(Effect.try(() => JSON.parse(text) as unknown)) }
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
+  it.effect('The funding route refuses a cross-origin write, an unknown step, an unserved network and an unregistered vault before any chain read (spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan")', () => effect {
+    const action = { step: "review", operation: "deposit", network: "solana-devnet", vault: SYSTEM_PROGRAM, wallet: SYSTEM_PROGRAM, amount: "1" }
+    const answers = [
+      try funding(action),
+      try funding({ ...action, step: "sign" }, "https://slop.test"),
+      try funding({ ...action, network: "base-mainnet" }, "https://slop.test"),
+      try funding({ ...action, network: "solana-testnet" }, "https://slop.test"),
+      try funding(action, "https://slop.test"),
+    ]
+    try same({ answers, routeOutbound }, {
+      answers: [
+        { status: 403, body: { error: "origin_forbidden", message: "" } },
+        { status: 400, body: { error: "invalid_funding_action", message: "" } },
+        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 503, body: { error: "payments_unavailable", message: "" } },
+        { status: 404, body: { error: "funding_vault_not_found", message: "This project has no such vault on a served network." } },
+      ],
+      routeOutbound: [],
+    })
+  })
+})
+
+service Release {
+  readonly escrow: EscrowStack
+  readonly db: D1Database
+  readonly manifests: RegistryManifest[]
+}
+
+interface Month {
+  readonly projectId: string
+  readonly vault: EvmAddress
+  readonly entries: ReadonlyArray<MonthlyEntry>
+  readonly tree: SumTree
+  readonly manifestSha256: string
+}
+
+const windowOpen = 1796346000
+const releaseNetwork: NetworkKey = "base-mainnet"
+const SOURCE_COMMIT = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+
+const ReleaseStarted = Layer.effect(Release, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { PAYMENTS_DB: "owner-release" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "PAYMENTS_DB", migrationsDir))).find((applied) => applied.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed`))
+  const manifests: RegistryManifest[] = []
+  return { escrow, db: try promise(() => database(mf, "PAYMENTS_DB")), manifests }
+})
+
+effect function lower(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) return try die(new Error(`${text} is not an address`))
+  return parsed
+}
+
+effect function codeDigest(at: string) {
+  const { escrow } = try Release
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  if (typeof code !== "string") return try die(new Error("eth_getCode answered no code"))
+  return try sha256Hex(try Effect.try(() => hexToBytes(code.slice(2))))
+}
+
+effect function registered(projectId: string, vault: EvmAddress) {
+  const { escrow, manifests } = try Release
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
+  const factorySlot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${factorySlot.slice(-40)}`
+  const deployment = {
+    network: releaseNetwork, vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar, owner: try lower(escrow.roles.owner.address),
+    identityAuthority: try lower(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, deploymentTransaction: created.at.transaction,
+    sourceCommit: SOURCE_COMMIT, codeSha256: try codeDigest(vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow.factory), registrar: try lower(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try lower(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+    },
+  }
+  const escrowPolicy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] }
+  const manifest = JSON.stringify({ id: projectId, status: "active", escrow: escrowPolicy })
+  manifests.push({ projectId, revision: 3, manifest })
+  return try sha256Hex(manifest)
+}
+
+effect function reservedMonth(projectId: string, first: bigint, fault: bigint) {
+  const { escrow, db } = try Release
+  const owner = try lower(escrow.roles.owner.address)
+  const donor = escrow.roles.donor.address
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(first), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  try promise(() => escrow.fund(vault, 20_000_000n, donor))
+  const entries = entriesFrom(first, [1_000_000n, 2_000_000n])
+  const tree = try Effect.try(() => sumTree(entries))
+  const snapshot = try sha256Hex(`snapshot:${projectId}`)
+  const allocationDigest = bytes32(`0x${snapshot}`)
+  const sequence = decodeUint(try promise(() => escrow.call(vault, SOURCE_SEQUENCE_CALL)), U256_MAX)
+  if (allocationDigest === undefined || sequence === undefined) return try die(new Error("malformed monthly reservation inputs"))
+  const gross = tree.root.total + fault
+  const reservation: MonthlyReservation = { allocationDigest, allocationRoot: tree.root.hash, wholeGross: gross, remainingGross: gross, count: entries.length, sourceSequence: sequence }
+  const typedData = try Effect.try(() => walletTypedData({ chainId: escrow.chainId, vault }, reserveStruct(NOVEMBER_2026, reservation)))
+  const signature = try promise(() => escrow.signTypedData(escrow.roles.authority.address, typedData))
+  const data = try Effect.try(() => reserveMonthlyCalldata(NOVEMBER_2026, reservation, signature))
+  try promise(() => escrow.send(donor, vault, data))
+  const plan = {
+    family: "evm",
+    request: { projectId, period: "2026-11", network: releaseNetwork, snapshotSha256: snapshot },
+    deployment: { network: releaseNetwork, vault },
+    entries: entries.map((entry) => ({ githubUserId: entry.actor.toString(), grossMicro: entry.gross.toString(), sourceDigest: entry.sourceDigest })),
+    evmReservation: { version: 2, allocationRoot: tree.root.hash },
+  }
+  const authorization = JSON.stringify({ plan })
+  const total = tree.root.total.toString()
+  provide d1(db) {
+    try (try D1).batch([
+      sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${projectId}, '2026-11', '{}', ${snapshot}, ${snapshot}, '50000000', 2, '2026-12-01T12:00:00.000Z')`,
+      sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES (${projectId}, '2026-11', 'automatic', NULL, 0, 'snapshot', ${snapshot}, ${releaseNetwork}, ${vault}, ${total}, '2026-12-04T00:00:00.000Z', NULL)`,
+      sql`UPDATE monthly_payment_runs SET obligations_created_at = '2026-12-04T00:05:00.000Z' WHERE project_id = ${projectId} AND period = '2026-11'`,
+      sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) VALUES (${projectId}, '2026-11', ${releaseNetwork}, ${snapshot}, ${authorization}, '2026-12-04T00:10:00.000Z')`,
+    ])
+  }
+  return { projectId, vault, entries, tree, manifestSha256: try registered(projectId, vault) } satisfies Month
+}
+
+effect function settledFirstLeaf(month: Month) {
+  const { escrow } = try Release
+  const [entry] = month.entries
+  const [proof] = month.tree.proofs
+  if (entry === undefined || proof === undefined) return try die(new Error("the month has no first leaf"))
+  const data = try Effect.try(() => commitMonthlyLeafCalldata(NOVEMBER_2026, entry, 0, proof))
+  try promise(() => escrow.send(escrow.roles.donor.address, month.vault, data))
+}
+
+effect function evmDeploymentOf(projectId: string) {
+  const loaded = try registryDeployments([releaseNetwork], "ordinary")
+  const found = loaded.deployments.find((deployment) => deployment.projectId === projectId)
+  if (found === undefined || found.family !== "evm") return try die(new Error(`no EVM deployment registered for ${projectId}`))
+  return found
+}
+
+function requestOf(month: Month): OwnerReleaseRequest {
+  return { projectId: month.projectId, period: "2026-11", network: releaseNetwork, manifestSha256: month.manifestSha256 }
+}
+
+effect function remainingOf(vault: EvmAddress) {
+  const { escrow } = try Release
+  const rootCall = try Effect.try(() => monthlyRootCall(NOVEMBER_2026))
+  const reserveCall = try Effect.try(() => monthlyReserveCall(NOVEMBER_2026))
+  const root = try promise(() => escrow.call(vault, rootCall))
+  const reserve = try promise(() => escrow.call(vault, reserveCall))
+  return decodeMonthlyReserve({ root, reserve })?.remaining
+}
+
+effect function releaseServices(months: ReadonlyArray<Month>, approvals: ApprovalRequest[]) {
+  const { escrow, db, manifests } = try Release
+  const authority = try Effect.try(() => privateKeyToAccount(escrow.roles.authority.privateKey))
+  return Layer.mergeAll(
+    d1(db),
+    webCrypto,
+    KeyValueStore.layerMemory,
+    ports(months.map((month) => viewOf(month.projectId, month.manifestSha256))),
+    Layer.succeed(RegistryManifests, {
+      current: () => effect { return [...manifests] },
+      project: (projectId) => effect { return manifests.find((manifest) => manifest.projectId === projectId) },
+    }),
+    Layer.succeed(ReleaseApprover, {
+      approve: (request) => effect {
+        approvals.push(request)
+        return (try promise(() => authority.sign({ hash: request.digest }))) as Hex
+      },
+    }),
+    Layer.provide(evmRpc({ urls: Redacted.make([escrow.chain.url]), chainId: escrow.chainId }), outbound),
+  )
+}
+
+layer(Layer.mergeAll(ReleaseStarted, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Reserve release request: a stranger is refused, healthy, partial and stale allocations are held, and a wrong total is approved once, signed by the owner and finalized whole (anvil) (spec/settlement/reserveRelease.md, "A reserve retains the admitted root and complete allocation"; spec/settlement/reserveRelease.md, "Only complete, untouched, finalized retained evidence admits an allocation"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve")', () => effect {
+    const { escrow } = try Release
+    const wrong = try reservedMonth("release-wrong", 0x9100n, 7n)
+    const reservedAt = try promise(() => escrow.head())
+    const healthy = try reservedMonth("release-healthy", 0x9200n, 0n)
+    const partial = try reservedMonth("release-partial", 0x9300n, 0n)
+    try settledFirstLeaf(partial)
+    const observedAt = try promise(() => escrow.head())
+    escrow.chain.setFinalized(observedAt)
+    const approvals: ApprovalRequest[] = []
+    const services = try releaseServices([wrong, healthy, partial], approvals)
+    const owner = { githubId: steward }
+    provide services {
+      const deployment = try evmDeploymentOf(wrong.projectId)
+      const stranger = try refusalOf(prepareRelease(requestOf(wrong), deployment, { githubId: "78" }))
+      const healthyHeld = try prepareRelease(requestOf(healthy), try evmDeploymentOf(healthy.projectId), owner)
+      const partialHeld = try prepareRelease(requestOf(partial), try evmDeploymentOf(partial.projectId), owner)
+      const ready = try prepareRelease(requestOf(wrong), deployment, owner)
+      if (ready.status !== "ready") return try die(new Error(`the wrong total was held: ${ready.reason}`))
+      escrow.chain.setFinalized(reservedAt)
+      const stale = try prepareRelease(requestOf(wrong), deployment, owner)
+      escrow.chain.setFinalized(observedAt)
+      const sent = try promise(() => escrow.send(escrow.roles.owner.address, wrong.vault, ready.transaction.data as Hex))
+      const check = { ...requestOf(wrong), planId: ready.planId, transactionId: sent.transactionHash }
+      const pending = try checkRelease(check, deployment)
+      escrow.chain.setFinalized(try promise(() => escrow.head()))
+      const finalized = try checkRelease(check, deployment)
+      try same({
+        stranger,
+        held: [healthyHeld, partialHeld, stale],
+        ready: { status: ready.status, from: ready.transaction.from, to: ready.transaction.to, value: ready.transaction.value, releasedGross: ready.terms.releasedGross },
+        approvals: approvals.map((approval) => [approval.vault, approval.period, approval.identityAuthority]),
+        checks: [pending, finalized],
+        remaining: try remainingOf(wrong.vault),
+      }, {
+        stranger: "ReleaseRefused: Only the current project steward can manage this project's awards.",
+        held: [{ status: "held", reason: "no-wrong-sum-fault" }, { status: "held", reason: "prior-reserve-transition" }, { status: "held", reason: "evidence-stale" }],
+        ready: { status: "ready", from: try lower(escrow.roles.owner.address), to: wrong.vault, value: "0", releasedGross: "3000007" },
+        approvals: [[wrong.vault, "2026-11", try lower(escrow.roles.authority.address)]],
+        checks: [{ status: "pending" }, { status: "finalized" }],
+        remaining: 0n,
+      })
+    }
+  })
+})

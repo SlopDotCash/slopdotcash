@@ -1,0 +1,36 @@
+// spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
+import { rows, sql } from "@repo/platform/d1"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+
+schema ChainAwardRow {
+  readonly source_digest: string
+  readonly github_user_id: string
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly state: "reserved" | "paid"
+}
+
+export interface ChainAward {
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly state: "reserved" | "paid"
+}
+
+export interface FrozenAward {
+  readonly githubUserId: string
+  readonly grossBase: string
+}
+
+export function holdsAward(chain: ChainAward | undefined, award: FrozenAward): chain is ChainAward {
+  if (chain === undefined || chain.githubUserId !== award.githubUserId || chain.grossBase !== award.grossBase) return false
+  const gross = parseBaseUnits(chain.grossBase)
+  const fee = parseBaseUnits(chain.feeBase)
+  return gross !== undefined && gross > 0n && fee !== undefined && payoutFeeAccepted(gross, fee, false)
+}
+
+export effect function chainAwards(network: string, vault: string) {
+  const found = try rows(ChainAwardRow, sql`SELECT source_digest, github_user_id, gross_base, fee_base, state FROM payment_obligations WHERE network = ${network} AND vault = ${vault} ORDER BY rowid`)
+  return new Map(found.map((row) => [row.source_digest, { githubUserId: row.github_user_id, grossBase: row.gross_base, feeBase: row.fee_base, state: row.state } satisfies ChainAward]))
+}

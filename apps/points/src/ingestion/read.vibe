@@ -1,0 +1,247 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+import { HttpClientError } from "effect/http"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoAt } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { GitHub, github, rateLimitHints } from "@repo/platform/github"
+import { type Event, type Method, type Origin, type Read, Machine, initial, machineOver } from "../../gen/points__ingestion.effect.vibe"
+import { type CachedDiscussion, type DiscussionCache, type DiscussionEntry, parsedJson } from "./discussions.vibe"
+import { replayed } from "./replayed.ts"
+
+export const requestTimeoutMs = 60_000
+export const immutableCacheBytes = 16 * 1024 * 1024
+export const transportLimitBytes = 64 * 1024 * 1024
+export const actionsJobMs = 6 * 60 * 60 * 1_000
+export const githubApiOrigin = "https://api.github.com"
+export const ingestionUserAgent = "slopbot"
+export const checkpointMessage = "GitHub source collection reached its checkpoint deadline"
+
+const fullSha = /^[a-f0-9]{40}$/u
+const repositoryRoot = /^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\//u
+const gitObject = /^git\/(commits|trees|blobs)\/([a-f0-9]{40})$/u
+const contentsRef = /^\?ref=[a-f0-9]{40}$/u
+const jsonType = /^application\/(?:json|[a-z0-9.+-]+\+json)(?:\s*;|$)/iu
+
+export error IngestionCheckpoint { message: string }
+
+export interface TransportOptions {
+  readonly deadlineMs?: number
+  readonly requestTimeoutMs?: number
+  readonly discussions?: DiscussionCache
+  readonly sleep?: (millis: number) => void!!
+}
+
+export interface IngestionGitHubOptions extends TransportOptions {
+  readonly token: Redacted.Redacted<string>
+  readonly authority?: string
+}
+
+export interface IngestionRun {
+  next(now: number): Machine.Shape!!
+  checkpointed(): boolean!!
+}
+
+export service Ingestion {
+  readonly client: HttpClient.HttpClient
+  readonly run: IngestionRun
+  assertNoCheckpoint(): void!IngestionCheckpoint
+}
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly bytes: Uint8Array
+}
+
+export effect function ingestionRun(deadline: number) {
+  let checkpoint: Read | undefined = undefined
+  const keep = (next: Read) => effect {
+    if (next.checkpoint) checkpoint = next
+  }
+  return {
+    next: (now) => effect {
+      return try machineOver(checkpoint ?? { ...initial, now, deadline }, keep)
+    },
+    checkpointed: () => effect {
+      return checkpoint !== undefined
+    },
+  } satisfies IngestionRun
+}
+
+export function immutableRead(url: string): string | undefined {
+  const parsed = URL.parse(url)
+  if (parsed === null || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "" || !repositoryRoot.test(parsed.pathname)) return undefined
+  const path = parsed.pathname.replace(repositoryRoot, "")
+  const object = gitObject.exec(path)
+  if (object !== null) return parsed.search === "" || (object[1] === "trees" && parsed.search === "?recursive=1") ? object[2] : undefined
+  return path.startsWith("contents/") && path.length > "contents/".length && contentsRef.test(parsed.search) ? "contents" : undefined
+}
+
+function transportError(request: HttpClientRequest.HttpClientRequest, description: string) {
+  return new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description }) })
+}
+
+function opaqueTag(etag: string | undefined) {
+  return etag?.replace(/^W\//u, "")
+}
+
+function sortedHeaders(headers: Readonly<Record<string, string>>) {
+  return Object.entries(headers).sort(([a], [b]) => a.localeCompare(b))
+}
+
+function plainHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.entries(headers))
+}
+
+effect function identified(answer: Answer, identity: string) {
+  if (answer.status !== 200 || answer.bytes.length > immutableCacheBytes) return false
+  const value = try parsedJson(answer.bytes)
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const { sha, type } = value as { readonly sha?: unknown; readonly type?: unknown }
+  if (typeof sha !== "string") return false
+  return identity === "contents" ? type === "file" && fullSha.test(sha) : sha === identity
+}
+
+function originOf(url: string): Origin {
+  return URL.parse(url)?.origin === githubApiOrigin ? "GitHubApi" : "OtherOrigin"
+}
+
+function methodOf(method: string): Method {
+  return method.toUpperCase() === "GET" ? "Get" : "Write"
+}
+
+export function ingestion(options: TransportOptions = {}) {
+  return Layer.effect(Ingestion, effect {
+    const timeoutMs = options.requestTimeoutMs ?? requestTimeoutMs
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new ConfigInvalid({ name: "requestTimeoutMs", issue: "GitHub request timeout must be a positive integer" })
+    const deadline = options.deadlineMs ?? Number.MAX_SAFE_INTEGER
+    if (!Number.isSafeInteger(deadline) || deadline <= 0) throw new ConfigInvalid({ name: "SLOP_DISCUSSION_DEADLINE_MS", issue: "GitHub quota deadline must be a positive epoch time" })
+    const sleeping = options.sleep ?? ((millis: number) => sleep(Duration.millis(millis)))
+    const base = try HttpClient.HttpClient
+    const run = try ingestionRun(deadline)
+    const immutable = new Map<string, Answer>()
+    let cachedBytes = 0
+
+    effect function exchanged(request: HttpClientRequest.HttpClientRequest) {
+      const fetched = effect {
+        const response = try base.execute(request)
+        const bytes = boundedBytes(response, transportLimitBytes, "GitHub read") catch effect (error) => {
+          throw transportError(request, error._tag === "BodyTooLarge" ? `GitHub answered more than ${transportLimitBytes} bytes` : "GitHub returned no readable body")
+        }
+        return { status: response.status, headers: plainHeaders(response.headers), bytes } satisfies Answer
+      }
+      return timeout(fetched, Duration.millis(timeoutMs)) catch effect (error) => {
+        if (error._tag === "TimeoutError") throw transportError(request, "GitHub read timed out")
+        throw error
+      }
+    }
+
+    effect function attempted(request: HttpClientRequest.HttpClientRequest, validator: CachedDiscussion | undefined) {
+      if (validator === undefined) return { answer: try exchanged(request), revalidated: undefined, validator }
+      const answer = try exchanged(HttpClientRequest.setHeader(request, "if-none-match", validator.etag))
+      if (answer.status !== 304) return { answer, revalidated: undefined, validator }
+      if (opaqueTag(answer.headers.etag) === opaqueTag(validator.etag)) return { answer: { status: 200, headers: { "content-type": "application/json" }, bytes: validator.bytes }, revalidated: validator, validator }
+      return { answer: try exchanged(request), revalidated: undefined, validator: undefined }
+    }
+
+    effect function retain(key: string | undefined, identity: string | undefined, answer: Answer) {
+      if (key === undefined || identity === undefined || !(try identified(answer, identity))) return
+      while (cachedBytes + answer.bytes.length > immutableCacheBytes) {
+        const oldest = immutable.entries().next().value
+        if (oldest === undefined) break
+        cachedBytes -= oldest[1].bytes.length
+        immutable.delete(oldest[0])
+      }
+      cachedBytes -= immutable.get(key)?.bytes.length ?? 0
+      cachedBytes += answer.bytes.length
+      immutable.set(key, answer)
+    }
+
+    effect function remembered(discussion: DiscussionEntry | undefined, answer: Answer, revalidated: CachedDiscussion | undefined) {
+      if (discussion === undefined) return
+      if (revalidated !== undefined) return try discussion.save(revalidated.etag, revalidated.bytes)
+      if (answer.status === 200 && jsonType.test(answer.headers["content-type"] ?? "")) try discussion.save(answer.headers.etag ?? "", answer.bytes)
+    }
+
+    effect function stepped(machine: Machine.Shape, event: Event) {
+      return try orDie(machine.send(event))
+    }
+
+    effect function advanced(machine: Machine.Shape) {
+      const now = try Clock.currentTimeMillis
+      const current = try machine.get()
+      return now > current.now ? try stepped(machine, { type: "tick", at: now }) : current
+    }
+
+    effect function waited(machine: Machine.Shape, request: HttpClientRequest.HttpClientRequest) {
+      let state = try machine.get()
+      try Console.warn(JSON.stringify({ event: "github_ingestion_quota_wait", attempt: state.attempt, maximumAttempts: 5, delayMs: state.wakeAt - state.now, at: try isoAt(state.now) }))
+      while (state.phase === "Waiting" && state.now < state.wakeAt) {
+        try sleeping(state.wakeAt - state.now)
+        state = try advanced(machine)
+      }
+      state = try stepped(machine, { type: "retry" })
+      if (state.phase === "Checkpointed") throw transportError(request, checkpointMessage)
+    }
+
+    effect function readWithRetries(request: HttpClientRequest.HttpClientRequest) {
+      const url = request.url
+      const headers = plainHeaders(request.headers)
+      const machine = try run.next(try Clock.currentTimeMillis)
+      const begun = machine.send({ type: "begin", method: "Get", origin: "GitHubApi" }) catch effect () => {
+        throw transportError(request, checkpointMessage)
+      }
+      if (begun.phase === "Checkpointed") throw transportError(request, checkpointMessage)
+      const discussion = options.discussions?.entry(url, headers)
+      let validator = discussion === undefined ? undefined : try discussion.read()
+      const identity = immutableRead(url)
+      const key = identity !== undefined && !Object.keys(headers).some((name) => name === "range" || name.startsWith("if-") || name === "cache-control" || name === "pragma")
+        ? JSON.stringify([url, sortedHeaders(headers)])
+        : undefined
+      const cached = key === undefined ? undefined : immutable.get(key)
+      if (key !== undefined && cached !== undefined) {
+        immutable.delete(key)
+        immutable.set(key, cached)
+        return try orDie(Effect.try(() => replayed(request, cached.status, cached.headers, cached.bytes)))
+      }
+      while (true) {
+        const attempt = try attempted(request, validator)
+        const { answer, revalidated } = attempt
+        validator = attempt.validator
+        const hints = rateLimitHints(answer.headers, try Clock.currentTimeMillis)
+        try advanced(machine)
+        const state = try stepped(machine, { type: "respond", x: { status: answer.status, primaryDelay: hints.primaryDelay, retryAfter: hints.retryAfter } })
+        if (state.phase === "Checkpointed") throw transportError(request, checkpointMessage)
+        if (state.phase === "Returned") {
+          try retain(key, identity, answer)
+          try remembered(discussion, answer, revalidated)
+          return try orDie(Effect.try(() => replayed(request, answer.status, answer.headers, answer.bytes)))
+        }
+        try waited(machine, request)
+      }
+    }
+
+    const client = HttpClient.transform(base, (sent, request) => {
+      const retryable = methodOf(request.method) === "Get" && originOf(request.url) === "GitHubApi"
+      return retryable ? readWithRetries(request) : sent
+    })
+
+    return {
+      client,
+      run,
+      assertNoCheckpoint: () => effect {
+        if (try run.checkpointed()) throw new IngestionCheckpoint({ message: checkpointMessage })
+      },
+    } satisfies Ingestion.Shape
+  })
+}
+
+export const ingestionClient = Layer.effect(HttpClient.HttpClient, effect {
+  return (try Ingestion).client
+})
+
+export function ingestionGitHub(options: IngestionGitHubOptions) {
+  const transport = ingestion(options)
+  const reads = github({ token: options.token, userAgent: ingestionUserAgent, timeoutMs: actionsJobMs, ...(options.authority === undefined ? {} : { authority: options.authority }) })
+  return Layer.provideMerge(Layer.provide(reads, ingestionClient), transport)
+}

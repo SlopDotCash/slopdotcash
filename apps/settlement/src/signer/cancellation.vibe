@@ -1,0 +1,144 @@
+// spec/settlement/signer.md, "Cancellation of an obsolete intent uses the same nonce and an empty zero-value self-transfer"; spec/settlement/signer.md, "A pending binding is obsolete only when a newer intent or a successor claim replaced it, or finalized chain time passed its consent expiry"; spec/settlement/signer.md, "A cancellation is one 21,000-gas transaction whose fee rises by at least one eighth and stays under 10 gwei"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"
+import { EvmRpc, type Hex } from "@repo/platform/chain/evm"
+import { type SignedType2, readSignedType2 } from "../chain/evm/transactions.ts"
+import { type Step, advance, withAttempt } from "../journal/bindings.vibe"
+import { type Entries, type Scope, within } from "../journal/journal.vibe"
+import { adoptedBinding, cancellationKey, consentCandidate, observationKey, pendingKeys, retainedConsent } from "../journal/stored.vibe"
+import { cancellationFees } from "../../gen/settlement__signer.effect.vibe"
+import { CANCELLATION_GAS as cancellationGas, MAX_FEE_PER_GAS } from "../kernels/attesterLimits.ts"
+import { Attempt, AttemptHeld, type Deployment, LimitRefused, MAX_GAS_CEILING, SignerUnavailable, attesterAccount, authorityInForce, frozenLimit, plainSigner, readAttempt, sameAttempt, signedWithin, transactionAllowed } from "./evm.vibe"
+import { reconcileBindingWinner } from "./winner.vibe"
+
+export interface ObsoleteIntent {
+  readonly candidate: { readonly claimId: string; readonly githubUserId: string }
+  readonly signed: SignedType2
+  readonly expiresAt: bigint
+}
+
+effect function cancellation(original: { readonly maxFeePerGas: bigint; readonly maxPriorityFeePerGas: bigint }, baseFee: bigint, gasCeiling: bigint) {
+  if (original.maxFeePerGas > MAX_FEE_PER_GAS || original.maxPriorityFeePerGas > MAX_FEE_PER_GAS || baseFee > MAX_FEE_PER_GAS || gasCeiling > MAX_GAS_CEILING) return undefined
+  const fees = cancellationFees(Number(original.maxFeePerGas), Number(original.maxPriorityFeePerGas), Number(baseFee), Number(gasCeiling))
+  if (!fees.allowed) return undefined
+  return try orDie(Effect.try(() => ({ maxFeePerGas: BigInt(fees.cancelMaxFee), maxPriorityFeePerGas: BigInt(fees.cancelPriorityFee) })))
+}
+
+export interface CancellationFacts<IE, IR, SE, SR> {
+  readonly intent: () => ObsoleteIntent!IE!IR
+  readonly successor: (intent: ObsoleteIntent) => (string | undefined)!SE!SR
+}
+
+export interface CancellationResult {
+  readonly settled: boolean
+  readonly transactionId?: string
+}
+
+schema Superseded {
+  readonly kind: "superseded"
+  readonly claimId: string
+  readonly successorClaimId: string
+}
+
+schema Expired {
+  readonly kind: "expired"
+  readonly expiresAt: string
+  readonly finalizedBlock: string
+}
+
+schema BindingCancellation {
+  readonly original: Attempt
+  readonly reason: Superseded | Expired
+  readonly rawTransaction: string
+  readonly transactionId: string
+}
+
+const settled: CancellationResult = { settled: true }
+
+function held(reason: string) {
+  return new AttemptHeld({ reason })
+}
+
+effect function readCancellation(entries: Entries, key: string) {
+  const stored = try entries.get(key)
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(BindingCancellation)(stored) catch effect () => { throw held("Stored cancellation malformed") }
+}
+
+interface Obsolescence {
+  readonly reason: Superseded | Expired
+  readonly finalizedTime: number
+}
+
+effect function obsolescence<SE, SR>(intent: ObsoleteIntent, successor: (intent: ObsoleteIntent) => (string | undefined)!SE!SR) {
+  const successorClaimId = try successor(intent)
+  if (successorClaimId !== undefined) return { reason: { kind: "superseded", claimId: intent.candidate.claimId, successorClaimId }, finalizedTime: 0 } satisfies Obsolescence
+  const finalized = try (try EvmRpc).head("finalized")
+  if (finalized.timestamp <= Number(intent.expiresAt)) return undefined
+  return { reason: { kind: "expired", expiresAt: intent.expiresAt.toString(), finalizedBlock: `0x${finalized.number.toString(16)}` }, finalizedTime: finalized.timestamp } satisfies Obsolescence
+}
+
+effect function recordCancellation(entries: Entries, deployment: Deployment, key: string, attempt: Attempt, obsolete: Obsolescence, signed: SignedType2) {
+  const record = try adoptedBinding(entries, deployment, key, attempt)
+  if (record === undefined) throw held("Pending binding unavailable")
+  const steps: Step[] = []
+  if (obsolete.reason.kind === "superseded") steps.push({ event: { type: "recordIntent", intent: record.state.latestIntent + 1 }, by: "account" })
+  else if (obsolete.finalizedTime > record.state.finalizedTime) steps.push({ event: { type: "observeFinalizedTime", time: obsolete.finalizedTime }, by: "attester" })
+  const cancelled = withAttempt(record, signed.id)
+  const destination = signed.request.to === deployment.identityAuthority ? "attester" : signed.request.to
+  const data = signed.request.data === "0x" ? "" : signed.request.data
+  steps.push({ event: { type: "cancelBinding", nonce: signed.request.nonce, attempt: cancelled.attempt, value: signed.request.value === 0n ? 0 : 1, destination, data }, by: "attester" })
+  try advance(entries, key, cancelled.record, steps)
+}
+
+effect function verifiedCancellation(deployment: Deployment, attempt: Attempt, stored: BindingCancellation, nonce: number) {
+  const signed = try signedWithin(deployment, stored.rawTransaction, attempt, true)
+  const request = signed.request
+  if (!sameAttempt(stored.original, attempt) || signed.id !== stored.transactionId.toLowerCase() || request.chainId !== Number(deployment.chainId) || request.nonce !== nonce || request.to !== deployment.identityAuthority || request.value !== 0n || request.data !== "0x" || request.gas !== cancellationGas || signed.sender !== deployment.identityAuthority) throw held("Stored cancellation differs from its binding or gas policy")
+  return signed
+}
+
+export effect function cancelObsoleteStoredBinding<IE, IR, SE, SR>(scope: Scope, deployment: Deployment, key: string, attempt: Attempt, facts: CancellationFacts<IE, IR, SE, SR>) {
+  const archiveKey = cancellationKey(attempt)
+  let archived = try within(scope, (entries) => readCancellation(entries, archiveKey))
+  const observe = (winner: string) => reconcileBindingWinner(scope, deployment, { network: attempt.network, vault: attempt.vault, originalTransactionId: attempt.transactionId, winnerTransactionId: winner }, { kind: "scheduled" })
+  if ((try observe(archived?.transactionId ?? attempt.transactionId)).state !== "pending") return settled
+  try within(scope, (entries) => retainedConsent(entries, deployment, attempt, deployment.consentNonceLimit))
+  if ((try authorityInForce(deployment)) !== deployment.identityAuthority) throw held("Wrong identity signer")
+  const intent = try facts.intent()
+  const original = intent.signed.request
+  if (archived === undefined) {
+    const obsolete = try obsolescence(intent, facts.successor)
+    if (obsolete === undefined) return undefined
+    const latest = try (try EvmRpc).head("latest")
+    const fees = try cancellation(original, latest.baseFeePerGas ?? 0n, deployment.gasCeiling)
+    if (fees === undefined) throw new LimitRefused({ reason: "Cancellation exceeds signer gas fee policy" })
+    const candidate = { nonce: original.nonce, gas: cancellationGas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas }
+    if (!(try transactionAllowed({ ...candidate, value: 0n }, deployment.gasCeiling, [deployment.maxNativeCost, frozenLimit(attempt)]))) throw new LimitRefused({ reason: "EVM transaction exceeds native cost limit" })
+    try within(scope, (entries) => consentCandidate(entries, deployment, attempt, candidate))
+    try plainSigner(deployment)
+    const account = try attesterAccount(deployment)
+    archived = try within(scope, (entries) => effect {
+      try retainedConsent(entries, deployment, attempt, deployment.consentNonceLimit)
+      const retained = try readCancellation(entries, archiveKey)
+      if (retained !== undefined) return retained
+      const current = try readAttempt(entries, key)
+      if (!sameAttempt(current, attempt) || !(try pendingKeys(entries)).includes(key) || (try entries.get(observationKey(attempt.transactionId))) !== undefined) throw held("Binding changed before cancellation signing")
+      try consentCandidate(entries, deployment, attempt, candidate)
+      const raw = try account.sign({ chainId: Number(deployment.chainId), nonce: original.nonce, gas: cancellationGas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas, to: account.address, value: 0n, data: "0x" })
+      const signed = readSignedType2(raw)
+      if (signed === undefined || signed.sender !== deployment.identityAuthority) throw new SignerUnavailable({ reason: "Signed transaction differs from its signer" })
+      const next = { original: attempt, reason: obsolete.reason, rawTransaction: raw, transactionId: signed.id } satisfies BindingCancellation
+      try entries.put(archiveKey, next)
+      try recordCancellation(entries, deployment, key, attempt, obsolete, signed)
+      return next
+    })
+  }
+  const stored = archived
+  const signed = try verifiedCancellation(deployment, attempt, stored, original.nonce)
+  try within(scope, (entries) => consentCandidate(entries, deployment, attempt, { nonce: signed.request.nonce, gas: signed.request.gas, maxFeePerGas: signed.request.maxFeePerGas, maxPriorityFeePerGas: signed.request.maxPriorityFeePerGas }))
+  if ((try observe(stored.transactionId)).state !== "pending") return settled
+  try plainSigner(deployment)
+  const sent = try (try EvmRpc).sendRaw(stored.rawTransaction as Hex)
+  if (sent.toLowerCase() !== stored.transactionId.toLowerCase()) throw held("Cancellation hash mismatch")
+  const sentResult: CancellationResult = { settled: false, transactionId: stored.transactionId }
+  return sentResult
+}

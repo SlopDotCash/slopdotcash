@@ -1,0 +1,39 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { randomId } from "@repo/platform/crypto"
+import { maxPartBytes, maxSnapshotBytes, readParts } from "../client/snapshot/parts.vibe"
+
+export error FileFailure { path: string; message: string }
+export error FileTooLarge { path: string; limitBytes: number }
+
+export effect function attempt<A, E, R>(operation: A!E!R, path: string, message: string) {
+  const value = operation catch effect () => {
+    throw new FileFailure({ path, message })
+  }
+  return value
+}
+
+export effect function boundedFile(path: string, limitBytes: number) {
+  const fs = try FileSystem.FileSystem
+  const info = try attempt(fs.stat(path), path, "Leaderboard file is unavailable")
+  if (Number(info.size) > limitBytes) throw new FileTooLarge({ path, limitBytes })
+  const bytes = try attempt(fs.readFile(path), path, "Leaderboard file is unavailable")
+  if (bytes.length > limitBytes) throw new FileTooLarge({ path, limitBytes })
+  return bytes
+}
+
+export effect function readSnapshotFile(path: string) {
+  const files = try Path.Path
+  const directory = files.dirname(path)
+  const root = try boundedFile(path, maxSnapshotBytes)
+  return try readParts(root, (part) => boundedFile(files.join(directory, part.slice("/data/".length)), maxPartBytes))
+}
+
+export effect function atomicWrite(path: string, bytes: Uint8Array) {
+  const fs = try FileSystem.FileSystem
+  const temporary = `${path}.${try randomId()}.tmp`
+  const written = effect {
+    try attempt(fs.writeFile(temporary, bytes, { flag: "wx" }), path, "Leaderboard file could not be written")
+    try attempt(fs.rename(temporary, path), path, "Leaderboard file could not be replaced")
+  }
+  try ensuring(written, Effect.ignore(fs.remove(temporary, { force: true })))
+}

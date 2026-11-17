@@ -1,0 +1,171 @@
+// spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/conversion.md, "A conversion approval grants exactly the intent's input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"
+import type { Address, Hex } from "@repo/platform/chain/evm"
+import { definitions } from "../runtime/networks.vibe"
+import { burnAddress, chainIds, dln, kyberswap, robinhoodUsdg, slopToken } from "../runtime/pins.ts"
+import {
+  type Type2,
+  accruedFeesCalldata,
+  approveCalldata,
+  claimFeesCalldata,
+  dlnOrderCalldata,
+  fixedNativeFeeCalldata,
+  parsedType2,
+  pausedCalldata,
+  sameFields,
+  signerOf,
+  transferCalldata,
+  wholeBig,
+} from "../evm/abi.ts"
+import { allowanceCovers, approvalNeeded, boundedApproval, isNative } from "../evm/approval.vibe"
+import { freeNonce, nonceAtLeast, readWord, simulated, tokenBalance } from "../evm/client.vibe"
+import { type KyberSettings, builtSwap, swapMatches } from "../kyber/route.vibe"
+import { decodedSwap, returnAmountOf } from "../kyber/swap.ts"
+import type { EvmNetwork, EvmReplacement, FirstEvmIntent } from "./intents.ts"
+
+export error SignRefused { step: string; issue: string }
+
+export interface EvmCall {
+  readonly to: Address
+  readonly data: Hex
+  readonly value: bigint
+  readonly nonce: bigint
+  readonly deadline: number | undefined
+  readonly minimumOutput: bigint
+  readonly approvedAmount: bigint
+}
+
+export const maximumDlnNativeFee = 1_000_000_000_000_000n
+
+const router = kyberswap.router as Address
+
+effect function refuse(step: string, issue: string) {
+  throw new SignRefused({ step, issue })
+}
+
+effect function usdcOf(network: EvmNetwork) {
+  const target = definitions[network].target
+  if (target.kind !== "usdc") return try refuse("facts", `no verified USDC target on ${network}`)
+  return target.address as Address
+}
+
+function dlnCall(wallet: Address, usdc: Address, intent: Extract<FirstEvmIntent, { kind: "DlnCreateOrder" }>) {
+  const { order } = intent
+  return dlnOrderCalldata({
+    giveToken: usdc,
+    giveAmount: order.giveAmount,
+    takeToken: robinhoodUsdg as Address,
+    takeAmount: order.takeAmount,
+    takeChainId: wholeBig(chainIds.robinhood) ?? 0n,
+    receiver: order.receiver,
+    sourceWallet: wallet,
+    allowedTaker: order.allowedTaker,
+    salt: order.salt,
+    metadata: order.metadata,
+  })
+}
+
+function swapRequestOf(intent: Extract<FirstEvmIntent, { kind: "KyberSwap" }>, wallet: Address, settings: KyberSettings) {
+  return { network: intent.network, wallet, token: intent.token, target: intent.target, amountIn: intent.amountIn, minimumOutput: intent.minimumOutput, slippageBps: intent.slippageBps, settings }
+}
+
+export effect function derivedCall(intent: FirstEvmIntent, wallet: Address, settings: KyberSettings) {
+  switch (intent.kind) {
+    case "KyberApprove": {
+      if (!(try approvalNeeded(intent.token, intent.amount, "Router"))) return try refuse("facts", "the finalized allowance already covers the input")
+      const nonce = try nonceAtLeast(intent.nonceFloor)
+      return { to: intent.token, data: approveCalldata(router, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n, approvedAmount: intent.amount } satisfies EvmCall
+    }
+    case "KyberSwap": {
+      try allowanceCovers(intent.token, intent.amountIn, "Router")
+      const nonce = try nonceAtLeast(intent.nonceFloor)
+      const built = try builtSwap(swapRequestOf(intent, wallet, settings))
+      const returned = returnAmountOf(built.description.entry, try simulated(router, built.data, built.value))
+      if (returned === undefined || returned < built.description.minReturnAmount) return try refuse("facts", "swap simulation returned less than the signed minimum")
+      return { to: router, data: built.data, value: built.value, nonce, deadline: built.deadline, minimumOutput: built.description.minReturnAmount, approvedAmount: 0n } satisfies EvmCall
+    }
+    case "EvmClaimFees": {
+      if ((try readWord(intent.vault, accruedFeesCalldata, "latest")) === 0n) return try refuse("facts", "No accrued fees to claim")
+      const nonce = try freeNonce(intent.nonceFloor)
+      try simulated(intent.vault, claimFeesCalldata, 0n)
+      return { to: intent.vault, data: claimFeesCalldata, value: 0n, nonce, deadline: undefined, minimumOutput: 0n, approvedAmount: 0n } satisfies EvmCall
+    }
+    case "DlnApprove": {
+      const usdc = try usdcOf(intent.network)
+      if (!(try approvalNeeded(usdc, intent.amount, "Bridge"))) return try refuse("facts", "the finalized bridge allowance already covers the order")
+      const nonce = try freeNonce(intent.nonceFloor)
+      return { to: usdc, data: approveCalldata(dln.source as Address, intent.amount), value: 0n, nonce, deadline: undefined, minimumOutput: 0n, approvedAmount: intent.amount } satisfies EvmCall
+    }
+    case "DlnCreateOrder": {
+      const usdc = try usdcOf(intent.network)
+      const { order } = intent
+      const fee = try readWord(dln.source as Address, fixedNativeFeeCalldata, "latest")
+      if (fee !== order.nativeFee || fee > maximumDlnNativeFee) return try refuse("facts", "the bridge's fixed native fee differs from the order or exceeds 0.001 ETH")
+      if (order.allowedTaker !== undefined && !dln.allowedTakers.some((taker) => taker === order.allowedTaker?.toLowerCase())) return try refuse("bytes", "Bridge order reserves its fill for an unknown taker")
+      try allowanceCovers(usdc, order.giveAmount, "Bridge")
+      const data = dlnCall(wallet, usdc, intent)
+      if (data === undefined) return try refuse("bytes", "Bridge order has no arrival amount, salt or bounded metadata")
+      const nonce = try freeNonce(intent.nonceFloor)
+      const answer = try simulated(dln.source as Address, data, order.nativeFee)
+      if (answer.toLowerCase() !== order.orderId.toLowerCase()) return try refuse("facts", "the order simulation does not return the proposed order id")
+      return { to: dln.source as Address, data, value: order.nativeFee, nonce, deadline: undefined, minimumOutput: 0n, approvedAmount: 0n } satisfies EvmCall
+    }
+    case "SlopBurn": {
+      if (intent.network !== "Robinhood") return try refuse("facts", "SLOP burns only on Robinhood Chain")
+      const slop = slopToken as Address
+      if ((try readWord(slop, pausedCalldata, "latest")) !== 0n) return try refuse("facts", "the SLOP token is paused")
+      if ((try tokenBalance(slop, "latest")) < intent.amount) return try refuse("facts", "the burn exceeds the fee wallet's SLOP balance")
+      const data = transferCalldata(burnAddress as Address, intent.amount)
+      const nonce = try freeNonce(intent.nonceFloor)
+      try simulated(slop, data, 0n)
+      return { to: slop, data, value: 0n, nonce, deadline: undefined, minimumOutput: 0n, approvedAmount: 0n } satisfies EvmCall
+    }
+    default: {
+      const _exhaustive: never = intent
+      return _exhaustive
+    }
+  }
+}
+
+export function recordedMatches(recorded: FirstEvmIntent, original: Type2, wallet: Address, settings: KyberSettings) {
+  const to = original.to.toLowerCase()
+  const exact = (address: string, data: Hex | undefined, value: bigint) => to === address.toLowerCase() && data !== undefined && original.data.toLowerCase() === data.toLowerCase() && original.value === value
+  const usdc = definitions[recorded.network].target
+  const usdcAddress = usdc.kind === "usdc" ? usdc.address : ""
+  switch (recorded.kind) {
+    case "KyberApprove": return to === recorded.token.toLowerCase() && boundedApproval(original.data, original.value, "Router", recorded.amount)
+    case "KyberSwap": {
+      const description = decodedSwap(original.data)
+      const value = isNative(recorded.token) ? recorded.amountIn : 0n
+      return to === router && original.value === value && swapMatches(description, swapRequestOf(recorded, wallet, settings))
+        && description !== undefined && description.minReturnAmount >= recorded.minimumOutput
+    }
+    case "EvmClaimFees": return exact(recorded.vault, claimFeesCalldata, 0n)
+    case "DlnApprove": return to === usdcAddress && boundedApproval(original.data, original.value, "Bridge", recorded.amount)
+    case "DlnCreateOrder": return exact(dln.source, dlnCall(wallet, usdcAddress as Address, recorded), recorded.order.nativeFee)
+    case "SlopBurn": return exact(slopToken, transferCalldata(burnAddress as Address, recorded.amount), 0n)
+    default: {
+      const _exhaustive: never = recorded
+      return _exhaustive
+    }
+  }
+}
+
+function tenPercentAbove(value: bigint) {
+  return (value * 110n + 99n) / 100n
+}
+
+export effect function replacementTransaction(intent: EvmReplacement, wallet: Address, chainId: bigint, settings: KyberSettings) {
+  const [first] = intent.attempts
+  const original = parsedType2(first)
+  const latest = parsedType2(intent.attempts[intent.attempts.length - 1] ?? first)
+  if (original === undefined || latest === undefined) return try refuse("bytes", "Recorded send cannot be replaced")
+  const signer = try tryPromise({ try: () => signerOf(first), catch: () => new SignRefused({ step: "bytes", issue: "the recorded signature cannot be recovered" }) })
+  if (signer !== wallet || wholeBig(original.chainId) !== chainId || !sameFields(original, latest) || intent.recorded.network !== intent.network)
+    return try refuse("bytes", "Recorded send cannot be replaced")
+  if (!recordedMatches(intent.recorded, original, wallet, settings)) return try refuse("bytes", "Recorded send differs from its intent")
+  const { maxFeePerGas, maxPriorityFeePerGas } = intent
+  if (maxFeePerGas < tenPercentAbove(latest.maxFeePerGas) || maxPriorityFeePerGas < tenPercentAbove(latest.maxPriorityFeePerGas)
+    || maxPriorityFeePerGas > maxFeePerGas || maxFeePerGas > original.maxFeePerGas * 3n || maxPriorityFeePerGas > original.maxPriorityFeePerGas * 3n)
+    return try refuse("limits", "the replacement fees are outside the bounded step")
+  return { ...original, maxFeePerGas, maxPriorityFeePerGas } satisfies Type2
+}

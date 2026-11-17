@@ -1,0 +1,283 @@
+// spec/settlement/signer.md, "Both possible winners stay retained"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"; spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
+import { EvmRpc, type Hex, type Receipt } from "@repo/platform/chain/evm"
+import { jsonRpc } from "@repo/platform/chain/rpc"
+import { type Binding, type WinnerEvidence, inertSelfTransfer } from "../../gen/settlement__signer.effect.vibe"
+import { bytes32, evmAddress } from "../chain/evm/abi.ts"
+import { type SignedType2, readSignedType2, signedType2, transactionId as idOf } from "../chain/evm/transactions.ts"
+import { type BindingRecord, type Step, advance, attemptOf, withAttempt } from "../journal/bindings.vibe"
+import { type Entries, type Scope, within } from "../journal/journal.vibe"
+import { STORED_BINDING, adoptedBinding, bindingArguments, observationKey, pendingKeys, removePending, retainedConsent } from "../journal/stored.vibe"
+import { Attempt, AttemptHeld, type Deployment, frozenLimit, readAttempt, rpcUrlsOf, sameAttempt, signedWithin } from "./evm.vibe"
+import { CANCELLATION_GAS as cancellationGas } from "../kernels/attesterLimits.ts"
+import { worstCaseNativeCost } from "../kernels/budget.ts"
+
+export interface RecoveryInput {
+  readonly network: string
+  readonly vault: string
+  readonly originalTransactionId: string
+  readonly winnerTransactionId: string
+}
+
+const recoveryKeys = "network,originalTransactionId,vault,winnerTransactionId"
+const networkPattern = /^[a-z][a-z0-9-]{1,63}$/u
+const vaultPattern = /^0x[0-9a-fA-F]{40}$/u
+const hashPattern = /^0x[0-9a-fA-F]{64}$/u
+
+export function isRecoveryInput(value: unknown): value is RecoveryInput {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const item = value as Record<string, unknown>
+  const { network, vault, originalTransactionId, winnerTransactionId } = item
+  return Object.keys(item).sort().join(",") === recoveryKeys
+    && typeof network === "string" && networkPattern.test(network)
+    && typeof vault === "string" && vaultPattern.test(vault)
+    && typeof originalTransactionId === "string" && hashPattern.test(originalTransactionId)
+    && typeof winnerTransactionId === "string" && hashPattern.test(winnerTransactionId)
+}
+
+export schema Proof {
+  readonly transactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+  readonly outcome: "original_finalized" | "original_reverted" | "superseded"
+}
+
+schema Observation {
+  readonly key: string
+  readonly attempt: Attempt
+  readonly proof: Proof
+  readonly requestedWinnerTransactionId: string
+}
+
+export type Mode = { readonly kind: "scheduled" } | { readonly kind: "operator"; readonly reason: string; readonly audited: boolean }
+
+export type Observed = { readonly state: "pending" } | {
+  readonly state: Proof["outcome"]
+  readonly originalTransactionId: string
+  readonly winnerTransactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+}
+
+schema WireWinner {
+  readonly hash: string
+  readonly blockHash: string | null
+  readonly blockNumber: string | null
+  readonly from: string
+  readonly to: string | null
+  readonly nonce: string
+  readonly type: string
+  readonly value: string
+  readonly input: string
+  readonly gas: string
+  readonly maxFeePerGas?: string
+  readonly maxPriorityFeePerGas?: string
+  readonly accessList?: ReadonlyArray<{ readonly address: string; readonly storageKeys: ReadonlyArray<string> }>
+  readonly r: string
+  readonly s: string
+  readonly v?: string
+  readonly yParity?: string
+}
+
+function held(reason: string) {
+  return new AttemptHeld({ reason })
+}
+
+function hexQuantity(value: string | undefined) {
+  return value !== undefined && /^0x(?:0|[1-9a-f][0-9a-f]*)$/iu.test(value) ? value.toLowerCase() : undefined
+}
+
+effect function quantity(value: string | undefined) {
+  const text = hexQuantity(value)
+  if (text === undefined) throw held("Binding reconciliation quantity unavailable")
+  return try orDie(Effect.try(() => BigInt(text)))
+}
+
+function scalar(value: string) {
+  return /^0x[0-9a-f]{1,64}$/iu.test(value) ? bytes32(`0x${value.slice(2).padStart(64, "0")}`) : undefined
+}
+
+function blockText(block: bigint) {
+  return `0x${block.toString(16)}`
+}
+
+effect function readObservation(entries: Entries, original: string) {
+  const stored = try entries.get(observationKey(original))
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(Observation)(stored) catch effect () => { throw held("Binding observation malformed") }
+}
+
+effect function canonicalReceipt(hash: string, finalizedHead: bigint) {
+  const rpc = try EvmRpc
+  const receipt = try rpc.receipt(hash as Hex)
+  if (receipt === undefined) return undefined
+  const finalized = try rpc.finalizedReceipt(hash as Hex)
+  if (finalized !== undefined) return finalized
+  throw held(receipt.blockNumber > finalizedHead ? "Binding receipt awaits finality" : "Binding receipt identity differs")
+}
+
+effect function winnerTransaction(deployment: Deployment, winner: string) {
+  const expected = `0x${deployment.chainId.toString(16)}`
+  const rpc = try jsonRpc({
+    urls: try rpcUrlsOf(deployment),
+    timeoutMs: 15_000,
+    maxBytes: 1024 * 1024,
+    identity: { method: "eth_chainId", expected, read: (answer) => (typeof answer === "string" ? hexQuantity(answer) : undefined) },
+  })
+  const found = try rpc.call("eth_getTransactionByHash", [winner], Schema.NullOr(WireWinner))
+  if (found === null) throw held("Winner is not the supported inert self-transaction")
+  return found
+}
+
+effect function rebuiltSender(deployment: Deployment, tx: WireWinner, winner: string) {
+  const [nonce, gas, value, maxFeePerGas, maxPriorityFeePerGas, parity] = [try quantity(tx.nonce), try quantity(tx.gas), try quantity(tx.value), try quantity(tx.maxFeePerGas), try quantity(tx.maxPriorityFeePerGas), try quantity(tx.yParity ?? tx.v)]
+  const [to, r, s] = [evmAddress(tx.to ?? ""), scalar(tx.r), scalar(tx.s)]
+  if (tx.type !== "0x2" || to === undefined || r === undefined || s === undefined || (parity !== 0n && parity !== 1n) || nonce > 9007199254740991n || (tx.accessList ?? []).length !== 0) return { signed: undefined, maxFeePerGas }
+  const request = { chainId: Number(deployment.chainId), nonce: Number(nonce), gas, maxFeePerGas, maxPriorityFeePerGas, to, value, data: tx.input.toLowerCase() as Hex }
+  const raw = Effect.try(() => signedType2(request, { r, s, yParity: parity === 0n ? 0 : 1 })) catch () => undefined
+  const signed = raw === undefined || idOf(raw) !== winner ? undefined : readSignedType2(raw)
+  return { signed, maxFeePerGas }
+}
+
+effect function winnerEvidence(deployment: Deployment, attempt: Attempt, winner: string, receipt: Receipt) {
+  const rpc = try EvmRpc
+  const tx = try winnerTransaction(deployment, winner)
+  const { signed, maxFeePerGas } = try rebuiltSender(deployment, tx, winner)
+  const frozen = frozenLimit(attempt)
+  if (frozen !== undefined && worstCaseNativeCost(cancellationGas, maxFeePerGas, 0n) > frozen) throw held("EVM transaction exceeds native cost limit")
+  const plain = (try rpc.code(deployment.identityAuthority, receipt.blockNumber)) === "0x"
+  const sameBlock = tx.blockHash?.toLowerCase() === receipt.blockHash && hexQuantity(tx.blockNumber ?? undefined) === blockText(receipt.blockNumber)
+  const sender = signed !== undefined && signed.sender === deployment.identityAuthority && evmAddress(tx.from) === signed.sender && plain ? "attester" : "other"
+  const gasLimit = try quantity(tx.gas)
+  const nonce = try quantity(tx.nonce)
+  const block = Number(receipt.blockNumber)
+  return {
+    transaction: 0,
+    originalReceiptFound: false,
+    succeeded: receipt.status === "success",
+    sender,
+    recipient: evmAddress(tx.to ?? "") === deployment.identityAuthority ? "attester" : "other",
+    nonce: nonce > 9007199254740991n ? -1 : Number(nonce),
+    value: (try quantity(tx.value)) === 0n ? 0 : 1,
+    emptyData: tx.input.toLowerCase() === "0x",
+    emptyAccessList: tx.type === "0x2" && (tx.accessList ?? []).length === 0,
+    gasLimit: gasLimit > 30_000_000n ? -1 : Number(gasLimit),
+    gasUsed: receipt.gasUsed > 30_000_000n ? -1 : Number(receipt.gasUsed),
+    block,
+    canonicalBlock: sameBlock ? block : 0,
+    finalized: sameBlock,
+  } satisfies WinnerEvidence
+}
+
+function originalEvidence(attempt: number, receipt: Receipt): WinnerEvidence {
+  const block = Number(receipt.blockNumber)
+  return {
+    transaction: attempt,
+    originalReceiptFound: true,
+    succeeded: receipt.status === "success",
+    sender: "attester",
+    recipient: "vault",
+    nonce: 0,
+    value: 0,
+    emptyData: false,
+    emptyAccessList: true,
+    gasLimit: 0,
+    gasUsed: Number(receipt.gasUsed > 30_000_000n ? -1n : receipt.gasUsed),
+    block,
+    canonicalBlock: block,
+    finalized: true,
+  }
+}
+
+function reasonLength(reason: string) {
+  return reason.length > 500 ? reason.length : reason.trim().length
+}
+
+function scheduledSteps(state: Binding, record: BindingRecord, proof: Proof, original: string, evidence: WinnerEvidence | undefined) {
+  const block = Number.parseInt(proof.blockNumber.slice(2), 16)
+  const attempt = attemptOf(record, original)
+  if (proof.outcome === "original_finalized") return state.phase === "Bound" ? [] : [{ event: { type: "finalizeBinding", attempt, height: block }, by: "attester" } satisfies Step]
+  if (proof.outcome === "original_reverted") return [{ event: { type: "retireReverted", receipt: { attempt, reverted: true, block, canonicalBlock: block } }, by: "attester" } satisfies Step]
+  const cancellation = attemptOf(record, proof.transactionId)
+  return evidence === undefined || !inertSelfTransfer(state, { ...evidence, transaction: cancellation }) ? undefined : [{ event: { type: "finalizeCancellation", attempt: cancellation, height: block }, by: "attester" } satisfies Step]
+}
+
+effect function recorded(entries: Entries, deployment: Deployment, located: { readonly key: string; readonly attempt: Attempt }, observation: Observation, mode: Mode, evidence: WinnerEvidence | undefined) {
+  const prior = try readObservation(entries, located.attempt.transactionId)
+  if (prior !== undefined) {
+    if (JSON.stringify(prior) !== JSON.stringify(observation)) throw held("Binding observation changed")
+    return
+  }
+  const current = try readAttempt(entries, located.key)
+  if (!sameAttempt(current, located.attempt) || !(try pendingKeys(entries)).includes(located.key)) throw held("Pending binding changed during reconciliation")
+  const loaded = try adoptedBinding(entries, deployment, located.key, located.attempt)
+  if (loaded === undefined) throw held("Pending binding unavailable")
+  const original = located.attempt.transactionId
+  if (mode.kind === "scheduled") {
+    const steps = scheduledSteps(loaded.state, loaded, observation.proof, original, evidence)
+    if (steps === undefined) throw held("Winner is not the supported inert self-transaction")
+    try advance(entries, located.key, loaded, steps)
+  } else {
+    const winner = observation.proof.outcome === "superseded" ? withAttempt(loaded, observation.proof.transactionId) : { record: loaded, attempt: attemptOf(loaded, original) }
+    const requested = withAttempt(winner.record, observation.requestedWinnerTransactionId)
+    const facts = evidence === undefined ? undefined : { ...evidence, transaction: winner.attempt }
+    if (facts === undefined) throw held("Winner evidence unavailable")
+    const request = { original: attemptOf(requested.record, original), winner: requested.attempt, reasonLength: reasonLength(mode.reason), audited: mode.audited }
+    try advance(entries, located.key, requested.record, [{ event: { type: "reconcileWinner", request, evidence: facts }, by: "operator" }])
+  }
+  try entries.put(observationKey(original), observation)
+  if (observation.proof.outcome !== "original_finalized") try entries.put(located.key, null)
+  try removePending(entries, located.key)
+}
+
+effect function located(entries: Entries, original: string, winner: string) {
+  const prior = try readObservation(entries, original)
+  if (prior !== undefined) {
+    if (prior.requestedWinnerTransactionId !== winner) throw held("Recorded winner request differs")
+    return { key: prior.key, attempt: prior.attempt }
+  }
+  let found: { readonly key: string; readonly attempt: Attempt } | undefined = undefined
+  for (const key of try pendingKeys(entries)) {
+    const value = try readAttempt(entries, key)
+    if (value === undefined || value === null || value.transactionId.toLowerCase() !== original) continue
+    if (found !== undefined) throw held("Ambiguous pending binding")
+    found = { key, attempt: value }
+  }
+  return found
+}
+
+export effect function reconcileBindingWinner(scope: Scope, deployment: Deployment, input: RecoveryInput, mode: Mode) {
+  if (!isRecoveryInput(input)) throw held("Invalid binding reconciliation")
+  const original = input.originalTransactionId.toLowerCase()
+  const winner = input.winnerTransactionId.toLowerCase()
+  const found = try within(scope, (entries) => located(entries, original, winner))
+  if (found === undefined || found.attempt.network !== input.network || found.attempt.vault.toLowerCase() !== input.vault.toLowerCase() || !/^0x[0-9a-f]{64}$/u.test(found.attempt.fingerprint) || found.key !== `${STORED_BINDING}${found.attempt.fingerprint.slice(2)}`) throw held("Pending binding unavailable")
+  const signed: SignedType2 | undefined = readSignedType2(found.attempt.rawTransaction as Hex)
+  if (signed === undefined || signed.request.chainId !== Number(deployment.chainId) || signed.request.to !== deployment.vault || signed.request.value !== 0n || signed.sender !== deployment.identityAuthority) throw held("Stored binding identity differs")
+  try bindingArguments(signed.request.data)
+  try within(scope, (entries) => retainedConsent(entries, deployment, found.attempt, false))
+  try signedWithin(deployment, found.attempt.rawTransaction, found.attempt, false)
+  const finalizedHead = (try (try EvmRpc).head("finalized")).number
+  const originalReceipt = try canonicalReceipt(original, finalizedHead)
+  let proof: Proof
+  let evidence: WinnerEvidence | undefined = undefined
+  if (originalReceipt !== undefined) {
+    proof = { transactionId: original, blockHash: originalReceipt.blockHash, blockNumber: blockText(originalReceipt.blockNumber), outcome: originalReceipt.status === "success" ? "original_finalized" : "original_reverted" }
+    evidence = originalEvidence(0, originalReceipt)
+  } else {
+    if (winner === original) {
+      if (mode.kind === "scheduled") return { state: "pending" } satisfies Observed
+      throw held("Original binding receipt unavailable")
+    }
+    const receipt = try canonicalReceipt(winner, finalizedHead)
+    if (receipt === undefined) {
+      if (mode.kind === "scheduled") return { state: "pending" } satisfies Observed
+      throw held("Finalized self-transaction unavailable")
+    }
+    if (receipt.status !== "success") throw held("Finalized self-transaction unavailable")
+    evidence = try winnerEvidence(deployment, found.attempt, winner, receipt)
+    proof = { transactionId: winner, blockHash: receipt.blockHash, blockNumber: blockText(receipt.blockNumber), outcome: "superseded" }
+  }
+  const observation = { key: found.key, attempt: found.attempt, proof, requestedWinnerTransactionId: winner } satisfies Observation
+  try within(scope, (entries) => recorded(entries, deployment, found, observation, mode, evidence))
+  return { state: proof.outcome, originalTransactionId: found.attempt.transactionId, winnerTransactionId: proof.transactionId, blockHash: proof.blockHash, blockNumber: proof.blockNumber } satisfies Observed
+}

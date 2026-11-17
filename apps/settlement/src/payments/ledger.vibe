@@ -1,0 +1,278 @@
+// spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"; spec/settlement/paymentInvestigation.md, "A later authorization of the same destination clears the hold as paid"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/composition.md, "A verified deposit can fund a walletless award"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
+import { isoNow, nowSeconds } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation, type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type Decision, load, update } from "@repo/platform/stored"
+import { Wallets } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { type Event as SettlementEvent, type Settlement, apply as applySettlement } from "../../gen/settlement__composition.effect.vibe"
+import { type Event as InvestigationEvent, type Investigation, type PaidEvent, apply as applyInvestigation, canReindex } from "../../gen/settlement__paymentInvestigation.effect.vibe"
+import { equalAmounts, legacyFloorFeeAmount, ordinaryFeeAmount } from "../../gen/settlement__money.effect.vibe"
+import { payoutAmountsAccepted } from "../kernels/fees.ts"
+import { maxBaseUnitsForChain } from "../kernels/networks.ts"
+import { type ObligationRows, type PaidRecord, type Projection, type Reservation, obligationAggregate, payoutOf, project, receiptOf, reservationOf, unreservedSettlement } from "./obligation.vibe"
+import { type EventReference, type FinalizedPaymentEvent, type PaymentDeployment, type VaultAsset, EvidenceRefused, bindingOf, limbs, networkOf, refused, sameAddress, sameEvidence, sameStoredAsset, storedEvidence } from "./terms.vibe"
+import { verifyFinalized } from "./verify.vibe"
+import { WalletHistory } from "./wallets.vibe"
+
+export schema HoldReason = "UnauthorizedDestination" | "LegacyFloorFee"
+
+export type Indexed =
+  | { readonly kind: "Recorded" }
+  | { readonly kind: "Replayed" }
+  | { readonly kind: "Held"; readonly reason: HoldReason; readonly block: number }
+
+const recorded: Indexed = { kind: "Recorded" }
+const replayed: Indexed = { kind: "Replayed" }
+
+function held(reason: HoldReason, block: number): Indexed {
+  return { kind: "Held", reason, block }
+}
+
+schema SnapshotRow {
+  readonly asset_address: string
+  readonly asset_decimals: number
+}
+
+schema StoredEventRow {
+  readonly kind: string
+  readonly obligation_id: string
+  readonly evidence_json: string
+  readonly obligation_state: string | null
+}
+
+schema SourceRow {
+  readonly source_digest: string
+}
+
+schema HeldRow {
+  readonly obligation_id: string
+  readonly block: string
+}
+
+export effect function vaultAsset(deployment: PaymentDeployment) {
+  const row = try first(SnapshotRow, sql`SELECT asset_address, asset_decimals FROM vault_snapshots WHERE project_id = ${deployment.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`)
+  if (row === undefined) throw refused("Finalized vault asset snapshot required")
+  return { address: row.asset_address, decimals: row.asset_decimals } satisfies VaultAsset
+}
+
+export effect function projectionFor(deployment: PaymentDeployment, asset: VaultAsset, githubUserId: string, lease?: string) {
+  const owner = { githubId: githubUserId, network: networkOf(deployment.chain) }
+  const history = try (try WalletHistory).authorized(owner)
+  const current = try (try Wallets).effective(owner)
+  const effective = current === undefined ? undefined : history.find((wallet) => wallet.claimId === current.claimId)
+  return { deployment, asset, history, effective, nowSeconds: try nowSeconds(), lease, requests: [], inspections: [] } satisfies Projection
+}
+
+effect function parsedEvidence(text: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused("Conflicting finalized event") })
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw refused("Conflicting finalized event")
+  return parsed as Readonly<Record<string, unknown>>
+}
+
+effect function settled(current: Settlement, event: SettlementEvent) {
+  return applySettlement(current, event) catch effect () => { throw refused("Chain event mismatch") }
+}
+
+effect function investigated(current: Investigation, event: InvestigationEvent) {
+  return applyInvestigation(current, event, "scanner") catch effect () => { throw refused("Chain event mismatch") }
+}
+
+effect function notices(deployment: PaymentDeployment, kind: "AwardReserved" | "PaymentPaid", obligationId: string, githubUserId: string, sourceAt: string) {
+  const eventKey = `${kind === "AwardReserved" ? "payment-reserved" : "payment-paid"}:${obligationId}`
+  return try (try Notices).statements({ notices: [{ eventKey, recipientGithubId: githubUserId, kind, subject: deployment.projectId, actionPath: "/earnings", sourceAt }] })
+}
+
+function identityMatches(deployment: PaymentDeployment, rows: ObligationRows, event: FinalizedPaymentEvent, asset: VaultAsset) {
+  const row = rows.obligation
+  return row !== undefined && row.project_id === event.projectId && row.network === event.network && sameAddress(deployment.chain, row.vault, event.vault)
+    && row.asset_address === asset.address && row.asset_decimals === asset.decimals && row.github_user_id === event.githubUserId && row.source_digest === event.sourceDigest
+}
+
+effect function decideReserved(deployment: PaymentDeployment, asset: VaultAsset, event: FinalizedPaymentEvent, evidence: string, rows: ObligationRows) {
+  if (rows.obligation !== undefined) {
+    if (!identityMatches(deployment, rows, event, asset)) throw refused("Immutable obligation mismatch")
+    const prior = rows.events.find((row) => row.kind === "reserved")
+    if (prior === undefined) throw refused("Conflicting finalized event")
+    const stored = try parsedEvidence(prior.evidence_json)
+    if (!sameEvidence(stored, try parsedEvidence(evidence)) || !sameStoredAsset(stored, asset)) throw refused("Conflicting finalized event")
+    return { value: replayed, writes: [] } satisfies Decision<Indexed>
+  }
+  const reservation = { obligationId: event.obligationId, githubUserId: event.githubUserId, gross: event.gross, fee: event.fee, sourceDigest: event.sourceDigest } satisfies Reservation
+  const projection = try projectionFor(deployment, asset, event.githubUserId)
+  const configured = try settled(try unreservedSettlement(projection, reservation), { type: "configure", purpose: "Ordinary", rail: "OrdinaryVault", gross: try limbs(event.gross) })
+  const reserved = try settled(configured, { type: "reserve" })
+  const wallet = projection.effective
+  const delivered = wallet === undefined ? reserved : try settled(reserved, { type: "updateDelivery", update: { tag: "SetWallet", ...bindingOf(deployment.chain, wallet) } })
+  const now = try isoNow()
+  const writes: Statement[] = [
+    sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES (${event.network}, ${event.transactionId}, ${event.eventIndex}, ${event.blockId}, 'reserved', ${event.obligationId}, ${evidence}, ${now})`,
+    sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (${event.obligationId}, ${event.projectId}, ${event.githubUserId}, ${event.network}, ${event.chain}, ${event.vault}, ${asset.address}, ${asset.decimals}, ${event.gross.toString()}, ${event.fee.toString()}, ${event.sourceDigest}, 'reserved', ${now}, NULL)`,
+  ]
+  if (delivered.delivery.queue === "Ready") writes.push(sql`INSERT INTO payment_outbox (obligation_id, state, updated_at) VALUES (${event.obligationId}, 'ready', ${now})`)
+  writes.push(...try notices(deployment, "AwardReserved", event.obligationId, event.githubUserId, now))
+  return { value: recorded, writes } satisfies Decision<Indexed>
+}
+
+effect function paidRecord(event: FinalizedPaymentEvent, evidence: string) {
+  const height = Number(event.blockNumber)
+  if (event.destination === undefined || !Number.isSafeInteger(height) || height <= 0) throw refused("Payout destination missing")
+  return {
+    transaction: event.transactionId,
+    eventIndex: event.eventIndex,
+    blockId: event.blockId,
+    destination: event.destination,
+    height,
+    evidenceDigest: try sha256Hex(evidence),
+    vault: event.vault,
+    network: event.network,
+    githubUserId: event.githubUserId,
+    gross: event.gross,
+    net: event.net,
+    fee: event.fee,
+  } satisfies PaidRecord
+}
+
+function samePayout(left: PaidEvent, right: PaidEvent) {
+  return left.transaction === right.transaction && left.index === right.index && left.destination === right.destination && left.block === right.block
+    && left.obligation === right.obligation && left.gross === right.gross && left.fee === right.fee && left.net === right.net
+}
+
+effect function paidWrites(deployment: PaymentDeployment, reservation: Reservation, record: PaidRecord, insert: { readonly network: string; readonly evidence: string } | undefined, observedAt: string) {
+  const now = try isoNow()
+  const id = reservation.obligationId
+  return [
+    ...(insert === undefined ? [] : [sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES (${insert.network}, ${record.transaction}, ${record.eventIndex}, ${record.blockId}, 'paid', ${id}, ${insert.evidence}, ${now})`]),
+    sql`UPDATE payment_obligations SET state = 'paid', paid_transaction = ${record.transaction} WHERE id = ${id} AND state = 'reserved'`,
+    sql`UPDATE payment_outbox SET state = 'paid', lease_token = NULL, lease_until = NULL, updated_at = ${now} WHERE obligation_id = ${id}`,
+    sql`UPDATE payment_attempts SET state = 'finalized' WHERE obligation_id = ${id} AND transaction_id = ${record.transaction}`,
+    ...try notices(deployment, "PaymentPaid", id, reservation.githubUserId, insert === undefined ? observedAt : now),
+  ]
+}
+
+interface Incoming {
+  readonly event: FinalizedPaymentEvent
+  readonly evidence: string
+}
+
+effect function decidePaid(deployment: PaymentDeployment, asset: VaultAsset, incoming: Incoming | undefined, rows: ObligationRows) {
+  const row = rows.obligation
+  if (row === undefined) throw refused("Unknown or duplicate payout")
+  const reservation = try reservationOf(row)
+  if (incoming !== undefined) {
+    const { event } = incoming
+    if (!identityMatches(deployment, rows, event, asset)) throw refused("Immutable obligation mismatch")
+    if (row.state === "paid" && row.paid_transaction !== event.transactionId) throw refused("Unknown or duplicate payout")
+    if (!sameAddress(deployment.chain, event.feeRecipient, deployment.feeRecipient)) throw refused("Payout fee recipient differs from the vault")
+  }
+  const projection = try projectionFor(deployment, asset, row.github_user_id)
+  const projected = try project(projection, rows)
+  const stored = projected.paid
+  const record = incoming === undefined ? stored : try paidRecord(incoming.event, incoming.evidence)
+  if (record === undefined) throw refused("Unknown or duplicate payout")
+  const payout = try payoutOf(projection, reservation.obligationId, record)
+  const { investigation } = projected
+  const reconcile = effect {
+    return try settled(projected.settlement, {
+      type: "reconcile",
+      evidence: {
+        scanner: receiptOf(projected.target, record, deployment.chain),
+        amounts: { obligation: 1, gross: try limbs(record.gross), principal: try limbs(record.net), fee: try limbs(record.fee), feeRecipient: "fees", height: record.height },
+        receipt: 1,
+      },
+    })
+  }
+  const observedAt = rows.events.find((event) => event.kind === "paid")?.observed_at ?? ""
+  if (investigation.phase === "Reserved") {
+    const next = try investigated(investigation, { type: "indexEvent", payout })
+    const insert = incoming === undefined ? undefined : { network: incoming.event.network, evidence: incoming.evidence }
+    if (next.phase === "Investigating") {
+      if (insert === undefined) throw refused("Unknown or duplicate payout")
+      const now = try isoNow()
+      return { value: held("UnauthorizedDestination", record.height), writes: [sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES (${insert.network}, ${record.transaction}, ${record.eventIndex}, ${record.blockId}, 'paid', ${reservation.obligationId}, ${insert.evidence}, ${now})`] } satisfies Decision<Indexed>
+    }
+    try reconcile
+    return { value: recorded, writes: try paidWrites(deployment, reservation, record, insert, observedAt) } satisfies Decision<Indexed>
+  }
+  if (!samePayout(investigation.payout, payout)) throw refused("Conflicting finalized event")
+  if (investigation.phase === "Investigating" && canReindex(investigation)) {
+    try investigated(investigation, { type: "reindex" })
+    try reconcile
+    return { value: recorded, writes: try paidWrites(deployment, reservation, record, undefined, observedAt) } satisfies Decision<Indexed>
+  }
+  try investigated(investigation, { type: "replay", payout })
+  return { value: investigation.phase === "Paid" ? replayed : held("UnauthorizedDestination", record.height), writes: [] } satisfies Decision<Indexed>
+}
+
+function conflicting(error: ConstraintViolation) {
+  return refused(`Conflicting finalized event: ${error.message.slice(0, 120)}`)
+}
+
+effect function settleObligation(deployment: PaymentDeployment, asset: VaultAsset, obligationId: string, incoming: Incoming | undefined) {
+  return update(obligationAggregate(obligationId), (rows) => incoming?.event.kind === "reserved" ? decideReserved(deployment, asset, incoming.event, incoming.evidence, rows) : decidePaid(deployment, asset, incoming, rows))
+    catch effect (error) => match (error) {
+      when ConstraintViolation: throw conflicting(error);
+      default: throw error;
+    }
+}
+
+effect function storedReplay(deployment: PaymentDeployment, reference: EventReference) {
+  const stored = try first(StoredEventRow, sql`SELECT e.kind, e.obligation_id, e.evidence_json, o.state AS obligation_state FROM payment_events e LEFT JOIN payment_obligations o ON o.id = e.obligation_id WHERE e.network = ${deployment.network} AND e.transaction_id = ${reference.transactionId} AND e.event_index = ${reference.eventIndex}`)
+  if (stored === undefined || stored.kind !== reference.kind || stored.obligation_id !== reference.obligationId) return undefined
+  const evidence = try parsedEvidence(stored.evidence_json)
+  const same = evidence.kind === reference.kind && evidence.transactionId === reference.transactionId && evidence.eventIndex === reference.eventIndex
+    && evidence.obligationId === reference.obligationId && evidence.projectId === deployment.projectId && evidence.network === deployment.network
+    && evidence.vault === deployment.vault
+  return same ? stored : undefined
+}
+
+effect function legacyFloorFee(gross: bigint, fee: bigint) {
+  const amount = try limbs(gross)
+  const charged = try limbs(fee)
+  return equalAmounts(charged, legacyFloorFeeAmount(amount)) && !equalAmounts(charged, ordinaryFeeAmount(amount))
+}
+
+effect function recordFinalized(deployment: PaymentDeployment, event: FinalizedPaymentEvent) {
+  if (deployment.scope === "PrivateBounty") throw refused("Finalized bounty differs from the private approved settlement")
+  if (!/^[1-9][0-9]*$/u.test(event.githubUserId) || !/^[a-f0-9]{64}$/u.test(event.sourceDigest)) throw refused("Chain event mismatch")
+  if (event.kind === "reserved" && event.gross > 0n && event.net === event.gross - event.fee && (try legacyFloorFee(event.gross, event.fee))) return held("LegacyFloorFee", Number(event.blockNumber))
+  if (event.kind === "reserved" && !payoutAmountsAccepted(event.gross, event.fee, event.net, false, maxBaseUnitsForChain(event.chain))) throw refused("Chain event mismatch")
+  const asset = try vaultAsset(deployment)
+  return try settleObligation(deployment, asset, event.obligationId, { event, evidence: storedEvidence(event, asset) })
+}
+
+export effect function acknowledgeStored(deployment: PaymentDeployment, reference: EventReference) {
+  const stored = try storedReplay(deployment, reference)
+  if (stored === undefined) return undefined
+  if (reference.kind === "reserved" || stored.obligation_state === "paid") return replayed
+  return try settleObligation(deployment, try vaultAsset(deployment), reference.obligationId, undefined)
+}
+
+export effect function indexPaymentEvent(deployment: PaymentDeployment, reference: EventReference) {
+  const stored = try acknowledgeStored(deployment, reference)
+  if (stored !== undefined) return stored
+  const source = reference.kind === "paid" ? (try first(SourceRow, sql`SELECT source_digest FROM payment_obligations WHERE id = ${reference.obligationId} AND network = ${deployment.network} AND vault = ${deployment.vault}`))?.source_digest : undefined
+  const event = try verifyFinalized(deployment, reference, source)
+  if (event.transactionId !== reference.transactionId || event.eventIndex !== reference.eventIndex || event.kind !== reference.kind || event.obligationId !== reference.obligationId) throw refused("Chain event mismatch")
+  return try recordFinalized(deployment, event)
+}
+
+export effect function obligationState(deployment: PaymentDeployment, obligationId: string) {
+  const { state } = try load(obligationAggregate(obligationId))
+  const row = state.obligation
+  if (row === undefined) return undefined
+  return try project(try projectionFor(deployment, try vaultAsset(deployment), row.github_user_id), state)
+}
+
+export effect function heldPayouts(deployment: PaymentDeployment) {
+  return try rows(HeldRow, sql`SELECT o.id AS obligation_id, json_extract(e.evidence_json, '$.blockNumber') AS block FROM payment_obligations o JOIN payment_events e ON e.obligation_id = o.id AND e.kind = 'paid' WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND o.state = 'reserved' ORDER BY e.rowid`)
+}
+
+export effect function reindexHeld(deployment: PaymentDeployment) {
+  const asset = try vaultAsset(deployment)
+  const outcomes: Indexed[] = []
+  for (const row of try heldPayouts(deployment)) outcomes.push(try settleObligation(deployment, asset, row.obligation_id, undefined))
+  return outcomes
+}
+
+export { EvidenceRefused }

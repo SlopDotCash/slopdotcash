@@ -1,0 +1,90 @@
+// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { ReportingRead, ReportingResult, ReportingRow } from "../../gen/slopbot__reportingReadiness.ts"
+import { emptyRow, mergeObservation, refreshOutcome } from "../../gen/slopbot__reportingReadiness.effect.vibe"
+import type { Target } from "./targets.vibe"
+
+schema Failure = "unavailable" | "app-not-installed" | "identity-mismatch"
+schema StatusRow {
+  repository_id: string | null
+  repository_node_id: string | null
+  enabled: number | null
+  verified_at: string | null
+  attempted_at: string
+  failure: Failure | null
+}
+
+const failures: Readonly<Record<Exclude<ReportingResult, "ReportingVerified">, Failure>> = {
+  ReportingUnavailable: "unavailable",
+  AppNotInstalled: "app-not-installed",
+  IdentityMismatch: "identity-mismatch",
+}
+
+const results: Readonly<Record<Failure, ReportingResult>> = {
+  "unavailable": "ReportingUnavailable",
+  "app-not-installed": "AppNotInstalled",
+  "identity-mismatch": "IdentityMismatch",
+}
+
+const storedId = /^[1-9][0-9]{0,15}$/u
+
+function scope(target: Target) {
+  return sql`project_id = ${target.projectId} AND project_revision = ${target.revision} AND repository_key = ${target.repositoryKey}`
+}
+
+effect function instant(text: string | null, label: string) {
+  if (text === null) return 0
+  const millis = millisOf(text)
+  if (!Number.isFinite(millis) || millis <= 0) throw new RowMismatch({ text: label, issue: "a reporting time is not an instant" })
+  return millis
+}
+
+effect function rowOf([found]: ReadonlyArray<Rows>) {
+  const label = "repository_reporting_status"
+  const [row] = try decoded(StatusRow, found ?? [], label)
+  if (row === undefined) return emptyRow
+  if (row.repository_id !== null && !storedId.test(row.repository_id)) throw new RowMismatch({ text: label, issue: "a repository ID is not a positive integer" })
+  return {
+    rowRepositoryId: row.repository_id === null ? 0 : Number(row.repository_id),
+    rowNodeId: row.repository_node_id ?? "",
+    enabledKnown: row.enabled !== null,
+    rowEnabled: row.enabled === 1,
+    verifiedAt: try instant(row.verified_at, label),
+    attemptedAt: try instant(row.attempted_at, label),
+    failure: row.failure === null ? "ReportingVerified" : results[row.failure],
+  } satisfies ReportingRow
+}
+
+function statusOf(target: Target): Aggregate<ReportingRow, RowMismatch, never> {
+  return {
+    name: `reporting status of ${target.projectId} revision ${target.revision} at ${target.repositoryKey}`,
+    version: sql`SELECT coalesce((SELECT json_array(repository_id, repository_node_id, enabled, verified_at, attempted_at, failure) FROM repository_reporting_status WHERE ${scope(target)}), '') AS version`,
+    reads: [sql`SELECT repository_id, repository_node_id, enabled, verified_at, attempted_at, failure FROM repository_reporting_status WHERE ${scope(target)}`],
+    decode: rowOf,
+  }
+}
+
+effect function written(target: Target, row: ReportingRow) {
+  const verifiedAt = row.enabledKnown ? try isoAt(row.verifiedAt) : null
+  return sql`INSERT INTO repository_reporting_status (project_id, project_revision, repository_key, repository_id, repository_node_id, enabled, verified_at, attempted_at, failure)
+    VALUES (${target.projectId}, ${target.revision}, ${target.repositoryKey}, ${row.rowRepositoryId > 0 ? String(row.rowRepositoryId) : null}, ${row.rowNodeId === "" ? null : row.rowNodeId}, ${row.enabledKnown ? (row.rowEnabled ? 1 : 0) : null}, ${verifiedAt}, ${try isoAt(row.attemptedAt)}, ${row.failure === "ReportingVerified" ? null : failures[row.failure]})
+    ON CONFLICT(project_id, project_revision, repository_key) DO UPDATE SET
+      repository_id = excluded.repository_id, repository_node_id = excluded.repository_node_id, enabled = excluded.enabled,
+      verified_at = excluded.verified_at, attempted_at = excluded.attempted_at, failure = excluded.failure`
+}
+
+effect function decide(target: Target, row: ReportingRow, result: ReportingResult, read: ReportingRead, at: number) {
+  const outcome = refreshOutcome(row, result, read, at)
+  if (at <= row.attemptedAt) return { value: outcome, writes: [] } satisfies Decision<ReportingResult>
+  return { value: outcome, writes: [try written(target, mergeObservation(row, result, read, at))] } satisfies Decision<ReportingResult>
+}
+
+export effect function recordObservation(target: Target, result: ReportingResult, read: ReportingRead, at: number) {
+  return try update(statusOf(target), (row) => decide(target, row, result, read, at))
+}
+
+export effect function storedObservation(target: Target) {
+  return (try load(statusOf(target))).state
+}

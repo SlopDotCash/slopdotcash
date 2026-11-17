@@ -1,0 +1,151 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"; spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
+import { GitHub, GitHubMalformed, decoded } from "@repo/platform/github"
+import { gitObjectId, sha256Of, textBytes, utf8Text } from "@repo/platform/git/bytes"
+import { type FileRecovery, type FileRequest, VALUE_FILE_EXPANSION_LIMIT, fileRequestsSha256, validFileRequest } from "@repo/platform/git/evidence"
+import type { Recovered, VerifiedBlob } from "./blob.vibe"
+import { type FileChange, hasCompleteValuePatch, needsFullValueComparison } from "./changes.vibe"
+import { base64Bytes, gunzipped, responseSignature } from "./encoding.ts"
+import { isObjectId, isRegularFileMode, isSha256 } from "./gitObject.ts"
+import { fields, text } from "./reads.vibe"
+
+export error RecoveryRefused { reason: string }
+
+export interface RecoverySource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly pull: { readonly head: { readonly sha: string } }
+  readonly files: ReadonlyArray<FileChange>
+}
+
+interface Inventory {
+  readonly repository: string
+  readonly ref: string
+  readonly parents: ReadonlyArray<string>
+  readonly changes: ReadonlyArray<FileChange>
+}
+
+const capturedResponse = /^\/repos\/[^/]+\/[^/]+\/(?:pulls\/\d+(?:\/(?:files|commits))?|commits\/[a-f0-9]{40})(?:\?|$)/u
+const comparedRange = /^\/repos\/([^/]+\/[^/]+)\/compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})$/u
+const commitPage = /^\/repos\/([^/]+\/[^/]+)\/commits\/([a-f0-9]{40})\?per_page=100&page=\d+$/u
+const textPoolMinimum = 1024
+
+export function fileRecoveryCapture() {
+  const metadata = new Map<string, string>()
+  const comparisonBases = new Map<string, string>()
+  const inventories = new Map<string, Inventory>()
+
+  effect function observe(path: string, result: unknown) {
+    if (capturedResponse.test(path)) {
+      const signature = responseSignature(path, result)
+      if (metadata.has(path) && metadata.get(path) !== signature) throw new GitHubMalformed({ path, issue: "Source metadata changed during collection" })
+      metadata.set(path, signature)
+    }
+    const compared = comparedRange.exec(path)
+    const base = text(fields(fields(result)?.["merge_base_commit"]), "sha")
+    if (compared !== null && base !== undefined && isObjectId(base)) comparisonBases.set(`${compared[1] ?? ""}:${compared[3] ?? ""}`, base)
+    const page = commitPage.exec(path)
+    if (page === null) return
+    const row = fields(result)
+    const parentsField = row?.["parents"]
+    const filesField = row?.["files"]
+    if (row === undefined || text(row, "sha") !== page[2] || !Array.isArray(parentsField) || !Array.isArray(filesField))
+      throw new GitHubMalformed({ path, issue: "Recovery commit inventory is incomplete" })
+    const repository = page[1] ?? ""
+    const ref = page[2] ?? ""
+    const key = `${repository}:${ref}`
+    const prior = inventories.get(key)
+    const parents = parentsField.map((parent: unknown) => text(fields(parent), "sha") ?? "")
+    if (prior !== undefined && JSON.stringify(prior.parents) !== JSON.stringify(parents))
+      throw new GitHubMalformed({ path, issue: "Recovery commit parents changed" })
+    const changes = [...prior?.changes ?? [], ...filesField as ReadonlyArray<FileChange>]
+    inventories.set(key, { repository, ref, parents, changes: [...new Map(changes.map((file) => [file.filename, file])).values()] })
+  }
+
+  const layer = Layer.effect(GitHub, effect {
+    const inner = try GitHub
+    return {
+      ...inner,
+      json: (path, schema, options) => effect {
+        const raw = try inner.json(path, Schema.Unknown, options)
+        try observe(path, raw)
+        return try decoded(schema, raw, path)
+      },
+    } satisfies GitHub.Shape
+  })
+
+  effect function requests(sources: ReadonlyArray<RecoverySource>) {
+    const selected = new Map<string, FileRequest>()
+    effect function add(source: RecoverySource, ref: string, path: string) {
+      const request: FileRequest = { repository: source.repository, repositoryNodeId: source.repositoryNodeId, ref, path }
+      if (!validFileRequest(request)) throw new RecoveryRefused({ reason: "Invalid source file recovery selection" })
+      selected.set(JSON.stringify(request), request)
+    }
+    effect function select(source: RecoverySource, changes: ReadonlyArray<FileChange>, head: string, base: string | undefined) {
+      for (const file of changes) {
+        if (hasCompleteValuePatch(file) && !needsFullValueComparison(file)) continue
+        if (file.status !== "removed") try add(source, head, file.filename)
+        if (base !== undefined && base !== "" && file.status !== "added") try add(source, base, file.previous_filename ?? file.filename)
+      }
+    }
+    for (const source of sources)
+      try select(source, source.files, source.pull.head.sha, comparisonBases.get(`${source.repository}:${source.pull.head.sha}`))
+    for (const inventory of inventories.values()) {
+      const source = sources.find((candidate) => inventory.repository.toLowerCase() === candidate.repository.toLowerCase())
+      if (source !== undefined) try select(source, inventory.changes, inventory.ref, inventory.parents[0])
+    }
+    return [...selected.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+  }
+
+  return { layer, metadata, requests }
+}
+
+function entryKey(repository: string, ref: string, path: string) {
+  return JSON.stringify([repository.toLowerCase(), ref, path])
+}
+
+export effect function recoveredFiles(requests: ReadonlyArray<FileRequest>, recovery: FileRecovery, intern?: (text: string) => string) {
+  if (recovery.inputSha256 !== fileRequestsSha256(requests) || recovery.entries.length !== requests.length)
+    throw new RecoveryRefused({ reason: "File recovery identity mismatch" })
+  const expected = new Set(requests.map((request) => JSON.stringify(request)))
+  const entries = new Map<string, FileRecovery["entries"][number]>()
+  for (const entry of recovery.entries) {
+    const request: FileRequest = { repository: entry.repository, repositoryNodeId: entry.repositoryNodeId, ref: entry.ref, path: entry.path }
+    const binding = entry.blobSha === null ? entry.mode === null : isObjectId(entry.blobSha) && entry.mode !== null && isRegularFileMode(entry.mode)
+    if (!validFileRequest(request) || !expected.delete(JSON.stringify(request)) || !isObjectId(entry.treeSha) || !binding)
+      throw new RecoveryRefused({ reason: "Invalid recovered file binding" })
+    entries.set(entryKey(entry.repository, entry.ref, entry.path), entry)
+  }
+  if (expected.size > 0) throw new RecoveryRefused({ reason: "Incomplete file recovery" })
+  const required = new Set(recovery.entries.flatMap((entry) => entry.blobSha === null ? [] : [entry.blobSha]))
+  const pool = new Map<string, string>()
+  const internText = intern ?? ((value: string) => {
+    if (value.length < textPoolMinimum) return value
+    const existing = pool.get(value)
+    if (existing !== undefined) return existing
+    pool.set(value, value)
+    return value
+  })
+  const blobs = new Map<string, { readonly sha: string; readonly text?: string; readonly bytes?: Uint8Array }>()
+  let expanded = 0
+  for (const blob of recovery.blobs) {
+    if (
+      !required.delete(blob.sha) || !isObjectId(blob.sha) || !isSha256(blob.sha256) || !Number.isSafeInteger(blob.size) ||
+      blob.size < 0 || blob.size > VALUE_FILE_EXPANSION_LIMIT - expanded
+    ) throw new RecoveryRefused({ reason: "Invalid recovered blob inventory" })
+    const compressed = base64Bytes(blob.gzipBase64)
+    const bytes = compressed === undefined ? undefined : try promise(() => gunzipped(compressed, blob.size))
+    if (bytes === undefined || bytes.length !== blob.size || sha256Of(bytes) !== blob.sha256 || gitObjectId("blob", bytes) !== blob.sha)
+      throw new RecoveryRefused({ reason: "Recovered Git blob bytes changed" })
+    expanded += bytes.length
+    const decoded = utf8Text(bytes)
+    blobs.set(blob.sha, decoded === undefined || decoded.includes("\0") ? { sha: blob.sha, bytes } : { sha: blob.sha, text: internText(decoded) })
+  }
+  if (required.size > 0) throw new RecoveryRefused({ reason: "Missing recovered Git blob" })
+  function verified(repository: string, ref: string, path: string): VerifiedBlob | undefined {
+    const entry = entries.get(entryKey(repository, ref, path))
+    const blob = entry?.blobSha === null || entry === undefined ? undefined : blobs.get(entry.blobSha)
+    if (blob === undefined) return undefined
+    return { sha: blob.sha, bytes: blob.bytes?.slice() ?? textBytes(blob.text ?? "") }
+  }
+  return { verified, intern: internText } satisfies Recovered
+}

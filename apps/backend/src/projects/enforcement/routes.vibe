@@ -1,0 +1,302 @@
+// spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"
+import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { Conflict } from "@repo/platform/stored"
+import type { Event as AccessEvent } from "../../../gen/backend__access.effect.vibe"
+import { type Event, type Registry, apply } from "../../../gen/backend__projectComposition.effect.vibe"
+import { AccessRoutes, projectContract } from "../../access/routes.vibe"
+import { type Context, DecisionNotNext, DenialUnrecordable, type GithubActor, type Loaded, activeBans, decisionOf, dryRun, loadAccess, maliceDecision, projectAppeal, restrictionAppeal, restrictionStateOf, send as sendAccess } from "../../access/store.vibe"
+import { AppealRequest, EnforcementRequest, enforcementDecision, enforcementPreview, projectAppeals } from "../../client/admin.vibe"
+import { postAdminProjectsByIdEnforcement, postProjectAppeals } from "../../client/refusals.vibe"
+import { AdminRoutes } from "../admin/routes.vibe"
+import { lookupActor } from "../github/lookup.vibe"
+import { manifestOf } from "../store/rows.vibe"
+import { loadProject, send } from "../store/store.vibe"
+import { type ProjectRow, type Row, boundedText, positiveInteger, projectIdPattern, projectRow, refused, requireModerator } from "./admission.vibe"
+import { recordView } from "./views.vibe"
+
+const bodyBytes = 65536
+const actions = ["quarantine", "ban", "request_reinstatement", "reinstate_accounts", "deny_reinstatement"] as const
+type Action = typeof actions[number]
+const decisionRows = postAdminProjectsByIdEnforcement
+
+interface Request {
+  readonly projectId: string
+  readonly action: Action
+  readonly accounts: ReadonlyArray<GithubActor>
+  readonly reason: string
+  readonly evidenceReference: string
+  readonly expected: { readonly revision: number; readonly sequence: number } | undefined
+  readonly actor: Actor
+  readonly scope: "account" | "any"
+}
+
+type Plan =
+  | { readonly kind: "composition"; readonly preview: Preview; readonly action: Parameters<typeof send>[0] }
+  | { readonly kind: "access"; readonly preview: Preview; readonly event: AccessEvent; readonly by: number; readonly context: Context }
+
+interface Preview {
+  readonly projectId: string
+  readonly projectName: string
+  readonly action: string
+  readonly sequence: number
+  readonly stateBefore: string
+  readonly stateAfter: string
+  readonly appealBefore: string
+  readonly appealAfter: string
+  readonly result: string
+  readonly pendingReason: string | null
+  readonly maintainerBans: ReadonlyArray<{ readonly githubId: string; readonly githubLogin: string }>
+  readonly accountReinstatements: ReadonlyArray<{ readonly githubId: string; readonly githubLogin: string }>
+  readonly revision: { readonly before: number; readonly after: number | null; readonly statusBefore: string; readonly statusAfter: string; readonly listingTierBefore: string; readonly listingTierAfter: string }
+}
+
+function restrictionText(restriction: Registry["security"]["restriction"]): string {
+  if (restriction === "Clear") return "clear"
+  return restriction === "FlagQuarantine" || restriction === "ModeratorQuarantine" ? "quarantined" : "banned"
+}
+
+function appealText(appeal: Registry["security"]["appeal"]): string {
+  return appeal === "AppealRequested" ? "requested" : appeal === "AppealGranted" ? "granted" : appeal === "AppealDenied" ? "denied" : "none"
+}
+
+function statusText(registry: Registry): string {
+  return registry.project.status === "Active" ? "active" : "paused"
+}
+
+function tierText(registry: Registry): string {
+  return registry.project.tier === "Featured" ? "featured" : registry.project.tier === "Retired" ? "retired" : "community"
+}
+
+effect function responsibleAccounts(value: unknown) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw refused(decisionRows.invalidRequestSelectTheResponsibleAccounts)
+  const accounts: GithubActor[] = []
+  for (const selected of value as ReadonlyArray<unknown>) {
+    if (typeof selected !== "object" || selected === null) throw refused(decisionRows.invalidRequestEnterAGitHubAccount)
+    const { githubLogin: login, githubId } = selected as { readonly githubLogin?: unknown; readonly githubId?: unknown }
+    if (typeof login !== "string") throw refused(decisionRows.invalidRequestEnterAGitHubAccount)
+    const account = try lookupActor(login)
+    if (account === undefined || (githubId !== undefined && githubId !== account.githubId)) throw refused(decisionRows.accountChanged)
+    if (!accounts.some((entry) => entry.githubId === account.githubId)) accounts.push({ githubId: account.githubId, login: account.githubLogin })
+  }
+  return accounts
+}
+
+effect function texts(body: { readonly reason: unknown; readonly evidenceReference: unknown }, rows: { readonly invalidRequestInvalidReason: Row; readonly invalidRequestReasonMustBe1To1000Characters: Row; readonly invalidRequestInvalidEvidenceReference: Row; readonly invalidRequestEvidenceReferenceMustBe1: Row }) {
+  return {
+    reason: try boundedText(body.reason, rows.invalidRequestInvalidReason, rows.invalidRequestReasonMustBe1To1000Characters, 1000),
+    evidenceReference: try boundedText(body.evidenceReference, rows.invalidRequestInvalidEvidenceReference, rows.invalidRequestEvidenceReferenceMustBe1, 500),
+  }
+}
+
+effect function policyOf(row: ProjectRow, registry: Registry) {
+  const valid = manifestOf(row.manifest, `project ${row.id}`) catch () => undefined
+  return { policy: { revision: registry.project.revision, result: valid === undefined ? "PolicyRefuses" as const : "PolicyAccepts" as const }, pendingReason: valid === undefined ? "The current manifest does not pass validation" : null }
+}
+
+function resultOf(before: Registry, after: Registry): string {
+  if (after.project.revision > before.project.revision) return "revision_appended"
+  return after.security.revisionPending && !before.security.revisionPending ? "revision_pending" : "no_revision_needed"
+}
+
+function revisionReason(action: Action): string {
+  return action === "ban" ? "Banned by a project moderator" : "Quarantined by a project moderator"
+}
+
+function compositionPreview(request: Request, name: string, before: Registry, after: Registry, pendingReason: string | null, bans: ReadonlyArray<GithubActor>): Preview {
+  return {
+    projectId: request.projectId,
+    projectName: name,
+    action: request.action,
+    sequence: before.security.journal.length + 1,
+    stateBefore: restrictionText(before.security.restriction),
+    stateAfter: restrictionText(after.security.restriction),
+    appealBefore: appealText(before.security.appeal),
+    appealAfter: appealText(after.security.appeal),
+    result: resultOf(before, after),
+    pendingReason: after.security.revisionPending && !before.security.revisionPending ? pendingReason : null,
+    maintainerBans: bans.map((account) => ({ githubId: account.githubId, githubLogin: account.login })),
+    accountReinstatements: [],
+    revision: { before: before.project.revision, after: after.project.revision > before.project.revision ? after.project.revision : null, statusBefore: statusText(before), statusAfter: statusText(after), listingTierBefore: tierText(before), listingTierAfter: tierText(after) },
+  }
+}
+
+effect function projectName(row: ProjectRow) {
+  const parsed = try orDie(Effect.try(() => JSON.parse(row.manifest) as { readonly name?: unknown }))
+  return typeof parsed.name === "string" ? parsed.name : row.id
+}
+
+function accountPreview(request: Request, name: string, registry: Registry, access: Loaded, appealAfter: string, released: ReadonlyArray<GithubActor>): Preview {
+  const state = restrictionStateOf(access, request.projectId)
+  return {
+    projectId: request.projectId,
+    projectName: name,
+    action: request.action,
+    sequence: access.journal.filter((entry) => entry.project_id === request.projectId).length + 1,
+    stateBefore: state,
+    stateAfter: state,
+    appealBefore: restrictionAppeal(access, request.projectId),
+    appealAfter,
+    result: "no_revision_needed",
+    pendingReason: null,
+    maintainerBans: [],
+    accountReinstatements: released.map((account) => ({ githubId: account.githubId, githubLogin: account.login })),
+    revision: { before: registry.project.revision, after: null, statusBefore: statusText(registry), statusAfter: statusText(registry), listingTierBefore: tierText(registry), listingTierAfter: tierText(registry) },
+  }
+}
+
+effect function moderators() {
+  return try (try Roles).snapshot("moderator")
+}
+
+function bannedIn(access: Loaded, projectId: string, githubId: string): boolean {
+  return activeBans(access).some((ban) => ban.projectId === projectId && ban.githubId === githubId)
+}
+
+function latestEligibleBan(access: Loaded, projectId: string, githubId: string): number {
+  const record = activeBans(access).filter((ban) => ban.projectId === projectId && ban.githubId === githubId).at(-1)
+  const row = access.journal.find((entry) => entry.id === record?.recordId)
+  return row === undefined ? 0 : decisionOf(row.row)
+}
+
+effect function accountPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded) {
+  const by = Number(request.actor.githubId)
+  const name = try projectName(row)
+  const project = access.numbers.get(request.projectId) ?? 0
+  const context = { actor: { githubId: request.actor.githubId, login: request.actor.login }, reason: request.reason, evidenceReference: request.evidenceReference, logins: {}, moderators: try moderators() }
+  if (request.action === "reinstate_accounts") {
+    if (request.accounts.length === 0) throw refused(decisionRows.invalidRequestSelectTheAccountsTo)
+    for (const account of request.accounts) if (!bannedIn(access, request.projectId, account.githubId)) throw refused(decisionRows.accountNotBanned)
+    const event: AccessEvent = { type: "reinstateAccounts", decision: access.nextDecision, project, targets: request.accounts.map((account) => Number(account.githubId)) }
+    const after = try dryRun(access, event, by)
+    const open = after.appeals.some((appeal) => appeal.status === "AppealOpen" && after.bans.some((ban) => ban.project === project && ban.enforcement === appeal.enforcement && ban.target === appeal.target))
+    const kept = projectAppeal(access, request.projectId) === "requested"
+    const preview = accountPreview(request, name, registry, access, open || kept ? "requested" : "granted", request.accounts)
+    return { kind: "access", preview, event, by, context } satisfies Plan
+  }
+  if (request.action === "deny_reinstatement") {
+    const appeal = openAccountAppealId(access, project)
+    const event: AccessEvent = { type: "denyAppeal", appealId: appeal, decision: access.nextDecision }
+    try dryRun(access, event, by)
+    const preview = accountPreview(request, name, registry, access, "denied", [])
+    return { kind: "access", preview, event, by, context } satisfies Plan
+  }
+  const event: AccessEvent = { type: "appeal", enforcement: latestEligibleBan(access, request.projectId, request.actor.githubId) }
+  try dryRun(access, event, by)
+  const preview = accountPreview(request, name, registry, access, "requested", [])
+  return { kind: "access", preview, event, by, context } satisfies Plan
+}
+
+function openAccountAppealId(access: Loaded, project: number): number {
+  const state = access.state
+  return state.appeals.find((appeal) => appeal.status === "AppealOpen" && state.bans.some((ban) => ban.project === project && ban.enforcement === appeal.enforcement && ban.target === appeal.target))?.id ?? 0
+}
+
+effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>) {
+  const by = Number(request.actor.githubId)
+  const after = try apply(registry, event, by)
+  const alongside = event.type === "decideMalice" ? (try maliceDecision(access, by, request.projectId, registry.security.journal.length + 1, malice)).writes : []
+  const preview = compositionPreview(request, try projectName(row), registry, after, pendingReason, malice)
+  const revision = { manifestText: row.manifest, reason: revisionReason(request.action), actor: { githubId: request.actor.githubId, login: request.actor.login } }
+  return { kind: "composition", preview, action: { projectId: request.projectId, event, by, revision, alongside } } satisfies Plan
+}
+
+effect function commit(plan: Plan) {
+  if (plan.kind === "access") return (try sendAccess(plan.event, plan.by, plan.context)).recordId
+  try send(plan.action)
+  return undefined
+}
+
+effect function planOf(request: Request, row: ProjectRow, registry: Registry, access: Loaded) {
+  const githubId = request.actor.githubId
+  const state = restrictionStateOf(access, request.projectId)
+  const fence = { revision: registry.project.revision, sequence: registry.security.journal.length + 1 }
+  const { policy, pendingReason } = try policyOf(row, registry)
+  const decidesMalice = request.action === "ban" && registry.security.restriction === "ServiceBan"
+  if (request.accounts.length > 0 && !decidesMalice && request.action !== "reinstate_accounts") throw refused(decisionRows.invalidRequestAccountBansRequireA)
+  switch (request.action) {
+    case "quarantine": return try compositionPlan(request, row, registry, access, { type: "quarantine", fence, policy }, pendingReason, [])
+    case "ban": {
+      if (decidesMalice) return try compositionPlan(request, row, registry, access, { type: "decideMalice", fence, accounts: request.accounts.map((account) => Number(account.githubId)) }, pendingReason, request.accounts)
+      return try compositionPlan(request, row, registry, access, { type: "ban", fence, policy }, pendingReason, [])
+    }
+    case "reinstate_accounts": return try accountPlan(request, row, registry, access)
+    case "deny_reinstatement": {
+      if (registry.security.appeal === "AppealRequested") return try compositionPlan(request, row, registry, access, { type: "denyAppeal", fence }, pendingReason, [])
+      return try accountPlan(request, row, registry, access)
+    }
+    case "request_reinstatement": {
+      const banned = bannedIn(access, request.projectId, githubId)
+      const projectOpen = projectAppeal(access, request.projectId) === "requested"
+      if (request.scope === "account") {
+        if (!banned) throw refused(postProjectAppeals.forbiddenOnlyACurrentlyBanned)
+        return try accountPlan(request, row, registry, access)
+      }
+      if (banned && (state === "clear" || projectOpen)) return try accountPlan(request, row, registry, access)
+      const by = Number(githubId)
+      const owner = by === registry.project.steward || by === registry.project.creator || registry.security.moderators.includes(by)
+      if (owner) return try compositionPlan(request, row, registry, access, { type: "requestAppeal" }, pendingReason, [])
+      if (banned) return try accountPlan(request, row, registry, access)
+      throw refused(postProjectAppeals.forbiddenOnlyTheProjectSteward)
+    }
+  }
+}
+
+effect function decided(request: Request, preview: boolean) {
+  const row = try projectRow(request.projectId)
+  if (row === undefined) throw refused(decisionRows.notFoundProjectNotFound)
+  const registry = (try loadProject(request.projectId)).state
+  const access = try loadAccess()
+  const expected = request.expected
+  if (expected !== undefined && (registry.project.revision !== expected.revision || registry.security.journal.length + 1 !== expected.sequence)) throw refused(decisionRows.staleEnforcement)
+  const plan = planOf(request, row, registry, access) catch effect (error) => match (error) {
+    when DenialUnrecordable: throw new Refused(admission.rejected);
+    when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
+    default: throw error;
+  }
+  if (preview) return json({ preview: plan.preview }, 200, projectContract)
+  const recordId = commit(plan) catch effect (error) => match (error) {
+    when DenialUnrecordable: throw new Refused(admission.rejected);
+    when DecisionNotNext: throw refused(decisionRows.staleEnforcement);
+    when Conflict: throw refused(decisionRows.staleEnforcement);
+    default: throw error;
+  }
+  const settled = try loadAccess()
+  const record = settled.journal.find((entry) => recordId === undefined ? entry.project_id === request.projectId && entry.sequence === plan.preview.sequence : entry.id === recordId)
+  if (record === undefined) throw refused(decisionRows.staleEnforcement)
+  return json({ preview: plan.preview, record: try recordView(settled, record, "decided") }, 200, projectContract)
+}
+
+effect function moderatorDecision(actor: Actor, projectId: string, preview: boolean) {
+  if (!(try sameOriginWrite())) throw refused(decisionRows.originForbidden)
+  try requireModerator(actor)
+  if (!projectIdPattern.test(projectId)) throw refused(decisionRows.notFoundProjectNotFound)
+  const body = try strictBody(EnforcementRequest, bodyBytes)
+  const action = actions.find((candidate) => candidate === body.action)
+  if (action === undefined) throw refused(decisionRows.invalidRequestInvalidEnforcementAction)
+  const accounts = try responsibleAccounts(body.responsibleAccounts)
+  const { reason, evidenceReference } = try texts(body, decisionRows)
+  const revision = try positiveInteger(body.expectedRevision, decisionRows.invalidRequestInvalidExpectedRevision)
+  const sequence = try positiveInteger(body.expectedSequence, decisionRows.invalidRequestInvalidExpectedSequence)
+  return try decided({ projectId, action, accounts, reason, evidenceReference, expected: { revision, sequence }, actor, scope: "any" }, preview)
+}
+
+effect function fileAppeal(actor: Actor) {
+  const rows = postProjectAppeals
+  if (!(try sameOriginWrite())) throw refused(rows.originForbidden)
+  const body = try strictBody(AppealRequest, bodyBytes)
+  if (body.appealScope !== undefined && body.appealScope !== "account") throw refused(rows.invalidRequestUnsupportedAppealScope)
+  const projectId = body.projectId
+  if (typeof projectId !== "string" || !projectIdPattern.test(projectId)) throw refused(rows.notFoundProjectNotFound)
+  const { reason, evidenceReference } = try texts(body, rows)
+  return try decided({ projectId, action: "request_reinstatement", accounts: [], reason, evidenceReference, expected: undefined, actor, scope: body.appealScope === "account" ? "account" : "any" }, false)
+}
+
+export const EnforcementRoutes = Layer.mergeAll(
+  handleRaw(enforcementPreview, (input) => moderatorDecision(input.actor, input.params.id ?? "", true)),
+  handleRaw(enforcementDecision, (input) => moderatorDecision(input.actor, input.params.id ?? "", false)),
+  handleRaw(projectAppeals, (input) => fileAppeal(input.actor)),
+  AccessRoutes,
+  AdminRoutes,
+)

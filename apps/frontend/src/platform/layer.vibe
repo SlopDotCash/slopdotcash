@@ -1,0 +1,8 @@
+// spec/frontend/presentation.md, "A blocked or failed beacon cannot block the page or its actions"
+import { webCrypto } from "@repo/platform/crypto"
+import { clipboard } from "./clipboard.vibe"
+import { deployment } from "./config.vibe"
+import { locks } from "./locks.vibe"
+import { localStore, sessionStore } from "./storage.vibe"
+
+export const browserServices = Layer.mergeAll(deployment, sessionStore, localStore, locks, clipboard, webCrypto, FetchHttpClient.layer)

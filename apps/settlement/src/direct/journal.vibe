@@ -1,0 +1,466 @@
+// spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"
+import { ConstraintViolation, RowMismatch, type Statement, decoded, rows, sql } from "@repo/platform/d1"
+import { type Aggregate, Conflict, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { EffectiveWallet } from "@repo/ports/backend"
+import type { ApprovedAward } from "@repo/ports/security"
+import { type ArchivedIntent, type CaseApproval, type DirectBounty, type Event, type Intent, type Lane, type Network, type QualifiedRoute, type Retirement, type Terms, type Transfer, type TxUse, type Wallet, admit, apply, canAdmit, decodeState, initial, noIntent, noTransfer, paid } from "../../gen/settlement__directBounty.effect.vibe"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { DirectIntent, PaymentAsset, type PaymentTransaction, PaymentWallet } from "../client/direct.vibe"
+import type { DirectAsset, DirectTransfer, EvmDirectRail, EvmTransactionRequest } from "./evm.vibe"
+
+module limbs {
+  import type { Amount } from "../../gen/settlement__money.ts"
+  import { toAmount } from "../kernels/amounts.ts"
+  /** @throws {never} */
+  export function amountOf(text: string): Amount {
+    try {
+      return toAmount(BigInt(text))
+    } catch {
+      return [-1]
+    }
+  }
+  /** @throws {never} */
+  export function nonceOf(text: string): bigint | undefined {
+    return /^0x[\da-f]{1,16}$/iu.test(text) || /^(?:0|[1-9]\d{0,19})$/u.test(text) ? BigInt(text) : undefined
+  }
+  /** @throws {never} */
+  export function wholeNumber(text: string | undefined): number {
+    if (text === undefined) return -1
+    const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
+    return Number.isSafeInteger(value) ? value : -1
+  }
+}
+import { amountOf, nonceOf, wholeNumber } from limbs
+
+export schema StoredReceipt {
+  readonly legIndex: number
+  readonly transactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+  readonly finalizedAt?: string
+  readonly message?: string
+}
+
+export schema StoredRetirement {
+  readonly kind: string
+  readonly legIndex?: number
+  readonly nonce?: string
+  readonly blockNumber?: string
+  readonly transactionId?: string
+  readonly message?: string
+  readonly coveredMessages?: ReadonlyArray<string>
+}
+
+schema StoredConsent {
+  readonly rail: string
+  readonly network: string
+  readonly asset: PaymentAsset
+  readonly recipient: PaymentWallet
+  readonly generation?: number
+}
+
+schema PaymentRow { network: string; intent: string; prepared_at: string }
+schema RevisionRow { generation: number; intent: string; retirement: string }
+schema ReceiptRow { leg_index: number; network: string; transaction_id: string; evidence: string; verified_at: string }
+schema ConsentRow { case_revision: number; deployment: string; reporter_github_id: string }
+schema PaidRow { evidence: string }
+
+export interface Revision {
+  readonly generation: number
+  readonly intent: DirectIntent
+  readonly retirement: StoredRetirement
+}
+
+export interface Leg {
+  readonly legIndex: number
+  readonly network: string
+  readonly transactionId: string
+  readonly evidence: StoredReceipt
+}
+
+export interface Consent {
+  readonly caseRevision: number
+  readonly deployment: StoredConsent
+  readonly reporterGithubId: string
+}
+
+export interface Journal {
+  readonly caseId: string
+  readonly network: string | undefined
+  readonly preparedAt: string | undefined
+  readonly original: DirectIntent | undefined
+  readonly revisions: ReadonlyArray<Revision>
+  readonly legs: ReadonlyArray<Leg>
+  readonly consents: ReadonlyArray<Consent>
+  readonly paid: boolean
+}
+
+export function currentIntent(journal: Journal): DirectIntent | undefined {
+  return journal.revisions.at(-1)?.intent ?? journal.original
+}
+
+export function generationOf(journal: Journal): number {
+  return journal.revisions.at(-1)?.generation ?? 0
+}
+
+export function legPaid(journal: Journal, legIndex: number): boolean {
+  return journal.legs.some((leg) => leg.legIndex === legIndex)
+}
+
+effect function parsed<S extends Schema.Constraint>(schema: S, text: string, label: string) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new RowMismatch({ text: label, issue: "stored JSON is malformed" }) })
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "stored JSON does not match its shape" }) }
+}
+
+effect function journalOf(caseId: string, [payments, revisions, receipts, consents, paid]: ReadonlyArray<Rows>) {
+  const [payment] = try decoded(PaymentRow, payments ?? [], "direct payment")
+  const stored: Revision[] = []
+  for (const row of try decoded(RevisionRow, revisions ?? [], "direct payment revisions")) {
+    stored.push({ generation: row.generation, intent: try parsed(DirectIntent, row.intent, "direct payment successor"), retirement: try parsed(StoredRetirement, row.retirement, "direct payment retirement") })
+  }
+  const legs: Leg[] = []
+  for (const row of try decoded(ReceiptRow, receipts ?? [], "direct transfer receipts")) {
+    legs.push({ legIndex: row.leg_index, network: row.network, transactionId: row.transaction_id, evidence: try parsed(StoredReceipt, row.evidence, "direct transfer evidence") })
+  }
+  const accepted: Consent[] = []
+  for (const row of try decoded(ConsentRow, consents ?? [], "payment consents")) {
+    const deployment = try parsed(Schema.Unknown, row.deployment, "payment consent")
+    const direct = Schema.decodeUnknownEffect(StoredConsent)(deployment) catch () => undefined
+    if (direct !== undefined && (direct.rail === "direct" || direct.rail === "direct-recovery")) accepted.push({ caseRevision: row.case_revision, deployment: direct, reporterGithubId: row.reporter_github_id })
+  }
+  return {
+    caseId,
+    network: payment?.network,
+    preparedAt: payment?.prepared_at,
+    original: payment === undefined ? undefined : try parsed(DirectIntent, payment.intent, "direct payment intent"),
+    revisions: stored,
+    legs,
+    consents: accepted,
+    paid: (try decoded(PaidRow, paid ?? [], "direct payment receipt")).length > 0,
+  } satisfies Journal
+}
+
+function ordered(select: Statement, order: Statement) {
+  return sql`coalesce((SELECT group_concat(entry, ',') FROM (${select} ORDER BY ${order})), '')`
+}
+
+export function journal(caseId: string): Aggregate<Journal, RowMismatch, never> {
+  const prepared = sql`coalesce((SELECT network || ':' || prepared_at FROM security_direct_payments WHERE case_id = ${caseId}), '-')`
+  const generations = ordered(sql`SELECT generation AS entry FROM security_direct_payment_revisions WHERE case_id = ${caseId}`, sql`generation`)
+  const receipts = ordered(sql`SELECT leg_index || ':' || transaction_id AS entry FROM security_direct_transfer_receipts WHERE case_id = ${caseId}`, sql`leg_index`)
+  const consents = ordered(sql`SELECT case_revision AS entry FROM security_payment_consents WHERE case_id = ${caseId}`, sql`case_revision`)
+  const paid = sql`(SELECT count(*) FROM security_direct_payment_receipts WHERE case_id = ${caseId})`
+  return {
+    name: `direct bounty ${caseId}`,
+    version: sql`SELECT ${prepared} || '|' || ${generations} || '|' || ${receipts} || '|' || ${consents} || '|' || ${paid} AS version`,
+    reads: [
+      sql`SELECT network, intent, prepared_at FROM security_direct_payments WHERE case_id = ${caseId}`,
+      sql`SELECT generation, intent, retirement FROM security_direct_payment_revisions WHERE case_id = ${caseId} ORDER BY generation`,
+      sql`SELECT leg_index, network, transaction_id, evidence, verified_at FROM security_direct_transfer_receipts WHERE case_id = ${caseId} ORDER BY leg_index`,
+      sql`SELECT case_revision, deployment, reporter_github_id FROM security_payment_consents WHERE case_id = ${caseId} ORDER BY case_revision`,
+      sql`SELECT evidence FROM security_direct_payment_receipts WHERE case_id = ${caseId}`,
+    ],
+    decode: (found) => journalOf(caseId, found),
+  }
+}
+
+export effect function journalFor(caseId: string) {
+  return (try load(journal(caseId))).state
+}
+
+export interface Facts {
+  readonly approval: ApprovedAward
+  readonly network: Network
+  readonly rail: EvmDirectRail
+  readonly caseRevision: number
+  readonly reporterGithubId: string
+  readonly payerGithubId: string
+  readonly payerWallet: EffectiveWallet | undefined
+  readonly reporterWallet: EffectiveWallet | undefined
+  readonly otherUses: ReadonlyArray<TxUse>
+}
+
+export function storedWallet(wallet: EffectiveWallet | undefined) {
+  return wallet === undefined ? undefined : { id: wallet.claimId, address: wallet.address, digest: wallet.digest } satisfies PaymentWallet
+}
+
+export type Claims = ReadonlyArray<string>
+
+export function walletModel(claims: Claims, wallet: PaymentWallet | undefined): Wallet {
+  return wallet === undefined ? { claim: 0, address: "", digest: "" } : { claim: claims.indexOf(wallet.id) + 1, address: wallet.address.toLowerCase(), digest: wallet.digest }
+}
+
+export function claimsOf(record: Journal, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined> = []) {
+  const intents = [record.original, ...record.revisions.map((revision) => revision.intent)]
+  const wallets = [
+    storedWallet(facts.payerWallet),
+    storedWallet(facts.reporterWallet),
+    ...intents.flatMap((intent) => intent === undefined ? [] : [intent.payer, intent.recipient]),
+    ...record.consents.map((consent) => consent.deployment.recipient),
+    ...extra,
+  ]
+  return [...new Set(wallets.flatMap((wallet) => wallet === undefined ? [] : [wallet.id]))].sort() satisfies Claims
+}
+
+export function grossOf(approval: ApprovedAward): bigint {
+  return parseBaseUnits(approval.grossBaseUnits) ?? 0n
+}
+
+export function termsOf(facts: Facts): Terms {
+  return {
+    caseId: 1,
+    project: 1,
+    finding: 1,
+    payerActor: wholeNumber(facts.payerGithubId),
+    reporterActor: wholeNumber(facts.reporterGithubId),
+    network: facts.network,
+    asset: facts.approval.asset.toLowerCase(),
+    feeWallet: facts.rail.feeRecipient.toLowerCase(),
+    gross: amountOf(facts.approval.grossBaseUnits),
+    split: facts.approval.split,
+  }
+}
+
+export function approvalOf(facts: Facts): { readonly approval: CaseApproval; readonly route: QualifiedRoute } {
+  const terms = termsOf(facts)
+  return {
+    approval: { caseId: 1, caseRevision: facts.approval.caseRevision, direct: facts.approval.direct, split: facts.approval.split, gross: terms.gross, asset: terms.asset, rootCause: 1 },
+    route: { network: facts.rail.model, asset: terms.asset, feeWallet: terms.feeWallet },
+  }
+}
+
+function solana(stored: DirectIntent) {
+  return stored.chain === "solana"
+}
+
+export function intentModel(stored: DirectIntent, generation: number, claims: Claims): Intent {
+  const anchors = stored.afterBlocks ?? [stored.afterBlock, stored.afterBlock]
+  return {
+    ...noIntent,
+    active: true,
+    generation,
+    payer: walletModel(claims, stored.payer),
+    reporter: walletModel(claims, stored.recipient),
+    researcherNonce: solana(stored) ? -1 : wholeNumber(stored.transactions?.[0]?.nonce),
+    feeNonce: solana(stored) ? -1 : wholeNumber(stored.transactions?.[1]?.nonce),
+    researcherAnchor: wholeNumber(solana(stored) ? stored.afterBlock : anchors[0] ?? stored.afterBlock),
+    feeAnchor: wholeNumber(solana(stored) ? stored.afterBlock : anchors[1] ?? stored.afterBlock),
+    message: stored.solana?.transaction ?? "",
+  }
+}
+
+const laneOfLeg: ReadonlyArray<Lane> = ["Researcher", "Fee"]
+
+const retirementKinds: Readonly<Record<string, Retirement["kind"]>> = { "evm-nonce-retired": "EvmRetired", "consent-renewal": "SameRequest", "solana-expired": "SolanaRetired" }
+
+function retirementModel(revision: Revision): Retirement {
+  const { retirement } = revision
+  const kind = retirementKinds[retirement.kind] ?? "Unverified"
+  return {
+    kind,
+    generation: revision.generation - 1,
+    lane: kind === "SolanaRetired" ? "Both" : laneOfLeg[retirement.legIndex ?? 0] ?? "Researcher",
+    nonce: kind === "EvmRetired" ? wholeNumber(retirement.nonce) : -1,
+    message: retirement.message ?? "",
+    coveredMessages: [...(retirement.coveredMessages ?? [])],
+    height: wholeNumber(retirement.blockNumber ?? "0"),
+    observation: retirement.transactionId ?? "",
+    certified: kind !== "Unverified",
+    lowerSettled: true,
+  }
+}
+
+export function transferModel(model: Network, intent: DirectIntent, generationIntent: Intent, legIndex: number, evidence: StoredReceipt): Transfer {
+  const researcherTransfer = intent.transfers[0]
+  const feeTransfer = intent.transfers[1]
+  const both = solana(intent)
+  const researcher = !both && legIndex === 0
+  const zero = amountOf("0")
+  return {
+    ...noTransfer,
+    lane: both ? "Both" : researcher ? "Researcher" : "Fee",
+    network: model,
+    asset: intent.asset.address.toLowerCase(),
+    payerAddress: intent.payer.address.toLowerCase(),
+    researcherAddress: both || researcher ? (researcherTransfer?.recipient ?? "").toLowerCase() : "",
+    feeAddress: both || !researcher ? (feeTransfer?.recipient ?? "").toLowerCase() : "",
+    principal: both || researcher ? amountOf(researcherTransfer?.amountBase ?? "0") : zero,
+    fee: both || !researcher ? amountOf(feeTransfer?.amountBase ?? "0") : zero,
+    transaction: evidence.transactionId.toLowerCase(),
+    nonce: both ? -1 : researcher ? generationIntent.researcherNonce : generationIntent.feeNonce,
+    message: both ? evidence.message ?? "" : "",
+    height: wholeNumber(evidence.blockNumber),
+    finalized: true,
+    succeeded: true,
+    exact: true,
+  }
+}
+
+export function stateOf(record: Journal, facts: Facts, claims: Claims) {
+  const terms = termsOf(facts)
+  const { approval, route } = approvalOf(facts)
+  if (!canAdmit(initial, terms, facts.approval.caseRevision, approval, route)) return decodeState(initial)
+  const admitted = admit(initial, terms, facts.approval.caseRevision, approval, route)
+  const stored = currentIntent(record)
+  const intents = [record.original, ...record.revisions.map((revision) => revision.intent)]
+  const priorIntents: ArchivedIntent[] = record.revisions.flatMap((revision) => {
+    const before = intents[revision.generation - 1]
+    return before === undefined ? [] : [{ intent: intentModel(before, revision.generation - 1, claims), retirement: retirementModel(revision) }]
+  })
+  const intent = stored === undefined ? noIntent : intentModel(stored, generationOf(record), claims)
+  const receipt = (legIndex: number) => {
+    const leg = record.legs.find((entry) => entry.legIndex === (stored !== undefined && solana(stored) ? 0 : legIndex))
+    return leg === undefined || stored === undefined ? noTransfer : transferModel(facts.rail.model, stored, intent, leg.legIndex, leg.evidence)
+  }
+  const consent = record.consents.at(-1)
+  return decodeState({
+    ...admitted,
+    caseRevision: Math.max(facts.caseRevision, facts.approval.caseRevision),
+    payerWallet: walletModel(claims, storedWallet(facts.payerWallet)),
+    reporterWallet: walletModel(claims, storedWallet(facts.reporterWallet)),
+    consent: walletModel(claims, consent?.deployment.recipient),
+    visibleConsent: consent !== undefined,
+    intent,
+    priorIntents,
+    researcherReceipt: receipt(0),
+    feeReceipt: receipt(1),
+    otherUses: facts.otherUses.map((use) => ({ network: use.network, transaction: use.transaction.toLowerCase() })),
+  } satisfies DirectBounty)
+}
+
+export effect function commit<A, E, R>(caseId: string, decide: (current: Journal) => Decision<A>!E!R, alongside: ReadonlyArray<Statement>) {
+  return update(journal(caseId), (current) => effect {
+    const decision = try decide(current)
+    return { value: decision.value, writes: [...decision.writes, ...alongside] } satisfies Decision<A>
+  }) catch effect (error) => match (error) {
+    when ConstraintViolation: throw new Conflict({ aggregate: `direct bounty ${caseId}`, attempts: 1 });
+    default: throw error;
+  }
+}
+
+export type Entry =
+  | { readonly kind: "consent"; readonly deployment: string; readonly reporterGithubId: string; readonly acceptedAt: string }
+  | { readonly kind: "intent"; readonly intent: DirectIntent }
+  | { readonly kind: "receipts"; readonly network: string; readonly verifiedAt: string; readonly proofs: ReadonlyArray<StoredReceipt> }
+  | { readonly kind: "successor"; readonly generation: number; readonly intent: DirectIntent; readonly retirement: StoredRetirement; readonly actorGithubId: string; readonly createdAt: string }
+
+export function entryWrites(caseId: string, entry: Entry, next: DirectBounty): ReadonlyArray<Statement> {
+  switch (entry.kind) {
+    case "consent":
+      return [sql`INSERT INTO security_payment_consents (case_id, deployment, reporter_github_id, accepted_at, case_revision) VALUES (${caseId}, ${entry.deployment}, ${entry.reporterGithubId}, ${entry.acceptedAt}, ${next.caseRevision})`]
+    case "intent":
+      return [sql`INSERT INTO security_direct_payments (case_id, network, intent, prepared_at) VALUES (${caseId}, ${entry.intent.network}, ${JSON.stringify(entry.intent)}, ${entry.intent.preparedAt})`]
+    case "successor":
+      return [sql`INSERT INTO security_direct_payment_revisions (case_id, generation, prior_generation, intent, retirement, actor_github_id, created_at) VALUES (${caseId}, ${entry.generation}, ${entry.generation - 1}, ${JSON.stringify(entry.intent)}, ${JSON.stringify(entry.retirement)}, ${entry.actorGithubId}, ${entry.createdAt})`]
+    case "receipts":
+      return [
+        ...entry.proofs.map((proof) => sql`INSERT INTO security_direct_transfer_receipts (case_id, leg_index, network, transaction_id, evidence, verified_at) VALUES (${caseId}, ${proof.legIndex}, ${entry.network}, ${proof.transactionId}, ${JSON.stringify(proof)}, ${entry.verifiedAt})`),
+        ...paid(next)
+          ? [
+            sql`INSERT INTO security_direct_payment_receipts (case_id, evidence, verified_at) SELECT ${caseId}, (SELECT json_group_array(json(evidence)) FROM (SELECT evidence FROM security_direct_transfer_receipts WHERE case_id = ${caseId} ORDER BY leg_index)), ${entry.verifiedAt}`,
+            sql`INSERT INTO security_direct_transaction_uses (network, transaction_id, case_id) SELECT network, transaction_id, case_id FROM security_direct_transfer_receipts WHERE case_id = ${caseId}`,
+          ]
+          : [],
+      ]
+    default: {
+      const _exhaustive: never = entry
+      return _exhaustive
+    }
+  }
+}
+
+export interface Snapshot {
+  readonly state: DirectBounty
+  readonly claims: Claims
+}
+
+export effect function snapshotOf(current: Journal, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined> = []) {
+  const claims = claimsOf(current, facts, extra)
+  return { state: try stateOf(current, facts, claims), claims } satisfies Snapshot
+}
+
+export effect function decided(current: Journal, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined>, eventOf: (snapshot: Snapshot) => Event, by: number, entry: Entry | undefined) {
+  const snapshot = try snapshotOf(current, facts, extra)
+  const next = try apply(snapshot.state, eventOf(snapshot), by)
+  return { next, writes: entry === undefined ? [] : entryWrites(current.caseId, entry, next) }
+}
+
+export effect function send(caseId: string, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined>, eventOf: (snapshot: Snapshot) => Event, by: number, entry: Entry | undefined) {
+  return try commit(caseId, (current) => effect {
+    const { next, writes } = try decided(current, facts, extra, eventOf, by, entry)
+    return { value: next, writes }
+  }, [])
+}
+
+export effect function snapshot(caseId: string, facts: Facts, extra: ReadonlyArray<PaymentWallet | undefined> = []) {
+  return try snapshotOf(try journalFor(caseId), facts, extra)
+}
+
+export function asPaymentTransactions(transactions: ReadonlyArray<EvmTransactionRequest>): ReadonlyArray<PaymentTransaction> {
+  return transactions.map((transaction) => ({ ...transaction }))
+}
+
+export interface PreparedIntent {
+  readonly preparedAt: string
+  readonly afterBlock: bigint
+  readonly network: string
+  readonly chain: string
+  readonly asset: DirectAsset
+  readonly payer: PaymentWallet
+  readonly recipient: PaymentWallet
+  readonly grossBase: bigint
+  readonly feeBase: bigint
+  readonly netBase: bigint
+  readonly transfers: ReadonlyArray<DirectTransfer>
+  readonly transactions: ReadonlyArray<EvmTransactionRequest>
+  readonly payerGithubId: string
+}
+
+export function storedIntent(prepared: PreparedIntent): DirectIntent {
+  const afterBlock = prepared.afterBlock.toString()
+  return {
+    protocolVersion: 2,
+    preparedAt: prepared.preparedAt,
+    afterBlock,
+    afterBlocks: prepared.transfers.map(() => afterBlock),
+    rail: "direct",
+    network: prepared.network,
+    chain: prepared.chain,
+    asset: prepared.asset,
+    payer: prepared.payer,
+    recipient: prepared.recipient,
+    grossBase: prepared.grossBase.toString(),
+    feeBase: prepared.feeBase.toString(),
+    netBase: prepared.netBase.toString(),
+    transfers: prepared.transfers,
+    transactions: asPaymentTransactions(prepared.transactions),
+    payerGithubId: prepared.payerGithubId,
+  }
+}
+
+schema NonceRow { nonce: string }
+
+export effect function highestReservedNonce(network: string, payer: string) {
+  const found = try rows(NonceRow, sql`SELECT nonce FROM security_direct_nonce_reservations WHERE network = ${network} AND payer = ${payer.toLowerCase()} ORDER BY length(nonce) DESC, nonce DESC LIMIT 1`)
+  const [top] = found
+  return top === undefined ? undefined : nonceOf(top.nonce)
+}
+
+schema UseRow { transaction_id: string }
+
+export effect function usedElsewhere(caseId: string, network: string, transactionIds: ReadonlyArray<string>) {
+  const ordinary: string[] = []
+  const recorded: string[] = []
+  for (const id of transactionIds) {
+    const credited = try rows(UseRow, sql`SELECT transaction_id FROM payment_direct_transfers WHERE network = ${network} AND CASE WHEN network LIKE 'solana%' THEN transaction_id = ${id} ELSE lower(transaction_id) = lower(${id}) END`)
+    if (credited.length > 0) ordinary.push(id.toLowerCase())
+    const other = try rows(UseRow, sql`SELECT transaction_id FROM security_direct_transfer_receipts WHERE network = ${network} AND lower(transaction_id) = lower(${id}) AND case_id <> ${caseId}`)
+    if (other.length > 0) recorded.push(id.toLowerCase())
+  }
+  return { ordinary, recorded }
+}
+
+export function asAmount(value: bigint): Amount {
+  return amountOf(value.toString())
+}

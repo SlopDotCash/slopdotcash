@@ -1,0 +1,102 @@
+// spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+import type { Queue } from "@repo/platform/bindings"
+
+export const appealCommands = ["accept", "reject", "uphold", "deny"] as const
+
+export schema ItemKind = "issue" | "pull_request"
+
+export schema ReviewJob {
+  readonly kind: "review"
+  readonly qualityCommentId?: number
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+}
+
+export schema AppealJob {
+  readonly kind: "appeal" | "human_reopen"
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+  readonly senderId: number
+  readonly subject?: "value"
+  readonly appealCommentId?: number
+}
+
+export schema AppealCommandJob {
+  readonly kind: "appeal_command"
+  readonly appealKey?: string
+  readonly command: "accept" | "reject" | "uphold" | "deny"
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+  readonly senderId: number
+}
+
+export schema AppealDueJob {
+  readonly kind: "appeal_due"
+  readonly appealKey: string
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+}
+
+export schema MaintainerHoldJob {
+  readonly kind: "maintainer_hold"
+  readonly reviewKey: string
+  readonly deliveryId: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly itemKind: ItemKind
+  readonly number: number
+}
+
+export const JobSchema = Schema.Union([ReviewJob, AppealJob, AppealCommandJob, AppealDueJob, MaintainerHoldJob])
+
+export type Job = typeof JobSchema.Type
+
+export error NotAJob { reason: string }
+
+export error QueueUnavailable { kind: string }
+
+export service JobQueue {
+  send(job: Job): void!QueueUnavailable
+}
+
+export function jobQueue(binding: Queue<Job>) {
+  return Layer.succeed(JobQueue, {
+    send: (job) => tryPromise({ try: () => binding.send(job), catch: () => new QueueUnavailable({ kind: job.kind }) }),
+  })
+}
+
+export effect function decodeJob(body: unknown) {
+  const job = Schema.decodeUnknownEffect(JobSchema)(body) catch effect () => { throw new NotAJob({ reason: "not a Slopbot job" }) }
+  return job
+}
+
+export effect function parseJob(text: string) {
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new NotAJob({ reason: "job JSON is malformed" }) })
+  return try decodeJob(value)
+}
+
+export effect function send(job: Job) {
+  try (try JobQueue).send(job)
+}

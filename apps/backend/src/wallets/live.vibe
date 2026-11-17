@@ -1,0 +1,44 @@
+// spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim"
+import { D1 } from "@repo/platform/d1"
+import { type Network, Wallets } from "@repo/ports/backend"
+import { NotAState, effectiveClaim, payableClaim } from "../../gen/backend__wallets.effect.vibe"
+import { type Loaded, claimAt, freshContext, loadPartition } from "./store.vibe"
+
+interface Owner {
+  readonly githubId: string
+  readonly network: Network
+}
+
+effect function partitionOf(owner: Owner) {
+  const now = try Clock.currentTimeMillis
+  return loadPartition({ actor: owner.githubId, chain: owner.network }, freshContext(now)) catch effect (error) => match (error) {
+    when NotAState: try die(error);
+    default: throw error;
+  }
+}
+
+function walletAt(loaded: Loaded, position: number) {
+  const claim = claimAt(loaded, position)
+  return claim === undefined ? undefined : { address: claim.wallet_address, claimId: claim.id, digest: claim.record_sha256 }
+}
+
+effect function effectiveWallet(owner: Owner) {
+  const loaded = try partitionOf(owner)
+  return walletAt(loaded, effectiveClaim(loaded.state))
+}
+
+export effect function payableWallet(owner: Owner) {
+  const loaded = try partitionOf(owner)
+  return walletAt(loaded, payableClaim(loaded.state))
+}
+
+export const WalletsLive = Layer.effect(Wallets, effect {
+  const db = try D1
+  return {
+    effective: (owner) => effect {
+      provide D1 = db {
+        return try effectiveWallet(owner)
+      }
+    },
+  } satisfies Wallets.Shape
+})

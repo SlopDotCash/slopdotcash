@@ -1,0 +1,25 @@
+// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"
+import { json } from "@repo/platform/http"
+
+export interface Row {
+  readonly status: number
+  readonly error: string
+}
+
+export const privateNoStore: Readonly<Record<string, string>> = { "cache-control": "private, no-store" }
+
+export const unsubscribeRows = {
+  unsubscribeInvalid: { status: 409, error: "unsubscribe_invalid" },
+} as const
+
+export function bare(row: Row, fields: Readonly<Record<string, unknown>> = {}, headers: Readonly<Record<string, string>> = {}) {
+  return json({ error: row.error, ...fields }, row.status, headers)
+}
+
+export function privateBare(row: Row, fields: Readonly<Record<string, unknown>> = {}) {
+  return bare(row, fields, privateNoStore)
+}
+
+export function privateJson(body: unknown, status = 200) {
+  return json(body, status, privateNoStore)
+}

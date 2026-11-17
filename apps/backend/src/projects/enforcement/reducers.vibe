@@ -1,0 +1,20 @@
+// spec/security/enforcement.md, "Restriction state, appeals and findings stay consistent"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"
+module verified {
+  import * as H from "./history.ts"
+  export type HistoryRow = H.HistoryRow
+  export type Episode = H.Episode
+  /** @throws {never} */
+  export function foldRestriction(records: ReadonlyArray<H.HistoryRow>): H.Episode { return H.foldRestriction([...records]) }
+  /** @throws {never} */
+  export function openProjectAppeals(records: ReadonlyArray<H.HistoryRow>, kept: boolean, before: number): number[] { return H.openProjectAppeals([...records], kept, before) }
+  /** @throws {never} */
+  export function openAccountAppeal(records: ReadonlyArray<H.HistoryRow>, account: string): number { return H.openAccountAppeal([...records], account) }
+  /** @throws {never} */
+  export function effectiveAppeal(records: ReadonlyArray<H.HistoryRow>, accounts: ReadonlyArray<string>): string { return H.effectiveAppeal([...records], [...accounts]) }
+  /** @throws {never} */
+  export function awaitsMaliceDecision(records: ReadonlyArray<H.HistoryRow>, state: string): boolean { return H.awaitsMaliceDecision([...records], state) }
+  /** @throws {never} */
+  export function unreleasedBans(keyCount: number, bans: ReadonlyArray<number>, releases: ReadonlyArray<number>): number[] { return H.unreleasedBans(keyCount, [...bans], [...releases]) }
+}
+import { type Episode, type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from verified
+export { type Episode, type HistoryRow, awaitsMaliceDecision, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans }

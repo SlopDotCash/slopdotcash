@@ -1,0 +1,150 @@
+// spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
+const pageSize = 100
+const page = "totalCount pageInfo{hasNextPage} nodes{id body url}"
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const decimal = /^[1-9]\d*$/u
+
+export const historicalDiscussionQuery = `query HistoricalValueDiscussion($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner pullRequest(number:$number){id number url body state headRefOid mergedAt updatedAt comments(first:${pageSize}){${page}} reviewThreads(first:${pageSize}){totalCount pageInfo{hasNextPage} nodes{id comments(first:${pageSize}){${page}}}} timelineItems(first:${pageSize},itemTypes:[CROSS_REFERENCED_EVENT]){pageInfo{hasNextPage} nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{id number url repository{nameWithOwner isPrivate}}}}}}}} rateLimit{cost limit remaining resetAt}}`
+
+export interface DiscussionPull {
+  readonly state: string
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly head?: { readonly sha?: string } | null
+  readonly merged_at: string | null
+  readonly updated_at: string
+  readonly body: string | null
+  readonly comments: number
+  readonly review_comments: number
+}
+
+export interface ExpectedDiscussion {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly headSha: string
+  readonly mergedAt: string
+}
+
+export type TimelineSource =
+  | { readonly __typename: "Issue" }
+  | { readonly __typename: "PullRequest"; readonly id: string; readonly number: number; readonly url: string; readonly repository: { readonly nameWithOwner: string; readonly isPrivate: false } }
+
+export interface TimelineNode {
+  readonly source: TimelineSource
+}
+
+export interface HistoricalDiscussion {
+  readonly commentBodies: ReadonlyArray<string>
+  readonly inlineBodies: ReadonlyArray<string>
+  readonly timeline: ReadonlyArray<TimelineNode>
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+export function historicalDiscussionHasRateLimit(value: unknown) {
+  const rateLimit = record(record(value)?.rateLimit)
+  return rateLimit !== undefined &&
+    [rateLimit.cost, rateLimit.limit, rateLimit.remaining].every((count) => typeof count === "number" && Number.isSafeInteger(count) && count >= 0) &&
+    typeof rateLimit.resetAt === "string" && Number.isFinite(Date.parse(rateLimit.resetAt))
+}
+
+function completePage(value: unknown, requireTotal = true): ReadonlyArray<unknown> | undefined {
+  const data = record(value)
+  const nodes = data?.nodes
+  if (!Array.isArray(nodes) || nodes.length >= pageSize || (requireTotal && data?.totalCount !== nodes.length) || record(data?.pageInfo)?.hasNextPage !== false) return undefined
+  return nodes
+}
+
+function discussionBodies(values: ReadonlyArray<unknown>, pullUrl: string, fragment: string): ReadonlyArray<string> | undefined {
+  const entries = new Map<number, string>()
+  const identities = new Set<string>()
+  const prefix = `${pullUrl}#${fragment}`
+  for (const value of values) {
+    const node = record(value)
+    if (node === undefined || typeof node.id !== "string" || node.id === "" || identities.has(node.id) || typeof node.body !== "string" || typeof node.url !== "string" || !node.url.startsWith(prefix)) return undefined
+    const suffix = node.url.slice(prefix.length)
+    const number = Number(suffix)
+    if (!decimal.test(suffix) || !Number.isSafeInteger(number) || entries.has(number)) return undefined
+    identities.add(node.id)
+    entries.set(number, node.body)
+  }
+  return [...entries].sort(([left], [right]) => left - right).map((entry) => entry[1])
+}
+
+function incomingReferences(values: ReadonlyArray<unknown>): ReadonlyArray<TimelineNode> | undefined {
+  const timeline: TimelineNode[] = []
+  const ids = new Map<string, string>()
+  const urls = new Map<string, string>()
+  for (const value of values) {
+    const source = record(record(value)?.source)
+    if (source === undefined || typeof source.__typename !== "string") return undefined
+    if (source.__typename !== "PullRequest") {
+      if (source.__typename !== "Issue") return undefined
+      timeline.push({ source: { __typename: "Issue" } })
+      continue
+    }
+    const repo = record(source.repository)
+    const name = repo?.nameWithOwner
+    const id = source.id
+    const number = source.number
+    const url = source.url
+    if (
+      repo?.isPrivate !== false || typeof name !== "string" || !repositoryName.test(name) ||
+      typeof id !== "string" || id === "" || typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0 ||
+      typeof url !== "string" || url !== `https://github.com/${name}/pull/${number}` ||
+      (ids.has(id) && ids.get(id) !== url) || (urls.has(url) && urls.get(url) !== id)
+    ) return undefined
+    ids.set(id, url)
+    urls.set(url, id)
+    timeline.push({ source: { __typename: "PullRequest", id, number, url, repository: { nameWithOwner: name, isPrivate: false } } })
+  }
+  return timeline
+}
+
+function sameMerge(node: Readonly<Record<string, unknown>>, expected: ExpectedDiscussion, pull: DiscussionPull) {
+  return typeof node.mergedAt === "string" && Date.parse(node.mergedAt) === Date.parse(expected.mergedAt) && node.mergedAt === pull.merged_at
+}
+
+export function validateHistoricalDiscussion(value: unknown, expected: ExpectedDiscussion, pull: DiscussionPull): HistoricalDiscussion | undefined {
+  const repository = record(record(value)?.repository)
+  const node = record(repository?.pullRequest)
+  if (
+    node === undefined || repository === undefined ||
+    repository.id !== expected.repositoryNodeId || repository.isPrivate !== false ||
+    typeof repository.nameWithOwner !== "string" || repository.nameWithOwner.toLowerCase() !== expected.repository.toLowerCase() ||
+    node.state !== "MERGED" || pull.state !== "closed" ||
+    node.id !== expected.id || node.id !== pull.node_id ||
+    node.number !== expected.number || node.number !== pull.number ||
+    node.url !== expected.url || node.url !== pull.html_url ||
+    node.headRefOid !== expected.headSha || node.headRefOid !== pull.head?.sha ||
+    !sameMerge(node, expected, pull) ||
+    typeof node.updatedAt !== "string" || !Number.isFinite(Date.parse(node.updatedAt)) || node.updatedAt !== pull.updated_at ||
+    (node.body !== null && typeof node.body !== "string") || (node.body ?? "") !== (pull.body ?? "")
+  ) return undefined
+  const comments = completePage(node.comments)
+  const threads = completePage(node.reviewThreads)
+  const events = completePage(node.timelineItems, false)
+  if (comments === undefined || threads === undefined || events === undefined || comments.length !== pull.comments) return undefined
+  const inline: unknown[] = []
+  const threadIds = new Set<string>()
+  for (const value of threads) {
+    const thread = record(value)
+    if (thread === undefined || typeof thread.id !== "string" || thread.id === "" || threadIds.has(thread.id)) return undefined
+    const threadPage = completePage(thread.comments)
+    if (threadPage === undefined) return undefined
+    threadIds.add(thread.id)
+    inline.push(...threadPage)
+  }
+  if (inline.length !== pull.review_comments || inline.length >= pageSize) return undefined
+  const commentBodies = discussionBodies(comments, expected.url, "issuecomment-")
+  const inlineBodies = discussionBodies(inline, expected.url, "discussion_r")
+  const timeline = incomingReferences(events)
+  if (commentBodies === undefined || inlineBodies === undefined || timeline === undefined) return undefined
+  return { commentBodies, inlineBodies, timeline }
+}

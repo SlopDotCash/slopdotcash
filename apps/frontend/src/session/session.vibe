@@ -1,0 +1,74 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"
+import { type WebSession, projectSession } from "@repo/backend/client"
+import { type CallFailure, InvalidResponse, call } from "../platform/api.vibe"
+
+export const sessionLimitBytes = 16_384
+
+const githubIdPattern = /^[1-9][0-9]*$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const invalidSession = "The server returned an invalid project session. Retry sign-in."
+
+export type SessionView =
+  | { readonly status: "checking" }
+  | { readonly status: "signedOut" }
+  | { readonly status: "failed"; readonly message: string }
+  | { readonly status: "signedIn"; readonly session: WebSession }
+
+export interface Observation {
+  readonly view: SessionView
+  readonly current: boolean
+}
+
+interface Published {
+  readonly generation: number
+  readonly view: SessionView
+}
+
+export function actorNumber(githubId: string): number {
+  return Number(githubId)
+}
+
+export function viewActor(view: SessionView): number {
+  return view.status === "signedIn" ? actorNumber(view.session.githubId) : 0
+}
+
+function wellFormed(session: WebSession): boolean {
+  return githubIdPattern.test(session.githubId) && Number.isSafeInteger(Number(session.githubId)) && loginPattern.test(session.githubLogin)
+}
+
+export effect function currentSession() {
+  const answer = try call(projectSession, {}, { limitBytes: sessionLimitBytes })
+  const found = answer.session
+  if (found === null) return null
+  if (!wellFormed(found)) throw new InvalidResponse({ status: 200, message: invalidSession })
+  return { githubId: found.githubId, githubLogin: found.githubLogin, admin: found.admin } satisfies WebSession
+}
+
+export service Session {
+  readonly changes: Stream.Stream<SessionView>
+  view(): SessionView!!
+  current(): (WebSession | null)!CallFailure!HttpClient.HttpClient
+  refresh(): Observation!!HttpClient.HttpClient
+}
+
+function settled(read: WebSession | null | { readonly failure: CallFailure }): SessionView {
+  if (read === null) return { status: "signedOut" }
+  if ("failure" in read) return { status: "failed", message: read.failure.message }
+  return { status: "signedIn", session: read }
+}
+
+export const sessionLayer = Layer.effect(Session, effect {
+  const held = try SubscriptionRef.make<Published>({ generation: 0, view: { status: "checking" } })
+  return {
+    changes: Stream.map(SubscriptionRef.changes(held), (published) => published.view),
+    view: effect () => (try SubscriptionRef.get(held)).view,
+    current: () => currentSession(),
+    refresh: effect () => {
+      const mine = try SubscriptionRef.modify(held, (published) => [published.generation + 1, { generation: published.generation + 1, view: { status: "checking" } }] as const)
+      const read = currentSession() catch (failure) => ({ failure })
+      const view = settled(read)
+      const current = try SubscriptionRef.modify(held, (published) => published.generation === mine ? [true, { generation: mine, view }] as const : [false, published] as const)
+      return { view, current }
+    },
+  }
+})

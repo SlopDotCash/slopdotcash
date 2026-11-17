@@ -1,0 +1,33 @@
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/reviews.md, "Review records preserve first qualification and highest band"; spec/points/scoringPolicy.md, "The acceptance instant selects the policy"
+import { type CommitAttribution, type Event as CommitEvent, NotAnEvent as CommitNotAnEvent, Rejected as CommitRejected, apply as applyCommit, decodeEvent as decodeCommit, initial as commitInitial } from "../../gen/points__authorship.effect.vibe"
+import { type Event as ReviewEvent, NotAnEvent as ReviewNotAnEvent, Rejected as ReviewRejected, type Reviews, apply as applyReviews, decodeEvent as decodeReview, initial as reviewsInitial } from "../../gen/points__reviews.effect.vibe"
+import { type Event as SourceEvent, NotAnEvent as SourceNotAnEvent, Rejected as SourceRejected, type Scored, apply as applyScored, decodeEvent as decodeSource, initial as scoredInitial } from "../../gen/points__scoringPolicy.effect.vibe"
+
+export interface Book<S, E, F, D> {
+  send(key: string, event: E): S!F
+  receive(key: string, input: unknown): S!(F | D)
+  get(key: string): S!!
+}
+
+function book<S, E, F, D>(initial: S, apply: (current: S, event: E) => S!F, decode: (input: unknown) => E!D): Book<S, E, F, D> {
+  const states = new Map<string, S>()
+  effect function send(key: string, event: E) {
+    const next = try apply(states.get(key) ?? initial, event)
+    states.set(key, next)
+    return next
+  }
+  return {
+    send,
+    effect receive(key: string, input: unknown) { return try send(key, try decode(input)) },
+    effect get(key: string) { return states.get(key) ?? initial },
+  }
+}
+
+export service Commits: Book<CommitAttribution, CommitEvent, CommitRejected, CommitNotAnEvent> {}
+export service ReviewRecords: Book<Reviews, ReviewEvent, ReviewRejected, ReviewNotAnEvent> {}
+export service Sources: Book<Scored, SourceEvent, SourceRejected, SourceNotAnEvent> {}
+
+export const commits = Layer.effect(Commits, effect { return book(commitInitial, applyCommit, decodeCommit) })
+export const reviewRecords = Layer.effect(ReviewRecords, effect { return book(reviewsInitial, applyReviews, decodeReview) })
+export const sources = Layer.effect(Sources, effect { return book(scoredInitial, applyScored, decodeSource) })
+export const books = Layer.mergeAll(commits, reviewRecords, sources)

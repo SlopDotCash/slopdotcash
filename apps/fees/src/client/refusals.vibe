@@ -1,0 +1,19 @@
+// spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"
+
+const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const textUncachedPlain = { "content-type": "text/plain;charset=UTF-8" } as const
+
+export const getAdminFeeConversions = {
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStore },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStore },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStore },
+  forbidden: { status: 403, error: "forbidden", message: "Admin access is required", headers: jsonPrivateNoStore },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+  otherMethods: {
+    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStore },
+  },
+} as const
+
+export const feeConverterAnyAny = {
+  notFound: { status: 404, text: "Not found", headers: textUncachedPlain },
+} as const

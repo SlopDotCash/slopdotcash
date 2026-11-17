@@ -1,0 +1,334 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Collection starts only for a collected project and never moves its window back"; spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"
+import { type Census, type Item, type ItemKind, Machine, type Page, type ProjectView, canFinish, canRecordCountChange, collected, decodeState, initial, machineOver } from "../../gen/points__census.effect.vibe"
+import { Graphql, type GraphqlFailure, ensureEstimatedBudget, estimateFirstPageDetailCost, graphqlPageSize } from "../ingestion/graphql.vibe"
+import { type GitHubItem, censusItem } from "../kernels/scoring/selection.ts"
+
+export const openPullRequestsQuery = `
+  query LeaderboardOpenPullRequestReferences(
+    $owner: String!
+    $name: String!
+    $after: String
+    $pageSize: Int!
+  ) {
+    repository(owner: $owner, name: $name) {
+      id
+      pullRequests(
+        states: OPEN
+        first: $pageSize
+        after: $after
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id updatedAt headRefOid }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const openIssuesQuery = `
+  query LeaderboardOpenIssueReferences(
+    $owner: String!
+    $name: String!
+    $after: String
+    $pageSize: Int!
+  ) {
+    repository(owner: $owner, name: $name) {
+      id
+      issues(
+        states: OPEN
+        first: $pageSize
+        after: $after
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { id updatedAt }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+const fullCommitSha = /^[a-f0-9]{40}$/iu
+
+export error OpenSetChanged { message: string }
+export error CensusBroken { message: string }
+export error NotCollected { projectId: string }
+export error CensusWindowBack { lowerDay: number; publishedLower: number }
+
+export interface OpenReference {
+  readonly nodeId: string
+  readonly kind: ItemKind
+  readonly openVersion: string
+}
+
+export interface ListedPage {
+  readonly repositoryId: string
+  readonly totalCount: number
+  readonly hasNextPage: boolean
+  readonly endCursor: string | null
+  readonly references: ReadonlyArray<OpenReference>
+}
+
+export type GitHubFacts = Omit<GitHubItem, "id">
+
+export interface Hydrated {
+  readonly nodeId: string
+  readonly facts: GitHubFacts
+}
+
+export interface CensusEntry {
+  readonly reference: OpenReference
+  readonly facts: GitHubFacts
+  readonly item: Item
+}
+
+export interface CensusSource<E, R> {
+  readonly label: string
+  readonly kind: ItemKind
+  read(after: string | null): ListedPage!E!R
+  hydrate(references: ReadonlyArray<OpenReference>): ReadonlyArray<Hydrated>!E!R
+}
+
+export interface CensusInput {
+  readonly projectId: string
+  readonly view: ProjectView
+  readonly lowerDay: number
+  readonly publishedLower: number
+  readonly referenceTime: number
+  readonly repositoryId: string
+  readonly identities: Identities
+}
+
+export interface CollectedCensus {
+  readonly census: Census
+  readonly entries: ReadonlyArray<CensusEntry>
+}
+
+export interface Identities {
+  id(nodeId: string): number
+  nodeOf(id: number): string | undefined
+  cursor(connection: string, text: string): number
+  cursorText(cursor: number): string | undefined
+}
+
+export function identities(): Identities {
+  const ids = new Map<string, number>()
+  const nodes: string[] = []
+  const cursors = new Map<string, number>()
+  const texts: string[] = []
+  return {
+    id: (nodeId) => {
+      const found = ids.get(nodeId)
+      if (found !== undefined) return found
+      nodes.push(nodeId)
+      ids.set(nodeId, nodes.length)
+      return nodes.length
+    },
+    nodeOf: (id) => nodes[id - 1],
+    cursor: (connection, text) => {
+      const key = `${connection}\u0000${text}`
+      const found = cursors.get(key)
+      if (found !== undefined) return found
+      texts.push(text)
+      cursors.set(key, texts.length)
+      return texts.length
+    },
+    cursorText: (cursor) => texts[cursor - 1],
+  }
+}
+
+export effect function censusRun(publishedLower: number = 0) {
+  const start = decodeState({ ...initial, publishedLower }) catch effect () => {
+    throw new CensusBroken({ message: `The published collection window ${publishedLower} is not a census day` })
+  }
+  return try machineOver(start, () => Effect.void)
+}
+
+effect function failed(run: Machine.Shape) {
+  try orDie(run.send({ type: "recordFailure" }))
+}
+
+effect function broken(run: Machine.Shape, message: string): never!CensusBroken {
+  try failed(run)
+  throw new CensusBroken({ message })
+}
+
+effect function failing<A, E, R>(run: Machine.Shape, work: A!E!R) {
+  return work catch effect (error) => {
+    try failed(run)
+    throw error
+  }
+}
+
+effect function matched(run: Machine.Shape, source: { readonly label: string; readonly kind: ItemKind }, references: ReadonlyArray<OpenReference>, hydrated: ReadonlyArray<Hydrated>) {
+  if (hydrated.length !== references.length || hydrated.some((entry, index) => entry.nodeId !== references[index]?.nodeId || entry.facts.kind !== source.kind)) {
+    try broken(run, `GitHub returned ${hydrated.length} ${source.label} for ${references.length} requested IDs`)
+  }
+  return hydrated
+}
+
+export effect function censusPass<E, R>(input: CensusInput, source: CensusSource<E, R>) {
+  if (!collected(input.view)) throw new NotCollected({ projectId: input.projectId })
+  const run = try censusRun(input.publishedLower)
+  run.send({ type: "begin", project: input.view, lowerDay: input.lowerDay }) catch effect () => {
+    throw new CensusWindowBack({ lowerDay: input.lowerDay, publishedLower: input.publishedLower })
+  }
+  let entries: CensusEntry[] = []
+  while (true) {
+    const state = try run.get()
+    const after = state.expectedCursor === 0 ? null : input.identities.cursorText(state.expectedCursor) ?? null
+    const listed = try failing(run, source.read(after))
+    if (listed.repositoryId !== input.repositoryId) try broken(run, "GitHub repository identity changed during collection")
+    if (listed.hasNextPage && listed.endCursor === null) try broken(run, `${source.label} reported another page without a cursor`)
+    const next = listed.hasNextPage && listed.endCursor !== null ? input.identities.cursor(`${input.repositoryId}/${source.label}`, listed.endCursor) : 0
+    const counted: Page = { cursor: state.expectedCursor, next, totalCount: listed.totalCount, items: [] }
+    if (canRecordCountChange(state, counted)) {
+      const changed = try orDie(run.send({ type: "recordCountChange", page: counted }))
+      if (changed.phase === "Incomplete") {
+        throw new OpenSetChanged({ message: `Open ${source.label} changed from ${state.totalCount} to ${listed.totalCount} while listing; rerun for a coherent snapshot` })
+      }
+      entries = []
+      continue
+    }
+    const hydrated = try matched(run, source, listed.references, try failing(run, source.hydrate(listed.references)))
+    const pageEntries = listed.references.map((reference, index) => {
+      const facts = hydrated[index].facts
+      return { reference, facts, item: censusItem({ ...facts, id: input.identities.id(reference.nodeId) }, input.referenceTime) } satisfies CensusEntry
+    })
+    const recorded = run.send({ type: "recordPage", page: { ...counted, items: pageEntries.map((entry) => entry.item) } }) catch effect () => {
+      return try broken(run, `Open ${source.label} cursor did not advance`)
+    }
+    for (const entry of pageEntries) {
+      if (!entries.some((kept) => kept.item.id === entry.item.id)) entries.push(entry)
+    }
+    if (recorded.terminalSeen) {
+      if (!canFinish(recorded)) {
+        try failed(run)
+        throw new OpenSetChanged({ message: `Open ${source.label} changed during listing: expected ${recorded.totalCount}, received ${recorded.items.length} unique references` })
+      }
+      return { census: try orDie(run.send({ type: "finish" })), entries } satisfies CollectedCensus
+    }
+  }
+}
+
+schema OpenNode { readonly id: string; readonly updatedAt: string; readonly headRefOid?: string }
+
+schema OpenConnection {
+  readonly totalCount: number
+  readonly pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null }
+  readonly nodes: ReadonlyArray<OpenNode>
+}
+
+schema OpenIssuesData { readonly repository: { readonly id: string; readonly issues: OpenConnection } }
+schema OpenPullRequestsData { readonly repository: { readonly id: string; readonly pullRequests: OpenConnection } }
+
+const decodeIssues = Schema.decodeUnknownEffect(OpenIssuesData)
+const decodePullRequests = Schema.decodeUnknownEffect(OpenPullRequestsData)
+
+export interface Repository {
+  readonly owner: string
+  readonly name: string
+}
+
+effect function connectionOf(kind: ItemKind, label: string, data: unknown) {
+  const malformed = new CensusBroken({ message: `GitHub ${label} page has an unexpected shape` })
+  if (kind === "IssueItem") {
+    const { repository } = decodeIssues(data) catch effect () => { throw malformed }
+    return { id: repository.id, connection: repository.issues }
+  }
+  const { repository } = decodePullRequests(data) catch effect () => { throw malformed }
+  return { id: repository.id, connection: repository.pullRequests }
+}
+
+effect function listedPage(kind: ItemKind, label: string, data: unknown) {
+  const { id, connection } = try connectionOf(kind, label, data)
+  if (!Number.isSafeInteger(connection.totalCount) || connection.totalCount < 0) throw new CensusBroken({ message: `data.repository.${label}.totalCount must be a non-negative integer` })
+  const references: OpenReference[] = []
+  for (const node of connection.nodes) {
+    if (node.id === "") throw new CensusBroken({ message: "GitHub record is missing its immutable node ID" })
+    const head = kind === "PullRequestItem" ? node.headRefOid ?? "" : ""
+    if (kind === "PullRequestItem" && !fullCommitSha.test(head)) throw new CensusBroken({ message: `data.repository.${label}.nodes headRefOid must be a full commit SHA` })
+    references.push({ nodeId: node.id, kind, openVersion: `${node.updatedAt}:${head.toLowerCase()}` })
+  }
+  return { repositoryId: id, totalCount: connection.totalCount, hasNextPage: connection.pageInfo.hasNextPage, endCursor: connection.pageInfo.endCursor, references } satisfies ListedPage
+}
+
+export interface OpenSourceOptions {
+  readonly pageSize?: number
+  readonly reservedCost?: number
+}
+
+export function openSource<E, R>(repository: Repository, kind: ItemKind, hydrate: (references: ReadonlyArray<OpenReference>) => ReadonlyArray<Hydrated>!E!R, options: OpenSourceOptions = {}): CensusSource<GraphqlFailure | CensusBroken | E, Graphql | R> {
+  const label = kind === "IssueItem" ? "issues" : "pullRequests"
+  const document = kind === "IssueItem" ? openIssuesQuery : openPullRequestsQuery
+  return {
+    label,
+    kind,
+    read: (after) => effect {
+      const data = try (try Graphql).execute(document, { owner: repository.owner, name: repository.name, after, pageSize: options.pageSize ?? graphqlPageSize })
+      return try listedPage(kind, label, data)
+    },
+    hydrate: (references) => effect {
+      const estimate = kind === "IssueItem" ? try estimateFirstPageDetailCost(0, references.length) : try estimateFirstPageDetailCost(references.length, 0)
+      try ensureEstimatedBudget(estimate, options.reservedCost ?? 0)
+      return try hydrate(references)
+    },
+  }
+}
+
+export interface OpenCensus {
+  readonly issues: CollectedCensus
+  readonly pullRequests: CollectedCensus
+}
+
+export interface OpenCensusInput<E, R> {
+  readonly census: Omit<CensusInput, "view" | "projectId">
+  readonly projectId: string
+  readonly view: ProjectView
+  readonly repository: Repository
+  readonly hydrate: (references: ReadonlyArray<OpenReference>) => ReadonlyArray<Hydrated>!E!R
+  readonly options?: OpenSourceOptions
+}
+
+export effect function collectOpen<E, R>(input: OpenCensusInput<E, R>) {
+  const census = { ...input.census, projectId: input.projectId, view: input.view }
+  const issues = try censusPass(census, openSource(input.repository, "IssueItem", input.hydrate, input.options))
+  const pullRequests = try censusPass(census, openSource(input.repository, "PullRequestItem", input.hydrate, input.options))
+  return { issues, pullRequests } satisfies OpenCensus
+}
+
+export interface OpenVersion {
+  readonly id: string
+  readonly updatedAt: string
+  readonly headRefOid: string
+}
+
+export effect function openEvidenceCurrent(repository: Repository, repositoryId: string, pullRequests: ReadonlyArray<OpenVersion>, pageSize: number = graphqlPageSize) {
+  if (pullRequests.length === 0) return
+  const graphql = try Graphql
+  const live = new Map<string, string>()
+  const visited = new Set<string>()
+  let expectedCount: number | undefined = undefined
+  let identity: string | undefined = undefined
+  let after: string | null = null
+  while (true) {
+    const page = try listedPage("PullRequestItem", "pullRequests", try graphql.execute(openPullRequestsQuery, { owner: repository.owner, name: repository.name, after, pageSize }))
+    identity = identity ?? page.repositoryId
+    if (identity !== page.repositoryId) throw new CensusBroken({ message: "GitHub repository identity changed during collection" })
+    expectedCount = expectedCount ?? page.totalCount
+    if (page.totalCount !== expectedCount) throw new OpenSetChanged({ message: `Open pullRequests changed from ${expectedCount} to ${page.totalCount} while listing; rerun for a coherent snapshot` })
+    for (const reference of page.references) if (!live.has(reference.nodeId)) live.set(reference.nodeId, reference.openVersion)
+    if (page.hasNextPage && page.endCursor === null) throw new CensusBroken({ message: "pullRequests reported another page without a cursor" })
+    if (!page.hasNextPage || page.endCursor === null) break
+    if (visited.has(page.endCursor)) throw new CensusBroken({ message: "Open pullRequests cursor did not advance" })
+    visited.add(page.endCursor)
+    after = page.endCursor
+  }
+  if (live.size !== expectedCount) throw new OpenSetChanged({ message: `Open pullRequests changed during listing: expected ${expectedCount ?? 0}, received ${live.size} unique references` })
+  if (identity !== repositoryId || pullRequests.some((pull) => live.get(pull.id) !== `${pull.updatedAt}:${pull.headRefOid}`)) {
+    throw new OpenSetChanged({ message: "An open pull request with evidence changed during verification" })
+  }
+}

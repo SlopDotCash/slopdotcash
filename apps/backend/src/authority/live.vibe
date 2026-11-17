@@ -1,0 +1,159 @@
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
+import type { Fetcher } from "@repo/platform/bindings"
+import { type ServiceClient, serviceClient } from "@repo/platform/binding"
+import { D1, first, sql } from "@repo/platform/d1"
+import { Authority, type AuthorityRead as PortRead } from "@repo/ports/backend"
+import type { AuthorityRead } from "../../gen/backend__projects.effect.vibe"
+import { type AuthorityDecision, type SetupRole, type SetupText, classifyAccessHeader, decideSetupAuthority } from "./accessHeaders.ts"
+
+export const slopbotInstallUrl = "https://github.com/apps/slopdotcash/installations/new"
+
+export schema RepositoryOwner { id: number; node_id: string; login: string; type: string }
+export schema RepositoryIdentity { id: number; node_id: string; full_name: string; private: boolean; owner: RepositoryOwner }
+
+export type RepositoryAccess =
+  | { readonly installation: "missing" }
+  | { readonly installation: "suspended"; readonly installationId: number }
+  | { readonly installation: "installed"; readonly installationId: number; readonly permission: string; readonly roleName: string | null; readonly repository: RepositoryIdentity | undefined }
+
+export type AccessCheck = { readonly state: "read"; readonly access: RepositoryAccess } | { readonly state: "retry"; readonly message: string }
+
+export interface Checked {
+  readonly authority: AuthorityDecision
+  readonly access: AccessCheck
+}
+
+export interface AccessActor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export interface AccessTarget {
+  readonly path: string
+  readonly githubId: string
+}
+
+export service SlopbotAccess {
+  readonly client: ServiceClient | undefined
+}
+
+export function slopbotAccess(fetcher: Fetcher | undefined) {
+  return Layer.succeed(SlopbotAccess, { client: fetcher === undefined ? undefined : serviceClient(fetcher, { binding: "SLOPBOT", origin: "https://slopbot.internal" }) })
+}
+
+const unreachable = "Slop cannot reach Slopbot to check the installation right now. Try again later."
+const unanswered = "GitHub or Slopbot did not answer the installation check. Try again."
+const rolePattern = /^[A-Za-z0-9 _-]{1,64}$/u
+
+export function scopeNote(repository: string): string {
+  return `On GitHub's install screen choose "Only select repositories" and pick ${repository}. Slopbot gets no access to your other private repositories.`
+}
+
+function text(value: unknown): SetupText {
+  return typeof value === "string" ? { kind: "text", value } : { kind: "other" }
+}
+
+function roleOf(value: unknown): SetupRole {
+  if (value === null) return { kind: "none" }
+  return typeof value === "string" && rolePattern.test(value) ? { kind: "role", value } : { kind: "invalid" }
+}
+
+effect function parsedAccess(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const body = value as Readonly<Record<string, unknown>>
+  const id = body.installationId
+  const header = classifyAccessHeader(
+    Object.keys(body).sort().join(","),
+    text(body.installation),
+    typeof id === "number" && Number.isSafeInteger(id) && id >= 1 ? { kind: "id", value: id } : { kind: "invalid" },
+    text(body.permission),
+    roleOf(body.roleName),
+  )
+  if (header.kind === "missing") return { installation: "missing" } satisfies RepositoryAccess
+  if (header.kind === "suspended") return { installation: "suspended", installationId: header.id } satisfies RepositoryAccess
+  if (header.kind !== "installed") return undefined
+  const repository = body.repository === undefined ? undefined : Schema.decodeUnknownEffect(RepositoryIdentity)(body.repository) catch () => "malformed" as const
+  if (repository === "malformed") return undefined
+  return { installation: "installed", installationId: header.id, permission: header.permission, roleName: header.role.kind === "role" ? header.role.value : null, repository } satisfies RepositoryAccess
+}
+
+export effect function readAccess(repository: AccessTarget, actor: AccessActor) {
+  const client = (try SlopbotAccess).client
+  if (client === undefined) return { state: "retry", message: unreachable } satisfies AccessCheck
+  const query = new URLSearchParams({ repository: repository.path, repositoryId: repository.githubId, login: actor.login, githubId: actor.githubId, includeRepository: "1" })
+  const answered = client.call("GET", `/v1/repository-access?${query.toString()}`, undefined, Schema.Unknown, 4 * 1024, { accept: "application/json" }) catch () => "unanswered" as const
+  if (answered === "unanswered") return { state: "retry", message: unanswered } satisfies AccessCheck
+  const access = try parsedAccess(answered)
+  return (access === undefined ? { state: "retry", message: unanswered } : { state: "read", access }) satisfies AccessCheck
+}
+
+export function decided(access: AccessCheck, actor: AccessActor, repository: string, flagger: boolean): AuthorityDecision {
+  const installationMessage = `Install Slopbot on ${repository} to confirm your access. ${scopeNote(repository)}`
+  if (access.state === "retry") return decideSetupAuthority({ kind: "retry", message: access.message }, actor.login, repository, installationMessage, flagger)
+  const read = access.access
+  if (read.installation !== "installed") return decideSetupAuthority({ kind: "read", installation: read.installation, permission: "", role: { kind: "none" } }, actor.login, repository, installationMessage, flagger)
+  return decideSetupAuthority({ kind: "read", installation: "installed", permission: read.permission, role: read.roleName === null ? { kind: "none" } : { kind: "role", value: read.roleName } }, actor.login, repository, installationMessage, flagger)
+}
+
+export effect function checkAuthority(repository: AccessTarget, actor: AccessActor) {
+  const access = try readAccess(repository, actor)
+  return { authority: decided(access, actor, repository.path, false), access } satisfies Checked
+}
+
+export function installationOf(access: AccessCheck): AuthorityRead["installation"] {
+  if (access.state === "retry") return "InstallationUnavailable"
+  const installation = access.access.installation
+  return installation === "installed" ? "Installed" : installation === "suspended" ? "InstallationSuspended" : "InstallationMissing"
+}
+
+export function permissionOf(checked: Checked): AuthorityRead["permission"] {
+  if (checked.authority.state === "verified") return "PermissionVerified"
+  if (checked.access.state === "retry" || checked.authority.state === "retry") return "PermissionUnavailable"
+  return checked.access.access.installation === "installed" ? "PermissionDenied" : "PermissionUnavailable"
+}
+
+export function modelRead(checked: Checked, actor: number, repository: number): AuthorityRead {
+  return { actor, repository, permission: permissionOf(checked), installation: installationOf(checked.access) }
+}
+
+schema MemberLogin { login: string }
+schema RegisteredManifest { manifest: string }
+schema ListedEntry { githubUrl?: string; githubId?: string }
+schema ListedAuthority { repositoryId: string | number }
+schema Listed { authority: ListedAuthority; repositories: ReadonlyArray<ListedEntry> }
+
+export function currentPath(githubUrl: string | undefined): string | undefined {
+  if (githubUrl === undefined) return undefined
+  const path = URL.parse(githubUrl)?.pathname.replace(/^\/|\/$/gu, "")
+  return path === undefined || path === "" ? undefined : path
+}
+
+effect function registeredPath(repositoryId: string) {
+  const row = try first(RegisteredManifest, sql`SELECT p.manifest FROM project_repositories r JOIN projects p ON p.id = r.project_id WHERE r.repository_key = ${`github:${repositoryId}`}`)
+  if (row === undefined) return undefined
+  const parsed = Effect.try(() => JSON.parse(row.manifest) as unknown) catch () => undefined
+  const manifest = parsed === undefined ? undefined : Schema.decodeUnknownEffect(Listed)(parsed) catch () => undefined
+  if (manifest === undefined) return undefined
+  const index = String(manifest.authority.repositoryId) === repositoryId ? 0 : manifest.repositories.findIndex((entry, at) => at > 0 && entry.githubId === repositoryId)
+  return index < 0 ? undefined : currentPath(manifest.repositories[index]?.githubUrl)
+}
+
+function unavailable(read: { readonly actorGithubId: string; readonly repositoryId: string }): PortRead {
+  return { ...read, permission: "PermissionUnavailable", installation: "InstallationUnavailable" }
+}
+
+effect function portRead(read: { readonly actorGithubId: string; readonly repositoryId: string }) {
+  const member = first(MemberLogin, sql`SELECT login FROM points_members WHERE github_id = ${read.actorGithubId}`) catch () => undefined
+  const path = registeredPath(read.repositoryId) catch () => undefined
+  if (member === undefined || path === undefined) return unavailable(read)
+  const checked = try checkAuthority({ path, githubId: read.repositoryId }, { githubId: read.actorGithubId, login: member.login })
+  return { ...read, permission: permissionOf(checked), installation: installationOf(checked.access) } satisfies PortRead
+}
+
+export const AuthorityLive = Layer.effect(Authority, effect {
+  const db = try D1
+  const slopbot = try SlopbotAccess
+  return {
+    repository: (read) => portRead(read).pipe(Effect.provideService(D1, db), Effect.provideService(SlopbotAccess, slopbot)),
+  } satisfies Authority.Shape
+})

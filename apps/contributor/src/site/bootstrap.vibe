@@ -1,0 +1,82 @@
+// spec/contributor/publication.md, "The served bootstrap skill and the agent-skills index carry the same digest"; spec/contributor/publication.md, "llms.txt and skill-manifest.json state the build commit and its committed or working-tree status"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { isoNow } from "@repo/platform/clock"
+import { type BootstrapSource, bootstrapOutputs, bootstrapPublishable } from "../../gen/contributor__publication.effect.vibe"
+import { publicSiteOrigin, templatePaths } from "../render/fields.ts"
+import { sha256Hex, sourceRepository } from "../render/templateIndex.ts"
+import { type SiteFile, committedDigests, jsonText, refused, regularFiles, sourceBytes, sourceText, statusText, textFile, utf8Text } from "./sources.vibe"
+import { validateSkill } from "./validation.vibe"
+
+const bootstrapPath = "skills/slop"
+const bootstrapSource = `${bootstrapPath}/SKILL.md`
+const discoverySchema = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
+
+const frontmatterPatterns = {
+  name: /^name:\s*(.+)$/mu,
+  description: /^description:\s*(.+)$/mu,
+} as const
+
+const inlinedTemplatePaths = {
+  "src/lib/install-command.ts": /export const GENERATED_SKILL_TEMPLATES = \{\n {2}contributor: "([^"\n]*)",\n {2}reviewer: "([^"\n]*)",\n\} as const;/u,
+  "src/lib/project-schema.mjs": /export const PROJECT_SKILL_TEMPLATES = Object\.freeze\(\{\n {2}contributor: "([^"\n]*)",\n {2}reviewer: "([^"\n]*)",\n\}\);/u,
+} as const
+
+effect function frontmatterValue(source: string, field: keyof typeof frontmatterPatterns) {
+  const match = frontmatterPatterns[field].exec(source)
+  if (match === null) throw refused(`bootstrap skill omitted ${field}`)
+  const value = (match[1] ?? "").trim()
+  if (value.startsWith('"')) {
+    const parsed: unknown = Effect.try(() => JSON.parse(value) as unknown) catch () => undefined
+    if (typeof parsed === "string" && parsed.length > 0) return parsed
+  } else if (/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)) {
+    return value
+  }
+  throw refused(`bootstrap skill has invalid ${field}`)
+}
+
+effect function templatePathsAgree(root: string) {
+  for (const [path, pattern] of Object.entries(inlinedTemplatePaths)) {
+    const match = pattern.exec(try sourceText(root, path))
+    if (match === null || match[1] !== templatePaths.contributor || match[2] !== templatePaths.reviewer) return false
+  }
+  return true
+}
+
+function llmsText(digest: string, revision: string, status: string): string {
+  return `# Slop\n\n> Make money shipping open source. Pick important public work, ship an accepted result, and build a contributor record on GitHub.\n\n## Agent onboarding\n\n- [Slop bootstrap skill](${publicSiteOrigin}/SKILL.md): Inspect and install the repository-specific contribution skill. SHA-256: ${digest}.\n- [Agent Skills discovery index](${publicSiteOrigin}/.well-known/agent-skills/index.json): Machine-readable v0.2 discovery and integrity metadata.\n\nThe bootstrap source revision is ${revision} (${status}). It never authorizes wallet creation, background upload, raw prompt, transcript, source, credential, or private-key disclosure.\n`
+}
+
+export effect function bootstrapFiles(root: string, commit: string) {
+  const validated = (try validateSkill(root, bootstrapPath)).outcome === "Valid"
+  const listing = try regularFiles(root, bootstrapPath)
+  const files = listing.irregular === undefined ? [...listing.paths] : []
+  if (files.length !== 1 || files[0] !== "SKILL.md") throw refused("universal bootstrap must remain one reviewable SKILL.md")
+  const bytes = try sourceBytes(root, bootstrapSource)
+  const text = try utf8Text(bytes, bootstrapSource)
+  const name = try frontmatterValue(text, "name")
+  const description = try frontmatterValue(text, "description")
+  if (name !== "slop") throw refused("universal bootstrap must be named slop")
+  const agree = try templatePathsAgree(root)
+  if (!agree) throw refused("generated skill template paths have drifted")
+  const committed = (try committedDigests(root, commit, [bootstrapSource])).get(bootstrapSource) ?? ""
+  const source: BootstrapSource = { files, name, validated, bytes: { path: "SKILL.md", working: sha256Hex(bytes), committed } }
+  if (!bootstrapPublishable(source, agree)) throw refused("the bootstrap skill is not publishable")
+  const outputs = bootstrapOutputs(source, commit)
+  const status = statusText(outputs.status)
+  return [
+    { path: "SKILL.md", bytes },
+    { path: ".well-known/agent-skills/slop/SKILL.md", bytes },
+    textFile(".well-known/agent-skills/index.json", jsonText({
+      $schema: discoverySchema,
+      skills: [{ name, type: "skill-md", description, url: `${publicSiteOrigin}/SKILL.md`, digest: `sha256:${outputs.indexDigest}` }],
+    })),
+    textFile("llms.txt", llmsText(outputs.llmsDigest, outputs.revision, status)),
+    textFile("skill-manifest.json", jsonText({
+      schemaVersion: "1",
+      name: null,
+      repository: sourceRepository,
+      revision: outputs.revision,
+      revisionStatus: status,
+      generatedAt: try isoNow(),
+    })),
+  ] satisfies ReadonlyArray<SiteFile>
+}

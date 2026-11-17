@@ -1,0 +1,45 @@
+// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"
+import { type Event, type Fee, lockMs } from "../../gen/fees__conversion.effect.vibe"
+import type { Instance, Names } from "../journal/codec.vibe"
+import { type Facts, send } from "../journal/store.vibe"
+
+export const renewalMs = lockMs / 2
+
+export interface Session {
+  instance: Instance
+  state: Fee
+  renewedAt: number
+  leased: boolean
+  readonly names: Names
+  readonly runId: number
+}
+
+export effect function step(session: Session, event: Event, facts: Facts = {}) {
+  const sent = send(session.instance, session.names, event, "Worker", facts) catch effect (error) => {
+    if (error._tag === "Rejected") return undefined
+    throw error
+  }
+  if (sent === undefined) return undefined
+  session.instance = sent.instance
+  session.state = sent.state
+  return sent.state
+}
+
+export effect function renewed(session: Session, force: boolean) {
+  const now = try Clock.currentTimeMillis
+  if (!session.leased || (!force && now - session.renewedAt < renewalMs)) return session.leased
+  const next = try step(session, { type: "renewLease", runId: session.runId })
+  if (next === undefined) {
+    session.leased = false
+    try Effect.logWarning("fee_conversion_lock_lost", { network: session.state.network })
+    return false
+  }
+  session.renewedAt = now
+  return true
+}
+
+export effect function released(session: Session) {
+  if (!session.leased) return
+  const next = step(session, { type: "releaseLease", runId: session.runId }) catch () => undefined
+  if (next !== undefined) session.leased = false
+}

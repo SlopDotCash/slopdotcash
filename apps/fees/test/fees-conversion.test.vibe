@@ -1,0 +1,156 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, rows, sql } from "@repo/platform/d1"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { lockMs } from "../gen/fees__conversion.ts"
+import type { Mode, Network, Runtime, WorkerConfig } from "../gen/fees__runtime.ts"
+import { apply, initial } from "../gen/fees__runtime.effect.vibe"
+import { ConversionChain, type QuoteRead } from "../src/conversion/chain.vibe"
+import { runNetwork } from "../src/conversion/run.vibe"
+import { triggerAt } from "../src/conversion/trigger.vibe"
+import type { Instance } from "../src/journal/codec.vibe"
+import type { EnabledNetwork } from "../src/runtime/config.vibe"
+import { definitions } from "../src/runtime/networks.vibe"
+import type { TokenFact } from "../src/runtime/reviewed.vibe"
+import { generationInstance, journalDatabase } from "./support/journal.ts"
+
+service Fixture { readonly db: D1Database }
+
+const Started = Layer.effect(Fixture, effect {
+  const started = try acquireRelease(promise(() => journalDatabase("fees-conversion")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  return { db: started.db }
+})
+
+const tokenA = "0x1111111111111111111111111111111111111111"
+const tokenB = "0x2222222222222222222222222222222222222222"
+const tokens: ReadonlyArray<TokenFact> = [{ address: tokenA, asset: "ProjectToken" }, { address: tokenB, asset: "ProjectToken" }]
+const nativeLimits = { perTransaction: 100000000000000n, perDay: 1000000000000000n, additionalFeeReserve: 0n }
+
+interface Stand {
+  readonly calls: Array<string>
+  quote: (token: string, amount: bigint) => QuoteRead
+}
+
+function found(amount: bigint, output: bigint, gasValue = 1000n): QuoteRead {
+  return { kind: "found", route: "kyberswap", amountIn: amount, output, minimumOutput: output - output / 100n, gasValue, impactBps: 50, summary: "{}" }
+}
+
+function chainStand(stand: Stand) {
+  return Layer.succeed(ConversionChain, {
+    balance: (token) => effect { return token === tokenA || token === tokenB ? 4000000000n : 0n },
+    quote: (token, amount) => effect {
+      stand.calls.push(`quote ${token === tokenA ? "A" : "B"} ${amount}`)
+      return stand.quote(token, amount)
+    },
+    reserve: (intent) => effect {
+      stand.calls.push(`reserve ${intent.nonceFloor}`)
+      return { nonce: intent.nonceFloor, maximumWei: "1000000000000", intentHash: "0x5555555555555555555555555555555555555555555555555555555555555555" }
+    },
+    sign: () => effect {
+      stand.calls.push("sign")
+      return { kind: "Conversion", txId: "0x6666666666666666666666666666666666666666666666666666666666666666", rawTx: "0x02f8", gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 445500000n, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 0n }
+    },
+    broadcast: () => effect { stand.calls.push("broadcast") },
+    status: () => effect { return { kind: "pending", mined: false } },
+    replacement: () => effect { return undefined },
+  })
+}
+
+effect function runtimeFor(mode: Mode, network: Network) {
+  const config: WorkerConfig = { source: 1, converterMode: mode, buybackMode: "Off", networks: [network], keys: mode === "Live" ? [network] : [], nativeLimits: [network], evmWallet: 1, solanaWallet: 2 }
+  let runtime: Runtime = try apply(initial, { type: "setReleaseVariable", variable: true }, "Owner")
+  if (mode === "Off") return runtime
+  runtime = try apply(runtime, { type: "publish", config }, "ReleaseWorkflow")
+  return mode === "Live" ? try apply(runtime, { type: "verifyReadiness", network, listedWallet: 1 }, "Owner") : runtime
+}
+
+interface World { readonly base: Instance; readonly clock: SettableClock; readonly stand: Stand; readonly db: D1Database; readonly network: EnabledNetwork }
+
+effect function opened(generation: number, mode: Mode, network: Network = "Base") {
+  const { db } = try Fixture
+  const made = generationInstance(generation, network)
+  const base = { ...made, held: { ...made.held, runtime: try runtimeFor(mode, network) } }
+  const enabled = { network, definition: definitions[network], feeWallet: made.held.wallets[0] ?? "", allowlist: [], nativeLimits } satisfies EnabledNetwork
+  return { base, clock: settableClock(base.epoch + 10 * lockMs), stand: { calls: [], quote: (_token, amount) => found(amount, amount / 2n) }, db, network: enabled } satisfies World
+}
+
+const income = {
+  transfers: [{ receipt: "0xaa:0", token: tokenA, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }],
+  topUps: [],
+  counters: [],
+  allowances: new Map<string, bigint>(),
+}
+
+effect function run(world: World, trigger: "Receipts" | "Recovery") {
+  return try Effect.provide(runNetwork({ network: world.network, base: world.base, trigger, tokens, income }), Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer, chainStand(world.stand)))
+}
+
+schema Recorded { token: string; state: string; mode: string; amount_in: string; reason: string | null }
+
+effect function recorded(world: World) {
+  const scope = world.base.scope
+  return (try Effect.provide(rows(Recorded, sql`SELECT token, state, mode, amount_in, reason FROM fee_conversions WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))).map((row) => `${row.token === tokenA ? "A" : "B"} ${row.state} ${row.mode} ${row.amount_in} ${row.reason ?? "-"}`)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Dry runs record the pinned outcome order once, a receipts run skips an unchanged token and the run cap rescales the quote (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+    const world = try opened(101, "DryRun")
+    world.stand.quote = (token, amount) => token === tokenA ? found(amount, amount / 2n) : found(amount, 3000000n)
+    const first = try run(world, "Recovery")
+    const afterFirst = try recorded(world)
+    const second = try run(world, "Receipts")
+    try same({
+      triggers: [triggerAt(Date.UTC(2026, 10, 16, 12, 30)), triggerAt(Date.UTC(2026, 10, 16, 12, 31))],
+      first: [first.status, first.records.Quoted, first.records.DustPending, first.leaseLost],
+      second: [second.status, second.records.Quoted, second.records.DustPending],
+      calls: world.stand.calls,
+      rows: afterFirst,
+      unchanged: try recorded(world),
+    }, {
+      triggers: ["Recovery", "Receipts"],
+      first: ["ran", 1, 1, false],
+      second: ["ran", 0, 0],
+      calls: ["quote A 4000000000", "quote A 1960000000", "quote B 4000000000"],
+      rows: ["A quoted dry_run 1960000000 -", "B pending dry_run 4000000000 below the minimum conversion value"],
+      unchanged: ["A quoted dry_run 1960000000 -", "B pending dry_run 4000000000 below the minimum conversion value"],
+    })
+  })
+
+  it.effect('Off starts nothing and Robinhood keeps what it received unconverted (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+    const off = try opened(102, "Off")
+    const idle = try run(off, "Recovery")
+    const robinhood = try opened(103, "DryRun", "Robinhood")
+    const kept = try run(robinhood, "Recovery")
+    try same({ off: [idle.status, off.stand.calls, try recorded(off)], robinhood: [kept.status, robinhood.stand.calls, try recorded(robinhood)] }, { off: ["off", [], []], robinhood: ["notConverted", [], []] })
+  })
+
+  it.effect('A forged signed send is refused at the journal, and a run whose lease expired mid-run stops before the next token (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease")', () => effect {
+    const world = try opened(104, "Live")
+    world.stand.quote = (_token, amount) => found(amount, 450000000n)
+    const forged = try run(world, "Recovery")
+    const signed = try recorded(world)
+    const late = try opened(105, "DryRun")
+    late.stand.quote = (_token, amount) => {
+      late.clock.advance(lockMs + 1)
+      return found(amount, 450000000n)
+    }
+    const lost = try run(late, "Recovery")
+    const next = try run(late, "Recovery")
+    try same({
+      forged: [forged.records.Failed, world.stand.calls.slice(0, 3)],
+      reason: signed.map((row) => row.includes(" failed live ") && row.includes("prepare: sign:")),
+      lost: [lost.leaseLost, lost.records.Quoted, try recorded(late)],
+      next: next.status,
+    }, {
+      forged: [1, ["quote A 4000000000", "reserve 0", "sign"]],
+      reason: [true, true],
+      lost: [true, 0, []],
+      next: "ran",
+    })
+  })
+})

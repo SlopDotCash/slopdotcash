@@ -1,0 +1,219 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "Appending a repository pauses the project and its work counts from next month"
+import { Refused } from "@repo/platform/http"
+import { postProjects, putProjectsById } from "../../client/refusals.vibe"
+import { fieldsCompleteOf } from "../store/codec.vibe"
+import { manifestOf } from "../store/rows.vibe"
+import { type Json, objectOf } from "./records.vibe"
+import { type RevisionChanges, classifyRevisionChanges } from "./classify.ts"
+import { canonical } from "./definition.ts"
+
+type Row = { readonly status: number; readonly error: string; readonly message?: string }
+
+export function refusal(row: Row, message?: string): Refused {
+  return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
+}
+
+export function invalidManifest(message: string): Refused {
+  return refusal({ ...putProjectsById.invalidManifest, message })
+}
+
+export function financialRestricted(row: Row): Refused {
+  return refusal(row)
+}
+
+const contributorTemplate = "skills/project-contributor-template"
+const reviewerTemplate = "skills/project-reviewer-template"
+const maxMonthlyCapMinor = 1_000_000_000_000_000n
+
+export function same(left: unknown, right: unknown): boolean {
+  return canonical(left ?? null) === canonical(right ?? null)
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+}
+
+function list(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : []
+}
+
+export effect function fieldsComplete(manifest: Json) {
+  const decoded = manifestOf(JSON.stringify(manifest), "submitted manifest") catch () => undefined
+  return decoded !== undefined && fieldsCompleteOf(decoded)
+}
+
+export function appendedRepositories(previous: Json, next: Json): ReadonlyArray<Json> | undefined {
+  const before = list(previous.repositories)
+  const after = list(next.repositories)
+  if (after.length < before.length) return undefined
+  for (let index = 0; index < before.length; index += 1) if (!same(before[index], after[index])) return undefined
+  return after.slice(before.length).map((entry) => objectOf(entry) ?? {})
+}
+
+export function classified(previous: Json, next: Json): RevisionChanges {
+  const fields = [...new Set([...Object.keys(previous), ...Object.keys(next)])].sort()
+  const changed = fields.filter((field) => !same(previous[field], next[field]))
+  return classifyRevisionChanges(changed, (appendedRepositories(previous, next)?.length ?? 0) > 0)
+}
+
+export interface Creator {
+  readonly githubId: string
+  readonly githubLogin: string
+}
+
+function fundingCommitments(manifest: Json): ReadonlyArray<unknown> {
+  return list(objectOf(manifest.funding)?.commitments)
+}
+
+export effect function newProjectRefusal(manifest: Json, actor: Creator, storedApplication: boolean) {
+  const reward = objectOf(manifest.reward) ?? {}
+  const reviewBudget = reward.kind === "monthly-pool" ? objectOf(reward.reviewBudget) : undefined
+  const skill = objectOf(manifest.skill)
+  const reviewSkill = objectOf(manifest.reviewSkill)
+  const authority = objectOf(manifest.authority)
+  const terms = objectOf(manifest.terms)
+  const program = objectOf(manifest.securityBounty)
+  const programFunding = objectOf(program?.funding)
+  const settlement = objectOf(program?.settlement)
+  const rules: ReadonlyArray<readonly [boolean, string]> = [
+    [manifest.status === "paused", "New projects must start paused"],
+    [manifest.listingTier === "community", "New projects are listed in the community tier"],
+    [list(manifest.repositories).length === 1, "A new project lists exactly one repository"],
+    [skill?.publishAtRoot === false, "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md"],
+    [skill?.sourcePath === contributorTemplate && reviewSkill?.sourcePath === reviewerTemplate, "New projects use generated skills from the canonical templates"],
+    [try fieldsComplete(manifest), "Complete the contribution rules that generate the project skills"],
+    [authority?.state === "unverified" && authority.proof === null, "Repository receipt authority is added in a later revision with its proof"],
+    [objectOf(terms?.receiptPolicy)?.state === "pending-authority-activation", "Receipt policy activates only after repository receipt authority"],
+    [terms?.externalPrize === null, "External prizes are not offered through self-service setup"],
+    [
+      reward.kind === "monthly-pool" &&
+        reward.paymentMode === "disabled" &&
+        reward.committedMinor === "0" &&
+        reward.fundingState === "pledged" &&
+        (reviewBudget === undefined || (storedApplication && reviewBudget.paymentMode === "disabled" && reviewBudget.committedMinor === "0" && reviewBudget.fundingState === "pledged")),
+      "A new project may only pledge a monthly amount with payments disabled; a separate review budget is not offered",
+    ],
+    [list(objectOf(manifest.funding)?.addresses).length === 0 && fundingCommitments(manifest).length === 0 && list(objectOf(manifest.escrow)?.deployments).length === 0, "Vault deployments and funding routes are added after setup"],
+    [
+      program === undefined ||
+        ((program.status === "paused" || program.status === "pending-approval" || (program.status === "open" && program.fundingPolicy === "after-approval")) && programFunding?.state === "pledged" && list(settlement?.deployments).length === 0),
+      "A new security bounty must pledge funding without an unverified vault; only an after-approval offer can open during setup",
+    ],
+  ]
+  const broken = rules.find(([valid]) => !valid)
+  if (broken !== undefined) return broken[1] === "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md" ? refusal(putProjectsById.invalidManifestRootSkillPublicationIs) : invalidManifest(broken[1])
+  if (program === undefined) return undefined
+  const split = objectOf(program.split)
+  if (split?.researcherBasisPoints === 10000 && split.slopBasisPoints === 0) return refusal(postProjects.securitySplitRestricted)
+  const approvers = objectOf(program.approvers)
+  const people = [...list(approvers?.technical), ...list(approvers?.financial), ...list(approvers?.dispute)].map((person) => objectOf(person) ?? {})
+  const sponsor = objectOf(program.sponsor)
+  const foreign = people.some((person) => person.githubId !== actor.githubId || String(person.githubLogin ?? "").toLowerCase() !== actor.githubLogin.toLowerCase())
+  if (foreign || (sponsor?.githubId !== null && sponsor?.githubId !== actor.githubId)) return refusal(postProjects.securityContactsRestricted)
+  return undefined
+}
+
+function groupedWhole(whole: bigint): string {
+  return whole.toString().replace(/\B(?=(\d{3})+(?!\d))/gu, ",")
+}
+
+effect function digits(text: string) {
+  return try orDie(Effect.try(() => BigInt(text === "" ? "0" : text)))
+}
+
+effect function scaleOf(decimals: number) {
+  return 10n ** (try digits(String(decimals)))
+}
+
+export effect function baseUnitsDisplay(value: bigint, decimals: number) {
+  const scale = try scaleOf(decimals)
+  const fraction = (value % scale).toString().padStart(decimals, "0").replace(/0+$/u, "")
+  const shown = groupedWhole(value / scale)
+  return fraction === "" ? shown : `${shown}.${fraction}`
+}
+
+export type Amount = { readonly kind: "amount"; readonly minor: string; readonly display: string } | { readonly kind: "invalid"; readonly reason: string }
+
+export effect function monthlyAmount(text: string, asset: Json | undefined) {
+  const decimals = typeof asset?.decimals === "number" && Number.isSafeInteger(asset.decimals) && asset.decimals >= 0 && asset.decimals <= 36 ? asset.decimals : 6
+  const match = /^(0|[1-9]\d{0,12})(?:\.(\d{1,36}))?$/u.exec(text)
+  if (match === null) return { kind: "invalid", reason: "amount must be a plain decimal number" } satisfies Amount
+  const fraction = match[2] ?? ""
+  if (fraction.length > decimals) return { kind: "invalid", reason: `amount has more decimal places than the asset's ${decimals}` } satisfies Amount
+  const minor = (try digits(match[1] ?? "0")) * (try scaleOf(decimals)) + (try digits(fraction.padEnd(decimals, "0")))
+  if (asset !== undefined && asset.kind !== "stablecoin") return { kind: "amount", minor: minor.toString(), display: `${try baseUnitsDisplay(minor, decimals)} ${String(asset.symbol)}` } satisfies Amount
+  if (minor > maxMonthlyCapMinor || minor % 10_000n !== 0n) return { kind: "invalid", reason: "monthly cap must be cent-precise and at most $1B" } satisfies Amount
+  const cents = Number((minor % 1_000_000n) / 10_000n)
+  return { kind: "amount", minor: minor.toString(), display: `$${groupedWhole(minor / 1_000_000n)}${cents === 0 ? "" : `.${String(cents).padStart(2, "0")}`}` } satisfies Amount
+}
+
+export effect function withMonthlyAmount(manifest: Json, amount: string | undefined) {
+  if (amount === undefined) return manifest
+  const reward = objectOf(manifest.reward)
+  if (reward?.kind !== "monthly-pool") throw refusal(putProjectsById.invalidManifestAMonthlyAmountNeeds)
+  const parsed = try monthlyAmount(amount, objectOf(manifest.rewardAsset))
+  if (parsed.kind === "invalid") throw refusal(putProjectsById.invalidManifestS422, `The monthly amount is invalid: ${parsed.reason}`)
+  return { ...manifest, reward: { ...reward, monthlyCapMinor: parsed.minor, monthlyCapDisplay: parsed.display } } satisfies Json
+}
+
+export function utcPeriod(iso: string): string {
+  return iso.slice(0, 7)
+}
+
+export function shiftPeriod(period: string, delta: number): string {
+  const [year = 0, month = 1] = period.split("-").map(Number)
+  const total = year * 12 + (month - 1) + delta
+  return `${String(Math.floor(total / 12)).padStart(4, "0")}-${String((total % 12) + 1).padStart(2, "0")}`
+}
+
+function monthsThrough(rewardStartAt: string, last: string): ReadonlyArray<string> {
+  const months: string[] = []
+  for (let id = rewardStartAt.slice(0, 7); id <= last; id = shiftPeriod(id, 1)) months.push(id)
+  return months
+}
+
+function chainEscrow(escrow: unknown): unknown {
+  const object = objectOf(escrow)
+  if (object === undefined) return escrow
+  return { ...object, deployments: list(object.deployments).map((deployment) => Object.fromEntries(Object.entries(objectOf(deployment) ?? {}).filter(([key]) => key !== "maxNativeCostWei" && key !== "bindingConsentNonceLimit"))) }
+}
+
+function positiveMinor(value: unknown): boolean {
+  return typeof value === "string" && /^[0-9]*[1-9][0-9]*$/u.test(value)
+}
+
+function fixedReward(reward: Json): Json {
+  return Object.fromEntries(Object.entries(reward).filter(([key]) => !["monthlyCapMinor", "monthlyCapDisplay", "cycleCaps", "chain", "currency", "feeBasisPoints", "payoutExclusions"].includes(key)))
+}
+
+export function prospectiveFinancialChange(previous: Json, next: Json, nowIso: string): Json | Refused {
+  const before = objectOf(previous.reward) ?? {}
+  const after = objectOf(next.reward) ?? {}
+  if (before.kind !== "monthly-pool" || after.kind !== "monthly-pool") return financialRestricted(putProjectsById.financialChangeRestrictedOnlyAMonthlyReward)
+  if (!sameValue(before.reviewBudget, after.reviewBudget)) return financialRestricted(putProjectsById.financialChangeRestrictedASeparateReviewBudget)
+  if (!sameValue(previous.funding, next.funding)) return financialRestricted(putProjectsById.financialChangeRestrictedFundingRoutesDoNot)
+  const previousEscrow = objectOf(chainEscrow(previous.escrow))
+  const nextEscrow = objectOf(chainEscrow(next.escrow))
+  if (!sameValue(previousEscrow?.deployments ?? [], nextEscrow?.deployments ?? [])) return financialRestricted(putProjectsById.financialChangeRestrictedUseVaultSetupTo)
+  const funded = before.fundingState === "committed" || positiveMinor(before.committedMinor) || before.paymentMode === "enabled" || list(objectOf(previous.escrow)?.deployments).length > 0 || list(objectOf(previous.funding)?.addresses).length > 0 || fundingCommitments(previous).length > 0
+  if (funded && (!sameValue(previous.rewardAsset, next.rewardAsset) || !sameValue(previousEscrow, nextEscrow))) return financialRestricted(putProjectsById.financialChangeRestrictedAFundedProjectKeeps)
+  const assetChanged = !sameValue(previous.rewardAsset, next.rewardAsset) || before.chain !== after.chain || before.currency !== after.currency
+  if (!sameValue(fixedReward(before), fixedReward(after)) || (assetChanged ? after.cycleCaps !== undefined : !sameValue(before.cycleCaps, after.cycleCaps))) return financialRestricted(putProjectsById.financialChangeRestrictedOnlyTheMonthlyAmount)
+  const cycle = utcPeriod(nowIso)
+  const rewardStartAt = typeof before.rewardStartAt === "string" ? before.rewardStartAt : nowIso
+  if (assetChanged) {
+    const zeroCaps = monthsThrough(rewardStartAt, cycle).map((cycleId) => ({ cycleId, monthlyCapMinor: "0" }))
+    const reward = Object.fromEntries(Object.entries(after).filter(([key]) => key !== "cycleCaps"))
+    return { ...next, reward: zeroCaps.length === 0 ? reward : { ...reward, cycleCaps: zeroCaps } }
+  }
+  if (before.monthlyCapMinor === after.monthlyCapMinor) return next
+  const caps = list(before.cycleCaps).map((cap) => objectOf(cap) ?? {})
+  const listed = new Set(caps.map((cap) => String(cap.cycleId)))
+  const kept = monthsThrough(rewardStartAt, cycle).filter((cycleId) => !listed.has(cycleId)).map((cycleId) => ({ cycleId, monthlyCapMinor: before.monthlyCapMinor }))
+  if (kept.length === 0) return next
+  return { ...next, reward: { ...after, cycleCaps: [...caps, ...kept].sort((left, right) => String(left.cycleId).localeCompare(String(right.cycleId))) } }
+}
+
+export function nextUtcMonthStart(nowIso: string): string {
+  return `${shiftPeriod(utcPeriod(nowIso), 1)}-01T00:00:00.000Z`
+}

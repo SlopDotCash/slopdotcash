@@ -1,0 +1,267 @@
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import { type Accounts, type Member, decodeState } from "../../../gen/backend__accounts.effect.vibe"
+import type { DeliveryState, Enrollment, Verification } from "../../../gen/backend__email.ts"
+import type { GitHubIdentity, Identity } from "../../../gen/backend__identity.ts"
+import type { XFlow, XLink } from "../../../gen/backend__xConnection.ts"
+
+export schema MemberRow { actor_id: string; github_id: string; login: string; joined_at: string; public: number; closed_at: string | null }
+schema SessionRow { token_hash: string; actor_id: string; expires_at: string }
+schema XLinkRow { actor_id: string; x_id: string; username: string; verified_at: string; public: number }
+export schema XFlowRow { state_hash: string; browser_hash: string; session_hash: string; actor_id: string; expires_at: string; status: string }
+schema XClaimRow { x_id: string; actor_id: string; claimed_at: string }
+schema XAwardRow { actor_id: string; awarded_at: string; points: number }
+schema TelegramClaimRow { telegram_id: string; actor_id: string }
+schema TelegramLinkRow { actor_id: string }
+export schema PreferenceRow { github_id: string; enabled: number; security_enabled: number | null; destination_version: string | null; revision: number }
+export schema DestinationRow { github_id: string; email: string; destination_version: string; verified_at: string }
+export schema VerificationRow {
+  id: string; github_id: string; request_key: string; email: string; address_key: string; token_hash: string
+  activity_enabled: number; security_enabled: number; state: string; created_at: string; expires_at: string
+  cancelled_at: string | null; consumed_at: string | null; destination_version: string | null
+}
+schema UnsubscribeRow { token_hash: string; destination_version: string }
+
+export type Namespace = "actor" | "github" | "session" | "xFlow" | "verification" | "requestKey" | "version" | "unsubscribe"
+
+export interface Names {
+  readonly ids: Record<Namespace, Map<string, number>>
+  readonly values: Record<Namespace, Array<string>>
+}
+
+export interface Loaded {
+  readonly state: Accounts
+  readonly names: Names
+  readonly members: ReadonlyArray<MemberRow>
+  readonly flows: ReadonlyArray<XFlowRow>
+  readonly preferences: ReadonlyArray<PreferenceRow>
+  readonly destinations: ReadonlyArray<DestinationRow>
+  readonly verifications: ReadonlyArray<VerificationRow>
+}
+
+export interface Facts {
+  readonly xConfigured: boolean
+  readonly mailAvailable: boolean
+  readonly pilot: { readonly githubId: string; readonly version: string } | undefined
+  readonly assertion: { readonly githubId: string; readonly login: string; readonly nodeId: string } | undefined
+}
+
+export const noFacts: Facts = { xConfigured: false, mailAvailable: false, pilot: undefined, assertion: undefined }
+
+const namespaces: ReadonlyArray<Namespace> = ["actor", "github", "session", "xFlow", "verification", "requestKey", "version", "unsubscribe"]
+
+function freshNames(): Names {
+  return {
+    ids: Object.fromEntries(namespaces.map((space) => [space, new Map<string, number>()])) as Record<Namespace, Map<string, number>>,
+    values: Object.fromEntries(namespaces.map((space) => [space, [] as Array<string>])) as Record<Namespace, Array<string>>,
+  }
+}
+
+export function intern(names: Names, space: Namespace, value: string) {
+  const known = names.ids[space].get(value)
+  if (known !== undefined) return known
+  names.values[space].push(value)
+  const made = names.values[space].length
+  names.ids[space].set(value, made)
+  return made
+}
+
+export function known(names: Names, space: Namespace, value: string) {
+  return names.ids[space].get(value) ?? 0
+}
+
+export function named(names: Names, space: Namespace, id: number) {
+  return id > 0 ? names.values[space][id - 1] : undefined
+}
+
+export function issued(names: Names, space: Namespace) {
+  return names.values[space].length
+}
+
+export function requestKeyOf(githubId: string, requestKey: string) {
+  return `${githubId}\n${requestKey}`
+}
+
+export function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function version(names: Names, text: string | null | undefined) {
+  return text === null || text === undefined || text === "" ? 0 : intern(names, "version", text)
+}
+
+const deliveries: Readonly<Record<string, DeliveryState>> = { queued: "Queued", sending: "Sending", sent: "Sent", unknown: "DeliveryUnknown" }
+
+effect function delivery(row: VerificationRow) {
+  const state = deliveries[row.state]
+  if (state === undefined) throw new RowMismatch({ text: "notification_email_verifications.state", issue: row.state })
+  return state
+}
+
+effect function flowStatus(row: XFlowRow) {
+  if (row.status === "pending") return "XPending" as const
+  if (row.status === "processing") return "XProcessing" as const
+  throw new RowMismatch({ text: "points_x_flows.status", issue: row.status })
+}
+
+export function accountReads(scope: Statement): ReadonlyArray<Statement> {
+  const githubScope = sql`SELECT github_id FROM points_members WHERE actor_id IN (${scope})`
+  return [
+    sql`SELECT actor_id, github_id, login, joined_at, public, closed_at FROM points_members WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT token_hash, actor_id, expires_at FROM points_sessions WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT actor_id, x_id, username, verified_at, public FROM points_x_links WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT state_hash, browser_hash, session_hash, actor_id, expires_at, status FROM points_x_flows WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT x_id, actor_id, claimed_at FROM points_x_claims WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT actor_id, awarded_at, points FROM points_x_awards WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT telegram_id, actor_id FROM points_telegram_claims WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT actor_id FROM points_telegram_links WHERE actor_id IN (${scope}) ORDER BY rowid`,
+    sql`SELECT github_id, enabled, security_enabled, destination_version, revision FROM notification_email_preferences WHERE github_id IN (${githubScope}) ORDER BY rowid`,
+    sql`SELECT github_id, email, destination_version, verified_at FROM notification_email_destinations WHERE github_id IN (${githubScope}) ORDER BY rowid`,
+    sql`SELECT id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at, cancelled_at, consumed_at, destination_version FROM notification_email_verifications WHERE github_id IN (${githubScope}) ORDER BY created_at, rowid`,
+    sql`SELECT token_hash, destination_version FROM notification_email_unsubscribe_tokens WHERE destination_version IN (SELECT destination_version FROM notification_email_destinations WHERE github_id IN (${githubScope}) UNION SELECT destination_version FROM notification_email_verifications WHERE github_id IN (${githubScope}) UNION SELECT destination_version FROM notification_email_preferences WHERE github_id IN (${githubScope})) ORDER BY rowid`,
+  ]
+}
+
+export function accountVersion(scope: Statement): Statement {
+  const githubScope = sql`SELECT github_id FROM points_members WHERE actor_id IN (${scope})`
+  return sql`SELECT json_array(
+    (SELECT json_group_array(json_array(actor_id, github_id, login, joined_at, public, closed_at)) FROM points_members WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(token_hash, actor_id, expires_at)) FROM points_sessions WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(actor_id, x_id, username, verified_at, public)) FROM points_x_links WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(state_hash, browser_hash, session_hash, actor_id, expires_at, status)) FROM points_x_flows WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(x_id, actor_id, claimed_at)) FROM points_x_claims WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(actor_id, awarded_at, points)) FROM points_x_awards WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(telegram_id, actor_id)) FROM points_telegram_claims WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(actor_id) FROM points_telegram_links WHERE actor_id IN (${scope})),
+    (SELECT json_group_array(json_array(github_id, enabled, security_enabled, destination_version, revision)) FROM notification_email_preferences WHERE github_id IN (${githubScope})),
+    (SELECT json_group_array(json_array(github_id, email, destination_version, verified_at)) FROM notification_email_destinations WHERE github_id IN (${githubScope})),
+    (SELECT json_group_array(json_array(id, request_key, state, cancelled_at, consumed_at, destination_version)) FROM notification_email_verifications WHERE github_id IN (${githubScope})),
+    (SELECT count(*) FROM notification_email_unsubscribe_tokens)
+  ) AS version`
+}
+
+function emptyIdentity(now: number): Identity {
+  return { now, flows: [], assertions: [], windows: [], lastFlow: 0, issued: [], localDelivered: [], consumedTokens: [] }
+}
+
+function assertedIdentity(now: number, github: GitHubIdentity): Identity {
+  return {
+    now,
+    flows: [{ id: 1, oauthState: 1, capability: 1, audience: "PointsWeb", mode: "Production", status: "AssertionIssued", pkceStored: false, github, createdAt: now, expiresAt: now + 300 }],
+    assertions: [{ token: 1, audience: "PointsWeb", github, createdAt: now, expiresAt: now + 90, consumed: false, consumedAt: 0 }],
+    windows: [],
+    lastFlow: 1,
+    issued: [1],
+    localDelivered: [],
+    consumedTokens: [],
+  }
+}
+
+function enrollment(names: Names, githubId: string, preferences: ReadonlyArray<PreferenceRow>, destinations: ReadonlyArray<DestinationRow>, verifications: ReadonlyArray<Verification>, tokens: ReadonlyArray<UnsubscribeRow>, facts: Facts): Enrollment {
+  const preference = preferences.find((row) => row.github_id === githubId)
+  const destination = destinations.find((row) => row.github_id === githubId)
+  const versions = new Set([destination?.destination_version, preference?.destination_version, ...verifications.map((row) => named(names, "version", row.version))].filter((text) => text !== undefined && text !== null && text !== ""))
+  const consenting = preference !== undefined && (preference.enabled === 1 || preference.security_enabled === 1)
+  const pilot = facts.pilot?.githubId === githubId ? facts.pilot.version : destination === undefined && consenting ? preference.destination_version : undefined
+  return {
+    actor: intern(names, "github", githubId),
+    verifications: [...verifications],
+    destination: destination === undefined ? { address: "", version: 0, verifiedAt: 0 } : { address: destination.email, version: version(names, destination.destination_version), verifiedAt: seconds(destination.verified_at) },
+    preference: preference === undefined
+      ? { stored: false, activity: false, security: false, version: 0, revision: 0 }
+      : { stored: true, activity: preference.enabled === 1, security: preference.security_enabled === 1, version: version(names, preference.destination_version), revision: preference.revision },
+    unsubscribeTokens: tokens.filter((row) => versions.has(row.destination_version)).map((row) => ({ token: intern(names, "unsubscribe", row.token_hash), version: version(names, row.destination_version) })),
+    pilotVersion: version(names, pilot),
+  }
+}
+
+effect function verificationOf(names: Names, row: VerificationRow) {
+  const id = intern(names, "verification", row.id)
+  const consumed = row.consumed_at !== null
+  return {
+    id,
+    requestKey: intern(names, "requestKey", requestKeyOf(row.github_id, row.request_key)),
+    address: row.email,
+    addressKey: row.address_key,
+    tokenDigest: id,
+    activity: row.activity_enabled === 1,
+    security: row.security_enabled === 1,
+    delivery: try delivery(row),
+    createdAt: seconds(row.created_at),
+    expiresAt: seconds(row.expires_at),
+    cancelled: row.cancelled_at !== null,
+    consumed,
+    version: consumed ? version(names, row.destination_version) : 0,
+  } satisfies Verification
+}
+
+export function decodeAccounts(now: number, facts: Facts) {
+  effect function decode(found: ReadonlyArray<Rows>) {
+    const [memberRows, sessionRows, linkRows, flowRows, claimRows, awardRows, telegramClaimRows, telegramLinkRows, preferenceRows, destinationRows, verificationRows, tokenRows] = found
+    const members = try decoded(MemberRow, memberRows ?? [], "points_members")
+    const sessions = try decoded(SessionRow, sessionRows ?? [], "points_sessions")
+    const links = try decoded(XLinkRow, linkRows ?? [], "points_x_links")
+    const flows = try decoded(XFlowRow, flowRows ?? [], "points_x_flows")
+    const claims = try decoded(XClaimRow, claimRows ?? [], "points_x_claims")
+    const awards = try decoded(XAwardRow, awardRows ?? [], "points_x_awards")
+    const telegramClaims = try decoded(TelegramClaimRow, telegramClaimRows ?? [], "points_telegram_claims")
+    const telegramLinks = try decoded(TelegramLinkRow, telegramLinkRows ?? [], "points_telegram_links")
+    const preferences = try decoded(PreferenceRow, preferenceRows ?? [], "notification_email_preferences")
+    const destinations = try decoded(DestinationRow, destinationRows ?? [], "notification_email_destinations")
+    const verifications = try decoded(VerificationRow, verificationRows ?? [], "notification_email_verifications")
+    const tokens = try decoded(UnsubscribeRow, tokenRows ?? [], "notification_email_unsubscribe_tokens")
+    const names = freshNames()
+    for (const row of members) {
+      intern(names, "actor", row.actor_id)
+      intern(names, "github", row.github_id)
+    }
+    const modelVerifications: Verification[] = []
+    for (const row of verifications) modelVerifications.push(try verificationOf(names, row))
+    const modelSessions = sessions.map((row) => ({ id: intern(names, "session", row.token_hash), actor: intern(names, "actor", row.actor_id), expiresAt: seconds(row.expires_at) }))
+    const modelFlows: XFlow[] = []
+    for (const row of flows) {
+      const id = intern(names, "xFlow", row.state_hash)
+      modelFlows.push({ id, actor: intern(names, "actor", row.actor_id), session: intern(names, "session", row.session_hash), browserCap: id, status: try flowStatus(row), expiresAt: seconds(row.expires_at) })
+    }
+    const modelMembers = members.map((row) => {
+      const link = links.find((candidate) => candidate.actor_id === row.actor_id)
+      const xLink: XLink = link === undefined
+        ? { xId: "", username: "", verifiedAt: 0, public: false }
+        : { xId: link.x_id, username: link.username, verifiedAt: seconds(link.verified_at), public: link.public === 1 }
+      const own = verifications.flatMap((candidate, index) => candidate.github_id === row.github_id ? [modelVerifications[index]] : []).filter((value): value is Verification => value !== undefined)
+      return {
+        actor: intern(names, "actor", row.actor_id),
+        githubId: intern(names, "github", row.github_id),
+        login: row.login,
+        membership: row.closed_at === null ? "Open" : "Closed",
+        public: row.public === 1,
+        joinedAt: seconds(row.joined_at),
+        closedAt: row.closed_at === null ? 0 : seconds(row.closed_at),
+        xLink,
+        telegramLinked: telegramLinks.some((candidate) => candidate.actor_id === row.actor_id),
+        email: enrollment(names, row.github_id, preferences, destinations, own, tokens, facts),
+      } satisfies Member
+    })
+    const asserted = facts.assertion === undefined ? undefined : { actor: intern(names, "github", facts.assertion.githubId), login: facts.assertion.login, nodeId: intern(names, "actor", facts.assertion.nodeId) } satisfies GitHubIdentity
+    const state = try decodeState({
+      now,
+      identity: asserted === undefined ? emptyIdentity(now) : assertedIdentity(now, asserted),
+      members: modelMembers,
+      sessions: modelSessions,
+      lastSession: issued(names, "session"),
+      xRegistry: { flows: modelFlows, claims: claims.map((row) => ({ xId: row.x_id, actor: intern(names, "actor", row.actor_id), claimedAt: seconds(row.claimed_at) })), lastFlow: issued(names, "xFlow") },
+      xConfigured: facts.xConfigured,
+      mailAvailable: facts.mailAvailable,
+      telegramClaims: telegramClaims.map((row) => row.telegram_id),
+      xAwards: awards.map((row) => ({ actor: intern(names, "actor", row.actor_id), at: seconds(row.awarded_at), points: row.points })),
+      refusedSignIns: [],
+      lastEmailId: issued(names, "verification"),
+      lastVersion: issued(names, "version"),
+      lastUnsubscribe: issued(names, "unsubscribe"),
+    })
+    return { state, names, members, flows, preferences, destinations, verifications } satisfies Loaded
+  }
+  return decode
+}

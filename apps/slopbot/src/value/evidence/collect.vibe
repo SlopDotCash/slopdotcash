@@ -1,0 +1,529 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { GitHub, GitHubMalformed, decoded } from "@repo/platform/github"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { capReached, commitFileCap, evidencePageSize, listingComplete } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type AcceptedPatchReplay, acceptedPatchReplay } from "../proofs/acceptedReplay.vibe"
+import { addedBinaryRecovery, binarySourceLimitations, recoverRetainedBinaryAtMerge } from "../proofs/binary.vibe"
+import { type Recovered, unrecovered } from "../proofs/blob.vibe"
+import {
+  type FileChange,
+  hasCompleteValuePatch,
+  needsAddedBinaryProof,
+  needsAddedValueComparison,
+  needsFullValueComparison,
+  needsRemovedValueComparison,
+  valueAdditionCount,
+  valueDeletionCount,
+  valuePatch,
+} from "../proofs/changes.vibe"
+import {
+  addedValuePatchRecovery,
+  recoverAddedValueComparisons,
+  recoverFullValueComparisons,
+  recoverRemovedValueComparisons,
+  recoverUnchangedValueRenames,
+} from "../proofs/comparisons.vibe"
+import { fetched } from "../proofs/reads.vibe"
+import { Acceptance, type CollectedChanges, nativeMergeContext, noChangePromotionContext } from "./acceptance.vibe"
+import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "./branchPolicy.vibe"
+import { sameRepositoryCommitHints } from "./hints.vibe"
+import { type ReferenceDiscussion, relatedPullRequests } from "./references.vibe"
+import {
+  type AcceptedRange,
+  type BranchPolicy,
+  Comment,
+  Commit,
+  type CommitAttribution,
+  type CommitChanges,
+  type Evidence,
+  EvidenceRefused,
+  Head,
+  type Limitation,
+  type NativeMergeAcceptance,
+  type NoChangePromotion,
+  Pull,
+  type RegisteredRepository,
+  type RelatedPullRequest,
+  type RepairBodyEdit,
+  Review,
+  Stats,
+  type UnavailableReference,
+  sourceMatchesRegistration,
+} from "./types.vibe"
+
+const listingLimitBytes = 16 * 1024 * 1024
+const objectLimitBytes = 1024 * 1024
+const emptyBlobSha = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+const objectId = /^[a-f0-9]{40}$/u
+const repairQuery =
+  "query SlopRetainedRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}"
+
+schema RawFile {
+  readonly filename: string
+  readonly previous_filename?: string
+  readonly status: string
+  readonly additions: number
+  readonly deletions: number
+  readonly patch?: string
+  readonly blob_url?: string | null
+  readonly sha?: string | null
+}
+schema CommitPage {
+  readonly sha: string
+  readonly html_url: string
+  readonly parents: ReadonlyArray<Head>
+  readonly stats: Stats
+  readonly files: ReadonlyArray<RawFile>
+}
+schema ComparePage { readonly total_commits: number; readonly commits: ReadonlyArray<Commit> }
+schema MergeBase { readonly merge_base_commit?: Head | null }
+schema RepositoryIdentity { readonly id: number; readonly node_id: string }
+schema RepairUser { readonly __typename: string; readonly id?: string }
+schema RepairPull {
+  readonly id: string
+  readonly body: string
+  readonly headRefOid: string
+  readonly mergedAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: RepairUser | null
+  readonly author: RepairUser | null
+}
+schema RepairRepository { readonly pullRequest: RepairPull | null }
+schema RepairAnswer { readonly repository: RepairRepository | null }
+
+export interface Listed<A> {
+  readonly items: ReadonlyArray<A>
+  readonly pageSizes: ReadonlyArray<number>
+}
+
+export interface Collection {
+  readonly repository: string
+  readonly number: number
+  readonly policy: RegisteredRepository | null
+  readonly recovered?: Recovered
+}
+
+export effect function read<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, limitBytes = objectLimitBytes) {
+  const raw = try fetched(path, limitBytes)
+  if (raw === undefined) return undefined
+  return try decoded(schema, raw, path)
+}
+
+export effect function pages<S extends Schema.ConstraintDecoder<unknown>>(path: string, item: S) {
+  const items: Array<S["Type"]> = []
+  const pageSizes: number[] = []
+  const list = Schema.Array(item)
+  for (let page = 1; ; page += 1) {
+    const location = `${path}?per_page=${evidencePageSize}&page=${page}`
+    const batch = try fetched(location, listingLimitBytes)
+    if (!Array.isArray(batch)) throw new EvidenceRefused({ reason: `Evidence unavailable: ${path}` })
+    items.push(...(try decoded(list, batch, location)))
+    pageSizes.push(batch.length)
+    if (batch.length < evidencePageSize) return { items, pageSizes } satisfies Listed<S["Type"]>
+  }
+}
+
+function fileChange(file: RawFile, intern: (text: string) => string): FileChange {
+  const patch = file.patch === undefined && file.status === "added" && file.additions === 0 && file.deletions === 0 && file.sha === emptyBlobSha
+    ? ""
+    : file.patch
+  return {
+    filename: file.filename,
+    ...(file.previous_filename === undefined ? {} : { previous_filename: file.previous_filename }),
+    status: file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    ...(patch === undefined ? {} : { patch: intern(patch) }),
+    blob_url: file.blob_url ?? null,
+  }
+}
+
+function changeBytes(files: ReadonlyArray<FileChange>) {
+  return JSON.stringify(
+    [...files]
+      .sort((left, right) => left.filename.localeCompare(right.filename))
+      .map((file) => [
+        file.filename,
+        file.previous_filename ?? null,
+        file.status,
+        valueAdditionCount(file),
+        valueDeletionCount(file),
+        valuePatch(file) ?? null,
+        file.fullComparison === undefined ? null : [file.fullComparison.before.blobSha, file.fullComparison.after.blobSha],
+        ...(file.addedBinary === undefined
+          ? []
+          : [[file.addedBinary.mode, file.addedBinary.blobSha, file.addedBinary.size, file.addedBinary.sha256]]),
+      ]),
+  )
+}
+
+function incomplete(name: string, listed: Listed<unknown>, reported: number) {
+  const complete = listingComplete({ pageSizes: [...listed.pageSizes], unavailable: false, reported, itemCap: 0, repeatedKeys: false })
+  return complete ? [] : [`Incomplete ${name}: ${listed.items.length}/${reported}`]
+}
+
+export effect function commitChanges(repository: string, sha: string, label: string, recovered: Recovered = unrecovered) {
+  const root = `/repos/${repository}`
+  let header: Omit<CommitChanges, "files"> | undefined
+  let files: FileChange[] = []
+  const pageSizes: number[] = []
+  const limitations: Limitation[] = []
+  for (let page = 1; ; page += 1) {
+    const location = `${root}/commits/${sha}?per_page=${evidencePageSize}&page=${page}`
+    const batch = try read(location, CommitPage, listingLimitBytes)
+    if (batch === undefined || batch.sha !== sha) {
+      limitations.push(`${label} evidence is unavailable`)
+      break
+    }
+    if (header === undefined) {
+      header = { sha: batch.sha, html_url: batch.html_url, parents: batch.parents.map((parent) => ({ sha: parent.sha })), stats: batch.stats }
+    }
+    files.push(...batch.files.map((file) => fileChange(file, recovered.intern)))
+    pageSizes.push(batch.files.length)
+    if (capReached({ pageSizes, unavailable: false, reported: files.length, itemCap: commitFileCap, repeatedKeys: false })) {
+      limitations.push(`${label} file limit reached; Git evidence required`)
+      break
+    }
+    if (batch.files.length < evidencePageSize) break
+  }
+  if (header === undefined) return { commit: null, limitations } satisfies CollectedChanges
+  if (new Set(files.map((file) => file.filename)).size !== files.length) limitations.push(`${label} contains repeated file paths`)
+  const parent = header.parents[0]?.sha
+  if (parent !== undefined && limitations.length === 0) {
+    files = [...try recoverAddedValueComparisons(repository, files, parent, header.sha, recovered)]
+    files = [...try recoverRemovedValueComparisons(repository, files, parent, header.sha, recovered)]
+    files = [...try recoverFullValueComparisons(repository, files, parent, header.sha, recovered)]
+  }
+  files = [...try addedValuePatchRecovery(repository, recovered)(files, header.sha)]
+  const additions = files.reduce((sum, file) => sum + valueAdditionCount(file), 0)
+  const deletions = files.reduce((sum, file) => sum + valueDeletionCount(file), 0)
+  if (additions !== header.stats.additions) limitations.push(`Incomplete ${label.toLowerCase()} additions`)
+  if (deletions !== header.stats.deletions) limitations.push(`Incomplete ${label.toLowerCase()} deletions`)
+  return { commit: { ...header, files }, limitations } satisfies CollectedChanges
+}
+
+export interface CommitRange {
+  readonly commits: number
+  readonly base: { readonly sha: string }
+  readonly head: { readonly sha: string }
+}
+
+export effect function pullCommits(root: string, path: string, pull: CommitRange, requireImmutableRange = false) {
+  const observed = try pages(`${path}/commits`, Commit)
+  if (!requireImmutableRange && observed.items.length >= pull.commits) return observed.items
+  const complete: Commit[] = []
+  const ids = new Set<string>()
+  const unreconciled = new EvidenceRefused({ reason: "Comparison cannot reconcile the reported PR commit count" })
+  for (let page = 1; page <= Math.ceil(pull.commits / evidencePageSize); page += 1) {
+    const location = `${root}/compare/${pull.base.sha}...${pull.head.sha}?per_page=${evidencePageSize}&page=${page}`
+    const raw = try fetched(location, listingLimitBytes)
+    const batch: ComparePage | undefined = raw === undefined ? undefined : Schema.decodeUnknownEffect(ComparePage)(raw) catch () => undefined
+    if (batch === undefined || batch.total_commits !== pull.commits) throw unreconciled
+    for (const commit of batch.commits) {
+      if (!objectId.test(commit.sha) || ids.has(commit.sha)) throw new EvidenceRefused({ reason: "Comparison contains an invalid or repeated commit" })
+      ids.add(commit.sha)
+      complete.push(commit)
+    }
+  }
+  if (complete.length !== pull.commits || observed.items.some((commit) => !ids.has(commit.sha)))
+    throw new EvidenceRefused({ reason: "Comparison commit range does not cover the observed PR commits" })
+  return complete
+}
+
+function changedPaths(files: ReadonlyArray<FileChange>) {
+  return [...new Set(files.flatMap((file) => [file.filename, ...(file.previous_filename === undefined || file.previous_filename === "" ? [] : [file.previous_filename])]))].sort()
+}
+
+function creditEligible(author: { readonly node_id: string; readonly type: string } | null) {
+  return author !== null && isCreditEligibleCommitAuthor({ id: author.node_id, kind: author.type })
+}
+
+function samePullState(after: Pull | undefined, pull: Pull) {
+  return after !== undefined && after.updated_at === pull.updated_at && after.head.sha === pull.head.sha && after.base.sha === pull.base.sha &&
+    after.state === pull.state && after.closed_at === pull.closed_at && after.merged_at === pull.merged_at &&
+    after.merge_commit_sha === pull.merge_commit_sha
+}
+
+effect function repairBody(repository: string, pull: Pull) {
+  const github = try GitHub
+  const [owner, name] = repository.split("/")
+  const answer = try github.graphql(repairQuery, { owner, name, number: pull.number }, RepairAnswer)
+  const body = answer.repository?.pullRequest ?? undefined
+  if (
+    body === undefined || body.id !== pull.node_id || body.body !== pull.body || body.headRefOid !== pull.head.sha ||
+    body.mergedAt !== pull.merged_at || body.updatedAt !== pull.updated_at || body.author === null || body.author.id === undefined
+  ) return undefined
+  return {
+    id: body.id,
+    body: body.body,
+    headRefOid: body.headRefOid,
+    mergedAt: body.mergedAt,
+    updatedAt: body.updatedAt,
+    lastEditedAt: body.lastEditedAt,
+    editor: body.editor === null ? null : { ...(body.editor.id === undefined ? {} : { id: body.editor.id }), type: body.editor.__typename },
+    author: { id: body.author.id, type: body.author.__typename },
+  } satisfies RepairBodyEdit
+}
+
+type BinaryRecovery = ReturnType<typeof addedBinaryRecovery>
+
+effect function withBinaries(recover: BinaryRecovery, files: ReadonlyArray<FileChange>, submitted: ReadonlyArray<FileChange>, baseSha: string, headSha: string) {
+  const wanted = files.filter((file) => submitted.some((source) => source.addedBinary !== undefined && source.filename === file.filename))
+  const recovered = new Map((try recover(wanted, baseSha, headSha)).map((file) => [file.filename, file]))
+  return files.map((file) => recovered.get(file.filename) ?? file)
+}
+
+export effect function collectEvidence(collection: Collection) {
+  const { repository, number, policy } = collection
+  const recovered = collection.recovered ?? unrecovered
+  const acceptance = try Acceptance
+  if (!/^[\w.-]+\/[\w.-]+$/u.test(repository) || !Number.isSafeInteger(number) || number < 1) throw new EvidenceRefused({ reason: "Invalid PR identity" })
+  const root = `/repos/${repository}`
+  const identity = try read(root, RepositoryIdentity)
+  if (identity === undefined) throw new EvidenceRefused({ reason: "Repository identity unavailable" })
+  if (policy !== null && !sourceMatchesRegistration(policy, repository, identity.node_id))
+    throw new EvidenceRefused({ reason: "Repository policy does not match the evidence source" })
+  const path = `${root}/pulls/${number}`
+  const pull = try read(path, Pull)
+  if (pull === undefined) throw new EvidenceRefused({ reason: "Pull request unavailable" })
+  const [listedFiles, commits, listedReviews, listedComments, listedReviewComments] = try.all [
+    pages(`${path}/files`, RawFile),
+    pullCommits(root, path, pull),
+    pages(`${path}/reviews`, Review),
+    pages(`${root}/issues/${number}/comments`, Comment),
+    pages(`${path}/comments`, Comment),
+  ]
+  const reviews = listedReviews.items
+  const comments = listedComments.items
+  const reviewComments = listedReviewComments.items
+  const limitations: Limitation[] = []
+  if (policy === null) limitations.push("Registered repository scoring policy is unavailable")
+  const recoverAddedPatches = addedValuePatchRecovery(repository, recovered)
+  const recoverBinary = addedBinaryRecovery(repository, recovered)
+  let files = try recoverAddedPatches(listedFiles.items.map((file) => fileChange(file, recovered.intern)), pull.head.sha)
+  if (files.some((file) =>
+    needsFullValueComparison(file) || needsAddedValueComparison(file) || needsRemovedValueComparison(file) || needsAddedBinaryProof(file) ||
+    (file.status === "renamed" && file.patch === undefined && file.additions === 0 && file.deletions === 0))) {
+    const comparison: MergeBase | undefined = read(`${root}/compare/${pull.base.sha}...${pull.head.sha}`, MergeBase, listingLimitBytes) catch effect (error) => match (error) {
+      when GitHubMalformed: undefined;
+      default: throw error;
+    }
+    const base = comparison?.merge_base_commit?.sha
+    if (base !== undefined && base !== "") {
+      files = try recoverAddedValueComparisons(repository, files, base, pull.head.sha, recovered)
+      files = try recoverRemovedValueComparisons(repository, files, base, pull.head.sha, recovered)
+      files = try recoverFullValueComparisons(repository, files, base, pull.head.sha, recovered)
+      files = try recoverUnchangedValueRenames(repository, files, base, pull.head.sha, recovered)
+      files = try recoverBinary(files, base, pull.head.sha)
+    }
+  }
+  let mergeCommitEvidence: CommitChanges | null = null
+  let nativeMergeAcceptance: NativeMergeAcceptance | undefined
+  let acceptedRange: AcceptedRange | undefined
+  let replayed: AcceptedPatchReplay | undefined
+  if (pull.merged_at !== null) {
+    if (pull.merge_commit_sha === null || pull.merge_commit_sha === "") limitations.push("Reported merge commit is unavailable")
+    else {
+      const accepted = try commitChanges(repository, pull.merge_commit_sha, "Reported merge commit", recovered)
+      limitations.push(...accepted.limitations)
+      if (accepted.commit !== null) {
+        let mergeFiles = try recoverAddedPatches(accepted.commit.files, pull.merge_commit_sha)
+        const parent = accepted.commit.parents[0]?.sha
+        if (parent !== undefined) {
+          mergeFiles = try recoverFullValueComparisons(repository, mergeFiles, parent, accepted.commit.sha, recovered)
+          mergeFiles = try recoverUnchangedValueRenames(repository, mergeFiles, parent, accepted.commit.sha, recovered)
+          mergeFiles = try recoverBinary(mergeFiles, parent, accepted.commit.sha)
+        }
+        const merge: CommitChanges = { ...accepted.commit, files: mergeFiles }
+        mergeCommitEvidence = merge
+        const directMerge = merge.parents.length === 2 && merge.parents.some((candidate) => candidate.sha === pull.head.sha)
+        const matchingSingleParent = merge.parents.length === 1 && files.length > 0 && changeBytes(files) === changeBytes(merge.files)
+        const proving = !directMerge && !matchingSingleParent
+        const source = { repository, pull, files, mergeCommitEvidence: merge }
+        if (proving && accepted.limitations.length === 0) acceptedRange = try acceptance.range(source)
+        if (proving && acceptedRange === undefined && accepted.limitations.length === 0)
+          replayed = try acceptedPatchReplay(repository, pull.head.sha, files, merge)
+        if (proving && acceptedRange === undefined && replayed === undefined) {
+          nativeMergeAcceptance = try acceptance.native(source)
+          limitations.push(nativeMergeAcceptance === undefined
+            ? "Reported merge neither directly integrates this head nor matches its entire diff; reconcile the accepted range and related PRs"
+            : nativeMergeContext)
+        }
+      }
+    }
+  }
+  limitations.push(
+    ...incomplete("files", listedFiles, pull.changed_files),
+    ...(commits.length === pull.commits ? [] : [`Incomplete commits: ${commits.length}/${pull.commits}`]),
+    ...incomplete("comments", listedComments, pull.comments),
+    ...incomplete("review comments", listedReviewComments, pull.review_comments),
+  )
+  for (const file of [...files, ...mergeCommitEvidence?.files ?? []]) {
+    if (!hasCompleteValuePatch(file) && file.fullComparison === undefined && file.addedBinary === undefined)
+      limitations.push(`Full diff required: ${file.filename}`)
+  }
+  const related = try relatedPullRequests(repository, number, pull.node_id, [
+    pull.body ?? "",
+    ...reviews.map((review) => review.body),
+    ...comments.map((entry) => entry.body),
+    ...reviewComments.map((entry) => entry.body),
+  ])
+  limitations.push(...related.limitations)
+  const evidenceUrls = [
+    ...new Set([
+      pull.html_url,
+      ...related.references.map((reference) => reference.url),
+      ...files.map((file) => file.blob_url),
+      ...(mergeCommitEvidence === null ? [] : [mergeCommitEvidence.html_url, ...mergeCommitEvidence.files.map((file) => file.blob_url)]),
+      ...commits.map((commit) => commit.html_url),
+      ...reviews.map((review) => review.html_url),
+      ...comments.map((entry) => entry.html_url),
+      ...reviewComments.map((entry) => entry.html_url),
+    ]),
+  ].filter((url): url is string => typeof url === "string")
+  const commitAttribution: CommitAttribution[] = []
+  for (const commit of commits.filter((entry) => entry.parents.length <= 1)) {
+    const changes = try commitChanges(repository, commit.sha, `Commit ${commit.sha}`, recovered)
+    const parent = commit.parents[0]?.sha
+    const changed = changes.commit !== null && commit.parents.length === 1 && parent !== undefined
+      ? { ...changes.commit, files: try withBinaries(recoverBinary, changes.commit.files, files, parent, commit.sha) }
+      : changes.commit
+    const complete = changed !== null && changes.limitations.length === 0
+    commitAttribution.push({
+      sha: commit.sha,
+      actorNodeIds: commit.author === null ? [] : [commit.author.node_id],
+      changedPaths: complete ? changedPaths(changed.files) : null,
+      ...(complete ? { files: changed.files } : {}),
+      limitations: changes.limitations,
+    })
+  }
+  const indirect = try acceptance.indirect(
+    { repository, repositoryNodeId: identity.node_id, repositoryPolicy: policy, pull, commits, comments },
+    (sha) => commitChanges(repository, sha, "Indirect integration commit", recovered),
+  )
+  limitations.push(...indirect.limitations)
+  const retained = indirect.acceptance === undefined
+    ? try acceptance.retained({ repository, repositoryNodeId: identity.node_id, repositoryDatabaseId: identity.id, pull, comments, reviews })
+    : { references: [], limitations: [] }
+  limitations.push(...retained.limitations)
+  if (indirect.acceptance !== undefined) {
+    evidenceUrls.push(
+      indirect.acceptance.observationUrl,
+      `https://github.com/${repository}/commit/${indirect.acceptance.integrationSha}`,
+      `https://github.com/${repository}/commit/${indirect.acceptance.acceptedTipSha}`,
+    )
+    for (const file of indirect.acceptance.integrationFiles) {
+      if (!hasCompleteValuePatch(file) && file.fullComparison === undefined) limitations.push(`Full indirect integration diff required: ${file.filename}`)
+    }
+  }
+  const implementationActors = new Set<string>()
+  if (pull.user.type !== "Bot") implementationActors.add(pull.user.node_id)
+  let historicalBranchPolicy: BranchPolicy | undefined
+  const noChangePromotion: NoChangePromotion | undefined = acceptance.promotion({ repository, pull, mergeCommitEvidence }) catch () => undefined
+  if (noChangePromotion !== undefined) limitations.push(noChangePromotionContext)
+  if (
+    noChangePromotion === undefined && pull.merged_at !== null && policy !== null && pull.base.ref !== policy.integrationBranch &&
+    commits.some((commit) => commit.parents.length <= 1 && commit.author !== null && commit.author.node_id !== pull.user.node_id && creditEligible(commit.author))
+  ) {
+    historicalBranchPolicy = collectBranchPolicy(repository, pull.base.sha) catch () => undefined
+    if (historicalBranchPolicy === undefined) limitations.push("Historical integration branch authority is unavailable or ambiguous")
+  }
+  if (pull.base.ref === policy?.integrationBranch || matchesHistoricalIntegrationBranch(historicalBranchPolicy, pull.base)) {
+    for (const commit of commits) {
+      if (
+        commit.parents.length <= 1 && (indirect.acceptance === undefined || indirect.acceptance.acceptedCommitShas.includes(commit.sha)) &&
+        commit.author !== null && creditEligible(commit.author)
+      ) implementationActors.add(commit.author.node_id)
+    }
+  }
+  for (const attribution of commitAttribution) limitations.push(...attribution.limitations)
+  if (!samePullState(try read(path, Pull), pull)) limitations.push("PR changed during evidence collection")
+  const outcomeAt = pull.merged_at ?? indirect.acceptance?.observedOnBranchAt ?? pull.closed_at
+  const eligibleReviewIds = reviews
+    .filter((review) =>
+      review.user !== null && review.user.type !== "Bot" && !implementationActors.has(review.user.node_id) &&
+      (noChangePromotion === undefined || !commits.some((commit) => commit.author?.node_id === review.user?.node_id)) &&
+      review.submitted_at !== null && review.state !== "PENDING" &&
+      (outcomeAt === null || millisOf(review.submitted_at) < millisOf(outcomeAt)))
+    .map((review) => review.node_id)
+  let repairBodyEdit: RepairBodyEdit | undefined
+  if (
+    pull.merged_at?.startsWith("2026-10-") === true && pull.body !== null && pull.body !== "" && related.references.length > 0 &&
+    commits.some((commit) => commit.author?.node_id !== pull.user.node_id) &&
+    sameRepositoryCommitHints(repository, pull.body).includes(pull.head.sha)
+  ) {
+    repairBodyEdit = try repairBody(repository, pull)
+    if (repairBodyEdit === undefined) limitations.push("Retained repair body changed during collection")
+  }
+  const collected: Evidence = {
+    repository,
+    repositoryNodeId: identity.node_id,
+    repositoryDatabaseId: identity.id,
+    repositoryPolicy: policy === null
+      ? null
+      : { id: policy.id, projectId: policy.projectId, integrationBranch: policy.integrationBranch, expectedNodeId: policy.expectedNodeId },
+    collectedAt: try isoNow(),
+    pull,
+    files,
+    mergeCommitEvidence,
+    ...(nativeMergeAcceptance === undefined ? {} : { nativeMergeAcceptance }),
+    ...(acceptedRange === undefined ? {} : { acceptedRange }),
+    ...(replayed === undefined ? {} : { acceptedPatchReplay: replayed }),
+    ...(indirect.acceptance === undefined ? {} : { indirectAcceptance: indirect.acceptance }),
+    commits,
+    reviews,
+    comments,
+    reviewComments,
+    ...(retained.references.length > 0 ? { retainedMergeReferences: retained.references } : {}),
+    limitations,
+    evidenceUrls,
+    eligibleReviewIds,
+    implementationActorNodeIds: [...implementationActors].sort(),
+    ...(historicalBranchPolicy === undefined ? {} : { historicalBranchPolicy }),
+    ...(noChangePromotion === undefined ? {} : { noChangePromotion }),
+    commitAttribution,
+    relatedPullRequests: related.references,
+    ...(related.unavailablePublicReferences.length > 0 ? { unavailablePublicReferences: related.unavailablePublicReferences } : {}),
+    ...(repairBodyEdit === undefined ? {} : { repairBodyEdit }),
+  }
+  const evidence: Evidence = { ...collected, files: try recoverRetainedBinaryAtMerge(collected) }
+  return { ...evidence, limitations: [...limitations, ...binarySourceLimitations(evidence)] } satisfies Evidence
+}
+
+export interface ReferenceEvidence {
+  readonly pull: Pull
+  readonly references: ReadonlyArray<RelatedPullRequest>
+  readonly unavailablePublicReferences: ReadonlyArray<UnavailableReference>
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+effect function bothSettled<A, E, R, B, F, Q>(left: A!E!R, right: B!F!Q) {
+  const [first, second] = try.allSettled [left, right]
+  return [try first, try second] as const
+}
+
+export effect function collectReferenceEvidence<E = never, R = never>(repository: string, number: number, readDiscussion?: (pull: Pull) => (ReferenceDiscussion | undefined)!E!R) {
+  const path = `/repos/${repository}/pulls/${number}`
+  const pull = try read(path, Pull)
+  if (pull === undefined) throw new EvidenceRefused({ reason: "Pull request unavailable" })
+  effect function discussion(current: Pull) {
+    const verified = readDiscussion === undefined ? undefined : try readDiscussion(current)
+    if (verified !== undefined) return verified
+    const [comments, inline] = try bothSettled(pages(`/repos/${repository}/issues/${number}/comments`, Comment), pages(`${path}/comments`, Comment))
+    return { commentBodies: comments.items.map((entry) => entry.body), inlineBodies: inline.items.map((entry) => entry.body) } satisfies ReferenceDiscussion
+  }
+  const [reviews, found] = try bothSettled(pages(`${path}/reviews`, Review), discussion(pull))
+  const related = try relatedPullRequests(repository, number, pull.node_id, [
+    pull.body ?? "",
+    ...reviews.items.map((review) => review.body),
+    ...found.commentBodies,
+    ...found.inlineBodies,
+  ], found.timeline)
+  const counted = [
+    ...(found.commentBodies.length === pull.comments ? [] : [`Incomplete comments: ${found.commentBodies.length}/${pull.comments}`]),
+    ...(found.inlineBodies.length === pull.review_comments ? [] : [`Incomplete review comments: ${found.inlineBodies.length}/${pull.review_comments}`]),
+  ]
+  return { pull, ...related, limitations: [...related.limitations, ...counted] } satisfies ReferenceEvidence
+}

@@ -1,0 +1,39 @@
+// spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
+import { GitHub, NotFound } from "@repo/platform/github"
+
+export type Reads = Map<string, unknown>
+
+export const treeLimitBytes = 16 * 1024 * 1024
+export const contentsLimitBytes = 2 * 1024 * 1024
+
+export type Fields = Readonly<Record<string, unknown>>
+
+export function fields(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+export function text(value: Fields | undefined, key: string): string | undefined {
+  const found = value?.[key]
+  return typeof found === "string" ? found : undefined
+}
+
+export function count(value: Fields | undefined, key: string): number | undefined {
+  const found = value?.[key]
+  return typeof found === "number" ? found : undefined
+}
+
+export effect function fetched(path: string, limitBytes: number) {
+  const github = try GitHub
+  const found: unknown = github.json(path, Schema.Unknown, { limitBytes }) catch effect (error) => match (error) {
+    when NotFound: undefined;
+    default: throw error;
+  }
+  return found
+}
+
+export effect function immutable(path: string, limitBytes: number, reads: Reads | undefined) {
+  if (reads?.has(path) === true) return reads.get(path)
+  const found = try fetched(path, limitBytes)
+  reads?.set(path, found)
+  return found
+}

@@ -1,0 +1,321 @@
+// spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB"; spec/slopbot/closure.md, "Review actions require the exact current source and effective repository scope"
+import * as Base64 from "effect/encoding/Base64"
+import { sha256Hex } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { GitHub, type GitHubFailure, GitHubMalformed, GitHubRefused, NotFound } from "@repo/platform/github"
+import type { SavedConsent } from "../../gen/backend__closureConsent.effect.vibe"
+import type { Coverage, PolicyRead } from "../../gen/slopbot__closure.effect.vibe"
+import { type ComparedFile, type GuidanceRead, comparisonFileLimit, guidanceOf, maxDiffChars, maxGuidanceBytes, unreviewedContent } from "../../gen/slopbot__review.effect.vibe"
+import { type FileText, type PolicyFileRead, type RepositoryConfig, configLimitBytes, configPath, parsePolicyFile, projectConfig } from "./policyFile.vibe"
+
+module verified {
+  import { type ReviewKeyInput, reviewKeyPreimage as preimage } from "./reviewKey.ts"
+  /** @throws {never} */
+  export function reviewKeyPreimage(input: ReviewKeyInput): string { return preimage(input) }
+}
+import { reviewKeyPreimage } from verified
+import type { ReviewRow } from "../lease/writes.vibe"
+
+export error ContextUnavailable { reason: string }
+
+export schema Account { readonly login: string; readonly id: number; readonly type: string }
+export schema RepositoryRead { readonly id: number; readonly private: boolean; readonly default_branch: string; readonly full_name: string; readonly owner: Account }
+export schema Label { readonly name: string }
+export schema Assignee { readonly login: string }
+export schema Closer { readonly id: number }
+export schema IssueRead {
+  readonly node_id: string
+  readonly number: number
+  readonly state: string
+  readonly title: string
+  readonly body: string | null
+  readonly user: Account
+  readonly assignees: ReadonlyArray<Assignee>
+  readonly labels?: ReadonlyArray<Label>
+  readonly pull_request?: { readonly url?: string }
+  readonly closed_at?: string | null
+  readonly closed_by?: Closer | null
+}
+schema Commit { readonly sha: string }
+schema BaseRepository { readonly id: number }
+export schema PullRead {
+  readonly draft: boolean
+  readonly merged: boolean
+  readonly head: Commit
+  readonly base: { readonly sha: string; readonly ref: string; readonly repo: BaseRepository }
+  readonly additions: number
+  readonly deletions: number
+  readonly changed_files: number
+}
+schema BranchRead { readonly commit: Commit }
+schema ComparedPath { readonly filename: string; readonly previous_filename?: string; readonly status: string; readonly patch?: string }
+schema CompareRead { readonly base_commit: Commit; readonly merge_base_commit: Commit | null; readonly files: ReadonlyArray<ComparedPath> }
+schema ContentsRead { readonly type: string; readonly content?: string; readonly encoding?: string }
+schema PriorReview { readonly item_number: number; readonly item_kind: string; readonly item_node_id: string }
+
+export type ItemKind = "issue" | "pull_request"
+
+export interface ReviewTarget {
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly itemKind: ItemKind
+  readonly number: number
+  readonly securityOnly: boolean
+  readonly consent: SavedConsent
+}
+
+export interface PolicyCandidate {
+  readonly path: string
+  readonly text: string
+  readonly truncated: boolean
+}
+
+export interface Comparison {
+  readonly diff: string
+  readonly limitations: ReadonlyArray<string>
+  readonly unreviewed: number
+  readonly changedFiles: number
+  readonly baseSha: string
+  readonly mergeBaseSha: string
+  readonly targetRef: string
+}
+
+export interface RelatedOpenItem {
+  readonly repositoryId: number
+  readonly number: number
+  readonly kind: ItemKind
+  readonly nodeId: string
+  readonly authorId: number
+  readonly currentAuthorId: number
+  readonly revision: string
+  readonly contentDigest: string
+}
+
+export interface ReviewContext {
+  readonly repository: typeof RepositoryRead.Type
+  readonly issue: typeof IssueRead.Type
+  readonly pull: typeof PullRead.Type | undefined
+  readonly revision: string
+  readonly itemText: string
+  readonly contentDigest: string
+  readonly policyFile: PolicyFileRead
+  readonly config: RepositoryConfig
+  readonly policy: ReadonlyArray<PolicyCandidate>
+  readonly guidance: PolicyRead
+  readonly policyDigest: string
+  readonly baseSha: string
+  readonly mergeBaseSha: string
+  readonly targetRef: string
+  readonly limitations: ReadonlyArray<string>
+  readonly coverage: Coverage
+}
+
+const policyGroups: ReadonlyArray<ReadonlyArray<string>> = [
+  ["AGENTS.md", "agents.md"],
+  ["CONTRIBUTING.md", "contributing.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md"],
+  ["README.md", "readme.md"],
+]
+const commitSha = /^[0-9a-f]{40}$/u
+const compareLimitBytes = 16 * 1024 * 1024
+const unreadable: FileText = { text: "", truncated: true }
+
+function repositoryPath(repositoryId: number) {
+  return `/repositories/${repositoryId}`
+}
+
+export effect function absentOn404<A>(read: A!GitHubFailure) {
+  const value: A | undefined = read catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  return value
+}
+
+effect function fileText(repositoryId: number, path: string, ref: string, maxBytes: number) {
+  const contentsPath = `${repositoryPath(repositoryId)}/contents/${encodeURIComponent(path).replaceAll("%2F", "/")}?ref=${ref}`
+  const file = (try GitHub).json(contentsPath, ContentsRead) catch effect (error) => match (error) {
+    when NotFound: "absent" as const;
+    when GitHubMalformed: "unreadable" as const;
+    when GitHubRefused: "unreadable" as const;
+    default: throw error;
+  }
+  if (file === "absent") return undefined
+  if (file === "unreadable") return unreadable
+  const bytes = file.type !== "file" || file.content === undefined || file.encoding !== "base64" ? undefined : Result.getOrUndefined(Base64.decode(file.content.replace(/\s+/gu, "")))
+  if (bytes === undefined) return unreadable
+  const truncated = bytes.length > maxBytes
+  return { text: new TextDecoder().decode(truncated ? bytes.slice(0, maxBytes) : bytes), truncated } satisfies FileText
+}
+
+export effect function loadPolicy(repositoryId: number, ref: string) {
+  const files: PolicyCandidate[] = []
+  const reads: GuidanceRead[] = []
+  for (const candidates of policyGroups) {
+    let read: GuidanceRead = { found: false, bytes: 0, readable: true }
+    for (const path of candidates) {
+      const file = try fileText(repositoryId, path, ref, maxGuidanceBytes)
+      if (file === undefined) continue
+      files.push({ path, ...file })
+      read = { found: true, bytes: file.truncated ? maxGuidanceBytes + 1 : new TextEncoder().encode(file.text).length, readable: !file.truncated }
+      break
+    }
+    reads.push(read)
+  }
+  return { files, guidance: guidanceOf(reads) }
+}
+
+export effect function compareDiff(repositoryId: number, pull: typeof PullRead.Type) {
+  const github = try GitHub
+  if (pull.base.repo.id !== repositoryId || pull.base.ref.length === 0 || !commitSha.test(pull.head.sha)) throw new ContextUnavailable({ reason: "Pull request target identity is unavailable" })
+  const branch = try github.json(`${repositoryPath(repositoryId)}/branches/${encodeURIComponent(pull.base.ref)}`, BranchRead)
+  if (!commitSha.test(branch.commit.sha)) throw new ContextUnavailable({ reason: "Pull request target branch is unavailable" })
+  const baseSha = branch.commit.sha
+  const comparison = try github.json(`${repositoryPath(repositoryId)}/compare/${baseSha}...${pull.head.sha}?per_page=1&page=1`, CompareRead, { limitBytes: compareLimitBytes })
+  const mergeBaseSha = comparison.merge_base_commit?.sha ?? ""
+  if (comparison.base_commit.sha !== baseSha || !commitSha.test(mergeBaseSha)) throw new ContextUnavailable({ reason: "Pull request comparison is unavailable" })
+  let diff = ""
+  const inventory: Array<{ readonly path: string; readonly status: string; readonly included: boolean }> = []
+  const limitations: string[] = []
+  const tallied: ComparedFile[] = []
+  if (comparison.files.length >= comparisonFileLimit) limitations.push("GitHub returned its 300-file comparison limit; the file inventory may be incomplete.")
+  for (const file of comparison.files.slice(0, comparisonFileLimit)) {
+    const name = file.previous_filename === undefined ? file.filename : `${file.previous_filename} -> ${file.filename}`
+    const chunk = `--- ${name} (${file.status})\n${file.patch ?? ""}\n`
+    const included = file.patch !== undefined && diff.length + chunk.length <= maxDiffChars
+    inventory.push({ path: name, status: file.status, included })
+    tallied.push({ chunkChars: chunk.length, patched: file.patch !== undefined })
+    if (included) diff += chunk
+    else limitations.push(`${name}: ${file.patch === undefined ? "GitHub did not supply a patch (binary or large file)" : "patch exceeds the review input budget"}.`)
+  }
+  const unreviewed = unreviewedContent(tallied)
+  return {
+    diff: limitations.length > 0 ? `Service review coverage (unreviewed content must not be inferred):\n${JSON.stringify(inventory)}\n\nIncluded patches:\n${diff}` : diff,
+    limitations,
+    unreviewed,
+    changedFiles: comparison.files.length,
+    baseSha,
+    mergeBaseSha,
+    targetRef: pull.base.ref,
+  } satisfies Comparison
+}
+
+export function reviewedItemText(issue: typeof IssueRead.Type, pull: typeof PullRead.Type | undefined, comparison: Pick<Comparison, "diff" | "changedFiles">) {
+  const emptyComparison = comparison.changedFiles === 0 ? "Comparison changed files: 0\n" : ""
+  return `Title: ${issue.title}\n\nBody:\n${issue.body ?? ""}${pull === undefined ? "" : `\n\nDiff:\n${emptyComparison}${comparison.diff}`}`
+}
+
+effect function revisionOf(issue: typeof IssueRead.Type, pull: typeof PullRead.Type | undefined) {
+  return pull?.head.sha ?? try sha256Hex(`${issue.title}\n${issue.body ?? ""}`)
+}
+
+export effect function loadContext(target: ReviewTarget) {
+  const github = try GitHub
+  const base = repositoryPath(target.repositoryId)
+  const repository = try absentOn404(github.json(base, RepositoryRead))
+  if (repository === undefined || repository.private || repository.id !== target.repositoryId) return undefined
+  const issue = try absentOn404(github.json(`${base}/issues/${target.number}`, IssueRead))
+  if (issue === undefined) return undefined
+  const branch = try absentOn404(github.json(`${base}/branches/${encodeURIComponent(repository.default_branch)}`, BranchRead))
+  if (branch === undefined) return undefined
+  const defaultSha = branch.commit.sha
+  const pull = target.itemKind === "pull_request" ? try absentOn404(github.json(`${base}/pulls/${target.number}`, PullRead)) : undefined
+  if (target.itemKind === "pull_request" && pull === undefined) return undefined
+  const policyFile = try parsePolicyFile(try fileText(target.repositoryId, configPath, defaultSha, configLimitBytes))
+  const config = projectConfig(policyFile, target.consent)
+  const { files, guidance } = try loadPolicy(target.repositoryId, defaultSha)
+  const comparison: Comparison = pull === undefined
+    ? { diff: "", limitations: [], unreviewed: 0, changedFiles: 0, baseSha: defaultSha, mergeBaseSha: defaultSha, targetRef: repository.default_branch }
+    : try compareDiff(repository.id, pull)
+  const itemText = reviewedItemText(issue, pull, comparison)
+  return {
+    repository,
+    issue,
+    pull: pull === undefined ? undefined : { ...pull, changed_files: comparison.changedFiles },
+    revision: try revisionOf(issue, pull),
+    itemText,
+    contentDigest: try sha256Hex(itemText),
+    policyFile,
+    config,
+    policy: files,
+    guidance,
+    policyDigest: try sha256Hex(JSON.stringify({ baseSha: defaultSha, config, files: files.map((file) => [file.path, file.text]) })),
+    baseSha: comparison.baseSha,
+    mergeBaseSha: comparison.mergeBaseSha,
+    targetRef: comparison.targetRef,
+    limitations: comparison.limitations,
+    coverage: comparison.unreviewed === 0 ? "CoverageComplete" : "CoverageLimited",
+  } satisfies ReviewContext
+}
+
+export effect function reviewKeyOf(context: ReviewContext, target: ReviewTarget, verifierKey: string, qualityIds: ReadonlyArray<string>) {
+  return try sha256Hex(reviewKeyPreimage({
+    itemNode: context.issue.node_id,
+    revision: context.revision,
+    policyDigest: context.policyDigest,
+    itemDigest: context.contentDigest,
+    verifierKey,
+    sortedQualityIds: [...qualityIds].sort(),
+    securityOnly: target.securityOnly,
+  }))
+}
+
+export function reviewRowOf(target: ReviewTarget, context: ReviewContext, reviewKey: string): ReviewRow {
+  return {
+    reviewKey,
+    installationId: target.installationId,
+    repositoryId: target.repositoryId,
+    itemKind: target.itemKind,
+    itemNumber: context.issue.number,
+    itemNodeId: context.issue.node_id,
+    authorId: context.issue.user.id,
+    revision: context.revision,
+    contentDigest: context.contentDigest,
+    policyDigest: context.policyDigest,
+  }
+}
+
+export function sameReviewedSource(target: ReviewTarget, fresh: ReviewContext | undefined, original: ReviewContext): fresh is ReviewContext {
+  return fresh !== undefined && fresh.repository.id === target.repositoryId && !fresh.repository.private && fresh.issue.state === "open" &&
+    fresh.pull?.draft !== true && fresh.pull?.merged !== true && fresh.issue.node_id === original.issue.node_id &&
+    fresh.issue.user.id === original.issue.user.id && fresh.revision === original.revision && fresh.baseSha === original.baseSha &&
+    fresh.mergeBaseSha === original.mergeBaseSha && fresh.targetRef === original.targetRef && fresh.itemText === original.itemText &&
+    JSON.stringify(fresh.limitations) === JSON.stringify(original.limitations) && fresh.policyDigest === original.policyDigest
+}
+
+export effect function matchingOpenItem(context: ReviewContext, number: number, kind: string) {
+  const itemKind: ItemKind | undefined = kind === "issue" || kind === "pull_request" ? kind : undefined
+  if (!Number.isSafeInteger(number) || number <= 0 || itemKind === undefined) return undefined
+  const github = try GitHub
+  const base = repositoryPath(context.repository.id)
+  const other = try absentOn404(github.json(`${base}/issues/${number}`, IssueRead))
+  if (other === undefined || other.state !== "open" || other.number !== number || (other.pull_request !== undefined) !== (itemKind === "pull_request") ||
+    other.node_id.length === 0 || other.node_id.length > 256 || other.node_id === context.issue.node_id ||
+    !Number.isSafeInteger(other.user.id) || other.user.id <= 0 || other.user.id !== context.issue.user.id) return undefined
+  const otherPull = itemKind === "pull_request" ? try absentOn404(github.json(`${base}/pulls/${number}`, PullRead)) : undefined
+  if (itemKind === "pull_request" && (otherPull === undefined || otherPull.merged)) return undefined
+  const comparison = otherPull === undefined ? { diff: "", limitations: [], changedFiles: 0 } : try compareDiff(context.repository.id, otherPull)
+  if (comparison.limitations.length > 0 || reviewedItemText(other, otherPull, comparison) !== context.itemText) return undefined
+  return {
+    repositoryId: context.repository.id,
+    number,
+    kind: itemKind,
+    nodeId: other.node_id,
+    authorId: other.user.id,
+    currentAuthorId: context.issue.user.id,
+    revision: try revisionOf(other, otherPull),
+    contentDigest: try sha256Hex(context.itemText),
+  } satisfies RelatedOpenItem
+}
+
+export effect function relatedOpenItem(target: ReviewTarget, context: ReviewContext) {
+  const prior = try first(PriorReview, sql`SELECT item_number, item_kind, item_node_id FROM slopbot_reviews WHERE repository_id = ${target.repositoryId} AND author_id = ${context.issue.user.id} AND content_digest = ${context.contentDigest} AND item_node_id != ${context.issue.node_id} ORDER BY created_at DESC LIMIT 1`)
+  if (prior === undefined) return undefined
+  const related = try matchingOpenItem(context, prior.item_number, prior.item_kind)
+  return related === undefined || related.nodeId !== prior.item_node_id ? undefined : related
+}
+
+export effect function sameReviewEvidence(target: ReviewTarget, fresh: ReviewContext | undefined, original: ReviewContext, related: RelatedOpenItem | undefined) {
+  if (!sameReviewedSource(target, fresh, original)) return false
+  if (related === undefined) return true
+  return JSON.stringify(try matchingOpenItem(fresh, related.number, related.kind)) === JSON.stringify(related)
+}

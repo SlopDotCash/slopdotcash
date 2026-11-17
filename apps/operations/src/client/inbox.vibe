@@ -1,0 +1,69 @@
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"
+import { type AnyRoute, type Method, route } from "@repo/platform/route"
+
+export schema NotificationKind = "application_approved" | "application_rejected" | "project_ready" | "project_scan_failed"
+  | "project_installation_lost" | "project_revision" | "award_reserved" | "payment_paid" | "payout_held" | "wallet_changed"
+  | "project_quarantined" | "project_banned" | "reinstatement_requested" | "project_reinstated" | "reinstatement_denied"
+  | "reinstatement_review" | "payout_exception" | "security_case" | "security_report_received" | "slopbot_appeal_review"
+  | "slopbot_appeal_resolved" | "slopbot_scam_review"
+
+export schema EmailDelivery = "queued" | "sent" | "delivered" | "failed" | "uncertain"
+
+export schema InboxNotice {
+  readonly eventKey: string
+  readonly kind: NotificationKind
+  readonly subject: string
+  readonly detail: string | null
+  readonly actionPath: string
+  readonly sourceAt: string
+  readonly createdAt: string
+  readonly readAt: string | null
+  readonly acknowledgedAt?: string | null
+  readonly emailDelivery?: EmailDelivery
+}
+
+export schema NotificationsPage {
+  readonly recipientGithubId: string
+  readonly nextCursor: string | null
+  readonly notifications: ReadonlyArray<InboxNotice>
+  readonly unread: number
+}
+
+export schema MarkRequest { readonly eventKeys: ReadonlyArray<string> }
+
+export schema Marked { readonly marked: number }
+
+export schema AcknowledgeRequest { readonly eventKey: string }
+
+export schema Acknowledged { readonly acknowledged: boolean }
+
+export const AcknowledgeFields = Schema.Struct({ eventKey: Schema.Unknown })
+
+export const maxNotificationMark = 100
+
+export const scamReviewPrefix = "/api/v1/notifications/scam-reviews/"
+
+export const appealPrefix = "/api/v1/notifications/appeals/"
+
+export function isNotificationEventKey(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 8 && value.length <= 300 && /^[a-z-]+:[\x21-\x7e]+$/u.test(value)
+}
+
+export const listNotices = route({ method: "GET", path: "/api/v1/notifications", access: "session", limitKib: 1, request: undefined, answer: NotificationsPage, rejected: "invalid_request", cache: "private" })
+export const markNoticesRead = route({ method: "POST", path: "/api/v1/notifications/read", access: "sessionWrite", limitKib: 32, request: MarkRequest, answer: Marked, rejected: "invalid_request", cache: "private" })
+export const acknowledgeCaseNotice = route({ method: "POST", path: "/api/v1/security-cases/:id/acknowledge", access: "sessionWrite", limitKib: 64, request: AcknowledgeRequest, answer: Acknowledged, rejected: "not_found", cache: "private" })
+export const openScamReview = route({ method: "GET", path: `${scamReviewPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private" })
+export const openAppealReview = route({ method: "GET", path: `${appealPrefix}*`, access: "session", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "not_found", cache: "private" })
+
+function refusedMethods(path: `/${string}`, methods: ReadonlyArray<Method>) {
+  return methods.map((method) => route({ method, path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "method_not_allowed", cache: "private" }))
+}
+
+export const otherInboxMethods = [
+  ...refusedMethods(listNotices.path, ["POST", "PUT", "DELETE"]),
+  ...refusedMethods(markNoticesRead.path, ["GET", "PUT", "DELETE"]),
+  ...refusedMethods(openScamReview.path, ["POST", "PUT", "DELETE"]),
+  ...refusedMethods(openAppealReview.path, ["POST", "PUT", "DELETE"]),
+]
+
+export const inboxApi: ReadonlyArray<AnyRoute> = [listNotices, markNoticesRead, acknowledgeCaseNotice, openScamReview, openAppealReview, ...otherInboxMethods]

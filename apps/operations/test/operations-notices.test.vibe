@@ -1,0 +1,168 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type Notice, type NoticeKind, NoticeOutbox, Notices } from "@repo/ports/operations"
+import type { Release } from "../src/notifications/rows.vibe"
+import { noticePorts } from "../src/notifications/statements.vibe"
+import { observe, readMany, recipientScope, send } from "../src/notifications/store.vibe"
+
+const clock = settableClock(Date.UTC(2030, 0, 1))
+const member = "9100000001"
+const other = "9100000002"
+const legacy = "9100000003"
+const reader = "9100000004"
+const stranger = "9100000005"
+const firstVersion = "1".repeat(64)
+const laterVersion = "2".repeat(64)
+const sourceAt = "2030-01-01T00:00:00.000Z"
+const release: Release = { routes: [], generalEmail: true }
+const inbox = recipientScope([member])
+
+const Started = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "notices-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return d1(try promise(() => database(mf, "SLOP_DB")))
+})
+
+function notice(eventKey: string, kind: NoticeKind, recipientGithubId = member): Notice {
+  return { eventKey, recipientGithubId, kind, subject: "base", actionPath: "/account#wallets", sourceAt }
+}
+
+function referralCode(code: string) {
+  return sql`INSERT INTO referral_codes (code_key, code, github_id, created_at) VALUES (${code}, ${code}, ${other}, ${sourceAt})`
+}
+
+effect function outbox() {
+  const found = try (try D1).all(sql`SELECT event_key, essential, state, destination_version FROM activity_notification_outbox WHERE recipient_github_id = ${member} ORDER BY rowid`)
+  const named = (version: unknown) => version === firstVersion ? "first" : version === laterVersion ? "later" : null
+  return found.map((row) => [row.event_key, row.essential, row.state, named(row.destination_version)])
+}
+
+effect function inboxKeys(recipient: string) {
+  return (try (try D1).all(sql`SELECT event_key FROM notifications WHERE recipient_github_id = ${recipient} ORDER BY rowid`)).map((row) => row.event_key)
+}
+
+function verifiedWithConsent(version: string) {
+  return [
+    sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${member}, 'member@slop.test', ${version}, ${sourceAt})
+      ON CONFLICT (github_id) DO UPDATE SET email = excluded.email, destination_version = excluded.destination_version, verified_at = excluded.verified_at`,
+    sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${member}, 1, 1, ${version}, ${sourceAt})
+      ON CONFLICT (github_id) DO UPDATE SET enabled = 1, security_enabled = 1, destination_version = excluded.destination_version, updated_at = excluded.updated_at`,
+  ]
+}
+
+function consent(activity: boolean, security: boolean) {
+  return sql`UPDATE notification_email_preferences SET enabled = ${activity ? 1 : 0}, security_enabled = ${security ? 1 : 0}, updated_at = ${sourceAt} WHERE github_id = ${member}`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Layer.mergeAll(Started, noticePorts, webCrypto, clock.layer), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Save each notice once with its source change, and control future email with consent (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Control future email with consent bound to a verified destination"; spec/operations/notifications.md, "Consent binds one verified destination version and opt-out suppresses waiting mail")', () => effect {
+    const db = try D1
+    const notices = try Notices
+    const first = [notice("wallet-claim:journey-1", "WalletChanged"), notice("payout-held:journey-1", "PayoutHeld")]
+    try db.batch([referralCode("journey-alpha"), ...(try notices.statements({ notices: first }))])
+    try db.batch(try notices.statements({ notices: first }))
+    const failedSource = db.batch([referralCode("journey-alpha"), ...(try notices.statements({ notices: [notice("award-reserved:journey-1", "AwardReserved")] }))]) catch (error) => error._tag
+    try db.batch(try notices.statements({ notices: [notice("payment-paid:journey-1", "PaymentPaid")], onlyIf: sql`0` }))
+    try db.batch(try notices.fanout({
+      eventKey: "payout-exception:journey-1",
+      recipients: sql`SELECT ${member} UNION SELECT ${other} UNION SELECT 'not-a-github-id'`,
+      excludedGithubId: other,
+      kind: "PayoutException",
+      subject: "journey",
+      actionPath: "/projects/journey",
+      sourceAt,
+    }))
+    const saved = try inboxKeys(member)
+
+    const outboxes = try NoticeOutbox
+    try db.batch(verifiedWithConsent(firstVersion))
+    try send(inbox, { type: "save", notice: notice("payout-held:journey-2", "PayoutHeld") }, "", release)
+    try send(inbox, { type: "save", notice: notice("wallet-claim:journey-2", "WalletChanged") }, "", release)
+    const replayed = try send(inbox, { type: "save", notice: notice("wallet-claim:journey-2", "WalletChanged") }, "", release)
+    try db.batch([consent(false, true), ...(try outboxes.suppress({ recipientGithubId: member, version: firstVersion, categories: ["ActivityMail"] }))])
+    const afterOptOut = try outbox()
+    try db.batch([consent(true, true)])
+    clock.advance(60_000)
+    try send(inbox, { type: "save", notice: notice("payout-held:journey-3", "PayoutHeld") }, "", release)
+    try send(inbox, { type: "save", notice: notice("wallet-claim:journey-3", "WalletChanged") }, "", release)
+    const beforeUnsubscribe = try outbox()
+    try db.batch([consent(false, false), ...(try outboxes.suppress({ recipientGithubId: member, version: firstVersion, categories: ["SecurityMail", "ActivityMail"] }))])
+    const [preference] = try db.all(sql`SELECT enabled, security_enabled FROM notification_email_preferences WHERE github_id = ${member}`)
+    const afterUnsubscribe = try outbox()
+    try db.batch(verifiedWithConsent(laterVersion))
+    try send(inbox, { type: "save", notice: notice("wallet-claim:journey-4", "WalletChanged") }, "", release)
+    try db.batch(try outboxes.suppress({ recipientGithubId: member, version: firstVersion, categories: ["SecurityMail", "ActivityMail"] }))
+    const afterEarlierToken = (try outbox()).at(-1)
+
+    try same({
+      saved,
+      excluded: try inboxKeys(other),
+      failedSource,
+      replayed: replayed.inbox.notices.length,
+      afterOptOut,
+      beforeUnsubscribe: beforeUnsubscribe.slice(-2),
+      preference,
+      afterUnsubscribe,
+      afterEarlierToken,
+      everyNotice: try inboxKeys(member),
+    }, {
+      saved: ["wallet-claim:journey-1", "payout-held:journey-1", "payout-exception:journey-1"],
+      excluded: [],
+      failedSource: "ConstraintViolation",
+      replayed: 5,
+      afterOptOut: [
+        ["wallet-claim:journey-1", 1, "queued", null],
+        ["payout-held:journey-2", 0, "suppressed", "first"],
+        ["wallet-claim:journey-2", 1, "queued", "first"],
+      ],
+      beforeUnsubscribe: [
+        ["payout-held:journey-3", 0, "queued", "first"],
+        ["wallet-claim:journey-3", 1, "queued", "first"],
+      ],
+      preference: { enabled: 0, security_enabled: 0 },
+      afterUnsubscribe: [
+        ["wallet-claim:journey-1", 1, "suppressed", null],
+        ["payout-held:journey-2", 0, "suppressed", "first"],
+        ["wallet-claim:journey-2", 1, "suppressed", "first"],
+        ["payout-held:journey-3", 0, "suppressed", "first"],
+        ["wallet-claim:journey-3", 1, "suppressed", "first"],
+      ],
+      afterEarlierToken: ["wallet-claim:journey-4", 1, "queued", "later"],
+      everyNotice: ["wallet-claim:journey-1", "payout-held:journey-1", "payout-exception:journey-1", "payout-held:journey-2", "wallet-claim:journey-2", "payout-held:journey-3", "wallet-claim:journey-3", "wallet-claim:journey-4"],
+    })
+  })
+
+  it.effect('A notice saved before its email outbox existed fails closed (spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing")', () => effect {
+    const db = try D1
+    try db.batch(try (try Notices).statements({ notices: [notice("wallet-claim:legacy-1", "WalletChanged", legacy)] }))
+    try db.batch([sql`DELETE FROM activity_notification_outbox WHERE recipient_github_id = ${legacy}`])
+    const observed = observe(recipientScope([legacy]), release) catch (error) => error._tag
+    try same({ observed, kept: try inboxKeys(legacy) }, { observed: "NotAState", kept: ["wallet-claim:legacy-1"] })
+  })
+
+  it.effect('Mark several notices read in one statement (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
+    const db = try D1
+    const mine = [notice("award-reserved:read-1", "AwardReserved", reader), notice("payment-paid:read-1", "PaymentPaid", reader), notice("project-ready:read-1", "ProjectReady", reader)]
+    const theirs = notice("award-reserved:read-2", "AwardReserved", stranger)
+    try db.batch(try (try Notices).statements({ notices: [...mine, theirs] }))
+    const keys = mine.map((saved) => saved.eventKey)
+    const first = try readMany({ recipientGithubId: reader, eventKeys: [...keys, theirs.eventKey] }, release)
+    const replay = try readMany({ recipientGithubId: reader, eventKeys: keys }, release)
+    const counted = try db.all(sql`SELECT recipient_github_id, COUNT(*) AS total, COUNT(read_at) AS marked FROM notifications WHERE event_key LIKE '%:read-%' GROUP BY recipient_github_id ORDER BY recipient_github_id`)
+    try same({ first: first.marked, replay: replay.marked, counted }, {
+      first: 3,
+      replay: 0,
+      counted: [{ recipient_github_id: reader, total: 3, marked: 3 }, { recipient_github_id: stranger, total: 1, marked: 0 }],
+    })
+  })
+})

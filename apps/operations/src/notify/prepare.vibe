@@ -1,0 +1,154 @@
+// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import { isoNow } from "@repo/platform/clock"
+import { hmacSha256Hex, sha256Hex } from "@repo/platform/crypto"
+import { D1, type Statement, first, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { EmailConsent, type MailCategory, ProjectAudience, Registry } from "@repo/ports/backend"
+import { ContributorAudience } from "@repo/ports/points"
+import { SecurityNoticeAccess } from "@repo/ports/security"
+import { type AccessCheck, type AppealSource, type Audience, type Kind, type Notice, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
+import type { Projection } from "../notifications/rows.vibe"
+import { digestText } from "../notifications/store.vibe"
+import type { Claimed } from "./claim.vibe"
+import type { Configured } from "./config.vibe"
+import { DisputeAudience, EmailEnrollment, SlopbotAudience, VettingBans } from "./ports.vibe"
+
+export error PreparationFailed { stage: string }
+
+export interface NoticeFacts {
+  readonly kind: Kind
+  readonly eventKey: string
+  readonly recipient: string
+  readonly subject: string
+  readonly essential: boolean
+}
+
+export function heldNotice(projection: Projection, id: number): Notice {
+  return projection.inbox.notices[id - 1] ?? noNotice
+}
+
+export function factsOf(claimed: Pick<Claimed, "projection" | "id" | "recipient">): NoticeFacts {
+  const held = heldNotice(claimed.projection, claimed.id)
+  const stored = claimed.projection.stored[claimed.id - 1]
+  return { kind: held.kind, eventKey: stored?.eventKey ?? "", recipient: claimed.recipient, subject: stored?.subject ?? "", essential: held.essential }
+}
+
+export effect function caseAccess(caseId: string, githubId: string) {
+  const access = (try SecurityNoticeAccess).forCase({ caseId, githubId }) catch () => undefined
+  if (access === undefined) return { tag: "Unavailable" } satisfies AccessCheck as AccessCheck
+  return (access.allowed ? { tag: "Allowed", acknowledgeHours: access.acknowledgeHours } : { tag: "Denied" }) satisfies AccessCheck as AccessCheck
+}
+
+schema Membership { readonly member: number }
+
+schema NoticeLink { readonly action_path: string }
+
+effect function within(audience: Statement, githubId: string) {
+  return (try first(Membership, sql`SELECT ${githubId} IN (${audience}) AS member`))?.member === 1
+}
+
+const appealPrefixes = ["slopbot-appeal:", "slopbot-value-appeal:"] as const
+const disputePrefix = "slopbot-points-dispute:"
+const scamPrefix = "slopbot-scam-review:"
+const enforcementPrefix = "project-enforcement:"
+const resolvedSuffix = ":resolved"
+
+interface AppealFacts {
+  readonly appeal: AppealSource
+  readonly appellant: boolean
+  readonly escalated: boolean
+  readonly resolved: boolean
+}
+
+const noAppeal: AppealFacts = { appeal: "NoAppeal", appellant: false, escalated: false, resolved: false }
+
+effect function appealFacts(facts: NoticeFacts) {
+  const key = facts.eventKey
+  if (appealPrefixes.some((prefix) => key.startsWith(prefix))) {
+    const found = try (try SlopbotAudience).escalatedAppeal(key.slice("slopbot-".length))
+    return { appeal: "EscalatedAppeal", appellant: found?.appellantGithubId === facts.recipient, escalated: found !== undefined, resolved: found?.resolved ?? false } satisfies AppealFacts
+  }
+  if (key.startsWith(disputePrefix)) {
+    const resolvedNotice = key.endsWith(resolvedSuffix)
+    const appealKey = resolvedNotice ? key.slice("slopbot-".length, -resolvedSuffix.length) : key.slice("slopbot-".length)
+    const found = try (try DisputeAudience).dispute(appealKey)
+    return {
+      appeal: resolvedNotice ? "DisputeResolved" : "DisputeOpened",
+      appellant: found !== undefined && found.appellantGithubId === facts.recipient,
+      escalated: found?.escalated ?? false,
+      resolved: found?.resolved ?? false,
+    } satisfies AppealFacts
+  }
+  return noAppeal
+}
+
+effect function scamFacts(facts: NoticeFacts) {
+  if (!facts.eventKey.startsWith(scamPrefix)) return { stands: false, author: false }
+  const penalty = try (try SlopbotAudience).scamPenalty(facts.eventKey.slice(scamPrefix.length))
+  return { stands: penalty !== undefined && !penalty.reversed, author: penalty?.authorGithubId === facts.recipient }
+}
+
+effect function audienceOf(facts: NoticeFacts) {
+  const roles = try Roles
+  const kind = facts.kind
+  const project = sql`${facts.subject}`
+  const vettingBan = kind === "ProjectBanned" && facts.eventKey.startsWith(enforcementPrefix)
+    && (try (try VettingBans).serviceBan({ enforcementId: facts.eventKey.slice(enforcementPrefix.length), projectId: facts.subject }))
+  const steward = kind === "PayoutException" && (try (try Registry).project(facts.subject))?.stewardGithubId === facts.recipient
+  const owner = (ownerKind(kind) || vettingBan) && (try within(try (try ProjectAudience).owners(project), facts.recipient))
+  const affectedContributor = vettingBan && (try within(try (try ContributorAudience).affected(project), facts.recipient))
+  const staffPath = ownerKind(kind) && (try first(NoticeLink, sql`SELECT action_path FROM notifications WHERE event_key = ${facts.eventKey} AND recipient_github_id = ${facts.recipient}`))?.action_path === "/admin"
+  const appeal = try appealFacts(facts)
+  const scam = try scamFacts(facts)
+  return {
+    steward,
+    owner,
+    affectedContributor,
+    administrator: try roles.has(facts.recipient, "administrator"),
+    moderator: try roles.has(facts.recipient, "moderator"),
+    vettingBan,
+    staffPath,
+    appeal: appeal.appeal,
+    appellant: appeal.appellant,
+    escalated: appeal.escalated,
+    resolved: appeal.resolved,
+    scamPenaltyStands: scam.stands,
+    author: scam.author,
+  } satisfies Audience
+}
+
+export effect function noticeAccess(facts: NoticeFacts) {
+  const audience = audienceOf(facts) catch () => undefined
+  return audience === undefined ? { tag: "Unavailable" } satisfies AccessCheck as AccessCheck : activityAccess(facts.kind, audience)
+}
+
+export interface Destination {
+  readonly address: string
+  readonly registeredVersion: string | undefined
+}
+
+function categoryOf(channel: Claimed["channel"], essential: boolean): MailCategory {
+  return channel === "security" || essential ? "SecurityMail" : "ActivityMail"
+}
+
+export effect function destinationOf(claimed: Claimed, pilot: Configured) {
+  const held = heldNotice(claimed.projection, claimed.id)
+  const digest = digestText(claimed.projection, held.digest)
+  if (held.digest > 1000) {
+    const route = pilot.recipients.get(claimed.recipient)
+    if (route === undefined || route.digest !== digest) throw new PreparationFailed({ stage: "pilot destination" })
+    return { address: route.email, registeredVersion: undefined } satisfies Destination
+  }
+  const consented = (try EmailConsent).destination({ githubId: claimed.recipient, category: categoryOf(claimed.channel, held.essential) }) catch () => undefined
+  if (consented === undefined || consented.version !== digest) throw new PreparationFailed({ stage: "registered destination" })
+  return { address: consented.address, registeredVersion: consented.version } satisfies Destination
+}
+
+export effect function unsubscribeToken(key: Redacted.Redacted<Uint8Array>, version: string) {
+  const token = `${version}.${try hmacSha256Hex(Redacted.value(key), `slop-email-unsubscribe-v1:${version}`)}`
+  const issued = try (try EmailEnrollment).unsubscribeIssued({ tokenHash: try sha256Hex(token), version, issuedAt: try isoNow() })
+  const db = try D1
+  const recorded = db.run(issued) catch () => -1
+  if (recorded < 0) throw new PreparationFailed({ stage: "unsubscribe token" })
+  return token
+}

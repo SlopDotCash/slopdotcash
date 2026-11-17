@@ -1,0 +1,1041 @@
+// spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"
+
+const jsonNoStoreSlopProjectApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-project-api-contract": "project-registry-v1" } as const
+const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonPublicMaxAge300 = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonNoStoreV2 = { "cache-control": "no-store", "content-type": "application/json", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonNoStoreSlopTraceApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } as const
+const textNoStorePlain = { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" } as const
+const jsonNoStoreRetryAfter = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "retry-after": "60", "x-content-type-options": "nosniff" } as const
+const htmlNoStore = { "cache-control": "no-store", "content-type": "text/html; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+
+const withOriginForbiddenV2 = {
+  originForbidden: { status: 403, error: "origin_forbidden", message: "Requests must come from this site", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withNotFound = {
+  notFound: { status: 404, error: "not_found", headers: jsonNoStoreSlopProjectApiContract },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withUnauthorizedAndInvalidExpectedActor = {
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonNoStoreSlopProjectApiContract },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonNoStoreSlopProjectApiContract },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withNotFound,
+} as const
+
+const withOriginForbiddenAndUnauthorizedV7 = {
+  ...withOriginForbiddenV2,
+  ...withUnauthorizedAndInvalidExpectedActor,
+  invalidRequestRequestBodyHasUnexpected: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonNoStoreSlopProjectApiContract },
+  invalidContentLength: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonNoStoreSlopProjectApiContract },
+  payloadTooLarge: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestRequestBodyMustBe: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestRequestBodyMustBeAJSONObject: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV6 = {
+  ...withOriginForbiddenAndUnauthorizedV7,
+  staleRevision: { status: 409, error: "stale_revision", message: "The project changed since you loaded it", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifest: { status: 422, error: "invalid_manifest", messageFrom: "error instanceof Error ? error.message : \"Project manifest is invalid\"", headers: jsonNoStoreSlopProjectApiContract },
+  maintainerBanned: { status: 403, error: "maintainer_banned", message: "A moderator banned this maintainer after a confirmed malicious scan result. The account cannot start new Slop participation. The banned account, project steward or original applicant may appeal the project decision.", headers: jsonNoStoreSlopProjectApiContract },
+  projectRestrictedNoStore: { status: 409, error: "project_restricted", messageFrom: "`The project is ${restriction.state}; a revision must keep it paused and retired until reinstatement`", headers: jsonNoStoreSlopProjectApiContract },
+  repositoryRestricted: { status: 403, error: "repository_restricted", messageFrom: "`This repository belongs to a ${restriction.state} project; only reinstatement can list it again`", headers: jsonNoStoreSlopProjectApiContract },
+  registryConflict: { status: 409, error: "registry_conflict", messageFrom: "error instanceof Error ? error.message : \"Project conflicts\"", headers: jsonNoStoreSlopProjectApiContract },
+  skillContentIncomplete: { status: 422, error: "skill_content_incomplete", message: "Complete the generated-skill contribution fields before activation", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestRootSkillPublicationIs: { status: 422, error: "invalid_manifest", message: "Root skill publication is retired; project skills are served at /projects/<id>/SKILL.md", headers: jsonNoStoreSlopProjectApiContract },
+  vettingRequired: { status: 422, error: "vetting_required", messageFrom: "uncleared === undefined ? `Security vetting is ${vetting.state}. A successful retained admission scan of this repository is required before activation; reinstatement requires fresh evidence.` : `Security vetting of ${uncleared} is ${vetting.state}. A successful retained admission scan of ${uncleared} is required before…", headers: jsonNoStoreSlopProjectApiContract },
+  registryConflictAnotherProjectListsA: { status: 409, error: "registry_conflict", message: "Another project lists a repository of this revision. Reload before retrying.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV3 = {
+  ...withOriginForbiddenAndUnauthorizedV6,
+  invalidManifestABountyAmountNeeds: { status: 422, error: "invalid_manifest", message: "A bounty amount needs security bounty terms", headers: jsonNoStoreSlopProjectApiContract },
+  rewardAssetUnverified: { status: 422, error: "reward_asset_unverified", messageFrom: "`The reward token could not be verified on ${network.name}: ${error.message}`", headers: jsonNoStoreSlopProjectApiContract },
+  rewardAssetUnverifiedNoStore: { status: 503, error: "reward_asset_unverified", messageFrom: "`${network.name} could not be reached to verify the reward token. Try again.`", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestSendTheBountyAmount: { status: 422, error: "invalid_manifest", message: "Send the bounty amount in whole asset units when creating or changing its award", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestNoStore: { status: 422, error: "invalid_manifest", messageFrom: "`The bounty amount is invalid: ${error instanceof Error ? error.message : \"check the amount\"}`", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withGithubRateLimitedAndGithubUnavailable = {
+  githubRateLimited: { status: 503, error: "github_rate_limited", message: "GitHub limited lookups.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailable: { status: 502, error: "github_unavailable", messageFrom: "`GitHub returned ${response.status}.`", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnUnexpected: { status: 502, error: "github_unavailable", message: "GitHub returned an unexpected response.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withInvalidManifestV3V2 = {
+  invalidManifestV3: { status: 422, error: "invalid_manifest", messageFrom: "control.reason", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withGithubUnavailableNoStore = {
+  githubUnavailableNoStore: { status: 503, error: "github_unavailable", messageFrom: "authority.message", headers: jsonNoStoreSlopProjectApiContract },
+  slopbotRequired: { status: 409, error: "slopbot_required", messageFrom: "authority.message", headers: jsonNoStoreSlopProjectApiContract },
+  authorityRequired: { status: 403, error: "authority_required", messageFrom: "authority.message", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withInvalidManifestV3 = {
+  ...withInvalidManifestV3V2,
+  ...withGithubUnavailableNoStore,
+} as const
+
+const withOriginForbiddenAndUnauthorized = {
+  ...withOriginForbiddenAndUnauthorizedV3,
+  invalidManifestAMonthlyAmountNeeds: { status: 422, error: "invalid_manifest", message: "A monthly amount needs a monthly pool", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestS422: { status: 422, error: "invalid_manifest", messageFrom: "`The monthly amount is invalid: ${error instanceof Error ? error.message : \"check the amount\"}`", headers: jsonNoStoreSlopProjectApiContract },
+  ...withGithubRateLimitedAndGithubUnavailable,
+  registryConflictNoStore: { status: 409, error: "registry_conflict", messageFrom: "`GitHub repository ${githubId}${typeof name === \"string\" ? ` (${name})` : \"\"} is already listed by project ${owner}`", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidManifestV3,
+} as const
+
+const withNotFoundProjectNotFoundV2 = {
+  notFoundProjectNotFound: { status: 404, error: "not_found", message: "Project not found", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withNotFoundProjectNotFoundAndInvalidRequestInvalidReason = {
+  ...withNotFoundProjectNotFoundV2,
+  invalidRequestInvalidReason: { status: 400, error: "invalid_request", message: "Invalid reason", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withInvalidRequestInvalidExpectedRevision = {
+  invalidRequestInvalidExpectedRevision: { status: 400, error: "invalid_request", message: "Invalid expectedRevision", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withNotFoundProjectNotFound = {
+  ...withNotFoundProjectNotFoundAndInvalidRequestInvalidReason,
+  ...withInvalidRequestInvalidExpectedRevision,
+  invalidManifestProjectIdCannotChange: { status: 422, error: "invalid_manifest", message: "Project id cannot change", headers: jsonNoStoreSlopProjectApiContract },
+  noChange: { status: 422, error: "no_change", message: "The revision changes nothing", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withInvalidRequestEnterTheRepositoryAs = {
+  invalidRequestEnterTheRepositoryAs: { status: 400, error: "invalid_request", message: "Enter the repository as owner/name.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableThePublicGitHubLookup: { status: 503, error: "github_unavailable", message: "The public GitHub lookup credential is not configured.", headers: jsonNoStoreSlopProjectApiContract },
+  notFoundGitHubHasNoPublic: { status: 404, error: "not_found", message: "GitHub has no public repository with that name.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedIncompleteRepository: { status: 502, error: "github_unavailable", message: "GitHub returned incomplete repository facts.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnInvalidBranchList: { status: 502, error: "github_unavailable", message: "GitHub returned an invalid branch list.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnInvalidBranchName: { status: 502, error: "github_unavailable", message: "GitHub returned an invalid branch name.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnInvalidBranchCommit: { status: 502, error: "github_unavailable", message: "GitHub returned an invalid branch commit.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnInvalidBranchPageCursor: { status: 502, error: "github_unavailable", message: "GitHub returned an invalid branch page cursor.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedTooManyBranchPages: { status: 502, error: "github_unavailable", message: "GitHub returned too many branch pages.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubDidNotReturn: { status: 502, error: "github_unavailable", message: "GitHub did not return the default branch. Try again.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withOriginForbidden = {
+  ...withOriginForbiddenAndUnauthorized,
+  ...withNotFoundProjectNotFound,
+  invalidRequestReasonMustBe1: { status: 400, error: "invalid_request", message: "reason must be 1 to 500 characters", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestProjectManifestIsInvalid: { status: 422, error: "invalid_manifest", message: "Project manifest is invalid", headers: jsonNoStoreSlopProjectApiContract },
+  staleRevisionNoStore: { status: 409, error: "stale_revision", messageFrom: "stored ? \"The project changed after this update was saved; make the change again in the project's settings\" : \"The project changed since you loaded it\"", headers: jsonNoStoreSlopProjectApiContract },
+  projectRestrictedS409: { status: 409, error: "project_restricted", messageFrom: "`The project is ${restriction.state}; request reinstatement before changing it`", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestricted: { status: 422, error: "financial_change_restricted", message: "Historical cycle caps cannot change", headers: jsonNoStoreSlopProjectApiContract },
+  ownerFieldRestricted: { status: 422, error: "owner_field_restricted", messageFrom: "`These fields do not change through owner self-service: ${restricted.join(\", \")}`", headers: jsonNoStoreSlopProjectApiContract },
+  securityProgramRequired: { status: 422, error: "security_program_required", message: "Close the bounty program instead of deleting it; existing reports and awards remain available", headers: jsonNoStoreSlopProjectApiContract },
+  securitySplitRestrictedOnlyAnAdminCan: { status: 422, error: "security_split_restricted", message: "Only an admin can change the approved researcher/Slop split", headers: jsonNoStoreSlopProjectApiContract },
+  securityContactsRestrictedOnlyTheProjectSteward: { status: 422, error: "security_contacts_restricted", message: "Only the project steward or a repository admin can change bounty contacts or the sponsor", headers: jsonNoStoreSlopProjectApiContract },
+  securityContactsRestrictedOnlyTheProjectStewardOrARepository: { status: 422, error: "security_contacts_restricted", message: "Only the project steward or a repository admin can name other bounty contacts or a sponsor", headers: jsonNoStoreSlopProjectApiContract },
+  securityVaultRestricted: { status: 422, error: "security_vault_restricted", message: "Keep the verified bounty vault; a new vault needs verified registration", headers: jsonNoStoreSlopProjectApiContract },
+  securityAssetRestricted: { status: 422, error: "security_asset_restricted", message: "A funded bounty program keeps its network and asset", headers: jsonNoStoreSlopProjectApiContract },
+  securityFundingUnavailable: { status: 422, error: "security_funding_unavailable", message: "Opening requires available funds in a verified bounty vault with a current finalized balance", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRepositoryStart: { status: 422, error: "invalid_repository_start", messageFrom: "`${entry.id} must count from ${countsFrom}, the start of the next UTC month.`", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRepository: { status: 422, error: "invalid_repository", messageFrom: "`The display name of ${entry.id} must be ${entry.id}.`", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRepositoryNoStore: { status: 422, error: "invalid_repository", messageFrom: "`${entry.id} needs its permanent GitHub ids.`", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidRequestEnterTheRepositoryAs,
+  invalidRepositoryS422: { status: 422, error: "invalid_repository", messageFrom: "`GitHub has no public repository named ${entry.id}.`", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableInternalError: { status: 503, error: "github_unavailable", message: "Internal error", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRepositoryV2: { status: 422, error: "invalid_repository", messageFrom: "refusal", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRepositoryV3: { status: 422, error: "invalid_repository", messageFrom: "`GitHub reports different facts for ${entry.id}. Look it up again.`", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedOnlyAMonthlyReward: { status: 422, error: "financial_change_restricted", message: "Only a monthly reward changes through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedASeparateReviewBudget: { status: 422, error: "financial_change_restricted", message: "A separate review budget is not offered; review credit comes from the shared scoring policy", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedFundingRoutesDoNot: { status: 422, error: "financial_change_restricted", message: "Funding routes do not change through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedUseVaultSetupTo: { status: 422, error: "financial_change_restricted", message: "Use vault setup to register a verified owner vault; a manifest edit cannot change vault records", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedAFundedProjectKeeps: { status: 422, error: "financial_change_restricted", message: "A funded project keeps its network, asset and vault", headers: jsonNoStoreSlopProjectApiContract },
+  financialChangeRestrictedOnlyTheMonthlyAmount: { status: 422, error: "financial_change_restricted", message: "Only the monthly amount, network and asset change through owner self-service", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withInvalidRequestReasonMustBe1To1000Characters = {
+  invalidRequestReasonMustBe1To1000Characters: { status: 400, error: "invalid_request", message: "reason must be 1 to 1000 characters", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV5 = {
+  ...withOriginForbiddenAndUnauthorizedV7,
+  ...withNotFoundProjectNotFoundAndInvalidRequestInvalidReason,
+  staleEnforcement: { status: 409, error: "stale_enforcement", message: "The project changed since you loaded it", headers: jsonNoStoreSlopProjectApiContract },
+  vettingRequiredReinstatementRequiresAFresh: { status: 409, error: "vetting_required", message: "Reinstatement requires a fresh clean scan of the current restricted revision, requested after the latest restriction, at the current integration-branch head and skill template.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestSelectTheAccountsTo: { status: 400, error: "invalid_request", message: "Select the accounts to reinstate.", headers: jsonNoStoreSlopProjectApiContract },
+  accountNotBanned: { status: 409, error: "account_not_banned", message: "The selected account has no active ban from this project.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestAccountBansRequireA: { status: 400, error: "invalid_request", message: "Account bans require a moderator decision on a confirmed malicious result.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidRequestReasonMustBe1To1000Characters,
+  invalidRequestInvalidEvidenceReference: { status: 400, error: "invalid_request", message: "Invalid evidenceReference", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestEvidenceReferenceMustBe1: { status: 400, error: "invalid_request", message: "evidenceReference must be 1 to 500 characters", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withForbidden = {
+  forbidden: { status: 403, error: "forbidden", message: "Admin access is required", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withPersonalAccountRequired = {
+  personalAccountRequired: { status: 422, error: "personal_account_required", messageFrom: "`@${login} is a GitHub ${user.type} account. Enter a person's GitHub account.`", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedIncompleteAccount: { status: 502, error: "github_unavailable", message: "GitHub returned incomplete account facts.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withGithubRateLimited = {
+  ...withGithubRateLimitedAndGithubUnavailable,
+  ...withPersonalAccountRequired,
+} as const
+
+const withOriginForbiddenAndUnauthorizedV2 = {
+  ...withOriginForbiddenAndUnauthorizedV5,
+  ...withForbidden,
+  moderationUnavailable: { status: 403, error: "moderation_unavailable", message: "Moderation is not configured. Contact the service operator.", headers: jsonNoStoreSlopProjectApiContract },
+  forbiddenTheProjectModeratorRole: { status: 403, error: "forbidden", message: "The project moderator role is required", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestInvalidEnforcementAction: { status: 400, error: "invalid_request", message: "Invalid enforcement action", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestSelectTheResponsibleAccounts: { status: 400, error: "invalid_request", message: "Select the responsible accounts.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidRequestEnterAGitHubAccount: { status: 400, error: "invalid_request", message: "Enter a GitHub account name.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withGithubRateLimited,
+  accountChanged: { status: 409, error: "account_changed", message: "The selected GitHub account changed. Preview the decision again.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidRequestInvalidExpectedRevision,
+  invalidRequestInvalidExpectedSequence: { status: 400, error: "invalid_request", message: "Invalid expectedSequence", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withUnauthorized = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  invalidRequest: { status: 400, error: "invalid_request", message: "The signed-in GitHub login is not valid.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withGithubRateLimited,
+  githubUnavailableGitHubAccountFactsCould: { status: 502, error: "github_unavailable", message: "GitHub account facts could not be read. Try again.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedAnInvalid: { status: 502, error: "github_unavailable", message: "GitHub returned an invalid repository page link.", headers: jsonNoStoreSlopProjectApiContract },
+  githubUnavailableGitHubReturnedTooMany: { status: 502, error: "github_unavailable", message: "GitHub returned too many repository pages.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidRequestEnterTheRepositoryAs,
+} as const
+
+const withOriginForbiddenAndUnauthorizedV4 = {
+  ...withOriginForbiddenAndUnauthorizedV6,
+  ...withNotFoundProjectNotFoundV2,
+  ...withInvalidManifestV3V2,
+} as const
+
+const withNotFoundNoStoreV2 = {
+  notFoundNoStore: { status: 404, error: "not_found", headers: jsonNoStore },
+} as const
+
+const withHttpsRequiredNoStoreAndNotFoundNoStore = {
+  httpsRequiredNoStore: { status: 400, error: "https_required", headers: jsonNoStore },
+  ...withNotFoundNoStoreV2,
+  internalErrorInternalErrorNoStore: { status: 500, error: "internal_error", message: "Internal error", headers: jsonNoStore },
+} as const
+
+const withHttpsRequiredNoStore = {
+  ...withHttpsRequiredNoStoreAndNotFoundNoStore,
+  invalidRequestRequestBodyIsRequired: { status: 400, error: "invalid_request", message: "Request body is required", headers: jsonNoStore },
+  invalidContentLengthContentLengthMustContainOnlyDecimalDigits: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonNoStore },
+  payloadTooLargeRequestBodyExceeds4096: { status: 413, error: "payload_too_large", message: "Request body exceeds 4096 bytes", headers: jsonNoStore },
+  requestTooLarge: { status: 413, error: "request_too_large", message: "Request body is too large", headers: jsonNoStore },
+  invalidRequestRequestBodyMustBeUTF8JSON: { status: 400, error: "invalid_request", message: "Request body must be UTF-8 JSON", headers: jsonNoStore },
+  invalidRequestV4: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonNoStore },
+} as const
+
+const withRateLimitedTooManyRequestsTryAndServiceUnavailableV2 = {
+  rateLimitedTooManyRequestsTry: { status: 429, error: "rate_limited", message: "Too many requests. Try again later.", headers: jsonNoStore, headersFrom: { "retry-after": "String(retryAfterSeconds)" } },
+  serviceUnavailable: { status: 503, error: "service_unavailable", message: "Identity service is temporarily unavailable.", headers: jsonNoStoreRetryAfter },
+  ...withHttpsRequiredNoStore,
+} as const
+
+const withRateLimitedTooManyRequestsTry = {
+  ...withRateLimitedTooManyRequestsTryAndServiceUnavailableV2,
+  invalidRequestInvalidPollRequest: { status: 400, error: "invalid_request", message: "Invalid poll request", headers: jsonNoStore },
+  flowUnavailableIdentityFlowIsUnavailable: { status: 410, error: "flow_unavailable", message: "Identity flow is unavailable", headers: jsonNoStore },
+  wrongFlow: { status: 403, error: "wrong_flow", message: "This authorization belongs to another sign-in mode", headers: jsonNoStore },
+  callbackFailed: { status: 410, error: "callback_failed", message: "Identity sign-in failed; start again", headers: jsonNoStore },
+  flowConsumed: { status: 410, error: "flow_consumed", message: "Identity flow was already consumed", headers: jsonNoStore },
+  identityIncomplete: { status: 502, error: "identity_incomplete", message: "Internal error", headers: jsonNoStore },
+  assertionUnavailable: { status: 503, error: "assertion_unavailable", message: "Internal error", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreV2 = {
+  originForbiddenPrivateNoStore: { status: 403, error: "origin_forbidden", headers: jsonPrivateNoStore },
+} as const
+
+const withInternalErrorInternalError = {
+  internalErrorInternalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV5 = {
+  ...withOriginForbiddenPrivateNoStoreV2,
+  unauthorizedSignInWithGitHub: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStore },
+  invalidExpectedActorExpectedGitHubActorIs: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStore },
+  actorChangedYourAccountChangedReload: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStore },
+  ...withInternalErrorInternalError,
+} as const
+
+const withNotSignedInV2 = {
+  notSignedIn: { status: 401, error: "not_signed_in", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV4 = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV5,
+  sessionExpired: { status: 401, error: "session_expired", headers: jsonPrivateNoStore },
+  ...withNotSignedInV2,
+  fundingVaultNotFound: { status: 404, error: "funding_vault_not_found", message: "This project has no such vault on a served network.", headers: jsonPrivateNoStore },
+  paymentsUnavailable: { status: 503, error: "payments_unavailable", headers: jsonPrivateNoStore },
+} as const
+
+const withInvalidRequestS400 = {
+  invalidRequestS400: { status: 400, error: "invalid_request", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV3 = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV4,
+  ...withInvalidRequestS400,
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV2 = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV3,
+  claimNotCurrent: { status: 409, error: "claim_not_current", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStore = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV2,
+  paymentDeploymentsUnavailable: { status: 503, error: "payment_deployments_unavailable", headers: jsonPrivateNoStore },
+  unknownDeployment: { status: 400, error: "unknown_deployment", headers: jsonPrivateNoStore },
+  bindingVersionUnavailable: { status: 503, error: "binding_version_unavailable", headers: jsonPrivateNoStore },
+} as const
+
+const withRateLimitedTooManyRequestsTryAndServiceUnavailable = {
+  ...withRateLimitedTooManyRequestsTryAndServiceUnavailableV2,
+  invalidRequestInvalidLocalReturnOrigin: { status: 400, error: "invalid_request", message: "Invalid local return origin", headers: jsonNoStore },
+  invalidRequestInvalidIdentityAudience: { status: 400, error: "invalid_request", message: "Invalid identity audience", headers: jsonNoStore },
+  flowUnavailable: { status: 503, error: "flow_unavailable", message: "Internal error", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHub = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV3,
+  identityAttesterUnavailable: { status: 503, error: "identity_attester_unavailable", headers: jsonPrivateNoStore },
+  bindingNotReady: { status: 409, error: "binding_not_ready", headers: jsonPrivateNoStore },
+  bindingPendingOrRejected: { status: 409, error: "binding_pending_or_rejected", headers: jsonPrivateNoStore },
+} as const
+
+const withNotFoundS404AndHttpsRequiredV6 = {
+  notFoundS404: { status: 404, error: "not_found", headers: jsonNoStoreSlopTraceApiContract },
+  httpsRequired: { status: 400, error: "https_required", headers: jsonNoStoreSlopTraceApiContract },
+  internalErrorNoStore: { status: 500, error: "internal_error", message: "Internal error", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundS404AndHttpsRequiredV3 = {
+  ...withNotFoundS404AndHttpsRequiredV6,
+  forbiddenSameOriginOperatorSession: { status: 403, error: "forbidden", message: "Same-origin operator session is required", headers: jsonNoStoreSlopTraceApiContract },
+  originNotAllowedSameOriginAccessIs: { status: 403, error: "origin_not_allowed", message: "Same-origin access is required", headers: jsonNoStoreSlopTraceApiContract },
+  unauthorizedAuthenticationFailed: { status: 401, error: "unauthorized", message: "Authentication failed", headers: jsonNoStoreSlopTraceApiContract },
+  forbiddenOperatorAccessIsRequired: { status: 403, error: "forbidden", message: "Operator access is required", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundS404AndHttpsRequired = {
+  ...withNotFoundS404AndHttpsRequiredV3,
+  invalidContentLengthContentLengthMustContain: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonNoStoreSlopTraceApiContract },
+  payloadTooLargeRequestBodyExceeds65536: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestRequestBodyMustBeValidUTF8: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestRequestBodyMustBeNoStore: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withOriginNotAllowedV2 = {
+  originNotAllowed: { status: 403, error: "origin_not_allowed", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withForbiddenWriteAccessIsNot = {
+  forbiddenWriteAccessIsNot: { status: 403, error: "forbidden", message: "Write access is not permitted", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundS404 = {
+  ...withNotFoundS404AndHttpsRequired,
+  ...withOriginNotAllowedV2,
+  ...withForbiddenWriteAccessIsNot,
+} as const
+
+const withNotFoundWalletClaimNotFound = {
+  notFoundWalletClaimNotFound: { status: 404, error: "not_found", message: "Wallet claim not found", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundS404AndHttpsRequiredV2 = {
+  ...withNotFoundS404AndHttpsRequiredV3,
+  ...withOriginNotAllowedV2,
+  ...withNotFoundWalletClaimNotFound,
+} as const
+
+const withNotSignedIn = {
+  ...withNotSignedInV2,
+  invalidExpectedActorPrivateNoStore: { status: 400, error: "invalid_expected_actor", headers: jsonPrivateNoStore },
+  actorChangedPrivateNoStore: { status: 403, error: "actor_changed", headers: jsonPrivateNoStore },
+  internalErrorPrivateNoStore: { status: 500, error: "internal_error", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStoreAndNotSignedIn = {
+  ...withOriginForbiddenPrivateNoStoreV2,
+  ...withNotSignedIn,
+  ...withInvalidRequestS400,
+  emailUnavailable: { status: 503, error: "email_unavailable", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenNoStoreV2 = {
+  originForbiddenNoStore: { status: 403, error: "origin_forbidden", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenNoStoreAndNotSignedInS401V3 = {
+  ...withOriginForbiddenNoStoreV2,
+  notSignedInS401: { status: 401, error: "not_signed_in", headers: jsonNoStore },
+  sessionExpiredNoStore: { status: 401, error: "session_expired", headers: jsonNoStore, headersFrom: { "set-cookie": "sessionCookie(\"\", 0)" } },
+} as const
+
+const withRateLimited = {
+  rateLimited: { status: 429, error: "rate_limited", headers: jsonNoStore, headersFrom: { "retry-after": "String(admission.retryAfterSeconds)" } },
+} as const
+
+const withOriginForbiddenNoStoreAndNotSignedInS401V2 = {
+  ...withOriginForbiddenNoStoreAndNotSignedInS401V3,
+  ...withRateLimited,
+} as const
+
+const withPointsUnavailable = {
+  pointsUnavailable: { status: 503, error: "points_unavailable", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenNoStoreAndNotSignedInS401 = {
+  ...withOriginForbiddenNoStoreAndNotSignedInS401V2,
+  ...withPointsUnavailable,
+} as const
+
+const withInvalidRequestV2 = {
+  invalidRequestV2: { status: 400, error: "invalid_request", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenNoStore = {
+  ...withOriginForbiddenNoStoreAndNotSignedInS401,
+  ...withInvalidRequestV2,
+} as const
+
+const withNotFoundS404AndHttpsRequiredV5 = {
+  ...withNotFoundS404AndHttpsRequiredV6,
+  ...withOriginNotAllowedV2,
+} as const
+
+const withInvalidRequestInvalidClaimIdV2 = {
+  invalidRequestInvalidClaimId: { status: 400, error: "invalid_request", message: "Invalid claim id", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundS404AndHttpsRequiredV4 = {
+  ...withNotFoundS404AndHttpsRequiredV5,
+  ...withInvalidRequestInvalidClaimIdV2,
+  ...withNotFoundWalletClaimNotFound,
+} as const
+
+const withOriginForbiddenNoStoreAndPointsUnavailableV4 = {
+  ...withOriginForbiddenNoStoreV2,
+  ...withPointsUnavailable,
+} as const
+
+const withOriginForbiddenNoStoreAndPointsUnavailableV3 = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  notSignedInNoStore: { status: 401, error: "not_signed_in", headers: jsonNoStoreV2 },
+} as const
+
+const withOriginForbiddenNoStoreAndPointsUnavailableV2 = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV3,
+  ...withRateLimited,
+} as const
+
+const withOriginForbiddenNoStoreAndPointsUnavailable = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV2,
+  invalidRequestNoStore: { status: 400, error: "invalid_request", headers: jsonNoStoreV2 },
+} as const
+
+const withInvalidManifestV2 = {
+  invalidManifestV2: { status: 422, error: "invalid_manifest", messageFrom: "message", headers: jsonNoStoreSlopProjectApiContract },
+  securitySplitRestricted: { status: 422, error: "security_split_restricted", message: "A new bounty uses the 75/25 researcher/Slop split; an admin must approve any full-award exception", headers: jsonNoStoreSlopProjectApiContract },
+  securityContactsRestricted: { status: 422, error: "security_contacts_restricted", message: "A new bounty names its signed-in creator as its private-case contact and sponsor; verified owners can manage contacts after setup", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withOriginForbiddenNoStoreAndRateLimitedV2 = {
+  ...withOriginForbiddenNoStoreV2,
+  ...withRateLimited,
+} as const
+
+const withOriginForbiddenNoStoreAndRateLimited = {
+  ...withOriginForbiddenNoStoreAndRateLimitedV2,
+  ...withNotFoundNoStoreV2,
+} as const
+
+const withOriginNotAllowed = {
+  ...withOriginNotAllowedV2,
+  headersNotAllowed: { status: 403, error: "headers_not_allowed", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withUnsupportedChain = {
+  unsupportedChain: { status: 409, error: "unsupported_chain", message: "Wallet possession proofs currently support Solana only", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withInvalidRequestInvalidClaimId = {
+  ...withInvalidRequestInvalidClaimIdV2,
+  ...withUnsupportedChain,
+} as const
+
+const withNotFoundNoStore = {
+  ...withNotFoundNoStoreV2,
+  preflightForbidden: { status: 403, error: "preflight_forbidden", headers: jsonNoStore },
+} as const
+
+const withNotFoundApplicationNotFound = {
+  notFoundApplicationNotFound: { status: 404, error: "not_found", message: "Application not found", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+const withMethodNotAllowedPrivateNoStore = {
+  methodNotAllowedPrivateNoStore: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStore },
+} as const
+
+const withNotFoundPrivateNoStore = {
+  notFoundPrivateNoStore: { status: 404, error: "not_found", headers: jsonPrivateNoStore },
+} as const
+
+const withWalletSignatureRequired = {
+  walletSignatureRequired: { status: 403, error: "wallet_signature_required", headers: jsonPrivateNoStore },
+} as const
+
+const withInvalidRequestInvalidWalletChain = {
+  invalidRequestInvalidWalletChain: { status: 400, error: "invalid_request", message: "Invalid wallet chain", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withInvalidRequestInvalidSupersedesClaimId = {
+  invalidRequestInvalidSupersedesClaimId: { status: 400, error: "invalid_request", message: "Invalid supersedesClaimId", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const getProjects = {
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectRevisions = {
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectRevisionsByIdByRevision = {
+  notFoundRevisionNotFound: { status: 404, error: "not_found", message: "Revision not found", headers: jsonNoStoreSlopProjectApiContract },
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectAccountBans = {
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectsById = {
+  ...withNotFoundProjectNotFoundV2,
+  projectRestricted: { status: 410, error: "project_restricted", messageFrom: "`This project is ${restriction.state}. Its history stays public; its skills and participation are closed. ${appeal} with POST /api/v1/project-appeals.`", fields: ["restriction"], headers: jsonNoStoreSlopProjectApiContract },
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectGithubOwnedRepositories = {
+  ...withUnauthorized,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectGithubRepositoriesByOwnerByName = {
+  ...withUnauthorized,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectSession = {
+  ...withNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postProjects = {
+  ...withOriginForbiddenAndUnauthorized,
+  ...withInvalidManifestV2,
+  invalidReferrer: { status: 422, error: "invalid_referrer", message: "The referrer must be a GitHub login.", headers: jsonNoStoreSlopProjectApiContract },
+  ...withPersonalAccountRequired,
+  invalidReferrerNoStore: { status: 422, error: "invalid_referrer", messageFrom: "`@${value} has not signed in to slop.cash, so they cannot be recorded as the referrer. Clear the referral or ask them to sign in first.`", headers: jsonNoStoreSlopProjectApiContract },
+  invalidReferrerYouCannotReferYour: { status: 422, error: "invalid_referrer", message: "You cannot refer your own project.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidReferrerTheProjectStewardCannot: { status: 422, error: "invalid_referrer", message: "The project steward cannot be recorded as its referrer.", headers: jsonNoStoreSlopProjectApiContract },
+  invalidReferrerSlopTeamAccountsCannot: { status: 422, error: "invalid_referrer", message: "Slop team accounts cannot be recorded as referrers.", headers: jsonNoStoreSlopProjectApiContract },
+  registryConflictTheProjectIdRepository: { status: 409, error: "registry_conflict", message: "The project id, repository or restrictions changed. Reload before creating it.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const putProjectsById = {
+  ...withOriginForbidden,
+} as const
+
+export const postProjectsByIdRemove = {
+  ...withOriginForbiddenAndUnauthorizedV4,
+  ...withInvalidRequestInvalidExpectedRevision,
+  ...withGithubUnavailableNoStore,
+} as const
+
+export const getProjectSetup = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectSetupById = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  ...withNotFoundProjectNotFoundV2,
+  ...withInvalidManifestV3,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postProjectSetupByIdCheck = {
+  ...withOriginForbiddenAndUnauthorizedV4,
+  invalidRequestInvalidRequestScan: { status: 400, error: "invalid_request", message: "Invalid requestScan", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const getProjectApplicationsMine = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postProjectApplicationsByIdPublish = {
+  ...withOriginForbidden,
+  ...withNotFoundApplicationNotFound,
+  alreadyDecided: { status: 409, error: "already_decided", messageFrom: "`Application was already ${application.status}`", headers: jsonNoStoreSlopProjectApiContract },
+  ...withInvalidManifestV2,
+  registryConflictTheProjectIdRepositoryOrRestrictionsChanged: { status: 409, error: "registry_conflict", message: "The project id, repository or restrictions changed, or the application was published. Reload before retrying.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const postProjectApplicationsByIdCancel = {
+  ...withOriginForbiddenAndUnauthorizedV7,
+  ...withNotFoundApplicationNotFound,
+  applicationDecided: { status: 409, error: "application_decided", messageFrom: "`Application was already ${application.status}`", headers: jsonNoStoreSlopProjectApiContract },
+  applicationDecidedTheApplicationChangedReload: { status: 409, error: "application_decided", message: "The application changed. Reload before retrying.", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const getAdminProjects = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  ...withForbidden,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const putAdminProjectsByIdManifest = {
+  ...withOriginForbiddenAndUnauthorizedV3,
+  ...withForbidden,
+  ...withNotFoundProjectNotFound,
+  ...withInvalidRequestReasonMustBe1To1000Characters,
+  invalidManifestAReviewBudgetCannot: { status: 422, error: "invalid_manifest", message: "A review budget cannot be added or funded while the contributor pool cap shrinks", headers: jsonNoStoreSlopProjectApiContract },
+  invalidManifestAReviewBudgetCannotAffectAnOpen: { status: 422, error: "invalid_manifest", message: "A review budget cannot affect an open or past cycle", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const postAdminProjectsByIdEnforcementPreview = {
+  ...withOriginForbiddenAndUnauthorizedV2,
+} as const
+
+export const postAdminProjectsByIdEnforcement = {
+  ...withOriginForbiddenAndUnauthorizedV2,
+} as const
+
+export const postProjectAppeals = {
+  ...withOriginForbiddenAndUnauthorizedV5,
+  invalidRequestUnsupportedAppealScope: { status: 400, error: "invalid_request", message: "Unsupported appeal scope", headers: jsonNoStoreSlopProjectApiContract },
+  forbiddenOnlyACurrentlyBanned: { status: 403, error: "forbidden", message: "Only a currently banned account can file an account appeal", headers: jsonNoStoreSlopProjectApiContract },
+  forbiddenOnlyTheProjectSteward: { status: 403, error: "forbidden", message: "Only the project steward, the account that listed the project, or an account banned by this project decision can appeal", headers: jsonNoStoreSlopProjectApiContract },
+} as const
+
+export const getProjectAppeals = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postReferralsCode = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV5,
+  invalidRequestPrivateNoStore: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonPrivateNoStore },
+  invalidRequestRequestBodyHasUnexpectedFields: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonPrivateNoStore },
+  invalidCode: { status: 422, error: "invalid_code", message: "Use 3 to 32 letters, digits, hyphens or underscores, starting and ending with a letter or digit.", headers: jsonPrivateNoStore },
+  teamAccount: { status: 422, error: "team_account", message: "Slop team accounts cannot be recorded as referrers.", headers: jsonPrivateNoStore },
+  reservedCode: { status: 422, error: "reserved_code", message: "That name is reserved. Choose another.", headers: jsonPrivateNoStore },
+  codeTaken: { status: 409, error: "code_taken", message: "That name is taken. Choose another.", headers: jsonPrivateNoStore },
+  githubRateLimitedInternalError: { status: 503, error: "github_rate_limited", message: "Internal error", headers: jsonPrivateNoStore },
+  githubUnavailablePrivateNoStore: { status: 502, error: "github_unavailable", message: "Internal error", headers: jsonPrivateNoStore },
+  codeIsGithubAccount: { status: 409, error: "code_is_github_account", message: "That name is another GitHub account. Choose another.", headers: jsonPrivateNoStore },
+  codeLimit: { status: 409, error: "code_limit", message: "You have used all 5 of your names. Choose one you used before.", headers: jsonPrivateNoStore },
+} as const
+
+export const getReferralsProjects = {
+  notFoundPublicMaxAge300: { status: 404, error: "not_found", headers: jsonPublicMaxAge300 },
+  ...withInternalErrorInternalError,
+  otherMethods: {
+    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
+  },
+} as const
+
+export const getNotificationsEmail = {
+  ...withNotSignedIn,
+  otherMethods: {
+    ...withMethodNotAllowedPrivateNoStore,
+  },
+} as const
+
+export const postNotificationsEmail = {
+  ...withOriginForbiddenPrivateNoStoreAndNotSignedIn,
+  verificationChanged: { status: 409, error: "verification_changed", headers: jsonPrivateNoStore },
+  preferenceChanged: { status: 409, error: "preference_changed", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withMethodNotAllowedPrivateNoStore,
+  },
+} as const
+
+export const postNotificationsEmailVerification = {
+  ...withOriginForbiddenPrivateNoStoreAndNotSignedIn,
+  idempotencyConflict: { status: 409, error: "idempotency_conflict", headers: jsonPrivateNoStore },
+  verificationRateLimited: { status: 429, error: "verification_rate_limited", fields: ["retryAfter"], headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withMethodNotAllowedPrivateNoStore,
+  },
+} as const
+
+export const postNotificationsEmailVerify = {
+  ...withOriginForbiddenPrivateNoStoreAndNotSignedIn,
+  verificationInvalid: { status: 409, error: "verification_invalid", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withMethodNotAllowedPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsRegister = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV4,
+  invalidWallet: { status: 400, error: "invalid_wallet", headers: jsonPrivateNoStore },
+  staleWalletClaim: { status: 409, error: "stale_wallet_claim", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsChallenge = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV2,
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsAuthorize = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHubV2,
+  ...withWalletSignatureRequired,
+  challengeConsumed: { status: 409, error: "challenge_consumed", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsBindChallenge = {
+  ...withOriginForbiddenPrivateNoStore,
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsBindAuthorize = {
+  ...withOriginForbiddenPrivateNoStore,
+  authorizationExpiresTooSoon: { status: 400, error: "authorization_expires_too_soon", headers: jsonPrivateNoStore },
+  authorizationExpiresTooLate: { status: 400, error: "authorization_expires_too_late", headers: jsonPrivateNoStore },
+  ...withWalletSignatureRequired,
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsSolanaBindPrepare = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHub,
+  bindingDeploymentUnavailable: { status: 503, error: "binding_deployment_unavailable", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const postPaymentsWalletsSolanaBindComplete = {
+  ...withOriginForbiddenPrivateNoStoreAndUnauthorizedSignInWithGitHub,
+  otherMethods: {
+    ...withNotFoundPrivateNoStore,
+  },
+} as const
+
+export const getPointsXProfile = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  invalidActor: { status: 400, error: "invalid_actor", headers: jsonNoStoreV2 },
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimitedV2,
+  },
+} as const
+
+export const getPointsXCallback = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimitedV2,
+  },
+} as const
+
+export const getPointsXMe = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV3,
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimitedV2,
+  },
+} as const
+
+export const postPointsXStart = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailable,
+  xNotConfigured: { status: 503, error: "x_not_configured", headers: jsonNoStoreV2 },
+} as const
+
+export const postPointsXDisconnect = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV2,
+} as const
+
+export const postPointsXVisibility = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailable,
+  publicVisibilityRequired: { status: 409, error: "public_visibility_required", headers: jsonNoStoreV2 },
+  notConnected: { status: 404, error: "not_connected", headers: jsonNoStoreV2 },
+} as const
+
+export const getPointsPeople = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  invalidCursor: { status: 400, error: "invalid_cursor", headers: jsonNoStore },
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimited,
+  },
+} as const
+
+export const postPointsJoin = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  ...withRateLimited,
+  ...withInvalidRequestV2,
+  identityExpired: { status: 401, error: "identity_expired", headers: jsonNoStore },
+  invalidIdentity: { status: 401, error: "invalid_identity", headers: jsonNoStore },
+  accountClosed: { status: 409, error: "account_closed", fields: ["closedAt"], headers: jsonNoStore },
+  accountClosedNoStore: { status: 409, error: "account_closed", fields: ["closedAt"], headers: jsonNoStore },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const getPointsMe = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndNotSignedInS401V2,
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const getPointsSessions = {
+  ...withOriginForbiddenNoStoreAndNotSignedInS401V3,
+  ...withPointsUnavailable,
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimited,
+  },
+} as const
+
+export const postPointsSessionsRevoke = {
+  ...withOriginForbiddenNoStore,
+  invalidSession: { status: 400, error: "invalid_session", headers: jsonNoStore },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const postPointsAccountClose = {
+  ...withOriginForbiddenNoStore,
+  confirmationMismatch: { status: 400, error: "confirmation_mismatch", headers: jsonNoStore },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const postPointsSignout = {
+  ...withOriginForbiddenNoStoreAndNotSignedInS401,
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const postPointsVisibility = {
+  ...withOriginForbiddenNoStore,
+  publicVisibilityRequiredNoStore: { status: 409, error: "public_visibility_required", headers: jsonNoStore },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const getPointsMember = {
+  ...withOriginForbiddenNoStoreAndPointsUnavailableV4,
+  invalidLogin: { status: 400, error: "invalid_login", headers: jsonNoStore },
+  otherMethods: {
+    ...withOriginForbiddenNoStoreAndRateLimited,
+  },
+} as const
+
+export const getWalletClaimsActorsByGithubIdCurrent = {
+  ...withNotFoundS404AndHttpsRequiredV5,
+  invalidRequestInvalidGitHubActorId: { status: 400, error: "invalid_request", message: "Invalid GitHub actor id", headers: jsonNoStoreSlopTraceApiContract },
+  ...withInvalidRequestInvalidWalletChain,
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const getWalletClaimsByIdPossession = {
+  ...withNotFoundS404AndHttpsRequiredV4,
+  ...withUnsupportedChain,
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const getWalletClaimsById = {
+  ...withNotFoundS404AndHttpsRequiredV4,
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const getWalletClaimsCurrent = {
+  ...withNotFoundS404AndHttpsRequiredV2,
+  ...withInvalidRequestInvalidWalletChain,
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const postWalletClaims = {
+  ...withNotFoundS404,
+  ...withInvalidRequestInvalidWalletChain,
+  invalidRequestV3: { status: 400, error: "invalid_request", messageFrom: "chainFamily(chain) === \"evm\" ? \"Invalid EVM address\" : \"Invalid Solana address\"", headers: jsonNoStoreSlopTraceApiContract },
+  ...withInvalidRequestInvalidSupersedesClaimId,
+  staleWalletClaimWalletClaimChangedReload: { status: 409, error: "stale_wallet_claim", message: "Wallet claim changed; reload the current claim before submitting", headers: jsonNoStoreSlopTraceApiContract },
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const postWalletClaimsByIdPossessionChallenge = {
+  ...withNotFoundS404AndHttpsRequiredV2,
+  ...withForbiddenWriteAccessIsNot,
+  ...withInvalidRequestInvalidClaimId,
+  addressNotSignable: { status: 409, error: "address_not_signable", message: "This destination is off the Ed25519 curve and cannot produce a signature", headers: jsonNoStoreSlopTraceApiContract },
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const postWalletClaimsByIdPossession = {
+  ...withNotFoundS404,
+  ...withInvalidRequestInvalidClaimId,
+  ...withNotFoundWalletClaimNotFound,
+  invalidRequestInvalidPossessionChallenge: { status: 400, error: "invalid_request", message: "Invalid possession challenge", headers: jsonNoStoreSlopTraceApiContract },
+  possessionChallengeUnavailable: { status: 409, error: "possession_challenge_unavailable", message: "Possession challenge is unknown, expired, already used, or bound elsewhere", headers: jsonNoStoreSlopTraceApiContract },
+  invalidPossessionProof: { status: 400, error: "invalid_possession_proof", messageFrom: "error instanceof Error ? error.message : \"Invalid possession proof\"", headers: jsonNoStoreSlopTraceApiContract },
+  invalidPossessionProofWalletPossessionChallengeWindow: { status: 400, error: "invalid_possession_proof", message: "Wallet possession challenge window differs from the issued challenge", headers: jsonNoStoreSlopTraceApiContract },
+  possessionChallengeUnavailablePossessionAttestationChangedReload: { status: 409, error: "possession_challenge_unavailable", message: "Possession attestation changed; reload the claim before submitting", headers: jsonNoStoreSlopTraceApiContract },
+  otherMethods: {
+    ...withOriginNotAllowed,
+  },
+} as const
+
+export const postOperatorWalletClaims = {
+  ...withNotFoundS404AndHttpsRequired,
+  invalidRequestInvalidGithubActorId: { status: 400, error: "invalid_request", message: "Invalid githubActorId", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidGithubLogin: { status: 400, error: "invalid_request", message: "Invalid githubLogin", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidSolanaAddress: { status: 400, error: "invalid_request", message: "Invalid Solana address", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidObservedAt: { status: 400, error: "invalid_request", message: "Invalid observedAt", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestWalletObservationCannotBe: { status: 400, error: "invalid_request", message: "Wallet observation cannot be in the future", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidSourceBodySha256: { status: 400, error: "invalid_request", message: "Invalid sourceBodySha256", headers: jsonNoStoreSlopTraceApiContract },
+  ...withInvalidRequestInvalidSupersedesClaimId,
+  invalidRequestInvalidWalletClaimSource: { status: 400, error: "invalid_request", message: "Invalid wallet claim source", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidGitHubIssueSource: { status: 400, error: "invalid_request", message: "Invalid GitHub issue source", headers: jsonNoStoreSlopTraceApiContract },
+  claimConflict: { status: 409, error: "claim_conflict", message: "Wallet claim conflicts", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const getReferralByCode = {
+  thisReferralLinkIs: { status: 503, text: "This referral link is unavailable. Retry.", headers: textNoStorePlain },
+  otherMethods: {
+    methodNotAllowedNoStore: { status: 405, text: "Method not allowed", headers: textNoStorePlain },
+  },
+} as const
+
+export const identityPostV1LocalStart = {
+  ...withRateLimitedTooManyRequestsTryAndServiceUnavailable,
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const identityPostV1LocalPoll = {
+  ...withRateLimitedTooManyRequestsTry,
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const identityPostV1OauthStart = {
+  ...withRateLimitedTooManyRequestsTryAndServiceUnavailable,
+  ...withOriginForbiddenNoStoreV2,
+  otherMethods: {
+    ...withNotFoundNoStore,
+  },
+} as const
+
+export const identityGetV1OauthAuthorize = {
+  ...withHttpsRequiredNoStoreAndNotFoundNoStore,
+  invalidRequestInvalidAuthorizationLink: { status: 400, error: "invalid_request", message: "Invalid authorization link", headers: jsonNoStore },
+  flowExpired: { status: 410, error: "flow_expired", message: "Authorization flow is unavailable", headers: jsonNoStore },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const identityGetV1OauthCallback = {
+  ...withHttpsRequiredNoStoreAndNotFoundNoStore,
+  signInFailed: { status: 400, html: { title: "Sign-in failed", message: "The sign-in response was invalid or expired." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  signInExpired: { status: 410, html: { title: "Sign-in expired", message: "Start sign-in again from Slop or your terminal." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  signInFailedGitHubIdentityCouldNot: { status: 502, html: { title: "Sign-in failed", message: "GitHub identity could not be verified." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  signInFailedGitHubAccountIdentityIs: { status: 502, html: { title: "Sign-in failed", message: "GitHub account identity is incomplete." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  signInExpiredTheSignInTook: { status: 410, html: { title: "Sign-in expired", message: "The sign-in took too long. Start again from your original tab or terminal." }, headers: htmlNoStore, headersFrom: { "content-security-policy": "`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`" } },
+  otherMethods: {
+    ...withNotFoundNoStoreV2,
+  },
+} as const
+
+export const identityPostV1OauthPoll = {
+  ...withRateLimitedTooManyRequestsTry,
+  ...withOriginForbiddenNoStoreV2,
+  otherMethods: {
+    ...withNotFoundNoStore,
+  },
+} as const
+
+export const identityPostV1AssertionsConsume = {
+  ...withHttpsRequiredNoStore,
+  unauthorizedIdentityAssertionIsInvalid: { status: 401, error: "unauthorized", message: "Identity assertion is invalid", headers: jsonNoStore },
+  invalidRequestInvalidAssertionAudience: { status: 400, error: "invalid_request", message: "Invalid assertion audience", headers: jsonNoStore },
+  unauthorizedIdentityAssertionIsInvalidUsedOrExpired: { status: 401, error: "unauthorized", message: "Identity assertion is invalid, used, or expired", headers: jsonNoStore },
+} as const

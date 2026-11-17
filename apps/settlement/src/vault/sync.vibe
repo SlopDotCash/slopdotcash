@@ -1,0 +1,31 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import type { NetworkKey } from "../kernels/networks.ts"
+import { scanEvmPayments } from "../scan/evm.vibe"
+import { scanSolanaPayments } from "../scan/solana.vibe"
+import { type RegisteredDeployment, registryDeployments } from "./deployments.vibe"
+import type { PolicyScope } from "./policy.vibe"
+import { refreshVaultSnapshots } from "./refresh.vibe"
+
+export interface SyncedVaults {
+  readonly deployments: ReadonlyArray<RegisteredDeployment>
+  readonly failures: ReadonlyArray<string>
+}
+
+function described(error: { readonly _tag: string; readonly message?: unknown; readonly failures?: unknown }): ReadonlyArray<string> {
+  if (Array.isArray(error.failures)) return error.failures.filter((failure): failure is string => typeof failure === "string")
+  return [typeof error.message === "string" ? `${error._tag}: ${error.message}` : error._tag]
+}
+
+export effect function syncRegistryVaults(networks: ReadonlyArray<NetworkKey>, scope: PolicyScope) {
+  const registry = try registryDeployments(networks, scope)
+  const failures: string[] = registry.failures.map((failure) => failure.message)
+  const refreshed = refreshVaultSnapshots(registry.deployments) catch (error) => described(error)
+  if (refreshed !== undefined) failures.push(...refreshed)
+  for (const deployment of registry.deployments) {
+    const scanned = deployment.family === "evm"
+      ? scanEvmPayments(deployment) catch (error) => described(error)
+      : scanSolanaPayments(deployment) catch (error) => described(error)
+    if (Array.isArray(scanned)) failures.push(...scanned)
+  }
+  return { deployments: registry.deployments, failures } satisfies SyncedVaults
+}

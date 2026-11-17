@@ -1,0 +1,96 @@
+// spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"
+import { randomId } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { Wallets } from "@repo/ports/backend"
+import type { Job } from "@repo/platform/worker"
+import { type Wallet, actorAccrued, actors, canAccrueNext, pinnedWallet } from "../../gen/settlement__referralAccrual.effect.vibe"
+import { fromAmount } from "../kernels/amounts.ts"
+import { formatPeriod } from "../kernels/calendar.ts"
+import { type Accruing, ReferralProgram } from "./config.vibe"
+import { type Book, LeaseLost, abandonMonth, accrueNext, acquireLease, beginMonth, fileMonth, openBook, programSetup, releaseLease } from "./accrual.vibe"
+import { pendingPeriods, periodOf } from "./periods.ts"
+import { ReferralAttributions, freezeMonth } from "./source.vibe"
+
+export error WalletMalformed { githubId: string }
+
+export interface Filed {
+  readonly period: string
+  readonly epoch: number
+  readonly rows: number
+  readonly leafCount: number
+}
+
+export type FilingRun =
+  | { readonly status: "off" }
+  | { readonly status: "locked" }
+  | { readonly status: "ran"; readonly filed: ReadonlyArray<Filed> }
+
+const evmAddress = /^0x[0-9a-f]{40}$/u
+
+schema Authorization {
+  readonly authorized: number
+}
+
+effect function authorizedClaim(githubId: string, claimId: string) {
+  const row = try first(Authorization, sql`SELECT EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = ${claimId} AND a.github_user_id = ${githubId}) AS authorized`)
+  return row?.authorized === 1
+}
+
+export effect function claimWallets(book: Book) {
+  const wallets = try Wallets
+  const found: Wallet[] = []
+  for (const actor of actors(book.state)) {
+    if (pinnedWallet(book.state.pins, actor) !== "" || fromAmount(actorAccrued(book.state, actor)) === 0n) continue
+    const githubId = String(actor)
+    const effective = try wallets.effective({ githubId, network: "Robinhood" })
+    if (effective === undefined) continue
+    const authorized = try authorizedClaim(githubId, effective.claimId)
+    const address = effective.address.toLowerCase()
+    if (authorized && !evmAddress.test(address)) throw new WalletMalformed({ githubId })
+    found.push({ actor, wallet: address, authorized })
+  }
+  return found
+}
+
+effect function fileMonths(accruing: Accruing, mode: "DryRun" | "Posting", runId: string) {
+  const attributions = try (try ReferralAttributions).referred()
+  let book = try openBook(try programSetup(accruing, mode, attributions))
+  const next = periodOf(book.state.nextPeriod)
+  if (next === undefined) return []
+  const now = try Clock.currentTimeMillis
+  const filed: Filed[] = []
+  for (const period of try orDie(Effect.try(() => pendingPeriods(next, now)))) {
+    book = try beginMonth(book, try freezeMonth(period, accruing.excluded), runId)
+    while (canAccrueNext(book.state)) book = try accrueNext(book)
+    const wallets = try claimWallets(book)
+    const before = book
+    book = fileMonth(before, wallets, runId) catch effect (error) => match (error) {
+      when LeaseLost: throw (try abandoned(before, runId, error));
+      default: throw error;
+    }
+    const filing = book.state.filings[book.state.filings.length - 1]
+    const kept = new Set(filing?.entries.map((entry) => entry.actor) ?? [])
+    for (const wallet of wallets)
+      if (wallet.authorized && !kept.has(wallet.actor)) try Effect.logWarning("referral_wallet_shared", { period: formatPeriod(period), wallet: wallet.wallet, droppedGithubId: String(wallet.actor) })
+    const entry = { period: formatPeriod(period), epoch: book.state.filings.length - 1, rows: filing?.recordCount ?? 0, leafCount: filing?.entries.length ?? 0 }
+    try Effect.logInfo("referral_accrual_filed", { ...entry, mode })
+    filed.push(entry)
+  }
+  return filed
+}
+
+effect function abandoned(book: Book, runId: string, lost: LeaseLost) {
+  try abandonMonth(book, runId)
+  return lost
+}
+
+export effect function fileClosedMonths() {
+  const { program } = try ReferralProgram
+  if (program.mode === "Off") return { status: "off" } satisfies FilingRun
+  const runId = `rrun_${try randomId()}`
+  if (!(try acquireLease(runId))) return { status: "locked" } satisfies FilingRun
+  const filed = try ensuring(fileMonths(program.ledger, program.mode, runId), effect { releaseLease(runId) catch () => undefined })
+  return { status: "ran", filed } satisfies FilingRun
+}
+
+export const filingJob: Job = { name: "referral-accrual-filing", run: () => effect { try fileClosedMonths() } }

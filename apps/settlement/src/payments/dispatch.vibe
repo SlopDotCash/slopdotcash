@@ -1,0 +1,298 @@
+// spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held"; spec/settlement/composition.md, "Current and historical consent belong to the shared outbox"
+import type { Fetcher } from "@repo/platform/bindings"
+import { serviceClient } from "@repo/platform/binding"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { type Decision, load, update } from "@repo/platform/stored"
+import { Registry } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { type DeliveryUpdate, type Settlement, apply as applySettlement } from "../../gen/settlement__composition.effect.vibe"
+import { type Dispatch, type DispatchRequest, type Event as DispatchEvent, apply as applyDispatch, attempt, canPark, noBinding, request } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { projectionFor } from "./ledger.vibe"
+import { type ObligationRows, type Projected, type Projection, leaseHorizon, obligationAggregate, outboxStates, ownToken, project } from "./obligation.vibe"
+import { type PaymentDeployment, type VaultAsset, bindingOf, failureTag, networkOf } from "./terms.vibe"
+
+export type Family = "evm" | "solana"
+
+export interface PaymentRequest {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+  readonly idempotencyKey: string
+}
+
+export interface AttemptIdentity {
+  readonly idempotencyKey: string
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+}
+
+export schema Submitted {
+  readonly transactionId: string
+}
+
+export schema AttemptStatus {
+  readonly transactionId: string | null
+  readonly submitted?: boolean
+}
+
+export schema Retirement {
+  readonly retired: boolean
+  readonly transactionId: string | null
+  readonly submitted?: boolean
+}
+
+export error ExecutorUnavailable { reason: string }
+
+export service PaymentExecutor {
+  submit(family: Family, request: PaymentRequest): Submitted!ExecutorUnavailable
+  status(family: Family, attempt: AttemptIdentity): AttemptStatus!ExecutorUnavailable
+  cancelUnsubmitted(family: Family, attempt: AttemptIdentity): Retirement!ExecutorUnavailable
+}
+
+export interface ExecutorBindings {
+  readonly evm?: Fetcher
+  readonly solana?: Fetcher
+}
+
+const executorOrigin = "https://payments-executor.internal"
+const answerBytes = 64 * 1024
+
+export function executors(bindings: ExecutorBindings) {
+  const clients = {
+    evm: bindings.evm === undefined ? undefined : serviceClient(bindings.evm, { binding: "EVM_PAYMENT_EXECUTOR", origin: executorOrigin }),
+    solana: bindings.solana === undefined ? undefined : serviceClient(bindings.solana, { binding: "SOLANA_PAYMENT_EXECUTOR", origin: executorOrigin }),
+  }
+  function call<T>(family: Family, path: `/${string}`, body: unknown, answer: Schema.ConstraintDecoder<T>, headers: Readonly<Record<string, string>>) {
+    return effect {
+      const client = clients[family]
+      if (client === undefined) throw new ExecutorUnavailable({ reason: "Chain execution service unavailable" })
+      return client.call("POST", path, body, answer, answerBytes, headers) catch effect () => { throw new ExecutorUnavailable({ reason: `Payment execution service rejected ${path}` }) }
+    }
+  }
+  return Layer.succeed(PaymentExecutor, {
+    submit: (family, payment) => effect {
+      const answer = try call(family, "/v1/pay", payment, Submitted, { "idempotency-key": payment.idempotencyKey })
+      if (answer.transactionId === "") throw new ExecutorUnavailable({ reason: "Missing transaction identity" })
+      return answer
+    },
+    status: (family, identity) => call(family, "/v1/attempt-status", identity, AttemptStatus, {}),
+    cancelUnsubmitted: (family, identity) => call(family, "/v1/cancel-unsubmitted", identity, Retirement, {}),
+  })
+}
+
+export error DispatchFailed { failures: ReadonlyArray<string> }
+
+export type Dispatched = "Submitted" | "Unavailable"
+
+const leaseSeconds = 60
+
+effect function heldNotices(deployment: PaymentDeployment, obligationId: string, githubUserId: string, heldAt: string) {
+  if (deployment.scope !== "Ordinary") return []
+  const project = try (try Registry).project(deployment.projectId)
+  const contributor = { eventKey: `payout-held:${obligationId}:${heldAt}`, recipientGithubId: githubUserId, kind: "PayoutHeld" as const, subject: deployment.projectId, actionPath: "/earnings", sourceAt: heldAt }
+  const steward = project === undefined || !/^[1-9][0-9]*$/u.test(project.stewardGithubId) ? [] : [{ eventKey: `payout-exception:${obligationId}:${heldAt}`, recipientGithubId: project.stewardGithubId, kind: "PayoutException" as const, subject: deployment.projectId, actionPath: `/projects/${deployment.projectId}`, sourceAt: heldAt }]
+  return try (try Notices).statements({ notices: [contributor, ...steward] })
+}
+
+effect function delivered(current: Settlement, update: DeliveryUpdate) {
+  return applySettlement(current, { type: "updateDelivery", update }) catch () => undefined
+}
+
+effect function stepped(current: Dispatch, event: DispatchEvent) {
+  return applyDispatch(current, event) catch () => undefined
+}
+
+interface Leased {
+  readonly deployment: PaymentDeployment
+  readonly asset: VaultAsset
+  readonly obligationId: string
+  readonly lease: string
+}
+
+effect function projected(leased: Leased, rows: ObligationRows, requests: ReadonlyArray<DispatchRequest>) {
+  const row = rows.obligation
+  if (row === undefined || row.state !== "reserved") return undefined
+  const projection: Projection = { ...try projectionFor(leased.deployment, leased.asset, row.github_user_id, leased.lease), requests }
+  return try project(projection, rows)
+}
+
+effect function acquire(leased: Leased) {
+  return try update(obligationAggregate(leased.obligationId), (rows) => effect {
+    const current = try projected(leased, rows, [])
+    if (current === undefined || (try delivered(current.settlement, { tag: "TakeLease", token: leaseHorizon + 1 })) === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const millis = try Clock.currentTimeMillis
+    const now = try isoAt(millis)
+    const until = try isoAt(millis + leaseSeconds * 1000)
+    return { value: true, writes: [sql`UPDATE payment_outbox SET state = 'processing', lease_token = ${leased.lease}, lease_until = ${until}, updated_at = ${now} WHERE obligation_id = ${leased.obligationId} AND (state = 'ready' OR (state = 'processing' AND lease_until < ${now}))`] } satisfies Decision<boolean>
+  })
+}
+
+const leaseRead: DispatchRequest = { token: ownToken, phase: "LeaseRead", binding: noBinding, key: "" }
+
+effect function capture(leased: Leased) {
+  const { state } = try load(obligationAggregate(leased.obligationId))
+  const current = try projected(leased, state, [leaseRead])
+  if (current === undefined) return undefined
+  const next = try delivered(current.settlement, { tag: "CaptureClaim", token: ownToken })
+  return next === undefined ? undefined : request(next.delivery, ownToken)
+}
+
+type Prepared = { readonly kind: "Park" } | { readonly kind: "Send"; readonly request: DispatchRequest; readonly projected: Projected } | { readonly kind: "Lost" }
+
+const lost: Prepared = { kind: "Lost" }
+const parked: Prepared = { kind: "Park" }
+
+function sending(sent: DispatchRequest, current: Projected): Prepared {
+  return { kind: "Send", request: sent, projected: current }
+}
+
+effect function prepare(leased: Leased, claimed: DispatchRequest, key: string) {
+  return try update(obligationAggregate(leased.obligationId), (rows) => effect {
+    const current = try projected(leased, rows, [claimed])
+    if (current === undefined) return { value: lost, writes: [] } satisfies Decision<Prepared>
+    const delivery = current.settlement.delivery
+    const now = try isoNow()
+    if (canPark(delivery, ownToken)) {
+      const after = try stepped(delivery, { type: "park", token: ownToken })
+      if (after === undefined) return { value: lost, writes: [] } satisfies Decision<Prepared>
+      const state = after.queue === "Ready" ? "ready" : "held"
+      const writes: Statement[] = [sql`UPDATE payment_outbox SET state = ${state}, lease_token = NULL, lease_until = NULL, updated_at = ${now} WHERE obligation_id = ${leased.obligationId} AND lease_token = ${leased.lease}`]
+      if (state === "held") writes.push(...try heldNotices(leased.deployment, leased.obligationId, current.reservation.githubUserId, now))
+      return { value: parked, writes } satisfies Decision<Prepared>
+    }
+    if (claimed.key !== "") {
+      const reused = try stepped(delivery, { type: "reuse", token: ownToken })
+      if (reused === undefined) return { value: lost, writes: [] } satisfies Decision<Prepared>
+      return { value: sending(request(reused, ownToken), current), writes: [] } satisfies Decision<Prepared>
+    }
+    const next = try delivered(current.settlement, { tag: "PrepareKey", token: ownToken, key })
+    if (next === undefined) return { value: lost, writes: [] } satisfies Decision<Prepared>
+    return {
+      value: sending(request(next.delivery, ownToken), current),
+      writes: [sql`INSERT INTO payment_attempts (id, obligation_id, claim_id, created_at, state) SELECT ${key}, ${leased.obligationId}, ${claimed.binding.claim}, ${now}, 'prepared' WHERE EXISTS (SELECT 1 FROM payment_outbox WHERE obligation_id = ${leased.obligationId} AND state = 'processing' AND lease_token = ${leased.lease})`],
+    } satisfies Decision<Prepared>
+  })
+}
+
+effect function ambiguous(leased: Leased, sent: DispatchRequest) {
+  return try update(obligationAggregate(leased.obligationId), (rows) => effect {
+    const current = try projected(leased, rows, [sent])
+    if (current === undefined || (try delivered(current.settlement, { tag: "NoteAmbiguity", token: ownToken })) === undefined) return { value: undefined, writes: [] } satisfies Decision<undefined>
+    const now = try isoNow()
+    return {
+      value: undefined,
+      writes: [
+        sql`UPDATE payment_attempts SET state = 'unknown' WHERE id = ${sent.key} AND state IN ('prepared', 'unknown')`,
+        sql`UPDATE payment_outbox SET state = 'ready', lease_token = NULL, lease_until = NULL, updated_at = ${now} WHERE obligation_id = ${leased.obligationId} AND lease_token = ${leased.lease}`,
+      ],
+    } satisfies Decision<undefined>
+  })
+}
+
+effect function succeeded(leased: Leased, sent: DispatchRequest, transaction: string) {
+  return try update(obligationAggregate(leased.obligationId), (rows) => effect {
+    const current = try projected(leased, rows, [sent])
+    if (current === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const next = try delivered(current.settlement, { tag: "NoteSuccess", token: ownToken, tx: transaction })
+    if (next === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const accepted = attempt(next.delivery, sent.key).tx === transaction
+    const owned = current.settlement.delivery.token === ownToken && current.settlement.delivery.queue === "Processing"
+    const now = try isoNow()
+    const writes: Statement[] = []
+    if (accepted) writes.push(sql`UPDATE payment_attempts SET state = 'submitted', transaction_id = ${transaction} WHERE id = ${sent.key} AND ((transaction_id IS NULL AND state IN ('prepared', 'unknown', 'submitted', 'failed')) OR (transaction_id = ${transaction} AND state IN ('prepared', 'unknown', 'submitted')))`)
+    if (owned) writes.push(sql`UPDATE payment_outbox SET state = ${outboxStates[accepted ? "Submitted" : "Held"]}, lease_token = NULL, lease_until = NULL, updated_at = ${now} WHERE obligation_id = ${leased.obligationId} AND lease_token = ${leased.lease}`)
+    if (owned && !accepted) writes.push(...try heldNotices(leased.deployment, leased.obligationId, current.reservation.githubUserId, now))
+    return { value: accepted, writes } satisfies Decision<boolean>
+  })
+}
+
+export effect function dispatchPayment(deployment: PaymentDeployment, asset: VaultAsset, obligationId: string) {
+  const leased = { deployment, asset, obligationId, lease: try randomId() } satisfies Leased
+  if (!(try acquire(leased))) return "Unavailable" satisfies Dispatched
+  const claimed = try capture(leased)
+  if (claimed === undefined) return "Unavailable" satisfies Dispatched
+  const prepared = try prepare(leased, claimed, try randomId())
+  if (prepared.kind !== "Send") return "Unavailable" satisfies Dispatched
+  const sent = prepared.request
+  const wallet = prepared.projected.settlement.delivery.wallet
+  const payment = {
+    obligationId,
+    network: deployment.network,
+    vault: deployment.vault,
+    githubUserId: prepared.projected.reservation.githubUserId,
+    claimId: sent.binding.claim,
+    claimDigest: sent.binding.digest,
+    destination: sent.binding.address === "" ? wallet.address : sent.binding.address,
+    idempotencyKey: sent.key,
+  } satisfies PaymentRequest
+  const executor = try PaymentExecutor
+  const answer = executor.submit(deployment.family, payment) catch effect (error) => {
+    try ambiguous(leased, sent)
+    throw error
+  }
+  if (!(try succeeded(leased, sent, answer.transactionId))) throw new ExecutorUnavailable({ reason: "Submitted transaction conflicts with the recorded attempt" })
+  return "Submitted" satisfies Dispatched
+}
+
+schema DueRow {
+  readonly obligation_id: string
+}
+
+schema ReleasableRow {
+  readonly id: string
+}
+
+effect function releaseOne(deployment: PaymentDeployment, asset: VaultAsset, obligationId: string) {
+  return try update(obligationAggregate(obligationId), (rows) => effect {
+    const row = rows.obligation
+    if (row === undefined || row.state !== "reserved") return { value: false, writes: [] } satisfies Decision<boolean>
+    const projection = try projectionFor(deployment, asset, row.github_user_id)
+    const wallet = projection.effective
+    if (wallet === undefined) return { value: false, writes: [] } satisfies Decision<boolean>
+    const current = try project(projection, rows)
+    const before = current.settlement.delivery.queue
+    if (before !== "NeedsWallet" && before !== "Held") return { value: false, writes: [] } satisfies Decision<boolean>
+    const next = try delivered(current.settlement, { tag: "SetWallet", ...bindingOf(deployment.chain, wallet) })
+    if (next === undefined || next.delivery.queue !== "Ready") return { value: false, writes: [] } satisfies Decision<boolean>
+    const now = try isoNow()
+    return {
+      value: true,
+      writes: [before === "NeedsWallet"
+        ? sql`INSERT INTO payment_outbox (obligation_id, state, updated_at) VALUES (${obligationId}, 'ready', ${now})`
+        : sql`UPDATE payment_outbox SET state = 'ready', updated_at = ${now} WHERE obligation_id = ${obligationId} AND state = 'held'`],
+    } satisfies Decision<boolean>
+  })
+}
+
+export effect function releaseAuthorized(deployment: PaymentDeployment, asset: VaultAsset) {
+  const candidates = try rows(ReleasableRow, sql`SELECT o.id FROM payment_obligations o LEFT JOIN payment_outbox q ON q.obligation_id = o.id WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND o.state = 'reserved' AND (q.obligation_id IS NULL OR q.state = 'held') ORDER BY o.rowid`)
+  let released = 0
+  for (const candidate of candidates) if (try releaseOne(deployment, asset, candidate.id)) released = released + 1
+  return released
+}
+
+export interface ServedVault {
+  readonly deployment: PaymentDeployment
+  readonly asset: VaultAsset
+}
+
+export effect function runPaymentDispatch(vaults: ReadonlyArray<ServedVault>) {
+  const failures: string[] = []
+  const now = try isoNow()
+  for (const served of vaults) {
+    const { deployment, asset } = served
+    const due = try rows(DueRow, sql`SELECT b.obligation_id FROM payment_outbox b JOIN payment_obligations o ON o.id = b.obligation_id WHERE o.project_id = ${deployment.projectId} AND o.network = ${deployment.network} AND o.vault = ${deployment.vault} AND (b.state = 'ready' OR (b.state = 'processing' AND b.lease_until < ${now})) ORDER BY b.updated_at LIMIT 50`)
+    for (const row of due) {
+      const outcome = dispatchPayment(deployment, asset, row.obligation_id) catch (error) => `${networkOf(deployment.chain)} ${row.obligation_id}: ${failureTag(error)}`
+      if (outcome !== "Submitted" && outcome !== "Unavailable") failures.push(outcome)
+    }
+  }
+  if (failures.length > 0) throw new DispatchFailed({ failures })
+}

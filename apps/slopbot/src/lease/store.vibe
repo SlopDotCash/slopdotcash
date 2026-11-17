@@ -1,0 +1,170 @@
+// spec/slopbot/reviewLease.md, "An expired claim can be replaced and cannot finalize while waiting for takeover"; spec/slopbot/reviewLease.md, "A late worker cannot publish a failed, skipped or complete review"
+import { isoAt } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
+import { type CloseAttempt, type ClaimStatus, type PriorStart, type ReviewLease, canFinish, canRecordCall, decodeState, enabled, leaseSeconds, ownsClaim, apply } from "../../gen/slopbot__reviewLease.effect.vibe"
+import { type MergeHistory, NotAState as SlotsNotAState, Rejected as SlotsRejected, type Route } from "../../gen/slopbot__routing.effect.vibe"
+import { ReviewBusy } from "../jobs/retry.vibe"
+import { type AuthorScope, type Instant, type SlotsLoaded, instant, latestClose, secondsUntil, slotsAggregate, slotsVersion } from "../routing/capacity.vibe"
+import { type FinishDetail, type Finished, type ReviewRow, claimWrite, finishWrite } from "./writes.vibe"
+
+export error ReviewLeaseLost { reviewKey: string }
+export error ReviewIdentityChanged { reviewKey: string }
+
+export interface ReviewClaim {
+  readonly reviewKey: string
+  readonly token: string
+  readonly start: PriorStart
+}
+
+export type ClaimOutcome = { readonly kind: "claimed"; readonly claim: ReviewClaim } | { readonly kind: "completed" } | { readonly kind: "limited" }
+
+export interface ClaimRequest {
+  readonly token: string
+  readonly route: Route
+  readonly history?: MergeHistory
+  readonly expiresAt?: number
+}
+
+export schema LeaseRow {
+  readonly review_key: string
+  readonly repository_id: number
+  readonly item_node_id: string
+  readonly author_id: number
+  readonly revision: string
+  readonly status: string
+  readonly claim_token: string | null
+  readonly lease_expires_at: string | null
+  readonly close_state: string | null
+  readonly called: number
+}
+
+const statuses: Readonly<Record<string, ClaimStatus>> = { running: "Running", completed: "Completed", failed: "Failed", skipped: "Skipped" }
+const closes: Readonly<Record<string, CloseAttempt>> = { pending: "PendingClose", confirmed: "ConfirmedClose", rejected: "RejectedClose" }
+const finishedStatus: Readonly<Record<Finished, ClaimStatus>> = { completed: "Completed", failed: "Failed", skipped: "Skipped" }
+const ownKey = sql`r.review_key`
+
+function leaseRead(reviewKey: string): Statement {
+  return sql`SELECT r.review_key, r.repository_id, r.item_node_id, r.author_id, r.revision, r.status, r.claim_token, r.lease_expires_at,
+      ${latestClose(ownKey, "state")} AS close_state, EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = r.review_key) AS called
+    FROM slopbot_reviews r WHERE r.review_key = ${reviewKey}`
+}
+
+function leaseVersion(reviewKey: string): Statement {
+  return sql`coalesce((SELECT review_key || ':' || status || ':' || coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') || ':' || coalesce(close_state, '-') || ':' || called FROM (${leaseRead(reviewKey)})), '')`
+}
+
+export interface LeaseLoaded {
+  readonly row: typeof LeaseRow.Type | undefined
+  readonly at: Instant
+}
+
+effect function leaseOf(rows: ReadonlyArray<Record<string, unknown>>) {
+  const [row] = try decoded(LeaseRow, rows, "review lease")
+  return { row, at: try instant() } satisfies LeaseLoaded
+}
+
+function leaseAggregate(reviewKey: string): Aggregate<LeaseLoaded, RowMismatch, never> {
+  return {
+    name: `review lease ${reviewKey}`,
+    version: sql`SELECT ${leaseVersion(reviewKey)} AS version`,
+    reads: [leaseRead(reviewKey)],
+    decode: ([rows]) => leaseOf(rows ?? []),
+  }
+}
+
+interface ClaimLoaded {
+  readonly lease: LeaseLoaded
+  readonly author: SlotsLoaded
+}
+
+function claimAggregate(scope: AuthorScope, history: MergeHistory | undefined): Aggregate<ClaimLoaded, RowMismatch | SlotsNotAState | SlotsRejected, never> {
+  const slots = slotsAggregate(scope, history)
+  return {
+    name: `review claim ${scope.reviewKey}`,
+    version: sql`SELECT ${leaseVersion(scope.reviewKey)} || '|' || ${slotsVersion(scope)} AS version`,
+    reads: [leaseRead(scope.reviewKey), ...slots.reads],
+    decode: ([leaseRows, ...slotRows]) => effect {
+      return { lease: try leaseOf(leaseRows ?? []), author: try slots.decode(slotRows) }
+    },
+  }
+}
+
+export effect function leaseState(loaded: LeaseLoaded, held: ReviewClaim | undefined) {
+  const { row } = loaded
+  const status = row === undefined ? "NoReview" : statuses[row.status] ?? "NoReview"
+  const terminal = status === "Completed" || status === "Failed" || status === "Skipped"
+  return try decodeState({
+    status,
+    token: row === undefined ? 0 : 1,
+    now: loaded.at.seconds,
+    expires: status === "Running" ? secondsUntil(row?.lease_expires_at ?? null) : 0,
+    completedToken: terminal ? 1 : 0,
+    callRecorded: row?.called === 1,
+    currentCalled: false,
+    kind: held !== undefined && row?.claim_token === held.token ? held.start : "First",
+    close: row?.close_state === null || row === undefined ? "NoCloseAttempt" : closes[row.close_state] ?? "NoCloseAttempt",
+  } satisfies ReviewLease)
+}
+
+function heldToken(loaded: LeaseLoaded, lease: ReviewLease, claim: ReviewClaim) {
+  return loaded.row?.claim_token === claim.token ? lease.token : 0
+}
+
+function sameIdentity(found: typeof LeaseRow.Type, row: ReviewRow) {
+  return found.repository_id === row.repositoryId && found.item_node_id === row.itemNodeId && found.author_id === row.authorId && found.revision === row.revision
+}
+
+effect function refusedClaim(lease: ReviewLease) {
+  if (lease.status === "Running" && lease.now < lease.expires) throw new ReviewBusy({ remainingSeconds: lease.expires - lease.now })
+  const outcome: ClaimOutcome = { kind: lease.status === "Completed" ? "completed" : "limited" }
+  return outcome
+}
+
+export effect function claimReview(row: ReviewRow, request: ClaimRequest) {
+  const scope = { repositoryId: row.repositoryId, authorId: row.authorId, reviewKey: row.reviewKey }
+  return try update(claimAggregate(scope, request.history), (loaded) => effect {
+    const found = loaded.lease.row
+    if (found !== undefined && !sameIdentity(found, row)) throw new ReviewIdentityChanged({ reviewKey: row.reviewKey })
+    const lease = try leaseState(loaded.lease, undefined)
+    const expires = request.expiresAt ?? lease.now + leaseSeconds
+    const event = { type: "claim" as const, token: request.token === "" ? 0 : lease.token + 1, expires, slots: loaded.author.slots, route: request.route }
+    if (!enabled(lease, event)) return { value: try refusedClaim(lease), writes: [] } satisfies Decision<ClaimOutcome>
+    const next = try apply(lease, event)
+    const claimed: ClaimOutcome = { kind: "claimed", claim: { reviewKey: row.reviewKey, token: request.token, start: next.kind } }
+    return {
+      value: claimed,
+      writes: [claimWrite({ row, token: request.token, expiresAt: try isoAt(expires * 1000), at: loaded.lease.at.iso, prior: found === undefined ? "absent" : found.status === "skipped" ? "skipped" : "retryable" })],
+    } satisfies Decision<ClaimOutcome>
+  })
+}
+
+export effect function finishReview(claim: ReviewClaim, status: Finished, detail: FinishDetail) {
+  return try update(leaseAggregate(claim.reviewKey), (loaded) => effect {
+    const lease = try leaseState(loaded, claim)
+    const event = { type: "finish" as const, token: heldToken(loaded, lease, claim), status: finishedStatus[status] }
+    if (!canFinish(lease, event.token, event.status)) throw new ReviewLeaseLost({ reviewKey: claim.reviewKey })
+    return { value: try apply(lease, event), writes: [finishWrite(claim.reviewKey, claim.token, status, detail, loaded.at.iso)] }
+  })
+}
+
+export effect function heldLease(claim: ReviewClaim) {
+  const loaded = (try load(leaseAggregate(claim.reviewKey))).state
+  const lease = try leaseState(loaded, claim)
+  return { lease, token: heldToken(loaded, lease, claim) }
+}
+
+export effect function assertReviewClaim(claim: ReviewClaim) {
+  const { lease, token } = try heldLease(claim)
+  if (!ownsClaim(lease, token)) throw new ReviewLeaseLost({ reviewKey: claim.reviewKey })
+}
+
+export effect function assertCallClaim(claim: ReviewClaim) {
+  const { lease, token } = try heldLease(claim)
+  if (!canRecordCall(lease, token)) throw new ReviewLeaseLost({ reviewKey: claim.reviewKey })
+}
+
+export effect function leaseView(reviewKey: string) {
+  const loaded = (try load(leaseAggregate(reviewKey))).state
+  return { lease: try leaseState(loaded, undefined), claimToken: loaded.row?.claim_token ?? undefined }
+}

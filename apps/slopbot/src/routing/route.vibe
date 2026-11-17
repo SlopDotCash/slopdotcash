@@ -1,0 +1,67 @@
+// spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
+import type { RegistryObservation } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { ownSlot } from "../../gen/slopbot__reviewLease.effect.vibe"
+import { type AuthorSlots, type Exemption, type MergeHistory, type Route, type RouteInput, apply, route } from "../../gen/slopbot__routing.effect.vibe"
+import type { ReviewContext, ReviewTarget } from "../context/load.vibe"
+import { authorSlots } from "./capacity.vibe"
+import { Participation, exemptionOf, humanReopened, installationFact, marker, mergeHistory } from "./facts.vibe"
+
+export interface RouteRequest {
+  readonly target: ReviewTarget
+  readonly context: ReviewContext
+  readonly reviewKey: string
+  readonly registry: RegistryObservation
+  readonly appUserId: string
+  readonly closureEligible: boolean
+}
+
+export interface Routed {
+  readonly route: Route
+  readonly input: RouteInput
+  readonly slots: AuthorSlots
+  readonly history: MergeHistory | undefined
+  readonly exemption: Exemption
+}
+
+export effect function routeInput(request: RouteRequest) {
+  const { target, context } = request
+  const { issue, pull, config } = context
+  return {
+    install: try installationFact(target.installationId),
+    visibility: context.repository.private ? "PrivateRepo" : "PublicRepo",
+    registry: request.registry,
+    repository: target.repositoryId,
+    author: issue.user.id,
+    kind: target.itemKind === "pull_request" ? "PullItem" : "IssueItem",
+    issuesOn: config.issues,
+    pullsOn: config.pullRequests,
+    open: issue.state === "open",
+    merged: pull?.merged ?? false,
+    draft: pull?.draft ?? false,
+    authorBot: issue.user.type === "Bot",
+    authorSelf: String(issue.user.id) === request.appUserId,
+    humanReopenedThisRevision: try humanReopened(issue.node_id, context.revision),
+    exemption: try exemptionOf(target.repositoryId, context.repository.owner, issue.user),
+    reviewExempt: config.reviewExempt,
+    audience: config.audience === "participants" ? "Participants" : "Protection",
+    marker: (issue.body ?? "").includes(marker),
+    participant: try (try Participation).member(String(issue.user.id)),
+    closureEligible: request.closureEligible,
+  } satisfies RouteInput
+}
+
+export effect function routeItem(request: RouteRequest) {
+  const input = try routeInput(request)
+  const scope = { repositoryId: request.target.repositoryId, authorId: input.author, reviewKey: request.reviewKey }
+  const slots = try authorSlots(scope, undefined)
+  const decided = route(input, slots, ownSlot)
+  const history = decided === "SkipAuthorCap" ? try mergeHistory(request.context.repository, request.context.issue.user) : undefined
+  const established = history === undefined ? slots : try apply(slots, { type: "observeMerges", history })
+  return {
+    route: history === undefined ? decided : route(input, established, ownSlot),
+    input,
+    slots: established,
+    history,
+    exemption: input.exemption,
+  } satisfies Routed
+}

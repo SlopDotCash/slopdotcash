@@ -1,0 +1,135 @@
+// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
+import { GitHub, NotFound, github } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { AccessFacts, GrantedPermission } from "../../gen/slopbot__reportingReadiness.ts"
+
+export interface AccessRequest {
+  readonly owner: string
+  readonly repo: string
+  readonly repositoryId: string
+  readonly login: string
+  readonly githubId: string
+  readonly includeRepository: boolean
+}
+
+export schema RepositoryOwner { id: number; node_id: string; login: string; type: "User" | "Organization" }
+export schema RepositoryIdentity { id: number; node_id: string; full_name: string; private: boolean; owner: RepositoryOwner }
+
+export interface Gathered {
+  readonly facts: AccessFacts
+  readonly roleName: string | null
+  readonly repository: RepositoryIdentity | undefined
+}
+
+const Fields = Schema.Record(Schema.String, Schema.Unknown)
+
+error UnexpectedAnswer { issue: string }
+
+const userAgent = "slopbot"
+const roleName = /^[A-Za-z0-9 _-]{1,64}$/u
+const repositoryPath = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+
+const permissions: Readonly<Record<string, GrantedPermission>> = {
+  admin: "PermissionAdmin",
+  write: "PermissionWrite",
+  read: "PermissionRead",
+  none: "PermissionNone",
+}
+
+export const unavailableFacts: AccessFacts = {
+  lookup: "LookupFailed",
+  installationId: 0,
+  tokenIssued: false,
+  repositoryIdSeen: 0,
+  permissionLookupFailed: true,
+  collaborator: false,
+  permission: "PermissionUnknown",
+  accountIdSeen: 0,
+}
+
+function gathered(facts: Partial<AccessFacts>): Gathered {
+  return { facts: { ...unavailableFacts, ...facts }, roleName: null, repository: undefined }
+}
+
+function installationIdOf(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+function fieldOf(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>)[key] : undefined
+}
+
+function seen(value: unknown, expected: string) {
+  return String(value) === expected ? Number(expected) : 0
+}
+
+effect function identityOf(facts: unknown) {
+  const identity = try Schema.decodeUnknownEffect(RepositoryIdentity)(facts)
+  const valid = Number.isSafeInteger(identity.id) && identity.id > 0 && identity.node_id !== "" && identity.full_name.length <= 201 && repositoryPath.test(identity.full_name) &&
+    Number.isSafeInteger(identity.owner.id) && identity.owner.id > 0 && identity.owner.node_id !== "" && identity.owner.login !== ""
+  if (!valid) throw new UnexpectedAnswer({ issue: "Repository identity is incomplete" })
+  return identity
+}
+
+effect function installationOf(request: AccessRequest) {
+  const jwt = Redacted.make(try (try GitHubApp).appJwt())
+  provide github({ token: jwt, userAgent }) {
+    const app = try GitHub
+    const found = app.json(`/repos/${request.owner}/${request.repo}/installation`, Fields) catch effect (error) => match (error) {
+      when NotFound: undefined;
+      default: throw error;
+    }
+    if (found === undefined) return { kind: "missing" } as const
+    const installationId = installationIdOf(found["id"])
+    if (installationId === 0) throw new UnexpectedAnswer({ issue: "GitHub installation id is invalid" })
+    const suspendedAt = found["suspended_at"]
+    if (suspendedAt !== null && suspendedAt !== undefined) return { kind: "suspended", installationId } as const
+    const issued = try app.send("POST", `/app/installations/${installationId}/access_tokens`, { repository_ids: [Number(request.repositoryId)], permissions: { metadata: "read" } }, Fields)
+    const token = fieldOf(issued.value, "token")
+    return typeof token === "string" && token.length >= 16
+      ? { kind: "installed", installationId, token: Redacted.make(token) } as const
+      : { kind: "tokenRefused", installationId } as const
+  }
+}
+
+effect function installedFacts(request: AccessRequest, installationId: number, token: Redacted.Redacted<string>) {
+  provide github({ token, userAgent }) {
+    const reads = try GitHub
+    const facts = try reads.json(`/repos/${request.owner}/${request.repo}`, Schema.Unknown)
+    const fullName = fieldOf(facts, "full_name")
+    const named = typeof fullName === "string" && fullName.toLowerCase() === `${request.owner}/${request.repo}`.toLowerCase()
+    const repositoryIdSeen = named ? seen(fieldOf(facts, "id"), request.repositoryId) : 0
+    const base = { lookup: "LookupInstalled", installationId, tokenIssued: true, repositoryIdSeen } as const
+    if (repositoryIdSeen === 0) return gathered(base)
+    const answer = reads.json(`/repos/${request.owner}/${request.repo}/collaborators/${request.login}/permission`, Fields) catch effect (error) => match (error) {
+      when NotFound: undefined;
+      default: throw error;
+    }
+    const repository = request.includeRepository ? try identityOf(facts) : undefined
+    if (answer === undefined) return { ...gathered({ ...base, permissionLookupFailed: false, collaborator: false, permission: "PermissionNone" }), repository }
+    const permission = answer["permission"]
+    const role = answer["role_name"]
+    const level = typeof permission === "string" && Object.hasOwn(permissions, permission) ? permissions[permission] ?? "PermissionUnknown" : "PermissionUnknown"
+    return {
+      facts: { ...unavailableFacts, ...base, permissionLookupFailed: false, collaborator: true, permission: level, accountIdSeen: seen(fieldOf(answer["user"], "id"), request.githubId) },
+      roleName: typeof role === "string" && roleName.test(role) ? role : null,
+      repository,
+    } satisfies Gathered
+  }
+}
+
+effect function gatheredFacts(request: AccessRequest) {
+  if (!Number.isSafeInteger(Number(request.repositoryId))) return gathered({})
+  const installation = try installationOf(request)
+  switch (installation.kind) {
+    case "missing": return gathered({ lookup: "LookupMissing" })
+    case "suspended": return gathered({ lookup: "LookupSuspended", installationId: installation.installationId })
+    case "tokenRefused": return gathered({ lookup: "LookupInstalled", installationId: installation.installationId })
+    case "installed": return try installedFacts(request, installation.installationId, installation.token)
+  }
+}
+
+export effect function accessFacts(request: AccessRequest) {
+  const outcome = try exit(gatheredFacts(request))
+  return Exit.isSuccess(outcome) ? outcome.value : gathered({})
+}

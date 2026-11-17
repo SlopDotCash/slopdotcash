@@ -1,0 +1,95 @@
+// spec/points/evaluations.md, "Awards retained before retirement survive the erroneous zeroing batch"; spec/points/journal.md, "An evaluated award comes only from an admitted reviewed manifest"
+import { sha256Hex } from "@repo/platform/crypto"
+import { ModelAttribution, ScoreEvent } from "../../client/snapshot/schema.vibe"
+import { FeedRefused, decodedFeed } from "./authoritative.vibe"
+
+export const acceptedReviewHistoryPath = "data/accepted-review-history.json"
+export const evaluatedContributionsPath = "data/evaluated-contributions.json"
+export const maximumEvaluatorAwardFiles = 256
+export const maximumEvaluatorAwardFileBytes = 64 * 1024
+
+const awardPath = /^evaluations\/[a-z0-9-]+\/award-[a-z0-9][a-z0-9-]*\.json$/u
+const sourceRevision = /^[a-f0-9]{40}$/u
+
+schema AcceptedReviewHistoryFile {
+  readonly schemaVersion: "2"
+  readonly events: ReadonlyArray<ScoreEvent>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+}
+
+const RetainedAward = Schema.Struct({ path: Schema.String, sha256: Schema.String, manifest: Schema.Unknown })
+
+const EvaluatedContributionsFile = Schema.Struct({ schemaVersion: Schema.Literal("1"), sourceRevision: Schema.String, awards: Schema.Array(RetainedAward) })
+
+export interface Retained<A> {
+  readonly path: string
+  readonly sha256: string
+  readonly value: A
+}
+
+export interface AcceptedReviewHistory {
+  readonly events: ReadonlyArray<ScoreEvent>
+  readonly attributions: ReadonlyArray<ModelAttribution>
+}
+
+export interface EvaluatedContribution {
+  readonly path: string
+  readonly sha256: string
+  readonly bytes: Uint8Array
+  readonly manifest: unknown
+}
+
+function exactKeys(value: unknown, keys: ReadonlyArray<string>) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).sort().join("\u0000") === [...keys].sort().join("\u0000")
+}
+
+function parsed(bytes: Uint8Array): { readonly value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown }
+  } catch {
+    return undefined
+  }
+}
+
+effect function refuse(feed: string, reason: string) {
+  throw new FeedRefused({ feed, reason })
+}
+
+effect function retainedFile(root: string, relative: string, feed: string, reason: string) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const bytes = try fs.readFile(path.join(root, relative))
+  const value = parsed(bytes)
+  if (value === undefined) return try refuse(feed, reason)
+  return { bytes, sha256: try sha256Hex(bytes), value: value.value }
+}
+
+export effect function acceptedReviewHistory(root: string) {
+  const reason = "accepted review history manifest is invalid"
+  const file = try retainedFile(root, acceptedReviewHistoryPath, "accepted review history", reason)
+  if (!exactKeys(file.value, ["attributions", "events", "schemaVersion"])) try refuse("accepted review history", reason)
+  const history = try decodedFeed(AcceptedReviewHistoryFile, file.value, "accepted review history", reason)
+  return { path: acceptedReviewHistoryPath, sha256: file.sha256, value: { events: history.events, attributions: history.attributions } } satisfies Retained<AcceptedReviewHistory>
+}
+
+export effect function evaluatedContributions(root: string) {
+  const feed = "retained evaluator awards"
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  if (!(try fs.exists(path.join(root, evaluatedContributionsPath)))) return undefined
+  const file = try retainedFile(root, evaluatedContributionsPath, feed, "retained evaluator award header is invalid")
+  if (file.bytes.length === 0 || file.bytes.length > maximumEvaluatorAwardFiles * maximumEvaluatorAwardFileBytes) try refuse(feed, "retained evaluator awards must be a bounded regular file")
+  if (!exactKeys(file.value, ["schemaVersion", "sourceRevision", "awards"])) try refuse(feed, "retained evaluator award header is invalid")
+  const retained = try decodedFeed(EvaluatedContributionsFile, file.value, feed, "retained evaluator award header is invalid")
+  if (!sourceRevision.test(retained.sourceRevision) || retained.awards.length > maximumEvaluatorAwardFiles) try refuse(feed, "retained evaluator award header is invalid")
+  const rawAwards = (file.value as { readonly awards: ReadonlyArray<unknown> }).awards
+  if (rawAwards.some((award) => !exactKeys(award, ["path", "sha256", "manifest"]))) try refuse(feed, "retained evaluator award is invalid")
+  const awards: EvaluatedContribution[] = []
+  for (const award of retained.awards) {
+    if (!awardPath.test(award.path)) try refuse(feed, "retained evaluator award path is invalid")
+    const bytes = new TextEncoder().encode(`${JSON.stringify(award.manifest, null, 2)}\n`)
+    if (bytes.length > maximumEvaluatorAwardFileBytes || (try sha256Hex(bytes)) !== award.sha256) try refuse(feed, "retained evaluator award digest does not match its manifest")
+    awards.push({ path: award.path, sha256: award.sha256, bytes, manifest: award.manifest })
+  }
+  return { path: evaluatedContributionsPath, sha256: file.sha256, value: { sourceRevision: retained.sourceRevision, awards } } satisfies Retained<{ readonly sourceRevision: string; readonly awards: ReadonlyArray<EvaluatedContribution> }>
+}

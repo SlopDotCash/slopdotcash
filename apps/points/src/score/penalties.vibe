@@ -1,0 +1,82 @@
+// spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/points/penalties.md, "Accepted-work credits are keyed by author, project and UTC month"
+import { type Bucket, type Penalties, type PenaltyRow, initial as noPenalties, standing } from "../../gen/points__penalties.effect.vibe"
+import { periodOf } from "../../gen/points__periods.effect.vibe"
+import { type Actor, FactsRefused, type Penalty, instantAtIso } from "./facts.vibe"
+import { consume } from "./standing.ts"
+
+export interface Credited {
+  readonly actor: Actor
+  readonly points: number
+  readonly scoreThirds?: number
+  readonly repository: string
+  readonly occurredAt: string
+}
+
+export interface Deductions {
+  readonly byActor: ReadonlyMap<string, number>
+  readonly byPenalty: ReadonlyMap<string, number>
+}
+
+export function eventPoints(event: Pick<Credited, "points" | "scoreThirds">) {
+  return Math.round((event.scoreThirds ?? Math.round(event.points * 3)) * 10)
+}
+
+interface Keyed {
+  readonly key: string
+  readonly bucket: Bucket
+}
+
+export effect function deductions(events: ReadonlyArray<Credited>, penalties: ReadonlyArray<Penalty>, projects: ReadonlyMap<string, string>) {
+  if (penalties.length === 0) return { byActor: new Map<string, number>(), byPenalty: new Map<string, number>() } satisfies Deductions
+  const actors = new Map<string, number>()
+  const projectNumbers = new Map<string, number>()
+  const number = (numbers: Map<string, number>, key: string) => {
+    const known = numbers.get(key)
+    if (known !== undefined) return known
+    numbers.set(key, numbers.size + 1)
+    return numbers.size
+  }
+  effect function keyed(actor: Actor, repository: string, occurredAt: string, sourceId: string) {
+    const project = projects.get(repository)
+    if (project === undefined) throw new FactsRefused({ reason: "score repository is not registered", sourceId })
+    const period = periodOf(try instantAtIso(occurredAt, sourceId))
+    return { key: `${actor.id}\u0000${project}\u0000${occurredAt.slice(0, 7)}`, bucket: { actor: number(actors, actor.id), project: number(projectNumbers, project), period } } satisfies Keyed
+  }
+  const buckets = new Map<string, Penalties>()
+  const bucketOf = new Map<string, Bucket>()
+  const ordered = [...penalties].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
+  for (const penalty of ordered) {
+    const { key, bucket } = try keyed(penalty.actor, penalty.repository, penalty.occurredAt, penalty.id)
+    const recordedAt = try instantAtIso(penalty.occurredAt, penalty.id)
+    const row: PenaltyRow = { item: penalty.id, bucket, revision: penalty.id, category: penalty.category, tableVersion: penalty.tableVersion, debit: Math.max(0, penalty.debitThirds * 10), recordedAt, moderatorReview: false, reversed: false, reason: "AppealUpheld", reversedAt: 0 }
+    const found = buckets.get(key) ?? noPenalties
+    buckets.set(key, { ...found, rows: [...found.rows, row] })
+    bucketOf.set(key, bucket)
+  }
+  for (const [index, event] of events.entries()) {
+    const { key, bucket } = try keyed(event.actor, event.repository, event.occurredAt, event.actor.id)
+    const found = buckets.get(key)
+    if (found !== undefined) buckets.set(key, { ...found, credits: [...found.credits, { source: index + 1, bucket, points: eventPoints(event) }] })
+  }
+  const byBucket = new Map<string, Penalty[]>()
+  for (const penalty of ordered) {
+    const { key } = try keyed(penalty.actor, penalty.repository, penalty.occurredAt, penalty.id)
+    byBucket.set(key, [...(byBucket.get(key) ?? []), penalty])
+  }
+  const actorPoints = new Map<string, number>()
+  const byPenalty = new Map<string, number>()
+  for (const [key, held] of buckets) {
+    const bucket = bucketOf.get(key)
+    const debits = byBucket.get(key) ?? []
+    if (bucket === undefined) continue
+    const available = Math.max(0, held.credits.reduce((sum, credit) => sum + credit.points, 0) - standing(held, bucket))
+    const { applied } = consume(available, debits.map((penalty) => penalty.debitThirds * 10))
+    for (const [index, penalty] of debits.entries()) {
+      const points = applied[index] ?? 0
+      if (points <= 0) continue
+      byPenalty.set(penalty.id, points / 10)
+      actorPoints.set(penalty.actor.id, (actorPoints.get(penalty.actor.id) ?? 0) + points)
+    }
+  }
+  return { byActor: new Map([...actorPoints].map(([actor, points]) => [actor, points / 10])), byPenalty } satisfies Deductions
+}

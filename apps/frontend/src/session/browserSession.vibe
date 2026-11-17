@@ -1,0 +1,151 @@
+// spec/frontend/composition.md, "The active draft and navigation share one authenticated actor"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/frontend/navigation.md, "The browser remembers its requested page independently of authentication"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import { pointsSignOut } from "@repo/backend/client"
+import { type Event as CompositionEvent, Machine as Composition, canRefreshAccount, canServerSessionEnded, machine as compositionMachineOf } from "../../gen/frontend__composition.effect.vibe"
+import { type Event as NavigationEvent, type Page, Machine as Navigation, canRefreshIdentity, machine as navigationMachineOf } from "../../gen/frontend__navigation.effect.vibe"
+import { type CallFailure, call } from "../platform/api.vibe"
+import { Deployment } from "../platform/config.vibe"
+import { parseNext } from "./loginReturn.ts"
+import { Session, type SessionView, sessionLayer, viewActor } from "./session.vibe"
+import { nextRevalidation } from "./signals.ts"
+
+export const signOutLimitBytes = 4096
+
+export type ObserveReason = "load" | "changed" | "revalidate"
+
+export interface Lifetime {
+  readonly actorId: number
+  readonly epoch: number
+}
+
+interface Stamp {
+  readonly navigation: number
+  readonly session: number
+}
+
+export type AccountEraser = (actorId: number) => void!!
+
+export const navigationMachine = navigationMachineOf()
+export const compositionMachine = compositionMachineOf()
+
+export service BrowserSession {
+  observe(reason: ObserveReason): SessionView!!HttpClient.HttpClient
+  signOut(): void!CallFailure!HttpClient.HttpClient
+  sessionEnded(): void!!HttpClient.HttpClient
+  navigate(destination: Page): boolean!!
+  saveReturn(search: string): boolean!!
+  returnPath(): string!!
+  lifetime(): Lifetime!!
+  acceptPrivate(lifetime: Lifetime, rows: number, authorized: boolean): boolean!!
+  onAccountChange(erase: AccountEraser): void!!Scope.Scope
+}
+
+export const browserSession = Layer.effect(BrowserSession, effect {
+  const navigation = try Navigation
+  const composition = try Composition
+  const session = try Session
+  const deployment = try Deployment
+  const lock = try Semaphore.make(1)
+  const erasers = new Set<AccountEraser>()
+
+  effect function stampNow() {
+    return { navigation: (try navigation.get()).epoch, session: (try composition.get()).navigation.epoch } satisfies Stamp
+  }
+
+  effect function settle(actorId: number, stamp: Stamp, ended: boolean) {
+    const shown = try navigation.get()
+    const held = try composition.get()
+    if (!canRefreshIdentity(shown, actorId, stamp.navigation) || !canRefreshAccount(held, actorId, stamp.session)) return false
+    if (actorId === shown.actor && actorId === held.navigation.actor) return false
+    const account: CompositionEvent = ended && actorId === 0 && canServerSessionEnded(held)
+      ? { type: "serverSessionEnded" }
+      : { type: "refreshAccount", refreshedActor: actorId, requestEpoch: stamp.session }
+    try orDie(navigation.send({ type: "refreshIdentity", actorId, requestEpoch: stamp.navigation }))
+    try orDie(composition.send(account))
+    for (const erase of [...erasers]) try erase(actorId)
+    return true
+  }
+
+  effect function settled(actorId: number, stamp: Stamp | undefined, ended: boolean) {
+    return try Semaphore.withPermit(lock, effect { return try settle(actorId, stamp ?? (try stampNow()), ended) })
+  }
+
+  effect function observe(reason: ObserveReason) {
+    const stamp = reason === "revalidate" ? try stampNow() : undefined
+    const observed = try session.refresh()
+    if (observed.current && (observed.view.status === "signedIn" || observed.view.status === "signedOut")) try settled(viewActor(observed.view), stamp, false)
+    return observed.view
+  }
+
+  effect function send(event: NavigationEvent) {
+    const sent = navigation.send(event) catch () => undefined
+    return sent !== undefined
+  }
+
+  return {
+    observe,
+    signOut: effect () => {
+      try call(pointsSignOut, { body: {} }, { limitBytes: signOutLimitBytes })
+      try settled(0, undefined, false)
+      try observe("changed")
+    },
+    sessionEnded: effect () => {
+      try settled(0, undefined, true)
+      try observe("changed")
+    },
+    navigate: (destination: Page) => send({ type: "navigate", destination }),
+    saveReturn: effect (search: string) => {
+      const sent = composition.send({ type: "saveReturn", request: parseNext(search, deployment.pageOrigin) }) catch () => undefined
+      return sent !== undefined
+    },
+    returnPath: effect () => (try composition.get()).returnPath,
+    lifetime: effect () => {
+      const shown = try navigation.get()
+      return { actorId: shown.actor, epoch: shown.epoch }
+    },
+    acceptPrivate: (lifetime: Lifetime, rows: number, authorized: boolean) => send({ type: "receivePrivate", actorId: lifetime.actorId, requestEpoch: lifetime.epoch, rows, authorized }),
+    onAccountChange: effect (erase: AccountEraser) => {
+      try acquireRelease(sync(() => erasers.add(erase)), () => sync(() => erasers.delete(erase)))
+    },
+  }
+})
+
+export const sessionServices = Layer.provideMerge(browserSession, Layer.mergeAll(navigationMachine, compositionMachine, sessionLayer))
+
+effect function revalidated() {
+  const browser = try BrowserSession
+  try browser.observe("load")
+  let running: Fiber.Fiber<SessionView> | undefined = undefined
+  while (true) {
+    try promise((signal) => nextRevalidation(signal))
+    if (running !== undefined) try Fiber.interrupt(running)
+    running = fork browser.observe("revalidate")
+  }
+}
+
+export const sessionWatch = Layer.effectDiscard(effect {
+  fork.scoped revalidated()
+})
+
+export effect function sendNavigation(event: NavigationEvent) {
+  return try (try Navigation).send(event)
+}
+
+export effect function receiveNavigation(input: unknown) {
+  return try (try Navigation).receive(input)
+}
+
+export effect function navigationState() {
+  return try (try Navigation).get()
+}
+
+export effect function sendComposition(event: CompositionEvent) {
+  return try (try Composition).send(event)
+}
+
+export effect function receiveComposition(input: unknown) {
+  return try (try Composition).receive(input)
+}
+
+export effect function compositionState() {
+  return try (try Composition).get()
+}

@@ -1,0 +1,88 @@
+// spec/points/evaluations.md, "Identity, source, work, content and reviewer-per-PR are each awarded once"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Problem, hasKeys, isRecord, parsedUrl } from "./checks.vibe"
+
+const canonicalForms: Readonly<Record<string, string>> = {
+  x: "https://x.com/<handle>/status/<id>",
+  discord: "https://discord.com/channels/<guild>/<channel>/<message>",
+  youtube: "https://www.youtube.com/watch?v=<video id>",
+  web: "https://<host>/<path> on a host that is not GitHub, X, Discord, YouTube or a mirror of them",
+}
+
+const reservedHostSuffixes = [
+  "github.com", "githubusercontent.com", "github.io", "githubassets.com",
+  "x.com", "twitter.com", "twimg.com", "t.co", "fxtwitter.com", "fixupx.com", "vxtwitter.com", "fixvx.com", "twittpr.com",
+  "nitter.net", "nitter.cz", "nitter.privacydev.net", "nitter.poast.org", "xcancel.com", "twstalker.com", "threadreaderapp.com",
+  "discord.com", "discordapp.com", "discord.gg", "discord.new",
+  "youtube.com", "youtu.be", "youtube-nocookie.com", "yewtu.be", "invidious.io", "piped.video",
+]
+
+const xStatusPath = /^\/[A-Za-z0-9_]{1,15}\/status\/([1-9]\d{0,24})$/u
+const discordMessagePath = /^\/channels\/([1-9]\d{0,24})\/([1-9]\d{0,24})\/([1-9]\d{0,24})$/u
+const youtubeWatchSearch = /^\?v=([A-Za-z0-9_-]{11})$/u
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+
+function reservedHost(host: string): boolean {
+  const lower = host.toLowerCase()
+  return reservedHostSuffixes.some((suffix) => lower === suffix || lower.endsWith(`.${suffix}`))
+}
+
+function plainHttpsUrl(value: string, field: string): URL | string {
+  if (value.length < 1 || value.length > 512) return `${field} is invalid`
+  const parsed = parsedUrl(value)
+  if (parsed === undefined) return `${field} is not a URL`
+  const queryStart = value.indexOf("?")
+  if (value.includes("#") || (queryStart !== -1 && queryStart === value.length - 1)) return `${field} must be a plain https URL`
+  if (parsed.protocol !== "https:" || parsed.hostname === "" || parsed.hostname.endsWith(".") || parsed.username !== "" || parsed.password !== "" || parsed.port !== "" || parsed.hash !== "") {
+    return `${field} must be a plain https URL`
+  }
+  return parsed
+}
+
+function workKey(parsed: URL, platform: string): string | undefined {
+  const host = parsed.hostname.toLowerCase()
+  const path = parsed.pathname
+  if (platform === "x") {
+    const match = host === "x.com" ? xStatusPath.exec(path) : null
+    return match !== null && parsed.search === "" ? `x\0status\0${match[1] ?? ""}` : undefined
+  }
+  if (platform === "discord") {
+    const match = host === "discord.com" ? discordMessagePath.exec(path) : null
+    return match !== null && parsed.search === "" ? `discord\0message\0${match[1] ?? ""}/${match[2] ?? ""}/${match[3] ?? ""}` : undefined
+  }
+  if (platform === "youtube") {
+    const match = host === "www.youtube.com" && path === "/watch" ? youtubeWatchSearch.exec(parsed.search) : null
+    return match !== null ? `youtube\0video\0${match[1] ?? ""}` : undefined
+  }
+  if (platform === "web") return !reservedHost(host) && host.includes(".") && path.length > 1 ? `web\0${parsed.toString()}` : undefined
+  return undefined
+}
+
+export function externalUrlProblem(value: string, platform: string, field: string): Problem {
+  const parsed = plainHttpsUrl(value, field)
+  if (typeof parsed === "string") return parsed
+  return workKey(parsed, platform) === undefined || parsed.toString() !== value ? `${field} is not a canonical public ${platform} URL; use ${canonicalForms[platform] ?? ""}` : undefined
+}
+
+function archiveProblem(value: string, sourceUrl: string, field: string): Problem {
+  const parsed = plainHttpsUrl(value, field)
+  if (typeof parsed === "string") return parsed
+  const host = parsed.hostname.toLowerCase()
+  const pathTarget = /^\/web\/\d{14}(?:[a-z_]+)?\/(https?:\/\/.*)$/u.exec(parsed.pathname)?.[1]
+  const wayback = host === "web.archive.org" && pathTarget !== undefined && `${pathTarget}${parsed.search}` === sourceUrl
+  const archiveToday = host === "archive.ph" && /^\/[A-Za-z0-9]{5,}$/u.test(parsed.pathname)
+  return wayback || archiveToday ? undefined : `${field} must be a web.archive.org capture of the source or an archive.ph snapshot`
+}
+
+export function externalEvidenceProblem(raw: unknown, sourceUrl: string, field: string): Problem {
+  if (!isRecord(raw)) return `${field} must be an object`
+  if (!hasKeys(raw, ["archiveUrl", "capturedAt", "contentSha256"])) return `${field} has unexpected or missing fields`
+  const { archiveUrl, capturedAt, contentSha256 } = raw
+  if (typeof contentSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(contentSha256)) return `${field}.contentSha256 must be a lowercase sha256`
+  if (typeof capturedAt !== "string" || !exactUtc.test(capturedAt) || !Number.isFinite(Date.parse(capturedAt)) || new Date(capturedAt).toISOString() !== capturedAt) return `${field}.capturedAt is not a UTC timestamp`
+  return typeof archiveUrl === "string" ? archiveProblem(archiveUrl, sourceUrl, `${field}.archiveUrl`) : `${field}.archiveUrl is invalid`
+}
+
+export effect function externalSourceId(sourceUrl: string) {
+  return `external-${try sha256Hex(sourceUrl)}`
+}

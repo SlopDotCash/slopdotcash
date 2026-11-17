@@ -1,0 +1,62 @@
+// spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+import { first, sql } from "@repo/platform/d1"
+import type { Job } from "@repo/platform/worker"
+import { interval } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { budgetExhausted } from "../route/route.vibe"
+import { SpendNotify, failureNoticePath, safeFailure, spendNoticePath } from "./notify.vibe"
+import { claimFailureNotice, claimMilestone, recordFailureReceipt, recordMilestoneReceipt } from "./store.vibe"
+
+export error NeedsReconciliation { notice: "spend" | "failure" }
+
+schema PendingMonth { month: string }
+
+schema PendingNotice { call_id: number }
+
+const pendingMonth = sql`WITH monthly AS (
+    SELECT substr(created_at, 1, 7) AS month, sum(coalesce(provider_cost_micro_usd, cost_micro_usd)) AS recorded
+    FROM slopbot_costs GROUP BY substr(created_at, 1, 7)
+  ), pending AS (
+    SELECT monthly.month, monthly.recorded, coalesce((SELECT max(threshold_micro_usd) FROM slopbot_spend_alerts a WHERE a.month = monthly.month), 0) + ${interval} AS threshold
+    FROM monthly
+  ) SELECT month FROM pending WHERE recorded >= threshold ORDER BY month LIMIT 1`
+
+const pendingNotice = sql`SELECT call_id FROM slopbot_provider_failure_notices WHERE claimed_at IS NULL ORDER BY call_id LIMIT 1`
+
+effect function claimedOrNothing<A, E extends { readonly _tag: string }, R>(claim: A!E!R) {
+  return claim catch effect (error) => {
+    if (error._tag === "Rejected") return undefined
+    throw error
+  }
+}
+
+export effect function dispatchSpendAlert() {
+  const pending = try first(PendingMonth, pendingMonth)
+  if (pending === undefined) return
+  const claimed = try claimedOrNothing(claimMilestone(pending.month))
+  if (claimed === undefined) return
+  const accepted = try (try SpendNotify).deliver({ path: spendNoticePath, body: claimed })
+  try recordMilestoneReceipt(claimed.month, claimed.thresholdMicroUsd, accepted)
+  if (!accepted) throw new NeedsReconciliation({ notice: "spend" })
+}
+
+export effect function dispatchFailureAlert() {
+  const pending = try first(PendingNotice, pendingNotice)
+  if (pending === undefined) return
+  const claimed = try claimedOrNothing(claimFailureNotice(pending.call_id))
+  if (claimed === undefined) return
+  const body = {
+    callId: claimed.id,
+    model: claimed.model,
+    kind: claimed.failure === budgetExhausted ? "budget-exhausted" : "request-failed",
+    occurredAt: claimed.occurredAt,
+    failure: safeFailure(claimed.failure),
+  } as const
+  const accepted = try (try SpendNotify).deliver({ path: failureNoticePath, body })
+  try recordFailureReceipt(claimed.id, accepted)
+  if (!accepted) throw new NeedsReconciliation({ notice: "failure" })
+}
+
+export const spendJobs = [
+  { name: "slopbot spend alert", run: () => dispatchSpendAlert() },
+  { name: "slopbot provider failure alert", run: () => dispatchFailureAlert() },
+] satisfies ReadonlyArray<Job>

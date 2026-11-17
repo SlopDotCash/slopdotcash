@@ -1,8 +1,8 @@
 // spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import { isoNow } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { Refused } from "@repo/platform/http"
-import { isoNow } from "./clock.vibe"
+import { Refused, admission } from "@repo/platform/http"
 
 module verified {
   import { tokenLengthAllowed as allowed } from "./sessionToken.ts"
@@ -11,15 +11,33 @@ module verified {
 }
 import { tokenLengthAllowed } from verified
 
-const sessionCookie = "__Host-slop_points"
+export const sessionCookie = "__Host-slop_points"
+export const sessionSeconds = 3600
 
-schema SessionMember { github_id: string }
+export schema SessionMember { actor_id: string; github_id: string; login: string; token_hash: string }
+
+export function sessionCookieHeader(token: string, seconds: number) {
+  return `${sessionCookie}=${token}; Path=/; Max-Age=${seconds}; Secure; HttpOnly; SameSite=Strict`
+}
+
+export function presentedToken(cookies: Readonly<Record<string, string | undefined>>) {
+  const token = cookies[sessionCookie] ?? ""
+  return tokenLengthAllowed(token.length) && /^[A-Za-z0-9_-]+$/u.test(token) ? token : undefined
+}
+
+export effect function presentedTokenHash() {
+  const token = presentedToken((try HttpServerRequest.HttpServerRequest).cookies)
+  return token === undefined ? "" : try sha256Hex(token)
+}
+
+export effect function sessionMember() {
+  const hash = try presentedTokenHash()
+  if (hash === "") return undefined
+  return try first(SessionMember, sql`SELECT m.actor_id, m.github_id, m.login, s.token_hash FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${try isoNow()} AND m.closed_at IS NULL`)
+}
 
 export effect function sessionActor() {
-  const request = try HttpServerRequest.HttpServerRequest
-  const token = request.cookies[sessionCookie] ?? ""
-  if (!tokenLengthAllowed(token.length) || !/^[A-Za-z0-9_-]+$/u.test(token)) throw new Refused({ status: 401, code: "sign_in_required" })
-  const member = try first(SessionMember, sql`SELECT m.github_id FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${try sha256Hex(token)} AND s.expires_at > ${try isoNow()} AND m.closed_at IS NULL`)
-  if (member === undefined) throw new Refused({ status: 401, code: "sign_in_required" })
+  const member = try sessionMember()
+  if (member === undefined) throw new Refused(admission.unauthenticated)
   return member.github_id
 }

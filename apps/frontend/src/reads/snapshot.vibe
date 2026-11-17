@@ -1,0 +1,149 @@
+// spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/rankedSnapshot.md, "Open counts are exact and processed counts are maximum distinct source counts"; spec/frontend/rankedSnapshot.md, "Explicit payment differences and an omission marker are exclusive"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateSnapshot } from "@repo/points/client"
+import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
+import { NetworkError, Refused, deadlineMs } from "../platform/api.vibe"
+import { boundedBytes } from "../platform/bounded.vibe"
+import { Deployment } from "../platform/config.vibe"
+import { Unreadable } from "./resource.vibe"
+import { sharedSnapshot } from "./snapshotCache.vibe"
+
+export const leaderboardPath = "/data/leaderboard.json"
+
+export interface Leaderboard {
+  readonly snapshot: LeaderboardSnapshot
+  readonly sha256: string
+  readonly payable: boolean
+}
+
+const refusedCoverage = "snapshot contradicts its published coverage"
+const reviewSplit = /:(?:automated-review|ratifier|reviewer|value-review):/u
+const omissionKeys = ["effectiveAt", "policy", "reason"]
+
+function instant(iso: string): number {
+  const millis = millisOf(iso)
+  return Number.isSafeInteger(millis) ? millis : -1
+}
+
+function kindOf(event: ScoreEvent): EventKind {
+  if (event.acceptanceKind === "indirect-integration") return "IndirectMerge"
+  switch (event.category) {
+    case "merged-pull-request": return "DirectMerge"
+    case "material-test-change": return "MaterialChange"
+    case "evidence": return "Evidence"
+    case "substantive-review": return "Review"
+    case "resolved-issue": return "ResolvedIssue"
+    default: return "OtherCredit"
+  }
+}
+
+function rowOf(event: ScoreEvent): LedgerRow {
+  const kind = kindOf(event)
+  const parentPr = kind === "Review" ? event.id.split(reviewSplit)[0] ?? "" : event.source.id
+  return { id: event.id, kind, source: event.source.id, parentPr, occurred: instant(event.occurredAt), continuity: event.continuity !== undefined }
+}
+
+function changeOf(attribution: ModelAttribution): Change {
+  return { id: attribution.id, digest: JSON.stringify(attribution) }
+}
+
+function basisOf(snapshot: LeaderboardSnapshot): PaymentBasis {
+  const basis = snapshot.paymentReviewBasis
+  if (basis === undefined) return noBasis
+  return {
+    policy: basis.policy,
+    cutoff: instant(basis.effectiveAt),
+    ledger: basis.ledger.map(rowOf),
+    removedEvents: [...basis.removedEventIds],
+    attribution: basis.attributions.map(changeOf),
+    removedAttribution: [...basis.removedAttributionIds],
+    attributionOrder: [...basis.attributionOrder],
+  }
+}
+
+function omissionOf(snapshot: LeaderboardSnapshot): Marker {
+  const omitted = snapshot.paymentReviewBasisOmitted
+  if (omitted === undefined) return noMarker
+  const exactFields = JSON.stringify(Object.keys(omitted).sort()) === JSON.stringify(omissionKeys)
+  return { exactFields, policy: omitted.policy, cutoff: instant(omitted.effectiveAt), reason: omitted.reason }
+}
+
+export function sampleOf(snapshot: LeaderboardSnapshot): Snapshot {
+  const source = snapshot.source
+  const counts = source.counts
+  return {
+    window: {
+      scoringFrom: instant(snapshot.window.from),
+      from: instant(source.verificationWindow.from),
+      to: instant(snapshot.window.to),
+      generatedAt: instant(snapshot.generatedAt),
+      fetchedAt: instant(source.fetchedAt),
+      cutoff: instant(source.cutoffAt),
+    },
+    counts: {
+      openIssues: counts.openIssues,
+      openPulls: counts.openPullRequests,
+      merged: counts.mergedPullRequests,
+      closedUnmerged: counts.closedUnmergedPullRequests ?? 0,
+      detailed: counts.detailedMergedPullRequests,
+      resolved: counts.resolvedIssues,
+    },
+    issues: snapshot.workQueue.issues.map((item) => item.id),
+    pulls: snapshot.workQueue.pullRequests.map((item) => item.id),
+    ledger: snapshot.ledger.map(rowOf),
+    attribution: snapshot.attributions.map(changeOf),
+    basisPresent: snapshot.paymentReviewBasis !== undefined,
+    omittedPresent: snapshot.paymentReviewBasisOmitted !== undefined,
+    basis: basisOf(snapshot),
+    omitted: omissionOf(snapshot),
+  }
+}
+
+effect function fetched(url: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>>) {
+  const read = effect {
+    const response = HttpClient.get(url, { headers }) catch effect () => {
+      throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." })
+    }
+    if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}` })
+    return try boundedBytes(response, limitBytes, label)
+  }
+  return try Effect.timeoutOrElse(read, {
+    duration: deadlineMs,
+    orElse: () => Effect.fail(new NetworkError({ timedOut: true, message: "The request timed out. Try again." })),
+  })
+}
+
+effect function leaderboardBytes(attempt: number, retry: number) {
+  const { pageOrigin } = try Deployment
+  const at = try Clock.currentTimeMillis
+  const root = try fetched(`${pageOrigin}${leaderboardPath}?attempt=${attempt}&retry=${retry}&at=${at}`, maxSnapshotBytes, "snapshot", { accept: "application/json" })
+  return readParts(root, (path) => fetched(`${pageOrigin}${path}`, maxPartBytes, "snapshot part", {})) catch effect (failed) => match (failed) {
+    when PartsInvalid: throw new Unreadable({ message: failed.message });
+    when SnapshotTooLarge: throw new Unreadable({ message: "Leaderboard exceeds the supported snapshot size" });
+    default: throw failed;
+  }
+}
+
+effect function readLeaderboard(ranked: Machine.Shape, registry: RepositoryRegistry, attempt: number, retry: number) {
+  const bytes = try leaderboardBytes(attempt, retry)
+  const raw = try Effect.try({
+    try: (): unknown => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+    catch: () => new Unreadable({ message: "snapshot is not UTF-8 JSON" }),
+  })
+  const snapshot = validateSnapshot(raw, registry) catch effect (failed) => { throw new Unreadable({ message: failed.message }) }
+  const sha256 = try sha256Hex(bytes)
+  const checked = ranked.send({ type: "inspect", digest: sha256, sample: sampleOf(snapshot) }) catch effect () => { throw new Unreadable({ message: refusedCoverage }) }
+  if (checked.result === "SnapshotRefused") throw new Unreadable({ message: refusedCoverage })
+  return { snapshot, sha256, payable: checked.result === "ScoreAndPayment" } satisfies Leaderboard
+}
+
+export function rankedChecks() {
+  return machineOver(initial, () => Effect.void)
+}
+
+export effect function leaderboard() {
+  const ranked = try rankedChecks()
+  const cache = try sharedSnapshot((registry: RepositoryRegistry, attempt: number, retry: number) => readLeaderboard(ranked, registry, attempt, retry))
+  return { ranked, cache }
+}

@@ -1,0 +1,143 @@
+// spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/referralHolds.md, "An operator hold zeroes a project's later accruals until its single lift, and no hold is ever deleted"
+import { first, rows, sql } from "@repo/platform/d1"
+import { sha256Hex } from "@repo/platform/crypto"
+import { Roles } from "@repo/platform/roles"
+import { type ReadFailure, Restrictions } from "@repo/ports/backend"
+import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import type { Period } from "../kernels/calendar.ts"
+import { periodBounds } from "./periods.ts"
+
+export schema ReferralAttribution {
+  readonly projectId: string
+  readonly applicantGithubId: string
+  readonly stewardGithubId: string
+  readonly referrerGithubId: string
+  readonly referrerGithubLogin: string
+}
+
+export service ReferralAttributions {
+  referred(): ReadonlyArray<ReferralAttribution>!ReadFailure
+}
+
+export interface SourceRow {
+  readonly obligationId: string
+  readonly projectId: string
+  readonly referrerGithubId: string
+  readonly referrerGithubLogin: string
+  readonly network: string
+  readonly paidTransaction: string
+  readonly paidObservedAt: string
+  readonly firstPaidAt: string
+  readonly grossBase: string
+  readonly assetAddress: string
+  readonly assetSymbol: string
+  readonly stablecoin: boolean
+  readonly team: boolean
+  readonly banned: boolean
+  readonly hold: string | undefined
+}
+
+export interface Snapshot {
+  readonly period: Period
+  readonly rows: ReadonlyArray<SourceRow>
+  readonly digest: string
+  readonly complete: boolean
+  readonly canonicalOrder: boolean
+}
+
+schema PaidRow {
+  readonly obligation_id: string
+  readonly project_id: string
+  readonly network: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly gross_base: string
+  readonly paid_transaction: string
+  readonly paid_observed_at: string
+}
+
+schema FirstPaid {
+  readonly first: string | null
+}
+
+schema HoldRow {
+  readonly id: string
+  readonly reason: string
+}
+
+export function eligibleSymbol(network: string, assetAddress: string, assetDecimals: number): string | undefined {
+  if (!isNetworkKey(network)) return undefined
+  const definition = NETWORKS[network]
+  const wanted = definition.family === "evm" ? assetAddress.toLowerCase() : assetAddress
+  const asset = definition.assets.find((entry) => (definition.family === "evm" ? entry.address.toLowerCase() : entry.address) === wanted)
+  return asset !== undefined && asset.decimals === 6 && assetDecimals === 6 ? asset.symbol : undefined
+}
+
+export function holdDetail(id: string, reason: string): string {
+  return `${id}: ${reason}`.slice(0, 500)
+}
+
+export function canonical(rows: ReadonlyArray<SourceRow>): boolean {
+  return rows.every((row, index) => {
+    const before = rows[index - 1]
+    return before === undefined || before.paidObservedAt < row.paidObservedAt || (before.paidObservedAt === row.paidObservedAt && before.obligationId < row.obligationId)
+  })
+}
+
+export effect function snapshotOf(period: Period, found: ReadonlyArray<SourceRow>, complete: boolean) {
+  return { period, rows: found, digest: try sha256Hex(JSON.stringify(found)), complete, canonicalOrder: canonical(found) } satisfies Snapshot
+}
+
+effect function firstPaidAt(projectId: string) {
+  const row = try first(FirstPaid, sql`SELECT MIN(e.observed_at) AS first FROM payment_obligations o JOIN payment_events e ON e.network = o.network AND e.transaction_id = o.paid_transaction AND e.obligation_id = o.id AND e.kind = 'paid' WHERE o.project_id = ${projectId} AND o.state = 'paid'`)
+  return row?.first ?? undefined
+}
+
+effect function activeHold(projectId: string) {
+  const row = try first(HoldRow, sql`SELECT id, reason FROM referral_holds WHERE project_id = ${projectId} AND lifted_at IS NULL ORDER BY created_at LIMIT 1`)
+  return row === undefined ? undefined : holdDetail(row.id, row.reason)
+}
+
+export effect function freezeMonth(period: Period, excluded: ReadonlySet<string>) {
+  const { start, end } = try orDie(Effect.try(() => periodBounds(period)))
+  const paid = try rows(PaidRow, sql`SELECT o.id AS obligation_id, o.project_id, o.network, o.asset_address, o.asset_decimals, o.gross_base, o.paid_transaction, e.observed_at AS paid_observed_at FROM payment_obligations o JOIN payment_events e ON e.network = o.network AND e.transaction_id = o.paid_transaction AND e.obligation_id = o.id AND e.kind = 'paid' WHERE o.state = 'paid' AND e.observed_at >= ${start} AND e.observed_at < ${end} AND NOT EXISTS (SELECT 1 FROM referral_accruals a WHERE a.obligation_id = o.id) ORDER BY e.observed_at, o.id`)
+  const attributions = new Map((try (try ReferralAttributions).referred()).map((entry) => [entry.projectId, entry]))
+  const referred = paid.filter((row) => attributions.has(row.project_id))
+  const roles = try Roles
+  const restrictions = try Restrictions
+  const firstPaid = new Map<string, string | undefined>()
+  const holds = new Map<string, string | undefined>()
+  const bans = new Map<string, boolean>()
+  const teams = new Map<string, boolean>()
+  for (const row of referred) {
+    const referrer = attributions.get(row.project_id)?.referrerGithubId ?? ""
+    if (!firstPaid.has(row.project_id)) firstPaid.set(row.project_id, try firstPaidAt(row.project_id))
+    if (!holds.has(row.project_id)) holds.set(row.project_id, try activeHold(row.project_id))
+    if (!teams.has(referrer)) teams.set(referrer, excluded.has(referrer) || (try roles.isTeam(referrer)))
+    if (!bans.has(referrer)) bans.set(referrer, (try restrictions.account(referrer)).banned)
+  }
+  const found = referred.map((row) => {
+    const attribution = attributions.get(row.project_id)
+    const referrer = attribution?.referrerGithubId ?? ""
+    const symbol = eligibleSymbol(row.network, row.asset_address, row.asset_decimals)
+    const earliest = firstPaid.get(row.project_id) ?? row.paid_observed_at
+    return {
+      obligationId: row.obligation_id,
+      projectId: row.project_id,
+      referrerGithubId: referrer,
+      referrerGithubLogin: attribution?.referrerGithubLogin ?? "",
+      network: row.network,
+      paidTransaction: row.paid_transaction,
+      paidObservedAt: row.paid_observed_at,
+      firstPaidAt: earliest < row.paid_observed_at ? earliest : row.paid_observed_at,
+      grossBase: row.gross_base,
+      assetAddress: row.asset_address,
+      assetSymbol: symbol ?? "unknown",
+      stablecoin: symbol !== undefined,
+      team: teams.get(referrer) ?? true,
+      banned: bans.get(referrer) ?? true,
+      hold: holds.get(row.project_id),
+    } satisfies SourceRow
+  })
+  return try snapshotOf(period, found, found.every((row) => row.referrerGithubId !== "" && row.referrerGithubLogin !== ""))
+}

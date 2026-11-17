@@ -1,0 +1,2 @@
+// spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically"; spec/settlement/referralHolds.md, "An operator hold zeroes a project's later accruals until its single lift, and no hold is ever deleted"
+export const writes = ["referral_accruals", "referral_accrual_files", "referral_accrual_locks", "referral_claim_wallets", "referral_holds"] as const;

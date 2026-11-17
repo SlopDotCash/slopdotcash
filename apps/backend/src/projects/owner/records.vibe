@@ -1,0 +1,154 @@
+// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"
+import { first, rows, sql } from "@repo/platform/d1"
+import type { OwnedProject, ProjectRecord, PublicApplication } from "../../client/projectSetup.vibe"
+
+export schema StoredProject {
+  id: string
+  status: string
+  revision: number
+  manifest: string
+  manifest_sha256: string
+  created_at: string
+  updated_at: string
+  source_application_id: string | null
+  referrer_github_id: string | null
+  referrer_github_login: string | null
+}
+
+export schema StoredApplication {
+  id: string
+  project_id: string
+  manifest: string
+  manifest_sha256: string
+  acceptance_criteria: string
+  applicant_github_id: string
+  applicant_github_login: string
+  submitted_at: string
+  status: string
+  admin_notification: string
+  admin_notification_at: string | null
+  decided_at: string | null
+  decided_by_github_id: string | null
+  decided_by_github_login: string | null
+  decision_reason: string | null
+  github_check: string | null
+  expected_revision: number | null
+  change_reason: string | null
+  referrer_github_id: string | null
+  referrer_github_login: string | null
+  applicant_cancelled_at: string | null
+}
+
+export type Json = { readonly [key: string]: unknown }
+
+export interface Loaded {
+  readonly row: StoredProject
+  readonly manifest: Json
+}
+
+const projectColumns = sql`id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login`
+const applicationColumns = sql`id, project_id, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason, github_check, expected_revision, change_reason, referrer_github_id, referrer_github_login, applicant_cancelled_at`
+
+export function objectOf(value: unknown): Json | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Json : undefined
+}
+
+export effect function parsedObject(text: string) {
+  const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return objectOf(parsed)
+}
+
+export effect function storedProject(projectId: string) {
+  const row = try first(StoredProject, sql`SELECT ${projectColumns} FROM projects WHERE id = ${projectId}`)
+  if (row === undefined) return undefined
+  const manifest = try parsedObject(row.manifest)
+  return manifest === undefined ? undefined : { row, manifest } satisfies Loaded
+}
+
+export effect function storedApplication(applicationId: string) {
+  return try first(StoredApplication, sql`SELECT ${applicationColumns} FROM project_applications WHERE id = ${applicationId}`)
+}
+
+export effect function applicantApplications(githubId: string) {
+  return try rows(StoredApplication, sql`SELECT ${applicationColumns} FROM project_applications WHERE applicant_github_id = ${githubId} ORDER BY submitted_at DESC, id LIMIT 50`)
+}
+
+export effect function ownedProjects(githubId: string) {
+  return try rows(StoredProject, sql`SELECT p.id, p.status, p.revision, p.manifest, p.manifest_sha256, p.created_at, p.updated_at, p.source_application_id, p.referrer_github_id, p.referrer_github_login FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE a.applicant_github_id = ${githubId} OR (p.source_application_id IS NULL AND r.actor_github_id = ${githubId}) OR json_extract(p.manifest, '$.steward.github.actorId') = ${githubId} ORDER BY p.id LIMIT 100`)
+}
+
+schema ListedManifest { id: string; manifest: string }
+
+export effect function listedManifests() {
+  const listed = try rows(ListedManifest, sql`SELECT id, manifest FROM projects ORDER BY id`)
+  const manifests: Array<{ readonly id: string; readonly manifest: Json }> = []
+  for (const row of listed) manifests.push({ id: row.id, manifest: (try parsedObject(row.manifest)) ?? {} })
+  return manifests
+}
+
+schema Creator { github_id: string; login: string }
+
+export effect function projectCreator(projectId: string) {
+  return try first(Creator, sql`SELECT coalesce(a.applicant_github_id, r.actor_github_id) AS github_id, coalesce(a.applicant_github_login, r.actor_github_login) AS login FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 WHERE p.id = ${projectId} AND coalesce(a.applicant_github_id, r.actor_github_id) IS NOT NULL`)
+}
+
+schema SignedIn { github_id: string }
+
+export effect function hasSignedIn(githubId: string) {
+  return (try first(SignedIn, sql`SELECT github_id FROM points_members WHERE github_id = ${githubId}`)) !== undefined
+}
+
+function actorOf(githubId: string | null, login: string | null) {
+  return githubId === null || login === null ? null : { githubId, githubLogin: login }
+}
+
+export function projectRecord(row: StoredProject, manifest: unknown): ProjectRecord {
+  return {
+    id: row.id,
+    status: row.status,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    sourceApplicationId: row.source_application_id,
+    referrer: actorOf(row.referrer_github_id, row.referrer_github_login),
+    manifest,
+  }
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value : ""
+}
+
+export function ownedProject(row: StoredProject, manifest: Json): OwnedProject {
+  return { id: row.id, slug: text(manifest.slug), name: text(manifest.name), status: row.status, listingTier: text(manifest.listingTier), revision: row.revision }
+}
+
+export function applicationStatus(row: StoredApplication): string {
+  return row.applicant_cancelled_at === null ? row.status : "cancelled"
+}
+
+export effect function publicApplication(row: StoredApplication) {
+  const manifest = Effect.try(() => JSON.parse(row.manifest) as unknown) catch () => null
+  const repositories = objectOf(manifest)?.repositories
+  const first = Array.isArray(repositories) ? objectOf(repositories[0])?.id : undefined
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    repository: typeof first === "string" ? first : null,
+    manifest,
+    manifestSha256: row.manifest_sha256,
+    acceptanceCriteria: row.acceptance_criteria,
+    applicant: { githubId: row.applicant_github_id, githubLogin: row.applicant_github_login },
+    submittedAt: row.submitted_at,
+    status: applicationStatus(row),
+    adminNotification: row.admin_notification,
+    adminNotificationAt: row.admin_notification_at,
+    decidedAt: row.decided_at,
+    decidedBy: actorOf(row.decided_by_github_id, row.decided_by_github_login),
+    decisionReason: row.decision_reason,
+    githubCheck: row.github_check,
+    ...(row.expected_revision === null ? {} : { expectedRevision: row.expected_revision, changeReason: row.change_reason ?? "" }),
+    referrer: actorOf(row.referrer_github_id, row.referrer_github_login),
+  } satisfies PublicApplication
+}

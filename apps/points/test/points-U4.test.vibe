@@ -1,0 +1,187 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import { type OpenReference, collectOpen, identities } from "../src/census/collect.vibe"
+import { collectedTargets, fetchRegistry, registeredProjects, registryAnswer } from "../src/census/projects.vibe"
+import { assertReviewCensusStable, collectReviewCensus, recollectedOnce } from "../src/census/reviews.vibe"
+import { Graphql, graphqlClient } from "../src/ingestion/graphql.vibe"
+import { atomicWrite } from "../src/snapshot/files.vibe"
+import { type WindowBounds, publishRefresh, startWindow, observe, windowBounds, windowRun } from "../src/window/window.vibe"
+import { type GitHubFake } from "@repo/platform/testing/github"
+import { fetcherOf, hydratedFromWorld, nodeIdOf, openedDuringPage, registrySnapshot, repository, seeded, servedRegistry, start, unchangedPage } from "./support/u4/github.ts"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function githubLayer(world: { readonly fake: GitHubFake; readonly token: string }) {
+  return Layer.provide(graphqlClient({ token: Redacted.make(world.token), sleep: () => Effect.void }), outboundVia(fetcherOf(world.fake)))
+}
+
+function hydration(world: { readonly fake: GitHubFake }) {
+  return (references: ReadonlyArray<OpenReference>) => Effect.try(() => hydratedFromWorld(world.fake, references.map((reference) => reference.nodeId)))
+}
+
+const view = { registered: true, paused: false, retired: false, legacy: false, quarantined: false }
+const day = 86_400_000
+
+it.live('Census with a count change mid-pass retries once then completes; a second change leaves it incomplete and no snapshot is written (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Publication requires a complete census and keeps the previous snapshot on failure"; spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
+  const clock = settableClock(start)
+  const bounds = try windowBounds(start)
+  const nextDay = try windowBounds(start + day)
+  provide Layer.mergeAll(NodeServices.layer, webCrypto) {
+  const fs = try FileSystem.FileSystem
+  try scoped(effect {
+    const directory = try fs.makeTempDirectoryScoped()
+    const first = try Effect.try(() => seeded(clock.now))
+    const ids = identities()
+    const input = (world: typeof first, window: WindowBounds, publishedLower: number) => ({
+      projectId: "widgets",
+      view,
+      repository: { owner: "ada", name: "widgets" },
+      census: { lowerDay: window.lowerDay, publishedLower, referenceTime: window.toMs, repositoryId: world.repositoryNodeId, identities: ids },
+      hydrate: hydration(world),
+      options: { pageSize: 2 },
+    })
+
+    openedDuringPage(first.fake, "Opened while listing")
+    const before = first.fake.requests.length
+    const open = try Effect.provide(collectOpen(input(first, bounds, 0)), githubLayer(first))
+    const listed = first.fake.requests.length - before
+
+    const published = try windowRun()
+    try startWindow(published, bounds)
+    const counted = try observe(published, bounds, ids, { nodeId: "IC_counted", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "U_grace", actorKind: "Human", pullRequestAuthorId: null, atMs: start - day, mergedAtMs: null, repeatLowValue: false })
+    const botComment = try observe(published, bounds, ids, { nodeId: "IC_bot", sourceNodeId: nodeIdOf(first.fake, 1), kind: "CommentEvent", actorId: "B_helper", actorKind: "Bot", pullRequestAuthorId: null, atMs: start - 3_600_000, mergedAtMs: null, repeatLowValue: false })
+    const written = `${directory}/leaderboard.json`
+    try publishRefresh(published, Effect.succeed(open.issues.census), () => atomicWrite(written, new TextEncoder().encode("{}\n")))
+    const publishedWindow = try published.get()
+    const previous = { from: bounds.from, to: bounds.to, count: publishedWindow.publishedCount }
+
+    const earlier = try windowRun(previous)
+    const movedBack = startWindow(earlier, try windowBounds(start - 2 * day)) catch (error) => error._tag
+
+    const second = try Effect.try(() => seeded(clock.now))
+    openedDuringPage(second.fake, "Opened in the first pass")
+    unchangedPage(second.fake)
+    openedDuringPage(second.fake, "Opened in the second pass")
+    const refused = try windowRun(previous)
+    try startWindow(refused, nextDay)
+    const kept = `${directory}/refused.json`
+    const refreshed = effect {
+      const again = try collectOpen(input(second, nextDay, bounds.lowerDay))
+      return again.issues.census
+    }
+    const failure = publishRefresh(refused, Effect.provide(refreshed, githubLayer(second)), () => atomicWrite(kept, new TextEncoder().encode("{}\n"))) catch (error) => ({ tag: error._tag, message: "message" in error ? error.message : "" })
+    const failedWindow = try refused.get()
+
+    try same({
+      issues: { phase: open.issues.census.phase, countChanges: open.issues.census.countChanges, totalCount: open.issues.census.totalCount, items: open.issues.census.items.length },
+      pullRequests: { phase: open.pullRequests.census.phase, countChanges: open.pullRequests.census.countChanges, totalCount: open.pullRequests.census.totalCount },
+      listed,
+      outcomes: [counted?.outcome, botComment?.outcome],
+      published: { phase: publishedWindow.phase, from: publishedWindow.publishedFrom, to: publishedWindow.publishedTo, count: publishedWindow.publishedCount, inventory: publishedWindow.censusTotal, written: try fs.exists(written) },
+      movedBack,
+      failure,
+      failed: { phase: failedWindow.phase, from: failedWindow.publishedFrom, to: failedWindow.publishedTo, count: failedWindow.publishedCount, written: try fs.exists(kept) },
+    }, {
+      issues: { phase: "Ready", countChanges: 1, totalCount: 4, items: 4 },
+      pullRequests: { phase: "Ready", countChanges: 0, totalCount: 2 },
+      listed: 5,
+      outcomes: ["Counted", "ExcludedBot"],
+      published: { phase: "Published", from: bounds.lowerDay, to: bounds.upper, count: 1, inventory: 4, written: true },
+      movedBack: "WindowRefused",
+      failure: { tag: "OpenSetChanged", message: "Open issues changed from 4 to 5 while listing; rerun for a coherent snapshot" },
+      failed: { phase: "Failed", from: bounds.lowerDay, to: bounds.upper, count: 1, written: false },
+    })
+  })
+  }
+})
+
+it.live('Paused, retired, quarantined and legacy projects are never collected (spec/points/census.md, "Collection starts only for a collected project and never moves its window back")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const served = servedRegistry(registrySnapshot)
+  const registered = try Effect.provide(fetchRegistry("https://slop.test"), outboundVia(served.fetcher))
+  const targets = try collectedTargets(registered)
+  const bounds = try windowBounds(start)
+  const refusals: Array<readonly [string, unknown]> = []
+  for (const project of registered) {
+    if (project.projectId === "widgets") continue
+    const refused = Effect.provide(collectOpen({
+        projectId: project.projectId,
+        view: project.view,
+        repository: { owner: "ada", name: "widgets" },
+        census: { lowerDay: bounds.lowerDay, publishedLower: 0, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+        hydrate: hydration(world),
+      }), githubLayer(world)) catch (error) => error._tag
+    refusals.push([project.projectId, refused])
+  }
+  const movedBack = Effect.provide(collectOpen({
+      projectId: "widgets",
+      view,
+      repository: { owner: "ada", name: "widgets" },
+      census: { lowerDay: bounds.lowerDay - 1, publishedLower: bounds.lowerDay, referenceTime: start, repositoryId: world.repositoryNodeId, identities: identities() },
+      hydrate: hydration(world),
+    }), githubLayer(world)) catch (error) => error._tag
+  const unknownRestriction = registeredProjects(try registryAnswer({ ...registrySnapshot, restrictions: [{ projectId: "missing", state: "quarantined" }] })) catch (error) => error._tag
+  const extraKey = registryAnswer({ ...registrySnapshot, revisions: [] }) catch (error) => error._tag
+  try same({
+    paths: served.paths,
+    views: registered.map((project) => [project.projectId, project.view]),
+    targets,
+    refusals,
+    movedBack,
+    githubRequests: world.fake.requests.length,
+    unknownRestriction,
+    extraKey,
+  }, {
+    paths: ["GET https://slop.test/api/v1/projects"],
+    views: [
+      ["paused-gadgets", { ...view, paused: true }],
+      ["asi", { ...view, legacy: true }],
+      ["delisted", { ...view, retired: true }],
+      ["held", { ...view, quarantined: true }],
+      ["widgets", view],
+    ],
+    targets: [{ projectId: "widgets", id: repository, owner: "ada", name: "widgets", displayName: repository, githubUrl: `https://github.com/${repository}`, description: "The widgets source repository.", integrationBranch: "main", aliases: [], expectedNodeId: null, countsFrom: null, role: "primary" }],
+    refusals: [["paused-gadgets", "NotCollected"], ["asi", "NotCollected"], ["delisted", "NotCollected"], ["held", "NotCollected"]],
+    movedBack: "CensusWindowBack",
+    githubRequests: 0,
+    unknownRestriction: "RegistryMalformed",
+    extraKey: "RegistryMalformed",
+  })
+})
+
+it.live('A changed review census recollects every source once and a second change stops the collection (spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const pull = { id: nodeIdOf(world.fake, 4) }
+  provide githubLayer(world) {
+    try (try Graphql).execute("query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }")
+    const attempts: number[] = []
+    const settled = try recollectedOnce((recollection) => effect {
+      attempts.push(recollection.attempt)
+      const before = try collectReviewCensus([pull])
+      if (recollection.attempt === 1) try Effect.try(() => world.fake.world.addReview(repository, 4, { author: "grace", state: "APPROVED", body: "Looks right to me after running it." }))
+      const after = try collectReviewCensus([pull])
+      try assertReviewCensusStable(before, after)
+      return { attempt: recollection.attempt, reviews: after.get(pull.id)?.reviewCount, holds: recollection.allowJointHolds }
+    })
+    const churned: number[] = []
+    const stopped = recollectedOnce((recollection) => effect {
+      churned.push(recollection.attempt)
+      const before = try collectReviewCensus([pull])
+      try Effect.try(() => world.fake.world.addReview(repository, 4, { author: "linus", state: "CHANGES_REQUESTED", body: "Please split the change into two parts." }))
+      try assertReviewCensusStable(before, try collectReviewCensus([pull]))
+    }) catch (error) => error._tag
+    try same({ settled, attempts, stopped, churned }, {
+      settled: { attempt: 2, reviews: 1, holds: true },
+      attempts: [1, 2],
+      stopped: "ReviewCensusChanged",
+      churned: [1, 2],
+    })
+  }
+})

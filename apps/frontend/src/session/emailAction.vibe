@@ -1,0 +1,237 @@
+// spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { emailUnsubscribe, emailVerify } from "@repo/backend/client"
+import { type EmailAction, type EmailKind, Machine, decodeState, initial, machine, mayApply, restorable } from "../../gen/frontend__emailAction.effect.vibe"
+import { type CallFailure, call } from "../platform/api.vibe"
+import { SessionStore, storageKeys } from "../platform/storage.vibe"
+import { currentAddress, replaceAddress } from "./address.ts"
+import { BrowserSession } from "./browserSession.vibe"
+import { parsedJson, recordOf } from "./localSignin.vibe"
+import { Session, actorNumber } from "./session.vibe"
+
+export const emailActionLimitBytes = 4096
+
+const key = storageKeys.emailAction.key
+const fragmentPattern = /^#(verify-email|unsubscribe-email)=(.*)$/u
+const verifyToken = /^[a-f0-9]{64}$/u
+const unsubscribeToken = /^[a-f0-9]{64}\.[a-f0-9]{64}$/u
+const actorPattern = /^\d+$/u
+
+export const emailActionMessages = {
+  accountChanged: "Your account changed. Reopen the email link for this account.",
+  uncheckable: "Your account could not be checked. Reload to retry.",
+  changedBeforeVerify: "Your account changed. Reload before verifying.",
+  wrongAccount: "Sign in to the account that requested this link.",
+  unusable: "This email link could not be used. It may have expired or already been used.",
+  changedAfterVerify: "Your account changed. Open email preferences to check the result.",
+  unsubscribeUnverified: "The unsubscribe result could not be verified. Retry.",
+} as const
+
+type LinkKind = "verify" | "unsubscribe"
+
+interface StoredAction {
+  readonly kind: LinkKind
+  readonly token: string
+  readonly actor: string | null
+  readonly createdAt: number
+}
+
+interface Opened {
+  readonly start: EmailAction
+  readonly stored: StoredAction | undefined
+}
+
+function machineKind(kind: LinkKind): EmailKind {
+  return kind === "verify" ? "VerifyEmail" : "UnsubscribeEmail"
+}
+
+export function validEmailToken(kind: LinkKind, token: string): boolean {
+  return kind === "verify" ? verifyToken.test(token) : unsubscribeToken.test(token)
+}
+
+function storedOf(value: unknown): StoredAction | undefined {
+  const saved = recordOf(value)
+  const kind = saved?.kind
+  if (saved === undefined || (kind !== "verify" && kind !== "unsubscribe")) return undefined
+  const token = saved.token
+  const actor = saved.actor
+  const createdAt = saved.createdAt
+  if (typeof token !== "string" || (token !== "" && !validEmailToken(kind, token))) return undefined
+  if (actor !== null && (typeof actor !== "string" || !actorPattern.test(actor))) return undefined
+  if (typeof createdAt !== "number" || !Number.isFinite(createdAt)) return undefined
+  return { kind, token, actor, createdAt }
+}
+
+export service EmailLink {
+  capture(hash: string): boolean!!
+  checkSession(): (string | undefined)!!HttpClient.HttpClient
+  confirm(): (string | undefined)!!HttpClient.HttpClient
+  dismiss(): void!!
+}
+
+type Values = KeyValueStore.KeyValueStore
+
+effect function write(values: Values, action: StoredAction | undefined) {
+  if (action === undefined) {
+    values.remove(key) catch () => undefined
+    return
+  }
+  const text = Effect.try(() => JSON.stringify(action)) catch () => undefined
+  if (text !== undefined) values.set(key, text) catch () => undefined
+}
+
+effect function captured(values: Values, hash: string) {
+  const fragment = fragmentPattern.exec(hash)
+  if (fragment === null) return undefined
+  const address = currentAddress()
+  replaceAddress(`${address.pathname}${address.search}`, true)
+  const kind: LinkKind = fragment[1] === "verify-email" ? "verify" : "unsubscribe"
+  const raw = fragment[2] ?? ""
+  const action = { kind, token: validEmailToken(kind, raw) ? raw : "", actor: null, createdAt: try Clock.currentTimeMillis } satisfies StoredAction
+  try write(values, action)
+  return action
+}
+
+effect function restored(values: Values) {
+  const text = values.get(key) catch () => undefined
+  const action = storedOf(try parsedJson(text))
+  if (action !== undefined && restorable((try Clock.currentTimeMillis) - action.createdAt)) return action
+  if (text !== undefined) try write(values, undefined)
+  return undefined
+}
+
+effect function opened() {
+  const values = (try SessionStore).values
+  const fresh = try captured(values, currentAddress().hash)
+  const action = fresh ?? (try restored(values))
+  if (action === undefined) return { start: initial, stored: undefined } satisfies Opened
+  const start = decodeState({
+    kind: machineKind(action.kind),
+    tokenValid: action.token !== "",
+    boundActor: action.actor === null ? 0 : actorNumber(action.actor),
+    signedIn: 0,
+    accountChanged: false,
+    done: false,
+    generation: 1,
+  }) catch () => undefined
+  if (start === undefined) {
+    try write(values, undefined)
+    return { start: initial, stored: undefined } satisfies Opened
+  }
+  return { start, stored: action } satisfies Opened
+}
+
+function requestFailure(failure: CallFailure): string {
+  switch (failure._tag) {
+    case "NetworkError": return failure.message
+    case "ActorChanged": return emailActionMessages.wrongAccount
+    case "Refused": return failure.status === 403 ? emailActionMessages.wrongAccount : emailActionMessages.unusable
+    case "InvalidResponse": return failure.status >= 200 && failure.status <= 299 ? failure.message : failure.status === 403 ? emailActionMessages.wrongAccount : emailActionMessages.unusable
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+function emailLinkOf(opened: Opened) {
+  return Layer.effect(EmailLink, effect {
+    const actions = try Machine
+    const session = try Session
+    const values = (try SessionStore).values
+    const browser = try BrowserSession
+    let stored = opened.stored
+
+    effect function keep(action: StoredAction | undefined) {
+      stored = action
+      try write(values, action)
+    }
+
+    effect function sessionActor() {
+      const current = try session.current()
+      return current === null ? 0 : actorNumber(current.githubId)
+    }
+
+    effect function generationIs(generation: number) {
+      return (try actions.get()).generation === generation
+    }
+
+    effect function checkSession() {
+      const before = try actions.get()
+      if (before.kind !== "VerifyEmail" || !before.tokenValid || before.done) return undefined
+      const actorId = sessionActor() catch () => -1
+      if (actorId < 0) return (try generationIs(before.generation)) ? emailActionMessages.uncheckable : undefined
+      const after = actions.send({ type: "checkSession", actorId, requestGeneration: before.generation }) catch () => undefined
+      if (after === undefined) return undefined
+      if (after.accountChanged) return emailActionMessages.accountChanged
+      if (stored !== undefined && stored.actor === null && after.boundActor > 0) try keep({ ...stored, actor: String(after.boundActor) })
+      return undefined
+    }
+
+    effect function accountProblem(actor: number, generation: number, changed: string) {
+      const found = sessionActor() catch (failure) => failure.message
+      if (!(try generationIs(generation))) return null
+      if (typeof found === "string") return found
+      return found === actor ? undefined : changed
+    }
+
+    effect function verified(token: string, actor: number, generation: number) {
+      const before = try accountProblem(actor, generation, emailActionMessages.changedBeforeVerify)
+      if (before !== undefined) return before ?? undefined
+      const answer = call(emailVerify, { body: { token } }, { limitBytes: emailActionLimitBytes, expectedActor: String(actor) }) catch (failure) => ({ failure })
+      if (!(try generationIs(generation))) return undefined
+      if ("failure" in answer) return requestFailure(answer.failure)
+      const after = try accountProblem(actor, generation, emailActionMessages.changedAfterVerify)
+      if (after !== undefined) return after ?? undefined
+      return true
+    }
+
+    effect function unsubscribed(token: string, generation: number) {
+      const answer = call(emailUnsubscribe, { body: { token } }, { limitBytes: emailActionLimitBytes }) catch (failure) => ({ failure })
+      if (!(try generationIs(generation))) return undefined
+      if ("failure" in answer) return requestFailure(answer.failure)
+      if (answer.enabled !== false || answer.securityEnabled !== false) return emailActionMessages.unsubscribeUnverified
+      return true
+    }
+
+    effect function confirm() {
+      const before = try actions.get()
+      const token = stored?.token ?? ""
+      if (!mayApply(before) || token === "") return undefined
+      const outcome = before.kind === "VerifyEmail" ? try verified(token, before.boundActor, before.generation) : try unsubscribed(token, before.generation)
+      if (outcome !== true) return outcome
+      try keep(undefined)
+      actions.send({ type: "confirmAction", requestGeneration: before.generation }) catch () => undefined
+      return undefined
+    }
+
+    effect function capture(hash: string) {
+      const action = try captured(values, hash)
+      if (action === undefined) return false
+      stored = action
+      try orDie(actions.send({ type: "capture", kind: machineKind(action.kind), tokenValid: action.token !== "" }))
+      return true
+    }
+
+    effect function dismiss() {
+      try keep(undefined)
+      actions.send({ type: "dismiss" }) catch () => undefined
+    }
+
+    try browser.onAccountChange(() => effect {
+      actions.send({ type: "accountChange" }) catch () => undefined
+    })
+
+    return {
+      capture,
+      checkSession,
+      confirm,
+      dismiss,
+    }
+  })
+}
+
+export const emailActionLayer = Layer.unwrap(effect {
+  const found = try opened()
+  return Layer.provideMerge(emailLinkOf(found), machine(found.start))
+})

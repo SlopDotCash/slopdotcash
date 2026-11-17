@@ -1,0 +1,517 @@
+// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"
+import { RowMismatch, decoded } from "@repo/platform/d1"
+import { millisOf } from "@repo/platform/clock"
+import type { Rows } from "@repo/platform/stored"
+import { type AssetKind, type Attempt, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import type { Held } from "../runtime/config.vibe"
+import { signedFees } from "./signedSend.ts"
+import { type Evaluation, type NetworkName, type StateName, releasedAt } from "./writes.vibe"
+
+module verified {
+  import { nativeUnits as unitsOf, nativeWei as weiAt, overran as above, sumOf as summed } from "./amounts.ts"
+  /** @throws {never} */
+  export function nativeUnits(wei: bigint, solana: boolean): bigint { return unitsOf(wei, solana) }
+  /** @throws {never} */
+  export function nativeWei(units: bigint, solana: boolean): bigint { return weiAt(units, solana) }
+  /** @throws {never} */
+  export function overran(actual: bigint, maximum: bigint): boolean { return above(actual, maximum) }
+  /** @throws {never} */
+  export function sumOf(values: ReadonlyArray<bigint>, count: number): bigint { return summed(values, count) }
+}
+import { nativeUnits, nativeWei, overran, sumOf } from verified
+
+export type NameKind = "wallet" | "token" | "tx" | "run" | "vault" | "deployment" | "receipt" | "operator" | "hash"
+
+export interface Names {
+  number(kind: NameKind, text: string): number
+  text(kind: NameKind, value: number): string | undefined
+}
+
+export function ledger(): Names {
+  const numbers = new Map<string, number>()
+  const texts = new Map<string, string>()
+  const counts = new Map<NameKind, number>()
+  function bind(kind: NameKind, text: string, value: number) {
+    numbers.set(`${kind}\u0000${text}`, value)
+    texts.set(`${kind}\u0000${value}`, text)
+    counts.set(kind, Math.max(counts.get(kind) ?? 0, value))
+    return value
+  }
+  return {
+    number: (kind, text) => numbers.get(`${kind}\u0000${text}`) ?? bind(kind, text, (counts.get(kind) ?? 0) + 1),
+    text: (kind, value) => {
+      const found = texts.get(`${kind}\u0000${value}`)
+      if (found !== undefined || kind !== "run") return found
+      const made = `fee-run-${value}`
+      bind(kind, made, value)
+      return made
+    },
+  }
+}
+
+export interface Observed {
+  readonly address: string
+  readonly asset: AssetKind
+  readonly received: number
+  readonly topUps: number
+  readonly vault: string | undefined
+  readonly vaultObserved: number
+  readonly allowance: number
+}
+
+export interface Reviewed { readonly vault: string; readonly deployment: string; readonly token: string }
+
+export interface Intent { readonly evaluation: Evaluation; readonly row: Row }
+
+export interface Instance {
+  readonly network: Network
+  readonly scope: string
+  readonly epoch: number
+  readonly held: Held
+  readonly tokens: ReadonlyArray<Observed>
+  readonly receipts: ReadonlyArray<string>
+  readonly vaults: ReadonlyArray<Reviewed>
+  readonly intent?: Intent
+}
+
+export interface SendRecord {
+  readonly id: string
+  readonly pending: Evaluation | undefined
+  readonly run: string
+  readonly wallet: string
+  readonly token: string
+  readonly txs: ReadonlyArray<string>
+}
+
+export interface GasRecord {
+  readonly id: string
+  readonly run: string
+  readonly wallet: string
+  readonly tx: string | null
+  readonly slot: number | null
+  readonly intent: string
+  readonly maximumWei: string
+  readonly accountProof: string | null
+}
+
+export interface Journal {
+  readonly state: Fee
+  readonly sends: ReadonlyArray<SendRecord>
+  readonly gas: ReadonlyArray<GasRecord>
+  readonly tokens: ReadonlyArray<string>
+  readonly runs: ReadonlyMap<number, string>
+  readonly scans: ReadonlyMap<string, string>
+  readonly foreign: ReadonlyArray<Foreign>
+  readonly pending: number
+}
+
+export interface Foreign { readonly purpose: string; readonly reservation: Reservation }
+
+export const networkNames: Readonly<Record<Network, NetworkName>> = { Base: "base", Ethereum: "ethereum", Robinhood: "robinhood", Solana: "solana" }
+
+export const reasonText = {
+  BelowMinimum: "below the minimum conversion value",
+  BelowGasMultiple: "below the gas-cost multiple",
+  RunCapReached: "per-run value cap reached",
+  DayCapReached: "daily value cap reached",
+  ExceedsRemaining: "quote exceeds the remaining value cap",
+  UnsafeValue: "quote value exceeds safe integer accounting",
+  ImpactUnknown: "price impact unknown",
+  ImpactAbove: "price impact above the cap",
+  SlippageOutside: "minimum output outside the slippage limit",
+  RunEndedBeforeSigning: "run ended before signing",
+  BelowSignedMinimum: "finalized below the signed minimum",
+  EvmExpired: "router deadline passed before inclusion",
+  SolanaExpired: "blockhash expired; two independent retained histories prove no inclusion",
+} as const
+
+const stateOf: Readonly<Record<StateName, RowState>> = {
+  quoted: "Quoted", pending: "DustPending", skipped: "Skipped", no_route: "NoRoute",
+  submitted: "Submitted", unknown: "Unknown", finalized: "Finalized", failed: "Failed",
+}
+
+export const stateName: Readonly<Record<RowState, StateName>> = {
+  Quoted: "quoted", DustPending: "pending", Skipped: "skipped", NoRoute: "no_route",
+  Submitted: "submitted", Unknown: "unknown", Finalized: "finalized", Failed: "failed",
+}
+
+const dustReasons: ReadonlyArray<readonly [Reason, string]> = [["BelowMinimum", reasonText.BelowMinimum], ["BelowGasMultiple", reasonText.BelowGasMultiple]]
+const skipReasons: ReadonlyArray<readonly [Reason, string]> = [
+  ["RunCapReached", reasonText.RunCapReached], ["DayCapReached", reasonText.DayCapReached], ["ExceedsRemaining", reasonText.ExceedsRemaining],
+  ["UnsafeValue", reasonText.UnsafeValue], ["ImpactUnknown", reasonText.ImpactUnknown], ["ImpactAbove", reasonText.ImpactAbove], ["SlippageOutside", reasonText.SlippageOutside],
+]
+
+function failedReason(text: string): Reason | undefined {
+  if (text.startsWith("prepare:") || text.startsWith("claim:")) return "PrepareFailed"
+  if (text === reasonText.RunEndedBeforeSigning) return "RunEndedBeforeSigning"
+  if (text === reasonText.EvmExpired || text.startsWith("blockhash expired")) return "ExpiredUnlanded"
+  if (text.endsWith(" transaction reverted") || text.endsWith(" transaction failed on chain")) return "Reverted"
+  return undefined
+}
+
+function reasonOf(state: RowState, text: string | null): Reason | undefined {
+  switch (state) {
+    case "Quoted": return "NoReason"
+    case "Submitted": return "NoReason"
+    case "Unknown": return "BroadcastUnknown"
+    case "NoRoute": return "NoRouteFound"
+    case "Finalized": return text === null ? "NoReason" : text === reasonText.BelowSignedMinimum ? "BelowSignedMinimum" : undefined
+    case "Failed": return text === null ? undefined : failedReason(text)
+    case "DustPending": return dustReasons.find(([, written]) => written === text)?.[0]
+    case "Skipped": return skipReasons.find(([, written]) => written === text)?.[0]
+    default: {
+      const _exhaustive: never = state
+      return _exhaustive
+    }
+  }
+}
+
+export function revertedText(kind: SendKind, network: Network): string {
+  const subject = kind === "Claim" ? "claim" : kind === "Approval" ? "approval" : "swap"
+  return network === "Solana" ? `${subject} transaction failed on chain` : `${subject} transaction reverted`
+}
+
+schema LockRow { run_id: string; expires_at: string; gas_revision: number }
+schema ConversionRow {
+  id: string; kind: string; run_id: string; mode: string; fee_wallet: string; token: string; amount_in: string
+  route: string | null; min_amount_out: string | null; quote_value_micro: number | null; journal: string | null
+  legacy_raw: string | null; approval_tx_id: string | null; tx_id: string | null; evm_nonce: number | null; expires_at: number | null
+  amount_out: string | null; token_balance_before: string | null; state: "quoted" | "pending" | "skipped" | "no_route" | "submitted" | "finalized" | "failed" | "unknown"
+  reason: string | null; created_at: string; submitted_at: string | null
+}
+schema ReplacementRow { conversion_id: string; tx_id: string; max_fee_per_gas: string; max_priority_fee_per_gas: string; created_at: string }
+schema GasRow {
+  id: string; run_id: string; fee_wallet: string; nonce: number; maximum_wei: string; state: "reserved" | "signed" | "abandoned"
+  tx_id: string | null; conversion_id: string | null; actual_wei: string | null; settled_day: string | null
+  solana_blockhash_slot: number | null; purpose: string; created_at: string; intent_hash: string; solana_account_proof: string | null
+}
+schema StepRow { tx_id: string; operator: string; revision: number; run_id: string; scan_json: string; observed_at: string }
+schema ProofRow { tx_id: string; run_id: string; proof_json: string; observed_at: string }
+schema SendJournal { gasLimit: number; maxFee: number; priority: number; deadline: number }
+export schema ScanJson {
+  txId: string; operator: string; blockhash: string; blockhashSlot: number; tipSlot: number; tipHash: string
+  nextSlot: number; expectedHash: string; blocks: number; digest: string; complete: boolean; revision: number
+}
+schema ProviderJson { operator: string; firstAvailableSlot: number; finalizedContextSlot: number; signatureContextSlot: number; coverage?: ScanJson }
+schema ProofJson { txId: string; blockhash: string; blockhashSlot: number; providers: ReadonlyArray<ProviderJson> }
+
+type Conversion = typeof ConversionRow.Type
+type Gas = typeof GasRow.Type
+
+const foreignKinds: ReadonlyArray<string> = ["bridge", "buyback", "burn"]
+const decimal = /^(0|[1-9][0-9]*)$/u
+
+export effect function amountOf(text: string, label: string) {
+  if (!decimal.test(text)) throw new RowMismatch({ text: label, issue: `${text} is not a whole number` })
+  return try orDie(Effect.try(() => BigInt(text)))
+}
+
+effect function exact(text: string | null, label: string) {
+  if (text === null) return 0
+  const value = Number(text)
+  if (!decimal.test(text) || !Number.isSafeInteger(value)) throw new RowMismatch({ text: label, issue: `${text} is not a whole number the journal model holds` })
+  return value
+}
+
+export effect function unitsOf(wei: string, network: Network, label: string) {
+  return nativeUnits(try amountOf(wei, label), network === "Solana")
+}
+
+effect function native(wei: string | null, network: Network, label: string) {
+  if (wei === null) return 0
+  return try exact((try unitsOf(wei, network, label)).toString(), label)
+}
+
+export effect function weiAmount(units: number, network: Network) {
+  return nativeWei(try orDie(Effect.try(() => BigInt(units))), network === "Solana")
+}
+
+export effect function weiOf(units: number, network: Network) {
+  return (try weiAmount(units, network)).toString()
+}
+
+export effect function exceeds(actual: string, maximum: string, label: string) {
+  return overran(try amountOf(actual, label), try amountOf(maximum, label))
+}
+
+export effect function decimalTotal(values: ReadonlyArray<string>, label: string) {
+  const amounts: Array<bigint> = []
+  for (const value of values) amounts.push(try amountOf(value, label))
+  return sumOf(amounts, amounts.length).toString()
+}
+
+effect function jsonOf(text: string, label: string) {
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: label, issue: "not JSON" }) })
+}
+
+effect function sendJournal(text: string, label: string) {
+  const value = try jsonOf(text, label)
+  return Schema.decodeUnknownEffect(SendJournal)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "does not match the send journal" }) }
+}
+
+effect function scanJson(text: string, label: string) {
+  const value = try jsonOf(text, label)
+  return Schema.decodeUnknownEffect(ScanJson)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "does not match the expiry scan" }) }
+}
+
+effect function proofJson(text: string, label: string) {
+  const value = try jsonOf(text, label)
+  return Schema.decodeUnknownEffect(ProofJson)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "does not match the expiry proof" }) }
+}
+
+export function runText(scope: string, base: string, trigger: Trigger) {
+  return `${scope}${base}:${trigger === "Receipts" ? "receipts" : "recovery"}`
+}
+
+function runParts(scope: string, runId: string): { readonly base: string; readonly trigger: Trigger } {
+  const local = runId.slice(scope.length)
+  if (local.endsWith(":receipts")) return { base: local.slice(0, -9), trigger: "Receipts" }
+  if (local.endsWith(":recovery")) return { base: local.slice(0, -9), trigger: "Recovery" }
+  return { base: local, trigger: "Recovery" }
+}
+
+function foreignRow(row: Conversion) {
+  return foreignKinds.includes(row.kind) || (row.kind === "approval" && row.route === "debridge")
+}
+
+function sum(rows: ReadonlyArray<Row>, token: number, keep: (row: Row) => boolean, value: (row: Row) => number) {
+  return rows.reduce((total, row) => row.token === token && keep(row) ? total + value(row) : total, 0)
+}
+
+function isOpen(row: Row) {
+  return row.state === "Submitted" || row.state === "Unknown" || (row.state === "Quoted" && row.live)
+}
+
+function coverageOf(names: Names, scan: typeof ScanJson.Type): Coverage {
+  return { fromSlot: scan.nextSlot, tipSlot: scan.tipSlot, tipHash: names.number("hash", scan.tipHash), blocks: scan.blocks, digest: names.number("hash", scan.digest) }
+}
+
+const provenClean: Omit<ProviderFinding, "operator"> = { invalidBlockhash: true, signatureFound: false, transactionFound: false }
+const openStates: ReadonlyArray<string> = ["quoted", "submitted", "unknown"]
+
+effect function firstAttempt(row: Conversion, network: Network, epoch: number) {
+  if (row.journal !== null) return { fees: try sendJournal(row.journal, `fee journal ${row.id}`), at: millisOf(row.submitted_at ?? row.created_at) - epoch }
+  const legacy = row.legacy_raw === null || network === "Solana" ? undefined : signedFees(row.legacy_raw)
+  const deadline = row.kind !== "conversion" ? 0 : network === "Solana" ? maximumSafeValue : (row.expires_at ?? 0) * 1000 - epoch
+  const fees = legacy === undefined
+    ? { gasLimit: 1, maxFee: transactionCeilingOf(network), priority: 0, deadline }
+    : {
+      gasLimit: try exact(legacy.gas.toString(), `fee journal ${row.id}`),
+      maxFee: try native(legacy.maxFeePerGas.toString(), network, `fee journal ${row.id}`),
+      priority: try native(legacy.maxPriorityFeePerGas.toString(), network, `fee journal ${row.id}`),
+      deadline,
+    }
+  return { fees, at: millisOf(row.submitted_at ?? row.created_at) - epoch }
+}
+
+export effect function decodeJournal(instance: Instance, names: Names, [locks, conversions, replaced, reservations, steps, proven]: ReadonlyArray<Rows>) {
+  const network = instance.network
+  const epoch = instance.epoch
+  const scope = instance.scope
+  const lock = (try decoded(LockRow, locks ?? [], "fee lease"))[0]
+  const rows = try decoded(ConversionRow, conversions ?? [], "fee journal")
+  const replacements = try decoded(ReplacementRow, replaced ?? [], "fee replacements")
+  const gasRows = try decoded(GasRow, reservations ?? [], "fee native gas")
+  const stepRows = try decoded(StepRow, steps ?? [], "Solana expiry scans")
+  const proofRows = try decoded(ProofRow, proven ?? [], "Solana expiry proofs")
+  const clock = (try Clock.currentTimeMillis) - epoch
+  const ms = (iso: string) => millisOf(iso) - epoch
+  const leased = lock !== undefined && lock.run_id.startsWith(scope) ? lock : undefined
+
+  const reserved = new Set(gasRows.flatMap((row) => row.tx_id === null ? [] : [row.tx_id]))
+  const live = rows.filter((row) => row.mode === "live")
+  const signedTexts = [
+    ...live.flatMap((row) => row.tx_id === null ? [] : [row.tx_id]),
+    ...replacements.map((entry) => entry.tx_id),
+    ...live.flatMap((row) => row.approval_tx_id === null || row.approval_tx_id === row.tx_id ? [] : [row.approval_tx_id]),
+  ]
+  const unaccounted = signedTexts.find((tx) => !reserved.has(tx))
+  if (unaccounted !== undefined) throw new RowMismatch({ text: `fee journal send ${unaccounted}`, issue: "signed bytes hold no native gas reservation; their historical liability must be imported first" })
+  const openApproval = live.find((row) => row.approval_tx_id !== null && row.tx_id === null && openStates.includes(row.state))
+  if (openApproval !== undefined) throw new RowMismatch({ text: `fee journal row ${openApproval.id}`, issue: "a legacy approval-only send is still open; its approval receipt must close it first" })
+
+  const firstSeen = [
+    ...rows.map((row) => [row.created_at, row.run_id] as const),
+    ...gasRows.map((row) => [row.created_at, row.run_id] as const),
+    ...stepRows.map((row) => [row.observed_at, row.run_id] as const),
+    ...proofRows.map((row) => [row.observed_at, row.run_id] as const),
+  ].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  const runs = new Map<number, string>()
+  const runOf = (runId: string) => {
+    const value = names.number("run", runParts(scope, runId).base)
+    runs.set(value, runId)
+    return value
+  }
+  for (const [, runId] of firstSeen) runOf(runId)
+  if (leased !== undefined) runOf(leased.run_id)
+  const nextRun = Math.max(0, ...runs.keys()) + 1
+
+  const known = new Set(rows.map((row) => row.id))
+  const carriers = rows.filter((row) => !foreignRow(row))
+  const foreignIds = new Set(rows.filter(foreignRow).map((row) => row.id))
+  const modelIds = new Map(carriers.map((carrier, index) => [carrier.id, index + 1] as const))
+  const isForeignGas = (row: Gas) => row.purpose === "bridge" || (row.conversion_id !== null && foreignIds.has(row.conversion_id))
+  const solanaNonce = new Map(gasRows.flatMap((row) => row.tx_id === null ? [] : [[row.tx_id, row.nonce] as const]))
+
+  const tokens = [...instance.tokens.map((token) => token.address)]
+  const tokenOf = (address: string) => {
+    const index = tokens.indexOf(address)
+    if (index !== -1) return index + 1
+    tokens.push(address)
+    return tokens.length
+  }
+  const wallets = instance.held.wallets
+  const extraWallets: Array<string> = []
+  const walletOf = (address: string) => {
+    const index = wallets.indexOf(address)
+    if (index !== -1) return index + 1
+    if (!extraWallets.includes(address)) extraWallets.push(address)
+    return wallets.length + extraWallets.indexOf(address) + 1
+  }
+
+  const sends: Array<SendRecord> = []
+  const modelRows: Array<Row> = []
+  for (const [index, carrier] of carriers.entries()) {
+    const label = `fee journal row ${carrier.id}`
+    const state = stateOf[carrier.state]
+    const reason = reasonOf(state, carrier.reason)
+    if (reason === undefined) throw new RowMismatch({ text: label, issue: `reason ${carrier.reason ?? "missing"} does not fit state ${carrier.state}` })
+    const later = replacements.filter((entry) => entry.conversion_id === carrier.id)
+    const approvalOnly = carrier.tx_id === null && carrier.approval_tx_id !== null
+    const firstTx = carrier.tx_id ?? (carrier.mode === "live" ? carrier.approval_tx_id : null)
+    const signed = firstTx === null ? undefined : try firstAttempt(carrier, network, epoch)
+    const attempts: Array<Attempt> = signed === undefined || firstTx === null ? [] : [
+      { tx: names.number("tx", firstTx), maxFee: signed.fees.maxFee, priority: signed.fees.priority, at: signed.at },
+    ]
+    for (const entry of later) attempts.push({
+      tx: names.number("tx", entry.tx_id),
+      maxFee: try native(entry.max_fee_per_gas, network, label),
+      priority: try native(entry.max_priority_fee_per_gas, network, label),
+      at: ms(entry.created_at),
+    })
+    const kind: SendKind = carrier.kind === "claim" ? "Claim" : carrier.kind === "approval" || approvalOnly ? "Approval" : "Conversion"
+    const nonce = network === "Solana" ? (firstTx === null ? -1 : solanaNonce.get(firstTx) ?? -1) : carrier.evm_nonce ?? -1
+    modelRows.push({
+      id: index + 1,
+      token: tokenOf(carrier.token),
+      kind,
+      live: carrier.mode === "live",
+      state,
+      reason,
+      runId: runOf(carrier.run_id),
+      wallet: walletOf(carrier.fee_wallet),
+      amountIn: try exact(carrier.amount_in, label),
+      valueMicro: carrier.quote_value_micro ?? 0,
+      balanceBefore: try exact(carrier.token_balance_before, label),
+      minimumOutput: try exact(carrier.min_amount_out, label),
+      nonce,
+      gasLimit: signed?.fees.gasLimit ?? 0,
+      deadline: signed?.fees.deadline ?? 0,
+      attempts,
+      output: try exact(carrier.amount_out, label),
+      createdAt: ms(carrier.created_at),
+    })
+    sends.push({ id: carrier.id, pending: undefined, run: carrier.run_id, wallet: carrier.fee_wallet, token: carrier.token, txs: [...(firstTx === null ? [] : [firstTx]), ...later.map((entry) => entry.tx_id)] })
+  }
+  const intent = instance.intent
+  const pending = intent === undefined || known.has(intent.evaluation.id) ? 0 : modelRows.length + 1
+  if (intent !== undefined && pending > 0) {
+    const evaluation = intent.evaluation
+    modelRows.push({ ...intent.row, id: pending, token: tokenOf(evaluation.token), runId: runOf(evaluation.runId), wallet: walletOf(evaluation.wallet) })
+    sends.push({ id: evaluation.id, pending: evaluation, run: evaluation.runId, wallet: evaluation.wallet, token: evaluation.token, txs: [] })
+  }
+
+  const gas: Array<GasRecord> = []
+  const modelGas: Array<Reservation> = []
+  const foreign: Array<Foreign> = []
+  for (const row of gasRows) {
+    const label = `fee native gas ${row.id}`
+    const state = row.state === "reserved" ? "Reserved" : row.state === "signed" ? "Signed" : "Abandoned"
+    const reservation: Reservation = {
+      id: 0,
+      runId: runOf(row.run_id),
+      nonce: row.nonce,
+      maximum: try native(row.maximum_wei, network, label),
+      state,
+      row: row.conversion_id === null ? 0 : modelIds.get(row.conversion_id) ?? 0,
+      tx: row.tx_id === null ? 0 : names.number("tx", row.tx_id),
+      settled: row.actual_wei !== null,
+      actual: try native(row.actual_wei, network, label),
+      settledDay: row.settled_day === null ? 0 : Math.floor(ms(`${row.settled_day}T00:00:00.000Z`) / dayMs),
+      blockhashSlot: state === "Signed" ? row.solana_blockhash_slot ?? 0 : 0,
+    }
+    if (isForeignGas(row)) {
+      foreign.push({ purpose: row.purpose, reservation: { ...reservation, id: foreign.length + 1 } })
+      continue
+    }
+    modelGas.push({ ...reservation, id: modelGas.length + 1 })
+    gas.push({ id: row.id, run: row.run_id, wallet: row.fee_wallet, tx: row.tx_id, slot: row.solana_blockhash_slot, intent: row.intent_hash, maximumWei: row.maximum_wei, accountProof: row.solana_account_proof })
+  }
+  let overrun = false
+  for (const row of gasRows) if (row.state !== "abandoned" && row.actual_wei !== null && (try exceeds(row.actual_wei, row.maximum_wei, `fee native gas ${row.id}`))) overrun = true
+
+  const latestScans = new Map<string, string>()
+  const scans: Array<ExpiryScan> = []
+  for (const step of stepRows) {
+    const scan = try scanJson(step.scan_json, `Solana expiry scan ${step.tx_id}`)
+    latestScans.set(`${step.tx_id}\u0000${step.operator}`, step.scan_json)
+    scans.push({ tx: names.number("tx", step.tx_id), operator: names.number("operator", step.operator), revision: step.revision, coverage: coverageOf(names, scan), complete: scan.complete, blockhashSlot: scan.blockhashSlot, runId: runOf(step.run_id) })
+  }
+  const proofs: Array<ExpiryProof> = []
+  for (const row of proofRows) {
+    const label = `Solana expiry proof ${row.tx_id}`
+    const proof = try proofJson(row.proof_json, label)
+    const [a, b] = proof.providers
+    if (a === undefined || b === undefined || proof.providers.length !== 2) throw new RowMismatch({ text: label, issue: "needs exactly two providers" })
+    if (a.coverage === undefined || b.coverage === undefined) throw new RowMismatch({ text: label, issue: "a provider has no retained coverage" })
+    proofs.push({ tx: names.number("tx", row.tx_id), a: { operator: names.number("operator", a.operator), ...provenClean }, b: { operator: names.number("operator", b.operator), ...provenClean }, blockhashSlot: proof.blockhashSlot, coverage: coverageOf(names, a.coverage) })
+  }
+
+  const current = nextRun - 1
+  const runValue = modelRows.reduce((total, row) => row.runId === current && ((row.state === "Quoted" && !row.live) || (row.kind === "Conversion" && row.attempts.length > 0)) ? total + row.valueMicro : total, 0)
+  const holdings: Array<Holding> = tokens.map((address, index) => {
+    const token = index + 1
+    const seen = instance.tokens[index]
+    const finalized = (kind: SendKind) => (row: Row) => row.kind === kind && row.state === "Finalized"
+    const sold = sum(modelRows, token, finalized("Conversion"), (row) => row.amountIn)
+    const claimed = sum(modelRows, token, finalized("Claim"), (row) => row.output)
+    const openClaims = sum(modelRows, token, (row) => row.kind === "Claim" && isOpen(row), (row) => row.amountIn)
+    const feeIncome = (seen?.received ?? 0) + claimed
+    const topUps = seen?.topUps ?? 0
+    const vaultObserved = seen?.vaultObserved ?? 0
+    return {
+      token,
+      asset: seen?.asset ?? "ProjectToken",
+      balance: feeIncome + topUps - sold,
+      feeIncome,
+      topUps,
+      sold,
+      usdcOut: sum(modelRows, token, finalized("Conversion"), (row) => row.output),
+      vault: seen?.vault === undefined ? 0 : names.number("vault", seen.vault),
+      vaultObserved,
+      accrued: vaultObserved - claimed - openClaims,
+      claimed,
+      allowance: seen?.allowance ?? 0,
+    }
+  })
+
+  const state = try decodeState({
+    runtime: instance.held.runtime,
+    network,
+    clock,
+    lease: leased === undefined || leased.expires_at === releasedAt ? { holder: 0, expiresAt: 0 } : { holder: runOf(leased.run_id), expiresAt: ms(leased.expires_at) },
+    nextRun,
+    trigger: leased === undefined ? "Recovery" : runParts(scope, leased.run_id).trigger,
+    runValue,
+    receipts: instance.receipts.map((receipt) => names.number("receipt", receipt)),
+    holdings,
+    vaults: instance.vaults.map((vault) => ({ vault: names.number("vault", vault.vault), deployment: names.number("deployment", vault.deployment), token: tokenOf(vault.token) })),
+    rows: modelRows,
+    gas: modelGas,
+    overrun,
+    scans,
+    proofs,
+  } satisfies Fee)
+  return { state, sends, gas, tokens, runs, scans: latestScans, foreign, pending } satisfies Journal
+}

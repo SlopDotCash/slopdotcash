@@ -1,0 +1,708 @@
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"
+import type { Actor } from "../../score/facts.vibe"
+
+export error MergedRecordInvalid { message: string }
+
+export const actorFragment = `
+  fragment LeaderboardActor on Actor {
+    __typename
+    login
+    avatarUrl
+    url
+    ... on User { id }
+    ... on Bot { id }
+    ... on Mannequin { id }
+    ... on Organization { id }
+  }
+`
+
+const labelFields = `
+  totalCount
+  nodes {
+    id
+    name
+    color
+  }
+`
+
+const assigneeFields = `
+  totalCount
+  nodes {
+    __typename
+    id
+    login
+    avatarUrl
+    url
+  }
+`
+
+const commentFields = `
+  totalCount
+  pageInfo { hasNextPage endCursor }
+  nodes {
+    id
+    body
+    createdAt
+    updatedAt
+    authorAssociation
+    url
+    author { ...LeaderboardActor }
+  }
+`
+
+const reviewFields = `
+  totalCount
+  pageInfo { hasNextPage endCursor }
+  nodes {
+    id
+    body
+    state
+    submittedAt
+    url
+    commit { oid }
+    author { ...LeaderboardActor }
+  }
+`
+
+const fileFields = `
+  totalCount
+  pageInfo { hasNextPage endCursor }
+  nodes {
+    path
+    additions
+    deletions
+  }
+`
+
+const outcomeCommitNodes = `nodes { commit { id oid parents { totalCount } author { user { ...LeaderboardActor } } } }`
+
+const pullRequestFragment = `
+  fragment LeaderboardPullRequest on PullRequest {
+    id
+    state
+    number
+    title
+    url
+    body
+    createdAt
+    updatedAt
+    lastEditedAt
+    editor { ...LeaderboardActor }
+    mergedAt
+    closedAt
+    isDraft
+    headRefOid
+    reviewDecision
+    reviewRequests(first: 1) { totalCount }
+    author { ...LeaderboardActor }
+    additions
+    deletions
+    changedFiles
+    commits { totalCount }
+    labels(first: 100) { ${labelFields} }
+    assignees(first: 100) { ${assigneeFields} }
+    comments(first: 100) { ${commentFields} }
+    reviews(first: 100) { ${reviewFields} }
+    files(first: 100) { ${fileFields} }
+    closingIssuesReferences(first: 100) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes { id }
+    }
+  }
+`
+
+const mergedPullRequestReviewFragment = `
+  fragment LeaderboardMergedPullRequestReview on PullRequest {
+    id
+    state
+    number
+    title
+    url
+    body
+    createdAt
+    updatedAt
+    lastEditedAt
+    editor { ...LeaderboardActor }
+    mergedAt
+    headRefOid
+    author { ...LeaderboardActor }
+    comments(first: 100) { ${commentFields} }
+    reviews(states: $reviewStates, first: 100) { ${reviewFields} }
+  }
+`
+
+const issueReferenceFields = `
+  totalCount
+  pageInfo { hasNextPage endCursor }
+  nodes {
+    ... on CrossReferencedEvent {
+      id
+      source { __typename ... on PullRequest { id } }
+    }
+  }
+`
+
+const issueFragment = `
+  fragment LeaderboardIssue on Issue {
+    id
+    state
+    number
+    title
+    url
+    body
+    createdAt
+    updatedAt
+    closedAt
+    stateReason
+    author { ...LeaderboardActor }
+    labels(first: 100) { ${labelFields} }
+    assignees(first: 100) { ${assigneeFields} }
+    comments(first: 100) { ${commentFields} }
+    timelineItems(first: 100, itemTypes: [CROSS_REFERENCED_EVENT]) @include(if: $includeReferences) { ${issueReferenceFields} }
+    closedByPullRequestsReferences(first: 100) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id
+        number
+        url
+        mergedAt
+        body
+        createdAt
+        updatedAt
+        author { ...LeaderboardActor }
+      }
+    }
+  }
+`
+
+export const rateLimitQuery = `
+  query LeaderboardRateLimit {
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const preflightQuery = `
+  query LeaderboardPreflight($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) { id isPrivate updatedAt }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const searchReferencesQuery = `
+  query LeaderboardSearchReferences(
+    $searchQuery: String!
+    $after: String
+    $pageSize: Int!
+    $withMergeCommits: Boolean!
+  ) {
+    search(
+      type: ISSUE
+      query: $searchQuery
+      first: $pageSize
+      after: $after
+    ) {
+      issueCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        __typename
+        ... on Issue { id }
+        ... on PullRequest {
+          id
+          state
+          number
+          title
+          url
+          body
+          createdAt
+          updatedAt
+          mergedAt
+          author { ...LeaderboardActor }
+          additions
+          deletions
+          baseRefName
+          baseRefOid
+          headRefOid
+          commits(first: 100) @include(if: $withMergeCommits) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            ${outcomeCommitNodes}
+          }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreOutcomeCommitsQuery = `
+  query LeaderboardOutcomeCommits($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        id
+        state
+        mergedAt
+        baseRefName
+        baseRefOid
+        headRefOid
+        commits(first: 100, after: $after) {
+          totalCount
+          pageInfo { hasNextPage endCursor }
+          ${outcomeCommitNodes}
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const pullRequestDetailsQuery = `
+  query LeaderboardPullRequestDetails($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest { ...LeaderboardPullRequest }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+  ${pullRequestFragment}
+`
+
+export const outcomeCommitLinesQuery = `
+  query LeaderboardOutcomeCommitLines($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on Commit { id oid additions deletions repository { id } }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const mergedFileSourceQuery = `
+  query LeaderboardMergedFileSource($id: ID!) {
+    node(id: $id) {
+      __typename
+      ... on PullRequest {
+        id state mergedAt headRefOid
+        repository { id databaseId isPrivate nameWithOwner }
+        mergeCommit {
+          oid
+          parents(first: 2) { totalCount nodes { oid } }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const mergedPullRequestReviewsQuery = `
+  query LeaderboardMergedPullRequestReviews($ids: [ID!]!, $reviewStates: [PullRequestReviewState!]) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequest { ...LeaderboardMergedPullRequestReview }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+  ${mergedPullRequestReviewFragment}
+`
+
+export const issueDetailsQuery = `
+  query LeaderboardIssueDetails($ids: [ID!]!, $includeReferences: Boolean!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on Issue { ...LeaderboardIssue }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+  ${issueFragment}
+`
+
+export const morePullRequestCommentsQuery = `
+  query LeaderboardMorePullRequestComments($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        comments(first: 100, after: $after) { ${commentFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreIssueReferencesQuery = `
+  query LeaderboardMoreIssueReferences($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on Issue {
+        timelineItems(first: 100, after: $after, itemTypes: [CROSS_REFERENCED_EVENT]) { ${issueReferenceFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const moreIssueCommentsQuery = `
+  query LeaderboardMoreIssueComments($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on Issue {
+        comments(first: 100, after: $after) { ${commentFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreReviewsQuery = `
+  query LeaderboardMoreReviews($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        id
+        headRefOid
+        reviews(first: 100, after: $after) { ${reviewFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreFormalReviewsQuery = `
+  query LeaderboardMoreFormalReviews($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        id
+        headRefOid
+        reviews(
+          states: [APPROVED, CHANGES_REQUESTED]
+          first: 100
+          after: $after
+        ) { ${reviewFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const reviewInlineCommentsQuery = `
+  query LeaderboardReviewInlineComments($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on PullRequestReview {
+        id
+        comments(first: 100) { ${commentFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreReviewInlineCommentsQuery = `
+  query LeaderboardMoreReviewInlineComments($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequestReview {
+        id
+        comments(first: 100, after: $after) { ${commentFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export const moreFilesQuery = `
+  query LeaderboardMoreFiles($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        state
+        isDraft
+        headRefOid
+        files(first: 100, after: $after) { ${fileFields} }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const moreClosingIssuesQuery = `
+  query LeaderboardMoreClosingIssues($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on PullRequest {
+        closingIssuesReferences(first: 100, after: $after) {
+          totalCount
+          pageInfo { hasNextPage endCursor }
+          nodes { id }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`
+
+export const moreClosingPullRequestsQuery = `
+  query LeaderboardMoreClosingPullRequests($id: ID!, $after: String!) {
+    node(id: $id) {
+      ... on Issue {
+        closedByPullRequestsReferences(first: 100, after: $after) {
+          totalCount
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            number
+            url
+            mergedAt
+            body
+            createdAt
+            updatedAt
+            author { ...LeaderboardActor }
+          }
+        }
+      }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+  ${actorFragment}
+`
+
+export schema ActorNode { readonly __typename: string; readonly id: string; readonly login: string; readonly avatarUrl: string; readonly url: string }
+export schema PageInfoNode { readonly hasNextPage: boolean; readonly endCursor: string | null }
+export schema CommentNode { readonly id: string; readonly body: string; readonly createdAt: string; readonly updatedAt: string; readonly authorAssociation: string; readonly url: string; readonly author: ActorNode | null }
+export schema CommentConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<CommentNode> }
+export schema ReviewNode { readonly id: string; readonly body: string; readonly state: string; readonly submittedAt: string | null; readonly url: string; readonly commit: { readonly oid: string } | null; readonly author: ActorNode | null }
+export schema ReviewConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<ReviewNode> }
+export schema FileNode { readonly path: string; readonly additions: number; readonly deletions: number }
+export schema FileConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<FileNode> }
+export schema IdConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<{ readonly id: string }> }
+export schema LabelConnection { readonly totalCount: number; readonly nodes: ReadonlyArray<{ readonly id: string; readonly name: string; readonly color: string }> }
+export schema AssigneeConnection { readonly totalCount: number; readonly nodes: ReadonlyArray<ActorNode | null> }
+export schema OutcomeCommitNode { readonly id: string; readonly oid: string; readonly parents: { readonly totalCount: number }; readonly author: { readonly user: ActorNode | null } | null }
+export schema OutcomeCommitEdge { readonly commit: OutcomeCommitNode }
+export schema OutcomeCommitConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<OutcomeCommitEdge> }
+export schema ClosingPullRequestNode { readonly id: string; readonly number: number; readonly url: string; readonly mergedAt: string | null; readonly body: string; readonly createdAt: string; readonly updatedAt: string; readonly author: ActorNode | null }
+export schema ClosingPullRequestConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<ClosingPullRequestNode> }
+export schema IssueReferenceNode { readonly id: string; readonly source: { readonly __typename: string; readonly id?: string } }
+export schema IssueReferenceConnection { readonly totalCount: number; readonly pageInfo: PageInfoNode; readonly nodes: ReadonlyArray<IssueReferenceNode> }
+
+export interface PageInfo {
+  readonly hasNextPage: boolean
+  readonly endCursor: string | null
+}
+
+export interface PageState {
+  readonly totalCount: number
+  readonly pageInfo: PageInfo
+}
+
+export interface Page<T> extends PageState {
+  readonly nodes: ReadonlyArray<T>
+}
+
+export interface Label {
+  readonly id: string
+  readonly name: string
+  readonly color: string
+}
+
+export interface TextSource {
+  readonly id: string
+  readonly artifactId: string
+  readonly kind: "comment"
+  readonly body: string
+  readonly url: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly author: Actor | null
+  readonly authorAssociation: string
+}
+
+export interface PendingReview {
+  readonly id: string
+  readonly body: string
+  readonly state: string
+  readonly submittedAt: string | null
+  readonly url: string
+  readonly author: Actor | null
+  readonly commitId: string | null
+}
+
+export interface Review extends PendingReview {
+  readonly inlineCommentCount: number
+}
+
+export interface PullRequestFile {
+  readonly path: string
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface OutcomeCommitIdentity {
+  readonly id: string
+  readonly oid: string
+  readonly parentCount: number
+  readonly author: Actor | null
+}
+
+export interface OutcomeCommit {
+  readonly oid: string
+  readonly parentCount: number
+  author: Actor | null
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface MergedOutcome {
+  readonly id: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly mergedAt: string
+  readonly headRefOid: string
+  readonly author: Actor | null
+  readonly additions: number
+  readonly deletions: number
+  readonly baseRefName: string
+  readonly commits: ReadonlyArray<OutcomeCommit> | null
+}
+
+export interface CommitPage extends PageState {
+  readonly baseRefOid: string
+  readonly headRefOid: string
+  readonly commits: ReadonlyArray<OutcomeCommitIdentity>
+}
+
+export type ReferenceKind = "Issue" | "PullRequest"
+
+export interface NodeReference {
+  readonly id: string
+  readonly kind: ReferenceKind
+  readonly outcome: MergedOutcome | null
+  readonly commitPage: CommitPage | null
+}
+
+export const actorKinds: ReadonlyArray<string> =["Bot", "Mannequin", "Organization", "User"]
+
+export const fullCommitSha = /^[a-f0-9]{40}$/iu
+
+export function chunks<T>(values: ReadonlyArray<T>, size: number) {
+  const result: ReadonlyArray<T>[] = []
+  for (let index = 0; index < values.length; index += size) result.push(values.slice(index, index + size))
+  return result
+}
+
+export function pageState<T>(page: Page<T>): PageState {
+  return { totalCount: page.totalCount, pageInfo: page.pageInfo }
+}
+
+export effect function decoded<S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, path: string) {
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw new MergedRecordInvalid({ message: `${path} does not have the expected GitHub shape` })
+  }
+}
+
+export effect function recordAt(value: unknown, path: string) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new MergedRecordInvalid({ message: `${path} must be an object` })
+  return value as Readonly<Record<string, unknown>>
+}
+
+export effect function arrayAt(value: unknown, path: string) {
+  if (!Array.isArray(value)) throw new MergedRecordInvalid({ message: `${path} must be an array` })
+  return value as ReadonlyArray<unknown>
+}
+
+export effect function commitSha(value: string, path: string) {
+  if (!fullCommitSha.test(value)) throw new MergedRecordInvalid({ message: `${path} must be a full commit SHA` })
+  return value.toLowerCase()
+}
+
+export effect function nonNegativeInteger(value: number, path: string) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new MergedRecordInvalid({ message: `${path} must be a non-negative integer` })
+  return value
+}
+
+export effect function actorOf(node: ActorNode | null, path: string) {
+  if (node === null) return null
+  const avatar = URL.parse(node.avatarUrl)
+  if (avatar === null) throw new MergedRecordInvalid({ message: `${path}.avatarUrl must be a URL` })
+  const version = avatar.searchParams.get("v")
+  avatar.search = version === null ? "" : `v=${version}`
+  const kind = node.id.startsWith("BOT_") ? "Bot" : actorKinds.includes(node.__typename) ? node.__typename : "Unknown"
+  return { id: node.id, login: node.login, avatarUrl: avatar.toString(), url: node.url, kind } satisfies Actor
+}
+
+export effect function commentsOf(connection: CommentConnection, path: string, artifactId: string) {
+  const nodes: TextSource[] = []
+  for (const [index, node] of connection.nodes.entries()) {
+    nodes.push({ id: node.id, artifactId, kind: "comment", body: node.body, url: node.url, createdAt: node.createdAt, updatedAt: node.updatedAt, author: try actorOf(node.author, `${path}.nodes[${index}].author`), authorAssociation: node.authorAssociation })
+  }
+  return { totalCount: connection.totalCount, pageInfo: connection.pageInfo, nodes } satisfies Page<TextSource>
+}
+
+export effect function reviewsOf(connection: ReviewConnection, path: string) {
+  const nodes: PendingReview[] = []
+  for (const [index, node] of connection.nodes.entries()) {
+    const nodePath = `${path}.nodes[${index}]`
+    nodes.push({
+      id: node.id,
+      body: node.body,
+      state: node.state,
+      submittedAt: node.submittedAt,
+      url: node.url,
+      commitId: node.commit === null ? null : try commitSha(node.commit.oid, `${nodePath}.commit.oid`),
+      author: try actorOf(node.author, `${nodePath}.author`),
+    })
+  }
+  return { totalCount: connection.totalCount, pageInfo: connection.pageInfo, nodes } satisfies Page<PendingReview>
+}
+
+export function dedupedById<T extends { readonly id: string }>(records: ReadonlyArray<T>): T[] {
+  const byId = new Map<string, T>()
+  for (const record of records) if (!byId.has(record.id)) byId.set(record.id, record)
+  return [...byId.values()]
+}
+
+export effect function uniqueById<T extends { readonly id: string }>(records: ReadonlyArray<T>) {
+  if (records.some((record) => record.id === "")) throw new MergedRecordInvalid({ message: "GitHub record is missing its immutable node ID" })
+  return dedupedById(records)
+}
+
+export effect function labelsOf(connection: LabelConnection, path: string) {
+  if (connection.nodes.length !== connection.totalCount) throw new MergedRecordInvalid({ message: `${path} has ${connection.totalCount} labels; the 100-label collector cannot return a complete record` })
+  return try uniqueById(connection.nodes.map((node) => ({ id: node.id, name: node.name, color: node.color }) satisfies Label))
+}
+
+export effect function assigneesOf(connection: AssigneeConnection, path: string) {
+  const nodes: Actor[] = []
+  for (const [index, node] of connection.nodes.entries()) {
+    const actor = try actorOf(node, `${path}.nodes[${index}]`)
+    if (actor === null) throw new MergedRecordInvalid({ message: `${path}.nodes[${index}] cannot be null` })
+    nodes.push(actor)
+  }
+  if (nodes.length !== connection.totalCount) throw new MergedRecordInvalid({ message: `${path} has ${connection.totalCount} assignees; the 100-assignee collector cannot return a complete record` })
+  return try uniqueById(nodes)
+}
+
+export effect function outcomeCommitsOf(edges: ReadonlyArray<OutcomeCommitEdge>, path: string) {
+  const commits: OutcomeCommitIdentity[] = []
+  for (const [index, edge] of edges.entries()) {
+    const commitPath = `${path}.nodes[${index}].commit`
+    const commit = edge.commit
+    const author = commit.author === null ? null : try actorOf(commit.author.user, `${commitPath}.author.user`)
+    const parentCount = try nonNegativeInteger(commit.parents.totalCount, `${commitPath}.parents.totalCount`)
+    commits.push({
+      id: commit.id,
+      oid: try commitSha(commit.oid, `${commitPath}.oid`),
+      parentCount,
+      author: author !== null && author.login.endsWith("[bot]") ? { ...author, kind: "Bot" } : author,
+    })
+  }
+  return commits
+}

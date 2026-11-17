@@ -1,0 +1,134 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import type { EvmFees, NetworkFeeObservation, RouteInspection, SendKind } from "../../gen/fees__conversion.effect.vibe"
+import type { RouteName } from "../journal/writes.vibe"
+
+module verified {
+  import { exactNumber as exact, isSafe as safe, quoteValue as quoted, wide as widened } from "./units.ts"
+  /** @throws {never} */
+  export function isSafe(value: bigint): boolean { return safe(value) }
+  /** @throws {never} */
+  export function exactNumber(value: bigint): number { return exact(value) }
+  /** @throws {never} */
+  export function quoteValue(value: bigint): number { return quoted(value) }
+  /** @throws {never} */
+  export function wide(value: number): bigint { return widened(value) }
+}
+import { exactNumber, isSafe, quoteValue, wide } from verified
+
+export error ChainUnavailable { operation: string; detail: string }
+export error SendRefused { operation: string; detail: string }
+export error FeeCapTooLow { operation: string; detail: string }
+
+export const rawTxLimit = 262146
+
+export function detailOf(error: ChainUnavailable | SendRefused | FeeCapTooLow) {
+  return `${error.operation}: ${error.detail}`
+}
+
+export function chainFailure<A>(outcome: A | ChainUnavailable | SendRefused | FeeCapTooLow) {
+  return outcome instanceof ChainUnavailable || outcome instanceof SendRefused || outcome instanceof FeeCapTooLow ? outcome : undefined
+}
+
+export function safeNumber(value: bigint): number | undefined {
+  return isSafe(value) ? exactNumber(value) : undefined
+}
+
+export function quoteNumber(value: bigint): number | undefined {
+  return value < 0n ? undefined : quoteValue(value)
+}
+
+export function wideNumber(value: number): bigint {
+  return wide(value)
+}
+
+export interface QuoteFound {
+  readonly kind: "found"
+  readonly route: RouteName
+  readonly amountIn: bigint
+  readonly output: bigint
+  readonly minimumOutput: bigint
+  readonly gasValue: bigint
+  readonly impactBps: number | undefined
+  readonly summary: string
+}
+
+export type QuoteRead = QuoteFound | { readonly kind: "noRoute"; readonly detail: string }
+
+export interface SendIntent { readonly token: string; readonly quote: QuoteFound; readonly nonceFloor: number }
+
+export interface Reservable {
+  readonly nonce: number
+  readonly maximumWei: string
+  readonly intentHash: string
+  readonly blockhashSlot?: number
+  readonly accountProof?: string
+}
+
+export interface Signed {
+  readonly kind: "Conversion" | "Approval"
+  readonly txId: string
+  readonly rawTx: string
+  readonly gasLimit: number
+  readonly fees: EvmFees
+  readonly inspection: RouteInspection
+  readonly outputToFeeWallet: boolean
+  readonly minimumOutput: bigint
+  readonly deadline: number
+  readonly blockhashSlot: number
+  readonly router: number
+  readonly approvedAmount: bigint
+  readonly expiresAt?: number
+}
+
+export interface SendAttempt { readonly txId: string; readonly rawTx: string | undefined; readonly attempt: number }
+
+export interface OpenSend {
+  readonly kind: SendKind
+  readonly token: string
+  readonly nonce: number
+  readonly deadline: number
+  readonly attempts: ReadonlyArray<SendAttempt>
+}
+
+export interface Landed {
+  readonly kind: "landed"
+  readonly txId: string
+  readonly succeeded: boolean
+  readonly output: bigint
+  readonly actualWei: string
+  readonly blockHash: string
+  readonly allowance: bigint
+  readonly feesClaimed: bigint
+  readonly vaultDebit: bigint
+  readonly walletCredit: bigint
+  readonly roleFree: boolean
+  readonly targetBalanceAfter?: string
+}
+
+export type SendStatus =
+  | Landed
+  | { readonly kind: "pending"; readonly mined: boolean }
+  | { readonly kind: "expired"; readonly finalizedTime: number }
+  | { readonly kind: "unseen" }
+
+export interface ReplacementSigned {
+  readonly kind: "signed"
+  readonly txId: string
+  readonly rawTx: string
+  readonly intentHash: string
+  readonly networkFee: NetworkFeeObservation
+  readonly maxFeePerGas: string
+  readonly maxPriorityFeePerGas: string
+}
+
+export type Replacement = ReplacementSigned | { readonly kind: "wait"; readonly reason: string }
+
+export service ConversionChain {
+  balance(token: string): bigint!ChainUnavailable
+  quote(token: string, amount: bigint): QuoteRead!ChainUnavailable
+  reserve(intent: SendIntent): Reservable!(ChainUnavailable | SendRefused)
+  sign(intent: SendIntent, reserved: Reservable): Signed!(ChainUnavailable | SendRefused)
+  broadcast(rawTx: string): void!(ChainUnavailable | SendRefused | FeeCapTooLow)
+  status(send: OpenSend): SendStatus!ChainUnavailable
+  replacement(send: OpenSend, observedAt: number): Replacement!(ChainUnavailable | SendRefused)
+}

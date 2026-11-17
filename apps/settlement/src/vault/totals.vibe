@@ -1,0 +1,104 @@
+// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"
+import { millisOf, nowSeconds } from "@repo/platform/clock"
+import { D1, RowMismatch, rows, sql } from "@repo/platform/d1"
+import type { Network } from "@repo/ports/backend"
+import { VaultTotals, type VaultPurpose, type VaultTotalsView } from "@repo/ports/settlement"
+import { noObservation, publicTotals } from "../../gen/settlement__vaultSnapshots.effect.vibe"
+import { type Chain, isChain } from "../kernels/networks.ts"
+import type { VaultSnapshot } from "../client/vault.vibe"
+import { RegistryManifests, projectDeployments } from "./deployments.vibe"
+import { vaultKeyOf } from "./policy.vibe"
+
+schema SnapshotRow {
+  readonly project_id: string
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly total_deposited: string
+  readonly total_paid: string
+  readonly total_payout_fees: string
+  readonly total_gross_withdrawn: string
+  readonly total_withdrawal_fees: string
+  readonly free_balance: string | null
+  readonly reserved_principal: string | null
+  readonly reserved_fees: string | null
+  readonly accrued_fees: string | null
+  readonly reserved: string | null
+  readonly block_number: string
+  readonly block_time: string
+  readonly observed_at: string
+}
+
+const PORT_NETWORKS: Readonly<Record<Chain, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
+
+effect function snapshotRows(projectId: string) {
+  return try rows(SnapshotRow, sql`SELECT project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at FROM vault_snapshots WHERE project_id = ${projectId} ORDER BY network, vault`)
+}
+
+effect function chainOf(text: string) {
+  if (!isChain(text)) throw new RowMismatch({ text: "vault_snapshots.chain", issue: "not a payment chain" })
+  return text
+}
+
+export effect function projectVaultSnapshots(projectId: string) {
+  const snapshots: VaultSnapshot[] = []
+  for (const row of try snapshotRows(projectId)) {
+    snapshots.push({
+      projectId: row.project_id,
+      network: row.network,
+      chain: try chainOf(row.chain),
+      vault: row.vault,
+      assetAddress: row.asset_address,
+      assetDecimals: row.asset_decimals,
+      totalDeposited: row.total_deposited,
+      totalPaid: row.total_paid,
+      totalPayoutFees: row.total_payout_fees,
+      totalGrossWithdrawn: row.total_gross_withdrawn,
+      totalWithdrawalFees: row.total_withdrawal_fees,
+      freeBalance: row.free_balance,
+      reservedPrincipal: row.reserved_principal,
+      reservedFees: row.reserved_fees,
+      accruedFees: row.accrued_fees,
+      reserved: row.reserved,
+      blockNumber: row.block_number,
+      blockTime: row.block_time,
+      observedAt: row.observed_at,
+    })
+  }
+  return snapshots
+}
+
+export effect function vaultTotalsOf(projectId: string, purpose: VaultPurpose) {
+  const manifest = try (try RegistryManifests).project(projectId)
+  if (manifest === undefined) return undefined
+  const deployments = projectDeployments(manifest, purpose === "PrivateBounty" ? "security-bounty" : "ordinary") catch () => []
+  const keys = new Set(deployments.map(vaultKeyOf))
+  const candidates = (try snapshotRows(projectId)).filter((row) => keys.has(vaultKeyOf({ network: row.network, vault: row.vault, family: row.chain === "solana" ? "solana" : "evm" })))
+  const latest = candidates.sort((left, right) => millisOf(right.observed_at) - millisOf(left.observed_at))[0]
+  if (latest === undefined) return undefined
+  const chain = try chainOf(latest.chain)
+  const observedAt = Math.floor(millisOf(latest.observed_at) / 1000)
+  const shown = publicTotals({ ...noObservation, exists: true, observedAt }, try nowSeconds(), false)
+  return {
+    network: PORT_NETWORKS[chain],
+    vault: latest.vault,
+    asset: latest.asset_address,
+    ...(latest.free_balance === null ? {} : { freeBaseUnits: latest.free_balance }),
+    observedAt: latest.observed_at,
+    stale: shown.freshness === "StaleTotals",
+  } satisfies VaultTotalsView
+}
+
+export const VaultTotalsLive = Layer.effect(VaultTotals, effect {
+  const db = try D1
+  const manifests = try RegistryManifests
+  return {
+    of: (vault) => effect {
+      provide D1 = db, RegistryManifests = manifests {
+        return try vaultTotalsOf(vault.projectId, vault.purpose)
+      }
+    },
+  } satisfies VaultTotals.Shape
+})

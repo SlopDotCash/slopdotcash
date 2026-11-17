@@ -1,0 +1,521 @@
+// spec/settlement/signer.md, "A binding needs the account's current intent and the wallet's own signature"; spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet's own signature"; spec/backend/bindingConsent.md, "Execution may use only the latest unexpired consent for the current claim and version"; spec/settlement/signer.md, "Each attester run tries at most ten bindings, least recently checked first, then by first reserved obligation, actor and claim"; spec/settlement/signer.md, "A bind transaction retires only after its revert is finalized at the canonical block"
+import { EvmRpc, type Hex, recoverDigest, recoverPersonalSign } from "@repo/platform/chain/evm"
+import { millisOf, nowSeconds } from "@repo/platform/clock"
+import { type Statement, first, rows, sql } from "@repo/platform/d1"
+import { type Bindings, canBind, initial as unprojected } from "../../gen/settlement__bindingAuthority.effect.vibe"
+import { type BindingCandidate as RunOrder, bindingsPerRun, candidateBefore, initial as unbound } from "../../gen/settlement__signer.effect.vibe"
+import { type BindingState, type EvmAddress, U64_MAX, awardCall, bindingCall, bytes32, decodeAward, decodeBinding, evmAddress } from "../chain/evm/abi.ts"
+import { type SignedType2, contractSignature, readSignedType2 } from "../chain/evm/transactions.ts"
+import { bindCalldata, bindingDigest } from "../chain/evm/typedData.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { payoutFeeAccepted } from "../kernels/fees.ts"
+import { type Step, advance, attemptOf, authorityOf, fresh, loadBinding, withAttempt, withAuthority } from "../journal/bindings.vibe"
+import { type Entries, type Scope, within } from "../journal/journal.vibe"
+import { STORED_BINDING, adoptedBinding, addPending, bindingArguments, cancellationKey, checkedKey, consentCandidate, consentIdentity, pendingKeys, removePending, reserveConsent, retainedConsent, revertedKey, textDigest, unusedConsent } from "../journal/stored.vibe"
+import { type ObsoleteIntent, cancelObsoleteStoredBinding } from "./cancellation.vibe"
+import { type Attempt, AttemptHeld, AttesterConfig, type Deployment, NotActivated, attesterAccount, authorityInForce, broadcast, onChain, preflight, prepareSend, readAttempt, reviewedDeployment, servedNetwork, signNext, signedWithin, signerMarker } from "./evm.vibe"
+
+export interface PaymentTables {
+  readonly obligations: Statement
+  readonly attempts: Statement
+}
+
+export const ordinaryTables: PaymentTables = { obligations: sql`payment_obligations`, attempts: sql`payment_attempts` }
+export const securityTables: PaymentTables = { obligations: sql`security_payment_obligations`, attempts: sql`security_payment_attempts` }
+
+const submissionWindow = 600
+const candidatePage = 500
+const obligationPattern = /^0x[0-9a-fA-F]{64}$/u
+const digestPattern = /^[0-9a-f]{64}$/u
+
+export schema BindingCandidate {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+  readonly firstCreatedAt: string
+}
+
+schema AuthorizationRow {
+  readonly obligationId: string
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly sourceDigest: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+  readonly message: string
+  readonly signature: string
+  readonly challengeId: string
+  readonly expiresAt: string
+}
+
+schema IntentRow {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+}
+
+schema ConsentRow {
+  readonly expiresAt: string
+  readonly signature: string
+}
+
+schema IdRow {
+  readonly id: string
+}
+
+schema ChainRow {
+  readonly chain: string
+}
+
+function held(reason: string) {
+  return new AttemptHeld({ reason })
+}
+
+effect function wholeNumber(text: string) {
+  const value = parseBaseUnits(text, U64_MAX)
+  if (value === undefined) throw held("Invalid actor/version")
+  return value
+}
+
+export effect function bindingCandidates(tables: PaymentTables) {
+  const { pins } = try AttesterConfig
+  const cutoff = (try nowSeconds()) + submissionWindow
+  const found: BindingCandidate[] = []
+  for (const pin of pins) {
+    let after: BindingCandidate | undefined = undefined
+    for (;;) {
+      const keyset: Statement = after === undefined ? sql`1 = 1` : sql`(MIN(o.created_at), o.github_user_id, w.id) > (${after.firstCreatedAt}, ${after.githubUserId}, ${after.claimId})`
+      const page: ReadonlyArray<BindingCandidate> = try rows(BindingCandidate, sql`SELECT MIN(o.id) AS obligationId, o.network AS network, o.vault AS vault, o.github_user_id AS githubUserId, w.id AS claimId, w.record_sha256 AS claimDigest, w.wallet_address AS destination, MIN(o.created_at) AS firstCreatedAt FROM ${tables.obligations} o JOIN effective_payment_wallet_claims w ON w.github_user_id = o.github_user_id AND w.chain = o.chain JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = o.github_user_id WHERE o.state = 'reserved' AND o.network = ${pin.network} AND lower(o.vault) = ${pin.vault.toLowerCase()} AND w.source = 'd1_registry' AND EXISTS (SELECT 1 FROM payment_binding_authorizations b WHERE b.claim_id = w.id AND b.github_user_id = o.github_user_id AND b.network = o.network AND b.vault = lower(o.vault) AND CAST(b.expires_at AS INTEGER) > ${cutoff}) GROUP BY o.github_user_id, w.id HAVING ${keyset} ORDER BY MIN(o.created_at), o.github_user_id, w.id LIMIT ${candidatePage}`)
+      found.push(...page)
+      const last: BindingCandidate | undefined = page[page.length - 1]
+      if (last === undefined || page.length < candidatePage) break
+      after = last
+    }
+  }
+  return found
+}
+
+export function paymentWalletMessage(input: { readonly actorId: string; readonly chain: string; readonly address: string; readonly claimId: string; readonly claimDigest: string; readonly nonce: string; readonly expiresAt: string }) {
+  return `Authorize Slop automatic contributor payouts\nAudience: slop.cash\nGitHub actor: ${input.actorId}\nChain: ${input.chain}\nWallet: ${input.address}\nClaim: ${input.claimId}\nDigest: ${input.claimDigest}\nNonce: ${input.nonce}\nExpires: ${input.expiresAt}`
+}
+
+type Claimed = Pick<BindingCandidate, "obligationId" | "network" | "vault" | "githubUserId" | "claimId" | "claimDigest" | "destination">
+
+export effect function registryAuthorization(tables: PaymentTables, candidate: Claimed, chain: string) {
+  const row = try first(AuthorizationRow, sql`SELECT o.id AS obligationId, o.project_id AS projectId, o.network AS network, o.vault AS vault, o.github_user_id AS githubUserId, o.gross_base AS grossBase, o.fee_base AS feeBase, o.source_digest AS sourceDigest, w.id AS claimId, w.record_sha256 AS claimDigest, w.wallet_address AS destination, c.message AS message, a.signature AS signature, c.id AS challengeId, c.expires_at AS expiresAt FROM ${tables.obligations} o JOIN effective_payment_wallet_claims w ON w.github_user_id = o.github_user_id AND w.chain = o.chain JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = o.github_user_id JOIN payment_wallet_challenges c ON c.id = a.challenge_id AND c.claim_id = w.id AND c.github_user_id = o.github_user_id WHERE o.id = ${candidate.obligationId} AND w.id = ${candidate.claimId} AND o.state = 'reserved' AND o.chain = ${chain} AND c.consumed_at IS NOT NULL AND c.consumed_at <= c.expires_at`)
+  if (row === undefined) throw held("Current approved wallet/attempt unavailable")
+  const fields = ["obligationId", "network", "vault", "githubUserId", "claimId", "claimDigest", "destination"] as const
+  if (fields.some((field) => row[field] !== candidate[field])) throw held("Payout request differs from approved registry")
+  const message = paymentWalletMessage({ actorId: candidate.githubUserId, chain, address: candidate.destination, claimId: candidate.claimId, claimDigest: candidate.claimDigest, nonce: row.challengeId, expiresAt: row.expiresAt })
+  if (row.message !== message || recoverPersonalSign(row.message, row.signature)?.toLowerCase() !== candidate.destination.toLowerCase()) throw held("Wallet authorization signature rejected")
+  return row
+}
+
+function lineage(claim: Claimed, chain: string) {
+  return sql`WITH RECURSIVE lineage(id, supersedes_claim_id, record_sha256, depth) AS (SELECT id, supersedes_claim_id, record_sha256, 0 FROM wallet_claims WHERE id = ${claim.claimId} AND github_user_id = ${claim.githubUserId} AND chain = ${chain} UNION ALL SELECT w.id, w.supersedes_claim_id, w.record_sha256, l.depth + 1 FROM wallet_claims w JOIN lineage l ON l.supersedes_claim_id = w.id WHERE w.github_user_id = ${claim.githubUserId} AND w.chain = ${chain} AND l.depth < 100)`
+}
+
+effect function bindingVersionAuthorized(tables: PaymentTables, candidate: Claimed, current: BindingState, chain: string) {
+  if (current.version === 0n) {
+    const claim = try first(IdRow, sql`SELECT w.id AS id FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${candidate.claimId} AND w.github_user_id = ${candidate.githubUserId}`)
+    if (claim === undefined) throw held("Wallet authorization missing")
+    return
+  }
+  const claimed = try first(ChainRow, sql`SELECT w.chain AS chain FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${candidate.claimId} AND w.github_user_id = ${candidate.githubUserId}`)
+  if (claimed === undefined || claimed.chain !== chain) throw held("Wallet rotation authorization missing")
+  try registryAuthorization(tables, candidate, chain)
+  const predecessor = try first(IdRow, sql`${lineage(candidate, chain)} SELECT id FROM lineage WHERE record_sha256 = ${current.claimDigest.slice(2)} AND depth > 0`)
+  if (predecessor === undefined) throw held("Wallet rotation is not a successor of the on-chain binding")
+  const pending = try first(IdRow, sql`${lineage(candidate, chain)} SELECT a.id AS id FROM ${tables.attempts} a JOIN lineage l ON l.id = a.claim_id JOIN ${tables.obligations} o ON o.id = a.obligation_id WHERE l.depth > 0 AND a.state IN ('prepared', 'unknown', 'submitted') AND o.state = 'reserved' LIMIT 1`)
+  if (pending !== undefined) throw held("Wallet rotation held until earlier payment attempts are reconciled")
+}
+
+effect function finalizedCall(deployment: Deployment, data: Hex) {
+  return try (try EvmRpc).call({ to: deployment.vault, data, block: "finalized" })
+}
+
+effect function awardState(deployment: Deployment, authorization: AuthorizationRow) {
+  const id = bytes32(authorization.obligationId)
+  const award = id === undefined ? undefined : decodeAward(try finalizedCall(deployment, awardCall(id)))
+  const gross = parseBaseUnits(authorization.grossBase)
+  const fee = parseBaseUnits(authorization.feeBase)
+  if (award === undefined || gross === undefined || fee === undefined || gross === 0n) throw held("Finalized award differs from approved ledger")
+  if (award.actor.toString() !== authorization.githubUserId || award.gross !== gross || award.fee !== fee || award.sourceDigest.slice(2) !== authorization.sourceDigest.toLowerCase() || !payoutFeeAccepted(gross, fee, deployment.bounty)) throw held("Finalized award differs from approved ledger")
+  return award
+}
+
+export effect function bindingOf(deployment: Deployment, actor: bigint) {
+  const current = decodeBinding(try finalizedCall(deployment, bindingCall(actor)))
+  if (current === undefined) throw held("Malformed contract state")
+  return current
+}
+
+export interface StoredConsent {
+  readonly data: Hex
+  readonly signer: string
+  readonly expiresAt: bigint
+  readonly signature: string
+}
+
+export effect function storedConsent(deployment: Deployment, candidate: Claimed, expectedVersion: bigint, exact: ConsentRow | undefined) {
+  const destination = evmAddress(candidate.destination)
+  const claimDigest = bytes32(`0x${candidate.claimDigest}`)
+  if (destination === undefined || claimDigest === undefined) throw held("Invalid payout request")
+  if (destination === deployment.identityAuthority) throw held("The identity authority cannot be a payout destination")
+  const cutoff = (try nowSeconds()) + submissionWindow
+  const exactly = exact === undefined ? sql`` : sql`AND expires_at = ${exact.expiresAt} AND lower(signature) = ${exact.signature.toLowerCase()}`
+  const row = try first(ConsentRow, sql`SELECT expires_at AS expiresAt, signature FROM payment_binding_authorizations WHERE claim_id = ${candidate.claimId} AND github_user_id = ${candidate.githubUserId} AND network = ${candidate.network} AND vault = ${deployment.vault} AND chain_id = ${deployment.chainId.toString()} AND expected_version = ${expectedVersion.toString()} AND CAST(expires_at AS INTEGER) > ${cutoff} ${exactly} ORDER BY CAST(expires_at AS INTEGER) DESC LIMIT 1`)
+  if (row === undefined) return undefined
+  const input = { actor: try wholeNumber(candidate.githubUserId), destination, expectedVersion, claimDigest, expiresAt: try wholeNumber(row.expiresAt) }
+  const walletSignature = contractSignature(row.signature)
+  const digest = try Effect.try({ try: () => bindingDigest({ chainId: deployment.chainId, vault: deployment.vault }, input), catch: () => held("Destination wallet signature rejected") })
+  const signer = walletSignature === undefined ? undefined : recoverDigest(digest, walletSignature)?.toLowerCase()
+  if (walletSignature === undefined || walletSignature !== row.signature.toLowerCase() || signer !== destination) throw held("Destination wallet signature rejected")
+  const data = try Effect.try({ try: () => bindCalldata({ ...input, walletSignature }), catch: () => held("Destination wallet signature rejected") })
+  return { data, signer, expiresAt: input.expiresAt, signature: walletSignature } satisfies StoredConsent
+}
+
+effect function bindingAllowed(deployment: Deployment, authority: EvmAddress, current: BindingState, candidate: Claimed, consent: StoredConsent) {
+  const latest = try (try EvmRpc).head("latest")
+  const actor = Number(candidate.githubUserId)
+  const bound = { actor, destination: current.destination, version: Number(current.version), claimDigest: current.claimDigest, activatesAt: Number(current.activatesAt), cancelled: current.cancelled }
+  const projection = {
+    ...unprojected,
+    deployed: true,
+    chain: "EvmChain",
+    owner: deployment.owner,
+    registrar: (deployment.pin.registrar ?? "").toLowerCase(),
+    feeRecipient: deployment.pin.feeRecipient.toLowerCase(),
+    project: deployment.pin.projectId,
+    vault: deployment.vault,
+    clock: latest.timestamp,
+    authority: { current: authority, pending: "", effectiveAt: 0, confirmed: false },
+    actors: current.version === 0n ? [] : [{ actor, current: bound, paidVersion: 0, cancelCount: 0, lastCommittedAt: 0, commitTimes: [] }],
+    history: current.version === 0n ? [] : [bound],
+  } satisfies Bindings
+  const request = { actor, destination: candidate.destination.toLowerCase(), expectedVersion: Number(current.version), claimDigest: `0x${candidate.claimDigest}`, expiresAt: Number(consent.expiresAt), walletSigner: consent.signer }
+  if (!canBind(projection, request, deployment.identityAuthority)) throw held("The authority in force cannot bind this consent")
+}
+
+export interface SigningFacts {
+  readonly actor: number
+  readonly wallet: string
+  readonly signer: string
+  readonly expiresAt: number
+  readonly authority: EvmAddress
+}
+
+effect function recordSignature(entries: Entries, deployment: Deployment, key: string, facts: SigningFacts, signed: SignedType2) {
+  const start = fresh({ ...unbound, actor: facts.actor, wallet: facts.wallet })
+  const loaded = try loadBinding(entries, key)
+  if (loaded !== undefined && loaded.state.phase === "Cancelled") try entries.put(`binding-state:${key}:cancelled:${loaded.transactions[loaded.state.canonical - 1] ?? "unknown"}`, { schema: "binding-state-v1", state: loaded.state, transactions: loaded.transactions, authorities: loaded.authorities })
+  const record = loaded === undefined || loaded.state.phase === "Cancelled" ? start : loaded
+  const observed = withAuthority(record, facts.authority)
+  const steps: Step[] = []
+  if (observed.authority > observed.record.state.authority) steps.push({ event: { type: "observeAuthority", authority: observed.authority }, by: "attester" })
+  if (observed.record.state.phase === "Unbound" || observed.record.state.phase === "Retired") {
+    const intent = observed.record.state.latestIntent + 1
+    steps.push({ event: { type: "recordIntent", intent }, by: "account" })
+    steps.push({ event: { type: "authorize", actor: facts.actor, signature: { wallet: facts.wallet, signer: facts.signer, intent, expiresAt: facts.expiresAt } }, by: "account" })
+  }
+  const attempted = withAttempt(observed.record, signed.id)
+  steps.push({ event: { type: "signBinding", nonce: signed.request.nonce, attempt: attempted.attempt, authority: authorityOf(attempted.record, deployment.identityAuthority) }, by: "attester" })
+  try advance(entries, key, attempted.record, steps)
+}
+
+interface Labels {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+}
+
+effect function signStoredBinding(scope: Scope, deployment: Deployment, key: string, fingerprint: string, labels: Labels, data: Hex, facts: SigningFacts) {
+  try within(scope, (entries) => unusedConsent(entries, deployment, data))
+  const prepared = try prepareSend(deployment, data)
+  const account = try attesterAccount(deployment)
+  return try within(scope, (entries) => effect {
+    const existing = try readAttempt(entries, key)
+    if (existing !== undefined && existing !== null) {
+      if (existing.fingerprint !== fingerprint) throw held("Idempotency collision")
+      try retainedConsent(entries, deployment, existing, deployment.consentNonceLimit)
+      return existing
+    }
+    const { raw, signed } = try signNext(entries, deployment, account, prepared, data)
+    const consent = try reserveConsent(entries, deployment, data, signed.request.nonce, signed.id)
+    if (consent !== undefined && consent.fingerprint !== fingerprint) throw held("Binding consent operation differs")
+    const next = {
+      obligationId: labels.obligationId,
+      network: labels.network,
+      vault: labels.vault,
+      fingerprint,
+      rawTransaction: raw,
+      transactionId: signed.id,
+      ...(consent === undefined ? {} : { bindingConsentBudgetKey: consent.key }),
+      ...(deployment.pin.maxNativeCostWei === undefined ? {} : { maxNativeCostWei: deployment.pin.maxNativeCostWei }),
+    } satisfies Attempt
+    try entries.put(key, next)
+    try addPending(entries, key)
+    try recordSignature(entries, deployment, key, facts, signed)
+    return next
+  })
+}
+
+export interface StoredIntent extends ObsoleteIntent {
+  readonly version: bigint
+  readonly signature: string
+}
+
+export effect function storedBindingIntent(tables: PaymentTables, deployment: Deployment, key: string, attempt: Attempt) {
+  const signed = readSignedType2(attempt.rawTransaction as Hex)
+  if (signed === undefined || signed.id !== attempt.transactionId.toLowerCase() || signed.request.chainId !== Number(deployment.chainId) || signed.request.to !== deployment.vault || signed.request.value !== 0n || signed.sender !== deployment.identityAuthority) throw held("Stored binding transaction differs from its reviewed signer or deployment")
+  const call = try bindingArguments(signed.request.data)
+  const row = try first(IntentRow, sql`SELECT o.id AS obligationId, o.network AS network, o.vault AS vault, o.github_user_id AS githubUserId, w.id AS claimId, w.record_sha256 AS claimDigest, w.wallet_address AS destination FROM ${tables.obligations} o JOIN wallet_claims w ON w.github_user_id = o.github_user_id AND w.chain = o.chain WHERE o.id = ${attempt.obligationId ?? ""} AND w.github_user_id = ${call.actor.toString()} AND w.record_sha256 = ${call.claimDigest.slice(2).toLowerCase()} AND lower(w.wallet_address) = ${call.destination.toLowerCase()}`)
+  if (row === undefined) throw held("Stored binding claim unavailable; signed attempt held")
+  const fingerprint = attempt.bindingConsentBudgetKey !== undefined
+    ? (try consentIdentity(deployment, signed.request.data)).fingerprint
+    : textDigest(JSON.stringify([deployment.chainId.toString(), row.vault.toLowerCase(), row.githubUserId, row.claimId, row.claimDigest, row.destination.toLowerCase(), call.version.toString()]))
+  if (fingerprint !== attempt.fingerprint || key !== `${STORED_BINDING}${fingerprint.slice(2)}` || row.network !== attempt.network || row.vault.toLowerCase() !== attempt.vault.toLowerCase()) throw held("Stored binding differs from its recorded authorization")
+  return { candidate: row, signed, expiresAt: call.expiresAt, version: call.version, signature: call.walletSignature } satisfies StoredIntent
+}
+
+effect function authorizeStoredBroadcast(tables: PaymentTables, deployment: Deployment, key: string, attempt: Attempt) {
+  const intent = try storedBindingIntent(tables, deployment, key, attempt)
+  const authorization = try registryAuthorization(tables, intent.candidate, deployment.pin.chain)
+  if ((try authorityInForce(deployment)) !== deployment.identityAuthority) throw held("Wrong identity signer")
+  if ((try awardState(deployment, authorization)).paid) throw held("Award already paid; signed binding held")
+  const current = try bindingOf(deployment, try wholeNumber(intent.candidate.githubUserId))
+  if (current.version !== intent.version) throw held("Stored binding version is no longer current; signed attempt held")
+  try bindingVersionAuthorized(tables, intent.candidate, current, deployment.pin.chain)
+  const consent = try storedConsent(deployment, intent.candidate, current.version, { expiresAt: intent.expiresAt.toString(), signature: intent.signature })
+  if (consent === undefined || consent.data.toLowerCase() !== intent.signed.request.data.toLowerCase()) throw held("Stored binding consent unavailable or expired; signed attempt held")
+  try registryAuthorization(tables, intent.candidate, deployment.pin.chain)
+}
+
+effect function deliver(scope: Scope, tables: PaymentTables, deployment: Deployment, key: string, attempt: Attempt) {
+  const receipt = try (try EvmRpc).receipt(attempt.transactionId as Hex)
+  if (receipt !== undefined) {
+    if (receipt.status !== "success") throw held("Recorded transaction reverted; operator reconciliation required")
+    return attempt.transactionId
+  }
+  const signed = try signedWithin(deployment, attempt.rawTransaction, attempt, true)
+  const candidate = { nonce: signed.request.nonce, gas: signed.request.gas, maxFeePerGas: signed.request.maxFeePerGas, maxPriorityFeePerGas: signed.request.maxPriorityFeePerGas }
+  try within(scope, (entries) => consentCandidate(entries, deployment, attempt, candidate))
+  try authorizeStoredBroadcast(tables, deployment, key, attempt)
+  try broadcast(attempt.rawTransaction, attempt.transactionId)
+  return attempt.transactionId
+}
+
+effect function retireRevertedAttempt(scope: Scope, deployment: Deployment, key: string, attempt: Attempt) {
+  const receipt = try (try EvmRpc).finalizedReceipt(attempt.transactionId as Hex)
+  if (receipt === undefined || receipt.status !== "reverted") return false
+  return try within(scope, (entries) => effect {
+    const current = try readAttempt(entries, key)
+    if (current === undefined || current === null || current.transactionId !== attempt.transactionId) return false
+    try entries.put(revertedKey(key, attempt.transactionId), { ...current, revert: { transactionId: receipt.transactionHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() } })
+    const record = try adoptedBinding(entries, deployment, key, current)
+    const retiring = record === undefined ? 0 : attemptOf(record, attempt.transactionId)
+    if (record !== undefined && !record.state.retired.includes(retiring)) {
+      const block = Number(receipt.blockNumber)
+      try advance(entries, key, record, [{ event: { type: "retireReverted", receipt: { attempt: retiring, reverted: true, block, canonicalBlock: block } }, by: "attester" }])
+    }
+    if (deployment.consentNonceLimit || current.bindingConsentBudgetKey !== undefined) return false
+    try entries.put(key, null)
+    return true
+  })
+}
+
+effect function finalizeOriginal(entries: Entries, deployment: Deployment, key: string, attempt: Attempt, block: bigint) {
+  const record = try adoptedBinding(entries, deployment, key, attempt)
+  if (record === undefined || (record.state.phase !== "BindingPending" && record.state.phase !== "CancellationPending")) return
+  try advance(entries, key, record, [{ event: { type: "finalizeBinding", attempt: attemptOf(record, attempt.transactionId), height: Number(block) }, by: "attester" }])
+}
+
+effect function successorClaim(deployment: Deployment, intent: ObsoleteIntent) {
+  const row = try first(IdRow, sql`SELECT w.id AS id FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id != ${intent.candidate.claimId} AND w.github_user_id = ${intent.candidate.githubUserId} AND w.chain = ${deployment.pin.chain}`)
+  return row?.id
+}
+
+export interface Settlement {
+  readonly settled: boolean
+  readonly transactionId?: string
+}
+
+function settlement(settled: boolean, transactionId?: string): Settlement {
+  return transactionId === undefined ? { settled } : { settled, transactionId }
+}
+
+export effect function reconcileStoredBinding(scope: Scope, tables: PaymentTables, key: string) {
+  const attempt = try within(scope, (entries) => readAttempt(entries, key))
+  if (attempt === undefined || attempt === null) return settlement(true)
+  const deployment = try reviewedDeployment(attempt.network, attempt.vault, "BindDestination")
+  const facts = { intent: () => storedBindingIntent(tables, deployment, key, attempt), successor: (intent: ObsoleteIntent) => successorClaim(deployment, intent) }
+  return try onChain(deployment, effect {
+    try preflight(deployment)
+    const archived = try within(scope, (entries) => effect {
+      try adoptedBinding(entries, deployment, key, attempt)
+      return (try entries.get(cancellationKey(attempt))) !== undefined
+    })
+    if (archived) {
+      const result = try cancelObsoleteStoredBinding(scope, deployment, key, attempt, facts)
+      if (result === undefined) throw held("Stored cancellation unavailable")
+      return settlement(result.settled, result.transactionId)
+    }
+    const rpc = try EvmRpc
+    const receipt = try rpc.receipt(attempt.transactionId as Hex)
+    if (receipt !== undefined) {
+      if (receipt.status !== "success") {
+        if (try retireRevertedAttempt(scope, deployment, key, attempt)) return settlement(true)
+        throw held("Recorded binding reverted; operator reconciliation required")
+      }
+      const finalized = try rpc.finalizedReceipt(attempt.transactionId as Hex)
+      if (finalized === undefined) {
+        if (receipt.blockNumber <= (try rpc.head("finalized")).number) throw held("Recorded binding receipt is not canonical")
+        return settlement(false)
+      }
+      try within(scope, (entries) => finalizeOriginal(entries, deployment, key, attempt, finalized.blockNumber))
+      return settlement(true)
+    }
+    try within(scope, (entries) => retainedConsent(entries, deployment, attempt, deployment.consentNonceLimit))
+    const cancelled = try cancelObsoleteStoredBinding(scope, deployment, key, attempt, facts)
+    if (cancelled !== undefined) return settlement(cancelled.settled, cancelled.transactionId)
+    return settlement(false, try deliver(scope, tables, deployment, key, attempt))
+  })
+}
+
+export type BindingOutcome = { readonly state: "current" } | { readonly state: "waiting" } | { readonly state: "submitted"; readonly transactionId: string }
+
+export effect function bindStoredDestination(scope: Scope, tables: PaymentTables, candidate: BindingCandidate) {
+  const deployment = try reviewedDeployment(candidate.network, candidate.vault, "BindDestination")
+  if (!obligationPattern.test(candidate.obligationId) || evmAddress(candidate.destination) === undefined || !digestPattern.test(candidate.claimDigest)) throw held("Invalid payout request")
+  const authorization = try registryAuthorization(tables, candidate, deployment.pin.chain)
+  return try onChain(deployment, effect {
+    try preflight(deployment)
+    if (deployment.pin.projectId !== authorization.projectId) throw held("Reviewed project deployment mismatch")
+    const authority = try authorityInForce(deployment)
+    if (authority !== deployment.identityAuthority) throw held("Wrong identity signer")
+    const actor = try wholeNumber(candidate.githubUserId)
+    const current = try bindingOf(deployment, actor)
+    if (!current.cancelled && current.version !== 0n && current.destination === candidate.destination.toLowerCase() && current.claimDigest.slice(2) === candidate.claimDigest) return { state: "current" } satisfies BindingOutcome
+    const scoped = deployment.consentNonceLimit ? try storedConsent(deployment, candidate, current.version, undefined) : undefined
+    if (deployment.consentNonceLimit && scoped === undefined) return { state: "waiting" } satisfies BindingOutcome
+    const fingerprint = scoped !== undefined
+      ? (try consentIdentity(deployment, scoped.data)).fingerprint
+      : textDigest(JSON.stringify([deployment.chainId.toString(), candidate.vault.toLowerCase(), candidate.githubUserId, candidate.claimId, candidate.claimDigest, candidate.destination.toLowerCase(), current.version.toString()]))
+    const key = `${STORED_BINDING}${fingerprint.slice(2)}`
+    const existing = try within(scope, (entries) => readAttempt(entries, key))
+    if (existing !== undefined && existing !== null) {
+      if ((try within(scope, (entries) => entries.get(cancellationKey(existing)))) !== undefined) {
+        const result = try reconcileStoredBinding(scope, tables, key)
+        return result.transactionId === undefined ? { state: "waiting" } satisfies BindingOutcome : { state: "submitted", transactionId: result.transactionId } satisfies BindingOutcome
+      }
+      if (!(try retireRevertedAttempt(scope, deployment, key, existing))) {
+        try within(scope, (entries) => retainedConsent(entries, deployment, existing, deployment.consentNonceLimit))
+        if (existing.fingerprint !== fingerprint) throw held("Idempotency key reused for another operation")
+        return { state: "submitted", transactionId: try deliver(scope, tables, deployment, key, existing) } satisfies BindingOutcome
+      }
+    }
+    if ((try awardState(deployment, authorization)).paid) throw held("Award already paid")
+    try bindingVersionAuthorized(tables, candidate, current, deployment.pin.chain)
+    const consent = scoped ?? (try storedConsent(deployment, candidate, current.version, undefined))
+    if (consent === undefined) return { state: "waiting" } satisfies BindingOutcome
+    try bindingAllowed(deployment, authority, current, candidate, consent)
+    const facts = { actor: Number(actor), wallet: candidate.destination.toLowerCase(), signer: consent.signer, expiresAt: Number(consent.expiresAt), authority } satisfies SigningFacts
+    const attempt = try signStoredBinding(scope, deployment, key, fingerprint, { obligationId: candidate.obligationId, network: candidate.network, vault: candidate.vault }, consent.data, facts)
+    return { state: "submitted", transactionId: try deliver(scope, tables, deployment, key, attempt) } satisfies BindingOutcome
+  })
+}
+
+interface Ranked {
+  readonly order: RunOrder
+  readonly candidate: BindingCandidate
+}
+
+function chosenForRun(candidates: ReadonlyArray<Ranked>) {
+  const compare = (left: Ranked, right: Ranked) => (candidateBefore(left.order, right.order) ? -1 : candidateBefore(right.order, left.order) ? 1 : 0)
+  return [...candidates].sort(compare).slice(0, bindingsPerRun).map((ranked) => ranked.candidate)
+}
+
+export interface BindingRunReport {
+  readonly candidates: number
+  readonly current: number
+  readonly waiting: number
+  readonly failed: number
+  readonly submitted: ReadonlyArray<string>
+}
+
+export function failureKind(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : "unknown"
+}
+
+effect function logFailure(event: string, error: unknown) {
+  try Effect.logError(event, { kind: failureKind(error), signer: signerMarker })
+}
+
+export effect function runStoredBindings(scope: Scope, tables: PaymentTables, candidates: ReadonlyArray<BindingCandidate>) {
+  const submitted = new Set<string>()
+  let current = 0
+  let waiting = 0
+  let failed = 0
+  for (const key of try within(scope, pendingKeys)) {
+    const observed = (try within(scope, (entries) => readAttempt(entries, key)))?.transactionId
+    const result = reconcileStoredBinding(scope, tables, key) catch effect (error) => {
+      try logFailure("stored_binding_reconcile_failed", error)
+      return undefined
+    }
+    if (result === undefined) {
+      failed += 1
+      continue
+    }
+    if (result.transactionId !== undefined) submitted.add(result.transactionId)
+    if (result.settled) try within(scope, (entries) => effect {
+      const now = try readAttempt(entries, key)
+      if (now !== undefined && now !== null && now.transactionId !== observed) return
+      try removePending(entries, key)
+    })
+  }
+  const now = try Clock.currentTimeMillis
+  const claims = [...new Set(candidates.map((candidate) => candidate.claimId))].sort()
+  const ranked: Ranked[] = []
+  for (const candidate of candidates) {
+    const checked = try within(scope, (entries) => entries.get(checkedKey(candidate.network, candidate.vault, candidate.githubUserId)))
+    ranked.push({ order: { lastChecked: typeof checked === "number" ? checked : 0, firstObligationAt: Math.floor(millisOf(candidate.firstCreatedAt) / 1000), actor: Number(candidate.githubUserId), claim: claims.indexOf(candidate.claimId) }, candidate })
+  }
+  for (const candidate of chosenForRun(ranked)) {
+    try within(scope, (entries) => entries.put(checkedKey(candidate.network, candidate.vault, candidate.githubUserId), now))
+    const outcome = bindStoredDestination(scope, tables, candidate) catch effect (error) => {
+      try logFailure("stored_binding_failed", error)
+      return undefined
+    }
+    if (outcome === undefined) failed += 1
+    else if (outcome.state === "submitted") submitted.add(outcome.transactionId)
+    else if (outcome.state === "current") current += 1
+    else waiting += 1
+  }
+  return { candidates: candidates.length, current, waiting, failed, submitted: [...submitted] } satisfies BindingRunReport
+}
+
+export effect function bindDestinations(scope: Scope, tables: PaymentTables) {
+  const { pins } = try AttesterConfig
+  if (pins.length === 0) throw new NotActivated({ network: "", intent: "BindDestination" })
+  for (const pin of pins) try servedNetwork(pin.network, "BindDestination")
+  for (const pin of pins) {
+    const deployment = try reviewedDeployment(pin.network, pin.vault, "BindDestination")
+    try onChain(deployment, preflight(deployment))
+  }
+  const candidates = try bindingCandidates(tables)
+  if (candidates.length === 0 && (try within(scope, pendingKeys)).length === 0) return { candidates: 0, current: 0, waiting: 0, failed: 0, submitted: [] } satisfies BindingRunReport
+  return try runStoredBindings(scope, tables, candidates)
+}

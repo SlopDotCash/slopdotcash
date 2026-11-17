@@ -1,0 +1,230 @@
+// spec/backend/projects.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request, and an unchanged asset keeps its stored reading"
+import { isoNow } from "@repo/platform/clock"
+import { type Address, EvmRpc, type Hex, checksum, evmRpc } from "@repo/platform/chain/evm"
+import { type RpcFailure } from "@repo/platform/chain/rpc"
+import { SolanaRpc, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, address as solanaAddress, decodeMint, solanaRpc } from "@repo/platform/chain/solana"
+import { Refused } from "@repo/platform/http"
+import type { AssetReading } from "../../../gen/backend__projects.effect.vibe"
+import { putProjectsById } from "../../client/refusals.vibe"
+
+export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
+
+interface Coin {
+  readonly address: string
+  readonly symbol: string
+  readonly decimals: number
+}
+
+interface RewardNetwork {
+  readonly name: string
+  readonly family: "evm" | "solana"
+  readonly chainId: string | null
+  readonly evmChainId: bigint
+  readonly cluster: string | null
+  readonly genesis: string | undefined
+  readonly native: Coin
+  readonly stablecoin: Coin
+}
+
+const evmNative: Coin = { address: "0x0000000000000000000000000000000000000000", symbol: "ETH", decimals: 18 }
+
+export const rewardNetworks: Readonly<Record<NetworkName, RewardNetwork>> = {
+  base: { name: "Base", family: "evm", chainId: "8453", evmChainId: 8453n, cluster: null, genesis: undefined, native: evmNative, stablecoin: { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", decimals: 6 } },
+  ethereum: { name: "Ethereum", family: "evm", chainId: "1", evmChainId: 1n, cluster: null, genesis: undefined, native: evmNative, stablecoin: { address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6 } },
+  robinhood: { name: "Robinhood Chain", family: "evm", chainId: "4663", evmChainId: 4663n, cluster: null, genesis: undefined, native: evmNative, stablecoin: { address: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", symbol: "USDG", decimals: 6 } },
+  solana: {
+    name: "Solana",
+    family: "solana",
+    chainId: null,
+    evmChainId: 0n,
+    cluster: "mainnet-beta",
+    genesis: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+    native: { address: "11111111111111111111111111111111", symbol: "SOL", decimals: 9 },
+    stablecoin: { address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", symbol: "USDC", decimals: 6 },
+  },
+}
+
+const defaultUrls: Readonly<Record<NetworkName, string>> = {
+  base: "https://mainnet.base.org",
+  ethereum: "https://ethereum-rpc.publicnode.com",
+  robinhood: "https://robinhood-rpc.publicnode.com",
+  solana: "https://api.mainnet-beta.solana.com",
+}
+
+export interface RewardRpcVars {
+  readonly REWARD_RPC_BASE?: string
+  readonly REWARD_RPC_ETHEREUM?: string
+  readonly REWARD_RPC_ROBINHOOD?: string
+  readonly REWARD_RPC_SOLANA?: string
+}
+
+export service RewardRpc {
+  readonly urls: Readonly<Record<NetworkName, Redacted.Redacted<ReadonlyArray<string>>>>
+}
+
+function configured(value: string | undefined, network: NetworkName) {
+  const url = value === undefined || value.trim() === "" ? defaultUrls[network] : value.trim()
+  return Redacted.make([url] as ReadonlyArray<string>)
+}
+
+export function rewardRpc(vars: RewardRpcVars) {
+  return Layer.succeed(RewardRpc, {
+    urls: {
+      base: configured(vars.REWARD_RPC_BASE, "base"),
+      ethereum: configured(vars.REWARD_RPC_ETHEREUM, "ethereum"),
+      robinhood: configured(vars.REWARD_RPC_ROBINHOOD, "robinhood"),
+      solana: configured(vars.REWARD_RPC_SOLANA, "solana"),
+    },
+  })
+}
+
+export type TokenRead = { readonly kind: "read"; readonly decimals: number; readonly symbol: string | null } | { readonly kind: "refused"; readonly reason: string } | { readonly kind: "unreachable" }
+
+const symbolPattern = /^[A-Za-z0-9$._-]{1,16}$/u
+const timeoutMs = 10_000
+const maxBytes = 64 * 1024
+
+effect function decodedText(bytes: Uint8Array) {
+  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+  const decoded = Effect.try(() => text.decode(bytes)) catch () => null
+  return decoded !== null && symbolPattern.test(decoded) ? decoded : null
+}
+
+effect function wordAt(hex: string, index: number) {
+  return try orDie(Effect.try(() => BigInt(`0x${hex.slice(2 + index * 64, 2 + index * 64 + 64)}`)))
+}
+
+export effect function decodeSymbol(result: string) {
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/u.test(result)) return null
+  const bytes = Uint8Array.from(result.slice(2).match(/../gu) ?? [], (pair) => Number.parseInt(pair, 16))
+  if (bytes.length === 32) {
+    let end = bytes.length
+    while (end > 0 && bytes[end - 1] === 0) end -= 1
+    return try decodedText(bytes.slice(0, end))
+  }
+  if (bytes.length < 64) return null
+  const offset = try wordAt(result, 0)
+  if (offset < 32n || offset % 32n !== 0n || offset > 4096n) return null
+  const at = Number(offset)
+  if (at + 32 > bytes.length) return null
+  const length = try wordAt(result, at / 32)
+  if (length > 64n) return null
+  const size = Number(length)
+  if (at + 32 + size > bytes.length) return null
+  const start = at + 32
+  return try decodedText(bytes.slice(start, start + size))
+}
+
+function failure(error: RpcFailure): TokenRead {
+  if (error._tag === "WrongChain") return { kind: "refused", reason: "The network RPC reports a different chain" }
+  if (error._tag === "RpcRefused") return error.code === -32603 || error.code === -32005 ? { kind: "unreachable" } : { kind: "refused", reason: "The network RPC refused the request" }
+  return { kind: "unreachable" }
+}
+
+effect function evmToken(token: Address) {
+  const rpc = try EvmRpc
+  const code = try rpc.code(token, "latest")
+  if (code === "0x") return { kind: "refused", reason: "No contract exists at that token address" } satisfies TokenRead
+  const decimals = try rpc.call({ to: token, data: "0x313ce567" as Hex, block: "latest" })
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(decimals)) return { kind: "refused", reason: "The token does not report ERC-20 decimals" } satisfies TokenRead
+  const value = try orDie(Effect.try(() => BigInt(decimals)))
+  if (value > 255n) return { kind: "refused", reason: "The token reports invalid decimals" } satisfies TokenRead
+  const symbol = rpc.call({ to: token, data: "0x95d89b41" as Hex, block: "latest" }) catch () => undefined
+  return { kind: "read", decimals: Number(value), symbol: symbol === undefined ? null : try decodeSymbol(symbol) } satisfies TokenRead
+}
+
+effect function solanaToken(mint: string) {
+  const key = solanaAddress(mint)
+  if (key === undefined) return { kind: "refused", reason: "No account exists at that mint address" } satisfies TokenRead
+  const account = try (try SolanaRpc).account(key, "finalized")
+  if (account === undefined) return { kind: "refused", reason: "No account exists at that mint address" } satisfies TokenRead
+  const decoded = account.owner === TOKEN_PROGRAM || account.owner === TOKEN_2022_PROGRAM ? decodeMint(account.data) : undefined
+  if (decoded === undefined || decoded.kind !== "decoded" || !decoded.value.initialized) return { kind: "refused", reason: "The account is not a supported SPL mint" } satisfies TokenRead
+  return { kind: "read", decimals: decoded.value.decimals, symbol: null } satisfies TokenRead
+}
+
+export effect function readToken(network: NetworkName, tokenAddress: string) {
+  const definition = rewardNetworks[network]
+  if (tokenAddress === definition.native.address) return { kind: "read", decimals: definition.native.decimals, symbol: definition.native.symbol } satisfies TokenRead
+  const urls = (try RewardRpc).urls[network]
+  if (definition.family === "solana") {
+    return Effect.provide(solanaToken(tokenAddress), solanaRpc({ urls, genesis: definition.genesis ?? "", timeoutMs, maxBytes })) catch (error) => error._tag === "GenesisPinMissing" ? { kind: "unreachable" } satisfies TokenRead : failure(error)
+  }
+  const token = checksum(tokenAddress)
+  if (token === undefined) return { kind: "refused", reason: "No contract exists at that token address" } satisfies TokenRead
+  return Effect.provide(evmToken(token), evmRpc({ urls, chainId: definition.evmChainId, timeoutMs, maxBytes })) catch (error) => error instanceof RangeError ? { kind: "unreachable" } satisfies TokenRead : failure(error)
+}
+
+export interface VerifiedAsset {
+  readonly network: NetworkName
+  readonly kind: "native" | "stablecoin" | "token"
+  readonly address: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly chainId: string | null
+  readonly cluster: string | null
+  readonly verifiedAt: string
+}
+
+export interface StoredAsset {
+  readonly network: string
+  readonly kind?: string
+  readonly address: string
+  readonly decimals: number
+}
+
+function isNetwork(value: string): value is NetworkName {
+  return value === "base" || value === "ethereum" || value === "robinhood" || value === "solana"
+}
+
+function invalid(message: string) {
+  return new Refused({ status: putProjectsById.invalidManifest.status, code: putProjectsById.invalidManifest.error, message })
+}
+
+function canonicalAddress(network: NetworkName, value: string): string | undefined {
+  const trimmed = value.trim()
+  if (rewardNetworks[network].family === "solana") return solanaAddress(trimmed) === undefined ? undefined : trimmed
+  return /^0x[0-9a-fA-F]{40}$/u.test(trimmed) ? trimmed.toLowerCase() : undefined
+}
+
+function choiceOf(fields: Readonly<Record<string, unknown>> | undefined) {
+  const network = String(fields?.network ?? "")
+  const kind = String(fields?.kind ?? "")
+  if (!isNetwork(network)) return invalid("Choose a supported reward network")
+  const definition = rewardNetworks[network]
+  if (kind === "stablecoin" || kind === "native") {
+    const coin = kind === "stablecoin" ? definition.stablecoin : definition.native
+    return { network, kind, address: coin.address, symbol: coin.symbol } as const
+  }
+  if (kind !== "token") return invalid("Choose native coin, stablecoin or token")
+  const canonical = canonicalAddress(network, String(fields?.address ?? ""))
+  if (canonical === undefined) return invalid(definition.family === "evm" ? "Enter a 0x token contract address with 40 hexadecimal characters" : "Enter a base58 SPL mint address")
+  if (canonical === definition.native.address) return invalid(`Choose ${definition.native.symbol} as the native coin`)
+  if (canonical === definition.stablecoin.address) return invalid(`That address is the network stablecoin; choose ${definition.stablecoin.symbol}`)
+  const symbol = String(fields?.symbol ?? "").trim()
+  if (!symbolPattern.test(symbol)) return invalid("Enter a token symbol of 1 to 16 letters or digits")
+  return { network, kind, address: canonical, symbol } as const
+}
+
+export interface AssetVerdict {
+  readonly asset: VerifiedAsset
+  readonly reading: AssetReading
+}
+
+export effect function verifiedAsset(submitted: unknown, prior: (StoredAsset & { readonly [key: string]: unknown }) | undefined) {
+  const fields = typeof submitted === "object" && submitted !== null && !Array.isArray(submitted) ? submitted as Readonly<Record<string, unknown>> : undefined
+  const choice = choiceOf(fields)
+  if (choice instanceof Refused) throw choice
+  const definition = rewardNetworks[choice.network]
+  const fixed = { chainId: definition.chainId, cluster: definition.cluster }
+  if (prior !== undefined && prior.network === choice.network && prior.kind === choice.kind && prior.address === choice.address) return { asset: prior as unknown as VerifiedAsset, reading: { asset: 0, decimals: prior.decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+  const verifiedAt = try isoNow()
+  if (choice.kind !== "token") {
+    const decimals = choice.kind === "native" ? definition.native.decimals : definition.stablecoin.decimals
+    return { asset: { ...choice, decimals, ...fixed, verifiedAt }, reading: { asset: 0, decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+  }
+  const read = try readToken(choice.network, choice.address)
+  if (read.kind === "unreachable") throw new Refused({ status: putProjectsById.rewardAssetUnverifiedNoStore.status, code: putProjectsById.rewardAssetUnverifiedNoStore.error, message: `${definition.name} could not be reached to verify the reward token. Try again.` })
+  if (read.kind === "refused") throw new Refused({ status: putProjectsById.rewardAssetUnverified.status, code: putProjectsById.rewardAssetUnverified.error, message: `The reward token could not be verified on ${definition.name}: ${read.reason}` })
+  return { asset: { ...choice, symbol: read.symbol ?? choice.symbol, decimals: read.decimals, ...fixed, verifiedAt }, reading: { asset: 0, decimals: read.decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+}

@@ -1,0 +1,211 @@
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
+
+const jsonPrivateNoStoreRobotsTag = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-robots-tag": "noindex" } as const
+const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonPrivateNoStorePlain = { "cache-control": "private, no-store", "content-type": "application/json" } as const
+const barePrivateNoStorePlain = { "cache-control": "private, no-store" } as const
+const jsonNoStorePlain = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" } as const
+const jsonNoStorePlainAllow = { "allow": "POST", "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" } as const
+
+const withInternalErrorPrivateNoStore = {
+  internalErrorPrivateNoStore: { status: 500, error: "internal_error", headers: jsonPrivateNoStore },
+} as const
+
+const withNotSignedInAndInvalidExpectedActorPrivateNoStore = {
+  notSignedIn: { status: 401, error: "not_signed_in", headers: jsonPrivateNoStore },
+  invalidExpectedActorPrivateNoStore: { status: 400, error: "invalid_expected_actor", headers: jsonPrivateNoStore },
+  actorChangedPrivateNoStore: { status: 403, error: "actor_changed", headers: jsonPrivateNoStore },
+  ...withInternalErrorPrivateNoStore,
+} as const
+
+const withNotSignedIn = {
+  ...withNotSignedInAndInvalidExpectedActorPrivateNoStore,
+  notAuthorized: { status: 403, error: "not_authorized", headers: jsonPrivateNoStore },
+  notFoundS404: { status: 404, error: "not_found", headers: jsonPrivateNoStore },
+} as const
+
+const withStatus503AndStatus400 = {
+  status503: { status: 503, body: null, headers: jsonPrivateNoStorePlain },
+  status400: { status: 400, body: null, headers: jsonPrivateNoStorePlain },
+  status500: { status: 500, body: null, headers: jsonPrivateNoStorePlain },
+} as const
+
+const withStatus503 = {
+  ...withStatus503AndStatus400,
+  status409: { status: 409, body: null, headers: jsonPrivateNoStorePlain },
+} as const
+
+const withNotFoundNoStore = {
+  notFoundNoStore: { status: 404, error: "not_found", headers: jsonNoStorePlain },
+  invalidRequestNoStore: { status: 400, error: "invalid_request", headers: jsonNoStorePlain },
+  serviceMisconfigured: { status: 500, error: "service_misconfigured", headers: jsonNoStorePlain },
+  deliveryFailed: { status: 502, error: "delivery_failed", fields: ["sent"], headers: jsonNoStorePlain },
+} as const
+
+const withStatus503PrivateNoStore = {
+  status503PrivateNoStore: { status: 503, body: null, headers: barePrivateNoStorePlain },
+  status400PrivateNoStore: { status: 400, body: null, headers: barePrivateNoStorePlain },
+  status500PrivateNoStore: { status: 500, body: null, headers: barePrivateNoStorePlain },
+} as const
+
+const withInvalidRequestPrivateNoStore = {
+  invalidRequestPrivateNoStore: { status: 400, error: "invalid_request", headers: jsonPrivateNoStore },
+} as const
+
+const withOriginForbiddenPrivateNoStore = {
+  originForbiddenPrivateNoStore: { status: 403, error: "origin_forbidden", headers: jsonPrivateNoStore },
+  ...withInvalidRequestPrivateNoStore,
+} as const
+
+const withMethodNotAllowed = {
+  methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStore },
+} as const
+
+const withStatus405 = {
+  status405: { status: 405, body: null, headers: jsonPrivateNoStorePlain },
+} as const
+
+const withStatus405PrivateNoStore = {
+  status405PrivateNoStore: { status: 405, body: null, headers: barePrivateNoStorePlain },
+} as const
+
+const withMethodNotAllowedNoStore = {
+  methodNotAllowedNoStore: { status: 405, error: "method_not_allowed", headers: jsonNoStorePlainAllow },
+} as const
+
+export const postSecurityCasesByIdAcknowledge = {
+  originForbidden: { status: 403, error: "origin_forbidden", message: "Requests must come from this site", headers: jsonPrivateNoStoreRobotsTag },
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStoreRobotsTag },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStoreRobotsTag },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStoreRobotsTag },
+  githubUnavailable: { status: 503, error: "github_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  notFound: { status: 404, error: "not_found", message: "Case not found", headers: jsonPrivateNoStoreRobotsTag },
+  invalidContentLength: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonPrivateNoStoreRobotsTag },
+  payloadTooLarge: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequest: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestRequestBodyMustBe: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestRequestBodyHasUnexpected: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestAnInboxEventKey: { status: 400, error: "invalid_request", message: "An inbox event key is required", headers: jsonPrivateNoStoreRobotsTag },
+  notFoundPrivateNoStore: { status: 404, error: "not_found", headers: jsonPrivateNoStoreRobotsTag },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postNotificationsEmailUnsubscribe = {
+  ...withOriginForbiddenPrivateNoStore,
+  unsubscribeInvalid: { status: 409, error: "unsubscribe_invalid", headers: jsonPrivateNoStore },
+  emailUnavailable: { status: 503, error: "email_unavailable", headers: jsonPrivateNoStore },
+  ...withInternalErrorPrivateNoStore,
+  otherMethods: {
+    ...withMethodNotAllowed,
+  },
+} as const
+
+export const getNotificationsScamReviewsByPath = {
+  ...withNotSignedIn,
+  otherMethods: {
+    ...withMethodNotAllowed,
+  },
+} as const
+
+export const getNotificationsAppealsByKey = {
+  ...withNotSignedIn,
+  ...withInvalidRequestPrivateNoStore,
+  otherMethods: {
+    ...withMethodNotAllowed,
+  },
+} as const
+
+export const getNotifications = {
+  ...withNotSignedInAndInvalidExpectedActorPrivateNoStore,
+  invalidCursor: { status: 400, error: "invalid_cursor", headers: jsonPrivateNoStore },
+  githubUnavailablePrivateNoStore: { status: 503, error: "github_unavailable", headers: jsonPrivateNoStore },
+  projectChanged: { status: 503, error: "project_changed", headers: jsonPrivateNoStore },
+  otherMethods: {
+    ...withMethodNotAllowed,
+  },
+} as const
+
+export const postNotificationsRead = {
+  ...withOriginForbiddenPrivateNoStore,
+  ...withNotSignedInAndInvalidExpectedActorPrivateNoStore,
+  otherMethods: {
+    ...withMethodNotAllowed,
+  },
+} as const
+
+export const notifyPostV1EmailCapabilities = {
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1EmailVerification = {
+  ...withStatus503,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1EmailUnsubscribe = {
+  ...withStatus503,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1SecurityNotificationsDispatch = {
+  ...withStatus503PrivateNoStore,
+  otherMethods: {
+    ...withStatus405PrivateNoStore,
+  },
+} as const
+
+export const notifyPostV1SecurityNotificationsReconcile = {
+  ...withStatus503PrivateNoStore,
+  status409PrivateNoStore: { status: 409, body: null, headers: barePrivateNoStorePlain },
+  otherMethods: {
+    ...withStatus405PrivateNoStore,
+  },
+} as const
+
+export const notifyPostV1ActivityNotificationsEligibility = {
+  ...withStatus503AndStatus400,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1ActivityNotificationsDispatch = {
+  ...withStatus503AndStatus400,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1ActivityNotificationsReconcile = {
+  ...withStatus503,
+  otherMethods: {
+    ...withStatus405,
+  },
+} as const
+
+export const notifyPostV1ProjectApplications = {
+  ...withNotFoundNoStore,
+  otherMethods: {
+    ...withMethodNotAllowedNoStore,
+  },
+} as const
+
+export const notifyPostV1SlopbotSpend = {
+  ...withNotFoundNoStore,
+  otherMethods: {
+    ...withMethodNotAllowedNoStore,
+  },
+} as const
+
+export const notifyPostV1SlopbotFailure = {
+  ...withNotFoundNoStore,
+  otherMethods: {
+    ...withMethodNotAllowedNoStore,
+  },
+} as const

@@ -1,0 +1,112 @@
+// spec/settlement/signer.md, "Both possible winners stay retained"; spec/settlement/signer.md, "One binding consent spends at most one nonce per vault and actor"
+import type { DurableObjectStorage } from "@repo/platform/bindings"
+import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { Journal, JournalFailure, type SqlTx } from "@repo/platform/journal"
+
+export error JournalValueInvalid { key: string }
+
+export type JournalError = JournalFailure | JournalValueInvalid | RowMismatch
+
+export interface Entry {
+  readonly key: string
+  readonly value: unknown
+}
+
+export interface Entries {
+  get(key: string): unknown!JournalError
+  put(key: string, value: unknown): void!JournalError
+  list(prefix: string, limit: number): ReadonlyArray<Entry>!JournalError
+}
+
+schema EntryRow {
+  readonly key: string
+  readonly value: string
+}
+
+const adoptedKey = "journal:adopted-key-value"
+const legacyPage = 1000
+
+const createTable = sql`CREATE TABLE IF NOT EXISTS signer_journal (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`
+
+effect function encoded(key: string, value: unknown) {
+  const text = try Effect.try({ try: () => JSON.stringify(value) as string | undefined, catch: () => new JournalValueInvalid({ key }) })
+  if (text === undefined) throw new JournalValueInvalid({ key })
+  return text
+}
+
+effect function parsed(key: string, text: string) {
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new JournalValueInvalid({ key }) })
+}
+
+function entriesOver(tx: SqlTx): Entries {
+  return {
+    get: (key) => effect {
+      const [row] = try decoded(EntryRow, try tx.all(sql`SELECT key, value FROM signer_journal WHERE key = ${key}`), "signer journal entry")
+      return row === undefined ? undefined : try parsed(key, row.value)
+    },
+    put: (key, value) => effect {
+      const text = try encoded(key, value)
+      try tx.run(sql`INSERT INTO signer_journal (key, value) VALUES (${key}, ${text}) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    },
+    list: (prefix, limit) => effect {
+      const found = try decoded(EntryRow, try tx.all(sql`SELECT key, value FROM signer_journal WHERE substr(key, 1, ${prefix.length}) = ${prefix} ORDER BY key LIMIT ${limit}`), "signer journal listing")
+      const entries: Entry[] = []
+      for (const row of found) entries.push({ key: row.key, value: try parsed(row.key, row.value) })
+      return entries
+    },
+  }
+}
+
+export function partition(entries: Entries, prefix: string, shared: ReadonlyArray<string>): Entries {
+  const scoped = (key: string) => (shared.some((kept) => key.startsWith(kept)) ? key : `${prefix}${key}`)
+  return {
+    get: (key) => entries.get(scoped(key)),
+    put: (key, value) => entries.put(scoped(key), value),
+    list: (listed, limit) => effect {
+      const scopedPrefix = scoped(listed)
+      const found = try entries.list(scopedPrefix, limit)
+      return scopedPrefix === listed ? found : found.map((entry) => ({ key: entry.key.slice(prefix.length), value: entry.value }))
+    },
+  }
+}
+
+export type Scope = (entries: Entries) => Entries
+
+export const ordinaryScope: Scope = (entries) => entries
+
+export effect function journaled<A, E, R>(work: (entries: Entries) => A!E!R) {
+  return try (try Journal).transaction((tx) => work(entriesOver(tx)))
+}
+
+export effect function within<A, E, R>(scope: Scope, work: (entries: Entries) => A!E!R) {
+  return try journaled((entries) => work(scope(entries)))
+}
+
+export effect function createJournal() {
+  try (try Journal).transaction((tx) => effect { try tx.run(createTable) })
+}
+
+effect function legacyEntries(storage: Pick<DurableObjectStorage, "list">) {
+  const found: Entry[] = []
+  let after: string | undefined = undefined
+  for (;;) {
+    const options = after === undefined ? { limit: legacyPage } : { limit: legacyPage, startAfter: after }
+    const page = try tryPromise({ try: () => storage.list<unknown>(options), catch: () => new JournalFailure({ message: "legacy key-value journal unreadable" }) })
+    for (const [key, value] of page) found.push({ key, value })
+    if (page.size < legacyPage) return found
+    after = found[found.length - 1]?.key
+  }
+}
+
+export effect function adoptKeyValue(storage: Pick<DurableObjectStorage, "list">) {
+  try createJournal()
+  const adopted = try journaled((entries) => entries.get(adoptedKey))
+  if (adopted !== undefined) return
+  const legacy = try legacyEntries(storage)
+  const rows: Array<readonly [string, string]> = []
+  for (const entry of legacy) rows.push([entry.key, try encoded(entry.key, entry.value)])
+  try (try Journal).transaction((tx) => effect {
+    for (const [key, text] of rows) try tx.run(sql`INSERT INTO signer_journal (key, value) VALUES (${key}, ${text}) ON CONFLICT(key) DO NOTHING`)
+    try entriesOver(tx).put(adoptedKey, { schema: "journal-adoption-v1", entries: rows.length })
+  })
+}

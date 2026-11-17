@@ -1,0 +1,239 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+import { randomId, sha256Hex, utf8 } from "@repo/platform/crypto"
+
+export const maxDiscussionEntries = 24_000
+export const maxDiscussionBytes = 256 * 1024 * 1024
+export const maxDiscussionAgeMs = 48 * 60 * 60 * 1_000
+export const maxDiscussionBodyBytes = 2 * 1024 * 1024
+export const maxMetadataBytes = 2_048
+export const entryName = /^[a-f0-9]{64}\.bin$/u
+
+const canonicalRepo = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u
+const repositoryNode = /^[A-Za-z0-9_=-]{1,128}$/u
+const etagPattern = /^(?:W\/)?"[!#-~]{1,256}"$/u
+const discussionPath = /^\/repos\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(pulls|issues)\/([1-9]\d*)(?:\/(comments|reviews))?$/u
+const collectionPage = /^\?per_page=100&page=[1-9]\d{0,5}$/u
+const bearer = /^Bearer \S+$/u
+const allowedHeaders = ["accept", "authorization", "user-agent", "x-github-api-version"]
+const accept = "application/vnd.github+json"
+const apiVersion = "2022-11-28"
+const submittedReviewStates: ReadonlyArray<unknown> = ["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]
+const decimal = /^[1-9]\d*$/u
+
+export error CheckpointInvalid { message: string }
+
+export interface CheckpointRepository {
+  readonly name: string
+  readonly nodeId: string
+}
+
+export interface DiscussionCacheOptions {
+  readonly directory: string
+  readonly repositories: ReadonlyArray<CheckpointRepository>
+}
+
+export interface CachedDiscussion {
+  readonly etag: string
+  readonly bytes: Uint8Array
+}
+
+export interface DiscussionEntry {
+  read(): (CachedDiscussion | undefined)!!
+  save(etag: string, bytes: Uint8Array): void!!
+}
+
+export interface DiscussionCache {
+  entry(url: string, headers: Readonly<Record<string, string>>): DiscussionEntry | undefined
+}
+
+export interface DiscussionCheckpoint {
+  readonly directory: string
+  readonly deadlineMs: number
+}
+
+type Fragment = "pullrequestreview-" | "issuecomment-" | "discussion_r" | undefined
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function listed(value: unknown, pullUrl: string, fragment: Exclude<Fragment, undefined>) {
+  if (!Array.isArray(value) || value.length > 100) return false
+  return value.every((item: unknown) => {
+    const data = record(item)
+    if (data === undefined || typeof data.node_id !== "string" || data.node_id === "" || typeof data.body !== "string") return false
+    if (fragment === "pullrequestreview-" && (typeof data.submitted_at !== "string" || !Number.isFinite(Date.parse(data.submitted_at)) || !submittedReviewStates.includes(data.state))) return false
+    return typeof data.html_url === "string" && data.html_url.toLowerCase().startsWith(`${pullUrl}#${fragment}`) && decimal.test(data.html_url.slice(pullUrl.length + 1 + fragment.length))
+  })
+}
+
+function matchesDiscussion(value: unknown, number: number, pullUrl: string, repository: string, nodeId: string, fragment: Fragment) {
+  if (fragment !== undefined) return listed(value, pullUrl, fragment)
+  const pull = record(value)
+  if (pull === undefined) return false
+  const base = record(record(pull.base)?.repo)
+  const head = record(pull.head)
+  return pull.number === number &&
+    typeof pull.node_id === "string" && pull.node_id !== "" &&
+    typeof pull.html_url === "string" && pull.html_url.toLowerCase() === pullUrl &&
+    (typeof pull.body === "string" || pull.body === null) &&
+    typeof pull.updated_at === "string" &&
+    (pull.state === "open" || pull.state === "closed") &&
+    base?.node_id === nodeId && base.private === false &&
+    typeof base.full_name === "string" && base.full_name.toLowerCase() === repository &&
+    head !== undefined && (head.repo === null || record(head.repo)?.private === false)
+}
+
+export effect function parsedJson(bytes: Uint8Array) {
+  return Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+}
+
+export effect function refuseIf(refused: boolean, message: string) {
+  if (refused) throw new CheckpointInvalid({ message })
+}
+
+export effect function discussionCheckpoint() {
+  const directory = try Config.withDefault(Config.String("SLOP_DISCUSSION_CHECKPOINT"), "")
+  const deadline = try Config.withDefault(Config.String("SLOP_DISCUSSION_DEADLINE_MS"), "")
+  if (directory === "" && deadline === "") return undefined
+  const actions = try Config.withDefault(Config.String("GITHUB_ACTIONS"), "")
+  const ref = try Config.withDefault(Config.String("GITHUB_REF"), "")
+  const event = try Config.withDefault(Config.String("GITHUB_EVENT_NAME"), "")
+  const deadlineMs = deadline.trim() === "" ? Number.NaN : Number(deadline)
+  const now = try Clock.currentTimeMillis
+  try refuseIf(actions !== "true" || ref !== "refs/heads/main" || !["push", "workflow_dispatch"].includes(event) || directory === "" || !Number.isSafeInteger(deadlineMs) || deadlineMs <= now, "Invalid trusted production discussion checkpoint settings")
+  return { directory, deadlineMs } satisfies DiscussionCheckpoint
+}
+
+effect function retained(fs: FileSystem.FileSystem, directory: string, sizes: Map<string, number>) {
+  try fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
+  const root = try fs.lstat(directory)
+  try refuseIf(root.type !== "Directory", "Invalid GitHub discussion cache directory")
+  let total = 0
+  for (const entry of try fs.readDirectoryEntries(directory)) {
+    try refuseIf(entry.type !== "File" || !entryName.test(entry.name), "Invalid GitHub discussion cache entry")
+    const size = Number((try fs.lstat(`${directory}/${entry.name}`)).size)
+    total += size
+    sizes.set(entry.name, size)
+    try refuseIf(sizes.size > maxDiscussionEntries || total > maxDiscussionBytes, "GitHub discussion cache exceeds its retention bounds")
+  }
+  return total
+}
+
+export effect function discussionCache(options: DiscussionCacheOptions) {
+  const repositories = new Map<string, string>()
+  for (const { name, nodeId } of options.repositories) {
+    try refuseIf(!canonicalRepo.test(name) || !repositoryNode.test(nodeId), "Invalid GitHub discussion cache repository identity")
+    try refuseIf(repositories.has(name.toLowerCase()), "Duplicate GitHub discussion cache repository")
+    repositories.set(name.toLowerCase(), nodeId)
+  }
+  const fs = try FileSystem.FileSystem
+  const crypto = try Experimental.Crypto.Crypto
+  const directory = options.directory
+  const sizes = new Map<string, number>()
+  const writing = new Set<string>()
+  const publicPulls = new Set<string>()
+  let totalBytes = retained(fs, directory, sizes) catch effect (error) => {
+    if (error._tag === "CheckpointInvalid") throw error
+    throw new CheckpointInvalid({ message: "Invalid GitHub discussion cache directory" })
+  }
+
+  effect function digest(data: string | Uint8Array) {
+    return try provideService(sha256Hex(data), Experimental.Crypto.Crypto, crypto)
+  }
+
+  function entry(url: string, headers: Readonly<Record<string, string>>): DiscussionEntry | undefined {
+    const parsed = URL.parse(url)
+    const match = parsed === null ? null : discussionPath.exec(parsed.pathname)
+    if (parsed === null || match === null || parsed.origin !== "https://api.github.com" || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "") return undefined
+    const [, rawRepo = "", section = "", rawNumber = "", collection] = match
+    const repository = rawRepo.toLowerCase()
+    const nodeId = repositories.get(repository)
+    const number = Number(rawNumber)
+    const names = Object.keys(headers)
+    if (
+      nodeId === undefined || !Number.isSafeInteger(number) ||
+      (section === "issues" && collection !== "comments") ||
+      (collection === undefined ? parsed.search !== "" : !collectionPage.test(parsed.search)) ||
+      headers.accept !== accept || headers["x-github-api-version"] !== apiVersion || headers["user-agent"] !== "slopbot" ||
+      !bearer.test(headers.authorization ?? "") || names.some((name) => !allowedHeaders.includes(name))
+    ) return undefined
+    const fragment: Fragment = collection === "reviews" ? "pullrequestreview-" : collection === "comments" ? section === "issues" ? "issuecomment-" : "discussion_r" : undefined
+    const pullUrl = `https://github.com/${repository}/pull/${number}`
+    if (fragment !== undefined && !publicPulls.has(pullUrl)) return undefined
+    if (fragment === undefined) publicPulls.delete(pullUrl)
+    const href = parsed.href
+
+    effect function name() {
+      return `${try digest(JSON.stringify(["1", nodeId, href, accept, apiVersion]))}.bin`
+    }
+
+    effect function validBody(bytes: Uint8Array) {
+      if (bytes.length === 0 || bytes.length > maxDiscussionBodyBytes) return false
+      const value = try parsedJson(bytes)
+      return value !== undefined && matchesDiscussion(value, number, pullUrl, repository, nodeId ?? "", fragment)
+    }
+
+    effect function stored(file: string, key: string) {
+      return try scoped(effect {
+        const handle = try fs.open(`${directory}/${file}`, { flag: "r", noFollow: true })
+        const info = try handle.stat
+        if (info.type !== "File" || Number(info.size) > maxDiscussionBodyBytes + maxMetadataBytes) return undefined
+        const raw = Option.getOrUndefined(try handle.readAlloc(Number(info.size))) ?? new Uint8Array(0)
+        const line = raw.indexOf(10)
+        if (line < 1 || line >= maxMetadataBytes) return undefined
+        const metadata = record(try parsedJson(raw.subarray(0, line)))
+        const bytes = raw.slice(line + 1)
+        const now = try Clock.currentTimeMillis
+        const observedAt = metadata?.observedAt
+        if (
+          metadata?.version !== 1 || metadata.key !== key ||
+          typeof metadata.etag !== "string" || !etagPattern.test(metadata.etag) ||
+          typeof observedAt !== "number" || !Number.isSafeInteger(observedAt) || observedAt > now || now - observedAt > maxDiscussionAgeMs ||
+          metadata.digest !== try digest(bytes) || !(try validBody(bytes))
+        ) return undefined
+        return { etag: metadata.etag, bytes } satisfies CachedDiscussion
+      })
+    }
+
+    return {
+      read: () => effect {
+        const file = try name()
+        if (!sizes.has(file)) return undefined
+        return stored(file, file) catch () => undefined
+      },
+      save: (etag, bytes) => effect {
+        if (fragment !== undefined && !publicPulls.has(pullUrl)) return
+        if (!(try validBody(bytes))) return
+        if (fragment === undefined && publicPulls.size < maxDiscussionEntries) publicPulls.add(pullUrl)
+        if (!etagPattern.test(etag)) return
+        const file = try name()
+        const metadata = utf8(`${JSON.stringify({ version: 1, key: file, etag, observedAt: try Clock.currentTimeMillis, digest: try digest(bytes) })}\n`)
+        const size = metadata.length + bytes.length
+        const previous = sizes.get(file) ?? 0
+        if ((previous === 0 && sizes.size >= maxDiscussionEntries) || totalBytes + size - previous > maxDiscussionBytes || writing.has(file)) return
+        const temporary = `${directory}/${file}.${try provideService(randomId(), Experimental.Crypto.Crypto, crypto)}.tmp`
+        const content = new Uint8Array(size)
+        content.set(metadata, 0)
+        content.set(bytes, metadata.length)
+        writing.add(file)
+        sizes.set(file, size)
+        totalBytes += size - previous
+        const written = effect {
+          try fs.writeFile(temporary, content, { flag: "wx", mode: 0o600 })
+          try fs.rename(temporary, `${directory}/${file}`)
+          return true
+        } catch () => false
+        if (!written) {
+          totalBytes -= size - previous
+          if (previous > 0) sizes.set(file, previous)
+          else sizes.delete(file)
+          fs.remove(temporary, { force: true }) catch () => undefined
+        }
+        writing.delete(file)
+      },
+    }
+  }
+
+  return { entry } satisfies DiscussionCache
+}

@@ -1,0 +1,78 @@
+// spec/backend/bindingConsent.md, "Story: Consent to bind the authorized payout wallet to a project vault"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+const loose = Schema.optionalKey(Schema.Unknown)
+
+export const ConsentFields = Schema.Struct({ claimId: loose, network: loose, vault: loose, expectedVersion: loose, expiresAt: loose, signature: loose })
+export type ConsentFields = typeof ConsentFields.Type
+export const SolanaBindFields = Schema.Struct({ obligationId: loose, transaction: loose })
+export type SolanaBindFields = typeof SolanaBindFields.Type
+
+export schema TypedFieldView {
+  readonly name: string
+  readonly type: string
+}
+
+export schema BindingTypesView {
+  readonly EIP712Domain: ReadonlyArray<TypedFieldView>
+  readonly DestinationBinding: ReadonlyArray<TypedFieldView>
+}
+
+export schema BindingDomainView {
+  readonly name: string
+  readonly version: string
+  readonly chainId: string
+  readonly verifyingContract: string
+}
+
+export schema BindingMessageView {
+  readonly actorId: string
+  readonly destination: string
+  readonly expectedVersion: string
+  readonly claimDigest: string
+  readonly expiresAt: string
+}
+
+export schema BindingTypedDataView {
+  readonly types: BindingTypesView
+  readonly primaryType: string
+  readonly domain: BindingDomainView
+  readonly message: BindingMessageView
+}
+
+export schema BindingChallenge {
+  readonly claimId: string
+  readonly typedData: BindingTypedDataView
+}
+
+export schema BindingAuthorized {
+  readonly authorized: boolean
+  readonly expiresAt: string
+}
+
+export schema BindingContext {
+  readonly vault: string
+  readonly programId: string
+  readonly projectPda: string
+  readonly networkDomain: string
+  readonly githubUserId: string
+  readonly destination: string
+  readonly claimDigest: string
+}
+
+export schema SolanaBindPrepared {
+  readonly transactionId: string
+  readonly transaction?: string
+  readonly bindingContext?: BindingContext
+}
+
+export schema SolanaBindCompleted {
+  readonly transactionId: string
+}
+
+export const bindChallenge = route({ method: "POST", path: "/api/v1/payments/wallets/bind-challenge", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingChallenge, rejected: "claim_not_current", cache: "private" })
+export const bindAuthorize = route({ method: "POST", path: "/api/v1/payments/wallets/bind-authorize", access: "sessionWrite", limitKib: 4, request: ConsentFields, answer: BindingAuthorized, rejected: "wallet_signature_required", cache: "private" })
+export const solanaBindPrepare = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/prepare", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindPrepared, rejected: "binding_not_ready", cache: "private" })
+export const solanaBindComplete = route({ method: "POST", path: "/api/v1/payments/wallets/solana-bind/complete", access: "sessionWrite", limitKib: 4, request: SolanaBindFields, answer: SolanaBindCompleted, rejected: "binding_pending_or_rejected", cache: "private" })
+
+export const api: ReadonlyArray<AnyRoute> = [bindChallenge, bindAuthorize, solanaBindPrepare, solanaBindComplete]

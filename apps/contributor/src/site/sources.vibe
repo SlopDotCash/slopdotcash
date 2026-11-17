@@ -1,0 +1,205 @@
+// spec/contributor/publication.md, "Only bytes equal to the build commit's tracked tree are labelled committed"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import type { RevisionStatus } from "../../gen/contributor__publication.effect.vibe"
+import { comparePaths } from "../render/render.ts"
+import { sha256Hex } from "../render/templateIndex.ts"
+
+export error SiteRefused { message: string }
+
+export interface SiteFile {
+  readonly path: string
+  readonly bytes: Uint8Array
+}
+
+export interface Ran {
+  readonly status: number
+  readonly stdout: Uint8Array
+}
+
+export interface Listing {
+  readonly paths: ReadonlyArray<string>
+  readonly irregular: string | undefined
+}
+
+const outputLimit = 64 * 1024 * 1024
+const blobLimit = 16 * 1024 * 1024
+const encoder = new TextEncoder()
+
+export function refused(message: string) {
+  return new SiteRefused({ message: `[Slop] ${message}` })
+}
+
+export function statusText(status: RevisionStatus): "committed" | "working-tree" {
+  return status === "CommittedStatus" ? "committed" : "working-tree"
+}
+
+export function utf8Bytes(text: string): Uint8Array {
+  return encoder.encode(text)
+}
+
+export function jsonText(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`
+}
+
+export function textFile(path: string, text: string): SiteFile {
+  return { path, bytes: utf8Bytes(text) }
+}
+
+function concatenated(chunks: ReadonlyArray<Uint8Array>): Uint8Array {
+  const joined = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0))
+  let offset = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, offset)
+    offset += chunk.length
+  }
+  return joined
+}
+
+export effect function utf8Text(bytes: Uint8Array, what: string) {
+  return try Effect.try({ try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes), catch: () => refused(`${what} is not UTF-8`) })
+}
+
+effect function collected<E>(stream: Stream.Stream<Uint8Array, E>) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for try (const chunk of stream) {
+    size += chunk.length
+    if (size > outputLimit) throw refused("a build command wrote more output than the site build reads")
+    chunks.push(chunk)
+  }
+  return concatenated(chunks)
+}
+
+export interface Invocation {
+  readonly cwd?: string
+  readonly input?: Uint8Array
+  readonly quiet?: boolean
+}
+
+export effect function ran(command: string, args: ReadonlyArray<string>, { cwd, input, quiet = false }: Invocation) {
+  return try scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const stdin = input === undefined ? "ignore" : Stream.make(input)
+    const handle = try spawner.spawn(ChildProcess.make(command, args, { cwd, stdin, stderr: quiet ? "ignore" : "inherit" }))
+    const [stdout, code] = try.all [collected(handle.stdout), handle.exitCode]
+    return { status: Number(code), stdout } satisfies Ran
+  })
+}
+
+export effect function git(root: string | undefined, args: ReadonlyArray<string>, input?: Uint8Array) {
+  const output = ran("git", args, { cwd: root, input }) catch effect () => {
+    throw refused(`git ${args[0] ?? ""} could not run`)
+  }
+  if (output.status !== 0) throw refused(`git ${args[0] ?? ""} failed`)
+  return output.stdout
+}
+
+export effect function gitLines(root: string, args: ReadonlyArray<string>) {
+  return (try utf8Text(try git(root, args), "git output")).split("\0").filter((record) => record !== "")
+}
+
+export effect function repositoryRoot() {
+  return (try utf8Text(try git(undefined, ["rev-parse", "--show-toplevel"]), "the repository path")).trim()
+}
+
+export effect function buildCommit(root: string) {
+  const commit = (try utf8Text(try git(root, ["rev-parse", "HEAD"]), "the build commit")).trim()
+  if (!/^[0-9a-f]{40}$/u.test(commit)) throw refused("git did not return a full commit SHA")
+  return commit
+}
+
+export effect function sourceBytes(root: string, path: string) {
+  const location = (try Path.Path).join(root, path)
+  const bytes = (try FileSystem.FileSystem).readFile(location) catch effect () => {
+    throw refused(`required source is unreadable: ${path}`)
+  }
+  return bytes
+}
+
+export effect function sourceText(root: string, path: string) {
+  return try utf8Text(try sourceBytes(root, path), path)
+}
+
+effect function entryType(location: string) {
+  const info = (try FileSystem.FileSystem).lstat(location) catch () => undefined
+  return info?.type
+}
+
+effect function listed(directory: string, prefix: string): Listing!SiteRefused!(FileSystem.FileSystem | Path.Path) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const names = fs.readDirectory(directory) catch effect () => {
+    throw refused(`skill source is unreadable: ${prefix === "" ? "." : prefix}`)
+  }
+  const paths: string[] = []
+  for (const name of names) {
+    const relative = `${prefix}${name}`
+    const type = try entryType(path.join(directory, name))
+    if (type === "Directory") {
+      const nested = try listed(path.join(directory, name), `${relative}/`)
+      if (nested.irregular !== undefined) return nested
+      paths.push(...nested.paths)
+    } else if (type === "File") {
+      paths.push(relative)
+    } else {
+      return { paths: [], irregular: relative } satisfies Listing
+    }
+  }
+  return { paths: paths.sort(comparePaths), irregular: undefined } satisfies Listing
+}
+
+export effect function regularFiles(root: string, sourcePath: string) {
+  const directory = (try Path.Path).join(root, sourcePath)
+  if ((try entryType(directory)) !== "Directory") return { paths: [], irregular: "." } satisfies Listing
+  return try listed(directory, "")
+}
+
+interface TreeRecord {
+  readonly path: string
+  readonly oid: string
+}
+
+function treeRecord(record: string): TreeRecord | undefined {
+  const tab = record.indexOf("\t")
+  const [, type = "", oid = ""] = record.slice(0, tab).split(" ")
+  if (tab < 0 || type !== "blob" || !/^[a-f0-9]{40}$/u.test(oid)) return undefined
+  return { path: record.slice(tab + 1), oid }
+}
+
+function blobsOf(output: Uint8Array, records: ReadonlyArray<TreeRecord>): ReadonlyArray<Uint8Array> | undefined {
+  const blobs: Uint8Array[] = []
+  let offset = 0
+  for (const record of records) {
+    const end = output.indexOf(10, offset)
+    const header = /^([a-f0-9]{40}) blob (\d+)$/u.exec(String.fromCharCode(...output.subarray(offset, end < 0 ? offset : end)))
+    if (end < 0 || header === null || header[1] !== record.oid) return undefined
+    const size = Number(header[2])
+    const start = end + 1
+    const next = start + size
+    if (!Number.isSafeInteger(size) || size > blobLimit || output[next] !== 10) return undefined
+    blobs.push(output.subarray(start, next))
+    offset = next + 1
+  }
+  return offset === output.length ? blobs : undefined
+}
+
+export effect function committedDigests(root: string, commit: string, paths: ReadonlyArray<string>) {
+  const records: TreeRecord[] = []
+  for (const line of try gitLines(root, ["ls-tree", "-r", "-z", "--full-name", commit, "--", ...paths])) {
+    const record = treeRecord(line)
+    if (record === undefined) throw refused("Invalid committed skill tree")
+    records.push(record)
+  }
+  if (records.length === 0) return new Map<string, string>()
+  const output = try git(root, ["cat-file", "--batch"], utf8Bytes(`${records.map((record) => record.oid).join("\n")}\n`))
+  const blobs = blobsOf(output, records)
+  if (blobs === undefined) throw refused("Unexpected committed skill blob output")
+  return new Map(records.map((record, index) => [record.path, sha256Hex(blobs[index] ?? new Uint8Array())]))
+}
+
+export effect function trackedPaths(root: string, sourcePath: string) {
+  const prefix = `${sourcePath}/`
+  return (try gitLines(root, ["ls-files", "-z", "--full-name", "--", sourcePath]))
+    .map((path) => (path.startsWith(prefix) ? path.slice(prefix.length) : path))
+    .sort(comparePaths)
+}

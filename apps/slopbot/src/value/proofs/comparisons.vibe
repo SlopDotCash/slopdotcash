@@ -1,0 +1,156 @@
+// spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit's totals"
+import { gitObjectId, utf8Text } from "@repo/platform/git/bytes"
+import { type ObjectRead, blobSessionByteLimit, objectVerified } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type Recovered, contentsFile, unrecovered, verifiedBlob, verifiedBlobSha } from "./blob.vibe"
+import {
+  type FileChange,
+  hasCompleteValuePatch,
+  needsAddedValueComparison,
+  needsFullValueComparison,
+  needsRemovedValueComparison,
+} from "./changes.vibe"
+import { isObjectId, isRegularFileMode, isSafePath } from "./gitObject.ts"
+import { addedPatch, textLineCount } from "./patch.ts"
+import { verifiedTree } from "./tree.vibe"
+
+const addedPatchReadLimit = 16
+
+function verifiedTextOf(bytes: Uint8Array) {
+  const decoded = utf8Text(bytes)
+  return decoded === undefined || decoded.includes("\0") ? undefined : decoded
+}
+
+export effect function recoverUnchangedValueRenames(repository: string, files: ReadonlyArray<FileChange>, baseSha: string, headSha: string, recovered: Recovered = unrecovered) {
+  const blob = verifiedBlobSha(repository, recovered)
+  const result: FileChange[] = []
+  for (const file of files) {
+    const previous = file.previous_filename
+    if (
+      file.status !== "renamed" || file.patch !== undefined || file.additions !== 0 || file.deletions !== 0 ||
+      previous === undefined || previous === "" || previous === file.filename
+    ) {
+      result.push(file)
+      continue
+    }
+    const before = try blob(previous, baseSha)
+    const after = before === undefined ? undefined : try blob(file.filename, headSha)
+    result.push(before !== undefined && after === before ? { ...file, unchangedRename: { baseSha, headSha, blobSha: before }, patch: "" } : file)
+  }
+  return result
+}
+
+export effect function recoverFullValueComparisons(repository: string, files: ReadonlyArray<FileChange>, baseSha: string, headSha: string, recovered: Recovered = unrecovered) {
+  const read = verifiedBlob(repository, recovered)
+  const result: FileChange[] = []
+  for (const file of files) {
+    if (!needsFullValueComparison(file)) {
+      result.push(file)
+      continue
+    }
+    const before = try read(file.previous_filename ?? file.filename, baseSha)
+    const after = before === undefined ? undefined : try read(file.filename, headSha)
+    const beforeText = before === undefined ? undefined : verifiedTextOf(before.bytes)
+    const afterText = after === undefined ? undefined : verifiedTextOf(after.bytes)
+    const identicalRename = file.status === "renamed" && before !== undefined && after !== undefined && before.sha === after.sha
+    result.push(
+      before === undefined || after === undefined || identicalRename || beforeText === undefined || afterText === undefined
+        ? file
+        : {
+            ...file,
+            fullComparison: {
+              baseSha,
+              headSha,
+              before: { blobSha: before.sha, text: recovered.intern(beforeText) },
+              after: { blobSha: after.sha, text: recovered.intern(afterText) },
+            },
+          },
+    )
+  }
+  return result
+}
+
+export effect function recoverAddedValueComparisons(repository: string, files: ReadonlyArray<FileChange>, baseSha: string, headSha: string, recovered: Recovered = unrecovered) {
+  if (!files.some(needsAddedValueComparison)) return files
+  const before = try verifiedTree(repository, baseSha)
+  const after = before === undefined ? undefined : try verifiedTree(repository, headSha)
+  if (before === undefined || after === undefined) return files
+  const read = verifiedBlob(repository, recovered)
+  const result: FileChange[] = []
+  for (const file of files) {
+    const entry = after.entries.get(file.filename)
+    if (!needsAddedValueComparison(file) || before.entries.has(file.filename) || entry?.type !== "blob" || !isRegularFileMode(entry.mode)) {
+      result.push(file)
+      continue
+    }
+    const blob = try read(file.filename, headSha)
+    const decoded = blob !== undefined && blob.sha === entry.sha ? verifiedTextOf(blob.bytes) : undefined
+    result.push(blob === undefined || decoded === undefined ? file : { ...file, addedComparison: { baseSha, headSha, after: { blobSha: blob.sha, text: recovered.intern(decoded) } } })
+  }
+  return result
+}
+
+export effect function recoverRemovedValueComparisons(repository: string, files: ReadonlyArray<FileChange>, baseSha: string, headSha: string, recovered: Recovered = unrecovered) {
+  if (!files.some(needsRemovedValueComparison)) return files
+  const before = try verifiedTree(repository, baseSha)
+  const after = before === undefined ? undefined : try verifiedTree(repository, headSha)
+  if (before === undefined || after === undefined) return files
+  const read = verifiedBlob(repository, recovered)
+  const result: FileChange[] = []
+  for (const file of files) {
+    const entry = before.entries.get(file.filename)
+    if (!needsRemovedValueComparison(file) || entry?.type !== "blob" || !isRegularFileMode(entry.mode) || after.entries.has(file.filename)) {
+      result.push(file)
+      continue
+    }
+    const blob = try read(file.filename, baseSha)
+    const decoded = blob !== undefined && blob.sha === entry.sha ? verifiedTextOf(blob.bytes) : undefined
+    result.push(blob === undefined || decoded === undefined ? file : { ...file, removedComparison: { baseSha, headSha, before: { blobSha: blob.sha, text: recovered.intern(decoded) } } })
+  }
+  return result
+}
+
+interface RecoveredPatch { readonly patch: string; readonly additions: number }
+
+export function addedValuePatchRecovery(repository: string, recovered: Recovered = unrecovered) {
+  let reads = 0
+  let totalBytes = 0
+  const patches = new Map<string, RecoveredPatch | undefined>()
+  function patchOf(bytes: Uint8Array, read: ObjectRead) {
+    const decoded = utf8Text(bytes)
+    return decoded === undefined || decoded.includes("\0") || !objectVerified(read)
+      ? undefined
+      : { patch: recovered.intern(addedPatch(decoded)), additions: textLineCount(decoded) } satisfies RecoveredPatch
+  }
+  effect function recoveredPatch(path: string, ref: string) {
+    const reused = recovered.verified(repository, ref, path)
+    if (reused !== undefined) {
+      const computedSha = gitObjectId("blob", reused.bytes)
+      return patchOf(reused.bytes, { objectKind: "BlobObject", claimedSha: reused.sha, computedSha, claimedSha256: "", computedSha256: "", reportedSize: reused.bytes.length, bytesRead: reused.bytes.length, readNumber: 0, bytesSoFar: 0, reused: true })
+    }
+    if (reads >= addedPatchReadLimit || totalBytes >= blobSessionByteLimit) return undefined
+    reads += 1
+    const file = try contentsFile(repository, ref, path)
+    if (file === undefined || file.size > blobSessionByteLimit - totalBytes) return undefined
+    totalBytes += file.bytes.length
+    const computedSha = gitObjectId("blob", file.bytes)
+    return patchOf(file.bytes, { objectKind: "BlobObject", claimedSha: file.sha, computedSha, claimedSha256: "", computedSha256: "", reportedSize: file.size, bytesRead: file.bytes.length, readNumber: reads, bytesSoFar: totalBytes, reused: false })
+  }
+  return effect (files: ReadonlyArray<FileChange>, ref: string) => {
+    if (!isObjectId(ref)) return files
+    const result: FileChange[] = []
+    for (const file of files) {
+      if (
+        hasCompleteValuePatch(file) || file.status !== "added" || file.deletions !== 0 ||
+        !Number.isSafeInteger(file.additions) || file.additions < 0 || !isSafePath(file.filename)
+      ) {
+        result.push(file)
+        continue
+      }
+      const key = JSON.stringify([ref, file.filename])
+      if (!patches.has(key)) patches.set(key, try recoveredPatch(file.filename, ref))
+      const found = patches.get(key)
+      result.push(found !== undefined && found.additions === file.additions ? { ...file, patch: found.patch } : file)
+    }
+    return result
+  }
+}

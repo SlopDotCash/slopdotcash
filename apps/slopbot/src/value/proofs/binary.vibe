@@ -1,0 +1,251 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { gitObjectId, sha256Of, utf8Text } from "@repo/platform/git/bytes"
+import { type ObjectRead, blobByteLimit, blobReadLimit, blobSessionByteLimit, objectVerified, treeEntryLimit } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { type Recovered, unrecovered, verifiedBlob } from "./blob.vibe"
+import { type AddedBinaryProof, type FileChange, type RetainedAtMerge, needsAddedBinaryProof } from "./changes.vibe"
+import { base64Bytes, base64Text, isGitLfsPointer } from "./encoding.ts"
+import { isObjectId, isSafePath, isSha256 } from "./gitObject.ts"
+import { count, fields, fetched, text } from "./reads.vibe"
+import { type TreeProof, verifiedTree } from "./tree.vibe"
+
+export interface Head { readonly sha: string }
+
+export interface ChangedCommit {
+  readonly sha: string
+  readonly parents: ReadonlyArray<Head>
+  readonly files: ReadonlyArray<FileChange>
+}
+
+export interface AttributedCommit {
+  readonly sha: string
+  readonly changedPaths: ReadonlyArray<string> | null
+  readonly files?: ReadonlyArray<FileChange>
+}
+
+export interface BinaryEvidence {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pull: { readonly head: Head; readonly merge_commit_sha: string | null; readonly merged_at: string | null }
+  readonly files: ReadonlyArray<FileChange>
+  readonly mergeCommitEvidence: ChangedCommit | null
+  readonly commitAttribution: ReadonlyArray<AttributedCommit>
+  readonly commits: ReadonlyArray<{ readonly sha: string; readonly parents: ReadonlyArray<Head> }>
+  readonly indirectAcceptance?: unknown
+  readonly acceptedRange?: unknown
+}
+
+const proofKeys = "baseSha,baseTreeSha,blobSha,contentBase64,contentReview,headSha,headTreeSha,mode,path,schemaVersion,sha256,size"
+const proofKeysRetained = `${proofKeys},retainedAtMerge`.split(",").sort().join()
+const retainedKeys = "mergeSha,mergeTreeSha,parentSha,parentTreeSha"
+const recoveryAttemptLimit = 48
+
+export function isBinary(bytes: Uint8Array) {
+  if (isGitLfsPointer(bytes)) return false
+  const decoded = utf8Text(bytes)
+  return decoded === undefined || decoded.includes("\0")
+}
+
+function binaryRead(bytes: Uint8Array, blobSha: string, sha256: string): ObjectRead {
+  return {
+    objectKind: "BinaryObject",
+    claimedSha: blobSha,
+    computedSha: gitObjectId("blob", bytes),
+    claimedSha256: sha256,
+    computedSha256: sha256Of(bytes),
+    reportedSize: bytes.length,
+    bytesRead: bytes.length,
+    readNumber: 1,
+    bytesSoFar: bytes.length,
+    reused: false,
+  }
+}
+
+function keysOf(value: object) {
+  return Object.keys(value).sort().join()
+}
+
+function validRetainedShape(retained: unknown) {
+  const shape = fields(retained)
+  return shape !== undefined && keysOf(shape) === retainedKeys && Object.values(shape).every((sha) => typeof sha === "string" && isObjectId(sha))
+}
+
+export function validAddedBinaryProof(file: FileChange) {
+  const proof = file.addedBinary
+  if (proof === undefined || !needsAddedBinaryProof(file)) return false
+  const retained: unknown = proof.retainedAtMerge
+  if (
+    keysOf(proof) !== (retained === undefined ? proofKeys : proofKeysRetained) ||
+    (retained !== undefined && !validRetainedShape(retained)) ||
+    proof.schemaVersion !== 1 || proof.path !== file.filename || !isSafePath(proof.path) ||
+    ![proof.baseSha, proof.headSha, proof.baseTreeSha, proof.headTreeSha, proof.blobSha].every(isObjectId) ||
+    proof.baseSha === proof.headSha || proof.baseTreeSha === proof.headTreeSha || proof.mode !== "100644" ||
+    proof.contentReview !== "unviewed" || !Number.isSafeInteger(proof.size) || proof.size <= 0 || proof.size > blobByteLimit ||
+    !isSha256(proof.sha256) || proof.contentBase64.length > 4 * Math.ceil(blobByteLimit / 3)
+  ) return false
+  const bytes = base64Bytes(proof.contentBase64)
+  return bytes !== undefined && bytes.length === proof.size && base64Text(bytes) === proof.contentBase64 && isBinary(bytes) &&
+    objectVerified(binaryRead(bytes, proof.blobSha, proof.sha256))
+}
+
+export function addedBinaryRecovery(repository: string, recovered: Recovered = unrecovered) {
+  const read = verifiedBlob(repository, recovered)
+  const trees = new Map<string, TreeProof | undefined>()
+  let treeEntries = 0
+  let attempts = 0
+  effect function tree(ref: string) {
+    if (!trees.has(ref)) {
+      if (treeEntries >= treeEntryLimit) return undefined
+      const proof = try verifiedTree(repository, ref)
+      treeEntries += proof?.entries.size ?? 0
+      trees.set(ref, treeEntries <= treeEntryLimit ? proof : undefined)
+    }
+    return treeEntries <= treeEntryLimit ? trees.get(ref) : undefined
+  }
+  return effect (files: ReadonlyArray<FileChange>, baseSha: string, headSha: string) => {
+    if (!isObjectId(baseSha) || !isObjectId(headSha) || baseSha === headSha) return files
+    const result: FileChange[] = []
+    let exhausted = false
+    for (const file of files) {
+      if (exhausted || !needsAddedBinaryProof(file) || file.addedBinary !== undefined) {
+        result.push(file)
+        continue
+      }
+      attempts += 1
+      if (attempts > recoveryAttemptLimit) {
+        exhausted = true
+        result.push(file)
+        continue
+      }
+      const before = try tree(baseSha)
+      const after = try tree(headSha)
+      const entry = after?.entries.get(file.filename)
+      if (before === undefined || after === undefined || before.entries.has(file.filename) || entry?.type !== "blob" || entry.mode !== "100644") {
+        result.push(file)
+        continue
+      }
+      const blob = try read(file.filename, headSha)
+      if (blob === undefined || blob.sha !== entry.sha || !isBinary(blob.bytes)) {
+        result.push(file)
+        continue
+      }
+      const addedBinary: AddedBinaryProof = {
+        schemaVersion: 1,
+        path: file.filename,
+        baseSha,
+        headSha,
+        baseTreeSha: before.treeSha,
+        headTreeSha: after.treeSha,
+        mode: "100644",
+        size: blob.bytes.length,
+        blobSha: gitObjectId("blob", blob.bytes),
+        sha256: sha256Of(blob.bytes),
+        contentBase64: base64Text(blob.bytes),
+        contentReview: "unviewed",
+      }
+      result.push({ ...file, addedBinary })
+    }
+    return result
+  }
+}
+
+export effect function recoverRetainedBinaryAtMerge(evidence: BinaryEvidence) {
+  const merge = evidence.mergeCommitEvidence
+  const candidates = evidence.files.filter((file) => file.addedBinary !== undefined && !(merge?.files.some((accepted) => accepted.filename === file.filename) ?? false))
+  const parentSha = merge?.parents[0]?.sha
+  if (
+    candidates.length === 0 || merge === null || parentSha === undefined || merge.sha !== evidence.pull.merge_commit_sha ||
+    merge.parents.length !== 2 || merge.parents[1]?.sha !== evidence.pull.head.sha
+  ) return evidence.files
+  const repository = fields(try fetched(`/repos/${evidence.repository}`, 1024 * 1024))
+  if (repository?.["private"] !== false || count(repository, "id") !== evidence.repositoryDatabaseId || text(repository, "node_id") !== evidence.repositoryNodeId)
+    return evidence.files
+  const [head, parent, accepted] = try.all [
+    verifiedTree(evidence.repository, evidence.pull.head.sha),
+    verifiedTree(evidence.repository, parentSha),
+    verifiedTree(evidence.repository, merge.sha),
+  ]
+  if (head === undefined || parent === undefined || accepted === undefined) return evidence.files
+  return evidence.files.map((file) => {
+    const proof = file.addedBinary
+    if (proof === undefined || !candidates.includes(file) || !validAddedBinaryProof(file) || proof.headSha !== evidence.pull.head.sha || proof.headTreeSha !== head.treeSha)
+      return file
+    const unchanged = [head, parent, accepted].every((tree) => {
+      const entry = tree.entries.get(file.filename)
+      return entry?.type === "blob" && entry.mode === proof.mode && entry.sha === proof.blobSha
+    })
+    const retainedAtMerge: RetainedAtMerge = { mergeSha: merge.sha, parentSha, mergeTreeSha: accepted.treeSha, parentTreeSha: parent.treeSha }
+    return unchanged ? { ...file, addedBinary: { ...proof, retainedAtMerge } } : file
+  })
+}
+
+function validRetainedBinaryAtMerge(file: FileChange, evidence: BinaryEvidence) {
+  const retained = file.addedBinary?.retainedAtMerge
+  const merge = evidence.mergeCommitEvidence
+  return retained !== undefined && validRetainedShape(retained) && merge !== null && merge.parents.length === 2 &&
+    retained.mergeSha === merge.sha && retained.mergeSha === evidence.pull.merge_commit_sha && retained.parentSha === merge.parents[0]?.sha &&
+    merge.parents[1]?.sha === evidence.pull.head.sha && file.addedBinary?.headSha === evidence.pull.head.sha &&
+    !merge.files.some((accepted) => accepted.filename === file.filename)
+}
+
+function sameAddedBinary(left: FileChange, right: FileChange) {
+  const a = left.addedBinary
+  const b = right.addedBinary
+  return a !== undefined && b !== undefined && a.path === b.path && a.mode === b.mode && a.blobSha === b.blobSha &&
+    a.size === b.size && a.sha256 === b.sha256 && a.contentBase64 === b.contentBase64
+}
+
+export function binarySourceLimitations(evidence: BinaryEvidence) {
+  const merge = evidence.mergeCommitEvidence
+  const groups = [evidence.files, merge?.files ?? [], ...evidence.commitAttribution.map((entry) => entry.files ?? [])]
+  if (!groups.some((files) => files.some((file) => file.addedBinary !== undefined))) return []
+  const proofs = groups.flatMap((files) => files.filter((file) => file.addedBinary !== undefined))
+  if (proofs.length > blobReadLimit) return ["Added binary evidence exceeds the recovery budget"]
+  const limitations: string[] = []
+  const submitted = evidence.files.filter((file) => file.addedBinary !== undefined)
+  const directAcceptance = merge !== null && merge.sha === evidence.pull.merge_commit_sha &&
+    (merge.parents.length === 1 || (merge.parents.length === 2 && merge.parents.some((parent) => parent.sha === evidence.pull.head.sha)))
+  if (submitted.length === 0 || evidence.indirectAcceptance !== undefined || evidence.acceptedRange !== undefined || !evidence.pull.merged_at || !directAcceptance)
+    limitations.push("Added binary evidence requires direct, unchanged acceptance")
+  const content = new Map<string, { readonly size: number; readonly bytes: string }>()
+  for (const files of groups) {
+    for (const file of files) {
+      const proof = file.addedBinary
+      if (proof === undefined) continue
+      if (!validAddedBinaryProof(file)) {
+        limitations.push(`Invalid added binary proof: ${file.filename}`)
+        continue
+      }
+      const previous = content.get(proof.blobSha)
+      if (previous !== undefined && (previous.size !== proof.size || previous.bytes !== proof.contentBase64)) {
+        limitations.push(`Conflicting added binary proof: ${file.filename}`)
+        continue
+      }
+      content.set(proof.blobSha, { size: proof.size, bytes: proof.contentBase64 })
+    }
+  }
+  if ([...content.values()].reduce((sum, proof) => sum + proof.size, 0) > blobSessionByteLimit)
+    limitations.push("Added binary evidence exceeds the recovery budget")
+  for (const file of merge?.files ?? []) {
+    if (file.addedBinary !== undefined && !submitted.some((source) => source.filename === file.filename))
+      limitations.push(`Accepted binary has no submitted proof: ${file.filename}`)
+  }
+  for (const file of submitted) {
+    const accepted = merge?.files.find((item) => item.filename === file.filename)
+    const acceptedIdentity = accepted !== undefined && accepted.addedBinary?.headSha === merge?.sha &&
+      accepted.addedBinary?.baseSha === merge?.parents[0]?.sha && sameAddedBinary(file, accepted)
+    if (file.addedBinary?.headSha !== evidence.pull.head.sha || (!validRetainedBinaryAtMerge(file, evidence) && !acceptedIdentity))
+      limitations.push(`Added binary accepted identity is unavailable: ${file.filename}`)
+    const scopes = evidence.commitAttribution.filter((entry) => entry.changedPaths?.includes(file.filename) ?? false)
+    if (scopes.length !== 1) limitations.push(`Added binary needs one unchanged implementation scope: ${file.filename}`)
+    for (const scope of scopes) {
+      const commit = evidence.commits.find((item) => item.sha === scope.sha)
+      const change = scope.files?.find((item) => item.filename === file.filename)
+      if (
+        commit?.parents.length !== 1 || change === undefined || change.addedBinary?.headSha !== commit.sha ||
+        change.addedBinary?.baseSha !== commit.parents[0]?.sha || !sameAddedBinary(file, change)
+      ) limitations.push(`Added binary implementation identity is unavailable: ${file.filename}`)
+    }
+  }
+  return limitations
+}

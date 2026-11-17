@@ -1,0 +1,70 @@
+// spec/frontend/requests.md, "Only the current request may publish its validated result"
+import { Unreadable } from "./resource.vibe"
+
+export const pageRowLimit = 100
+
+export interface HistoryPage<T> {
+  readonly rows: ReadonlyArray<T>
+  readonly through: unknown
+  readonly total: unknown
+  readonly next: unknown
+}
+
+export interface PageRefusals {
+  readonly history: string
+  readonly duplicate: string
+  readonly count: string
+  readonly incomplete: string
+}
+
+interface Cursor {
+  readonly after: number
+  readonly through: number | undefined
+  readonly total: number | undefined
+}
+
+function count(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+interface Bounds {
+  readonly through: number
+  readonly total: number
+  readonly next: number | null
+}
+
+function boundsOf<T>(page: HistoryPage<T>, cursor: Cursor): Bounds | undefined {
+  const through = count(page.through)
+  const total = count(page.total)
+  if (through === undefined || total === undefined || page.rows.length > pageRowLimit) return undefined
+  if ((cursor.through !== undefined && through !== cursor.through) || (cursor.total !== undefined && total !== cursor.total)) return undefined
+  if (page.next === null) return { through, total, next: null }
+  const next = count(page.next)
+  if (page.rows.length === 0 || next === undefined || next <= cursor.after || next > through) return undefined
+  return { through, total, next }
+}
+
+export effect function readCompletePages<T, E, R>(fetchPage: (query: string) => (HistoryPage<T> | ReadonlyArray<T>)!E!R, key: (row: T) => string, refusals: PageRefusals) {
+  const rows: T[] = []
+  const ids = new Set<string>()
+  let cursor: Cursor = { after: 0, through: undefined, total: undefined }
+  while (true) {
+    const page = try fetchPage(cursor.through === undefined ? "" : `?after=${cursor.after}&through=${cursor.through}`)
+    if (Array.isArray(page)) return page as ReadonlyArray<T>
+    const paged = page as HistoryPage<T>
+    const bounds = boundsOf(paged, cursor)
+    if (bounds === undefined) throw new Unreadable({ message: refusals.history })
+    for (const row of paged.rows) {
+      const id = key(row)
+      if (ids.has(id)) throw new Unreadable({ message: refusals.duplicate })
+      ids.add(id)
+      rows.push(row)
+    }
+    if (rows.length > bounds.total || (bounds.next !== null && rows.length >= bounds.total)) throw new Unreadable({ message: refusals.count })
+    if (bounds.next === null) {
+      if (rows.length !== bounds.total) throw new Unreadable({ message: refusals.incomplete })
+      return rows as ReadonlyArray<T>
+    }
+    cursor = { after: bounds.next, through: bounds.through, total: bounds.total }
+  }
+}

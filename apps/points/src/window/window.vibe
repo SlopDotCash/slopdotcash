@@ -1,0 +1,126 @@
+// spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import type { Census } from "../../gen/points__census.effect.vibe"
+import { type ActorKind, type EventKind, type LedgerEvent, Machine, type Window, decodeState, enabled, initial, machineOver, windowDays } from "../../gen/points__window.effect.vibe"
+import type { Identities } from "../census/collect.vibe"
+import { dayMs } from "./days.ts"
+
+module verified {
+  import { dayOf as day, mergedDay as merged, upperDay as upper } from "./days.ts"
+  /** @throws {never} */
+  export function upperDay(nowMs: number): number { return upper(nowMs) }
+  /** @throws {never} */
+  export function dayOf(upperOfWindow: number, toMs: number, millis: number): number { return day(upperOfWindow, toMs, millis) }
+  /** @throws {never} */
+  export function mergedDay(at: number, atMs: number, mergedAtMs: number): number { return merged(at, atMs, mergedAtMs) }
+}
+import { dayOf, mergedDay, upperDay } from verified
+
+export error WindowRefused { message: string }
+
+export interface WindowBounds {
+  readonly days: number
+  readonly from: string
+  readonly to: string
+  readonly fromMs: number
+  readonly toMs: number
+  readonly upper: number
+  readonly lowerDay: number
+}
+
+export interface PublishedWindow {
+  readonly from: string
+  readonly to: string
+  readonly count: number
+}
+
+export interface ObservedEvent {
+  readonly nodeId: string
+  readonly sourceNodeId: string
+  readonly kind: EventKind
+  readonly actorId: string
+  readonly actorKind: ActorKind
+  readonly pullRequestAuthorId: string | null
+  readonly atMs: number
+  readonly mergedAtMs: number | null
+  readonly repeatLowValue: boolean
+}
+
+export effect function windowBounds(nowMs: number) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < windowDays * dayMs) throw new WindowRefused({ message: "The window end must be an exact instant after the first window" })
+  const upper = upperDay(nowMs)
+  const fromMs = nowMs - windowDays * dayMs
+  return { days: windowDays, from: try isoAt(fromMs), to: try isoAt(nowMs), fromMs, toMs: nowMs, upper, lowerDay: upper - windowDays } satisfies WindowBounds
+}
+
+export function ledgerEvent(bounds: WindowBounds, ids: Identities, event: ObservedEvent): LedgerEvent {
+  const at = dayOf(bounds.upper, bounds.toMs, event.atMs)
+  return {
+    id: ids.id(event.nodeId),
+    source: ids.id(event.sourceNodeId),
+    kind: event.kind,
+    actor: ids.id(event.actorId),
+    actorKind: event.actorKind,
+    prAuthor: event.pullRequestAuthorId === null ? 0 : ids.id(event.pullRequestAuthorId),
+    at,
+    mergedAt: event.mergedAtMs === null ? 0 : mergedDay(at, event.atMs, event.mergedAtMs),
+    repeatLowValue: event.repeatLowValue,
+  }
+}
+
+effect function keptWindow(previous: PublishedWindow) {
+  const refused = new WindowRefused({ message: "The previous snapshot window is not an exact 35-day rolling window" })
+  const fromMs = millisOf(previous.from)
+  const toMs = millisOf(previous.to)
+  if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs - fromMs !== windowDays * dayMs || fromMs < 0 || !Number.isSafeInteger(previous.count) || previous.count < 0) throw refused
+  if ((try isoAt(fromMs)) !== previous.from || (try isoAt(toMs)) !== previous.to) throw refused
+  const upper = upperDay(toMs)
+  return decodeState({ ...initial, phase: "Failed", from: upper - windowDays, to: upper, publishedFrom: upper - windowDays, publishedTo: upper, publishedCount: previous.count }) catch effect () => {
+    throw refused
+  }
+}
+
+export effect function windowRun(previous?: PublishedWindow) {
+  const start = previous === undefined ? initial : try keptWindow(previous)
+  return try machineOver(start, () => Effect.void)
+}
+
+export effect function startWindow(run: Machine.Shape, bounds: WindowBounds) {
+  return run.send({ type: "start", upper: bounds.upper }) catch effect () => {
+    throw new WindowRefused({ message: "snapshot.window must be the exact rolling window ending no later than generation" })
+  }
+}
+
+export effect function observe(run: Machine.Shape, bounds: WindowBounds, ids: Identities, event: ObservedEvent) {
+  const sent = run.send({ type: "observe", e: ledgerEvent(bounds, ids, event) }) catch effect () => {
+    throw new WindowRefused({ message: `Ledger event ${event.nodeId} cannot be recorded in this window` })
+  }
+  return sent.records.find((record) => record.id === ids.id(event.nodeId))
+}
+
+effect function failRefresh(run: Machine.Shape) {
+  try orDie(run.send({ type: "failRefresh" }))
+}
+
+export effect function publishRefresh<E, R, A, WE, WR>(run: Machine.Shape, refresh: Census!E!R, write: (window: Window) => A!WE!WR) {
+  const census = refresh catch effect (error) => {
+    try failRefresh(run)
+    throw error
+  }
+  const complete = { type: "completeCensus", c: census } as const
+  if (!enabled(try run.get(), complete)) {
+    try failRefresh(run)
+    throw new WindowRefused({ message: "The source census is not verified complete for this window; the previous window stays published" })
+  }
+  const ready = try orDie(run.send(complete))
+  if (!enabled(ready, { type: "publish" })) {
+    try failRefresh(run)
+    throw new WindowRefused({ message: "Every recorded ledger event must belong to the source census" })
+  }
+  const written = write(ready) catch effect (error) => {
+    try failRefresh(run)
+    throw error
+  }
+  try orDie(run.send({ type: "publish" }))
+  return written
+}

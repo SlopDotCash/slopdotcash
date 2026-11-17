@@ -1,0 +1,262 @@
+// spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+import { type D1, type D1Error, type RowMismatch, sql } from "@repo/platform/d1"
+import { type Actor, Refused, body, handleRaw, json, sameOriginWrite } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { type Binding, type ChallengeOutcome, type Deployment, type Event, type EvmConsentSignature, Rejected, challengeOutcome, consentLifetime, deploymentFor, enabled, expirySlack, nowSeconds, offeredExpiry, solanaDeploymentReady, solanaReady, submissionWindow } from "../../gen/backend__bindingConsent.effect.vibe"
+import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
+import { ConsentFields, SolanaBindFields, bindAuthorize, bindChallenge, solanaBindComplete, solanaBindPrepare } from "../client/bindingConsent.vibe"
+import { postPaymentsWalletsBindAuthorize, postPaymentsWalletsBindChallenge, postPaymentsWalletsSolanaBindComplete, postPaymentsWalletsSolanaBindPrepare } from "../client/refusals.vibe"
+import { type Loaded as Partition, claimAt, freshContext, positionOf } from "../wallets/store.vibe"
+import { AttesterRefused, AttesterUnavailable, attest } from "./attester.vibe"
+import { BindingVersions, type PaymentDeployment, PaymentDeployments, SolanaAttesters, deploymentModel } from "./deployments.vibe"
+import { type Readiness, caseOf, ledgerFingerprint, ledgerOf, modelObligation, readinessOf } from "./ledger.vibe"
+import { type BindingTerms, bindingTypedData, consentSignature, isUint64Decimal, walletSlotSigner, wellFormedSignature } from "./signatures.vibe"
+import { type Scope, loadBinding, noFacts, nothingOutside, sendBinding } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+interface BodyRows {
+  readonly originForbiddenPrivateNoStore: Row
+  readonly invalidRequestS400: Row
+  readonly paymentsUnavailable: Row
+}
+
+interface ConsentRows extends BodyRows {
+  readonly paymentDeploymentsUnavailable: Row
+  readonly unknownDeployment: Row
+  readonly claimNotCurrent: Row
+  readonly bindingVersionUnavailable: Row
+}
+
+interface SolanaRows extends BodyRows {
+  readonly identityAttesterUnavailable: Row
+  readonly bindingNotReady: Row
+  readonly bindingPendingOrRejected: Row
+}
+
+interface ConsentRequest {
+  readonly claimId: string
+  readonly network: string
+  readonly vault: string
+  readonly versionText: string | undefined
+  readonly version: number | undefined
+  readonly expiresText: string
+  readonly expiresAt: number
+  readonly signature: string
+}
+
+type SolanaStep = "prepare" | "complete"
+
+const vaultPattern = /^0x[0-9a-fA-F]{40}$/u
+const obligationPattern = /^[0-9a-f]{64}$/u
+const transactionPattern = /^[A-Za-z0-9+/]+={0,2}$/u
+const transactionLimit = 2048
+
+function refused(row: Row) {
+  return new Refused({ status: row.status, code: row.error, message: row.message ?? "" })
+}
+
+function paid(answer: unknown) {
+  return json(answer, 200, { "cache-control": cacheControl("private") })
+}
+
+effect function fieldsOf<S extends Schema.Constraint>(schema: S, rows: BodyRows) {
+  if (!(try sameOriginWrite())) throw refused(rows.originForbiddenPrivateNoStore)
+  return body(schema, 4) catch effect () => { throw refused(rows.invalidRequestS400) }
+}
+
+function safeNumber(text: string): number | undefined {
+  const value = Number(text)
+  return Number.isSafeInteger(value) ? value : undefined
+}
+
+function consentRequest(fields: ConsentFields, authorizing: boolean): ConsentRequest | undefined {
+  const { claimId, network, vault, expectedVersion, expiresAt, signature } = fields
+  if (typeof claimId !== "string" || typeof network !== "string" || typeof vault !== "string" || !vaultPattern.test(vault)) return undefined
+  if (expectedVersion !== undefined && (typeof expectedVersion !== "string" || !isUint64Decimal(expectedVersion))) return undefined
+  const version = typeof expectedVersion === "string" ? safeNumber(expectedVersion) : undefined
+  if (typeof expectedVersion === "string" && version === undefined) return undefined
+  if (!authorizing) return { claimId, network, vault: vault.toLowerCase(), versionText: version === undefined ? undefined : String(version), version, expiresText: "", expiresAt: 0, signature: "" }
+  if (version === undefined || typeof expiresAt !== "string" || !isUint64Decimal(expiresAt) || typeof signature !== "string" || !wellFormedSignature(signature)) return undefined
+  return { claimId, network, vault: vault.toLowerCase(), versionText: String(version), version, expiresText: expiresAt, expiresAt: safeNumber(expiresAt) ?? Number.MAX_SAFE_INTEGER, signature }
+}
+
+function evmChainFor(deployments: ReadonlyArray<PaymentDeployment>, network: string, vault: string): WalletChain {
+  const matched = deployments.filter((deployment) => deployment.family === "evm" && deployment.network === network && deployment.vault === vault)
+  return matched.length === 1 ? matched[0]?.chain ?? "Base" : "Base"
+}
+
+function consentScope(actor: string, chain: WalletChain, deployments: ReadonlyArray<Deployment>, now: number): Scope<undefined, never, never> {
+  return {
+    actor,
+    chain,
+    contexts: { evm: freshContext(now), solana: freshContext(now) },
+    deployments,
+    fingerprint: sql`SELECT ''`,
+    outside: () => effect { return { outside: nothingOutside, found: undefined } },
+  }
+}
+
+effect function consentProjection(actor: Actor, request: ConsentRequest, rows: ConsentRows) {
+  const served = (try PaymentDeployments).served() catch effect () => { throw refused(rows.paymentDeploymentsUnavailable) }
+  const scope = consentScope(actor.githubId, evmChainFor(served, request.network, request.vault), served.map(deploymentModel), try Clock.currentTimeMillis)
+  const loaded = try loadBinding(scope)
+  return { scope, loaded, claim: positionOf(loaded.evm, request.claimId) }
+}
+
+const outcomeRefusals: Record<Exclude<ChallengeOutcome, "ChallengeOffered">, (rows: ConsentRows) => Row> = {
+  UnknownDeployment: (rows) => rows.unknownDeployment,
+  ClaimNotCurrent: (rows) => rows.claimNotCurrent,
+  BindingVersionUnavailable: (rows) => rows.bindingVersionUnavailable,
+}
+
+effect function offered(outcome: ChallengeOutcome, rows: ConsentRows) {
+  if (outcome !== "ChallengeOffered") throw refused(outcomeRefusals[outcome](rows))
+}
+
+function termsOf(actorId: string, chainId: number, vault: string, wallet: { readonly wallet_address: string; readonly record_sha256: string }, expectedVersion: string, expiresAt: string): BindingTerms {
+  return { chainId: String(chainId), vault, actorId, destination: wallet.wallet_address.toLowerCase(), expectedVersion, claimDigest: `0x${wallet.record_sha256.toLowerCase()}`, expiresAt }
+}
+
+effect function walletOf(evm: Partition, claim: number) {
+  const wallet = claimAt(evm, claim)
+  if (wallet === undefined) return try die(new Error(`binding claim ${claim} is missing from its partition`))
+  return wallet
+}
+
+effect function challenge(actor: Actor) {
+  const rows = postPaymentsWalletsBindChallenge
+  const request = consentRequest(try fieldsOf(ConsentFields, rows), false)
+  if (request === undefined) throw refused(rows.invalidRequestS400)
+  const { loaded, claim } = try consentProjection(actor, request, rows)
+  const state = loaded.state
+  try offered(challengeOutcome(state, claim, request.network, request.vault, 0), rows)
+  const deployment = deploymentFor(state, request.network, request.vault)
+  const version = request.version ?? ((try BindingVersions).read(deployment, actor.githubId) catch effect () => { throw refused(rows.paymentsUnavailable) })
+  try offered(challengeOutcome(state, claim, request.network, request.vault, version ?? -1), rows)
+  const wallet = try walletOf(loaded.evm, claim)
+  const typedData = bindingTypedData(termsOf(actor.githubId, deployment.chainId, request.vault, wallet, String(version ?? 0), String(offeredExpiry(state))))
+  return paid({ claimId: wallet.id, typedData })
+}
+
+function authorizeRefusal(state: Binding, signature: EvmConsentSignature) {
+  const rows = postPaymentsWalletsBindAuthorize
+  const outcome = challengeOutcome(state, signature.claim, signature.network, signature.vault, signature.version)
+  if (outcome !== "ChallengeOffered") return refused(outcomeRefusals[outcome](rows))
+  if (signature.expiresAt <= nowSeconds(state) + submissionWindow) return refused(rows.authorizationExpiresTooSoon)
+  if (signature.expiresAt > nowSeconds(state) + consentLifetime + expirySlack) return refused(rows.authorizationExpiresTooLate)
+  return refused(rows.walletSignatureRequired)
+}
+
+effect function authorize(actor: Actor) {
+  const rows = postPaymentsWalletsBindAuthorize
+  const request = consentRequest(try fieldsOf(ConsentFields, rows), true)
+  if (request === undefined || request.version === undefined || request.versionText === undefined) throw refused(rows.invalidRequestS400)
+  const { scope, loaded, claim } = try consentProjection(actor, request, rows)
+  const state = loaded.state
+  try offered(challengeOutcome(state, claim, request.network, request.vault, request.version), rows)
+  const deployment = deploymentFor(state, request.network, request.vault)
+  const wallet = try walletOf(loaded.evm, claim)
+  const signed = try consentSignature(termsOf(actor.githubId, deployment.chainId, request.vault, wallet, request.versionText, request.expiresText), request.signature, wallet.wallet_address)
+  const signature: EvmConsentSignature = {
+    recoveredSigner: signed.recoveredSigner,
+    claim,
+    network: request.network,
+    vault: request.vault,
+    chainId: deployment.chainId,
+    version: request.version,
+    expiresAt: request.expiresAt,
+    upperHalfS: signed.upperHalfS,
+  }
+  if (!enabled(state, { type: "bindAuthorize", signature }, actor.githubId)) throw authorizeRefusal(state, signature)
+  sendBinding(scope, () => [{ event: { type: "bindAuthorize", signature }, by: actor.githubId, facts: { kind: "consent", signature: signed.stored } }]) catch effect (error) => match (error) {
+    when Rejected: throw authorizeRefusal(error.state, signature);
+    default: throw error;
+  }
+  return paid({ authorized: true, expiresAt: request.expiresText })
+}
+
+function solanaRowsOf(step: SolanaStep): SolanaRows {
+  return step === "prepare" ? postPaymentsWalletsSolanaBindPrepare : postPaymentsWalletsSolanaBindComplete
+}
+
+function solanaRefusal(state: Binding, by: string, step: SolanaStep, deploymentsRead: boolean) {
+  const rows = solanaRowsOf(step)
+  if (!solanaReady(state, by, modelObligation)) return refused(rows.bindingNotReady)
+  if (step === "prepare" && !solanaDeploymentReady(state, modelObligation)) {
+    return refused(deploymentsRead ? postPaymentsWalletsSolanaBindPrepare.bindingDeploymentUnavailable : rows.paymentsUnavailable)
+  }
+  return refused(rows.bindingPendingOrRejected)
+}
+
+function contextOf(served: ReadonlyArray<PaymentDeployment>, network: string, vault: string) {
+  const deployment = served.find((candidate) => candidate.family === "solana" && candidate.network === network && candidate.vault === vault)
+  return deployment === undefined || deployment.programId === null || deployment.projectPda === null || deployment.networkDomain === null
+    ? undefined
+    : { programId: deployment.programId, projectPda: deployment.projectPda, networkDomain: deployment.networkDomain }
+}
+
+effect function optionalDeployments() {
+  return (try PaymentDeployments).served() catch () => undefined
+}
+
+effect function solanaBind(actor: Actor, step: SolanaStep) {
+  const rows = solanaRowsOf(step)
+  const { obligationId, transaction } = try fieldsOf(SolanaBindFields, rows)
+  if (typeof obligationId !== "string" || !obligationPattern.test(obligationId)) throw refused(rows.invalidRequestS400)
+  const signed = typeof transaction === "string" && transaction.length <= transactionLimit && transactionPattern.test(transaction) ? transaction : undefined
+  if (step === "complete" && signed === undefined) throw refused(rows.invalidRequestS400)
+  const attesters = try SolanaAttesters
+  if (attesters.ordinary === undefined && attesters.privateScope === undefined) throw refused(rows.identityAttesterUnavailable)
+  const served = step === "prepare" ? try optionalDeployments() : []
+  const now = try Clock.currentTimeMillis
+  const by = actor.githubId
+  const scope: Scope<Readiness, D1Error | RowMismatch, D1> = {
+    actor: by,
+    chain: "Base",
+    contexts: { evm: freshContext(now), solana: freshContext(now) },
+    deployments: (served ?? []).map(deploymentModel),
+    fingerprint: ledgerFingerprint(obligationId),
+    outside: (solana) => effect { return readinessOf(try ledgerOf(by, obligationId), by, obligationId, solana, step === "complete") },
+  }
+  const loaded = try loadBinding(scope)
+  const caseId = caseOf(loaded.found.ledger)
+  const payment = loaded.found.payment
+  const event: Event = step === "prepare"
+    ? { type: "solanaPrepare", obligation: modelObligation }
+    : { type: "solanaComplete", obligation: modelObligation, generation: 1, walletSignature: { recoveredSigner: payment === undefined || signed === undefined ? "" : try walletSlotSigner(signed, payment.destination), transaction: 1 } }
+  const accepted = enabled(loaded.state, event, by)
+  if (!accepted && caseId === undefined) throw solanaRefusal(loaded.state, by, step, served !== undefined)
+  const sent = sendBinding(scope, () => [{ event: accepted ? event : { type: "solanaRefused", obligation: modelObligation }, by, facts: caseId === undefined ? noFacts : { kind: "access", caseId } }]) catch effect (error) => match (error) {
+    when Rejected: throw solanaRefusal(error.state, by, step, served !== undefined);
+    default: throw error;
+  }
+  if (!accepted) throw solanaRefusal(sent.loaded.state, by, step, served !== undefined)
+  const ready = sent.loaded.found.payment
+  const fetcher = caseId === undefined ? attesters.ordinary : attesters.privateScope
+  if (fetcher === undefined) throw refused(rows.identityAttesterUnavailable)
+  if (ready === undefined) return try die(new Error("a ready Solana binding has no open payout attempt"))
+  const bindingContext = step === "prepare" ? contextOf(served ?? [], ready.network, ready.vault) : undefined
+  const answer = attest(fetcher, { step: step === "prepare" ? "pay" : "complete-bind", privateScope: caseId !== undefined, payment: ready, transaction: step === "complete" ? signed : undefined }) catch effect (error) => match (error) {
+    when AttesterRefused: throw refused(rows.bindingPendingOrRejected);
+    when AttesterUnavailable: throw refused(rows.paymentsUnavailable);
+    default: throw error;
+  }
+  if (step === "complete") return paid({ transactionId: answer.transactionId })
+  return paid({
+    transactionId: answer.transactionId,
+    ...(answer.transaction === undefined ? {} : { transaction: answer.transaction }),
+    ...(bindingContext === undefined ? {} : { bindingContext: { vault: ready.vault, ...bindingContext, githubUserId: by, destination: ready.destination, claimDigest: ready.claimDigest } }),
+  })
+}
+
+export const BindingRoutes = Layer.mergeAll(
+  handleRaw(bindChallenge, (input) => challenge(input.actor)),
+  handleRaw(bindAuthorize, (input) => authorize(input.actor)),
+  handleRaw(solanaBindPrepare, (input) => solanaBind(input.actor, "prepare")),
+  handleRaw(solanaBindComplete, (input) => solanaBind(input.actor, "complete")),
+)

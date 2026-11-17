@@ -1,0 +1,190 @@
+// spec/backend/xConnection.md, "A start replaces the member's earlier flows and binds the originating session"; spec/backend/xConnection.md, "The callback claims one live pending flow whose originating session is still live"; spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { handleRaw } from "@repo/platform/http"
+import { Rejected, xCallback } from "../../gen/backend__accounts.effect.vibe"
+import { AccountSettings, type XClient, pointsAnswer, pointsJson } from "../accounts/routes/admission.vibe"
+import { boundedObject, keysOf } from "../accounts/routes/membership.vibe"
+import { bare } from "../accounts/routes/refusals.vibe"
+import { type Facts, noFacts } from "../accounts/store/codec.vibe"
+import { type Intent, type Sender, send } from "../accounts/store/store.vibe"
+import { xCallbackRoute, xDisconnect, xMe, xProfile, xStart, xVisibility } from "../client/accounts.vibe"
+import { getPointsXProfile, postPointsXStart, postPointsXVisibility } from "../client/refusals.vibe"
+import { challengeOf, openVerifier, randomText, sealVerifier } from "../identity/pkce.vibe"
+import { presentedToken } from "../session.vibe"
+import { authorizationUrl, currentXUser, exchangeCode, revokeToken } from "./oauth.vibe"
+
+schema SessionRow { actor_id: string }
+schema SealedRow { verifier: string; iv: string }
+schema LinkRow { id: string; username: string; verifiedAt: string }
+schema AccountRow { id: string; username: string; verifiedAt: string; public: number }
+
+type Finish = "connected" | "cancelled" | "failed"
+
+interface Progress {
+  stage: string
+  token: Redacted.Redacted<string> | undefined
+  committed: boolean
+}
+
+const flowCookie = "__Host-slop_x_flow"
+const stateShape = /^[A-Za-z0-9_-]{43}$/u
+const actorShape = /^[A-Za-z0-9_=-]{4,256}$/u
+const longestCode = 2048
+const flowSeconds = 600
+const callbackSender: Sender = { kind: "service", id: xCallback }
+
+function flowHeader(name: string, value: string, seconds: number) {
+  return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${seconds}`
+}
+
+function finish(status: Finish, name: string | undefined) {
+  const headers: Record<string, string> = { location: `/points?x=${status}`, "cache-control": "no-store", "referrer-policy": "no-referrer" }
+  if (name !== undefined) headers["set-cookie"] = flowHeader(name, "", 0)
+  return HttpServerResponse.empty({ status: 303, headers })
+}
+
+effect function failed(stage: string, name: string | undefined, status?: number) {
+  try Effect.logWarning("[Slop X] Connection failed", { stage, status })
+  return finish("failed", name)
+}
+
+effect function facts() {
+  return { ...noFacts, xConfigured: (try AccountSettings).x !== undefined } satisfies Facts
+}
+
+effect function sent(intent: Intent, sender: Sender) {
+  const settled = send(intent, sender, try facts()) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  return settled !== undefined
+}
+
+effect function xSession() {
+  const token = presentedToken((try HttpServerRequest.HttpServerRequest).cookies)
+  if (token === undefined) return undefined
+  const hash = try sha256Hex(token)
+  const row = try first(SessionRow, sql`SELECT actor_id FROM points_sessions WHERE token_hash = ${hash} AND expires_at > ${try isoNow()}`)
+  return row === undefined ? undefined : { actor: row.actor_id, sender: { kind: "session", hash } satisfies Sender }
+}
+
+function signedOut() {
+  return bare(postPointsXStart.notSignedInNoStore)
+}
+
+function invalidBody() {
+  return bare(postPointsXStart.invalidRequestNoStore)
+}
+
+effect function profile(query: URLSearchParams) {
+  const actor = query.get("actor") ?? ""
+  if (!actorShape.test(actor)) return bare(getPointsXProfile.invalidActor)
+  const link = try first(LinkRow, sql`SELECT l.x_id AS id, l.username, l.verified_at AS verifiedAt FROM points_x_links l JOIN points_members m ON m.actor_id = l.actor_id WHERE l.actor_id = ${actor} AND l.public = 1 AND m.public = 1`)
+  return pointsJson(link ?? null)
+}
+
+effect function account() {
+  const session = try xSession()
+  if (session === undefined) return signedOut()
+  const linked = try first(AccountRow, sql`SELECT x_id AS id, username, verified_at AS verifiedAt, public FROM points_x_links WHERE actor_id = ${session.actor}`)
+  return pointsJson({ configured: (try AccountSettings).x !== undefined, account: linked ?? null })
+}
+
+effect function start() {
+  const session = try xSession()
+  if (session === undefined) return signedOut()
+  const settings = try AccountSettings
+  const client = settings.x
+  if (client === undefined) return bare(postPointsXStart.xNotConfigured)
+  const value = try boundedObject(256)
+  if (value === undefined || keysOf(value) !== "public" || typeof value.public !== "boolean") return invalidBody()
+  const state = try randomText(32)
+  const capability = try randomText(32)
+  const verifier = try randomText(32)
+  const stateHash = try sha256Hex(state)
+  const sealed = try sealVerifier(settings.pkceKey, verifier, `slop-x:${stateHash}`)
+  const started = try sent({ kind: "startX", stateHash, browserHash: try sha256Hex(capability), verifier: sealed.ciphertext, iv: sealed.iv }, session.sender)
+  if (!started) return signedOut()
+  const origin = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).origin
+  const authorizationUrlText = authorizationUrl(client, `${origin}/api/v1/points/x/callback`, state, try challengeOf(verifier))
+  return pointsJson({ authorizationUrl: authorizationUrlText }, flowHeader(`${flowCookie}_${state}`, capability, flowSeconds))
+}
+
+effect function connect(client: XClient, stateHash: string, query: URLSearchParams, name: string | undefined, progress: Progress) {
+  if (query.has("error")) return finish("cancelled", name)
+  const code = query.get("code") ?? ""
+  if (code === "" || code.length > longestCode) return try failed("code_parameter", name)
+  progress.stage = "decrypt_verifier"
+  const stored = try first(SealedRow, sql`SELECT verifier, iv FROM points_x_flows WHERE state_hash = ${stateHash}`)
+  if (stored === undefined) return try failed(progress.stage, name)
+  const { pkceKey } = try AccountSettings
+  const verifier = try openVerifier(pkceKey, { iv: stored.iv, ciphertext: stored.verifier }, `slop-x:${stateHash}`)
+  progress.stage = "token_exchange"
+  const origin = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).origin
+  const exchanged = try exchangeCode(client, code, `${origin}/api/v1/points/x/callback`, verifier)
+  if (exchanged.kind === "failed") return try failed(exchanged.stage, name, exchanged.status)
+  progress.token = exchanged.token
+  progress.stage = "identity_request"
+  const identity = try currentXUser(exchanged.token)
+  if (identity.kind === "failed") return try failed(identity.stage, name, identity.status)
+  progress.stage = identity.wellFormed ? "record_connection" : "identity_response"
+  const committed = try sent({ kind: "commitX", stateHash, xId: identity.xId, username: identity.username, wellFormed: identity.wellFormed }, callbackSender)
+  if (!committed) return try failed(progress.stage, name)
+  progress.committed = true
+  return finish("connected", name)
+}
+
+effect function clearFlow(stateHash: string) {
+  try sent({ kind: "failX", stateHash }, callbackSender)
+}
+
+effect function callback(query: URLSearchParams) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const client = (try AccountSettings).x
+  const state = query.get("state") ?? ""
+  const validState = stateShape.test(state)
+  const name = validState ? `${flowCookie}_${state}` : undefined
+  const capability = (name === undefined ? undefined : request.cookies[name]) ?? request.cookies[flowCookie] ?? ""
+  if (client === undefined) return try failed("not_configured", name)
+  if (!validState) return try failed("state_parameter", name)
+  if (!stateShape.test(capability)) return try failed("flow_cookie", name)
+  const stateHash = try sha256Hex(state)
+  const claimed = try sent({ kind: "claimXCallback", stateHash, browserHash: try sha256Hex(capability) }, callbackSender)
+  if (!claimed) return try failed("flow_lookup", name)
+  const progress: Progress = { stage: "callback", token: undefined, committed: false }
+  const attempt = try exit(connect(client, stateHash, query, name, progress))
+  const finished = Exit.isSuccess(attempt) ? attempt.value : try failed(progress.stage, name)
+  const cleared = try exit(progress.committed ? Effect.void : clearFlow(stateHash))
+  if (progress.token !== undefined) try revokeToken(client, progress.token)
+  if (Exit.isFailure(cleared)) return try Effect.failCause(cleared.cause)
+  return finished
+}
+
+effect function disconnect() {
+  const session = try xSession()
+  if (session === undefined) return signedOut()
+  const disconnected = try sent({ kind: "disconnectX" }, session.sender)
+  if (!disconnected) return signedOut()
+  return pointsJson({ disconnected: true })
+}
+
+effect function publishLink() {
+  const session = try xSession()
+  if (session === undefined) return signedOut()
+  const value = try boundedObject(256)
+  if (value === undefined || keysOf(value) !== "public" || typeof value.public !== "boolean") return invalidBody()
+  if (!value.public) return bare(postPointsXVisibility.publicVisibilityRequired)
+  const published = try sent({ kind: "publishX" }, session.sender)
+  return published ? pointsJson({ updated: true }) : bare(postPointsXVisibility.notConnected)
+}
+
+export const XRoutes = Layer.mergeAll(
+  handleRaw(xProfile, (input) => pointsAnswer(profile(input.query))),
+  handleRaw(xCallbackRoute, (input) => pointsAnswer(callback(input.query))),
+  handleRaw(xMe, () => pointsAnswer(account())),
+  handleRaw(xStart, () => pointsAnswer(start())),
+  handleRaw(xDisconnect, () => pointsAnswer(disconnect())),
+  handleRaw(xVisibility, () => pointsAnswer(publishLink())),
+)

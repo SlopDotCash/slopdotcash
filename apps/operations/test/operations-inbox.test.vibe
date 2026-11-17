@@ -1,0 +1,320 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { CallerLive } from "@repo/backend/caller"
+import type { D1Database, ExecutionContext, Fetcher } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { rolesFrom } from "@repo/platform/roles"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { area, pages } from "@repo/platform/worker"
+import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
+import { inboxApi } from "../src/client/inbox.vibe"
+import { inboxRoutes } from "../src/inbox/routes.vibe"
+import { noticePorts } from "../src/notifications/statements.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+interface Ask {
+  readonly method?: string
+  readonly as?: string
+  readonly json?: unknown
+  readonly origin?: string
+  readonly expected?: string
+}
+
+service Site { readonly env: Env }
+
+const origin = "https://slop.test"
+const member = "9300000001"
+const other = "9300000002"
+const moderator = "9300000003"
+const listedModerator = "9300000004"
+const caseId = "sc_inbox_journey_case"
+const version = "1".repeat(64)
+const digest = "d".repeat(64)
+const providerReference = "private-provider-reference"
+const seededAt = "2030-01-01T00:00:00.000Z"
+const scamPath = "/api/v1/notifications/scam-reviews/acme/widgets/pull/7"
+const appealPath = "/api/v1/notifications/appeals/appeal-inbox-1"
+const context: ExecutionContext = { waitUntil: () => undefined }
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static asset", { status: 404 }) as unknown as globalThis.Response) }
+
+const site = pages({
+  areas: [area({ name: "operations", api: inboxApi, routes: inboxRoutes, provides: Layer.empty })],
+  services: (env: Env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${listedModerator}` }))),
+  assets: "ASSETS",
+})
+
+const Started = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "inbox-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  return Layer.mergeAll(d1(db), Layer.succeed(Site, { env: { SLOP_DB: db, ASSETS: assets } }))
+})
+
+function tokenOf(githubId: string) {
+  return `inbox-journey-session-${githubId}`.padEnd(48, "x")
+}
+
+effect function ask(path: string, options: Ask = {}) {
+  const { env } = try Site
+  const headers: Record<string, string> = {}
+  if (options.as !== undefined) headers.cookie = `__Host-slop_points=${tokenOf(options.as)}`
+  if (options.expected !== undefined) headers["x-slop-expected-github-id"] = options.expected
+  if (options.json !== undefined) {
+    headers["content-type"] = "application/json"
+    headers.origin = options.origin ?? origin
+  }
+  const method = options.method ?? (options.json === undefined ? "GET" : "POST")
+  const body = options.json === undefined ? undefined : JSON.stringify(options.json)
+  const request = try orDie(Effect.try(() => new WebRequest(`${origin}${path}`, { method, headers, body, redirect: "manual" })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+  const text = try promise(() => response.text())
+  const parsed: unknown = text === "" ? null : try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return { status: response.status, location: response.headers.get("location"), cache: response.headers.get("cache-control"), text, body: parsed }
+}
+
+effect function inbox(as: string, cursor?: string) {
+  const answer = try ask(cursor === undefined ? "/api/v1/notifications" : `/api/v1/notifications?${new URLSearchParams({ cursor })}`, { as })
+  return answer.body as { recipientGithubId: string; nextCursor: string | null; unread: number; notifications: ReadonlyArray<Record<string, unknown>> }
+}
+
+function withoutCreatedAt(items: ReadonlyArray<Record<string, unknown>>) {
+  return items.map(({ createdAt: _, ...rest }) => rest)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function signedUp(githubIds: ReadonlyArray<string>) {
+  const statements: Statement[] = []
+  for (const githubId of githubIds) {
+    statements.push(
+      sql`INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${githubId}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
+      sql`INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(tokenOf(githubId))}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+    )
+  }
+  try (try D1).batch(statements)
+}
+
+const securityCases = [
+  sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('inbox-journey', 1, '{"id":"inbox-journey"}', ${"a".repeat(64)}, 'Listed', ${seededAt})`,
+  sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('inbox-journey', 'paused', 1, '{"id":"inbox-journey"}', ${"a".repeat(64)}, ${seededAt}, ${seededAt})`,
+  ...[caseId].map((id) => sql`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state,
+      receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
+    VALUES (${id}, 'inbox-journey', 'example/inbox', 'GHSA-aaaa-bbbb-cccc', '7', 'reporter', 'claimed',
+      'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ${seededAt}, ${seededAt})`),
+]
+
+const consented = [
+  sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${member}, 'member@slop.test', ${version}, ${seededAt})`,
+  sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${member}, 1, 1, ${version}, ${seededAt})`,
+]
+
+function notice(eventKey: string, kind: NoticeKind, sourceAt: string, recipientGithubId = member, subject = "alpha", actionPath = "/projects/alpha"): Notice {
+  return { eventKey, recipientGithubId, kind, subject, actionPath, sourceAt }
+}
+
+function delivered(eventKey: string, state: string, attempts: number, bound: string | null) {
+  return sql`UPDATE activity_notification_outbox SET state = ${state}, attempts = ${attempts}, destination_digest = ${bound}, provider_reference = ${providerReference}
+    WHERE event_key = ${eventKey} AND recipient_github_id = ${member}`
+}
+
+effect function save(notices: ReadonlyArray<Notice>, after: ReadonlyArray<Statement> = []) {
+  try (try D1).batch([...(try (try Notices).statements({ notices })), ...after])
+}
+
+effect function readAt(eventKey: string, recipient: string) {
+  const [row] = try (try D1).all(sql`SELECT read_at FROM notifications WHERE event_key = ${eventKey} AND recipient_github_id = ${recipient}`)
+  return row?.read_at ?? null
+}
+
+function at(minute: number) {
+  return `2030-01-02T00:${String(minute).padStart(2, "0")}:00.000Z`
+}
+
+layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Read the Inbox over HTTP without email details, and mark only the recipient\'s own notices read (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment")', () => effect {
+    try signedUp([member, other, moderator, listedModerator])
+    try (try D1).batch(securityCases)
+    const signedOut = try ask("/api/v1/notifications")
+    try save([notice("award-reserved:inbox-quiet", "AwardReserved", at(1))])
+    try (try D1).batch(consented)
+    try save([
+      notice("wallet-claim:inbox-1", "WalletChanged", at(2), member, "base", "/account#wallets"),
+      notice("project-revision:inbox:sent", "ProjectRevision", at(3)),
+      notice("project-revision:inbox:delivered", "ProjectRevision", at(4)),
+      notice("project-revision:inbox:bounced", "ProjectRevision", at(5)),
+      notice("project-revision:inbox:exhausted", "ProjectRevision", at(6)),
+      notice("project-revision:inbox:never-sent", "ProjectRevision", at(7)),
+      notice("project-revision:inbox:ambiguous", "ProjectRevision", at(8)),
+      notice("project-revision:inbox:retrying", "ProjectRevision", at(9)),
+      notice("project-revision:inbox:suppressed", "ProjectRevision", at(10)),
+      notice("security-case:inbox-1", "SecurityCase", at(11), member, caseId, "/security"),
+      notice("security-receipt:inbox-1", "SecurityReportReceived", at(12), member, caseId, "/security"),
+      notice("slopbot-scam-review:PR_inbox_hidden", "SlopbotScamReview", at(13), member, "acme/widgets#7", scamPath),
+      notice("wallet-claim:inbox-1", "WalletChanged", at(2), other, "solana", "/account#wallets"),
+      notice("wallet-claim:inbox-other", "WalletChanged", at(2), other, "solana", "/account#wallets"),
+    ], [
+      delivered("project-revision:inbox:sent", "provider-accepted", 1, digest),
+      delivered("project-revision:inbox:delivered", "delivered", 1, digest),
+      delivered("project-revision:inbox:bounced", "bounced", 1, digest),
+      delivered("project-revision:inbox:exhausted", "exhausted", 5, digest),
+      delivered("project-revision:inbox:never-sent", "exhausted", 5, null),
+      delivered("project-revision:inbox:ambiguous", "ambiguous", 1, digest),
+      delivered("project-revision:inbox:retrying", "retrying", 1, null),
+      delivered("project-revision:inbox:suppressed", "suppressed", 0, null),
+    ])
+    const listedAnswer = try ask("/api/v1/notifications", { as: member })
+    const listed = try inbox(member)
+
+    const history = Array.from({ length: 101 }, (_, index) => notice(`wallet-claim:history-${String(index).padStart(3, "0")}`, "WalletChanged", seededAt, member, "base", "/account#wallets"))
+    try save(history)
+    const firstPage = try inbox(member)
+    const secondPage = try inbox(member, firstPage.nextCursor ?? "")
+    const invalidCursor = try ask("/api/v1/notifications?cursor=invalid", { as: member })
+
+    const read = (eventKeys: unknown, options: Ask = {}) => ask("/api/v1/notifications/read", { as: member, json: { eventKeys }, ...options })
+    const firstMark = try read(["project-revision:inbox:sent", "wallet-claim:inbox-other"])
+    const replayMark = try read(["project-revision:inbox:sent"])
+    const hiddenMark = try read(["slopbot-scam-review:PR_inbox_hidden"])
+    const caseRead = try read(["security-case:inbox-1"])
+    const refusals = [
+      try read(["wallet-claim:inbox-1"], { origin: "https://attacker.example" }),
+      try read([]),
+      try read(["x"]),
+      try read(["wallet-claim:inbox-1", "wallet-claim:inbox-1"]),
+      try ask("/api/v1/notifications/read", { as: member, json: { eventKeys: ["wallet-claim:inbox-1"], extra: true } }),
+      try read(["wallet-claim:inbox-1"], { expected: other }),
+      try read(["wallet-claim:inbox-1"], { expected: "01" }),
+      try read(["wallet-claim:inbox-1"], { as: undefined }),
+      try ask("/api/v1/notifications", { as: member, expected: other }),
+      try ask("/api/v1/notifications", { as: member, method: "POST", json: {} }),
+    ].map((answer) => [answer.status, answer.body])
+    const afterReading = (try inbox(member)).notifications.find((item) => item.eventKey === "security-case:inbox-1")
+    try save([notice("project-revision:inbox:legacy-exhausted", "ProjectRevision", seededAt)], [delivered("project-revision:inbox:legacy-exhausted", "exhausted", 3, digest)])
+    const besideLegacy = try read(["project-revision:inbox:delivered"])
+
+    try same({
+      signedOut: [signedOut.status, signedOut.body],
+      cache: listedAnswer.cache,
+      private: [digest, providerReference, version, "member@slop.test", "attempts"].filter((secret) => listedAnswer.text.includes(secret)),
+      listed: { ...listed, notifications: withoutCreatedAt(listed.notifications) },
+      paging: [firstPage.notifications.length, secondPage.notifications.length, secondPage.nextCursor, firstPage.unread, new Set([...firstPage.notifications, ...secondPage.notifications].map((item) => item.eventKey)).size],
+      invalidCursor: [invalidCursor.status, invalidCursor.body],
+      marks: [firstMark.body, replayMark.body, hiddenMark.body, caseRead.body],
+      readAt: [(try readAt("project-revision:inbox:sent", member)) !== null, try readAt("wallet-claim:inbox-other", other), try readAt("wallet-claim:inbox-1", other)],
+      refusals,
+      readIsNotAcknowledgment: [afterReading?.readAt !== null, afterReading?.acknowledgedAt],
+      besideLegacy: [besideLegacy.status, besideLegacy.body],
+    }, {
+      signedOut: [401, { error: "not_signed_in", message: "" }],
+      cache: "private, no-store",
+      private: [],
+      listed: {
+        recipientGithubId: member,
+        nextCursor: null,
+        unread: 12,
+        notifications: [
+          { eventKey: "security-receipt:inbox-1", kind: "security_report_received", subject: caseId, detail: null, actionPath: `/security?case=${caseId}`, sourceAt: at(12), readAt: null, emailDelivery: "queued" },
+          { eventKey: "security-case:inbox-1", kind: "security_case", subject: caseId, detail: null, actionPath: `/security?case=${caseId}`, sourceAt: at(11), readAt: null, acknowledgedAt: null, emailDelivery: "queued" },
+          { eventKey: "project-revision:inbox:suppressed", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(10), readAt: null },
+          { eventKey: "project-revision:inbox:retrying", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(9), readAt: null, emailDelivery: "queued" },
+          { eventKey: "project-revision:inbox:ambiguous", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(8), readAt: null, emailDelivery: "uncertain" },
+          { eventKey: "project-revision:inbox:never-sent", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(7), readAt: null },
+          { eventKey: "project-revision:inbox:exhausted", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(6), readAt: null, emailDelivery: "failed" },
+          { eventKey: "project-revision:inbox:bounced", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(5), readAt: null, emailDelivery: "failed" },
+          { eventKey: "project-revision:inbox:delivered", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(4), readAt: null, emailDelivery: "delivered" },
+          { eventKey: "project-revision:inbox:sent", kind: "project_revision", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(3), readAt: null, emailDelivery: "sent" },
+          { eventKey: "wallet-claim:inbox-1", kind: "wallet_changed", subject: "base", detail: null, actionPath: "/account#wallets", sourceAt: at(2), readAt: null, emailDelivery: "queued" },
+          { eventKey: "award-reserved:inbox-quiet", kind: "award_reserved", subject: "alpha", detail: null, actionPath: "/projects/alpha", sourceAt: at(1), readAt: null },
+        ],
+      },
+      paging: [100, 13, null, 113, 113],
+      invalidCursor: [400, { error: "invalid_cursor", message: "" }],
+      marks: [{ marked: 1 }, { marked: 0 }, { marked: 0 }, { marked: 1 }],
+      readAt: [true, null, null],
+      refusals: [
+        [403, { error: "origin_forbidden", message: "" }],
+        [400, { error: "invalid_request", message: "" }],
+        [400, { error: "invalid_request", message: "" }],
+        [400, { error: "invalid_request", message: "" }],
+        [400, { error: "invalid_request", message: "" }],
+        [403, { error: "actor_changed", message: "" }],
+        [400, { error: "invalid_expected_actor", message: "" }],
+        [401, { error: "not_signed_in", message: "" }],
+        [403, { error: "actor_changed", message: "" }],
+        [405, { error: "method_not_allowed", message: "" }],
+      ],
+      readIsNotAcknowledgment: [true, null],
+      besideLegacy: [200, { marked: 1 }],
+    })
+  })
+
+  it.effect('Open scam and appeal reviews only as a current moderator while the review stands (spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count")', () => effect {
+    const db = try D1
+    try save([
+      notice("slopbot-scam-review:PR_inbox_scam", "SlopbotScamReview", at(30), moderator, "acme/widgets#7", scamPath),
+      notice("slopbot-appeal-inbox-1", "SlopbotAppealReview", at(31), moderator, "acme/widgets#8", appealPath),
+      notice("slopbot-scam-review:PR_inbox_scam", "SlopbotScamReview", at(30), listedModerator, "acme/widgets#7", scamPath),
+      notice("slopbot-appeal-inbox-1", "SlopbotAppealReview", at(31), listedModerator, "acme/widgets#8", appealPath),
+    ], [
+      sql`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at)
+        VALUES ('PR_inbox_scam', 1, 'inbox-journey', ${other}, 'scam', 'v1', 3, '2030-01', 1, 'review-inbox-1', ${seededAt})`,
+      sql`INSERT INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at, escalated_at, escalation)
+        VALUES ('appeal-inbox-1', 1, 'PR_inbox_appeal', ${other}, '{"owner":"acme","repo":"widgets","number":8,"itemKind":"pull_request"}', ${seededAt}, '2030-01-08T00:00:00.000Z', ${seededAt}, 'moderator')`,
+    ])
+    const kinds = (items: ReadonlyArray<Record<string, unknown>>) => items.map((item) => [item.eventKey, item.kind])
+    const listedBefore = kinds((try inbox(moderator)).notifications)
+    const notAdministrator = try inbox(listedModerator)
+    const opened = [
+      try ask(scamPath, { as: moderator }),
+      try ask(appealPath, { as: moderator }),
+      try ask(scamPath, { as: member }),
+      try ask(appealPath, { as: member }),
+      try ask("/api/v1/notifications/scam-reviews/acme/widgets", { as: moderator }),
+      try ask("/api/v1/notifications/appeals/%E0%A4%A", { as: moderator }),
+      try ask("/api/v1/notifications/appeals/appeal-unknown", { as: moderator }),
+      try ask(scamPath),
+      try ask(scamPath, { as: listedModerator }),
+      try ask(appealPath, { as: listedModerator }),
+    ].map((answer) => [answer.status, answer.location, answer.body])
+    try db.batch([
+      sql`UPDATE slopbot_penalties SET reversed_at = ${at(40)}, reversal = 'appeal_upheld' WHERE item_node_id = 'PR_inbox_scam'`,
+      sql`UPDATE slopbot_appeals SET resolved_at = ${at(40)}, resolution = 'upheld', resolved_by = 'moderator' WHERE appeal_key = 'appeal-inbox-1'`,
+    ])
+    const reversed = try ask(scamPath, { as: moderator })
+    const listedAfter = try inbox(moderator)
+    try same({
+      listedBefore,
+      notAdministrator: [notAdministrator.notifications, notAdministrator.unread],
+      opened,
+      reversed: [reversed.status, reversed.body],
+      listedAfter: [kinds(listedAfter.notifications), listedAfter.unread],
+    }, {
+      listedBefore: [["slopbot-appeal-inbox-1", "slopbot_appeal_review"], ["slopbot-scam-review:PR_inbox_scam", "slopbot_scam_review"]],
+      notAdministrator: [[], 0],
+      opened: [
+        [302, "https://github.com/acme/widgets/pull/7", null],
+        [302, "https://github.com/acme/widgets/pull/8", null],
+        [403, null, { error: "not_authorized", message: "" }],
+        [403, null, { error: "not_authorized", message: "" }],
+        [404, null, { error: "not_found", message: "" }],
+        [400, null, { error: "invalid_request", message: "" }],
+        [404, null, { error: "not_found", message: "" }],
+        [401, null, { error: "not_signed_in", message: "" }],
+        [403, null, { error: "not_authorized", message: "" }],
+        [403, null, { error: "not_authorized", message: "" }],
+      ],
+      reversed: [404, { error: "not_found", message: "" }],
+      listedAfter: [[["slopbot-appeal-inbox-1", "slopbot_appeal_resolved"]], 1],
+    })
+  })
+})

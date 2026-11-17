@@ -1,0 +1,92 @@
+// spec/slopbot/reportingReadiness.md, "The repository-access route answers installation presence and a login's base permission and never returns a token"
+
+const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonPrivateNoStorePlain = { "cache-control": "private, no-store", "content-type": "application/json" } as const
+const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonPublicMaxAge60Allow = { "allow": "GET", "cache-control": "public, max-age=60", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const jsonUncachedPlain = { "content-type": "application/json" } as const
+const jsonNoStorePlain = { "cache-control": "no-store", "content-type": "application/json" } as const
+const textUncachedPlain = { "content-type": "text/plain;charset=UTF-8" } as const
+
+const withStatus500 = {
+  status500: { status: 500, body: null },
+} as const
+
+const withInvalidValueHistoryQuery = {
+  invalidValueHistoryQuery: { status: 400, error: "Invalid value-history query", headers: jsonUncachedPlain },
+  valueHistoryIsUnavailable: { status: 503, error: "Value history is unavailable", headers: jsonNoStorePlain },
+  ...withStatus500,
+} as const
+
+export const getNotificationsIncompleteAssessments = {
+  notSignedIn: { status: 401, error: "not_signed_in", headers: jsonPrivateNoStore },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", headers: jsonPrivateNoStore },
+  actorChanged: { status: 403, error: "actor_changed", headers: jsonPrivateNoStore },
+  invalidCursor: { status: 400, error: "invalid_cursor", headers: jsonPrivateNoStore },
+  githubUnavailable: { status: 503, error: "github_unavailable", headers: jsonPrivateNoStore },
+  projectChanged: { status: 503, error: "project_changed", headers: jsonPrivateNoStore },
+  internalError: { status: 500, error: "internal_error", headers: jsonPrivateNoStore },
+  otherMethods: {
+    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStore },
+  },
+} as const
+
+export const postSlopbotValueImport = {
+  originForbidden: { status: 403, error: "origin_forbidden", headers: jsonPrivateNoStorePlain },
+  intakeUnavailable: { status: 503, error: "intake_unavailable", headers: jsonPrivateNoStorePlain },
+  unauthorized: { status: 401, error: "unauthorized", headers: jsonPrivateNoStorePlain },
+  forbidden: { status: 403, error: "forbidden", headers: jsonPrivateNoStorePlain },
+  invalidRequest: { status: 400, error: "invalid_request", headers: jsonPrivateNoStorePlain },
+  assessmentNotPublished: { status: 409, error: "assessment_not_published", headers: jsonPrivateNoStorePlain },
+  otherMethods: {
+    methodNotAllowedPrivateNoStore: { status: 405, error: "method_not_allowed", headers: jsonPrivateNoStorePlain },
+  },
+} as const
+
+export const getSlopbotSummary = {
+  unavailable: { status: 503, error: "unavailable", headers: jsonNoStore },
+  otherMethods: {
+    methodNotAllowedPublicMaxAge60: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge60Allow },
+  },
+} as const
+
+export const slopbotGetHealth = {
+  ...withStatus500,
+} as const
+
+export const slopbotGetV1Penalties = {
+  invalidPenaltyQuery: { status: 400, error: "Invalid penalty query", headers: jsonUncachedPlain },
+  penaltiesAreUnavailable: { status: 503, error: "Penalties are unavailable", headers: jsonNoStorePlain },
+  ...withStatus500,
+} as const
+
+export const slopbotGetV1ValueAssessments = {
+  ...withInvalidValueHistoryQuery,
+} as const
+
+export const slopbotGetV1WorkUnitAssessments = {
+  ...withInvalidValueHistoryQuery,
+} as const
+
+export const slopbotGetV1RepositoryAccess = {
+  invalidRequestNoStore: { status: 400, error: "invalid_request", headers: jsonNoStorePlain },
+  unavailableNoStore: { status: 503, error: "unavailable", headers: jsonNoStorePlain },
+} as const
+
+export const slopbotPostV1PointsDisputes = {
+  invalidRequestS400: { status: 400, error: "invalid_request", headers: jsonUncachedPlain },
+  ...withStatus500,
+} as const
+
+export const slopbotPostGithubWebhook = {
+  payloadTooLarge: { status: 413, text: "payload too large", headers: textUncachedPlain },
+  invalidSignature: { status: 401, text: "invalid signature", headers: textUncachedPlain },
+  missingDeliveryId: { status: 400, text: "missing delivery id", headers: textUncachedPlain },
+  invalidBody: { status: 400, text: "invalid body", headers: textUncachedPlain },
+  invalidPayload: { status: 400, text: "invalid payload", headers: textUncachedPlain },
+  invalidJSON: { status: 400, text: "invalid JSON", headers: textUncachedPlain },
+  ...withStatus500,
+  otherMethods: {
+    notFound: { status: 404, text: "not found", headers: textUncachedPlain },
+  },
+} as const

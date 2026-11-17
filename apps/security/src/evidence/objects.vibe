@@ -1,0 +1,246 @@
+// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"
+import type { R2Bucket } from "@repo/platform/bindings"
+import { D1, type Statement, first, sql } from "@repo/platform/d1"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { isoNow } from "@repo/platform/clock"
+import { DigestMismatch, StorageFailure, bucket } from "@repo/platform/r2"
+import { type EvidenceChunk, boundedSlot, partBytes } from "./layout.ts"
+import { type Row, refused, rows } from "./refused.vibe"
+
+export service EvidenceBucket { readonly binding: R2Bucket }
+
+export function evidenceBucket(binding: R2Bucket) {
+  return Layer.succeed(EvidenceBucket, { binding })
+}
+
+export interface StorageRow {
+  readonly object_key: string
+  readonly sha256: string
+  readonly size_bytes: number
+  readonly storage: string
+  readonly storage_generation: string | null
+}
+
+interface Slot {
+  readonly index: number
+  readonly sha: string
+  readonly size: number
+}
+
+const identity = /^[A-Za-z0-9_-]{1,100}$/u
+const digest = /^[a-f0-9]{64}$/u
+export const retirementMetadataKey = "evidenceRetirement"
+export const retirementMetadataValue = "v1"
+
+export function objectKey(sha256: string) {
+  return `vetting/objects/${sha256}`
+}
+
+export function location(row: StorageRow) {
+  return row.storage === "content" ? objectKey(row.sha256) : row.object_key
+}
+
+export function chunkKey(key: string, chunk: EvidenceChunk) {
+  return `${key}/chunks/${chunk.index}/${chunk.sha256}`
+}
+
+export effect function targetKey(generation: string, target: string) {
+  if (!identity.test(generation) || !identity.test(target)) throw refused(rows.targetIdentity)
+  return `vetting/generations/${generation}/${target}`
+}
+
+effect function generationOf(row: StorageRow) {
+  const generation = row.storage_generation
+  if (generation === null) return undefined
+  if (row.storage !== "content" || !identity.test(generation)) throw refused(rows.invalidBinding)
+  return generation
+}
+
+effect function slotOf(row: StorageRow, part: EvidenceChunk | undefined) {
+  const slot: Slot = { index: part?.index ?? -1, sha: part?.sha256 ?? row.sha256, size: part?.sizeBytes ?? row.size_bytes }
+  if (!digest.test(row.sha256) || !digest.test(slot.sha) || !boundedSlot(slot.index, slot.size)) throw refused(rows.invalidTarget)
+  return slot
+}
+
+function storageFailure(operation: string, key: string) {
+  return (cause: unknown) => new StorageFailure({ operation, key, message: cause instanceof Error ? cause.message : String(cause) })
+}
+
+type Inspection =
+  | { readonly kind: "verified"; readonly bytes: Uint8Array }
+  | { readonly kind: "missing" }
+  | { readonly kind: "corrupt"; readonly row: Row; readonly etag: string }
+
+effect function inspected(key: string, sha256: string, size: number, allowMarker: boolean) {
+  if (size > partBytes || size < 0) throw refused(rows.invalidTarget)
+  const { binding } = try EvidenceBucket
+  const found = try tryPromise({ try: () => binding.get(key), catch: storageFailure("get", key) })
+  if (found === null) return { kind: "missing" } satisfies Inspection
+  if (!allowMarker && found.customMetadata?.[retirementMetadataKey] === retirementMetadataValue) throw refused(rows.retired)
+  const corrupt = (row: Row) => ({ kind: "corrupt", row, etag: found.etag }) satisfies Inspection
+  if (found.size !== size || found.customMetadata?.sha256 !== sha256) return corrupt(rows.metadataChanged)
+  const bytes = new Uint8Array(try tryPromise({ try: () => found.arrayBuffer(), catch: storageFailure("get", key) }))
+  if (bytes.length > size) return corrupt(rows.lengthChanged)
+  if (bytes.length !== size || (try sha256Hex(bytes)) !== sha256) return corrupt(rows.bytesChanged)
+  return { kind: "verified", bytes } satisfies Inspection
+}
+
+export effect function verifiedPart(key: string, sha256: string, size: number, allowMarker = false) {
+  const found = try inspected(key, sha256, size, allowMarker)
+  if (found.kind === "missing") throw refused(rows.bytesMissing)
+  if (found.kind === "corrupt") throw refused(found.row)
+  return found.bytes
+}
+
+interface ConditionalPut {
+  readonly onlyIf: { readonly etagDoesNotMatch?: string; readonly etagMatches?: string }
+  readonly httpMetadata: { readonly contentType?: string }
+  readonly customMetadata: Readonly<Record<string, string>>
+}
+
+interface ConditionalBucket {
+  put(key: string, value: Uint8Array, options: ConditionalPut): Promise<unknown>
+}
+
+effect function putOnly(key: string, body: Uint8Array, sha256: string, contentType: string, onlyIf: ConditionalPut["onlyIf"]) {
+  const { binding } = try EvidenceBucket
+  const conditional: ConditionalBucket = binding
+  try tryPromise({ try: () => conditional.put(key, body, { onlyIf, customMetadata: { sha256 }, httpMetadata: { contentType } }), catch: storageFailure("put", key) })
+}
+
+effect function storeLocated(row: StorageRow, body: Uint8Array, part: EvidenceChunk | undefined, contentType: string) {
+  const root = location(row)
+  const key = part === undefined ? root : chunkKey(root, part)
+  const sha = part?.sha256 ?? row.sha256
+  try putOnly(key, body, sha, contentType, { etagDoesNotMatch: "*" })
+  const found = try inspected(key, sha, body.length, false)
+  if (found.kind === "verified") return
+  if (row.storage !== "content") throw refused(found.kind === "missing" ? rows.bytesMissing : found.row)
+  try putOnly(key, body, sha, contentType, found.kind === "corrupt" ? { etagMatches: found.etag } : { etagDoesNotMatch: "*" })
+  try verifiedPart(key, sha, body.length)
+}
+
+effect function repairable(error: unknown) {
+  if (typeof error === "object" && error !== null && "code" in error && (error.code === "evidence_corrupt" || error.code === "evidence_missing")) return true
+  throw error
+}
+
+export effect function registrationStatement(sha256: string, at: string) {
+  const id = try randomId()
+  if (!digest.test(sha256) || !identity.test(id)) throw refused(rows.generationIdentity)
+  return sql`INSERT INTO vetting_evidence_generations(id,sha256,state,created_at) SELECT ${id},${sha256},'active',${at} WHERE NOT EXISTS (SELECT 1 FROM vetting_evidence_generations WHERE sha256=${sha256} AND state='active')` satisfies Statement
+}
+
+schema GenerationState { state: string }
+schema HeadTarget { target_key: string }
+schema Target { target_key: string; generation_id: string; part_index: number; sha256: string; size_bytes: number }
+
+effect function active(generation: string, sha256: string) {
+  const row = try first(GenerationState, sql`SELECT state FROM vetting_evidence_generations WHERE id=${generation} AND sha256=${sha256}`)
+  if (row === undefined || row.state !== "active") throw refused(rows.retired)
+}
+
+export effect function partKey(row: StorageRow, part?: EvidenceChunk) {
+  const generation = try generationOf(row)
+  if (generation === undefined) {
+    const root = location(row)
+    return part === undefined ? root : chunkKey(root, part)
+  }
+  const slot = try slotOf(row, part)
+  const head = try first(HeadTarget, sql`SELECT h.target_key FROM vetting_evidence_heads h
+    JOIN vetting_evidence_targets t ON t.target_key=h.target_key
+    JOIN vetting_evidence_generations g ON g.id=h.generation_id
+    WHERE h.generation_id=${generation} AND h.part_index=${slot.index} AND h.sha256=${slot.sha} AND h.size_bytes=${slot.size}
+      AND g.sha256=${row.sha256} AND t.generation_id=h.generation_id
+      AND t.part_index=h.part_index AND t.sha256=h.sha256 AND t.size_bytes=h.size_bytes`)
+  if (head === undefined) return undefined
+  const prefix = `vetting/generations/${generation}/`
+  if (!head.target_key.startsWith(prefix) || !identity.test(head.target_key.slice(prefix.length))) throw refused(rows.invalidSelected)
+  return head.target_key
+}
+
+export effect function readPart(row: StorageRow, part?: EvidenceChunk) {
+  const slot = try slotOf(row, part)
+  const key = try partKey(row, part)
+  if (key === undefined) throw refused(rows.bytesMissing)
+  return try verifiedPart(key, slot.sha, slot.size)
+}
+
+effect function reserve(generation: string, slot: Slot) {
+  const key = try targetKey(generation, try randomId())
+  const db = try D1
+  const at = try isoNow()
+  const failure = db.run(sql`INSERT INTO vetting_evidence_targets(target_key,generation_id,part_index,sha256,size_bytes,created_at)
+    SELECT ${key},${generation},${slot.index},${slot.sha},${slot.size},${at} WHERE EXISTS (SELECT 1 FROM vetting_evidence_generations WHERE id=${generation} AND state='active')`) catch (error) => ({ error })
+  const saved = try first(Target, sql`SELECT target_key,generation_id,part_index,sha256,size_bytes FROM vetting_evidence_targets WHERE target_key=${key}`)
+  if (saved === undefined) {
+    if (typeof failure !== "number") throw failure.error
+    throw refused(rows.noWrites)
+  }
+  if (saved.generation_id !== generation || saved.part_index !== slot.index || saved.sha256 !== slot.sha || saved.size_bytes !== slot.size) throw refused(rows.targetTaken)
+  return key
+}
+
+export effect function storePart(row: StorageRow, body: Uint8Array, part: EvidenceChunk | undefined, contentType: string) {
+  const generation = try generationOf(row)
+  if (generation === undefined) return try storeLocated(row, body, part, contentType)
+  const slot = try slotOf(row, part)
+  if (body.length !== slot.size) throw refused(rows.slotLength)
+  try active(generation, row.sha256)
+  const previous = try partKey(row, part)
+  if (previous !== undefined) {
+    const kept = verifiedPart(previous, slot.sha, slot.size) catch effect (error) => {
+      try repairable(error)
+      return undefined
+    }
+    if (kept !== undefined) {
+      try active(generation, row.sha256)
+      return
+    }
+  }
+  const target = try reserve(generation, slot)
+  const { binding } = try EvidenceBucket
+  try tryPromise({
+    try: () => binding.put(target, body, { onlyIf: { etagDoesNotMatch: "*" }, customMetadata: { sha256: slot.sha }, httpMetadata: { contentType } }),
+    catch: storageFailure("put", target),
+  })
+  try verifiedPart(target, slot.sha, slot.size)
+  const failure = (try D1).run(sql`INSERT INTO vetting_evidence_heads(generation_id,part_index,sha256,size_bytes,target_key)
+    SELECT ${generation},${slot.index},${slot.sha},${slot.size},${target} WHERE EXISTS (SELECT 1 FROM vetting_evidence_generations WHERE id=${generation} AND state='active')
+    ON CONFLICT(generation_id,part_index,sha256,size_bytes) DO UPDATE SET target_key=excluded.target_key
+    WHERE vetting_evidence_heads.target_key=${previous ?? null}`) catch (error) => ({ error })
+  try active(generation, row.sha256)
+  const winner = try partKey(row, part)
+  if (winner === undefined) {
+    if (typeof failure !== "number") throw failure.error
+    throw refused(rows.notSelected)
+  }
+  try verifiedPart(winner, slot.sha, slot.size)
+  try active(generation, row.sha256)
+}
+
+export effect function partKeys(row: StorageRow, chunks: ReadonlyArray<EvidenceChunk>) {
+  const keys: string[] = []
+  for (const chunk of chunks) {
+    const key = try partKey(row, chunk)
+    if (key === undefined) throw refused(rows.bytesMissing)
+    keys.push(key)
+  }
+  return keys
+}
+
+export effect function verifySequence<E, R>(row: StorageRow, chunks: ReadonlyArray<EvidenceChunk>, each: (bytes: Uint8Array) => void!E!R) {
+  const { binding } = try EvidenceBucket
+  const keys = try partKeys(row, chunks)
+  for (const key of keys) {
+    const head = try tryPromise({ try: () => binding.head(key), catch: storageFailure("head", key) })
+    if (head?.customMetadata?.[retirementMetadataKey] === retirementMetadataValue) throw refused(rows.retired)
+  }
+  const parts = chunks.map((chunk, index) => ({ key: keys[index] ?? "", sha256: chunk.sha256, size: chunk.sizeBytes }))
+  const whole = location(row)
+  const complete = bucket(binding).getParts({ key: whole, sha256: row.sha256, size: row.size_bytes, parts }, each) catch effect (error) => match (error) {
+    when DigestMismatch: throw refused(error.key === whole ? rows.wholeChanged : rows.bytesChanged);
+    default: throw error;
+  }
+  if (!complete) throw refused(rows.bytesMissing)
+}

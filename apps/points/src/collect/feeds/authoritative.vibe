@@ -1,0 +1,71 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { boundedBytes } from "@repo/platform/browser"
+import { type Machine } from "../../../gen/points__window.effect.vibe"
+
+export const feedTimeoutMs = 30_000
+export const feedLimitBytes = 8 * 1024 * 1024
+export const valueFeedUnavailableExitCode = 75
+
+export error ValueFeedUnavailable { feed: string; reason: string }
+export error FeedRefused { feed: string; reason: string }
+
+export interface FeedRead {
+  readonly feed: string
+  readonly url: string
+  readonly unavailable: string
+  readonly oversized: string
+  readonly notFoundIsOutage: boolean
+  readonly timeoutMs: number
+}
+
+function outage(status: number, notFoundIsOutage: boolean) {
+  return status === 408 || status === 429 || status >= 500 || (notFoundIsOutage && status === 404)
+}
+
+function parsedText(bytes: Uint8Array): { readonly value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown }
+  } catch {
+    return undefined
+  }
+}
+
+effect function answered(read: FeedRead) {
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.get(read.url, { headers: { accept: "application/json" } })
+  const response = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual", cache: "no-store" }) catch effect () => {
+    throw new ValueFeedUnavailable({ feed: read.feed, reason: "the feed could not be reached" })
+  }
+  if (outage(response.status, read.notFoundIsOutage)) throw new ValueFeedUnavailable({ feed: read.feed, reason: `HTTP ${response.status}` })
+  if (response.status !== 200) throw new FeedRefused({ feed: read.feed, reason: read.unavailable })
+  const bytes = boundedBytes(response, feedLimitBytes, read.feed) catch effect (error) => {
+    if (error._tag === "BodyTooLarge") throw new FeedRefused({ feed: read.feed, reason: read.oversized })
+    throw new ValueFeedUnavailable({ feed: read.feed, reason: "the feed body could not be read" })
+  }
+  return bytes
+}
+
+export effect function feedJson(read: FeedRead) {
+  const bytes = timeout(answered(read), Duration.millis(read.timeoutMs)) catch effect (error) => {
+    if (error._tag === "TimeoutError") throw new ValueFeedUnavailable({ feed: read.feed, reason: `no complete answer within ${read.timeoutMs} ms` })
+    throw error
+  }
+  const parsed = parsedText(bytes)
+  if (parsed === undefined) throw new FeedRefused({ feed: read.feed, reason: `${read.feed} is not valid JSON` })
+  return parsed.value
+}
+
+export effect function decodedFeed<S extends Schema.Constraint>(schema: S, value: unknown, feed: string, reason: string) {
+  const decoded: S["Type"] = Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw new FeedRefused({ feed, reason })
+  }
+  return decoded
+}
+
+export effect function keepPreviousWindow<A, E, R>(window: Machine.Shape, refresh: A!E!R) {
+  const refreshed: A = refresh catch effect (error) => {
+    try orDie(window.send({ type: "failRefresh" }))
+    throw error
+  }
+  return refreshed
+}

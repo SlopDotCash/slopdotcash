@@ -1,0 +1,61 @@
+// spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
+import { isoNow } from "@repo/platform/clock"
+import { D1, sql } from "@repo/platform/d1"
+import type { Usage } from "@repo/platform/providers"
+import { apply } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { emptySpend, failureKindOf, monthNumber, monthOf } from "../spend/store.vibe"
+import type { CallRecord } from "./route.vibe"
+
+module pricing {
+  import { costMicroUsd, priceVersion as version, rateOf } from "./price.ts"
+  import type { Usage } from "@repo/platform/providers"
+  /** @throws {never} */
+  export const priceVersion: string = version
+  /** @throws {never} */
+  export function estimateOf(priceKey: string, usage: Usage): { readonly costMicroUsd: number; readonly listPrice: boolean } | undefined {
+    const rate = rateOf(priceKey)
+    if (rate === null) return undefined
+    const cost = costMicroUsd(rate, { input: BigInt(usage.input), cacheWrite: BigInt(usage.cacheWrite), cacheRead: BigInt(usage.cacheRead), output: BigInt(usage.output) })
+    return cost > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : { costMicroUsd: Number(cost), listPrice: rate.listPrice }
+  }
+}
+import { estimateOf, priceVersion } from pricing
+
+export type CallKind = "triage" | "confirm"
+
+export error Unpriced { priceKey: string }
+
+export function priceUsage(priceKey: string, usage: Usage) {
+  return estimateOf(priceKey, usage)
+}
+
+export effect function recordCalls(reviewKey: string, installationId: number, callKind: CallKind, calls: ReadonlyArray<CallRecord>) {
+  if (calls.length === 0) return
+  const at = try isoNow()
+  const writes = []
+  for (const call of calls) {
+    const price = estimateOf(call.priceKey, call.usage)
+    if (price === undefined) throw new Unpriced({ priceKey: call.priceKey })
+    try apply(emptySpend, {
+      type: "recordCall",
+      c: {
+        month: monthNumber(monthOf(at)),
+        estimate: price.costMicroUsd,
+        reported: call.providerCostMicroUsd ?? 0,
+        providerReported: call.providerCostMicroUsd !== null,
+        provider: call.gateway === "orbio" ? "Orbio" : "Surplus",
+        failure: failureKindOf(call.outcome, call.failure),
+      },
+    })
+    const substituted = call.servedModel !== null && !call.priceKey.endsWith(`/${call.servedModel}`)
+    writes.push(sql`INSERT INTO slopbot_costs (review_key, installation_id, call_kind, route_step, provider, requested_model,
+        served_model, outcome, failure, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens,
+        price_version, cost_micro_usd, billed_micro_usdc, reconciliation, created_at, provider_cost_micro_usd,
+        provider_request_id, billing_rule, billable_cost_micro_usd)
+      VALUES (${reviewKey}, ${installationId}, ${callKind}, ${call.routeStep}, ${call.gateway}, ${call.requestedModel},
+        ${call.servedModel}, ${call.outcome}, ${call.failure}, ${call.usage.input}, ${call.usage.cacheWrite}, ${call.usage.cacheRead}, ${call.usage.output},
+        ${priceVersion}, ${price.costMicroUsd}, 0, ${substituted || !price.listPrice ? "estimated" : "list-price"}, ${at}, ${call.providerCostMicroUsd},
+        ${call.providerRequestId}, 'review-v2', 0)`)
+  }
+  try (try D1).batch(writes)
+}

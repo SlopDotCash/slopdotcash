@@ -1,0 +1,118 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Account, type Address, SYSTEM_PROGRAM, SolanaRpc, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, address, addressOf } from "@repo/platform/chain/solana"
+import { decodeConfig, decodeProject, decodeVault } from "../chain/solana/accounts.ts"
+import { digest, readU32 } from "../chain/solana/bytes.ts"
+import { type Purpose, UPGRADEABLE_LOADER, configAddress, keyBytes, projectAddress, vaultAddress } from "../chain/solana/pda.ts"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { readMint } from "../kernels/token2022.ts"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { type FundingAsset, registryProjectDigest } from "./ownerInstructions.ts"
+
+export error DeploymentUnverified { message: string }
+
+const BPF_LOADER_2 = "BPFLoader2111111111111111111111111111111111"
+const NATIVE_DECIMALS = 9
+
+export interface VerifiedDeployment {
+  readonly program: Address
+  readonly project: Address
+  readonly vault: Address
+  readonly owner: Address
+  readonly asset: FundingAsset
+  readonly decimals: number
+}
+
+export interface FundsRead {
+  readonly free: bigint
+  readonly decimals: number
+}
+
+function unverified(message: string) {
+  return new DeploymentUnverified({ message })
+}
+
+effect function key(text: string | null, what: string) {
+  const parsed = text === null ? undefined : address(text)
+  if (parsed === undefined) throw unverified(`Invalid ${what} address`)
+  return parsed
+}
+
+effect function finalizedAccount(at: Address) {
+  return try (try SolanaRpc).account(at, "finalized")
+}
+
+effect function programCode(deployment: SolanaDeployment, program: Address) {
+  const account = try finalizedAccount(program)
+  if (account === undefined || !account.executable) throw unverified("Program is not executable")
+  if (account.owner !== UPGRADEABLE_LOADER) {
+    if (account.owner !== BPF_LOADER_2 || deployment.upgradeAuthority !== null) throw unverified("Unsupported program loader or authority")
+    return account.data
+  }
+  const pointer = account.data
+  const dataKey = pointer.length === 36 && readU32(pointer, 0) === 2 ? addressOf(pointer.slice(4, 36)) : undefined
+  if (dataKey === undefined) throw unverified("Invalid upgradeable program pointer")
+  const data = try finalizedAccount(dataKey)
+  if (data === undefined || data.owner !== UPGRADEABLE_LOADER || data.executable) throw unverified("ProgramData owner mismatch")
+  const content = data.data
+  const flag = content[12] ?? 2
+  if (content.length <= 45 || readU32(content, 0) !== 3 || flag > 1) throw unverified("Invalid ProgramData metadata")
+  const authority = flag === 1 ? addressOf(content.slice(13, 45)) ?? null : null
+  if (authority !== deployment.upgradeAuthority) throw unverified("Upgrade authority mismatch")
+  return content.slice(45)
+}
+
+effect function assetOf(mintText: string) {
+  if (mintText === SYSTEM_PROGRAM) return { asset: { kind: "Native" } as FundingAsset, decimals: NATIVE_DECIMALS }
+  const mint = try key(mintText, "mint")
+  const account: Account | undefined = try finalizedAccount(mint)
+  if (account === undefined) throw unverified("Mint account missing")
+  const read = readMint({ program: account.owner, bytes: account.data, mint: keyBytes(mint) })
+  if (read.kind === "Refused") throw unverified("The vault mint is not an admitted token")
+  const tokenProgram = read.kind === "Classic" ? TOKEN_PROGRAM : TOKEN_2022_PROGRAM
+  return { asset: { kind: "Token", mint, tokenProgram } as FundingAsset, decimals: read.decimals }
+}
+
+export effect function verifiedDeployment(deployment: SolanaDeployment) {
+  const program = try key(deployment.programId, "program")
+  const code = try programCode(deployment, program)
+  if ((try sha256Hex(code)) !== deployment.codeSha256) throw unverified("Deployed program bytes differ from reviewed digest")
+  const config = decodeConfig(try finalizedAccount(configAddress(program)), program)
+  if (config.kind !== "decoded") throw unverified("Escrow Config missing")
+  if (config.value.feeRecipient !== deployment.feeRecipient || config.value.identityAuthority !== deployment.identityAuthority || config.value.rotationAuthority !== deployment.rotationAuthority)
+    throw unverified("Authorities differ from the pinned escrow Config")
+  const owner = try key(deployment.owner, "owner")
+  const purpose: Purpose = deployment.scope === "security-bounty" ? "Bounty" : "Ordinary"
+  const projectId = registryProjectDigest(deployment.projectId)
+  const project = projectAddress(program, owner, projectId, purpose)
+  const vault = vaultAddress(program, project)
+  if (project !== deployment.projectPda || vault !== deployment.vault) throw unverified("The vault belongs to a different registry project.")
+  const decoded = decodeProject(try finalizedAccount(project), program)
+  if (decoded.kind !== "decoded" || decoded.value.projectId !== projectId || decoded.value.purpose !== purpose) throw unverified("The vault belongs to a different registry project.")
+  const state = decoded.value
+  if (state.bindingDelay !== parseBaseUnits(deployment.bindingDelaySeconds) || state.rotationDelay !== parseBaseUnits(deployment.rotationDelaySeconds)
+    || state.owner !== deployment.owner || state.feeRecipient !== deployment.feeRecipient || state.mint !== deployment.asset || state.network !== digest(deployment.networkDomain))
+    throw unverified("Reviewed project authorities or asset mismatch")
+  const { asset, decimals } = try assetOf(deployment.asset)
+  return { program, project, vault, owner, asset, decimals } satisfies VerifiedDeployment
+}
+
+export effect function finalizedFunds(verified: VerifiedDeployment) {
+  const rpc = try SolanaRpc
+  const { asset, program, project, vault } = verified
+  const mint = asset.kind === "Native" ? SYSTEM_PROGRAM : asset.mint
+  const read = try rpc.accounts(asset.kind === "Native" ? [project, vault] : [project, mint, vault], "finalized")
+  const decoded = decodeProject(read.value[0], program)
+  if (decoded.kind !== "decoded" || decoded.value.mint !== mint) throw unverified("Project mint changed")
+  const { deposited, paid, payoutFees, withdrawnGross, reserved, accruedFees } = decoded.value
+  const free = deposited - paid - payoutFees - withdrawnGross - reserved
+  if (free < 0n) throw unverified("Project counters exceed deposits")
+  const owed = free + reserved + accruedFees
+  const held = decodeVault(read.value[asset.kind === "Native" ? 1 : 2], { program, project, mint })
+  if (held.kind !== "decoded") throw unverified("Vault account mismatch")
+  const covered = held.value.kind === "Native"
+    ? held.value.lamports - (try rpc.rentExemption(0, "finalized")) >= owed
+    : held.value.tokenProgram === (asset.kind === "Token" ? asset.tokenProgram : undefined) && held.value.token.amount >= owed
+  if (!covered) throw unverified("Vault balance is below free, reserved and accrued fees")
+  return { free, decimals: verified.decimals } satisfies FundsRead
+}

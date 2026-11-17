@@ -1,0 +1,220 @@
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import { type Address, type BlockRef, EvmRpc, type Hex, type Receipt, type Transaction, evmRpc } from "@repo/platform/chain/evm"
+import { type JsonRpc, RpcMalformed, type RpcFailure, WrongChain, jsonRpc } from "@repo/platform/chain/rpc"
+import { executionGasCost, nativeFeeTotal } from "@repo/settlement/kernels/budget"
+import type { EvmNetwork } from "../signer/intents.ts"
+import { definitions } from "../runtime/networks.vibe"
+import { baseGasPriceOracle } from "../runtime/pins.ts"
+import { allowanceCalldata, balanceCalldata, creditedTo, oracleCalldata, quantity, wholeBig, word } from "./abi.ts"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+}
+import { errorText } from verified
+
+export error ChainRefused { issue: string }
+
+export service FeeChain {
+  readonly network: EvmNetwork
+  readonly chainId: bigint
+  readonly wallet: Address
+  readonly raw: JsonRpc
+}
+
+export interface FeeChainOptions {
+  readonly network: EvmNetwork
+  readonly wallet: string
+  readonly urls: Redacted.Redacted<ReadonlyArray<string>>
+  readonly timeoutMs?: number
+}
+
+effect function pinnedChain(network: EvmNetwork) {
+  const id = definitions[network].chainId
+  const pinned = id === undefined ? undefined : wholeBig(id)
+  if (pinned === undefined) throw new ChainRefused({ issue: `${network} has no pinned chain id` })
+  return pinned
+}
+
+export function feeChain(options: FeeChainOptions) {
+  const pinned = definitions[options.network].chainId ?? 0
+  const chainId = wholeBig(pinned) ?? 0n
+  const timeoutMs = options.timeoutMs ?? 15_000
+  return Layer.mergeAll(
+    evmRpc({ urls: options.urls, chainId, timeoutMs }),
+    Layer.effect(FeeChain, effect {
+      const expected = try pinnedChain(options.network)
+      const raw = try jsonRpc({
+        urls: options.urls,
+        timeoutMs,
+        maxBytes: 16 * 1024 * 1024,
+        identity: { method: "eth_chainId", expected: expected.toString(), read: (answer) => quantity(answer)?.toString() },
+      })
+      return { network: options.network, chainId: expected, wallet: options.wallet.toLowerCase() as Address, raw }
+    }),
+  )
+}
+
+export effect function chainPreflight() {
+  const chain = try FeeChain
+  const observed = try (try EvmRpc).chainId()
+  if (observed !== chain.chainId) throw new WrongChain({ expected: chain.chainId.toString(), actual: observed.toString() })
+}
+
+export effect function nonceAtLeast(floor: bigint) {
+  const chain = try FeeChain
+  const pending = try (try EvmRpc).nonce(chain.wallet, "pending")
+  if (pending < floor) throw new ChainRefused({ issue: `fee-wallet nonce ${pending} is held by an open journaled send; next free nonce is ${floor}` })
+  return pending
+}
+
+export effect function freeNonce(floor: bigint) {
+  const chain = try FeeChain
+  const evm = try EvmRpc
+  const latest = try evm.nonce(chain.wallet, "latest")
+  const pending = try evm.nonce(chain.wallet, "pending")
+  if (pending !== latest) throw new ChainRefused({ issue: "an earlier fee-wallet transaction is still pending" })
+  if (latest < floor) throw new ChainRefused({ issue: `fee-wallet nonce ${latest} is held by an open journaled send; next free nonce is ${floor}` })
+  return latest
+}
+
+export interface FeesPerGas { readonly baseFee: bigint; readonly maxFeePerGas: bigint; readonly maxPriorityFeePerGas: bigint }
+
+export effect function baseFee() {
+  const head = try (try EvmRpc).head("latest")
+  if (head.baseFeePerGas === undefined) throw new ChainRefused({ issue: "the current network base fee is unavailable" })
+  return head.baseFeePerGas
+}
+
+export effect function feesPerGas() {
+  const base = try baseFee()
+  const priority = try (try EvmRpc).maxPriorityFee()
+  return { baseFee: base, maxFeePerGas: (base * 12n) / 10n + priority, maxPriorityFeePerGas: priority } satisfies FeesPerGas
+}
+
+export effect function gasLimit(to: Address, data: Hex, value: bigint) {
+  const chain = try FeeChain
+  const estimate = try (try EvmRpc).estimateGas({ to, data, from: chain.wallet, value })
+  return (estimate * 13n) / 10n
+}
+
+const hexData = /^0x(?:[0-9a-fA-F]{2})*$/u
+
+export effect function simulated(to: Address, data: Hex, value: bigint) {
+  const chain = try FeeChain
+  const answer = try chain.raw.call("eth_call", [{ from: chain.wallet, to, data, value: `0x${value.toString(16)}` }, "latest"], Schema.String)
+  if (!hexData.test(answer)) throw new RpcMalformed({ method: "eth_call", issue: "the simulation answer is not hex data" })
+  return answer as Hex
+}
+
+export effect function readWord(to: Address, data: Hex, block: BlockRef) {
+  const answer = try (try EvmRpc).call({ to, data, block })
+  const value = word(answer)
+  if (value === undefined) throw new RpcMalformed({ method: "eth_call", issue: "the answer is not one 32-byte word" })
+  return value
+}
+
+export effect function allowanceOf(token: Address, spender: Address, block: BlockRef) {
+  const chain = try FeeChain
+  return try readWord(token, allowanceCalldata(chain.wallet, spender), block)
+}
+
+export effect function tokenBalance(token: Address, block: BlockRef) {
+  const chain = try FeeChain
+  return try readWord(token, balanceCalldata(chain.wallet), block)
+}
+
+export effect function nativeBalance(block: BlockRef) {
+  const chain = try FeeChain
+  return try (try EvmRpc).balance(chain.wallet, block)
+}
+
+export interface DataOperatorFee { readonly data: bigint; readonly operator: bigint }
+
+export effect function dataOperatorFee(unsignedBytes: number, gas: bigint) {
+  const chain = try FeeChain
+  if (chain.network !== "Base") return { data: 0n, operator: 0n } satisfies DataOperatorFee
+  const size = wholeBig(unsignedBytes + 68)
+  if (size === undefined) throw new ChainRefused({ issue: "the unsigned transaction size is out of range" })
+  const block = (try (try EvmRpc).head("latest")).number
+  const oracle = baseGasPriceOracle.address as Address
+  const data = try readWord(oracle, oracleCalldata(baseGasPriceOracle.l1FeeUpperBound as Hex, size), block)
+  const operator = try readWord(oracle, oracleCalldata(baseGasPriceOracle.operatorFee as Hex, gas), block)
+  return { data, operator } satisfies DataOperatorFee
+}
+
+export type Broadcast = { readonly kind: "Accepted" } | { readonly kind: "FeeCapTooLow"; readonly detail: string } | { readonly kind: "Unknown"; readonly detail: string }
+
+function failureText(error: RpcFailure) {
+  switch (error._tag) {
+    case "RpcUnavailable": return error.message
+    case "RpcMalformed": return error.issue
+    case "RpcRefused": return error.message
+    case "WrongChain": return `the RPC answered chain ${error.actual}, not ${error.expected}`
+  }
+}
+
+function classified(error: RpcFailure): Broadcast {
+  const text = failureText(error)
+  if (/already known/iu.test(text)) return { kind: "Accepted" }
+  if (error._tag === "RpcRefused" && /max fee per gas less than block base fee|fee cap less than block base fee/iu.test(error.message)) return { kind: "FeeCapTooLow", detail: errorText(text) }
+  return { kind: "Unknown", detail: errorText(text) }
+}
+
+export effect function broadcast(raw: Hex) {
+  const sent = (try EvmRpc).sendRaw(raw) catch (error) => classified(error)
+  return typeof sent === "string" ? ({ kind: "Accepted" } satisfies Broadcast) : sent
+}
+
+export interface Landed { readonly kind: "Landed"; readonly tx: Hex; readonly receipt: Receipt; readonly transaction: Transaction }
+export interface Unlanded { readonly kind: "Unlanded"; readonly seen: ReadonlyArray<Hex>; readonly latestSeen: boolean; readonly finalizedNonce: bigint; readonly latestNonce: bigint }
+export type AttemptStatus = Landed | { readonly kind: "Mined" } | Unlanded
+
+export effect function attemptStatus(attempts: ReadonlyArray<Hex>) {
+  const chain = try FeeChain
+  const evm = try EvmRpc
+  for (const tx of attempts) {
+    const receipt = try evm.receipt(tx)
+    if (receipt === undefined) continue
+    const finalized = try evm.head("finalized")
+    if (receipt.blockNumber > finalized.number) return { kind: "Mined" } satisfies AttemptStatus
+    const canonical = try evm.finalizedReceipt(tx)
+    if (canonical === undefined) throw new ChainRefused({ issue: "Fee send receipt identity differs" })
+    const transaction = try evm.transaction(tx)
+    if (transaction === undefined || transaction.from.toLowerCase() !== chain.wallet || transaction.blockHash !== canonical.blockHash
+      || transaction.blockNumber !== canonical.blockNumber || transaction.transactionIndex !== canonical.transactionIndex)
+      throw new ChainRefused({ issue: "Fee send receipt differs from its signed transaction" })
+    return { kind: "Landed", tx, receipt: canonical, transaction } satisfies Landed
+  }
+  const seen: Hex[] = []
+  for (const tx of attempts) if ((try evm.transaction(tx)) !== undefined) seen.push(tx)
+  const latest = attempts[attempts.length - 1]
+  return {
+    kind: "Unlanded",
+    seen,
+    latestSeen: latest !== undefined && seen.includes(latest),
+    finalizedNonce: try evm.nonce(chain.wallet, "finalized"),
+    latestNonce: try evm.nonce(chain.wallet, "latest"),
+  } satisfies Unlanded
+}
+
+schema RawReceipt { transactionHash: string; blockHash: string; l1Fee?: string }
+
+export effect function nativeCost(receipt: Receipt) {
+  const chain = try FeeChain
+  if (receipt.effectiveGasPrice === undefined) throw new RpcMalformed({ method: "eth_getTransactionReceipt", issue: "the receipt has no effective gas price" })
+  const execution = executionGasCost(receipt.gasUsed, receipt.effectiveGasPrice)
+  if (chain.network !== "Base") return nativeFeeTotal(execution, 0n, 0n, 0n)
+  const raw = try chain.raw.call("eth_getTransactionReceipt", [receipt.transactionHash], Schema.NullOr(RawReceipt))
+  const data = raw === null ? undefined : quantity(raw.l1Fee)
+  if (raw === null || raw.transactionHash.toLowerCase() !== receipt.transactionHash.toLowerCase() || raw.blockHash.toLowerCase() !== receipt.blockHash.toLowerCase() || data === undefined)
+    throw new RpcMalformed({ method: "eth_getTransactionReceipt", issue: "Finalized Base data fee is unavailable" })
+  const operator = try readWord(baseGasPriceOracle.address as Address, oracleCalldata(baseGasPriceOracle.operatorFee as Hex, receipt.gasUsed), receipt.blockNumber)
+  return nativeFeeTotal(execution, 0n, data, operator)
+}
+
+export effect function credited(receipt: Receipt, token: Address) {
+  const chain = try FeeChain
+  return creditedTo(receipt.logs, token, chain.wallet)
+}

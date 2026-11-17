@@ -1,0 +1,274 @@
+// spec/settlement/monthlyCommitment.md, "A journal begins with no authorization"; spec/settlement/monthlyCommitment.md, "The first authorization records the frozen funded allocation once"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt"; spec/settlement/monthlyCommitment.md, "A retained V1 authorization of the same frozen month may win on EVM"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "An admitted month stays resumable after opt-out or the window closes"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { recoverDigest } from "@repo/platform/chain/evm"
+import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Attempt, type ChainFamily, type Commitment, type Event, type FundedMonth, type LegacyAuthorization, NotAState, apply, authorize, canAuthorize, decodeState, initial, noLegacy, windowClosesAt, windowOpensAt } from "../../gen/settlement__monthlyCommitment.effect.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, formatPeriod } from "../kernels/calendar.ts"
+import { amountOf } from "../monthly/store.vibe"
+import type { AttestationPlan } from "./plan.vibe"
+
+export interface JournalKey {
+  readonly projectId: string
+  readonly period: Period
+  readonly network: string
+}
+
+export interface JournalContext {
+  readonly family: ChainFamily
+  readonly funded: FundedMonth | undefined
+  readonly authority: string
+}
+
+export interface EvmReservation {
+  readonly version: 2
+  readonly allocationDigest: string
+  readonly allocationRoot: string
+  readonly wholeGross: string
+  readonly remainingGross: string
+  readonly count: number
+  readonly sourceSequence: string
+}
+
+export interface SignedPlan {
+  readonly plan: AttestationPlan & { readonly evmReservation?: EvmReservation }
+  readonly signatureHex: string
+}
+
+export interface MonthlyAuthorization extends SignedPlan {
+  readonly legacyAuthorization?: SignedPlan
+}
+
+export schema StoredReservation {
+  readonly version: 2
+  readonly allocationRoot: string
+  readonly wholeGross: string
+  readonly remainingGross: string
+  readonly count: number
+  readonly sourceSequence: string
+}
+
+export schema StoredPlan {
+  readonly family: "evm" | "solana"
+  readonly allocationRoot: string
+  readonly messageHex: string
+  readonly totalGrossBase: string
+  readonly frozenAt?: string
+  readonly entries: ReadonlyArray<{ readonly sourceDigest: string }>
+  readonly evmReservation?: StoredReservation
+}
+
+export schema StoredAuthorization {
+  readonly plan: StoredPlan
+  readonly signatureHex: string
+}
+
+schema FirstRow { readonly authorization: string; readonly snapshot_sha256: string; readonly published_at: string }
+schema AttemptRow { readonly source_sequence: string; readonly authorization: string; readonly published_at: string }
+schema ExecutionRow { readonly complete: number }
+
+export interface JournalRows {
+  readonly first: FirstRow | undefined
+  readonly attempts: ReadonlyArray<AttemptRow>
+  readonly complete: boolean
+}
+
+export interface Journal {
+  readonly rows: JournalRows
+  readonly state: Commitment
+}
+
+function scopeOf(key: JournalKey) {
+  return sql`project_id = ${key.projectId} AND period = ${formatPeriod(key.period)} AND network = ${key.network}`
+}
+
+function reads(key: JournalKey): ReadonlyArray<Statement> {
+  const scope = scopeOf(key)
+  return [
+    sql`SELECT authorization, snapshot_sha256, published_at FROM monthly_payment_authorizations WHERE ${scope}`,
+    sql`SELECT source_sequence, authorization, published_at FROM monthly_payment_authorization_attempts WHERE ${scope} ORDER BY length(source_sequence), source_sequence`,
+    sql`SELECT complete FROM monthly_payment_execution WHERE ${scope}`,
+  ]
+}
+
+function version(key: JournalKey): Statement {
+  const scope = scopeOf(key)
+  const period = formatPeriod(key.period)
+  return sql`SELECT json_array((SELECT count(*) FROM monthly_payment_authorizations WHERE ${scope}), (SELECT count(*) FROM monthly_payment_authorization_attempts WHERE ${scope}), (SELECT coalesce(max(complete), -1) FROM monthly_payment_execution WHERE ${scope}), (SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${key.projectId}), (SELECT coalesce(max(snapshot_sha256), '') || ':' || coalesce(max(obligations_created_at), '') FROM monthly_payment_runs WHERE project_id = ${key.projectId} AND period = ${period})) AS version`
+}
+
+effect function authorizationOf(text: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: "monthly authorization", issue: "not JSON" }) })
+  return Schema.decodeUnknownEffect(StoredAuthorization)(parsed) catch effect () => {
+    throw new RowMismatch({ text: "monthly authorization", issue: "not a monthly authorization" })
+  }
+}
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function signerOf(stored: StoredAuthorization, context: JournalContext) {
+  if (stored.plan.family === "solana") return context.authority
+  return recoverDigest(`0x${stored.plan.messageHex}`, `0x${stored.signatureHex}`)?.toLowerCase() ?? ""
+}
+
+effect function units(text: string) {
+  const value = parseBaseUnits(text)
+  if (value === undefined) throw new RowMismatch({ text: "monthly authorization", issue: `${text} is not base units` })
+  return amountOf(value)
+}
+
+effect function attemptOf(id: number, stored: StoredAuthorization, publishedAt: string, context: JournalContext) {
+  const reservation = stored.plan.evmReservation
+  const frozenAt = stored.plan.frozenAt === undefined ? 0 : Number(stored.plan.frozenAt)
+  return {
+    id,
+    height: 0,
+    sourceSequence: reservation === undefined ? 0 : Number(reservation.sourceSequence),
+    root: reservation?.allocationRoot ?? stored.plan.allocationRoot,
+    remainingGross: try units(reservation?.remainingGross ?? stored.plan.totalGrossBase),
+    leafCount: reservation?.count ?? stored.plan.entries.length,
+    frozenAt,
+    signer: signerOf(stored, context),
+    publishedAt: seconds(publishedAt),
+  } satisfies Attempt
+}
+
+effect function stateOf(key: JournalKey, rows: JournalRows, context: JournalContext) {
+  const funded = context.funded
+  const empty = { ...initial, family: context.family }
+  if (funded === undefined || !canAuthorize(empty, context.family, funded)) return try decodeState(empty)
+  const authorized = authorize(empty, context.family, funded)
+  const attempts: Attempt[] = []
+  let legacy: LegacyAuthorization = noLegacy
+  if (rows.first !== undefined) {
+    const first = try authorizationOf(rows.first.authorization)
+    if (context.family === "SolanaV3") attempts.push(try attemptOf(1, first, rows.first.published_at, context))
+    else if (first.plan.evmReservation === undefined) legacy = { root: first.plan.allocationRoot, snapshotDigest: rows.first.snapshot_sha256, wholeGross: try units(first.plan.totalGrossBase), leafCount: first.plan.entries.length, signer: signerOf(first, context) }
+  }
+  if (context.family === "EvmV2") for (const [index, row] of rows.attempts.entries()) attempts.push(try attemptOf(index + 1, try authorizationOf(row.authorization), row.published_at, context))
+  const latest = attempts.at(-1)
+  const admittedRoot = rows.complete ? latest?.root ?? legacy.root : ""
+  return try decodeState({
+    ...authorized,
+    phase: rows.complete && authorized.phase === "Authorized" ? "Completed" : authorized.phase,
+    legacy,
+    attempts,
+    admittedRoot,
+    admittedLegacy: rows.complete && latest === undefined && legacy.root !== "",
+    frozenAt: context.family === "SolanaV3" ? latest?.frozenAt ?? 0 : 0,
+    clock: Math.max(initial.clock, windowOpensAt(funded.period)),
+    opensAt: windowOpensAt(funded.period),
+    closesAt: windowClosesAt(funded.period),
+  })
+}
+
+function aggregate(key: JournalKey, context: JournalContext): Aggregate<Journal, NotAState | RowMismatch, never> {
+  return {
+    name: `monthly authorization journal of ${key.projectId} ${formatPeriod(key.period)} ${key.network}`,
+    version: version(key),
+    reads: reads(key),
+    decode: ([first, attempts, execution]: ReadonlyArray<Rows>) => effect {
+      const rows: JournalRows = {
+        first: (try decoded(FirstRow, first ?? [], "monthly authorization"))[0],
+        attempts: try decoded(AttemptRow, attempts ?? [], "monthly authorization attempts"),
+        complete: (try decoded(ExecutionRow, execution ?? [], "monthly execution")).some((row) => row.complete === 1),
+      }
+      return { rows, state: try stateOf(key, rows, context) } satisfies Journal
+    },
+  }
+}
+
+export effect function loadJournal(key: JournalKey, context: JournalContext) {
+  return (try load(aggregate(key, context))).state
+}
+
+export effect function authorizationText(signed: SignedPlan, first: string | undefined) {
+  if (signed.plan.evmReservation === undefined || first === undefined) return JSON.stringify({ plan: signed.plan, signatureHex: signed.signatureHex } satisfies MonthlyAuthorization)
+  const original = try authorizationOf(first)
+  if (original.plan.evmReservation !== undefined) return JSON.stringify({ plan: signed.plan, signatureHex: signed.signatureHex } satisfies MonthlyAuthorization)
+  const legacy = try Effect.try({ try: () => JSON.parse(first) as SignedPlan, catch: () => new RowMismatch({ text: "monthly authorization", issue: "not JSON" }) })
+  return JSON.stringify({ plan: signed.plan, signatureHex: signed.signatureHex, legacyAuthorization: { plan: legacy.plan, signatureHex: legacy.signatureHex } } satisfies MonthlyAuthorization)
+}
+
+effect function signedWrites(key: JournalKey, journal: Journal, signed: SignedPlan, now: number) {
+  const period = formatPeriod(key.period)
+  const published = try isoAt(now * 1000)
+  const text = try authorizationText(signed, journal.rows.first?.authorization)
+  const automatic = sql`coalesce((SELECT automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1), 1) = 1`
+  const first = sql`INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) SELECT project_id, period, network, snapshot_sha256, ${text}, ${published} FROM monthly_payment_runs WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND obligations_created_at IS NOT NULL AND ${automatic} ON CONFLICT DO NOTHING`
+  const reservation = signed.plan.evmReservation
+  if (reservation === undefined) return [first]
+  const sequence = reservation.sourceSequence
+  return [first, sql`INSERT INTO monthly_payment_authorization_attempts (project_id, period, network, source_sequence, authorization, published_at) SELECT project_id, period, network, ${sequence}, ${text}, ${published} FROM monthly_payment_authorizations a WHERE project_id = ${key.projectId} AND period = ${period} AND network = ${key.network} AND snapshot_sha256 = ${signed.plan.request.snapshotSha256} AND ${automatic} AND NOT EXISTS (SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id = a.project_id AND n.period = a.period AND n.network = a.network AND (length(n.source_sequence) > length(${sequence}) OR (length(n.source_sequence) = length(${sequence}) AND n.source_sequence > ${sequence}))) ON CONFLICT DO NOTHING`]
+}
+
+effect function completionWrites(key: JournalKey, now: number) {
+  const touched = try isoAt(now * 1000)
+  return [sql`INSERT INTO monthly_payment_execution (project_id, period, network, last_attempt, complete) SELECT project_id, period, network, ${touched}, 1 FROM monthly_payment_authorizations WHERE project_id = ${key.projectId} AND period = ${formatPeriod(key.period)} AND network = ${key.network} ON CONFLICT (project_id, period, network) DO UPDATE SET complete = 1`]
+}
+
+export error SignatureMissing { event: string }
+export error AttemptInvalid { issue: string }
+export error PublicationSkipped { projectId: string; period: string; network: string }
+export error PublicationConflict { projectId: string; period: string; network: string }
+
+const sourceSequencePattern = /^(0|[1-9][0-9]{0,77})$/u
+
+function validated(key: JournalKey, context: JournalContext, signed: SignedPlan) {
+  const request = signed.plan.request
+  if (request.projectId !== key.projectId || request.period !== formatPeriod(key.period) || request.network !== key.network || context.funded === undefined || request.snapshotSha256 !== context.funded.snapshotDigest) return new AttemptInvalid({ issue: "the attester returned another monthly allocation" })
+  const attempt = signed.plan.evmReservation
+  if (attempt !== undefined && (attempt.version !== 2 || attempt.allocationDigest !== `0x${request.snapshotSha256}` || attempt.wholeGross !== signed.plan.totalGrossBase || !sourceSequencePattern.test(attempt.sourceSequence))) return new AttemptInvalid({ issue: "the attester returned an invalid monthly execution attempt" })
+  return undefined
+}
+
+schema CurrentRow { readonly authorization: string }
+schema AutomaticRow { readonly automatic: number }
+
+export interface JournalRun {
+  readonly events: ReadonlyArray<Event>
+  readonly by: string
+  readonly signed?: SignedPlan
+}
+
+effect function published(key: JournalKey, text: string) {
+  const scope = scopeOf(key)
+  const current = try first(CurrentRow, sql`SELECT authorization FROM monthly_payment_current_authorizations WHERE ${scope}`)
+  if (current?.authorization === text) return
+  const setting = try first(AutomaticRow, sql`SELECT automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1`)
+  const failure = { projectId: key.projectId, period: formatPeriod(key.period), network: key.network }
+  if (setting !== undefined && setting.automatic !== 1) throw new PublicationSkipped(failure)
+  throw new PublicationConflict(failure)
+}
+
+export effect function runJournal(key: JournalKey, context: JournalContext, run: JournalRun) {
+  if (run.signed !== undefined) {
+    const invalid = validated(key, context, run.signed)
+    if (invalid !== undefined) throw invalid
+  }
+  const outcome = try update(aggregate(key, context), (journal) => effect {
+    let state = journal.state
+    let text: string | undefined = undefined
+    const writes: Statement[] = []
+    for (const event of run.events) {
+      state = try apply(state, event, run.by)
+      if (event.type === "signEvm" || event.type === "signSolana") {
+        if (run.signed === undefined) throw new SignatureMissing({ event: event.type })
+        text = try authorizationText(run.signed, journal.rows.first?.authorization)
+        for (const statement of try signedWrites(key, journal, run.signed, state.clock)) writes.push(statement)
+      }
+      if (event.type === "complete") for (const statement of try completionWrites(key, state.clock)) writes.push(statement)
+    }
+    return { value: { state, text }, writes } satisfies Decision<{ readonly state: Commitment; readonly text: string | undefined }>
+  })
+  if (outcome.text !== undefined) try published(key, outcome.text)
+  return outcome.state
+}
+
+export effect function touchExecution(key: JournalKey, now: number) {
+  const touched = try isoAt(now * 1000)
+  return sql`INSERT INTO monthly_payment_execution (project_id, period, network, last_attempt) SELECT project_id, period, network, ${touched} FROM monthly_payment_authorizations WHERE project_id = ${key.projectId} AND period = ${formatPeriod(key.period)} AND network = ${key.network} ON CONFLICT (project_id, period, network) DO UPDATE SET last_attempt = excluded.last_attempt`
+}

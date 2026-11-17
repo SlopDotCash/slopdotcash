@@ -1,0 +1,33 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import { ConfigInvalid } from "@repo/platform/config"
+import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+
+export service PaymentRpc {
+  readonly urls: Readonly<Partial<Record<NetworkKey, Redacted.Redacted<ReadonlyArray<string>>>>>
+  readonly genesis: Readonly<Partial<Record<NetworkKey, string>>>
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+effect function objectVar(name: string, text: string | undefined, fallback: string) {
+  const parsed = Effect.try(() => JSON.parse(text ?? fallback) as unknown) catch () => undefined
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new ConfigInvalid({ name, issue: "must be a JSON object keyed by registry network" })
+  return parsed as Fields
+}
+
+export effect function paymentRpcOf(urlsText: string | undefined, genesisText: string | undefined) {
+  const listed = try objectVar("PAYMENT_RPC_URLS", urlsText, "")
+  const pinned = try objectVar("PAYMENT_SOLANA_GENESIS", genesisText, "{}")
+  const urls: Partial<Record<NetworkKey, Redacted.Redacted<ReadonlyArray<string>>>> = {}
+  for (const [network, url] of Object.entries(listed)) {
+    if (!isNetworkKey(network) || typeof url !== "string" || url === "") throw new ConfigInvalid({ name: "PAYMENT_RPC_URLS", issue: "must map registry networks to RPC URLs" })
+    urls[network] = Redacted.make([url])
+  }
+  const genesis: Partial<Record<NetworkKey, string>> = {}
+  for (const [network, pin] of Object.entries(pinned)) if (isNetworkKey(network) && typeof pin === "string" && pin.length > 0) genesis[network] = pin
+  return { urls, genesis } satisfies PaymentRpc.Shape
+}
+
+export function paymentRpc(urlsText: string | undefined, genesisText: string | undefined) {
+  return Layer.effect(PaymentRpc, paymentRpcOf(urlsText, genesisText))
+}

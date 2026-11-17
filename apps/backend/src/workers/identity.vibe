@@ -1,0 +1,38 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+import type { D1Database, RateLimit } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { Caller, Unauthenticated, outbound, preflight } from "@repo/platform/http"
+import { byCron, worker } from "@repo/platform/worker"
+import { identityApi } from "../client/identity.vibe"
+import { type IdentityVars, identitySettings } from "../identity/config.vibe"
+import { EdgeLimiters } from "../identity/flows.vibe"
+import { type ReadinessRefresher, ReportingRefresh, identityJobs } from "../identity/maintenance.vibe"
+import { IdentityRoutes } from "../identity/routes.vibe"
+
+export interface Env extends IdentityVars {
+  readonly IDENTITY_DB: D1Database
+  readonly IDENTITY_START_LIMITER: RateLimit
+  readonly IDENTITY_POLL_LIMITER: RateLimit
+  readonly REPORTING_READINESS?: ReadinessRefresher
+}
+
+const noSessions = Layer.succeed(Caller, {
+  current: () => effect {
+    throw new Unauthenticated()
+  },
+})
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.IDENTITY_DB),
+    webCrypto,
+    outbound,
+    noSessions,
+    identitySettings(env),
+    Layer.succeed(EdgeLimiters, { start: env.IDENTITY_START_LIMITER, poll: env.IDENTITY_POLL_LIMITER }),
+    Layer.succeed(ReportingRefresh, { binding: env.REPORTING_READINESS }),
+  ),
+  routes: Layer.mergeAll(IdentityRoutes, preflight(identityApi)),
+  scheduled: byCron(identityJobs),
+})

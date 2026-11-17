@@ -1,0 +1,63 @@
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema Advisory { ghsa: string; url: string }
+
+export schema IntakeView {
+  state: string
+  receivedAt: string
+  revision: number
+  reportVersion: number
+  routingState: string
+  reason: string | null
+  reviewedAt: string | null
+  canReview: boolean
+  canForward: boolean
+  canRetryScreening: boolean
+  canAuthorize: boolean
+  canRevise: boolean
+}
+
+export schema SubmissionView {
+  id: string
+  projectId: string
+  repository: string
+  origin: string
+  state: string
+  revision: number
+  attempt: number
+  advisory: Advisory | null
+  githubCreatedAt: string | null
+  failureCode: string | null
+  caseId: string | null
+  retryAllowed: boolean
+  reconcileAfter: string | null
+  createdAt: string
+  updatedAt: string
+  intake: IntakeView | null
+}
+
+export schema Submitted { replayed?: boolean; submission: SubmissionView }
+
+export schema IntakeReadiness {
+  projectId: string
+  repository: string
+  state: "ready" | "disabled" | "unavailable"
+  automatic: "ready" | "app-not-installed" | "unavailable" | "off"
+  automaticConfigured: boolean
+  storedIntake: boolean
+  checkedAt: string | null
+  stale: boolean
+  maxAgeSeconds: number
+  programStatus: string | null
+  paidParticipation: "open" | "closed"
+  handoffUrl: string | null
+}
+
+export const readinessSeconds = 30
+
+export const submitReport = route({ method: "POST", path: "/api/v1/security-submissions", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "rejected", cache: "private", status: 201 })
+export const reviseReport = route({ method: "POST", path: "/api/v1/security-submissions/:id/report", access: "sessionWrite", limitKib: 256, request: undefined, answer: Submitted, rejected: "report_not_editable", cache: "private" })
+export const intakeReadiness = route({ method: "GET", path: "/api/v1/security-programs/:id/intake", access: "public", limitKib: 1, request: undefined, answer: IntakeReadiness, rejected: "program_not_found", cache: { browserSeconds: 0, edgeSeconds: readinessSeconds } })
+
+export const intakeApi: ReadonlyArray<AnyRoute> = [submitReport, reviseReport, intakeReadiness]

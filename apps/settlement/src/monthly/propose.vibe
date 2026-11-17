@@ -1,0 +1,87 @@
+// spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
+import { nowSeconds } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { ClosedMonth } from "@repo/ports/points"
+import type { WorkRow, WorkSnapshot } from "../../gen/settlement__payoutExclusions.ts"
+import { type Event, type Monthly, apply, canCloseProposalWindow, closeProposalWindow, projectMayPropose, proposalWindowOpen } from "../../gen/settlement__monthly.effect.vibe"
+import { fromAmount } from "../kernels/amounts.ts"
+import { formatPeriod } from "../kernels/calendar.ts"
+import { type MonthKey, MonthlyFacts, amountOf, manifestOf, proposalWrites, readRows, reviewBudgetActive, stateOf, unproposed } from "./store.vibe"
+
+export schema ContributorWeight {
+  readonly githubId: string
+  readonly login: string
+  readonly points: number
+}
+
+export schema ContributorWeights = ReadonlyArray<ContributorWeight>
+
+export type Skip = "NotEligible" | "Unfunded" | "WindowPassed" | "WindowNotOpen" | "ReviewBudget"
+
+export type Failure = "SnapshotMissing" | "SnapshotWithoutLogins" | "ActorInvalid" | "Refused"
+
+export type Proposed =
+  | { readonly kind: "Proposed"; readonly projectId: string; readonly recipients: number; readonly snapshotSha256: string }
+  | { readonly kind: "AlreadyProposed"; readonly projectId: string }
+  | { readonly kind: "Incomplete"; readonly projectId: string }
+  | { readonly kind: "Skipped"; readonly projectId: string; readonly reason: Skip }
+  | { readonly kind: "Failed"; readonly projectId: string; readonly reason: Failure }
+
+function skipped(projectId: string, reason: Skip): Proposed {
+  return { kind: "Skipped", projectId, reason }
+}
+
+function failed(projectId: string, reason: Failure): Proposed {
+  return { kind: "Failed", projectId, reason }
+}
+
+function windowSkip(month: Monthly): Skip {
+  if (!canCloseProposalWindow(month)) return "WindowNotOpen"
+  const reason = closeProposalWindow(month).skip
+  return reason === "NotEligible" || reason === "Unfunded" ? reason : "WindowPassed"
+}
+
+effect function rowOf(weight: ContributorWeight) {
+  const actor = Number(weight.githubId)
+  if (!/^[1-9][0-9]{0,19}$/u.test(weight.githubId) || !Number.isSafeInteger(actor) || !Number.isSafeInteger(weight.points) || weight.points < 0) return undefined
+  const points = try orDie(Effect.try(() => BigInt(weight.points)))
+  return { actor, acceptedWork: amountOf(points), participation: 0, recognition: 0 } satisfies WorkRow
+}
+
+export effect function proposeProject(key: MonthKey) {
+  const projectId = key.projectId
+  const facts = try (try MonthlyFacts).of(projectId)
+  const now = try nowSeconds()
+  const rows = try readRows(key)
+  if (rows.base !== undefined && rows.proposed.length === rows.base.recipient_count) return { kind: "AlreadyProposed", projectId } satisfies Proposed
+  const opened = try stateOf(key, unproposed(rows), facts, now)
+  if (!proposalWindowOpen(opened)) return skipped(projectId, windowSkip(opened))
+  const current = facts.current
+  if (current === undefined) return skipped(projectId, "NotEligible")
+  const manifest = try manifestOf(projectId, current.manifest)
+  if (reviewBudgetActive(manifest, key.period)) return skipped(projectId, "ReviewBudget")
+  const ledger = try (try ClosedMonth).ledger({ projectId, period: formatPeriod(key.period) })
+  if (ledger === undefined) return failed(projectId, "SnapshotMissing")
+  const weights = Schema.decodeUnknownEffect(ContributorWeights)(ledger.weights) catch () => undefined
+  if (weights === undefined) return failed(projectId, "SnapshotWithoutLogins")
+  const workRows: WorkRow[] = []
+  const logins = new Map<number, string>()
+  for (const weight of weights) {
+    const row = try rowOf(weight)
+    if (row === undefined) return failed(projectId, "ActorInvalid")
+    workRows.push(row)
+    logins.set(row.actor, weight.login)
+  }
+  const snapshot: WorkSnapshot = { project: projectId, period: key.period, digest: ledger.sha256, coverage: "CompleteCoverage", rows: workRows }
+  const event: Event = { type: "propose", snapshot, exclusions: opened.currentRevision.exclusions, revision: opened.currentRevision }
+  const next = apply(opened, event) catch () => undefined
+  if (next === undefined) {
+    if (!projectMayPropose(opened.eligibility, opened.currentRevision)) return skipped(projectId, "NotEligible")
+    return fromAmount(opened.currentRevision.monthlyAmount) === 0n ? skipped(projectId, "Unfunded") : failed(projectId, "Refused")
+  }
+  const db = try D1
+  for (const statement of try proposalWrites(key, next, current, ledger.sha256, logins)) try db.run(statement)
+  const stored = try readRows(key)
+  if (stored.base === undefined || stored.base.source_snapshot_sha256 !== ledger.sha256 || stored.proposed.length !== stored.base.recipient_count) return { kind: "Incomplete", projectId } satisfies Proposed
+  return { kind: "Proposed", projectId, recipients: next.proposedShares.length, snapshotSha256: ledger.sha256 } satisfies Proposed
+}

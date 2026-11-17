@@ -1,0 +1,159 @@
+// spec/slopbot/budgetBlocks.md, "Only the current claim owner records an immutable block"; spec/slopbot/budgetBlocks.md, "A due block is sent once while its claim is still the failed current one"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
+import { RowMismatch, decoded, rows, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { Job as CronJob } from "@repo/platform/worker"
+import { type BudgetState, type Denial, NotAState, apply, decodeState, heldBack, noBlock } from "../../gen/slopbot__budgetBlocks.effect.vibe"
+import { installationOf } from "../installation/store.vibe"
+import { type ReviewJob, parseJob, send } from "../jobs/job.vibe"
+
+schema ClaimRow { status: string; claim_token: string | null; lease_expires_at: string | null; installation_id: number }
+
+schema BlockRow { id: number; claim_token: string; job_json: string; retry_at: string; dispatched: number }
+
+schema DueRow { review_key: string }
+
+export interface Claim {
+  readonly reviewKey: string
+  readonly token: string
+}
+
+interface Budget {
+  readonly state: BudgetState
+  readonly claimToken: string | undefined
+  readonly block: { readonly id: number; readonly job: string } | undefined
+}
+
+export const resumeLimit = 100
+
+function statusOf(status: string) {
+  switch (status) {
+    case "running": return "Running"
+    case "completed": return "Completed"
+    case "failed": return "Failed"
+    case "skipped": return "Skipped"
+    default: return status
+  }
+}
+
+effect function budgetOf([claimRows, blockRows, installationRows]: ReadonlyArray<Rows>) {
+  const now = try Clock.currentTimeMillis
+  const [review] = try decoded(ClaimRow, claimRows ?? [], "slopbot review claim")
+  const blocks = try decoded(BlockRow, blockRows ?? [], "slopbot budget blocks")
+  const install = try installationOf([installationRows ?? []], [])
+  const claimToken = review?.claim_token ?? undefined
+  const current = claimToken === undefined ? undefined : blocks.find((block) => block.claim_token === claimToken)
+  const status = review === undefined ? "NoRow" : statusOf(review.status)
+  const state = try decodeState({
+    now,
+    status,
+    token: claimToken === undefined ? 0 : 1,
+    leaseUntil: status === "Running" && review?.lease_expires_at != null ? millisOf(review.lease_expires_at) : 0,
+    current: current === undefined ? noBlock : { id: blocks.length, token: 1, retryAt: millisOf(current.retry_at), dispatched: current.dispatched === 1 },
+    blockCount: blocks.length,
+    sends: 0,
+    install,
+  })
+  return { state, claimToken, block: current === undefined ? undefined : { id: current.id, job: current.job_json } } satisfies Budget
+}
+
+function budget(reviewKey: string): Aggregate<Budget, NotAState | RowMismatch, never> {
+  const installation = sql`installation_id = (SELECT installation_id FROM slopbot_reviews WHERE review_key = ${reviewKey})`
+  return {
+    name: `slopbot budget blocks of ${reviewKey}`,
+    version: sql`SELECT coalesce((SELECT status || ':' || coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') || ':' || installation_id FROM slopbot_reviews WHERE review_key = ${reviewKey}), '')
+      || '|' || coalesce((SELECT group_concat(b.id || ':' || (d.block_id IS NOT NULL), ',') FROM slopbot_budget_blocks b LEFT JOIN slopbot_budget_dispatches d ON d.block_id = b.id WHERE b.review_key = ${reviewKey}), '')
+      || '|' || coalesce((SELECT account_login || ':' || coalesce(suspended_at, '-') || ':' || coalesce(removed_at, '-') || ':' || coalesce(source_updated_at, '-') FROM slopbot_installations WHERE ${installation}), '') AS version`,
+    reads: [
+      sql`SELECT status, claim_token, lease_expires_at, installation_id FROM slopbot_reviews WHERE review_key = ${reviewKey}`,
+      sql`SELECT b.id, b.claim_token, b.job_json, b.retry_at, (d.block_id IS NOT NULL) AS dispatched FROM slopbot_budget_blocks b LEFT JOIN slopbot_budget_dispatches d ON d.block_id = b.id WHERE b.review_key = ${reviewKey} ORDER BY b.id`,
+      sql`SELECT installation_id, account_id, account_login, account_type, created_at, suspended_at, removed_at, source_updated_at FROM slopbot_installations WHERE ${installation}`,
+    ],
+    decode: budgetOf,
+  }
+}
+
+function identifiers(job: ReviewJob) {
+  return {
+    kind: "review",
+    deliveryId: job.deliveryId,
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    owner: job.owner,
+    repo: job.repo,
+    itemKind: job.itemKind,
+    number: job.number,
+  } satisfies ReviewJob
+}
+
+export effect function budgetState(reviewKey: string) {
+  return (try load(budget(reviewKey))).state.state
+}
+
+export effect function budgetBlockedUntil(reviewKey: string) {
+  const state = try budgetState(reviewKey)
+  if (!heldBack(state)) return undefined
+  return try isoAt(state.current.retryAt)
+}
+
+export effect function recordBudgetBlock(claim: Claim, job: ReviewJob, denial: Denial) {
+  return try update(budget(claim.reviewKey), (current) => effect {
+    const { state } = current
+    try apply(state, { type: "recordBlock", token: claim.token === current.claimToken ? state.token : state.token + 1, d: denial })
+    const blockedAt = try isoAt(state.now)
+    const retryAt = try isoAt(denial.resetAt)
+    const jobJson = try orDie(Effect.try(() => JSON.stringify(identifiers(job))))
+    return {
+      value: retryAt,
+      writes: [sql`INSERT INTO slopbot_budget_blocks (review_key, claim_token, job_json, blocked_at, retry_at) VALUES (${claim.reviewKey}, ${claim.token}, ${jobJson}, ${blockedAt}, ${retryAt})`],
+    } satisfies Decision<string>
+  })
+}
+
+export effect function dueBudgetBlocks() {
+  const at = try isoNow()
+  const due = try rows(DueRow, sql`SELECT b.review_key FROM slopbot_budget_blocks b
+    JOIN slopbot_reviews r ON r.review_key = b.review_key AND r.claim_token = b.claim_token
+    JOIN slopbot_installations i ON i.installation_id = r.installation_id
+    WHERE r.status = 'failed' AND b.retry_at <= ${at} AND i.removed_at IS NULL AND i.suspended_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM slopbot_budget_dispatches d WHERE d.block_id = b.id)
+    ORDER BY b.retry_at, b.id LIMIT ${resumeLimit}`)
+  return due.map((row) => row.review_key)
+}
+
+export effect function sendBudgetResume(reviewKey: string) {
+  const { state, block } = (try load(budget(reviewKey))).state
+  try apply(state, { type: "sendResume" })
+  try send(try parseJob(block?.job ?? ""))
+}
+
+export effect function recordBudgetDispatch(reviewKey: string) {
+  return try update(budget(reviewKey), (current) => effect {
+    try apply(current.state, { type: "recordDispatch" })
+    const blockId = current.block?.id ?? 0
+    const at = try isoAt(current.state.now)
+    return {
+      value: at,
+      writes: [sql`INSERT INTO slopbot_budget_dispatches (block_id, queued_at) SELECT ${blockId}, ${at} WHERE NOT EXISTS (SELECT 1 FROM slopbot_budget_dispatches WHERE block_id = ${blockId})`],
+    } satisfies Decision<string>
+  })
+}
+
+effect function resumeOne(reviewKey: string) {
+  try sendBudgetResume(reviewKey)
+  try recordBudgetDispatch(reviewKey)
+  return 1
+}
+
+export effect function resumeBudgetBlocks() {
+  let sent = 0
+  for (const reviewKey of try dueBudgetBlocks()) {
+    sent += resumeOne(reviewKey) catch effect (error) => {
+      if (error._tag === "Rejected") return 0
+      throw error
+    }
+  }
+  return sent
+}
+
+export const budgetJobs = [{ name: "slopbot budget resume", run: () => Effect.asVoid(resumeBudgetBlocks()) }] satisfies ReadonlyArray<CronJob>

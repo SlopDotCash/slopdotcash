@@ -1,0 +1,430 @@
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
+import { millisOf } from "@repo/platform/clock"
+import { ConfigInvalid, tierOf } from "@repo/platform/config"
+import { positiveBudgetFits } from "@repo/settlement/kernels/budget"
+import type { Environment, Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts"
+import { apply, initial, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
+import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, definitions, evmNetworks, expectedSecrets, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
+import { type ReadinessEvent, type ReadinessSettings, decodeReadiness, sameReadiness } from "./readiness.vibe"
+import { jupiter, kyberswap } from "./pins.ts"
+
+export interface NativeLimits { readonly perTransaction: bigint; readonly perDay: bigint; readonly additionalFeeReserve: bigint }
+
+export interface ConverterLimits {
+  readonly minValueMicro: bigint
+  readonly gasMultiple: bigint
+  readonly maxSlippageBps: number
+  readonly maxPriceImpactBps: number
+  readonly runCapMicro: bigint
+  readonly dailyCapMicro: bigint
+  readonly solanaFeeMicro: bigint
+}
+
+export interface BridgeNativeFee { readonly network: Network; readonly maximum: bigint }
+
+export interface BuybackLimits {
+  readonly startAt: number
+  readonly shareBps: bigint
+  readonly burnBps: bigint
+  readonly minBridgeMicro: bigint
+  readonly maxBridgeCostBps: bigint
+  readonly maxBridgeNativeFee: ReadonlyArray<BridgeNativeFee>
+  readonly minBuyMicro: bigint
+  readonly minBurnMicro: bigint
+  readonly maxSlippageBps: number
+  readonly maxPriceImpactBps: number
+  readonly runCapMicro: bigint
+  readonly dailyCapMicro: bigint
+  readonly unfilledAlertSeconds: bigint
+  readonly solanaBridgeNative: NativeLimits | undefined
+}
+
+export interface NetworkBudget { readonly network: Network; readonly limits: NativeLimits }
+
+export interface EnabledNetwork {
+  readonly network: Network
+  readonly definition: NetworkDefinition
+  readonly feeWallet: string
+  readonly allowlist: ReadonlyArray<string>
+  readonly nativeLimits: NativeLimits | undefined
+}
+
+export interface FeeConfig {
+  readonly converterMode: Mode
+  readonly buybackMode: Mode
+  readonly converter: ConverterLimits | undefined
+  readonly buyback: BuybackLimits | undefined
+  readonly networks: ReadonlyArray<EnabledNetwork>
+  readonly budgets: ReadonlyArray<NetworkBudget>
+  readonly keys: ReadonlyArray<Network>
+  readonly evmWallet: string | undefined
+  readonly solanaWallet: string | undefined
+  readonly kyberClientId: string
+  readonly jupiterApiUrl: string
+}
+
+export interface Endpoint { readonly network: Network; readonly url: Redacted.Redacted<string> }
+export interface Endpoints { readonly rpc: ReadonlyArray<Endpoint>; readonly solanaRecovery: Redacted.Redacted<string> | undefined; readonly jupiterApiKey: Redacted.Redacted<string> | undefined }
+
+const exactInteger = /^(0|[1-9][0-9]{0,30})$/u
+const nativeInteger = /^(0|[1-9][0-9]{0,77})$/u
+const utcInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/u
+const httpUrl = /^https?:\/\//u
+const dustDecision = "awaits the owner's decision on whether tiny fee balances may accumulate"
+const bridgeSources: ReadonlyArray<Network> = ["Base", "Ethereum", "Solana"]
+const modes = new Map<string, Mode>([["off", "Off"], ["dry_run", "DryRun"], ["live", "Live"]])
+const modeNames = new Map<Mode, string>([["Off", "off"], ["DryRun", "dry_run"], ["Live", "live"]])
+
+effect function bigintOf(name: string, text: string, pattern: RegExp, issue: string) {
+  if (!pattern.test(text)) throw new ConfigInvalid({ name, issue })
+  return try Effect.try({ try: () => BigInt(text), catch: () => new ConfigInvalid({ name, issue }) })
+}
+
+effect function integer(name: string, text: string | undefined, missing = "is required") {
+  const value = (text ?? "").trim()
+  if (value === "") throw new ConfigInvalid({ name, issue: missing })
+  return try bigintOf(name, value, exactInteger, "must be a non-negative integer")
+}
+
+effect function basisPoints(name: string, text: string | undefined) {
+  const value = try integer(name, text)
+  if (value > 10_000n) throw new ConfigInvalid({ name, issue: "must be at most 10000" })
+  return value
+}
+
+effect function modeOf(name: string, text: string | undefined) {
+  const mode = modes.get((text ?? "off").trim())
+  if (mode === undefined) throw new ConfigInvalid({ name, issue: "must be off, dry_run or live" })
+  return mode
+}
+
+effect function jsonObject(name: string, text: string) {
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new ConfigInvalid({ name, issue: "must be a JSON object" }) })
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ConfigInvalid({ name, issue: "must be a JSON object" })
+  return value as Readonly<Record<string, unknown>>
+}
+
+function field(object: Readonly<Record<string, unknown>>, key: string) {
+  return Object.hasOwn(object, key) ? object[key] : undefined
+}
+
+effect function nativeLimitsOf(name: string, value: unknown, reserve: "positive" | "zero") {
+  const invalid = new ConfigInvalid({ name, issue: "needs exact perTransaction, perDay and additionalFeeReserve integers" })
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw invalid
+  const entry = value as Readonly<Record<string, unknown>>
+  const [perTransaction, perDay, additional] = [field(entry, "perTransaction"), field(entry, "perDay"), field(entry, "additionalFeeReserve")]
+  if (typeof perTransaction !== "string" || typeof perDay !== "string" || typeof additional !== "string") throw invalid
+  const limits = {
+    perTransaction: try bigintOf(name, perTransaction, nativeInteger, invalid.issue),
+    perDay: try bigintOf(name, perDay, nativeInteger, invalid.issue),
+    additionalFeeReserve: try bigintOf(name, additional, nativeInteger, invalid.issue),
+  } satisfies NativeLimits
+  if (!positiveBudgetFits(limits.perTransaction, limits.perDay) || limits.additionalFeeReserve >= limits.perTransaction) throw new ConfigInvalid({ name, issue: "the daily budget must cover one positive transaction limit and its additional fees" })
+  if (reserve === "positive" ? limits.additionalFeeReserve === 0n : additional !== "0") throw new ConfigInvalid({ name, issue: "Base needs a positive data/operator allowance; other networks use zero" })
+  return limits
+}
+
+effect function budgetsOf(text: string | undefined) {
+  const name = "FEE_CONVERTER_NATIVE_BUDGETS"
+  if ((text ?? "").trim() === "") return []
+  const object = try jsonObject(name, text ?? "")
+  const budgets: Array<NetworkBudget> = []
+  for (const [key, value] of Object.entries(object)) {
+    const network = networkNamed(key)
+    if (network === undefined) throw new ConfigInvalid({ name, issue: "names an invalid network" })
+    budgets.push({ network, limits: try nativeLimitsOf(`${name}.${key}`, value, network === "Base" ? "positive" : "zero") })
+  }
+  return budgets
+}
+
+effect function enabledNetworksOf(text: string | undefined) {
+  const names = (text ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "")
+  const unknown = names.find((name) => networkNamed(name) === undefined)
+  if (unknown !== undefined) throw new ConfigInvalid({ name: "FEE_CONVERTER_NETWORKS", issue: `unknown network ${unknown}` })
+  return [...new Set(names.flatMap((name) => networkOrder.filter((network) => definitions[network].name === name)))]
+}
+
+effect function allowlistOf(text: string | undefined) {
+  const name = "FEE_CONVERTER_ALLOWLIST"
+  if ((text ?? "").trim() === "") return {}
+  const object = try jsonObject(name, text ?? "")
+  const unknown = Object.keys(object).find((key) => networkNamed(key) === undefined)
+  if (unknown !== undefined) throw new ConfigInvalid({ name, issue: `unknown network ${unknown}` })
+  return object
+}
+
+effect function sharedWallet(vars: FeeVars, family: ReadonlyArray<Network>, enabled: ReadonlyArray<Network>) {
+  const wallets: Array<string> = []
+  for (const network of family) {
+    const definition = definitions[network]
+    const value = (vars[definition.walletVar] ?? "").trim()
+    if ((value !== "" || enabled.includes(network)) && !isTokenAddress(network, value)) throw new ConfigInvalid({ name: definition.walletVar, issue: "is not set or invalid" })
+    if (value !== "" && wallets.length > 0 && wallets[0] !== value) throw new ConfigInvalid({ name: definition.walletVar, issue: "differs from the shared fee wallet of its family" })
+    if (value !== "") wallets.push(value)
+  }
+  return wallets[0]
+}
+
+effect function converterLimitsOf(vars: FeeVars) {
+  const solanaFee = (vars.FEE_CONVERTER_SOLANA_FEE_MICRO ?? "").trim()
+  return {
+    minValueMicro: try integer("FEE_CONVERTER_MIN_VALUE_MICRO", vars.FEE_CONVERTER_MIN_VALUE_MICRO, dustDecision),
+    gasMultiple: try integer("FEE_CONVERTER_GAS_MULTIPLE", vars.FEE_CONVERTER_GAS_MULTIPLE, dustDecision),
+    maxSlippageBps: Number(try basisPoints("FEE_CONVERTER_MAX_SLIPPAGE_BPS", vars.FEE_CONVERTER_MAX_SLIPPAGE_BPS)),
+    maxPriceImpactBps: Number(try basisPoints("FEE_CONVERTER_MAX_PRICE_IMPACT_BPS", vars.FEE_CONVERTER_MAX_PRICE_IMPACT_BPS)),
+    runCapMicro: try integer("FEE_CONVERTER_RUN_CAP_MICRO", vars.FEE_CONVERTER_RUN_CAP_MICRO),
+    dailyCapMicro: try integer("FEE_CONVERTER_DAILY_CAP_MICRO", vars.FEE_CONVERTER_DAILY_CAP_MICRO),
+    solanaFeeMicro: solanaFee === "" ? 2_000n : try integer("FEE_CONVERTER_SOLANA_FEE_MICRO", solanaFee),
+  } satisfies ConverterLimits
+}
+
+effect function bridgeNativeFeesOf(text: string | undefined) {
+  const name = "BUYBACK_MAX_BRIDGE_NATIVE_FEE"
+  const object = try jsonObject(name, text ?? "")
+  const fees: Array<BridgeNativeFee> = []
+  for (const [key, value] of Object.entries(object)) {
+    const network = bridgeSources.find((source) => definitions[source].name === key)
+    if (network === undefined) throw new ConfigInvalid({ name, issue: `${key} is not a buyback source network` })
+    if (typeof value !== "string") throw new ConfigInvalid({ name, issue: "a bridge native fee must be a decimal string" })
+    fees.push({ network, maximum: try integer(`${name}.${key}`, value) })
+  }
+  return fees
+}
+
+effect function solanaBridgeNativeOf(text: string | undefined) {
+  const name = "BUYBACK_SOLANA_BRIDGE_NATIVE"
+  if ((text ?? "").trim() === "") return undefined
+  const object = try jsonObject(name, text ?? "")
+  const perTransaction = field(object, "perTransaction")
+  const perDay = field(object, "perDay")
+  if (typeof perTransaction !== "string" || typeof perDay !== "string") throw new ConfigInvalid({ name, issue: "needs perTransaction and perDay" })
+  return try nativeLimitsOf(name, { perTransaction, perDay, additionalFeeReserve: "0" }, "zero")
+}
+
+effect function startOf(text: string | undefined) {
+  const value = (text ?? "").trim()
+  const millis = millisOf(value)
+  if (!utcInstant.test(value) || Number.isNaN(millis)) throw new ConfigInvalid({ name: "BUYBACK_START_AT", issue: "must be a UTC ISO-8601 instant" })
+  return millis
+}
+
+effect function buybackLimitsOf(vars: FeeVars) {
+  return {
+    startAt: try startOf(vars.BUYBACK_START_AT),
+    maxBridgeNativeFee: try bridgeNativeFeesOf(vars.BUYBACK_MAX_BRIDGE_NATIVE_FEE),
+    solanaBridgeNative: try solanaBridgeNativeOf(vars.BUYBACK_SOLANA_BRIDGE_NATIVE),
+    shareBps: try basisPoints("BUYBACK_SHARE_BPS", vars.BUYBACK_SHARE_BPS),
+    burnBps: try basisPoints("BUYBACK_BURN_BPS", vars.BUYBACK_BURN_BPS),
+    minBridgeMicro: try integer("BUYBACK_MIN_BRIDGE_MICRO", vars.BUYBACK_MIN_BRIDGE_MICRO),
+    maxBridgeCostBps: try basisPoints("BUYBACK_MAX_BRIDGE_COST_BPS", vars.BUYBACK_MAX_BRIDGE_COST_BPS),
+    minBuyMicro: try integer("BUYBACK_MIN_BUY_MICRO", vars.BUYBACK_MIN_BUY_MICRO),
+    minBurnMicro: try integer("BUYBACK_MIN_BURN_MICRO", vars.BUYBACK_MIN_BURN_MICRO),
+    maxSlippageBps: Number(try basisPoints("BUYBACK_MAX_SLIPPAGE_BPS", vars.BUYBACK_MAX_SLIPPAGE_BPS)),
+    maxPriceImpactBps: Number(try basisPoints("BUYBACK_MAX_PRICE_IMPACT_BPS", vars.BUYBACK_MAX_PRICE_IMPACT_BPS)),
+    runCapMicro: try integer("BUYBACK_RUN_CAP_MICRO", vars.BUYBACK_RUN_CAP_MICRO),
+    dailyCapMicro: try integer("BUYBACK_DAILY_CAP_MICRO", vars.BUYBACK_DAILY_CAP_MICRO),
+    unfilledAlertSeconds: try integer("BUYBACK_UNFILLED_ALERT_SECONDS", vars.BUYBACK_UNFILLED_ALERT_SECONDS),
+  } satisfies BuybackLimits
+}
+
+effect function enabledNetworkOf(vars: FeeVars, network: Network, allowlist: Readonly<Record<string, unknown>>, budgets: ReadonlyArray<NetworkBudget>) {
+  const definition = definitions[network]
+  const list = field(allowlist, definition.name) ?? []
+  if (!Array.isArray(list) || !list.every((token: unknown) => typeof token === "string" && isTokenAddress(network, token))) throw new ConfigInvalid({ name: "FEE_CONVERTER_ALLOWLIST", issue: `the ${definition.name} list has an invalid token` })
+  const tokens: ReadonlyArray<string> = list.filter((token: unknown) => typeof token === "string")
+  return {
+    network,
+    definition,
+    feeWallet: (vars[definition.walletVar] ?? "").trim(),
+    allowlist: tokens,
+    nativeLimits: budgets.find((budget) => budget.network === network)?.limits,
+  } satisfies EnabledNetwork
+}
+
+export effect function decodeConfig(vars: FeeVars, presentSecrets: ReadonlyArray<string>) {
+  const converterMode = try modeOf("FEE_CONVERTER_MODE", vars.FEE_CONVERTER_MODE)
+  const buybackMode = try modeOf("BUYBACK_MODE", vars.BUYBACK_MODE)
+  const enabled = try enabledNetworksOf(vars.FEE_CONVERTER_NETWORKS)
+  const allowlist = try allowlistOf(vars.FEE_CONVERTER_ALLOWLIST)
+  const budgets = try budgetsOf(vars.FEE_CONVERTER_NATIVE_BUDGETS)
+  const evmWallet = try sharedWallet(vars, evmNetworks, enabled)
+  const solanaWallet = try sharedWallet(vars, ["Solana"], enabled)
+  const networks: Array<EnabledNetwork> = []
+  for (const network of enabled) networks.push(try enabledNetworkOf(vars, network, allowlist, budgets))
+  return {
+    converterMode,
+    buybackMode,
+    converter: converterMode === "Off" ? undefined : try converterLimitsOf(vars),
+    buyback: buybackMode === "Off" ? undefined : try buybackLimitsOf(vars),
+    networks,
+    budgets,
+    keys: networkOrder.filter((network) => presentSecrets.includes(definitions[network].keySecret)),
+    evmWallet,
+    solanaWallet,
+    kyberClientId: (vars.KYBERSWAP_CLIENT_ID ?? "").trim() || kyberswap.clientId,
+    jupiterApiUrl: (vars.JUPITER_API_URL ?? "").trim() || jupiter.api,
+  } satisfies FeeConfig
+}
+
+export effect function environmentOf(vars: FeeVars) {
+  const tier = try tierOf(vars.SLOP_ENVIRONMENT)
+  return (tier === "staging" ? "Staging" : "Production") satisfies Environment
+}
+
+export function presentSecrets(secrets: FeeSecrets): ReadonlyArray<SecretName> {
+  return secretNames.filter((name) => (secrets[name] ?? "").trim() !== "")
+}
+
+effect function urlOf(name: SecretName, text: string | undefined, fallback: string | undefined) {
+  const value = (text ?? "").trim() || fallback
+  if (value === undefined) return undefined
+  if (!httpUrl.test(value)) throw new ConfigInvalid({ name, issue: "must be an http(s) URL" })
+  return Redacted.make(value)
+}
+
+export effect function decodeEndpoints(config: FeeConfig, secrets: FeeSecrets) {
+  const rpc: Array<Endpoint> = []
+  for (const { network, definition } of config.networks) {
+    const url = try urlOf(definition.rpcSecret, secrets[definition.rpcSecret], definition.defaultRpcUrl)
+    if (url !== undefined) rpc.push({ network, url })
+  }
+  const jupiterApiKey = (secrets.JUPITER_API_KEY ?? "").trim()
+  return {
+    rpc,
+    solanaRecovery: try urlOf("SOLANA_RECOVERY_RPC_URL", secrets.SOLANA_RECOVERY_RPC_URL, undefined),
+    jupiterApiKey: jupiterApiKey === "" ? undefined : Redacted.make(jupiterApiKey),
+  } satisfies Endpoints
+}
+
+export interface Held { readonly runtime: Runtime; readonly wallets: ReadonlyArray<string> }
+
+export const unpublished: Held = { runtime: initial, wallets: ["unpublished EVM fee wallet", "unpublished Solana fee wallet"] }
+
+export type RuntimeEvent =
+  | { readonly type: "chooseEnvironment"; readonly environment: Environment }
+  | { readonly type: "setReleaseVariable"; readonly variable: boolean }
+  | { readonly type: "publish"; readonly source: number; readonly config: FeeConfig }
+  | ReadinessEvent
+
+function walletId(wallets: ReadonlyArray<string>, address: string | undefined) {
+  if (address === undefined) return 0
+  const index = wallets.indexOf(address)
+  return index === -1 ? wallets.length + 1 : index + 1
+}
+
+function registered(wallets: ReadonlyArray<string>, addresses: ReadonlyArray<string | undefined>) {
+  return addresses.reduce<ReadonlyArray<string>>((list, address) => address === undefined || list.includes(address) ? list : [...list, address], wallets)
+}
+
+export function workerConfig(config: FeeConfig, source: number, wallets: ReadonlyArray<string>): WorkerConfig {
+  return {
+    source,
+    converterMode: config.converterMode,
+    buybackMode: config.buybackMode,
+    networks: config.networks.map((entry) => entry.network),
+    keys: [...config.keys],
+    nativeLimits: networkOrder.filter((network) => config.budgets.some((budget) => budget.network === network)),
+    evmWallet: walletId(wallets, config.evmWallet),
+    solanaWallet: walletId(wallets, config.solanaWallet),
+  }
+}
+
+function specEvent(held: Held, event: RuntimeEvent): { readonly event: Event; readonly wallets: ReadonlyArray<string> } {
+  switch (event.type) {
+    case "publish": {
+      const wallets = registered(held.wallets, [event.config.evmWallet, event.config.solanaWallet])
+      return { event: { type: "publish", config: workerConfig(event.config, event.source, wallets) }, wallets }
+    }
+    case "verifyReadiness":
+      return { event: { type: "verifyReadiness", network: event.network, listedWallet: walletId(held.wallets, event.wallet) }, wallets: held.wallets }
+    case "chooseEnvironment":
+      return { event: { type: "chooseEnvironment", environment: event.environment }, wallets: held.wallets }
+    case "setReleaseVariable":
+      return { event: { type: "setReleaseVariable", variable: event.variable }, wallets: held.wallets }
+    case "withdrawReadiness":
+      return { event: { type: "withdrawReadiness", network: event.network }, wallets: held.wallets }
+    case "setReplacement":
+      return { event: { type: "setReplacement", active: event.active }, wallets: held.wallets }
+  }
+}
+
+export effect function send(held: Held, event: RuntimeEvent, by: Sender) {
+  const next = specEvent(held, event)
+  const runtime = try apply(held.runtime, next.event, by)
+  return { runtime, wallets: next.wallets } satisfies Held
+}
+
+export const isolatePublication = 1
+
+export interface ReadinessOutcome { readonly event: ReadinessEvent; readonly granted: boolean }
+
+export interface Derived {
+  readonly environment: Environment
+  readonly config: FeeConfig
+  readonly held: Held
+  readonly readiness: ReadonlyArray<ReadinessOutcome>
+}
+
+export interface Release {
+  readonly vars: FeeVars
+  readonly secretInventory: ReadonlyArray<string>
+  readonly releaseVariable: boolean
+  readonly source: number
+  readonly previous: Held
+  readonly ownerApproval: ReadinessSettings
+}
+
+interface Admission {
+  readonly environment: Environment
+  readonly config: FeeConfig
+  readonly settings: ReadinessSettings
+  readonly releaseVariable: boolean
+  readonly source: number
+  readonly previous: Held
+}
+
+function readinessEvents(held: Held, settings: ReadinessSettings): ReadonlyArray<ReadinessEvent> {
+  const { ready, replacementActive } = held.runtime
+  const approved = (network: Network) => settings.entries.some((entry) => entry.network === network && walletId(held.wallets, entry.wallet) === walletOf(held.runtime, network))
+  const withdrawn = networkOrder.filter((network) => readyFor(ready, network) && !approved(network)).map((network): ReadinessEvent => ({ type: "withdrawReadiness", network }))
+  const verified = settings.entries.filter((entry) => !readyFor(ready, entry.network)).map((entry): ReadinessEvent => ({ type: "verifyReadiness", network: entry.network, wallet: entry.wallet }))
+  const replacement: ReadonlyArray<ReadinessEvent> = settings.replacementActive === replacementActive ? [] : [{ type: "setReplacement", active: settings.replacementActive }]
+  return [...withdrawn, ...verified, ...replacement]
+}
+
+effect function admit(admission: Admission) {
+  const { environment, config, settings, releaseVariable, source, previous } = admission
+  let held = previous
+  if (environment !== held.runtime.environment) held = try send(held, { type: "chooseEnvironment", environment }, "ReleaseWorkflow")
+  if (releaseVariable !== held.runtime.variableEnabled) held = try send(held, { type: "setReleaseVariable", variable: releaseVariable }, "Owner")
+  held = try send(held, { type: "publish", source, config }, "ReleaseWorkflow")
+  const readiness: Array<ReadinessOutcome> = []
+  for (const event of readinessEvents(held, settings)) {
+    const next = send(held, event, "Owner") catch () => undefined
+    readiness.push({ event, granted: next !== undefined })
+    held = next ?? held
+  }
+  return { environment, config, held, readiness } satisfies Derived
+}
+
+export effect function isolateRuntime(vars: FeeVars, secrets: ReadonlyArray<string>) {
+  const environment = try environmentOf(vars)
+  const config = try decodeConfig(vars, secrets)
+  const settings = try decodeReadiness(vars)
+  return try admit({ environment, config, settings, releaseVariable: environment === "Production", source: isolatePublication, previous: unpublished })
+}
+
+export effect function preflight(release: Release) {
+  const environment = try environmentOf(release.vars)
+  const expected: ReadonlyArray<string> = expectedSecrets(environment)
+  if (release.secretInventory.some((name) => !expected.includes(name))) throw new ConfigInvalid({ name: "secrets", issue: "the fee-converter Worker secret inventory contains unexpected entries" })
+  const config = try decodeConfig(release.vars, release.secretInventory)
+  const settings = try decodeReadiness(release.vars)
+  if (!sameReadiness(settings, release.ownerApproval)) throw new ConfigInvalid({ name: "FEE_READY", issue: "FEE_READY and FEE_REPLACEMENT_ACTIVE differ from the owner's authenticated approval" })
+  return try admit({ environment, config, settings, releaseVariable: release.releaseVariable, source: release.source, previous: release.previous })
+}
+
+export function summary(derived: Derived) {
+  const names = derived.config.networks.map((entry) => entry.definition.name).join(",")
+  return `fee-converter mode ${modeNames.get(derived.config.converterMode) ?? ""}; networks ${names || "none"}`
+}

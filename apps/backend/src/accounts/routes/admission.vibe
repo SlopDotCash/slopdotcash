@@ -1,0 +1,120 @@
+// spec/backend/accounts.md, "Account identity, sessions and membership"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
+import type { Fetcher } from "@repo/platform/bindings"
+import { type Outcome, exchanged } from "@repo/platform/browser"
+import { nowSeconds } from "@repo/platform/clock"
+import { localDevelopmentOrigin, tierOf } from "@repo/platform/config"
+import { json, outboundVia, sameOriginWrite } from "@repo/platform/http"
+import { deploymentOrigins } from "../../client/identity.vibe"
+import { postPointsJoin } from "../../client/refusals.vibe"
+import { challengeOf } from "../../identity/pkce.vibe"
+import { countRequest, retryAfterSeconds, windowKey } from "../../identity/rateWindow.vibe"
+import { bare } from "./refusals.vibe"
+
+export interface AccountVars {
+  readonly SLOP_ENVIRONMENT?: string
+  readonly PAYMENTS_ALLOWED_ORIGIN?: string
+  readonly TRACE_AUTH_SECRET?: string
+  readonly X_CLIENT_ID?: string
+  readonly X_CLIENT_SECRET?: string
+  readonly SLOP_IDENTITY: Fetcher
+  readonly SLOP_NOTIFY?: Fetcher
+}
+
+export interface XClient {
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted<string>
+}
+
+export service AccountSettings {
+  readonly browserOrigins: ReadonlySet<string>
+  readonly limiterSecret: Redacted.Redacted<string> | undefined
+  readonly pkceKey: Redacted.Redacted<string>
+  readonly x: XClient | undefined
+  readonly identity: Fetcher
+  readonly notify: Fetcher | undefined
+}
+
+export error LimiterUnavailable
+
+const stagingOrigins: ReadonlyArray<string> = ["https://staging.slop.cash", "https://slop-staging.pages.dev"]
+
+const pointsLimit = 20
+
+const serviceDeadlineMs = 10_000
+
+const unreachable: Outcome = { kind: "unreachable" }
+
+function extraOrigins(configured: string | undefined): ReadonlyArray<string> {
+  return configured !== undefined && (stagingOrigins.includes(configured) || localDevelopmentOrigin(configured)) ? [configured] : []
+}
+
+export function accountSettings(vars: AccountVars) {
+  return Layer.effect(AccountSettings, effect {
+    const tier = try tierOf(vars.SLOP_ENVIRONMENT)
+    const secretText = vars.TRACE_AUTH_SECRET ?? ""
+    const clientId = vars.X_CLIENT_ID ?? ""
+    const clientSecret = vars.X_CLIENT_SECRET ?? ""
+    return {
+      browserOrigins: new Set([...deploymentOrigins[tier].browserOrigins, ...extraOrigins(vars.PAYMENTS_ALLOWED_ORIGIN)]),
+      limiterSecret: secretText.length >= 32 ? Redacted.make(secretText) : undefined,
+      pkceKey: Redacted.make(try challengeOf(`slop-x-pkce:${secretText}`)),
+      x: clientId !== "" && clientSecret !== "" ? { clientId, clientSecret: Redacted.make(clientSecret) } : undefined,
+      identity: vars.SLOP_IDENTITY,
+      notify: vars.SLOP_NOTIFY,
+    } satisfies AccountSettings.Shape
+  })
+}
+
+export function okStatus(status: number) {
+  return status >= 200 && status <= 299
+}
+
+export effect function exchangedVia(fetcher: Fetcher, request: HttpClientRequest.HttpClientRequest, limitBytes: number) {
+  provide outboundVia(fetcher) {
+    return try Effect.timeoutOrElse(exchanged(request, limitBytes), { duration: serviceDeadlineMs, orElse: () => Effect.succeed(unreachable) })
+  }
+}
+
+export function postJson(url: string, body: unknown, headers: Readonly<Record<string, string>> = {}) {
+  return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.make("POST")(url, { headers }), body)
+}
+
+effect function limited() {
+  const { limiterSecret } = try AccountSettings
+  if (limiterSecret === undefined) throw new LimiterUnavailable()
+  const request = try HttpServerRequest.HttpServerRequest
+  const now = try nowSeconds()
+  const counted = try countRequest(try windowKey(limiterSecret, "points-web", request.headers["cf-connecting-ip"] ?? "unattributed"), now)
+  if (counted.count <= pointsLimit) return undefined
+  return bare(postPointsJoin.rateLimited, {}, { "retry-after": String(retryAfterSeconds(counted, now)) })
+}
+
+export effect function pointsOrigin() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const { browserOrigins } = try AccountSettings
+  const forbidden = bare(postPointsJoin.originForbiddenNoStore)
+  if (!browserOrigins.has(new URL(request.originalUrl).origin)) return forbidden
+  if (request.method !== "GET" && (request.method !== "POST" || !(try sameOriginWrite()))) return forbidden
+  return undefined
+}
+
+effect function gated<E, R>(program: HttpServerResponse.HttpServerResponse!E!R) {
+  if ((try HttpServerRequest.HttpServerRequest).method === "POST") {
+    const refused = try limited()
+    if (refused !== undefined) return refused
+  }
+  return try program
+}
+
+export effect function pointsAnswer<E, R>(program: HttpServerResponse.HttpServerResponse!E!R) {
+  const forbidden = try pointsOrigin()
+  if (forbidden !== undefined) return forbidden
+  return gated(program) catch effect () => {
+    try Effect.logError("points API failure")
+    return bare(postPointsJoin.pointsUnavailable)
+  }
+}
+
+export function pointsJson(body: unknown, cookie?: string) {
+  return json(body, 200, cookie === undefined ? {} : { "set-cookie": cookie })
+}

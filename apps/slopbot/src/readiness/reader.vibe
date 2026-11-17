@@ -1,0 +1,49 @@
+// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import type { ReportingRead, ReportingResult } from "../../gen/slopbot__reportingReadiness.ts"
+import { checkedResult } from "../../gen/slopbot__reportingReadiness.effect.vibe"
+import type { Target } from "./targets.vibe"
+
+const Fields = Schema.Record(Schema.String, Schema.Unknown)
+
+const limitBytes = 64 * 1024
+const nodeId = /^[A-Za-z0-9_=-]{4,256}$/u
+
+function readOf(readKind: ReportingResult): ReportingRead {
+  return { readKind, readEnabled: false, readRepositoryId: 0, readNodeId: "", nodeWellFormed: false }
+}
+
+function idOf(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+effect function installationOf(target: Target) {
+  return (try GitHubApp).installationFor(target.owner, target.name) catch (error) => error._tag === "NotFound" ? null : undefined
+}
+
+effect function appRead(target: Target) {
+  const installation = try installationOf(target)
+  if (installation === null) return readOf("AppNotInstalled")
+  if (installation === undefined) return readOf("ReportingUnavailable")
+  const scoped = (try GitHubApp).asInstallation(installation, { repositories: [target.name], permissions: { repository_advisories: "read" } })
+  provide scoped {
+    const github = try GitHub
+    const facts = try github.json(`/repos/${target.owner}/${target.name}`, Fields, { limitBytes })
+    const node = facts["node_id"]
+    const readNodeId = typeof node === "string" ? node : ""
+    const identity: ReportingRead = { readKind: "ReportingVerified", readEnabled: false, readRepositoryId: idOf(facts["id"]), readNodeId, nodeWellFormed: nodeId.test(readNodeId) }
+    const fullName = facts["full_name"]
+    const sameName = typeof fullName === "string" && fullName.toLowerCase() === target.repository.toLowerCase()
+    if (!sameName || checkedResult(identity, target.expected) !== "ReportingVerified") return readOf("IdentityMismatch")
+    const reporting = try github.json(`/repos/${target.owner}/${target.name}/private-vulnerability-reporting`, Fields, { limitBytes })
+    const enabled = reporting["enabled"]
+    if (typeof enabled !== "boolean") return readOf("ReportingUnavailable")
+    return { ...identity, readEnabled: enabled }
+  }
+}
+
+export effect function reportingRead(target: Target) {
+  const read = try exit(appRead(target))
+  return Exit.isSuccess(read) ? read.value : readOf("ReportingUnavailable")
+}

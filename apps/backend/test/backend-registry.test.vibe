@@ -1,0 +1,312 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+import { Response } from "miniflare"
+
+const stewardId = 41
+const moderatorId = 18633264
+const readerId = 5000
+const contract = "project-registry-v1"
+const listCache = "public, max-age=0, s-maxage=30"
+const immutable = "public, max-age=31536000, immutable"
+
+interface Fixture {
+  readonly id: string
+  readonly repository: string
+  readonly repositoryId: number
+  readonly aliases?: ReadonlyArray<string>
+  readonly listingTier: string
+  readonly headline: string
+}
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+}
+
+const alpha: Fixture = { id: "alpha", repository: "member-41/alpha", repositoryId: 9101, aliases: ["member-41/shared-tool"], listingTier: "community", headline: "First tooling." }
+const beta: Fixture = { id: "beta", repository: "member-41/shared-tool", repositoryId: 9102, listingTier: "featured", headline: "Listed under the old path." }
+const gamma: Fixture = { id: "gamma", repository: "member-41/gamma", repositoryId: 9103, listingTier: "retired", headline: "Delisted tooling." }
+const renamed: Fixture = { id: "renamed", repository: "member-41/alpha-renamed", repositoryId: 9101, listingTier: "community", headline: "Same repository, another path." }
+const zeta: Fixture = { id: "zeta", repository: "member-41/zeta", repositoryId: 9106, listingTier: "community", headline: "Unrelated tooling." }
+const delta: Fixture = { id: "delta", repository: "member-41/delta", repositoryId: 9104, listingTier: "community", headline: "Receipts." }
+
+function owner() {
+  return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    github.world.addUser({ id: moderatorId, login: "moderator-a", nodeId: "U_moderator" })
+    github.world.addUser({ id: readerId, login: "slop-reader" })
+    github.world.addRepo({ id: zeta.repositoryId, nodeId: `R_${zeta.repositoryId}`, owner: `member-${stewardId}`, name: "zeta", defaultBranch: "main", license: { spdx: "MIT" } })
+  }))
+  return { github, net: internet({ github: github.handler }) }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const { github, net } = try World
+  const root = new URL("..", import.meta.url).pathname
+  const reader = try orDie(Effect.try(() => github.tokens.user("slop-reader")))
+  return areaLayer({
+    root,
+    entry: "worker",
+    d1: { SLOP_DB: "slop-private" },
+    vars: { ADMIN_GITHUB_IDS: String(moderatorId), PROJECT_MODERATOR_GITHUB_IDS: String(moderatorId), SLOP_ENVIRONMENT: "local", SLOP_GITHUB_READ_TOKEN: reader },
+    services: {
+      SLOPBOT: (request) => {
+        const url = new URL(request.url)
+        const id = Number(url.searchParams.get("repositoryId"))
+        const permission = url.searchParams.get("login") === `member-${stewardId}` ? "admin" : "read"
+        return new Response(JSON.stringify({ installation: "installed", installationId: 77, permission, roleName: null, repository: { id, node_id: `R_${id}`, full_name: url.searchParams.get("repository") ?? "", private: false, owner: owner() } }), { headers: { "content-type": "application/json" } })
+      },
+    },
+    internet: net,
+    workers: {
+      SLOP_IDENTITY: {
+        name: "identity",
+        root,
+        entry: "identity",
+        d1: { IDENTITY_DB: "slop-private" },
+        ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+        vars: {
+          SLOP_ENVIRONMENT: "local",
+          GITHUB_APP_CLIENT_ID: github.app.clientId,
+          GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+          IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+          IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+        },
+      },
+    },
+  })
+}), Built)
+
+function manifestOf(fixture: Fixture) {
+  const repository = fixture.repository
+  return {
+    schemaVersion: "1",
+    id: fixture.id,
+    slug: fixture.id,
+    name: `Project ${fixture.id}`,
+    eyebrow: "Open-source project",
+    headline: fixture.headline,
+    description: "Build and maintain reproducible research tooling.",
+    listingTier: fixture.listingTier,
+    status: "paused",
+    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(fixture.repositoryId), repositoryNodeId: `R_${fixture.repositoryId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/main/LICENSE`, commitSha: "a".repeat(40), fileSha256: "b".repeat(64) },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, ...fixture.aliases === undefined ? {} : { aliases: fixture.aliases }, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Tooling.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${fixture.id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${fixture.id}/skill.md` },
+    reviewSkill: { id: `review-${fixture.id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC" },
+    contribution: {
+      approvedScope: "Bug fixes and documented features in the toolkit.",
+      contributionGuide: "Branch from main and keep one change per pull request.",
+      supportedTasks: "Reproduced bugs with a failing test.",
+      requiredTests: "Run the test suite and attach the output.",
+      reviewExpectations: "The failing test fails on the base and passes on the head.",
+      securityContact: "security@example.org",
+      closurePolicy: "Maintainers close duplicates.",
+      maintainerNotes: "",
+    },
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: "2026-11-01T00:00:00.000Z", cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet.", recordsPath: `funding/${fixture.id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  return path.reduce<unknown>((current, key) => typeof current === "object" && current !== null ? (current as Record<string, unknown>)[key] : undefined, value)
+}
+
+function seen(answer: Answer) {
+  return {
+    status: answer.status,
+    cache: answer.headers["x-slop-cache"] ?? null,
+    control: answer.headers["cache-control"] ?? null,
+    cors: answer.headers["access-control-allow-origin"] ?? null,
+    contract: answer.headers["x-slop-project-api-contract"] ?? null,
+    keys: typeof answer.body === "object" && answer.body !== null ? Object.keys(answer.body) : [],
+  }
+}
+
+effect function revision(projectId: string, number: number, text: string) {
+  const digest = try sha256Hex(text)
+  try (try Area).sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", projectId, number, text, digest, `Revision ${number}`, String(stewardId), `member-${stewardId}`, `2026-11-0${number}T00:00:00.000Z`)
+  return digest
+}
+
+effect function seed(fixture: Fixture, texts: ReadonlyArray<string>) {
+  const area = try Area
+  let digest = ""
+  for (const [index, text] of texts.entries()) digest = try revision(fixture.id, index + 1, text)
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'paused', ?, ?, ?, ?, ?)", fixture.id, texts.length, texts[texts.length - 1] ?? "", digest, "2026-11-01T00:00:00.000Z", `2026-11-0${texts.length}T00:00:00.000Z`)
+  try area.sql("INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)", fixture.repository, fixture.id)
+  return digest
+}
+
+effect function stored() {
+  const found = try (try Area).sql("SELECT manifest FROM projects ORDER BY id")
+  return try orDie(Effect.try(() => found.map((row) => JSON.parse(String(row.manifest)) as unknown)))
+}
+
+effect function quarantine(moderator: Session, projectId: string) {
+  const area = try Area
+  const listed = try area.request("/api/v1/admin/projects", { as: moderator })
+  const entry = (field(listed.body, "projects") as ReadonlyArray<unknown>).find((candidate) => field(candidate, "id") === projectId)
+  return try area.request(`/api/v1/admin/projects/${projectId}/enforcement`, {
+    json: { action: "quarantine", reason: "Install script downloads an unpinned binary", evidenceReference: "case-registry-1", expectedRevision: Number(field(entry, "revision")), expectedSequence: Number(field(entry, "enforcement", "nextSequence")) },
+    as: moderator,
+  })
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Public reads before and after a publish and a quarantine: the next request reflects each write (spec/backend/listing.md, "Story: Find Featured and Community projects independently of funding"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision")', () => effect {
+    const area = try Area
+    const world = try World
+    const steward = try area.signIn(String(stewardId), `member-${stewardId}`)
+    const moderator = try area.signIn(String(moderatorId), "moderator-a")
+    for (const fixture of [alpha, beta, gamma, renamed, zeta]) try seed(fixture, [JSON.stringify(manifestOf(fixture))])
+
+    const first = try area.get("/api/v1/projects")
+    const again = try area.get("/api/v1/projects")
+    const before = try stored()
+    const detail = try area.get("/api/v1/projects/alpha")
+    const missing = try.all [area.get("/api/v1/projects/gamma"), area.get("/api/v1/projects/Alpha"), area.get("/api/v1/projects/omega")]
+
+    const zetaNext = { ...manifestOf(zeta), headline: "Unrelated tooling, revised." }
+    const published = try area.request("/api/v1/projects/zeta", { method: "PUT", json: { manifest: zetaNext, expectedRevision: 1, reason: "Clearer headline" }, as: steward })
+    const afterPublish = try area.get("/api/v1/projects")
+    const revisions = try area.get("/api/v1/project-revisions")
+    const republished = try stored()
+
+    const quarantined = try quarantine(moderator, "alpha")
+    const afterQuarantine = try area.get("/api/v1/projects")
+    const cached = try area.get("/api/v1/projects")
+    const restricted = try stored()
+    const closed = try.all [area.get("/api/v1/projects/alpha"), area.get("/api/v1/projects/beta"), area.get("/api/v1/projects/renamed")]
+    const open = try area.get("/api/v1/projects/zeta")
+    const since = String((try area.sql("SELECT created_at FROM project_enforcements WHERE project_id = 'alpha' AND action = 'quarantine'"))[0]?.created_at)
+    const restriction = (projectId: string) => ({ projectId, sourceProjectId: "alpha", state: "quarantined", appeal: "none", since })
+    const zetaRevisions = (field(revisions.body, "revisions") as ReadonlyArray<unknown>).filter((row) => field(row, "projectId") === "zeta").map((row) => [field(row, "revision"), field(row, "manifest", "headline"), field(row, "reason")])
+    const shared = "This project is quarantined. Its history stays public; its skills and participation are closed. The restriction is recorded on project alpha, which claims the same repository; its steward or applicant may request reinstatement of alpha with POST /api/v1/project-appeals."
+
+    try same({
+      lists: [first, again, afterPublish, afterQuarantine, cached].map(seen),
+      bodies: [first.body, again.body, afterPublish.body, afterQuarantine.body, cached.body],
+      detail: [seen(detail), field(detail.body, "project"), field(detail.body, "revision"), field(detail.body, "skillsPublished"), field(detail.body, "vetting")],
+      missing: missing.map((answer) => [answer.status, answer.body, answer.headers["x-slop-project-api-contract"] ?? null]),
+      published: [published.status, field(republished[4], "headline")],
+      revisions: [seen(revisions), zetaRevisions],
+      quarantined: quarantined.status,
+      closed: closed.map((answer) => [seen(answer), answer.body]),
+      open: [open.status, field(open.body, "project", "headline"), field(open.body, "vetting")],
+      unexpected: world.net.unexpected,
+      outbound: area.outboundErrors,
+    }, {
+      lists: [
+        { status: 200, cache: "miss", control: listCache, cors: "*", contract, keys: ["schemaVersion", "projects", "restrictions"] },
+        { status: 200, cache: "hit", control: listCache, cors: "*", contract, keys: ["schemaVersion", "projects", "restrictions"] },
+        { status: 200, cache: "miss", control: listCache, cors: "*", contract, keys: ["schemaVersion", "projects", "restrictions"] },
+        { status: 200, cache: "miss", control: listCache, cors: "*", contract, keys: ["schemaVersion", "projects", "restrictions"] },
+        { status: 200, cache: "hit", control: listCache, cors: "*", contract, keys: ["schemaVersion", "projects", "restrictions"] },
+      ],
+      bodies: [
+        { schemaVersion: "1", projects: before, restrictions: [] },
+        { schemaVersion: "1", projects: before, restrictions: [] },
+        { schemaVersion: "1", projects: republished, restrictions: [] },
+        { schemaVersion: "1", projects: restricted, restrictions: [restriction("alpha"), restriction("beta"), restriction("renamed")] },
+        { schemaVersion: "1", projects: restricted, restrictions: [restriction("alpha"), restriction("beta"), restriction("renamed")] },
+      ],
+      detail: [
+        { status: 200, cache: null, control: "no-store", cors: "*", contract, keys: ["schemaVersion", "project", "revision", "manifestSha256", "updatedAt", "skillsPublished", "vetting"] },
+        manifestOf(alpha), 1, false, { state: "unscanned" },
+      ],
+      missing: [
+        [404, { error: "not_found", message: "Project not found" }, contract],
+        [404, { error: "not_found", message: "Project not found" }, contract],
+        [404, { error: "not_found", message: "Project not found" }, contract],
+      ],
+      published: [200, "Unrelated tooling, revised."],
+      revisions: [
+        { status: 200, cache: "miss", control: listCache, cors: "*", contract, keys: ["schemaVersion", "revisions"] },
+        [[1, "Unrelated tooling.", "Revision 1"], [2, "Unrelated tooling, revised.", "Clearer headline"]],
+      ],
+      quarantined: 200,
+      closed: [
+        [
+          { status: 410, cache: null, control: "no-store", cors: "*", contract, keys: ["error", "message", "restriction"] },
+          { error: "project_restricted", message: "This project is quarantined. Its history stays public; its skills and participation are closed. The project steward or applicant may request reinstatement with POST /api/v1/project-appeals.", restriction: restriction("alpha") },
+        ],
+        [{ status: 410, cache: null, control: "no-store", cors: "*", contract, keys: ["error", "message", "restriction"] }, { error: "project_restricted", message: shared, restriction: restriction("beta") }],
+        [{ status: 410, cache: null, control: "no-store", cors: "*", contract, keys: ["error", "message", "restriction"] }, { error: "project_restricted", message: shared, restriction: restriction("renamed") }],
+      ],
+      open: [200, "Unrelated tooling, revised.", { state: "unscanned" }],
+      unexpected: [],
+      outbound: [],
+    })
+  })
+
+  it.effect('A revision receipt serves the stored manifest bytes and refuses a digest that does not match them (spec/backend/revisionReceipts.md, "Story: Install a project skill from the bytes the registry approved"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest")', () => effect {
+    const area = try Area
+    const firstText = JSON.stringify(manifestOf(delta), null, 2)
+    const secondText = JSON.stringify({ ...manifestOf(delta), headline: "Receipts, revised." }, null, 4)
+    try seed(delta, [firstText, secondText])
+    const [firstDigest, secondDigest] = [try sha256Hex(firstText), try sha256Hex(secondText)]
+
+    const first = try area.get("/api/v1/project-revisions/delta/1")
+    const second = try area.get("/api/v1/project-revisions/delta/2")
+    const absent = try.all [area.get("/api/v1/project-revisions/delta/3"), area.get("/api/v1/project-revisions/delta/0"), area.get("/api/v1/project-revisions/delta/01"), area.get("/api/v1/project-revisions/Delta/1")]
+
+    try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, 3, ?, ?, 'Tampered digest', NULL, NULL, ?)", delta.id, JSON.stringify(manifestOf(delta)), "0".repeat(64), "2026-11-03T00:00:00.000Z")
+    const tampered = try area.get("/api/v1/project-revisions/delta/3")
+
+    const servedText = String(field(second.body, "manifestText"))
+    try same({
+      receipts: [[seen(first), first.body], [seen(second), second.body]],
+      digest: [try sha256Hex(servedText), servedText === secondText],
+      absent: absent.map((answer) => [answer.status, answer.body]),
+      tampered: [tampered.status, tampered.body],
+    }, {
+      receipts: [
+        [
+          { status: 200, cache: null, control: immutable, cors: null, contract, keys: ["schemaVersion", "projectId", "revision", "manifestSha256", "manifestText"] },
+          { schemaVersion: "1", projectId: "delta", revision: 1, manifestSha256: firstDigest, manifestText: firstText },
+        ],
+        [
+          { status: 200, cache: null, control: immutable, cors: null, contract, keys: ["schemaVersion", "projectId", "revision", "manifestSha256", "manifestText"] },
+          { schemaVersion: "1", projectId: "delta", revision: 2, manifestSha256: secondDigest, manifestText: secondText },
+        ],
+      ],
+      digest: [secondDigest, true],
+      absent: [
+        [404, { error: "not_found", message: "Revision not found" }],
+        [404, { error: "not_found", message: "Revision not found" }],
+        [404, { error: "not_found", message: "Revision not found" }],
+        [404, { error: "not_found", message: "Revision not found" }],
+      ],
+      tampered: [500, { error: "internal_error", message: "Internal error" }],
+    })
+  })
+})

@@ -1,0 +1,86 @@
+import { assert, it } from "@effect/vitest"
+import { holds } from "vibestack/testing"
+import { type JupiterFields, type JupiterType, decodeJupiterRoute, jupiterInstructions, jupiterTypes } from "../src/kernels/jupiterSchema.ts"
+import { sizeRefused, trailingBytes } from "../src/kernels/jupiterWire.ts"
+import { jupiterFixtures } from "./fixtures/jupiter/routes.ts"
+
+const widths: Readonly<Record<string, number>> = { u8: 1, u16: 2, u32: 4, u64: 8, u128: 16 }
+
+function decoded(bytes: Uint8Array) {
+  const route = decodeJupiterRoute(bytes)
+  return route.kind === "route" ? { kind: route.kind, instruction: route.instruction.name, args: route.args } : route
+}
+
+it.effect('Every recorded route instruction is decided exactly as the old decoder decided it (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+  const actual = jupiterFixtures.map((fixture) => ({ name: fixture.name, ...decoded(fixture.bytes) }))
+  const expected = jupiterFixtures.map((fixture) => fixture.kind === "route"
+    ? { name: fixture.name, kind: fixture.kind, instruction: fixture.instruction, args: fixture.args }
+    : { name: fixture.name, kind: fixture.kind, error: fixture.error, at: fixture.at })
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+})
+
+function encoder(choices: ReadonlyArray<bigint>) {
+  let next = 0
+  const choice = () => {
+    const chosen = choices[next % choices.length]
+    next += 1
+    return chosen
+  }
+  const pick = (bound: number) => Number(choice()) % bound
+  const unsigned = (width: number) => {
+    const parts = globalThis.Array.from({ length: width }, () => choice() % 256n)
+    return { bytes: parts.map((part) => Number(part)), value: parts.reduceRight((total, part) => total * 256n + part, 0n) }
+  }
+  const prefix = (count: number) => [count % 256, (count >> 8) % 256, 0, 0]
+  const fields = (list: JupiterFields): number[] => list.flatMap(([, type]) => value(type))
+  const value = (type: JupiterType): number[] => {
+    if (type === "bool") return [pick(2)]
+    if (type === "bytes") {
+      const length = pick(9)
+      return [...prefix(length), ...globalThis.Array.from({ length }, () => pick(256))]
+    }
+    if (typeof type === "string") return unsigned(widths[type]).bytes
+    if ("vec" in type) {
+      const count = pick(3)
+      return [...prefix(count), ...globalThis.Array.from({ length: count }, () => value(type.vec)).flat()]
+    }
+    if ("option" in type) return pick(2) === 0 ? [0] : [1, ...value(type.option)]
+    if ("array" in type) return globalThis.Array.from({ length: type.array[1] }, () => value(type.array[0])).flat()
+    const definition = jupiterTypes[type.defined]
+    if (definition.kind === "struct") return fields(definition.fields)
+    const tag = pick(definition.variants.length)
+    const variant = definition.variants[tag]
+    return [tag, ...fields(typeof variant === "string" ? [] : variant[1])]
+  }
+  const instruction = jupiterInstructions[pick(jupiterInstructions.length)]
+  const args: Record<string, bigint> = {}
+  const body = instruction.args.flatMap(([name, type]) => {
+    if (typeof type === "string" && type in widths) {
+      const scalar = unsigned(widths[type])
+      args[name] = scalar.value
+      return scalar.bytes
+    }
+    if (typeof type === "object" && "vec" in type) {
+      const steps = 1n + choice() % 3n
+      args[name] = steps
+      return [...prefix(Number(steps)), ...globalThis.Array.from({ length: Number(steps) }, () => value(type.vec)).flat()]
+    }
+    return value(type)
+  })
+  return { bytes: Uint8Array.from([...instruction.discriminator, ...body]), expected: { kind: "route", instruction: instruction.name, args }, cut: pick(1 << 20), extra: pick(256) }
+}
+
+const routes = Arbitrary.map(Arbitrary.array(Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 0n, maximum: 1n << 30n }))), { minLength: 1, maxLength: 300 }), encoder)
+
+const text = (value: unknown) => JSON.stringify(value, (_, item) => (typeof item === "bigint" ? `${item}n` : item))
+
+it.effect('An admitted route decodes to the amounts it encodes, and every shorter or longer copy is refused (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade")', () => effect {
+  try holds(routes, ({ bytes, expected, cut, extra }) => {
+    const whole = decoded(bytes)
+    if (bytes.length > 1232) return whole.kind === "refused" && whole.error === sizeRefused
+    const shorter = decoded(bytes.subarray(0, cut % bytes.length))
+    const longer = decoded(Uint8Array.from([...bytes, extra]))
+    const overflow = bytes.length === 1232 ? { error: sizeRefused, at: 0 } : { error: trailingBytes, at: bytes.length }
+    return text(whole) === text(expected) && shorter.kind === "refused" && text(longer) === text({ kind: "refused", ...overflow })
+  })
+})

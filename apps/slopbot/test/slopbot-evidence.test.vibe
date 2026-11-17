@@ -1,0 +1,182 @@
+// spec/slopbot/valueEvidence.md, "Story: Value only evidence that is complete and hash-verified"
+import { assert, it } from "@effect/vitest"
+import { collectBranchPolicy, matchesHistoricalIntegrationBranch } from "../src/value/evidence/branchPolicy.vibe"
+import { collectEvidence, collectReferenceEvidence } from "../src/value/evidence/collect.vibe"
+import { collectContext } from "../src/value/evidence/context.vibe"
+import { EvidenceRefused, type RelatedPullRequest } from "../src/value/evidence/types.vibe"
+import { failNext, rewriteNext } from "./support/proofsWorker.vibe"
+import {
+  type Seeded,
+  acceptanceRecorder,
+  commitPage,
+  githubOver,
+  patchCommitPage,
+  patchCommitPages,
+  policyOf,
+  policyText,
+  repository,
+  requested,
+  seeded,
+  widgetCount,
+  widgetName,
+  widgetPatch,
+} from "./support/evidenceWorker.vibe"
+
+const helloBlobSha = "ce013625030ba8dba906f756967f9e9ca394464a"
+const filesPage = (page: number) => new RegExp(`^GET /repos/ada/widgets/pulls/1/files\\?per_page=100&page=${page}$`, "u")
+const graphqlRequests = /^POST \/graphql$/u
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function reasonOf(error: { readonly _tag: string }) {
+  return error instanceof EvidenceRefused ? error.reason : error._tag
+}
+
+effect function relatedOf(world: Seeded, numbers: ReadonlyArray<number>) {
+  const related: RelatedPullRequest[] = []
+  for (const number of numbers) {
+    const pull = try Effect.try(() => world.fake.world.pull(repository, number))
+    related.push({ id: pull.nodeId, number, url: `https://github.com/${repository}/pull/${number}`, repository })
+  }
+  return related.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function reviewNode(id: number) {
+  return `PRR_kwDO${id.toString(36)}`
+}
+
+it.live('A merged pull request with paged files collects complete evidence, and one missing page leaves it incomplete (spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")', () => effect {
+  const world = try seeded()
+  const recorder = acceptanceRecorder()
+  const policy = policyOf(world)
+  const related = try relatedOf(world, [2, 3])
+  provide githubOver(world), recorder.layer {
+    try patchCommitPages(world, world.merge)
+    try patchCommitPages(world, world.head)
+    const evidence = try collectEvidence({ repository, number: 1, policy })
+    const merge = evidence.mergeCommitEvidence
+    try same({
+      limitations: evidence.limitations,
+      files: [evidence.files.length, evidence.files[0]],
+      merge: merge === null ? null : [merge.sha, merge.parents, merge.stats, merge.files.length, merge.files.every((file) => file.patch !== undefined)],
+      commits: evidence.commits.map((commit) => commit.sha),
+      attribution: evidence.commitAttribution.map((entry) => [entry.sha, entry.actorNodeIds, entry.changedPaths?.length, entry.limitations]),
+      related: evidence.relatedPullRequests,
+      urls: evidence.evidenceUrls,
+      eligible: evidence.eligibleReviewIds,
+      actors: evidence.implementationActorNodeIds,
+      policy: evidence.repositoryPolicy,
+      identity: [evidence.repositoryNodeId, evidence.repositoryDatabaseId],
+      pages: [requested(world, filesPage(1)), requested(world, filesPage(2)), requested(world, filesPage(3))],
+      asked: [...recorder.asked],
+    }, {
+      limitations: [],
+      files: [widgetCount, { filename: widgetName(0), status: "added", additions: 1, deletions: 0, patch: widgetPatch(0), blob_url: null }],
+      merge: [world.merge, [{ sha: world.base }, { sha: world.head }], { total: widgetCount, additions: widgetCount, deletions: 0 }, widgetCount, true],
+      commits: [world.head],
+      attribution: [[world.head, [world.authorNodeId], widgetCount, []]],
+      related,
+      urls: [
+        `https://github.com/${repository}/pull/1`,
+        ...related.map((entry) => entry.url),
+        `https://github.com/${repository}/commit/${world.merge}`,
+        `https://github.com/${repository}/commit/${world.head}`,
+        `https://github.com/${repository}/pull/1#pullrequestreview-${world.reviewId}`,
+        `https://github.com/${repository}/pull/1#pullrequestreview-${world.selfReviewId}`,
+        `https://github.com/${repository}/pull/1#issuecomment-${world.commentId}`,
+        `https://github.com/${repository}/pull/1#discussion_r${world.inlineId}`,
+      ],
+      eligible: [reviewNode(world.reviewId)],
+      actors: [world.authorNodeId],
+      policy: { id: repository, projectId: "widgets", integrationBranch: "main", expectedNodeId: world.repositoryNodeId },
+      identity: [world.repositoryNodeId, 7397],
+      pages: [1, 1, 0],
+      asked: ["indirect 1", "retained 1", "promotion 1"],
+    })
+    try patchCommitPage(world, world.merge, 1)
+    try failNext(world.fake, commitPage(world.merge, 2), { status: 404 })
+    try patchCommitPages(world, world.head)
+    const partial = try collectEvidence({ repository, number: 1, policy })
+    try same({
+      limitations: partial.limitations,
+      mergeFiles: partial.mergeCommitEvidence?.files.length,
+      files: partial.files.length,
+    }, {
+      limitations: ["Reported merge commit evidence is unavailable", "Incomplete reported merge commit additions"],
+      mergeFiles: 100,
+      files: widgetCount,
+    })
+    try failNext(world.fake, "GET /repos/ada/widgets/pulls/1/files?per_page=100&page=2", { status: 404 })
+    const stopped = collectEvidence({ repository, number: 1, policy }) catch (error) => reasonOf(error)
+    try patchCommitPages(world, world.merge)
+    try patchCommitPages(world, world.head)
+    const unregistered = collectEvidence({ repository, number: 1, policy: null }) catch (error) => reasonOf(error)
+    const misnamed = collectEvidence({ repository, number: 1, policy: { ...policy, expectedNodeId: "R_other" } }) catch (error) => reasonOf(error)
+    try same({
+      stopped: typeof stopped === "string" ? stopped : "collected",
+      unregistered: typeof unregistered === "string" ? unregistered : [unregistered.repositoryPolicy, unregistered.limitations],
+      misnamed: typeof misnamed === "string" ? misnamed : "collected",
+    }, {
+      stopped: "Evidence unavailable: /repos/ada/widgets/pulls/1/files",
+      unregistered: [null, ["Registered repository scoring policy is unavailable"]],
+      misnamed: "Repository policy does not match the evidence source",
+    })
+  }
+})
+
+it.live('Outgoing references resolve only through their link destination and public identity (spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage")', () => effect {
+  const world = try seeded()
+  const [earlier] = try relatedOf(world, [2])
+  provide githubOver(world) {
+    const found = try collectReferenceEvidence(repository, world.referencesPull)
+    try same({
+      references: found.references,
+      unavailable: found.unavailablePublicReferences,
+      limitations: found.limitations,
+      queries: requested(world, graphqlRequests),
+    }, {
+      references: [earlier],
+      unavailable: [{ repository, repositoryNodeId: world.repositoryNodeId, number: 23 }],
+      limitations: ["Outgoing reference is unavailable or private"],
+      queries: 5,
+    })
+  }
+})
+
+it.live('Context files and the historical branch policy count only from hash-verified bytes at the pinned revision (spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read")', () => effect {
+  const world = try seeded()
+  const recorder = acceptanceRecorder()
+  provide githubOver(world), recorder.layer {
+    try patchCommitPages(world, world.merge)
+    try patchCommitPages(world, world.head)
+    const evidence = try collectEvidence({ repository, number: 1, policy: policyOf(world) })
+    const url = `https://github.com/${repository}/blob/${world.head}/README.md`
+    const selected = try collectContext(evidence, ["README.md"])
+    try rewriteNext(world.fake, `GET /repos/ada/widgets/contents/README.md?ref=${world.head}`, (body) => ({ ...body, content: "aGVsbHAK" }))
+    const forged = collectContext(evidence, ["README.md"]) catch (error) => reasonOf(error)
+    const escaping = collectContext(evidence, ["../README.md"]) catch (error) => reasonOf(error)
+    const unpinned = collectContext(evidence, [{ path: "README.md", ref: "f".repeat(40) }]) catch (error) => reasonOf(error)
+    const declared = try collectBranchPolicy(repository, world.policyCommit)
+    const fenced = collectBranchPolicy(repository, world.fencedPolicyCommit) catch (error) => reasonOf(error)
+    const invalid = collectBranchPolicy(repository, "main") catch (error) => reasonOf(error)
+    try same({
+      context: [selected.contextFiles, selected.evidenceUrls.at(-1)],
+      forged: typeof forged === "string" ? forged : "selected",
+      escaping: typeof escaping === "string" ? escaping : "selected",
+      unpinned: typeof unpinned === "string" ? unpinned : "selected",
+      declared: [declared, matchesHistoricalIntegrationBranch(declared, { sha: world.policyCommit, ref: "develop" }), matchesHistoricalIntegrationBranch(declared, { sha: world.policyCommit, ref: "main" })],
+      fenced: typeof fenced === "string" ? fenced : "declared",
+      invalid: typeof invalid === "string" ? invalid : "declared",
+    }, {
+      context: [[{ path: "README.md", ref: world.head, blobSha: helloBlobSha, text: "hello\n", url }], url],
+      forged: "Complete context file unavailable: README.md",
+      escaping: "Invalid immutable context selection",
+      unpinned: "Invalid immutable context selection",
+      declared: [{ baseSha: world.policyCommit, path: "CONTRIBUTING.md", text: policyText }, true, false],
+      fenced: "Historical integration branch is absent or ambiguous",
+      invalid: "Invalid policy revision",
+    })
+  }
+})

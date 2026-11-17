@@ -1,0 +1,390 @@
+import { assert, layer } from "@effect/vitest"
+import { utf8 } from "@repo/platform/crypto"
+import { type Answer, type World, agedClosure, assessment, backUp, digest, endSession, finish, legacyObject, overwrite, owner, partialDownload, reader, reportCase, request, revokeTriager, rows, signed, started } from "./support/evidence/harness.ts"
+
+service Evidence { readonly world: World }
+
+const Started = Layer.effect(Evidence, effect {
+  const world = try acquireRelease(promise(() => started(["701"])), (running) => promise(() => running.mf.dispose()))
+  return { world }
+})
+
+const partBytes = 8 * 1024 * 1024
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function refusal(status: number, error: string, message: string) {
+  return { status, body: { error, message } }
+}
+
+function shown(answer: Answer) {
+  return { status: answer.status, body: answer.body }
+}
+
+function vetting(digit: string) {
+  return `vet_${digit.repeat(32)}`
+}
+
+function evidencePath(id: string, run = "run-1") {
+  return `/api/v1/vetting/evidence/${id}/${run}`
+}
+
+function operatorPath(id: string, sha: string, action: string, run = "run-1") {
+  return `/api/v1/operator/vetting-evidence/${id}/${run}/${sha}/${action}`
+}
+
+function reasonBody(reason: string) {
+  return JSON.stringify({ reason })
+}
+
+effect function small(world: World, id: string, digit: string, text: string, kind = "trace") {
+  try promise(() => assessment(world, id, digit.repeat(40)))
+  const bytes = utf8(text)
+  const sha = try promise(() => digest(bytes))
+  const declared = { traceSha256: sha, objects: [{ sha256: sha, sizeBytes: bytes.length, kind, label: "harmless", contentType: "text/plain" }] }
+  const registered = try promise(() => signed(world, "POST", evidencePath(id), utf8(JSON.stringify(declared))))
+  const uploaded = try promise(() => signed(world, "PUT", `${evidencePath(id)}/${sha}`, bytes))
+  return { sha, bytes, declared, registered, uploaded }
+}
+
+effect function actions(world: World, id: string) {
+  const found = try promise(() => rows(world, "SELECT action FROM vetting_evidence_audit WHERE assessment_id=? ORDER BY created_at, rowid", id))
+  return found.map((row) => row.action)
+}
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Register, upload once and read small scanner evidence under a single-use fifteen-minute grant (spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery")', () => effect {
+    const world = (try Evidence).world
+    const id = vetting("1")
+    try promise(() => assessment(world, id, "1".repeat(40)))
+    const bytes = utf8("harmless scanner trace")
+    const sha = try promise(() => digest(bytes))
+    const declared = { traceSha256: sha, objects: [{ sha256: sha, sizeBytes: bytes.length, kind: "trace", label: "trace", contentType: "text/plain" }] }
+    const manifestSha256 = try promise(() => digest(JSON.stringify(declared)))
+    const body = utf8(JSON.stringify(declared))
+    const registered = try promise(() => signed(world, "POST", evidencePath(id), body))
+    const replayed = try promise(() => signed(world, "POST", evidencePath(id), body))
+    const conflicting = try promise(() => signed(world, "POST", evidencePath(id), utf8(JSON.stringify({ ...declared, objects: [{ ...declared.objects[0], label: "other" }] }))))
+    const unsigned = try promise(() => request(world, evidencePath(id), { method: "POST", body }))
+    const untraced = try promise(() => signed(world, "POST", evidencePath(id, "run-2"), utf8(JSON.stringify({ ...declared, traceSha256: "f".repeat(64) }))))
+    const wrongBytes = try promise(() => signed(world, "PUT", `${evidencePath(id)}/${sha}`, utf8("harmless scanner trade")))
+    const uploaded = try promise(() => signed(world, "PUT", `${evidencePath(id)}/${sha}`, bytes))
+    const stored = try promise(() => signed(world, "POST", evidencePath(id), body))
+    const grant = (as: string, reason: string) => promise(() => request(world, operatorPath(id, sha, "grant"), { method: "POST", body: reasonBody(reason), as, json: true }))
+    const stranger = try grant("7", "Inspect the harmless trace")
+    const vague = try grant(reader, "short")
+    const granted = try grant(reader, "Inspect the harmless trace")
+    const token = (granted.body as { readonly grant: string }).grant
+    const read = (as: string, value: string, method = "GET") => promise(() => request(world, operatorPath(id, sha, "body"), { method, as, headers: { "x-vetting-read-grant": value } }))
+    const first = try read(reader, token)
+    const second = try read(reader, token)
+    const another = try grant(reader, "Inspect the harmless trace again")
+    const borrowed = try read(owner, (another.body as { readonly grant: string }).grant)
+    const head = try read(reader, (another.body as { readonly grant: string }).grant, "HEAD")
+    try same({
+      registered: shown(registered),
+      replayed: shown(replayed),
+      conflicting: shown(conflicting),
+      unsigned: shown(unsigned),
+      untraced: shown(untraced),
+      wrongBytes: shown(wrongBytes),
+      uploaded: shown(uploaded),
+      stored: shown(stored),
+      stranger: shown(stranger),
+      vague: shown(vague),
+      granted: [granted.status, typeof token, token.length, (granted.body as { readonly expiresInSeconds: number }).expiresInSeconds, granted.headers["cache-control"], granted.headers["x-robots-tag"]],
+      first: [first.status, new TextDecoder().decode(first.body as Uint8Array), first.headers["content-disposition"]],
+      second: shown(second),
+      borrowed: shown(borrowed),
+      head: head.status,
+      audits: try actions(world, id),
+    }, {
+      registered: { status: 201, body: { manifestSha256, stored: [] } },
+      replayed: { status: 200, body: { manifestSha256, replayed: true, stored: [] } },
+      conflicting: refusal(409, "evidence_conflict", "Evidence run already binds different bytes"),
+      unsigned: refusal(401, "invalid_signature", "The signed timestamp is missing or stale"),
+      untraced: refusal(400, "invalid_request", "The exact trace object must be declared"),
+      wrongBytes: refusal(422, "digest_mismatch", "Upload must match the complete declared bytes"),
+      uploaded: { status: 200, body: { sha256: sha, sizeBytes: bytes.length } },
+      stored: { status: 200, body: { manifestSha256, replayed: true, stored: [sha] } },
+      stranger: refusal(403, "forbidden", "Designated vetting operator access is required"),
+      vague: refusal(400, "invalid_request", "Explain why access is needed (8 to 500 characters)"),
+      granted: [201, "string", 72, 900, "private, no-store", "noindex"],
+      first: [200, "harmless scanner trace", `attachment; filename="${sha}.bin"`],
+      second: refusal(403, "grant_invalid", "Read grant is expired, used or belongs to another operator or object"),
+      borrowed: refusal(403, "grant_invalid", "Read grant is expired, used or belongs to another operator or object"),
+      head: 403,
+      audits: ["register", "upload", "grant", "read-attempt", "read", "grant"],
+    })
+  })
+
+  it.effect('Upload large evidence in verified parts and download it once by cookie, refusing HEAD, ranges, cross-site requests and a second use, and abort before the next part when the operator session ends mid-stream (spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate")', () => effect {
+    const world = (try Evidence).world
+    const id = vetting("2")
+    try promise(() => assessment(world, id, "2".repeat(40)))
+    const whole = Uint8Array.from({ length: 2 * partBytes + 5 }, (_, index) => index % 251)
+    const sha = try promise(() => digest(whole))
+    const slices = [whole.slice(0, partBytes), whole.slice(partBytes, 2 * partBytes), whole.slice(2 * partBytes)]
+    const chunks: { index: number; sha256: string; sizeBytes: number }[] = []
+    for (const [index, slice] of slices.entries()) chunks.push({ index, sha256: try promise(() => digest(slice)), sizeBytes: slice.length })
+    const trace = utf8("harmless large trace")
+    const traceSha = try promise(() => digest(trace))
+    const declared = { traceSha256: traceSha, objects: [
+      { sha256: sha, sizeBytes: whole.length, kind: "artifact", label: "large", contentType: "application/octet-stream", chunks },
+      { sha256: traceSha, sizeBytes: trace.length, kind: "trace", label: "trace", contentType: "text/plain" },
+    ] }
+    const registered = try promise(() => signed(world, "POST", evidencePath(id), utf8(JSON.stringify(declared))))
+    const early = try promise(() => signed(world, "POST", `${evidencePath(id)}/${sha}/finalize`, utf8("{}")))
+    const parts: number[] = []
+    for (const [index, slice] of slices.entries()) parts.push((try promise(() => signed(world, "PUT", `${evidencePath(id)}/${sha}/chunks/${index}`, slice))).status)
+    const finalized = try promise(() => signed(world, "POST", `${evidencePath(id)}/${sha}/finalize`, utf8("{}")))
+    const refinalized = try promise(() => signed(world, "POST", `${evidencePath(id)}/${sha}/finalize`, utf8("{}")))
+    const smallGrant = try promise(() => request(world, operatorPath(id, sha, "grant"), { method: "POST", body: reasonBody("Read the large artifact"), as: reader, json: true }))
+    const cookieGrant = effect {
+      const answer = try promise(() => request(world, operatorPath(id, sha, "download-grant"), { method: "POST", body: reasonBody("Download the large artifact"), as: reader, json: true }))
+      const header = answer.headers["set-cookie"] ?? ""
+      return { answer, header, cookie: header.split(";")[0] ?? "" }
+    }
+    const granted = try cookieGrant
+    const download = (headers: Readonly<Record<string, string>>, method = "GET", as = reader) => promise(() => request(world, operatorPath(id, sha, "download"), { method, as, headers }))
+    const fresh = { cookie: granted.cookie, "sec-fetch-site": "same-origin" }
+    const head = try download(fresh, "HEAD")
+    const ranged = try download({ ...fresh, range: "bytes=0-1" })
+    const crossSite = try download({ ...fresh, "sec-fetch-site": "cross-site" })
+    const doubled = try download({ ...fresh, cookie: `${granted.cookie}; ${granted.cookie}` })
+    const posted = try promise(() => request(world, operatorPath(id, sha, "download"), { method: "POST", body: "{}", as: reader, json: true }))
+    const full = try download(fresh)
+    const fullSha = try promise(() => digest(full.body as Uint8Array))
+    const reused = try download(fresh)
+    const interrupted = try cookieGrant
+    const partial = try promise(() => partialDownload(world, operatorPath(id, sha, "download"), reader, interrupted.cookie, 1, () => endSession(world, reader)))
+    try same({
+      registered: registered.status,
+      early: shown(early),
+      parts,
+      finalized: shown(finalized),
+      refinalized: shown(refinalized),
+      smallGrant: shown(smallGrant),
+      grant: [granted.answer.status, granted.answer.body, granted.header.endsWith(`; Path=${operatorPath(id, sha, "download")}; Max-Age=900; Secure; HttpOnly; SameSite=Strict`), granted.cookie.startsWith("__Secure-vetting-read-grant=")],
+      head: head.status,
+      ranged: shown(ranged),
+      crossSite: shown(crossSite),
+      doubled: shown(doubled),
+      posted: shown(posted),
+      full: [full.status, fullSha, full.headers["accept-ranges"]],
+      reused: shown(reused),
+      partial: [partial.status, partial.failed, partial.received],
+      audits: try actions(world, id),
+    }, {
+      registered: 201,
+      early: refusal(404, "evidence_missing", "Declared evidence bytes are missing"),
+      parts: [200, 200, 200],
+      finalized: { status: 200, body: { sha256: sha, sizeBytes: whole.length, replayed: false } },
+      refinalized: { status: 200, body: { sha256: sha, sizeBytes: whole.length, replayed: true } },
+      smallGrant: refusal(413, "evidence_oversize", "Large evidence requires a native streamed download grant"),
+      grant: [201, { expiresInSeconds: 900 }, true, true],
+      head: 405,
+      ranged: refusal(403, "origin_forbidden", "Downloads require a fresh same-origin browser request without ranges"),
+      crossSite: refusal(403, "origin_forbidden", "Downloads require a fresh same-origin browser request without ranges"),
+      doubled: refusal(403, "grant_invalid", "Exactly one download grant is required"),
+      posted: refusal(405, "method_not_allowed", "Native downloads require GET"),
+      full: [200, sha, "none"],
+      reused: refusal(403, "grant_invalid", "Read grant is expired, used or belongs to another operator or object"),
+      partial: [200, true, partBytes],
+      audits: ["register", "upload-chunk", "upload-chunk", "upload-chunk", "finalize", "grant", "read-attempt", "download-authorized", "download-started", "download-finished", "grant", "read-attempt", "download-authorized", "download-started", "download-failed"],
+    })
+  })
+
+  it.effect('Close only a finished exception case as the policy owner, keep successful admission evidence permanent and end ordinary access ninety days after closure (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable")', () => effect {
+    const world = (try Evidence).world
+    const exception = vetting("3")
+    const pending = vetting("4")
+    const admitted = vetting("5")
+    const aged = vetting("6")
+    const failed = try small(world, exception, "3", "harmless incomplete evidence")
+    try promise(() => finish(world, exception, "incomplete", "slop-vetting-result-v2"))
+    try promise(() => assessment(world, pending, "4".repeat(40)))
+    const clean = try small(world, admitted, "5", "harmless clean evidence")
+    try promise(() => finish(world, admitted, "clean", "slop-vetting-result-v2"))
+    const old = try small(world, aged, "6", "harmless aged evidence")
+    try promise(() => finish(world, aged, "incomplete", "slop-vetting-result-v2"))
+    try promise(() => agedClosure(world, aged, 91))
+    const close = (id: string, as: string) => promise(() => request(world, `/api/v1/operator/vetting-evidence/${id}/close`, { method: "POST", body: reasonBody("Reviewed the incomplete scan"), as, json: true }))
+    const byReader = try close(exception, reader)
+    const notFinished = try close(pending, owner)
+    const closed = try close(exception, owner)
+    const replayed = try close(exception, owner)
+    const closure = closed.body as { readonly closedAt: string; readonly expiresAt: string }
+    const overview = (id: string) => promise(() => request(world, `/api/v1/operator/vetting-evidence?assessmentId=${id}&runId=run-1`, { as: owner }))
+    const runOf = (answer: Answer) => (answer.body as { readonly runs: ReadonlyArray<{ readonly expiresAt: string | null; readonly permanentAdmissionEvidence: boolean; readonly objects: ReadonlyArray<{ readonly state: string }> }> }).runs[0]
+    const exceptionView = runOf(try overview(exception))
+    const admittedView = runOf(try overview(admitted))
+    const agedView = runOf(try overview(aged))
+    const badIdentity = try promise(() => request(world, "/api/v1/operator/vetting-evidence?assessmentId=not%20an%20id&runId=run-1", { as: owner }))
+    const agedGrant = try promise(() => request(world, operatorPath(aged, old.sha, "grant"), { method: "POST", body: reasonBody("Inspect the aged evidence"), as: reader, json: true }))
+    const agedUpload = try promise(() => signed(world, "PUT", `${evidencePath(aged)}/${old.sha}`, old.bytes))
+    try same({
+      uploads: [failed.uploaded.status, clean.uploaded.status, old.uploaded.status],
+      byReader: shown(byReader),
+      notFinished: shown(notFinished),
+      closed: [closed.status, Date.parse(closure.expiresAt) - Date.parse(closure.closedAt)],
+      replayed: shown(replayed),
+      exception: [exceptionView?.expiresAt, exceptionView?.permanentAdmissionEvidence, exceptionView?.objects.map((entry) => entry.state)],
+      admitted: [admittedView?.expiresAt, admittedView?.permanentAdmissionEvidence],
+      aged: [agedView?.objects.map((entry) => entry.state), agedView?.permanentAdmissionEvidence],
+      badIdentity: shown(badIdentity),
+      agedGrant: shown(agedGrant),
+      agedUpload: shown(agedUpload),
+    }, {
+      uploads: [200, 200, 200],
+      byReader: refusal(403, "forbidden", "Only the evidence policy owner may close an exception case"),
+      notFinished: refusal(409, "case_not_exception", "Only a finished exception case can be closed manually"),
+      closed: [200, 90 * 86400000],
+      replayed: { status: 200, body: closed.body },
+      exception: [closure.expiresAt, false, ["stored-unverified"]],
+      admitted: [null, true],
+      aged: [["expired"], false],
+      badIdentity: refusal(400, "invalid_request", "Enter the exact assessment and run identity"),
+      agedGrant: refusal(410, "evidence_expired", "Evidence access expired; physical retention is governed separately"),
+      agedUpload: refusal(410, "evidence_expired", "Evidence upload expired"),
+    })
+  })
+
+  it.effect('Deliver a private report only to its reporter, a current maintainer and a current triager, audit each delivery and refuse a revoked triager, another case\'s triager, a financial approver and a moderator without an open appeal, and never deliver a contributor trace (spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision")', () => effect {
+    const world = (try Evidence).world
+    const caseId = "sc_evidence_case_one"
+    const otherCase = "sc_evidence_case_two"
+    const report = JSON.stringify({ summary: "Harmless fixture finding", description: "A harmless fixture description for the private report read." })
+    try promise(() => reportCase(world, { caseId, submissionId: "ss_evidence_case_one", reporter: "501", triagers: ["601"], text: report }))
+    try promise(() => reportCase(world, { caseId: otherCase, submissionId: "ss_evidence_case_two", reporter: "502", triagers: ["602"], text: report }))
+    const traceCase = "sc_evidence_case_trace"
+    try promise(() => reportCase(world, { caseId: traceCase, submissionId: "ss_evidence_case_trace", reporter: "503", triagers: [], text: report, traceKey: true }))
+    const readAs = (id: string, as: string, query = "") => promise(() => request(world, `/api/v1/test/security-cases/${id}/report${query}`, { as }))
+    const read = (as: string) => readAs(caseId, as)
+    const delivered = { status: 200, body: { submissionId: "ss_evidence_case_one", version: 1, text: report } }
+    const reporter = try read("501")
+    const maintainer = try read("701")
+    const triager = try read("601")
+    const otherTriager = try read("602")
+    const moderator = try read("801")
+    const stranger = try read("9")
+    const programTechnical = try readAs(caseId, "701", "?program=fixture")
+    const programFinancial = try readAs(caseId, "702", "?program=fixture")
+    const trace = try readAs(traceCase, "503")
+    try promise(() => revokeTriager(world, caseId, "601"))
+    const revoked = try read("601")
+    const audited = try promise(() => rows(world, "SELECT actor_github_id, action FROM security_intake_access_log WHERE submission_id=? ORDER BY id", "ss_evidence_case_one"))
+    const missing = refusal(404, "not_found", "Report not found")
+    try same({
+      reporter: shown(reporter),
+      maintainer: shown(maintainer),
+      triager: shown(triager),
+      otherTriager: shown(otherTriager),
+      moderator: shown(moderator),
+      stranger: shown(stranger),
+      programTechnical: shown(programTechnical),
+      programFinancial: shown(programFinancial),
+      trace: shown(trace),
+      revoked: shown(revoked),
+      audited,
+    }, {
+      reporter: delivered,
+      maintainer: delivered,
+      triager: delivered,
+      otherTriager: missing,
+      moderator: missing,
+      stranger: missing,
+      programTechnical: delivered,
+      programFinancial: missing,
+      trace: refusal(503, "report_unavailable", "Internal error"),
+      revoked: missing,
+      audited: [{ actor_github_id: "501", action: "read" }, { actor_github_id: "701", action: "read" }, { actor_github_id: "601", action: "read" }, { actor_github_id: "701", action: "read" }],
+    })
+  })
+
+  it.effect('Write a generation-less legacy object create-only, repair a corrupt target with a fresh one, retire every target of a frozen generation once only behind a verified backup, never read or re-point a retired target, and start a new generation for the same bytes (spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate")', () => effect {
+    const world = (try Evidence).world
+    const legacy = vetting("9")
+    try promise(() => assessment(world, legacy, "9".repeat(40)))
+    const legacyBytes = utf8("harmless legacy evidence")
+    const legacySha = try promise(() => legacyObject(world, legacy, "run-1", legacyBytes))
+    const legacyPath = `${evidencePath(legacy)}/${legacySha}`
+    const legacyStored = try promise(() => signed(world, "PUT", legacyPath, legacyBytes))
+    const legacyAgain = try promise(() => signed(world, "PUT", legacyPath, legacyBytes))
+    const legacyKey = `vetting/${legacy}/run-1/${legacySha}`
+    const legacyCopy = try promise(() => world.objects.head(legacyKey))
+    try promise(() => overwrite(world, legacyKey, utf8("harmless tampered legacy bytes"), legacySha))
+    const legacyCorrupt = try promise(() => signed(world, "PUT", legacyPath, legacyBytes))
+    const id = vetting("7")
+    const stored = try small(world, id, "7", "harmless retired evidence")
+    const [head] = try promise(() => rows(world, "SELECT target_key FROM vetting_evidence_heads WHERE sha256=?", stored.sha))
+    const original = String(head?.target_key)
+    try promise(() => overwrite(world, original, utf8("harmless tampered bytes!"), stored.sha))
+    const repaired = try promise(() => signed(world, "PUT", `${evidencePath(id)}/${stored.sha}`, stored.bytes))
+    const [moved] = try promise(() => rows(world, "SELECT target_key FROM vetting_evidence_heads WHERE sha256=?", stored.sha))
+    try promise(() => finish(world, id, "incomplete", "slop-vetting-result-v2"))
+    try promise(() => agedClosure(world, id, 91))
+    const [bound] = try promise(() => rows(world, "SELECT storage_generation AS generation FROM vetting_evidence_objects WHERE assessment_id=?", id))
+    const generation = String(bound?.generation)
+    const targets = (try promise(() => rows(world, "SELECT target_key FROM vetting_evidence_targets WHERE generation_id=? ORDER BY target_key", generation))).map((row) => String(row.target_key))
+    const backupRoot = "vetting-backups/2026-11-16"
+    const retire = () => promise(() => request(world, `/api/v1/test/evidence-generations/${generation}/retire`, { method: "POST", body: JSON.stringify({ outcome: "backed", backupDay: "2026-11-16", backupRoot }), json: true }))
+    const markersOf = effect {
+      const found: unknown[] = []
+      for (const key of targets) found.push((try promise(() => world.objects.head(key)))?.customMetadata?.evidenceRetirement)
+      return found
+    }
+    const retirementsOf = () => promise(() => rows(world, "SELECT target_key, outcome FROM vetting_evidence_target_retirements WHERE target_key IN (SELECT target_key FROM vetting_evidence_targets WHERE generation_id=?) ORDER BY target_key", generation))
+    const unbacked = try retire()
+    const unbackedMarkers = try markersOf
+    const unbackedRetirements = try retirementsOf()
+    try promise(() => backUp(world, backupRoot, targets, stored.bytes, stored.sha))
+    const first = try retire()
+    const second = try retire()
+    const markers = try markersOf
+    const retirements = try retirementsOf()
+    const replayed = try promise(() => signed(world, "POST", evidencePath(id), utf8(JSON.stringify(stored.declared))))
+    const reuploaded = try promise(() => signed(world, "PUT", `${evidencePath(id)}/${stored.sha}`, stored.bytes))
+    const [kept] = try promise(() => rows(world, "SELECT target_key FROM vetting_evidence_heads WHERE generation_id=?", generation))
+    const reserved = try promise(() => rows(world, "SELECT target_key FROM vetting_evidence_targets WHERE generation_id=?", generation))
+    const again = vetting("8")
+    const renewed = try small(world, again, "8", "harmless retired evidence")
+    const generations = try promise(() => rows(world, "SELECT state FROM vetting_evidence_generations WHERE sha256=? ORDER BY rowid", stored.sha))
+    const regrant = try promise(() => request(world, operatorPath(again, renewed.sha, "grant"), { method: "POST", body: reasonBody("Inspect the renewed evidence"), as: owner, json: true }))
+    try same({
+      legacy: [legacyStored.status, legacyAgain.status, legacyCopy?.customMetadata?.sha256, legacyCopy?.size, shown(legacyCorrupt)],
+      repaired: shown(repaired),
+      moved: moved?.target_key !== original && targets.includes(String(moved?.target_key)),
+      targets: targets.length,
+      unbacked: [shown(unbacked), unbackedMarkers, unbackedRetirements.length],
+      first: shown(first),
+      second: shown(second),
+      markers,
+      retirements: retirements.map((row) => [row.target_key, row.outcome]),
+      replayed: [replayed.status, (replayed.body as { readonly stored: ReadonlyArray<string> }).stored],
+      reuploaded: shown(reuploaded),
+      kept: [kept?.target_key === moved?.target_key, reserved.length],
+      renewed: [renewed.registered.status, renewed.uploaded.status],
+      generations: generations.map((row) => row.state),
+      regrant: regrant.status,
+    }, {
+      legacy: [200, 200, legacySha, legacyBytes.length, refusal(409, "evidence_corrupt", "Evidence metadata changed")],
+      repaired: { status: 200, body: { sha256: stored.sha, sizeBytes: stored.bytes.length } },
+      moved: true,
+      targets: 2,
+      unbacked: [refusal(404, "evidence_missing", "Declared evidence bytes are missing"), [undefined, undefined], 0],
+      first: { status: 200, body: { frozen: "retiring", retired: targets, finished: "retired" } },
+      second: { status: 200, body: { frozen: "retired", retired: [], finished: "retired" } },
+      markers: ["v1", "v1"],
+      retirements: targets.map((key) => [key, "backed"]),
+      replayed: [200, []],
+      reuploaded: refusal(410, "evidence_expired", "Evidence upload expired"),
+      kept: [true, 2],
+      renewed: [201, 200],
+      generations: ["retired", "active"],
+      regrant: 201,
+    })
+  })
+})

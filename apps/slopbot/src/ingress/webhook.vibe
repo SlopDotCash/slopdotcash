@@ -1,0 +1,180 @@
+// spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"
+import { ConfigInvalid, idList, secret } from "@repo/platform/config"
+import { sha256Hex } from "@repo/platform/crypto"
+import { verifyWebhook } from "@repo/platform/github/webhook"
+import { bytesBody } from "@repo/platform/http"
+import { type Bytes, type Event, type Outcome, type Webhook, apply, initial, noBody, qualifiedJob, request } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { type RegistryObservation, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { slopbotPostGithubWebhook as refusals } from "../client/refusals.vibe"
+import { servedProjects } from "../installation/notices.vibe"
+import type { Change } from "../installation/store.vibe"
+import { send } from "../jobs/job.vibe"
+import { type RepositoryRef, observe, unregistered } from "../scope/facts.vibe"
+import { type Parsed, parse } from "./payload.vibe"
+import { type Context, advance } from "./store.vibe"
+
+export const webhookLimitBytes = 25 * 1024 * 1024
+
+const requestId = 1
+
+export service WebhookSettings {
+  readonly secret: Redacted.Redacted<string>
+  readonly appUserId: string
+}
+
+export interface WebhookVars {
+  readonly SLOPBOT_WEBHOOK_SECRET?: string
+  readonly SLOPBOT_APP_USER_ID?: string
+}
+
+export function webhookSettings(vars: WebhookVars) {
+  return Layer.effect(WebhookSettings, effect {
+    const webhookSecret = try secret("SLOPBOT_WEBHOOK_SECRET", vars.SLOPBOT_WEBHOOK_SECRET)
+    const [appUserId] = try idList("SLOPBOT_APP_USER_ID", vars.SLOPBOT_APP_USER_ID)
+    if (appUserId === undefined) throw new ConfigInvalid({ name: "SLOPBOT_APP_USER_ID", issue: "missing" })
+    return { secret: webhookSecret, appUserId }
+  })
+}
+
+interface TextRefusal {
+  readonly status: number
+  readonly text: string
+}
+
+const acceptedTexts: Partial<Readonly<Record<Outcome, string>>> = {
+  Duplicate: "duplicate delivery",
+  NotRegistered: "repository is not registered in the Slop registry",
+  ReopenUnavailable: "reopen source unavailable; no decision",
+  Ignored: "ignored",
+  ValuationPending: "valuation pending",
+  Queued: "queued",
+}
+
+function textAnswer(status: number, text: string) {
+  return HttpServerResponse.text(text, { status, contentType: "text/plain;charset=UTF-8" })
+}
+
+function replied(state: Webhook, refusal?: TextRefusal) {
+  const answer = request(state, requestId)
+  const accepted = acceptedTexts[answer.result]
+  if (accepted !== undefined) return textAnswer(answer.status, accepted)
+  if (refusal !== undefined && refusal.status === answer.status) return textAnswer(refusal.status, refusal.text)
+  return HttpServerResponse.empty({ status: answer.status })
+}
+
+function settled(state: Webhook) {
+  return request(state, requestId).phase === "Disposed"
+}
+
+effect function stepped(state: Webhook, event: Event) {
+  return try orDie(apply(state, event))
+}
+
+interface Decoded {
+  readonly strictUtf8: boolean
+  readonly jsonObject: boolean
+  readonly payload: Readonly<Record<string, unknown>> | undefined
+  readonly refusal: TextRefusal
+}
+
+effect function decodedPayload(bytes: Uint8Array, deliveryId: string) {
+  if (deliveryId === "") return { strictUtf8: true, jsonObject: true, payload: undefined, refusal: refusals.missingDeliveryId } satisfies Decoded
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
+  if (text === undefined) return { strictUtf8: false, jsonObject: false, payload: undefined, refusal: refusals.invalidBody } satisfies Decoded
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  if (value === undefined) return { strictUtf8: true, jsonObject: false, payload: undefined, refusal: refusals.invalidJSON } satisfies Decoded
+  const payload = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+  return { strictUtf8: true, jsonObject: payload !== undefined, payload, refusal: refusals.invalidPayload } satisfies Decoded
+}
+
+interface Lookup {
+  readonly registration: RegistryObservation
+  readonly lookupOk: boolean
+}
+
+effect function looked(ref: RepositoryRef) {
+  const observed = observe(ref) catch () => undefined
+  return { registration: observed?.observation ?? unregistered, lookupOk: observed !== undefined } satisfies Lookup
+}
+
+effect function durable(context: Context, state: Webhook, event: Event) {
+  return try advance(context, state.requests, event)
+}
+
+function installationChange(deliveryId: string, parsed: Parsed, servedProjects: ReadonlyArray<string>) {
+  const installation = parsed.installation
+  return installation === undefined ? undefined : { installationId: installation.installationId, account: installation.account, deliveryId, event: parsed.body.change, servedProjects } satisfies Change
+}
+
+effect function finishedInstallation(context: Context, claimed: Webhook, parsed: Parsed) {
+  const installation = parsed.installation
+  const loss = parsed.body.change.kind === "Deleted" || parsed.body.change.kind === "Suspend"
+  const served = installation === undefined || !loss ? [] : servedProjects(installation.repositories) catch () => undefined
+  const ready = installation !== undefined && served !== undefined && (installation.account !== undefined || !installation.hasAccount)
+  const committed = !ready ? undefined : durable({ ...context, installation: installationChange(context.deliveryId, parsed, served) }, claimed, { type: "finishInstallation", requestId, committed: true }) catch () => undefined
+  return committed ?? try stepped(claimed, { type: "finishInstallation", requestId, committed: false })
+}
+
+effect function valueLookups(state: Webhook) {
+  const { body } = request(state, requestId)
+  if (!body.valueCandidate) return { registration: unregistered, writeRegistration: unregistered, lookupOk: true }
+  const ref = { owner: body.value.owner, repo: body.value.repo, repositoryId: body.value.repository }
+  const first = try looked(ref)
+  const recheck = first.lookupOk && slopbotScope(first.registration) === "Contributor" ? try looked(ref) : first
+  return { registration: first.registration, writeRegistration: recheck.registration, lookupOk: first.lookupOk && recheck.lookupOk }
+}
+
+effect function completed(context: Context, state: Webhook) {
+  const done = durable(context, state, { type: "complete", requestId, committed: true }) catch () => undefined
+  return done ?? try durable(context, state, { type: "complete", requestId, committed: false })
+}
+
+effect function routed(context: Context, claimed: Webhook, parsed: Parsed) {
+  const lookups = try valueLookups(claimed)
+  const valued = try durable(context, claimed, { type: "inspectValue", requestId, ...lookups })
+  if (settled(valued)) return valued
+  const job = qualifiedJob(parsed.body) === "NoJob" ? undefined : parsed.job
+  const queueLookup = job === undefined ? { registration: unregistered, lookupOk: true } : try looked({ owner: job.owner, repo: job.repo, repositoryId: job.repositoryId })
+  let state = try durable(context, valued, { type: "inspectQueue", requestId, ...queueLookup })
+  if (request(state, requestId).phase === "PersistReopen") state = try durable(context, state, { type: "bindReopen", requestId, strictSource: parsed.strictSource })
+  if (request(state, requestId).phase === "SendQueue" && job !== undefined) {
+    const sent = send(job) catch () => false
+    state = try durable(context, state, { type: "send", requestId, ack: sent === false ? "QueueRejected" : "QueuedAndAcked" })
+  }
+  if (request(state, requestId).phase === "AwaitCompletion") state = try completed(context, state)
+  return state
+}
+
+effect function releasing(context: Context, claimed: Webhook, parsed: Parsed) {
+  return routed(context, claimed, parsed) catch effect (error) => {
+    try Effect.logError("slopbot webhook failed", { delivery: context.deliveryId, failure: error._tag })
+    const _released = durable(context, claimed, { type: "releaseOrdinary" }) catch () => claimed
+    throw error
+  }
+}
+
+export effect function webhook() {
+  const http = try HttpServerRequest.HttpServerRequest
+  const settings = try WebhookSettings
+  const read = bytesBody(webhookLimitBytes, ["application/json", "application/x-www-form-urlencoded"]) catch effect (refused) => {
+    if (refused.status === 413) return undefined
+    throw refused
+  }
+  const bytes: Bytes = read === undefined ? { digest: "unread", length: webhookLimitBytes + 1 } : { digest: try sha256Hex(read), length: read.length }
+  const received = try stepped(initial, { type: "receive", requestId, bytes, route: true })
+  if (read === undefined || settled(received)) return replied(received, refusals.payloadTooLarge)
+  const verified = try verifyWebhook(read, http.headers["x-hub-signature-256"], settings.secret)
+  const authenticated = try stepped(received, { type: "authenticate", requestId, signedBytes: bytes, verifiedHmac: verified })
+  if (settled(authenticated)) return replied(authenticated, refusals.invalidSignature)
+  const eventName = http.headers["x-github-event"] ?? ""
+  const deliveryId = http.headers["x-github-delivery"] ?? ""
+  const decoded = try decodedPayload(read, deliveryId)
+  const parsed = decoded.payload === undefined ? undefined : try parse(eventName, deliveryId, decoded.payload, settings.appUserId)
+  const claimable = try stepped(authenticated, { type: "decode", requestId, decodedBytes: bytes, strictUtf8: decoded.strictUtf8, jsonObject: decoded.jsonObject, body: parsed?.body ?? { ...noBody, deliveryId } })
+  if (settled(claimable) || parsed === undefined) return replied(claimable, decoded.refusal)
+  const context: Context = { deliveryId, eventName, reopen: parsed.reopen, installation: installationChange(deliveryId, parsed, []) }
+  const claimed = try durable(context, claimable, { type: "claim", requestId })
+  if (settled(claimed)) return replied(claimed)
+  if (request(claimed, requestId).phase === "InstallPending") return replied(try finishedInstallation(context, claimed, parsed))
+  return replied(try releasing(context, claimed, parsed))
+}

@@ -1,0 +1,182 @@
+// spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+import { type PublicMergeRepository, VALUE_FILE_EXPANSION_LIMIT, gitBytes, publicGitArguments, withPublicGitObjects } from "@repo/platform/git"
+import { Graphql } from "../../ingestion/graphql.vibe"
+import { MergedRecordInvalid, type PullRequestFile, commitSha, decoded, mergedFileSourceQuery } from "./wire.vibe"
+
+export interface FileTarget {
+  readonly owner: string
+  readonly name: string
+  readonly expectedNodeId: string | null
+}
+
+export interface PullRequestGitFilesInput {
+  readonly repository: PublicMergeRepository
+  readonly head: string
+  readonly merge: { readonly sha: string; readonly parents: ReadonlyArray<{ readonly sha: string }> }
+}
+
+export interface PullRequestGitFiles {
+  readonly files: ReadonlyArray<PullRequestFile>
+  readonly additions: number
+  readonly deletions: number
+  readonly changedFiles: number
+}
+
+schema MergedFileSource {
+  readonly node: {
+    readonly __typename: string
+    readonly id: string
+    readonly state: string
+    readonly mergedAt: string | null
+    readonly headRefOid: string
+    readonly repository: { readonly id: string; readonly databaseId: number; readonly isPrivate: boolean; readonly nameWithOwner: string }
+    readonly mergeCommit: { readonly oid: string; readonly parents: { readonly totalCount: number; readonly nodes: ReadonlyArray<{ readonly oid: string }> } }
+  }
+}
+
+const readFailed = "Native Git object read failed"
+const lowerSha = /^[a-f0-9]{40}$/u
+const diff = ["diff", "--no-ext-diff", "--no-textconv", "--no-color"]
+const smallOutput = 1024 * 1024
+const gitSeconds = 1800
+
+effect function utf8Of(bytes: Uint8Array, fatal: boolean, message: string) {
+  return try Effect.try({ try: () => new TextDecoder("utf-8", { fatal }).decode(bytes), catch: () => new MergedRecordInvalid({ message }) })
+}
+
+effect function git(directory: string, args: ReadonlyArray<string>, home: string, limit = smallOutput) {
+  return try gitBytes({ args: publicGitArguments(directory, args), env: { GIT_ATTR_NOSYSTEM: "1", HOME: home, XDG_CONFIG_HOME: home }, limit, seconds: gitSeconds }, readFailed)
+}
+
+effect function gitText(directory: string, args: ReadonlyArray<string>, home = directory) {
+  return (try utf8Of(try git(directory, args, home), false, readFailed)).trim()
+}
+
+effect function checkInput(input: PullRequestGitFilesInput) {
+  const [base, head] = input.merge.parents
+  if (input.merge.parents.length !== 2 || head?.sha !== input.head || base?.sha === input.head || ![input.head, input.merge.sha, ...input.merge.parents.map(({ sha }) => sha)].every((sha) => lowerSha.test(sha))) {
+    throw new MergedRecordInvalid({ message: "File recovery requires an exact two-parent accepted merge" })
+  }
+  return base?.sha ?? ""
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array) {
+  return left.length === right.length && left.every((byte, index) => byte === right[index])
+}
+
+effect function changes(directory: string, base: string, head: string) {
+  return try git(directory, [...diff, "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--"], directory, VALUE_FILE_EXPANSION_LIMIT)
+}
+
+effect function lineCount(bytes: Uint8Array) {
+  const text = String.fromCharCode(...bytes)
+  if (!/^(0|[1-9][0-9]*)$/u.test(text) || !Number.isSafeInteger(Number(text))) throw new MergedRecordInvalid({ message: "Invalid native Git line count" })
+  return Number(text)
+}
+
+export effect function numstatFiles(output: Uint8Array) {
+  const files: PullRequestFile[] = []
+  const paths = new Set<string>()
+  let additions = 0
+  let deletions = 0
+  let rename: { readonly additions: number; readonly deletions: number; oldPathRead: boolean } | null = null
+  effect function add(pathBytes: Uint8Array, added: number, removed: number) {
+    const path = try utf8Of(pathBytes, true, "Invalid native Git file inventory")
+    if (path === "" || paths.has(path)) throw new MergedRecordInvalid({ message: "Invalid native Git file inventory" })
+    paths.add(path)
+    additions += added
+    deletions += removed
+    if (!Number.isSafeInteger(additions) || !Number.isSafeInteger(deletions)) throw new MergedRecordInvalid({ message: "Native Git line totals exceed safe integers" })
+    files.push({ path, additions: added, deletions: removed })
+  }
+  let start = 0
+  for (let end = output.indexOf(0, start); end !== -1; end = output.indexOf(0, start)) {
+    const token = output.subarray(start, end)
+    start = end + 1
+    if (rename !== null) {
+      if (token.length === 0) throw new MergedRecordInvalid({ message: "Invalid native Git rename path" })
+      if (!rename.oldPathRead) {
+        rename.oldPathRead = true
+        continue
+      }
+      try add(token, rename.additions, rename.deletions)
+      rename = null
+      continue
+    }
+    const first = token.indexOf(9)
+    const second = token.indexOf(9, first + 1)
+    if (first < 1 || second < 0) throw new MergedRecordInvalid({ message: "Invalid native Git file statistics" })
+    const added = token.subarray(0, first)
+    const removed = token.subarray(first + 1, second)
+    const binaryAdded = added.length === 1 && added[0] === 45
+    const binaryRemoved = removed.length === 1 && removed[0] === 45
+    if (binaryAdded !== binaryRemoved) throw new MergedRecordInvalid({ message: "Invalid native Git binary statistics" })
+    const counts = { additions: binaryAdded ? 0 : try lineCount(added), deletions: binaryRemoved ? 0 : try lineCount(removed) }
+    const path = token.subarray(second + 1)
+    if (path.length === 0) rename = { ...counts, oldPathRead: false }
+    else try add(path, counts.additions, counts.deletions)
+  }
+  if (start !== output.length || rename !== null) throw new MergedRecordInvalid({ message: "Incomplete native Git file statistics" })
+  return { files, additions, deletions, changedFiles: files.length } satisfies PullRequestGitFiles
+}
+
+effect function readGitFiles(directory: string, input: PullRequestGitFilesInput) {
+  const base = try checkInput(input)
+  if ((try gitText(directory, ["cat-file", "-t", input.merge.sha])) !== "commit") throw new MergedRecordInvalid({ message: "Accepted merge object is not a native commit" })
+  const parents = try gitText(directory, ["show", "-s", "--format=%P", input.merge.sha, "--"])
+  if (parents !== input.merge.parents.map(({ sha }) => sha).join(" ")) throw new MergedRecordInvalid({ message: "Git merge parents differ from the accepted source" })
+  const mergeBases = (try gitText(directory, ["merge-base", "--all", base, input.head])).split("\n")
+  const [mergeBase = ""] = mergeBases
+  if (mergeBases.length !== 1 || !lowerSha.test(mergeBase)) throw new MergedRecordInvalid({ message: "A unique submitted merge base is required" })
+  if (!sameBytes(try changes(directory, base, input.merge.sha), try changes(directory, mergeBase, input.head))) {
+    throw new MergedRecordInvalid({ message: "Accepted Git file changes differ from the submitted source" })
+  }
+  const output = try git(directory, [`--attr-source=${input.head}`, ...diff, "--numstat", "-z", "--find-renames", "-l0", base, input.merge.sha, "--"], directory, VALUE_FILE_EXPANSION_LIMIT)
+  return try numstatFiles(output)
+}
+
+export effect function readPullRequestGitFiles(repository: string, input: PullRequestGitFilesInput) {
+  try checkInput(input)
+  return try scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const directory = fs.makeTempDirectoryScoped({ prefix: "slop-pr-git-files-" }) catch effect () => {
+      throw new MergedRecordInvalid({ message: readFailed })
+    }
+    const objects = try gitText(repository, ["rev-parse", "--path-format=absolute", "--git-path", "objects"], directory)
+    try git(directory, ["init", "--bare", "--template="], directory)
+    fs.writeFileString(`${directory}/objects/info/alternates`, `${objects}\n`) catch effect () => {
+      throw new MergedRecordInvalid({ message: readFailed })
+    }
+    return try readGitFiles(directory, input)
+  })
+}
+
+export effect function recoverPullRequestGitFiles(input: PullRequestGitFilesInput) {
+  try checkInput(input)
+  return try withPublicGitObjects(input.repository, [input.head, input.merge.sha, ...input.merge.parents.map(({ sha }) => sha)], (directory) => readPullRequestGitFiles(directory, input))
+}
+
+export interface MergedFileOriginal {
+  readonly id: string
+  readonly state: unknown
+  readonly mergedAt: unknown
+  readonly headRefOid: unknown
+}
+
+export effect function recoverPullRequestFiles(target: FileTarget, repositoryId: string, original: MergedFileOriginal) {
+  const data = try (try Graphql).execute(mergedFileSourceQuery, { id: original.id })
+  const { node } = try decoded(MergedFileSource, data, "data")
+  const source = node.repository
+  if (node.__typename !== "PullRequest" || node.id !== original.id || node.state !== "MERGED" || original.state !== "MERGED" || node.mergedAt !== original.mergedAt || node.headRefOid !== original.headRefOid || source.id !== repositoryId || (target.expectedNodeId !== null && source.id !== target.expectedNodeId) || source.isPrivate !== false) {
+    throw new MergedRecordInvalid({ message: "Merged file source identity changed or is unavailable" })
+  }
+  const parents = node.mergeCommit.parents
+  if (parents.totalCount !== 2) throw new MergedRecordInvalid({ message: "Merged file recovery requires complete merge parents" })
+  const parentShas: { readonly sha: string }[] = []
+  for (const [index, parent] of parents.nodes.entries()) parentShas.push({ sha: try commitSha(parent.oid, `data.node.mergeCommit.parents.nodes[${index}].oid`) })
+  return try recoverPullRequestGitFiles({
+    repository: { id: source.databaseId, node_id: source.id, private: false, full_name: source.nameWithOwner },
+    head: try commitSha(node.headRefOid, "data.node.headRefOid"),
+    merge: { sha: try commitSha(node.mergeCommit.oid, "data.node.mergeCommit.oid"), parents: parentShas },
+  })
+}

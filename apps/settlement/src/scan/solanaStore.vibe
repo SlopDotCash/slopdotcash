@@ -1,0 +1,142 @@
+// spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import { isoNow } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type Event, NotAState, type Scan, apply, decodeEvent, decodeState } from "../../gen/settlement__solanaScan.effect.vibe"
+import type { ScanScope } from "./index.vibe"
+
+export interface Listed {
+  readonly signature: string
+  readonly err: boolean
+}
+
+export interface StoredScan {
+  readonly scan: Scan
+  readonly top: { readonly page: number; readonly entries: ReadonlyArray<Listed> } | undefined
+}
+
+schema ScanRow {
+  readonly generation: string
+  readonly until_signature: string | null
+  readonly before_signature: string | null
+  readonly next_page: number
+  readonly ready: number
+  readonly revision: number
+}
+
+schema PageRow {
+  readonly page: number
+  readonly signatures_json: string
+}
+
+schema CursorRow { readonly position: string }
+
+schema StoredEntry {
+  readonly signature: string
+  readonly err: Schema.Unknown
+}
+
+const StoredEntries = Schema.Array(StoredEntry)
+
+const IDLE_PAGE = -1
+const GENERATION = /^[1-9][0-9]{0,15}$/u
+
+function generationOf(text: string): number {
+  return GENERATION.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : 1
+}
+
+effect function entriesOf(row: PageRow) {
+  const parsed = Effect.try(() => JSON.parse(row.signatures_json) as unknown) catch () => undefined
+  const entries = Schema.decodeUnknownEffect(StoredEntries)(parsed) catch () => undefined
+  if (entries === undefined) throw new RowMismatch({ text: "payment_solana_scan_pages.signatures_json", issue: "not a list of listed signatures" })
+  return entries.map((entry) => ({ signature: entry.signature, err: Boolean(entry.err) }) satisfies Listed)
+}
+
+effect function stored([scanRows, pageRows, cursorRows]: ReadonlyArray<Rows>) {
+  const scanRow = (try decoded(ScanRow, scanRows ?? [], "payment_solana_scans"))[0]
+  const pages = try decoded(PageRow, pageRows ?? [], "payment_solana_scan_pages")
+  const cursor = (try decoded(CursorRow, cursorRows ?? [], "payment_chain_cursors"))[0]?.position ?? ""
+  const listed: Array<{ readonly page: number; readonly entries: ReadonlyArray<Listed> }> = []
+  for (const row of pages) listed.push({ page: row.page, entries: try entriesOf(row) })
+  const idle = scanRow === undefined || scanRow.next_page === IDLE_PAGE
+  const scan = try decodeState({
+    phase: idle ? "Idle" : scanRow.ready === 1 ? "Processing" : "Discovering",
+    generation: scanRow === undefined ? 0 : generationOf(scanRow.generation),
+    revision: scanRow?.revision ?? 0,
+    cursor,
+    frozenUntil: idle ? "" : scanRow.until_signature ?? "",
+    beforeSignature: idle ? "" : scanRow.before_signature ?? "",
+    pending: idle ? [] : listed.flatMap((page) => page.entries.map((entry) => entry.signature)),
+  })
+  return { scan, top: idle ? undefined : listed[0] } satisfies StoredScan
+}
+
+function scoped(scope: ScanScope): Statement {
+  return sql`project_id = ${scope.projectId} AND network = ${scope.network}`
+}
+
+function aggregate(scope: ScanScope): Aggregate<StoredScan, NotAState | RowMismatch, never> {
+  const where = scoped(scope)
+  const generation = sql`(SELECT generation FROM payment_solana_scans WHERE ${where})`
+  return {
+    name: `solana scan of ${scope.projectId} on ${scope.network}`,
+    version: sql`SELECT coalesce((SELECT generation || ':' || revision || ':' || ready || ':' || next_page || ':' || coalesce(until_signature, '-') || ':' || coalesce(before_signature, '-') FROM payment_solana_scans WHERE ${where}), '')
+      || '|' || coalesce((SELECT group_concat(page || '=' || signatures_json, ';') FROM (SELECT page, signatures_json FROM payment_solana_scan_pages WHERE ${where} AND generation = ${generation} ORDER BY page DESC)), '')
+      || '|' || coalesce((SELECT position FROM payment_chain_cursors WHERE ${where}), '') AS version`,
+    reads: [
+      sql`SELECT generation, until_signature, before_signature, next_page, ready, revision FROM payment_solana_scans WHERE ${where}`,
+      sql`SELECT page, signatures_json FROM payment_solana_scan_pages WHERE ${where} AND generation = ${generation} ORDER BY page DESC`,
+      sql`SELECT position FROM payment_chain_cursors WHERE ${where}`,
+    ],
+    decode: stored,
+  }
+}
+
+effect function writesFor(scope: ScanScope, current: StoredScan, event: Event, listed: ReadonlyArray<Listed>) {
+  const where = scoped(scope)
+  const generation = sql`(SELECT generation FROM payment_solana_scans WHERE ${where})`
+  if (event.type === "openInterval") {
+    const until = current.scan.cursor === "" ? null : current.scan.cursor
+    return [sql`INSERT INTO payment_solana_scans (project_id, network, generation, until_signature, before_signature, next_page, ready, revision) VALUES (${scope.projectId}, ${scope.network}, ${String(event.generation)}, ${until}, NULL, 0, 0, 0)
+      ON CONFLICT (project_id, network) DO UPDATE SET generation = excluded.generation, until_signature = excluded.until_signature, before_signature = NULL, next_page = 0, ready = 0, revision = 0`]
+  }
+  if (event.type === "discoverPage") {
+    const flags = new Map(listed.map((entry) => [entry.signature, entry.err]))
+    const entries = event.oldestFirst.map((signature) => ({ signature, err: flags.get(signature) ?? false }) satisfies Listed)
+    const page = entries.length === 0 ? [] : [sql`INSERT INTO payment_solana_scan_pages (project_id, network, generation, page, signatures_json) SELECT ${scope.projectId}, ${scope.network}, generation, next_page, ${JSON.stringify(entries)} FROM payment_solana_scans WHERE ${where}`]
+    return [
+      ...page,
+      sql`UPDATE payment_solana_scans SET before_signature = ${event.oldestFirst[0] ?? (current.scan.beforeSignature === "" ? null : current.scan.beforeSignature)}, next_page = next_page + ${entries.length === 0 ? 0 : 1}, ready = ${event.coverage === "ShortPage" ? 1 : 0}, revision = revision + 1 WHERE ${where}`,
+    ]
+  }
+  if (event.type === "checkpoint") {
+    const top = current.top
+    const now = try isoNow()
+    const remaining = top === undefined ? [] : top.entries.slice(1)
+    return [
+      sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES (${scope.projectId}, ${scope.network}, ${event.signature}, ${now}) ON CONFLICT (project_id, network) DO UPDATE SET position = excluded.position, synced_at = excluded.synced_at`,
+      remaining.length > 0
+        ? sql`UPDATE payment_solana_scan_pages SET signatures_json = ${JSON.stringify(remaining)} WHERE ${where} AND generation = ${generation} AND page = ${top?.page ?? 0}`
+        : sql`DELETE FROM payment_solana_scan_pages WHERE ${where} AND generation = ${generation} AND page = ${top?.page ?? 0}`,
+      sql`UPDATE payment_solana_scans SET revision = revision + 1 WHERE ${where}`,
+    ]
+  }
+  return [sql`UPDATE payment_solana_scans SET until_signature = NULL, before_signature = NULL, next_page = ${IDLE_PAGE}, ready = 0 WHERE ${where}`]
+}
+
+effect function decide(scope: ScanScope, current: StoredScan, event: Event, listed: ReadonlyArray<Listed>) {
+  const next = try apply(current.scan, event)
+  return { value: next, writes: try writesFor(scope, current, event, listed) } satisfies Decision<Scan>
+}
+
+export effect function storedScan(scope: ScanScope) {
+  return (try load(aggregate(scope))).state
+}
+
+export effect function sendSolanaScan(scope: ScanScope, event: Event, listed: ReadonlyArray<Listed> = []) {
+  return try update(aggregate(scope), (current) => decide(scope, current, event, listed))
+}
+
+export effect function receiveSolanaScan(scope: ScanScope, input: unknown) {
+  return try sendSolanaScan(scope, try decodeEvent(input))
+}

@@ -1,0 +1,195 @@
+// spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/workUnits.md, "Story: Value one logical work unit once"
+import { type Recollection, type ReviewCensus, assertReviewCensusStable, collectReviewCensus, reconcileReviewCensus } from "../../census/reviews.vibe"
+import { Graphql, type UnavailableSource, ensureEstimatedBudget, estimateFirstPageDetailCost, estimateReviewFirstPageDetailCost, executeNodeBatch, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
+import type { SearchStats } from "../../ingestion/search.vibe"
+import { type HydrationCandidate, type HydrationPlan, type Preflight, collectSearchReferences, countSearchResults, planMergedPullRequestHydration, preflightRepository } from "./census.vibe"
+import { type CommitLineLoader, commitLineLoader } from "./commits.vibe"
+import { type IssueRecord, type PullRequestRecord, type ReviewRecord, hydrateIssues, hydratePullRequests, hydrateReviewedPullRequests } from "./hydrate.vibe"
+import { MergedRecordInvalid, type MergedOutcome, type NodeReference, arrayAt, chunks, decoded, dedupedById, rateLimitQuery } from "./wire.vibe"
+
+export const sourceAvailabilityQuery = "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}"
+
+export interface MergedTarget {
+  readonly id: string
+  readonly projectId: string
+  readonly owner: string
+  readonly name: string
+  readonly expectedNodeId: string | null
+}
+
+export interface MergedUnavailable extends UnavailableSource {
+  readonly unavailableInMergedCensus?: true
+}
+
+export interface MergedWorkInput {
+  readonly targets: ReadonlyArray<MergedTarget>
+  readonly nowMs: number
+  readonly windowFromMs: number
+  readonly verificationFromMs: number
+  readonly valuePolicyFromMs: number
+  readonly evaluatedReviewKeys: ReadonlySet<string>
+  readonly recollection: Recollection
+}
+
+export interface RepositoryCollection {
+  readonly target: MergedTarget
+  readonly preflight: Preflight
+  readonly outcomes: ReadonlyArray<MergedOutcome>
+  readonly detailed: ReadonlyArray<PullRequestRecord>
+  readonly reviewed: ReadonlyArray<ReviewRecord>
+  readonly closedUnmerged: ReadonlyArray<PullRequestRecord>
+  readonly closedIssues: ReadonlyArray<IssueRecord>
+}
+
+export interface MergedWork {
+  readonly collections: ReadonlyArray<RepositoryCollection>
+  readonly outcomes: ReadonlyArray<MergedOutcome>
+  readonly mergedPullRequests: ReadonlyArray<PullRequestRecord>
+  readonly reviewedMergedPullRequests: ReadonlyArray<ReviewRecord>
+  readonly closedUnmergedPullRequests: ReadonlyArray<PullRequestRecord>
+  readonly closedIssues: ReadonlyArray<IssueRecord>
+  readonly closedIssueCount: number
+  readonly candidates: ReadonlyArray<HydrationCandidate>
+  readonly plan: HydrationPlan
+  readonly unavailableSources: ReadonlyArray<MergedUnavailable>
+  readonly searchSliceCount: number
+}
+
+schema AvailableNode { readonly __typename: string; readonly id: string }
+
+export effect function probeUnavailableSources(ids: ReadonlyArray<string>, recollection: Recollection) {
+  const unavailable: UnavailableSource[] = []
+  for (const batch of chunks(ids, reviewDetailBatchSize)) {
+    const probed = effect {
+      const nodes = try arrayAt((try executeNodeBatch(sourceAvailabilityQuery, batch)).nodes, "source availability.nodes")
+      if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
+      for (const [index, value] of nodes.entries()) {
+        const node = try decoded(AvailableNode, value, `source availability.nodes[${index}]`)
+        if (node.__typename !== "PullRequest" || node.id !== batch[index]) throw new MergedRecordInvalid({ message: "Joint source availability did not match the requested identities" })
+      }
+    }
+    probed catch effect (error) => {
+      if (error._tag !== "SourceNodeUnavailable" || !recollection.allowJointHolds) throw error
+      unavailable.push(...error.sources)
+    }
+  }
+  return unavailable
+}
+
+function underValuePolicy(acceptedAt: string | null, valuePolicyFromMs: number) {
+  return acceptedAt !== null && Date.parse(acceptedAt) >= valuePolicyFromMs
+}
+
+function outcomeOf(reference: NodeReference) {
+  return reference.outcome
+}
+
+interface Listed {
+  readonly target: MergedTarget
+  readonly preflight: Preflight
+  references: ReadonlyArray<NodeReference>
+  readonly closedIssueReferences: ReadonlyArray<NodeReference>
+  readonly closedUnmerged: ReadonlyArray<PullRequestRecord>
+}
+
+effect function listRepository<E, R>(input: MergedWorkInput, target: MergedTarget, index: number, stats: SearchStats, commitLines: CommitLineLoader<E, R>, listed: ReadonlyArray<Listed>) {
+  const preflight = try preflightRepository(target, index === 0)
+  for (const earlier of listed) {
+    if (earlier.preflight.id === preflight.id) throw new MergedRecordInvalid({ message: `Registry repositories ${earlier.target.id} and ${target.id} resolved to one GitHub node` })
+  }
+  const search = { target, toMs: input.nowMs, stats, commitLines, repositoryNodeId: preflight.id }
+  const references = try collectSearchReferences({ ...search, fromMs: input.windowFromMs, qualifier: "merged", kindQualifier: "is:pr is:merged", expectedKind: "PullRequest" })
+  for (const reference of references) {
+    if (reference.outcome === null) throw new MergedRecordInvalid({ message: `Merged pull request ${reference.id} is missing scalar outcome metadata` })
+  }
+  const closedFromMs = Math.max(input.valuePolicyFromMs, input.windowFromMs)
+  let closedUnmerged: ReadonlyArray<PullRequestRecord> = []
+  if (closedFromMs < input.nowMs) {
+    const closedReferences = try collectSearchReferences({ ...search, fromMs: closedFromMs, qualifier: "closed", kindQualifier: "is:pr is:closed is:unmerged", expectedKind: "PullRequest" })
+    try ensureEstimatedBudget(try estimateFirstPageDetailCost(closedReferences.length, 0))
+    closedUnmerged = try hydratePullRequests(closedReferences, "closed", target, preflight.id)
+    if (closedUnmerged.some((pull) => pull.mergedAt !== null || pull.closedAt === null)) throw new MergedRecordInvalid({ message: "Closed unmerged census changed during hydration" })
+  }
+  const closedIssueCount = try countSearchResults(target, input.windowFromMs, input.nowMs, "closed", "is:issue is:closed", "Issue", stats)
+  const closedIssueReferences = try collectSearchReferences({ ...search, fromMs: input.verificationFromMs, qualifier: "closed", kindQualifier: "is:issue is:closed", expectedKind: "Issue" })
+  return { listed: { target, preflight, references, closedIssueReferences, closedUnmerged } satisfies Listed, closedIssueCount }
+}
+
+export effect function collectMergedWork<E = never, R = never>(input: MergedWorkInput, commitLines: CommitLineLoader<E, R> = commitLineLoader<E, R>()) {
+  const stats: SearchStats = { searchSliceCount: 0 }
+  if (input.targets.length === 0) try (try Graphql).execute(rateLimitQuery, {})
+  const listed: Listed[] = []
+  let closedIssueCount = 0
+  for (const [index, target] of input.targets.entries()) {
+    const repository = try listRepository(input, target, index, stats, commitLines, listed)
+    listed.push(repository.listed)
+    closedIssueCount += repository.closedIssueCount
+  }
+  const unavailableSources: MergedUnavailable[] = [...input.recollection.unavailableSources]
+  if (input.recollection.allowJointHolds) {
+    const prior = new Set(input.recollection.unavailableSources.map((source) => source.nodeId))
+    const probe = listed.flatMap((repository) => repository.references.filter((reference) => prior.has(reference.id)).map((reference) => reference.id))
+    const unavailable = new Set(probe.length === 0 ? [] : (try probeUnavailableSources(probe, input.recollection)).map((source) => source.nodeId))
+    for (const nodeId of unavailable) unavailableSources.push({ nodeId, reason: "NOT_FOUND", unavailableInMergedCensus: true })
+    for (const repository of listed) repository.references = repository.references.filter((reference) => !unavailable.has(reference.id))
+  }
+  const candidates = listed.flatMap((repository) => repository.references.flatMap((reference) => {
+    const outcome = outcomeOf(reference)
+    return outcome === null ? [] : [{ outcome, projectId: repository.target.projectId } satisfies HydrationCandidate]
+  }))
+  const plan = try planMergedPullRequestHydration(candidates, input.verificationFromMs)
+  let reviewCounts: ReviewCensus = plan.reviewCounts
+  const finalReviewCensusCost = Math.ceil(candidates.length / reviewDetailBatchSize)
+  const collections: RepositoryCollection[] = []
+  for (const repository of listed) {
+    const key = (reference: NodeReference) => `${repository.target.id.toLowerCase()}\u0000${reference.outcome?.number ?? ""}`
+    const detailedReferences = repository.references.filter((reference) => plan.detailEligibleIds.has(reference.id) || (reference.outcome !== null && input.evaluatedReviewKeys.has(key(reference))))
+    const detailedIds = new Set(detailedReferences.map((reference) => reference.id))
+    const reviewOnly = repository.references.filter((reference) => !detailedIds.has(reference.id))
+    const valueReviewed = reviewOnly.filter((reference) => underValuePolicy(reference.outcome?.mergedAt ?? null, input.valuePolicyFromMs))
+    const legacyReviewed = reviewOnly.filter((reference) => !underValuePolicy(reference.outcome?.mergedAt ?? null, input.valuePolicyFromMs) && plan.hydratedIds.has(reference.id))
+    const estimate = (try estimateFirstPageDetailCost(detailedReferences.length, 0)) + (try estimateReviewFirstPageDetailCost(valueReviewed.length + legacyReviewed.length))
+    try ensureEstimatedBudget(estimate, finalReviewCensusCost)
+    const detailed = try hydratePullRequests(detailedReferences, "merged", repository.target, repository.preflight.id)
+    const reviewed = [...try hydrateReviewedPullRequests(valueReviewed, true), ...try hydrateReviewedPullRequests(legacyReviewed)]
+    reviewCounts = try reconcileReviewCensus(reviewCounts, [...detailed, ...reviewed])
+    const linkedIssueIds = new Set(detailed.flatMap((pull) => pull.closingIssueIds))
+    const linkedClosedIssues = repository.closedIssueReferences.filter((reference) => linkedIssueIds.has(reference.id))
+    try ensureEstimatedBudget(try estimateFirstPageDetailCost(0, linkedClosedIssues.length), finalReviewCensusCost)
+    const closedIssues = try hydrateIssues(linkedClosedIssues, "closed")
+    collections.push({
+      target: repository.target,
+      preflight: repository.preflight,
+      outcomes: repository.references.flatMap((reference) => reference.outcome === null ? [] : [reference.outcome]),
+      detailed,
+      reviewed,
+      closedUnmerged: repository.closedUnmerged,
+      closedIssues,
+    })
+  }
+  return {
+    collections,
+    outcomes: dedupedById(collections.flatMap((collection) => collection.outcomes)),
+    mergedPullRequests: dedupedById(collections.flatMap((collection) => collection.detailed)),
+    reviewedMergedPullRequests: dedupedById(collections.flatMap((collection) => collection.reviewed)),
+    closedUnmergedPullRequests: collections.flatMap((collection) => collection.closedUnmerged),
+    closedIssues: dedupedById(collections.flatMap((collection) => collection.closedIssues)),
+    closedIssueCount,
+    candidates,
+    plan: { ...plan, reviewCounts },
+    unavailableSources,
+    searchSliceCount: stats.searchSliceCount,
+  } satisfies MergedWork
+}
+
+function formalDecisionCount(reviews: ReadonlyArray<{ readonly state: string }>) {
+  return reviews.filter((review) => review.state === "APPROVED" || review.state === "CHANGES_REQUESTED").length
+}
+
+export effect function confirmReviewCensus(work: MergedWork) {
+  const final = try collectReviewCensus(work.candidates.map(({ outcome }) => ({ id: outcome.id })))
+  try assertReviewCensusStable(work.plan.reviewCounts, final)
+  if (work.closedUnmergedPullRequests.length === 0) return
+  const closed = new Map(work.closedUnmergedPullRequests.map((pull) => [pull.id, { reviewCount: formalDecisionCount(pull.reviews), updatedAt: pull.updatedAt }]))
+  try assertReviewCensusStable(closed, try collectReviewCensus(work.closedUnmergedPullRequests))
+}

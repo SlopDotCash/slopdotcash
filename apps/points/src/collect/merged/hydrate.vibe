@@ -1,0 +1,520 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+import { OpenSetChanged } from "../../census/collect.vibe"
+import { currentHeadReviewDecision } from "../../census/reviews.vibe"
+import { Graphql, detailBatchSize, executeNodeBatch, reviewDetailBatchSize } from "../../ingestion/graphql.vibe"
+import type { Actor } from "../../score/facts.vibe"
+import { type FileTarget, recoverPullRequestFiles } from "./files.vibe"
+import {
+  ActorNode, AssigneeConnection, ClosingPullRequestConnection, CommentConnection, FileConnection, IdConnection, IssueReferenceConnection, type Label, LabelConnection,
+  MergedRecordInvalid, type NodeReference, type Page, type PageState, type PendingReview, type PullRequestFile, type Review, ReviewConnection, type TextSource,
+  actorOf, arrayAt, assigneesOf, chunks, commentsOf, commitSha, decoded, issueDetailsQuery, labelsOf, mergedPullRequestReviewsQuery, moreClosingIssuesQuery,
+  moreClosingPullRequestsQuery, moreFilesQuery, moreFormalReviewsQuery, moreIssueCommentsQuery, moreIssueReferencesQuery, morePullRequestCommentsQuery,
+  moreReviewInlineCommentsQuery, moreReviewsQuery, pageState, pullRequestDetailsQuery, recordAt, reviewInlineCommentsQuery, reviewsOf, uniqueById,
+} from "./wire.vibe"
+
+export const maxTransientAttempts = 3
+
+export type ExpectedState = "closed" | "merged" | "open"
+
+export interface PullRequestRecord {
+  readonly id: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: Actor | null
+  readonly mergedAt: string | null
+  readonly closedAt: string | null
+  readonly headRefOid: string
+  readonly isDraft: boolean
+  readonly reviewDecision: string | null
+  readonly activeReviewRequestCount: number
+  readonly author: Actor | null
+  readonly assignees: ReadonlyArray<Actor>
+  readonly labels: ReadonlyArray<Label>
+  readonly files: ReadonlyArray<PullRequestFile> | null
+  readonly comments: ReadonlyArray<TextSource>
+  readonly reviews: ReadonlyArray<Review>
+  readonly closingIssueIds: ReadonlyArray<string>
+  readonly additions: number
+  readonly deletions: number
+  readonly changedFiles: number
+  readonly commitCount: number
+}
+
+export type ReviewRecord = Pick<PullRequestRecord, "id" | "number" | "title" | "url" | "body" | "createdAt" | "updatedAt" | "lastEditedAt" | "editor" | "mergedAt" | "headRefOid" | "author" | "comments" | "reviews">
+
+export interface ClosingPullRequest {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly mergedAt: string | null
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly author: Actor | null
+}
+
+export interface IssueRecord {
+  readonly id: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly closedAt: string | null
+  readonly stateReason: string | null
+  readonly author: Actor | null
+  readonly assignees: ReadonlyArray<Actor>
+  readonly labels: ReadonlyArray<Label>
+  readonly comments: ReadonlyArray<TextSource>
+  readonly referencedPullRequestIds?: ReadonlyArray<string>
+  readonly closedByPullRequests: ReadonlyArray<ClosingPullRequest>
+}
+
+interface PendingText {
+  readonly id: string
+  readonly number: number
+  readonly headRefOid: string
+  readonly author: Actor | null
+  comments: TextSource[]
+  reviews: PendingReview[]
+}
+
+interface PendingPull extends PendingText {
+  readonly record: Omit<PullRequestRecord, "comments" | "reviews" | "files" | "closingIssueIds" | "reviewDecision">
+  files: PullRequestFile[] | null
+  closingIssueIds: string[]
+}
+
+interface PendingReviewed extends PendingText {
+  readonly record: Omit<ReviewRecord, "comments" | "reviews">
+}
+
+schema PullRequestNode {
+  readonly __typename: string
+  readonly id: string
+  readonly state: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: ActorNode | null
+  readonly mergedAt: string | null
+  readonly closedAt?: string | null
+  readonly isDraft: boolean
+  readonly headRefOid: string
+  readonly reviewDecision: string | null
+  readonly reviewRequests: { readonly totalCount: number }
+  readonly author: ActorNode | null
+  readonly additions: number
+  readonly deletions: number
+  readonly changedFiles: number
+  readonly commits: { readonly totalCount: number }
+  readonly labels: LabelConnection
+  readonly assignees: AssigneeConnection
+  readonly comments: CommentConnection
+  readonly reviews: ReviewConnection
+  readonly files: FileConnection | null
+  readonly closingIssuesReferences: IdConnection
+}
+
+schema ReviewedPullNode {
+  readonly __typename: string
+  readonly id: string
+  readonly state: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly lastEditedAt: string | null
+  readonly editor: ActorNode | null
+  readonly mergedAt: string | null
+  readonly headRefOid: string
+  readonly author: ActorNode | null
+  readonly comments: CommentConnection
+  readonly reviews: ReviewConnection
+}
+
+schema IssueNode {
+  readonly __typename: string
+  readonly id: string
+  readonly state: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly closedAt: string | null
+  readonly stateReason: string | null
+  readonly author: ActorNode | null
+  readonly labels: LabelConnection
+  readonly assignees: AssigneeConnection
+  readonly comments: CommentConnection
+  readonly timelineItems?: IssueReferenceConnection
+  readonly closedByPullRequestsReferences: ClosingPullRequestConnection
+}
+
+schema CommentsData { readonly node: { readonly comments: CommentConnection } }
+schema ReviewsData { readonly node: { readonly id: string; readonly headRefOid: string; readonly reviews: ReviewConnection } }
+schema FilesData { readonly node: { readonly state: string; readonly isDraft: boolean; readonly headRefOid: string; readonly files: FileConnection | null } }
+schema ClosingIssuesData { readonly node: { readonly closingIssuesReferences: IdConnection } }
+schema IssueReferencesData { readonly node: { readonly timelineItems: IssueReferenceConnection } }
+schema ClosingPullRequestsData { readonly node: { readonly closedByPullRequestsReferences: ClosingPullRequestConnection } }
+schema InlineReviewNode { readonly __typename: string; readonly id: string; readonly comments: CommentConnection }
+schema MoreInlineData { readonly node: { readonly id: string; readonly comments: CommentConnection } }
+
+effect function detailNodes(data: Readonly<Record<string, unknown>>, ids: ReadonlyArray<string>) {
+  const nodes = try arrayAt(data.nodes, "data.nodes")
+  if (nodes.length !== ids.length) throw new MergedRecordInvalid({ message: `GitHub details returned ${nodes.length} nodes for ${ids.length} requested IDs` })
+  return nodes
+}
+
+effect function expected<T extends { readonly __typename: string; readonly id: string }>(node: T, path: string, kind: "Issue" | "PullRequest", id: string) {
+  if (node.__typename !== kind) throw new MergedRecordInvalid({ message: `${path} must be a ${kind}` })
+  if (node.id !== id) throw new MergedRecordInvalid({ message: `${path}.id did not match the requested immutable node ID` })
+  return node
+}
+
+effect function stateHolds(id: string, mergedAt: string | null, closedAt: string | null, state: ExpectedState) {
+  if ((state === "merged" && mergedAt === null) || (state === "closed" && closedAt === null)) {
+    throw new MergedRecordInvalid({ message: `GitHub node ${id} changed state during collection; expected ${state}` })
+  }
+}
+
+function openSetChanged(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error && error._tag === "OpenSetChanged"
+}
+
+export effect function retryOpenBatch<A, E, R>(state: ExpectedState, hydrate: () => A!E!R, attempt = 1): A!(E | OpenSetChanged)!R {
+  return hydrate() catch effect (error) => {
+    if (state !== "open" || !openSetChanged(error)) throw error
+    if (attempt >= maxTransientAttempts) throw new OpenSetChanged({ message: `Open work batch changed during ${maxTransientAttempts} consecutive hydration attempts` })
+    return try retryOpenBatch(state, hydrate, attempt + 1)
+  }
+}
+
+effect function completeText<T extends PendingText>(pull: T, comments: PageState, reviews: PageState, moreReviews: string) {
+  let commentsState = comments
+  while (commentsState.pageInfo.hasNextPage) {
+    const after = commentsState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `PR #${pull.number} comments cursor is missing` })
+    const data = try decoded(CommentsData, try (try Graphql).execute(morePullRequestCommentsQuery, { id: pull.id, after }), "data")
+    const page = try commentsOf(data.node.comments, "data.node.comments", pull.id)
+    pull.comments.push(...page.nodes)
+    commentsState = pageState(page)
+  }
+  let reviewsState = reviews
+  while (reviewsState.pageInfo.hasNextPage) {
+    const after = reviewsState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `PR #${pull.number} reviews cursor is missing` })
+    const { node } = try decoded(ReviewsData, try (try Graphql).execute(moreReviews, { id: pull.id, after }), "data")
+    if (node.id !== pull.id) throw new MergedRecordInvalid({ message: `PR #${pull.number} changed identity during review pagination` })
+    if ((try commitSha(node.headRefOid, "data.node.headRefOid")) !== pull.headRefOid) throw new OpenSetChanged({ message: `PR #${pull.number} changed head during review pagination` })
+    const page = try reviewsOf(node.reviews, "data.node.reviews")
+    pull.reviews.push(...page.nodes)
+    reviewsState = pageState(page)
+  }
+  pull.comments = try uniqueById(pull.comments)
+  pull.reviews = try uniqueById(pull.reviews)
+  if (pull.comments.length !== comments.totalCount || pull.reviews.length !== reviews.totalCount) {
+    throw new MergedRecordInvalid({ message: `PR #${pull.number} changed during collection; review connection totals no longer match` })
+  }
+  return pull
+}
+
+effect function parsedPull(node: PullRequestNode, path: string) {
+  const comments = try commentsOf(node.comments, `${path}.comments`, node.id)
+  const reviews = try reviewsOf(node.reviews, `${path}.reviews`)
+  if (node.files === null && node.state !== "OPEN") throw new MergedRecordInvalid({ message: `${path}.files must be an object` })
+  const closing = node.closingIssuesReferences
+  const headRefOid = try commitSha(node.headRefOid, `${path}.headRefOid`)
+  const author = try actorOf(node.author, `${path}.author`)
+  const pending: PendingPull = {
+    id: node.id,
+    number: node.number,
+    headRefOid,
+    author,
+    comments: [...comments.nodes],
+    reviews: [...reviews.nodes],
+    files: node.files === null ? null : [...node.files.nodes],
+    closingIssueIds: closing.nodes.map((issue) => issue.id),
+    record: {
+      id: node.id,
+      number: node.number,
+      title: node.title,
+      url: node.url,
+      body: node.body,
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt,
+      lastEditedAt: node.lastEditedAt,
+      editor: try actorOf(node.editor, `${path}.editor`),
+      mergedAt: node.mergedAt,
+      closedAt: node.closedAt ?? null,
+      isDraft: node.isDraft,
+      headRefOid,
+      activeReviewRequestCount: node.reviewRequests.totalCount,
+      author,
+      assignees: try assigneesOf(node.assignees, `${path}.assignees`),
+      labels: try labelsOf(node.labels, `${path}.labels`),
+      additions: node.additions,
+      deletions: node.deletions,
+      changedFiles: node.changedFiles,
+      commitCount: node.commits.totalCount,
+    },
+  }
+  return { pending, state: node.state, comments: pageState(comments), reviews: pageState(reviews), files: node.files === null ? null : pageState({ ...node.files, nodes: node.files.nodes }), closing: pageState({ ...closing, nodes: closing.nodes }) }
+}
+
+effect function completePull(parsed: { readonly pending: PendingPull; readonly state: string; readonly comments: PageState; readonly reviews: PageState; readonly files: PageState | null; readonly closing: PageState }) {
+  const pull = try completeText(parsed.pending, parsed.comments, parsed.reviews, moreReviewsQuery)
+  let filesState = parsed.files
+  while (filesState !== null && filesState.pageInfo.hasNextPage) {
+    const after = filesState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `PR #${pull.number} files cursor is missing` })
+    const { node } = try decoded(FilesData, try (try Graphql).execute(moreFilesQuery, { id: pull.id, after }), "data")
+    if (node.files === null && parsed.state === "OPEN" && node.state === "OPEN" && node.headRefOid === pull.headRefOid) {
+      pull.files = null
+      break
+    }
+    if (node.files === null) throw new MergedRecordInvalid({ message: "data.node.files must be an object" })
+    if (pull.files === null) throw new MergedRecordInvalid({ message: `PR #${pull.number} file detail is unavailable` })
+    pull.files.push(...node.files.nodes)
+    filesState = pageState({ ...node.files, nodes: node.files.nodes })
+  }
+  let closingState = parsed.closing
+  while (closingState.pageInfo.hasNextPage) {
+    const after = closingState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `PR #${pull.number} closing-issues cursor is missing` })
+    const { node } = try decoded(ClosingIssuesData, try (try Graphql).execute(moreClosingIssuesQuery, { id: pull.id, after }), "data")
+    pull.closingIssueIds.push(...node.closingIssuesReferences.nodes.map((issue) => issue.id))
+    closingState = pageState({ ...node.closingIssuesReferences, nodes: node.closingIssuesReferences.nodes })
+  }
+  pull.closingIssueIds = [...new Set(pull.closingIssueIds)]
+  if ((pull.files !== null && pull.files.length !== parsed.files?.totalCount) || pull.closingIssueIds.length !== parsed.closing.totalCount) {
+    throw new MergedRecordInvalid({ message: `PR #${pull.number} changed during collection; nested connection totals no longer match` })
+  }
+  return pull
+}
+
+effect function inlineComments(reviewId: string, artifactId: string, first: Page<TextSource>) {
+  const comments = [...first.nodes]
+  let pageInfo = first.pageInfo
+  while (pageInfo.hasNextPage) {
+    const after = pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `Review ${reviewId} comments cursor is missing` })
+    const { node } = try decoded(MoreInlineData, try (try Graphql).execute(moreReviewInlineCommentsQuery, { id: reviewId, after }), "data")
+    if (node.id !== reviewId) throw new MergedRecordInvalid({ message: `Review ${reviewId} changed identity during pagination` })
+    const page = try commentsOf(node.comments, "data.node.comments", artifactId)
+    comments.push(...page.nodes)
+    pageInfo = page.pageInfo
+  }
+  const deduped = try uniqueById(comments)
+  if (deduped.length !== first.totalCount) throw new MergedRecordInvalid({ message: `Review ${reviewId} changed during collection; expected ${first.totalCount} inline comments, received ${deduped.length}` })
+  return deduped
+}
+
+effect function finalize<T extends PendingText>(pending: ReadonlyArray<T>) {
+  const bindings = pending.flatMap((pull) => pull.reviews.map((review) => ({ pull, review })))
+  const seen = new Set<string>()
+  for (const { review } of bindings) {
+    if (seen.has(review.id)) throw new MergedRecordInvalid({ message: `Review ${review.id} appeared under more than one pull request` })
+    seen.add(review.id)
+  }
+  const counts = new Map<string, number>()
+  for (const batch of chunks(bindings, reviewDetailBatchSize)) {
+    const ids = batch.map(({ review }) => review.id)
+    const nodes = try arrayAt((try executeNodeBatch(reviewInlineCommentsQuery, ids)).nodes, "data.nodes")
+    if (nodes.length !== batch.length) throw new MergedRecordInvalid({ message: `GitHub returned ${nodes.length} reviews for ${batch.length} requested IDs` })
+    for (const [index, binding] of batch.entries()) {
+      const path = `data.nodes[${index}]`
+      const node = try decoded(InlineReviewNode, nodes[index], path)
+      if (node.__typename !== "PullRequestReview" || node.id !== binding.review.id) throw new MergedRecordInvalid({ message: `${path} did not match the requested review` })
+      const comments = try inlineComments(binding.review.id, binding.pull.id, try commentsOf(node.comments, `${path}.comments`, binding.pull.id))
+      binding.pull.comments.push(...comments)
+      counts.set(binding.review.id, comments.length)
+    }
+  }
+  const finished: { readonly pending: T; readonly reviewDecision: string | null; readonly comments: ReadonlyArray<TextSource>; readonly reviews: ReadonlyArray<Review> }[] = []
+  for (const pull of pending) {
+    const reviews: Review[] = []
+    for (const review of pull.reviews) {
+      const inlineCommentCount = counts.get(review.id)
+      if (inlineCommentCount === undefined) throw new MergedRecordInvalid({ message: `Review ${review.id} inline comments were not loaded` })
+      reviews.push({ id: review.id, body: review.body, state: review.state, submittedAt: review.submittedAt, url: review.url, author: review.author, commitId: review.commitId, inlineCommentCount })
+    }
+    finished.push({ pending: pull, reviewDecision: try currentHeadReviewDecision(pull.headRefOid, pull.author, pull.reviews), comments: try uniqueById(pull.comments), reviews })
+  }
+  return finished
+}
+
+effect function withRecoveredFiles(nodes: ReadonlyArray<unknown>, ids: ReadonlyArray<string>, target: FileTarget, repositoryId: string) {
+  const patched: unknown[] = []
+  for (const [index, value] of nodes.entries()) {
+    const node = try recordAt(value, `data.nodes[${index}]`)
+    if (node.files !== null) {
+      patched.push(value)
+      continue
+    }
+    if (node.__typename !== "PullRequest" || node.id !== ids[index] || node.state !== "MERGED") throw new MergedRecordInvalid({ message: "Complete merged file evidence is unavailable" })
+    const recovered = try recoverPullRequestFiles(target, repositoryId, { id: ids[index] ?? "", state: node.state, mergedAt: node.mergedAt, headRefOid: node.headRefOid })
+    patched.push({ ...node, ...recovered, files: { totalCount: recovered.changedFiles, nodes: recovered.files, pageInfo: { hasNextPage: false, endCursor: null } } })
+  }
+  return patched
+}
+
+export effect function hydratePullRequests(references: ReadonlyArray<NodeReference>, state: ExpectedState, target: FileTarget, repositoryId: string) {
+  const pending: PendingPull[] = []
+  for (const batch of chunks(references, detailBatchSize)) {
+    const hydrated = try retryOpenBatch(state, () => effect {
+      const ids = batch.map((reference) => reference.id)
+      const raw = try detailNodes(try executeNodeBatch(pullRequestDetailsQuery, ids), ids)
+      const nodes = state === "merged" ? try withRecoveredFiles(raw, ids, target, repositoryId) : raw
+      const completed: PendingPull[] = []
+      for (const [index, value] of nodes.entries()) {
+        const path = `data.nodes[${index}]`
+        const node = try expected(try decoded(PullRequestNode, value, path), path, "PullRequest", ids[index] ?? "")
+        const parsed = try parsedPull(node, path)
+        if (state === "open" && parsed.state !== "OPEN") continue
+        try stateHolds(node.id, node.mergedAt, node.closedAt ?? null, state)
+        completed.push(try completePull(parsed))
+      }
+      return completed
+    })
+    pending.push(...hydrated)
+  }
+  return (try finalize(pending)).map(({ pending: pull, reviewDecision, comments, reviews }) => ({
+    ...pull.record,
+    reviewDecision,
+    files: pull.files,
+    closingIssueIds: pull.closingIssueIds,
+    comments,
+    reviews,
+  }) satisfies PullRequestRecord)
+}
+
+export effect function hydrateReviewedPullRequests(references: ReadonlyArray<NodeReference>, allReviews = false, state: "merged" | "closed" = "merged") {
+  const pending: PendingReviewed[] = []
+  for (const batch of chunks(references, detailBatchSize)) {
+    const ids = batch.map((reference) => reference.id)
+    const nodes = try detailNodes(try executeNodeBatch(mergedPullRequestReviewsQuery, ids, { reviewStates: allReviews ? null : ["APPROVED", "CHANGES_REQUESTED"] }), ids)
+    for (const [index, value] of nodes.entries()) {
+      const path = `data.nodes[${index}]`
+      const node = try expected(try decoded(ReviewedPullNode, value, path), path, "PullRequest", ids[index] ?? "")
+      if (state === "merged") try stateHolds(node.id, node.mergedAt, null, "merged")
+      else if (node.state !== "CLOSED" || node.mergedAt !== null) throw new MergedRecordInvalid({ message: "Joint context source changed its closed state" })
+      const comments = try commentsOf(node.comments, `${path}.comments`, node.id)
+      const reviews = try reviewsOf(node.reviews, `${path}.reviews`)
+      const headRefOid = try commitSha(node.headRefOid, `${path}.headRefOid`)
+      const author = try actorOf(node.author, `${path}.author`)
+      const record = { id: node.id, number: node.number, title: node.title, url: node.url, body: node.body, createdAt: node.createdAt, updatedAt: node.updatedAt, lastEditedAt: node.lastEditedAt, editor: try actorOf(node.editor, `${path}.editor`), mergedAt: node.mergedAt, headRefOid, author }
+      pending.push(try completeText({ id: node.id, number: node.number, headRefOid, author, comments: [...comments.nodes], reviews: [...reviews.nodes], record }, pageState(comments), pageState(reviews), allReviews ? moreReviewsQuery : moreFormalReviewsQuery))
+    }
+  }
+  return (try finalize(pending)).map(({ pending: pull, comments, reviews }) => ({ ...pull.record, comments, reviews }) satisfies ReviewRecord)
+}
+
+effect function completeIssue(node: IssueNode, path: string) {
+  const comments = try commentsOf(node.comments, `${path}.comments`, node.id)
+  const allComments = [...comments.nodes]
+  const closing: ClosingPullRequest[] = []
+  effect function closingOf(connection: ClosingPullRequestConnection, at: string) {
+    for (const [index, pull] of connection.nodes.entries()) {
+      closing.push({ id: pull.id, number: pull.number, url: pull.url, mergedAt: pull.mergedAt, body: pull.body, createdAt: pull.createdAt, updatedAt: pull.updatedAt, author: try actorOf(pull.author, `${at}.nodes[${index}].author`) })
+    }
+  }
+  try closingOf(node.closedByPullRequestsReferences, `${path}.closedByPullRequestsReferences`)
+  let referencedPullRequestIds: ReadonlyArray<string> | undefined = undefined
+  if (node.state === "OPEN") {
+    const first = node.timelineItems
+    if (first === undefined) throw new MergedRecordInvalid({ message: `${path}.timelineItems must be an object` })
+    const references = [...first.nodes]
+    let pageInfo = first.pageInfo
+    const cursors = new Set<string>()
+    while (pageInfo.hasNextPage) {
+      const after = pageInfo.endCursor
+      if (after === null || after === "" || cursors.has(after)) throw new MergedRecordInvalid({ message: `Issue #${node.number} reference cursor is missing or repeated` })
+      cursors.add(after)
+      const page = (try decoded(IssueReferencesData, try (try Graphql).execute(moreIssueReferencesQuery, { id: node.id, after }), "data")).node.timelineItems
+      if (page.totalCount !== first.totalCount) throw new MergedRecordInvalid({ message: `Issue #${node.number} references changed during collection` })
+      references.push(...page.nodes)
+      pageInfo = page.pageInfo
+    }
+    for (const reference of references) {
+      if (reference.source.__typename !== "Issue" && reference.source.__typename !== "PullRequest") throw new MergedRecordInvalid({ message: `${path}.timelineItems has an unsupported reference source` })
+      if (reference.source.__typename === "PullRequest" && reference.source.id === undefined) throw new MergedRecordInvalid({ message: `${path}.timelineItems source.id must be a string` })
+    }
+    const unique = try uniqueById(references)
+    if (unique.length !== first.totalCount) throw new MergedRecordInvalid({ message: `Issue #${node.number} reference count is incomplete` })
+    referencedPullRequestIds = [...new Set(unique.flatMap((reference) => reference.source.__typename === "PullRequest" && reference.source.id !== undefined ? [reference.source.id] : []))]
+  }
+  let commentsState = pageState(comments)
+  while (commentsState.pageInfo.hasNextPage) {
+    const after = commentsState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `Issue #${node.number} comments cursor is missing` })
+    const page = try commentsOf((try decoded(CommentsData, try (try Graphql).execute(moreIssueCommentsQuery, { id: node.id, after }), "data")).node.comments, "data.node.comments", node.id)
+    allComments.push(...page.nodes)
+    commentsState = pageState(page)
+  }
+  let closingState: PageState = { totalCount: node.closedByPullRequestsReferences.totalCount, pageInfo: node.closedByPullRequestsReferences.pageInfo }
+  while (closingState.pageInfo.hasNextPage) {
+    const after = closingState.pageInfo.endCursor
+    if (after === null || after === "") throw new MergedRecordInvalid({ message: `Issue #${node.number} closing-pull-requests cursor is missing` })
+    const page = (try decoded(ClosingPullRequestsData, try (try Graphql).execute(moreClosingPullRequestsQuery, { id: node.id, after }), "data")).node.closedByPullRequestsReferences
+    try closingOf(page, "data.node.closedByPullRequestsReferences")
+    closingState = { totalCount: page.totalCount, pageInfo: page.pageInfo }
+  }
+  const uniqueComments = try uniqueById(allComments)
+  const uniqueClosing = try uniqueById(closing)
+  if (uniqueComments.length !== comments.totalCount || uniqueClosing.length !== node.closedByPullRequestsReferences.totalCount) {
+    throw new MergedRecordInvalid({ message: `Issue #${node.number} changed during collection; nested connection totals no longer match` })
+  }
+  return {
+    id: node.id,
+    number: node.number,
+    title: node.title,
+    url: node.url,
+    body: node.body,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    closedAt: node.closedAt,
+    stateReason: node.stateReason,
+    author: try actorOf(node.author, `${path}.author`),
+    assignees: try assigneesOf(node.assignees, `${path}.assignees`),
+    labels: try labelsOf(node.labels, `${path}.labels`),
+    comments: uniqueComments,
+    ...(referencedPullRequestIds === undefined ? {} : { referencedPullRequestIds }),
+    closedByPullRequests: uniqueClosing,
+  } satisfies IssueRecord
+}
+
+export effect function hydrateIssues(references: ReadonlyArray<NodeReference>, state: ExpectedState) {
+  const issues: IssueRecord[] = []
+  for (const batch of chunks(references, detailBatchSize)) {
+    const hydrated = try retryOpenBatch(state, () => effect {
+      const ids = batch.map((reference) => reference.id)
+      const nodes = try detailNodes(try executeNodeBatch(issueDetailsQuery, ids, { includeReferences: state === "open" }), ids)
+      const completed: IssueRecord[] = []
+      for (const [index, value] of nodes.entries()) {
+        const path = `data.nodes[${index}]`
+        const node = try expected(try decoded(IssueNode, value, path), path, "Issue", ids[index] ?? "")
+        if (state === "open" && node.state !== "OPEN") continue
+        try stateHolds(node.id, null, node.closedAt, state)
+        completed.push(try completeIssue(node, path))
+      }
+      return completed
+    })
+    issues.push(...hydrated)
+  }
+  return issues
+}

@@ -1,0 +1,15 @@
+// spec/ui/copy.md, "Copying starts from ready and reports the browser's answer"
+import { writeClipboard } from "./navigatorClipboard.ts"
+
+export error CopyRefused { message: string }
+
+export service Clipboard {
+  write(text: string): void!CopyRefused
+}
+
+export const clipboard = Layer.succeed(Clipboard, {
+  write: (text) => tryPromise({
+    try: () => writeClipboard(text),
+    catch: (cause) => new CopyRefused({ message: cause instanceof Error ? cause.message : "The browser refused the copy." }),
+  }),
+})

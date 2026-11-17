@@ -1,0 +1,180 @@
+// spec/points/census.md, "Collection starts only for a collected project and never moves its window back"
+import { isLegacyProject } from "@repo/backend/legacy"
+import { boundedBytes } from "@repo/platform/browser"
+import { type ProjectView, collected } from "../../gen/points__census.effect.vibe"
+import type { Reward } from "./ranking.ts"
+
+module verified {
+  import type { Reward } from "./ranking.ts"
+  import { rewardOrder as order } from "./ranking.ts"
+  /** @throws {never} */
+  export function rewardOrder(left: Reward, right: Reward): number { return order(left, right) }
+}
+import { rewardOrder } from verified
+
+export const defaultRegistryOrigin = "https://slop.cash"
+export const maxRegistryBytes = 4 * 1024 * 1024
+export const registryTimeoutMs = 30_000
+const contractHeader = "x-slop-project-api-contract"
+const answerKeys: ReadonlyArray<string> = ["schemaVersion", "projects", "restrictions"]
+const restrictionStates: ReadonlyArray<string> = ["quarantined", "banned"]
+const minorUnits = /^(0|[1-9][0-9]*)$/u
+
+export schema RegistryRepository {
+  readonly id: string
+  readonly githubUrl: string
+  readonly displayName: string
+  readonly description: string
+  readonly integrationBranch: string
+  readonly aliases?: ReadonlyArray<string>
+  readonly nodeId?: string
+  readonly countsFrom?: string
+}
+
+export schema RegistryProject {
+  readonly id: string
+  readonly status: string
+  readonly listingTier: string
+  readonly authority: { readonly repositoryNodeId?: string }
+  readonly reward: { readonly committedMinor: string; readonly monthlyCapMinor: string }
+  readonly skill: { readonly publishAtRoot?: boolean }
+  readonly repositories: ReadonlyArray<RegistryRepository>
+}
+
+export schema RegistryRestriction { readonly projectId: string; readonly state: string }
+
+export schema RegistryAnswer {
+  readonly schemaVersion: "1"
+  readonly projects: ReadonlyArray<RegistryProject>
+  readonly restrictions?: ReadonlyArray<RegistryRestriction>
+}
+
+export error RegistryNotDeployed { origin: string }
+export error RegistryUnavailable { message: string }
+export error RegistryMalformed { message: string }
+
+export interface RegisteredProject {
+  readonly projectId: string
+  readonly view: ProjectView
+  readonly project: RegistryProject
+}
+
+export interface CollectedTarget {
+  readonly projectId: string
+  readonly id: string
+  readonly owner: string
+  readonly name: string
+  readonly displayName: string
+  readonly githubUrl: string
+  readonly description: string
+  readonly integrationBranch: string
+  readonly aliases: ReadonlyArray<string>
+  readonly expectedNodeId: string | null
+  readonly countsFrom: string | null
+  readonly role: "primary" | "member"
+}
+
+const decodeAnswer = Schema.decodeUnknownEffect(RegistryAnswer)
+
+function rewardOf(project: RegistryProject): Reward {
+  return { committedMinor: project.reward.committedMinor, monthlyCapMinor: project.reward.monthlyCapMinor, publishAtRoot: project.skill.publishAtRoot === true }
+}
+
+function ranked(left: RegistryProject, right: RegistryProject) {
+  return rewardOrder(rewardOf(left), rewardOf(right)) || left.id.localeCompare(right.id)
+}
+
+export effect function registryAnswer(value: unknown) {
+  if (typeof value !== "object" || value === null || Object.keys(value).some((key) => !answerKeys.includes(key))) {
+    throw new RegistryMalformed({ message: "Project registry response has an unexpected shape" })
+  }
+  const answer = decodeAnswer(value) catch effect () => {
+    throw new RegistryMalformed({ message: "Project registry response has an unexpected shape" })
+  }
+  for (const project of answer.projects) {
+    if (!minorUnits.test(project.reward.committedMinor) || !minorUnits.test(project.reward.monthlyCapMinor)) {
+      throw new RegistryMalformed({ message: `Project ${project.id} reward amounts are not minor units` })
+    }
+  }
+  return answer
+}
+
+export effect function registeredProjects(answer: RegistryAnswer) {
+  const restricted = new Set<string>()
+  for (const restriction of answer.restrictions ?? []) {
+    if (!restrictionStates.includes(restriction.state) || !answer.projects.some((project) => project.id === restriction.projectId)) {
+      throw new RegistryMalformed({ message: "Project restriction has an unexpected shape" })
+    }
+    restricted.add(restriction.projectId)
+  }
+  return [...answer.projects].sort(ranked).map((project) => ({
+    projectId: project.id,
+    project,
+    view: {
+      registered: true,
+      paused: project.status !== "active",
+      retired: project.listingTier === "retired",
+      legacy: isLegacyProject(project.id),
+      quarantined: restricted.has(project.id),
+    },
+  }) satisfies RegisteredProject)
+}
+
+effect function expectedNodeId(project: RegistryProject, index: number, repository: RegistryRepository, current: string) {
+  if (current.toLowerCase() === repository.id.toLowerCase()) return null
+  const nodeId = index === 0 ? project.authority.repositoryNodeId : repository.nodeId
+  if (nodeId === undefined || nodeId === "") throw new RegistryMalformed({ message: `${repository.id} has no recorded GraphQL node ID` })
+  return nodeId
+}
+
+export effect function collectedTargets(registered: ReadonlyArray<RegisteredProject>) {
+  const targets: CollectedTarget[] = []
+  for (const { project, view } of registered) {
+    if (!collected(view)) continue
+    for (const [index, repository] of project.repositories.entries()) {
+      const url = URL.parse(repository.githubUrl)
+      const [owner, name] = url === null ? [] : url.pathname.split("/").filter((part) => part !== "")
+      if (owner === undefined || name === undefined) throw new RegistryMalformed({ message: `${repository.id} has no GitHub repository URL` })
+      targets.push({
+        projectId: project.id,
+        id: repository.id,
+        owner,
+        name,
+        displayName: repository.displayName,
+        githubUrl: repository.githubUrl,
+        description: repository.description,
+        integrationBranch: repository.integrationBranch,
+        aliases: repository.aliases ?? [],
+        expectedNodeId: try expectedNodeId(project, index, repository, `${owner}/${name}`),
+        countsFrom: repository.countsFrom ?? null,
+        role: targets.length === 0 ? "primary" : "member",
+      })
+    }
+  }
+  return targets
+}
+
+export effect function fetchRegistry(origin: string = defaultRegistryOrigin) {
+  const url = URL.parse("/api/v1/projects", origin)
+  if (url === null || !(url.protocol === "https:" || (url.protocol === "http:" && url.hostname === "127.0.0.1"))) {
+    throw new RegistryMalformed({ message: "Project registry URL must use HTTPS" })
+  }
+  const client = try HttpClient.HttpClient
+  const read = effect {
+    const response = try client.execute(HttpClientRequest.get(url.href, { headers: { accept: "application/json" } }))
+    if (response.status === 404 && response.headers[contractHeader] === undefined) throw new RegistryNotDeployed({ origin: url.origin })
+    if (response.status < 200 || response.status >= 300) throw new RegistryUnavailable({ message: `${url.pathname} returned HTTP ${response.status}` })
+    return boundedBytes(response, maxRegistryBytes, url.pathname) catch effect (error) => {
+      throw new RegistryUnavailable({ message: error._tag === "BodyTooLarge" ? `${url.pathname} exceeds the size limit` : `${url.pathname} returned no readable body` })
+    }
+  }
+  const bytes = timeout(provideService(read, FetchHttpClient.RequestInit, { redirect: "error" }), Duration.millis(registryTimeoutMs)) catch effect (error) => match (error._tag) {
+    when "TimeoutError": throw new RegistryUnavailable({ message: `${url.pathname} timed out after ${registryTimeoutMs}ms` });
+    when "HttpClientError": throw new RegistryUnavailable({ message: `${url.pathname} could not be read` });
+    default: throw error;
+  }
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new RegistryMalformed({ message: `${url.pathname} returned malformed JSON` })
+  }
+  return try registeredProjects(try registryAnswer(value))
+}

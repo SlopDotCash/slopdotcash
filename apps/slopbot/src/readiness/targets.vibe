@@ -1,0 +1,86 @@
+// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
+import type { ReportingTarget } from "../../gen/slopbot__reportingReadiness.ts"
+
+schema Intake { repository?: string }
+schema SecurityBounty { intake?: Intake | null }
+schema ManifestRepository { id: string; aliases?: ReadonlyArray<string> | null; githubUrl?: string | null }
+schema ManifestAuthority { repositoryId: string | number; repositoryNodeId: string }
+schema ReportingManifest {
+  status: "active" | "paused"
+  listingTier: string
+  authority: ManifestAuthority
+  repositories: ReadonlyArray<ManifestRepository>
+  securityBounty?: SecurityBounty | null
+}
+schema ProjectRow { id: string; revision: number; manifest: string }
+
+export interface Target {
+  readonly projectId: string
+  readonly revision: number
+  readonly owner: string
+  readonly name: string
+  readonly repository: string
+  readonly repositoryKey: string
+  readonly expected: ReportingTarget
+}
+
+export interface Registered {
+  readonly paused: boolean
+  readonly target: Target
+}
+
+const repositoryPath = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/u
+const repositoryId = /^[1-9][0-9]{0,15}$/u
+
+effect function manifestOf(row: ProjectRow) {
+  const label = `project ${row.id}`
+  const parsed = try Effect.try({ try: () => JSON.parse(row.manifest) as unknown, catch: () => new RowMismatch({ text: label, issue: "manifest is not JSON" }) })
+  return Schema.decodeUnknownEffect(ReportingManifest)(parsed) catch effect (error) => { throw new RowMismatch({ text: label, issue: String(error) }) }
+}
+
+effect function pathOf(repository: ManifestRepository, label: string) {
+  const githubUrl = repository.githubUrl ?? ""
+  if (githubUrl === "") return repository.id
+  const url = try Effect.try({ try: () => new URL(githubUrl), catch: () => new RowMismatch({ text: label, issue: "Invalid reporting repository" }) })
+  return url.pathname.replace(/^\/|\/$/gu, "")
+}
+
+effect function targetOf(row: ProjectRow, manifest: ReportingManifest) {
+  const label = `project ${row.id}`
+  const selected = (manifest.securityBounty?.intake?.repository ?? manifest.repositories[0]?.id)?.toLowerCase()
+  const index = manifest.repositories.findIndex((repository) => [repository.id, ...repository.aliases ?? []].some((name) => name.toLowerCase() === selected))
+  const repository = manifest.repositories[index]
+  if (repository === undefined || !Number.isSafeInteger(row.revision) || row.revision < 1) throw new RowMismatch({ text: label, issue: "Reporting repository is not registered" })
+  const path = try pathOf(repository, label)
+  const parts = repositoryPath.exec(path)
+  if (parts === null || path.length > 201) throw new RowMismatch({ text: label, issue: "Invalid reporting repository" })
+  const authorityId = String(manifest.authority.repositoryId)
+  if (index === 0 && !repositoryId.test(authorityId)) throw new RowMismatch({ text: label, issue: "Registered repository ID is invalid" })
+  return {
+    projectId: row.id,
+    revision: row.revision,
+    owner: parts[1] ?? "",
+    name: parts[2] ?? "",
+    repository: path,
+    repositoryKey: path.toLowerCase(),
+    expected: index === 0
+      ? { expectedRepositoryId: Number(authorityId), expectedNodeId: manifest.authority.repositoryNodeId }
+      : { expectedRepositoryId: 0, expectedNodeId: "" },
+  } satisfies Target
+}
+
+export effect function registeredProjects() {
+  const found: Registered[] = []
+  for (const row of try rows(ProjectRow, sql`SELECT id, revision, manifest FROM projects ORDER BY id`)) {
+    const manifest = try manifestOf(row)
+    if (manifest.listingTier === "retired") continue
+    found.push({ paused: manifest.status === "paused", target: try targetOf(row, manifest) })
+  }
+  return found
+}
+
+export effect function currentTarget(projectId: string) {
+  const row = try first(ProjectRow, sql`SELECT id, revision, manifest FROM projects WHERE id = ${projectId}`)
+  return row === undefined ? undefined : try targetOf(row, try manifestOf(row))
+}

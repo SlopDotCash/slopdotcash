@@ -1,0 +1,60 @@
+// spec/frontend/requests.md, "Loading, empty, stale, denied, invalid and unavailable remain distinct"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type DeadlineExceeded, type RequestFailed, request } from "@repo/platform/browser"
+import type { Access, Route } from "@repo/platform/route"
+import type { ReadResult } from "../../gen/frontend__requests.effect.vibe"
+
+module verified {
+  import { transientHttpStatus as transient } from "./status.ts"
+  /** @throws {never} */
+  export function transientHttpStatus(status: number): boolean { return transient(status) }
+}
+import { transientHttpStatus } from verified
+
+export const deadlineMs = 15_000
+
+export error Refused { status: number; error: string; message: string }
+export error NetworkError { timedOut: boolean; message: string }
+export error InvalidResponse { status: number; message: string }
+export error ActorChanged { expected: string; message: string }
+
+export type CallFailure = Refused | NetworkError | InvalidResponse | ActorChanged
+
+export interface CallInput<B> {
+  readonly body?: B
+  readonly params?: Readonly<Record<string, string>>
+  readonly query?: Readonly<Record<string, string>>
+}
+
+export interface CallOptions {
+  readonly limitBytes: number
+  readonly expectedActor?: string
+  readonly deadlineMs?: number
+}
+
+const actorMismatch = { status: 403, code: "actor_changed" }
+
+function failure(error: RequestFailed | DeadlineExceeded, mismatch: { readonly status: number; readonly code: string }, expected: string | undefined): CallFailure {
+  if (error._tag === "DeadlineExceeded") return new NetworkError({ timedOut: true, message: "The request timed out. Try again." })
+  if (error.status === 0) return new NetworkError({ timedOut: false, message: "The network request failed. Try again." })
+  if (error.error === "invalid_response") return new InvalidResponse({ status: error.status, message: error.message })
+  if (error.status === mismatch.status && error.error === mismatch.code) return new ActorChanged({ expected: expected ?? "", message: error.message })
+  return new Refused({ status: error.status, error: error.error, message: error.message })
+}
+
+export effect function call<B, A, X extends Access>(route: Route<B, A, X>, input: CallInput<B>, options: CallOptions) {
+  const sent = { limitBytes: options.limitBytes, deadlineMs: options.deadlineMs ?? deadlineMs, ...(options.expectedActor === undefined ? {} : { expectedActor: options.expectedActor }) }
+  return request(route, input, sent) catch effect (error) => { throw failure(error, route.actorMismatch ?? actorMismatch, options.expectedActor) }
+}
+
+export function readResultOf(failed: CallFailure): ReadResult {
+  switch (failed._tag) {
+    case "ActorChanged": return "NoAuthority"
+    case "NetworkError": return "NoService"
+    case "InvalidResponse": return "BadData"
+    case "Refused": return failed.status === 401 || failed.status === 403 ? "NoAuthority" : transientHttpStatus(failed.status) ? "NoService" : "ReadError"
+    default: {
+      const _exhaustive: never = failed
+      return _exhaustive
+    }
+  }
+}

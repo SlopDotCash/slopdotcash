@@ -1,0 +1,82 @@
+// spec/backend/projectRegistry.md, "Each permanent repository id and each path key belongs to at most one project"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"
+import { allChunked, first, list, rows, sql } from "@repo/platform/d1"
+import type { RegistryRead } from "../../gen/backend__projectComposition.effect.vibe"
+import { idOf, repositoryIdsOf, repositoryKeysOf } from "../projects/store/codec.vibe"
+import { type ActiveRestriction, EnforcementRows } from "../projects/store/enforcementRows.vibe"
+import { legacyHolder } from "../projects/store/legacy.ts"
+import { type Manifest, manifestOf } from "../projects/store/rows.vibe"
+
+schema ListedRow { project_id: string }
+schema ManifestRow { manifest: string }
+
+export interface Identity {
+  readonly githubIds: ReadonlyArray<string>
+  readonly keys: ReadonlyArray<string>
+}
+
+export interface RepositoryClaim {
+  readonly listedBy?: string
+  readonly restrictedBy?: string
+}
+
+export interface Closure {
+  readonly restricted: boolean
+  readonly sourceProjectId?: string
+}
+
+export function githubIdKey(githubId: string): string {
+  return `github:${githubId}`
+}
+
+export function identityOf(manifest: Manifest): Identity {
+  const githubIds = [...new Set(repositoryIdsOf(manifest).filter((id) => id > 0).map(String))]
+  const appended = manifest.repositories.slice(1).flatMap((repository) => repository.githubId === undefined ? [] : [repository.githubId])
+  return { githubIds, keys: [...new Set([...repositoryKeysOf(manifest), ...appended.map(githubIdKey)])] }
+}
+
+export function restrictionFor(identity: Identity, active: ReadonlyArray<ActiveRestriction>): ActiveRestriction | undefined {
+  const keys = new Set([...identity.keys, ...identity.githubIds.map(githubIdKey)])
+  return active.find((restriction) => identity.githubIds.includes(restriction.repositoryGithubId) || restriction.repositoryKeys.some((key) => keys.has(key)))
+}
+
+export effect function activeRestrictions() {
+  return try (try EnforcementRows).restrictions()
+}
+
+export effect function manifestOfProject(projectId: string) {
+  const row = try first(ManifestRow, sql`SELECT manifest FROM projects WHERE id = ${projectId}`)
+  return row === undefined ? undefined : try manifestOf(row.manifest, `project ${projectId}`)
+}
+
+export effect function closureOf(projectId: string) {
+  const active = try activeRestrictions()
+  if (active.some((restriction) => restriction.projectId === projectId)) return { restricted: true, sourceProjectId: projectId } satisfies Closure
+  const manifest = try manifestOfProject(projectId)
+  const shared = manifest === undefined ? undefined : restrictionFor(identityOf(manifest), active)
+  return (shared === undefined ? { restricted: false } : { restricted: true, sourceProjectId: shared.projectId }) satisfies Closure
+}
+
+export effect function listedById(repositoryId: string) {
+  const found = try rows(ListedRow, sql`SELECT id AS project_id FROM projects WHERE CAST(json_extract(manifest, '$.authority.repositoryId') AS TEXT) = ${repositoryId} OR EXISTS (SELECT 1 FROM json_each(projects.manifest, '$.repositories') listed WHERE json_extract(listed.value, '$.githubId') = ${repositoryId}) ORDER BY id`)
+  return found.map((row) => row.project_id)
+}
+
+export effect function listedByKeys(keys: ReadonlyArray<string>) {
+  const found = try allChunked(ListedRow, keys, (chunk) => sql`SELECT project_id FROM project_repositories WHERE repository_key IN (${list(chunk)})`)
+  return [...new Set(found.map((row) => row.project_id))]
+}
+
+export effect function repositoryClaim(claim: { readonly projectId: string; readonly repositoryId: string; readonly keys: ReadonlyArray<string> }) {
+  const keys = [...new Set(claim.keys.map((key) => key.toLowerCase()))]
+  const listed = [...try listedById(claim.repositoryId), ...try listedByKeys(keys)].filter((projectId) => projectId !== claim.projectId)
+  const legacy = keys.flatMap((key) => {
+    const holder = legacyHolder(key)
+    return holder === undefined || holder === claim.projectId ? [] : [holder]
+  })
+  const restriction = restrictionFor({ githubIds: [claim.repositoryId], keys }, try activeRestrictions())
+  return { listedBy: listed[0] ?? legacy[0], restrictedBy: restriction?.projectId } satisfies RepositoryClaim
+}
+
+export function registryReadOf(repositoryId: string, claim: RepositoryClaim): RegistryRead {
+  return { repository: idOf(repositoryId), listedBy: claim.listedBy === undefined ? 0 : 1, restricted: claim.restrictedBy !== undefined }
+}

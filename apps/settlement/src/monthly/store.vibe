@@ -1,0 +1,708 @@
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A cut below the proposed amount needs a public reason of 20 to 500 characters"
+import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import type { Exclusion, Relationship } from "../../gen/settlement__payoutExclusions.ts"
+import type { Share } from "../../gen/settlement__allocation.ts"
+import { type AllocationChange, type BanExclusion, type Cut, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, closeProposalWindow, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import { MAX_BASE_UNITS, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
+import { type Period, formatPeriod, parsePeriod, periodStartSeconds } from "../kernels/calendar.ts"
+import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
+import { NETWORKS, isChain, isNetworkKey, maxBaseUnitsForChain } from "../kernels/networks.ts"
+import { frozenTotal, obligationProgress, withinCap } from "../monthlyCommitment/execution.ts"
+
+module limbs {
+  import { toAmount } from "../kernels/amounts.ts"
+  /** @throws {never} */
+  export function amountOf(value: bigint): number[] { return toAmount(value < 0n ? 0n : value) }
+}
+import { amountOf } from limbs
+
+export { amountOf }
+
+export schema ManifestExclusion {
+  readonly actorId: string
+  readonly relationship: "owner" | "funded-employee" | "related-party"
+  readonly fromCycle: string
+  readonly untilCycle: string | null
+}
+
+export schema CycleCap {
+  readonly cycleId: string
+  readonly monthlyCapMinor: string
+}
+
+export schema ReviewBudget {
+  readonly fundingState?: string
+  readonly paymentMode?: string
+  readonly effectiveAt?: string
+  readonly committedMinor?: string
+  readonly monthlyCapMinor?: string
+}
+
+export schema ManifestReward {
+  readonly kind: string
+  readonly monthlyCapMinor?: string
+  readonly cycleCaps?: ReadonlyArray<CycleCap>
+  readonly rewardStartAt?: string
+  readonly payoutExclusions?: ReadonlyArray<ManifestExclusion>
+  readonly reviewBudget?: ReviewBudget
+}
+
+export schema ManifestDeployment {
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+}
+
+export schema ManifestEscrow {
+  readonly chain: string
+  readonly effectiveCycle: string
+  readonly feeMode: string
+  readonly feeBasisPoints: number
+  readonly withdrawalFeeBasisPoints: number
+  readonly deployments: ReadonlyArray<ManifestDeployment>
+}
+
+export schema ManifestState {
+  readonly state: string
+}
+
+export schema ManifestTerms {
+  readonly receiptPolicy?: ManifestState
+}
+
+export schema MonthlyManifest {
+  readonly id: string
+  readonly status: string
+  readonly name?: string
+  readonly authority?: ManifestState
+  readonly terms?: ManifestTerms
+  readonly reward: ManifestReward
+  readonly escrow?: ManifestEscrow
+}
+
+export error ManifestInvalid { projectId: string; issue: string }
+export error LoginMissing { projectId: string; actor: number }
+export error AllocationExceedsCap { projectId: string; period: string }
+export error ProjectChanged { projectId: string; write: string }
+export error FundingStale { projectId: string; period: string }
+export error FundingFactsMissing { projectId: string; period: string }
+export error MonthlyAwardAssetUnreviewed { network: string; asset: string }
+
+export interface MonthKey {
+  readonly projectId: string
+  readonly period: Period
+}
+
+export interface CurrentRevision {
+  readonly number: number
+  readonly manifest: string
+  readonly manifestSha256: string
+}
+
+export interface MonthFacts {
+  readonly eligibility: Eligibility
+  readonly current: CurrentRevision | undefined
+  readonly served: ReadonlySet<string>
+}
+
+export service MonthlyFacts {
+  of(projectId: string): MonthFacts!(ManifestInvalid | D1Error | RowMismatch)
+}
+
+export interface VaultReading {
+  readonly asset: string
+  readonly free: string
+  readonly observedAt: string
+}
+
+export interface FundingFacts {
+  readonly outstanding: number
+  readonly reserved: number
+  readonly vault?: VaultReading
+}
+
+export interface Extra {
+  readonly logins?: ReadonlyMap<number, string>
+  readonly funding?: FundingFacts
+  readonly alongside?: ReadonlyArray<Statement>
+}
+
+const relationships: Readonly<Record<ManifestExclusion["relationship"], Relationship>> = {
+  owner: "ProjectOwner",
+  "funded-employee": "FundedEmployee",
+  "related-party": "RelatedParty",
+}
+
+export const manifestRelationships: Readonly<Record<Relationship, ManifestExclusion["relationship"]>> = {
+  ProjectOwner: "owner",
+  FundedEmployee: "funded-employee",
+  RelatedParty: "related-party",
+}
+
+export effect function manifestOf(projectId: string, text: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new ManifestInvalid({ projectId, issue: "not JSON" }) })
+  const manifest = Schema.decodeUnknownEffect(MonthlyManifest)(parsed) catch effect () => {
+    throw new ManifestInvalid({ projectId, issue: "not a project manifest" })
+  }
+  if (manifest.id !== projectId) throw new ManifestInvalid({ projectId, issue: "names another project" })
+  return manifest
+}
+
+function seconds(iso: string | undefined) {
+  if (iso === undefined) return 0
+  const millis = millisOf(iso)
+  return Number.isFinite(millis) ? Math.floor(millis / 1000) : 0
+}
+
+function base(text: string | undefined) {
+  return text === undefined ? 0n : parseBaseUnits(text) ?? 0n
+}
+
+export function exclusionsOf(manifest: MonthlyManifest): Exclusion[] {
+  return (manifest.reward.payoutExclusions ?? []).map((entry) => ({
+    actor: Number(entry.actorId),
+    relationship: relationships[entry.relationship],
+    fromPeriod: parsePeriod(entry.fromCycle) ?? 0,
+    untilPeriod: entry.untilCycle === null ? 0 : parsePeriod(entry.untilCycle) ?? 0,
+  }))
+}
+
+export function monthlyCapOf(manifest: MonthlyManifest, period: Period): bigint {
+  if (manifest.reward.kind !== "monthly-pool") return 0n
+  const cycle = formatPeriod(period)
+  return base(manifest.reward.cycleCaps?.find((cap) => cap.cycleId === cycle)?.monthlyCapMinor ?? manifest.reward.monthlyCapMinor)
+}
+
+export function servedDeploymentOf(manifest: MonthlyManifest, served: ReadonlySet<string>): ManifestDeployment | undefined {
+  const deployments = (manifest.escrow?.deployments ?? []).filter((entry) => served.has(entry.network))
+  return deployments.length === 1 ? deployments[0] : undefined
+}
+
+export function feePolicyOf(manifest: MonthlyManifest): string {
+  const escrow = manifest.escrow
+  return escrow === undefined ? "" : JSON.stringify([escrow.chain, escrow.effectiveCycle, escrow.feeMode, escrow.feeBasisPoints, escrow.withdrawalFeeBasisPoints])
+}
+
+export function reviewBudgetActive(manifest: MonthlyManifest, period: Period): boolean {
+  const budget = manifest.reward.reviewBudget
+  if (budget === undefined || budget.fundingState !== "committed" || budget.paymentMode !== "enabled") return false
+  if (seconds(budget.effectiveAt) > periodStartSeconds(period)) return false
+  const committed = base(budget.committedMinor)
+  const cap = base(budget.monthlyCapMinor)
+  return (committed < cap ? committed : cap) > 0n
+}
+
+export function revisionOf(manifest: MonthlyManifest, number: number, period: Period, served: ReadonlySet<string>): RevisionFact {
+  const escrow = manifest.escrow
+  const deployment = servedDeploymentOf(manifest, served)
+  const maximum = escrow !== undefined && isChain(escrow.chain) ? maxBaseUnitsForChain(escrow.chain) : MAX_BASE_UNITS
+  return {
+    number,
+    effectivePeriod: escrow === undefined ? 0 : parsePeriod(escrow.effectiveCycle) ?? 0,
+    monthlyAmount: amountOf(monthlyCapOf(manifest, period)),
+    maximum: amountOf(maximum),
+    rewardStartAt: seconds(manifest.reward.rewardStartAt),
+    vault: deployment?.vault ?? "",
+    asset: deployment?.asset ?? "",
+    feePolicy: feePolicyOf(manifest),
+    exclusions: exclusionsOf(manifest),
+  }
+}
+
+export function eligibilityOf(view: ProjectView, manifest: MonthlyManifest, restricted: boolean, served: ReadonlySet<string>): Eligibility {
+  return {
+    revision: view.revision,
+    active: view.rowStatus === "Active" && view.manifestStatus === "Active",
+    verifiedPool: manifest.authority?.state === "verified",
+    paused: view.rowStatus === "Paused" || view.manifestStatus === "Paused",
+    restricted,
+    retired: view.retirement !== "NotRetired" || view.listingTier === "Retired",
+    vaultRegistered: (manifest.escrow?.deployments.length ?? 0) > 0,
+    networkServed: servedDeploymentOf(manifest, served) !== undefined,
+    receiptPolicyActive: manifest.terms?.receiptPolicy?.state === "active",
+    monthlyPoolReward: manifest.reward.kind === "monthly-pool",
+  }
+}
+
+schema RevisionRow { readonly manifest: string; readonly manifest_sha256: string }
+
+export function monthlyFacts(served: ReadonlySet<string>) {
+  return Layer.effect(MonthlyFacts, effect {
+    const db = try D1
+    const registry = try Registry
+    const restrictions = try Restrictions
+    return {
+      of: (projectId) => effect {
+        const view = try registry.project(projectId)
+        if (view === undefined) return { eligibility: noEligibility, current: undefined, served } satisfies MonthFacts
+        const closure = try restrictions.project(projectId)
+        provide D1 = db {
+          const revision = try first(RevisionRow, sql`SELECT manifest, manifest_sha256 FROM project_revisions WHERE project_id = ${projectId} AND revision = ${view.revision}`)
+          if (revision === undefined || revision.manifest_sha256 !== view.manifestSha256) throw new ManifestInvalid({ projectId, issue: "current revision bytes are unavailable" })
+          const manifest = try manifestOf(projectId, revision.manifest)
+          return {
+            eligibility: eligibilityOf(view, manifest, closure.restricted, served),
+            current: { number: view.revision, manifest: revision.manifest, manifestSha256: revision.manifest_sha256 },
+            served,
+          } satisfies MonthFacts
+        }
+      },
+    }
+  })
+}
+
+export effect function awardSource(projectId: string, period: Period, actor: number) {
+  return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, formatPeriod(period), String(actor)]))
+}
+
+export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly revision: number | null }
+export schema ProposedRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
+export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly created_at: string }
+export schema CutRow { readonly sequence: number; readonly github_user_id: string; readonly proposed_gross_base: string; readonly gross_base: string; readonly reason: string; readonly created_at: string }
+export schema SettingRow { readonly sequence: number; readonly automatic: number }
+export schema RunRow { readonly trigger: "owner" | "automatic"; readonly actor_id: string | null; readonly allocation_sequence: number; readonly network: string; readonly vault: string; readonly frozen_at: string; readonly obligations_created_at: string | null }
+export schema ObligationRow { readonly github_user_id: string; readonly gross_base: string; readonly fee_base: string; readonly source_digest: string; readonly held_actor: string | null; readonly held_gross: string | null; readonly held_fee: string | null; readonly held_state: string | null }
+export schema ExclusionRow { readonly github_user_id: string; readonly ban: number | null }
+
+export interface MonthRows {
+  readonly base: BaseRow | undefined
+  readonly proposed: ReadonlyArray<ProposedRow>
+  readonly changes: ReadonlyArray<ChangeRow>
+  readonly cuts: ReadonlyArray<CutRow>
+  readonly setting: SettingRow | undefined
+  readonly run: RunRow | undefined
+  readonly obligations: ReadonlyArray<ObligationRow>
+  readonly exclusions: ReadonlyArray<ExclusionRow>
+}
+
+export function unproposed(rows: MonthRows): MonthRows {
+  return { base: undefined, proposed: [], changes: [], cuts: [], setting: rows.setting, run: undefined, obligations: [], exclusions: [] }
+}
+
+export interface Loaded {
+  readonly rows: MonthRows
+  readonly state: Monthly
+  readonly facts: MonthFacts
+}
+
+function scopeOf(key: MonthKey) {
+  return sql`project_id = ${key.projectId} AND period = ${formatPeriod(key.period)}`
+}
+
+export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
+  const scope = scopeOf(key)
+  return [
+    sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
+    sql`SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE ${scope} ORDER BY rowid`,
+    sql`SELECT sequence, github_user_id, gross_base, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
+    sql`SELECT sequence, github_user_id, proposed_gross_base, gross_base, reason, created_at FROM monthly_allocation_cut_reasons WHERE ${scope} ORDER BY sequence`,
+    sql`SELECT sequence, automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1`,
+    sql`SELECT trigger, actor_id, allocation_sequence, network, vault, frozen_at, obligations_created_at FROM monthly_payment_runs WHERE ${scope}`,
+    sql`SELECT o.github_user_id, o.gross_base, o.fee_base, o.source_digest, p.github_user_id AS held_actor, p.gross_base AS held_gross, p.fee_base AS held_fee, p.state AS held_state FROM monthly_payment_obligations o LEFT JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${key.projectId} AND o.period = ${formatPeriod(key.period)} ORDER BY o.rowid`,
+    sql`SELECT x.github_user_id, (SELECT b.rowid FROM project_maintainer_bans b WHERE b.enforcement_id = x.enforcement_id AND b.github_id = x.github_user_id) AS ban FROM monthly_payment_exclusions x WHERE x.project_id = ${key.projectId} AND x.period = ${formatPeriod(key.period)} ORDER BY x.rowid`,
+  ]
+}
+
+export function monthVersion(key: MonthKey): Statement {
+  const scope = scopeOf(key)
+  const project = key.projectId
+  const period = formatPeriod(key.period)
+  return sql`SELECT json_array((SELECT count(*) FROM monthly_reward_bases WHERE ${scope}), (SELECT count(*) FROM monthly_reward_base_rows WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_changes WHERE ${scope}), (SELECT count(*) FROM monthly_allocation_cut_reasons WHERE ${scope}), (SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${project}), (SELECT count(*) || ':' || coalesce(max(obligations_created_at), '') FROM monthly_payment_runs WHERE ${scope}), (SELECT count(*) FROM monthly_payment_obligations WHERE ${scope}), (SELECT count(*) FROM monthly_payment_exclusions WHERE ${scope}), (SELECT coalesce(group_concat(p.source_digest || ':' || p.state || ':' || p.github_user_id || ':' || p.gross_base || ':' || p.fee_base, ','), '') FROM monthly_payment_obligations o JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${project} AND o.period = ${period})) AS version`
+}
+
+effect function rowsOf(found: ReadonlyArray<Rows>) {
+  const [bases, proposed, changes, cuts, settings, runs, obligations, exclusions] = found
+  return {
+    base: (try decoded(BaseRow, bases ?? [], "monthly base"))[0],
+    proposed: try decoded(ProposedRow, proposed ?? [], "monthly base rows"),
+    changes: try decoded(ChangeRow, changes ?? [], "monthly allocation changes"),
+    cuts: try decoded(CutRow, cuts ?? [], "monthly cut reasons"),
+    setting: (try decoded(SettingRow, settings ?? [], "monthly settings"))[0],
+    run: (try decoded(RunRow, runs ?? [], "monthly run"))[0],
+    obligations: try decoded(ObligationRow, obligations ?? [], "monthly obligations"),
+    exclusions: try decoded(ExclusionRow, exclusions ?? [], "monthly exclusions"),
+  } satisfies MonthRows
+}
+
+effect function units(text: string, label: string) {
+  const value = parseBaseUnits(text)
+  if (value === undefined) throw new RowMismatch({ text: label, issue: `${text} is not base units` })
+  return value
+}
+
+effect function actorOf(text: string, label: string) {
+  const actor = Number(text)
+  if (!/^[1-9][0-9]{0,19}$/u.test(text) || !Number.isSafeInteger(actor)) throw new RowMismatch({ text: label, issue: `${text} is not a GitHub id` })
+  return actor
+}
+
+function progressOf(row: ObligationRow): ObligationState {
+  const gross = parseBaseUnits(row.gross_base)
+  const fee = row.held_fee === null ? undefined : parseBaseUnits(row.held_fee)
+  const feeAccepted = gross !== undefined && gross > 0n && fee !== undefined && payoutFeeAccepted(gross, fee, false)
+  return obligationProgress(row.held_state !== null, row.held_actor === row.github_user_id, row.held_gross === row.gross_base, feeAccepted, row.held_state === "paid")
+}
+
+export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts, now: number) {
+  const project = key.projectId
+  const period = key.period
+  const currentManifest = facts.current === undefined ? undefined : try manifestOf(project, facts.current.manifest)
+  const currentRevision = facts.current === undefined || currentManifest === undefined ? noRevision : revisionOf(currentManifest, facts.current.number, period, facts.served)
+  const automatic = rows.setting === undefined || rows.setting.automatic === 1
+  const settingsSequence = rows.setting?.sequence ?? 0
+  const opened = { ...initial, project, period, phase: "Collecting" as MonthlyPhase, now, automatic, settingsSequence, eligibility: facts.eligibility, currentRevision }
+  const found = rows.base
+  if (found === undefined) return try decodeState(opened)
+  if (found.revision === null) throw new RowMismatch({ text: "monthly base", issue: "the proposal's project revision is not registered" })
+  if (rows.proposed.length !== found.recipient_count) throw new RowMismatch({ text: "monthly base rows", issue: "the proposal is incomplete" })
+  const proposalManifest = try manifestOf(project, found.manifest)
+  const revision = revisionOf(proposalManifest, found.revision, period, facts.served)
+  const proposedShares: Share[] = []
+  for (const row of rows.proposed) proposedShares.push({ actor: try actorOf(row.github_user_id, "monthly base row"), amount: amountOf(try units(row.gross_base, "monthly base row")) })
+  let shares = proposedShares
+  const changes: AllocationChange[] = []
+  for (const row of rows.changes) {
+    const actor = try actorOf(row.github_user_id, "monthly change")
+    const amount = amountOf(try units(row.gross_base, "monthly change"))
+    shares = replaceShare(shares, actor, amount)
+    changes.push({ sequence: row.sequence, actor, amount, at: seconds(row.created_at) })
+  }
+  const cuts: Cut[] = []
+  for (const row of rows.cuts) cuts.push({
+    sequence: row.sequence,
+    actor: try actorOf(row.github_user_id, "monthly cut"),
+    proposed: amountOf(try units(row.proposed_gross_base, "monthly cut")),
+    amount: amountOf(try units(row.gross_base, "monthly cut")),
+    reason: row.reason,
+    reasonLength: row.reason.length,
+    at: seconds(row.created_at),
+  })
+  const total = amountOf(shares.reduce((sum, share) => sum + fromAmount(share.amount), 0n))
+  const proposed = {
+    ...opened,
+    phase: "Proposed" as MonthlyPhase,
+    revision,
+    cap: amountOf(try units(found.cap_base, "monthly base")),
+    snapshotDigest: found.source_snapshot_sha256,
+    exclusions: revision.exclusions,
+    shares,
+    proposedShares,
+    total,
+    sequence: changes.length,
+    changes,
+    cuts,
+  }
+  const run = rows.run
+  if (run === undefined) return try decodeState(proposed)
+  const frozen = {
+    ...proposed,
+    phase: "Frozen" as MonthlyPhase,
+    trigger: run.trigger === "owner" ? "OwnerTrigger" as const : "AutomaticTrigger" as const,
+    frozenSequence: run.allocation_sequence,
+    frozenBy: run.actor_id === null ? 0 : try actorOf(run.actor_id, "monthly run"),
+  }
+  if (run.obligations_created_at === null) return try decodeState(frozen)
+  const obligations: Obligation[] = []
+  for (const row of rows.obligations) {
+    const actor = try actorOf(row.github_user_id, "monthly obligation")
+    obligations.push({ actor, amount: amountOf(try units(row.gross_base, "monthly obligation")), source: { project, period, actor }, progress: progressOf(row) })
+  }
+  const banned: BanExclusion[] = []
+  for (const row of rows.exclusions) {
+    if (row.ban === null) throw new RowMismatch({ text: "monthly exclusion", issue: "the ban it records is not registered" })
+    banned.push({ actor: try actorOf(row.github_user_id, "monthly exclusion"), ban: row.ban })
+  }
+  const completed = obligations.every((obligation) => obligation.progress === "Paid")
+  return try decodeState({ ...frozen, phase: completed ? "Completed" as MonthlyPhase : "Funded" as MonthlyPhase, obligations, banned })
+}
+
+function aggregate(key: MonthKey, facts: MonthFacts, now: number): Aggregate<Loaded, NotAState | RowMismatch | ManifestInvalid, never> {
+  return {
+    name: `monthly allocation of ${key.projectId} ${formatPeriod(key.period)}`,
+    version: monthVersion(key),
+    reads: monthReads(key),
+    decode: (found) => effect {
+      const rows = try rowsOf(found)
+      return { rows, state: try stateOf(key, rows, facts, now), facts } satisfies Loaded
+    },
+  }
+}
+
+export effect function loadMonth(key: MonthKey) {
+  const facts = try (try MonthlyFacts).of(key.projectId)
+  const now = try nowSeconds()
+  return (try load(aggregate(key, facts, now))).state
+}
+
+export effect function readRows(key: MonthKey) {
+  const db = try D1
+  const found: Rows[] = []
+  for (const statement of monthReads(key)) found.push(try db.all(statement))
+  return try rowsOf(found)
+}
+
+export effect function readMonth(key: MonthKey) {
+  const facts = try (try MonthlyFacts).of(key.projectId)
+  const now = try nowSeconds()
+  const rows = try readRows(key)
+  return { rows, state: try stateOf(key, rows, facts, now), facts } satisfies Loaded
+}
+
+export effect function proposalWrites(key: MonthKey, next: Monthly, current: CurrentRevision, sourceSnapshot: string, logins: ReadonlyMap<number, string>) {
+  const created = try isoAt(next.now * 1000)
+  const period = formatPeriod(key.period)
+  const digests: string[] = []
+  for (const share of next.proposedShares) digests.push(try awardSource(key.projectId, key.period, share.actor))
+  const proposal = sql`project_id = ${key.projectId} AND period = ${period} AND source_snapshot_sha256 = ${sourceSnapshot} AND manifest_sha256 = ${current.manifestSha256}`
+  const rows: Statement[] = []
+  for (const [index, share] of next.proposedShares.entries()) {
+    const login = logins.get(share.actor)
+    if (login === undefined) throw new LoginMissing({ projectId: key.projectId, actor: share.actor })
+    rows.push(sql`INSERT INTO monthly_reward_base_rows (project_id, period, github_user_id, github_login, gross_base, source_digest) SELECT ${key.projectId}, ${period}, ${String(share.actor)}, ${login}, ${fromAmount(share.amount).toString()}, ${digests[index] ?? ""} WHERE EXISTS (SELECT 1 FROM monthly_reward_bases WHERE ${proposal}) ON CONFLICT (project_id, period, github_user_id) DO NOTHING`)
+  }
+  return [
+    sql`INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES (${key.projectId}, ${period}, ${current.manifest}, ${current.manifestSha256}, ${sourceSnapshot}, ${fromAmount(next.cap).toString()}, ${next.proposedShares.length}, ${created}) ON CONFLICT (project_id, period) DO NOTHING`,
+    ...rows,
+  ]
+}
+
+export interface ExecutionAward {
+  readonly githubUserId: string
+  readonly login: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly sourceDigest: string
+}
+
+export interface ExecutionSnapshot {
+  readonly schemaVersion: "1"
+  readonly kind: "monthly-execution-snapshot"
+  readonly projectId: string
+  readonly period: string
+  readonly trigger: "owner" | "automatic"
+  readonly baseManifestSha256: string
+  readonly manifestSha256: string
+  readonly sourceSnapshotSha256: string
+  readonly allocationSequence: number
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+  readonly capBase: string
+  readonly totalGrossBase: string
+  readonly frozenAt: string
+  readonly awards: ReadonlyArray<ExecutionAward>
+}
+
+export interface Frozen {
+  readonly base: { readonly projectId: string; readonly period: string; readonly manifestSha256: string; readonly sourceSnapshotSha256: string; readonly capBase: string }
+  readonly rows: ReadonlyArray<{ readonly githubUserId: string; readonly login: string; readonly grossBase: bigint; readonly sourceDigest: string }>
+  readonly allocationSequence: number
+  readonly trigger: "owner" | "automatic"
+  readonly manifestSha256: string
+  readonly network: string
+  readonly vault: string
+  readonly asset: string
+  readonly frozenAt: string
+}
+
+function codePoints(a: string, b: string) {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+export effect function executionSnapshot(input: Frozen) {
+  const awards = input.rows
+    .filter((row) => row.grossBase > 0n)
+    .map((row) => ({
+      githubUserId: row.githubUserId,
+      login: row.login,
+      grossBase: row.grossBase.toString(),
+      feeBase: ordinaryFeeBase(row.grossBase).toString(),
+      netBase: (row.grossBase - ordinaryFeeBase(row.grossBase)).toString(),
+      sourceDigest: row.sourceDigest,
+    }))
+    .sort((a, b) => codePoints(a.githubUserId, b.githubUserId))
+  const total = frozenTotal(input.rows.map((row) => row.grossBase))
+  const cap = parseBaseUnits(input.base.capBase)
+  if (cap === undefined || !withinCap(total, cap)) throw new AllocationExceedsCap({ projectId: input.base.projectId, period: input.base.period })
+  return {
+    schemaVersion: "1",
+    kind: "monthly-execution-snapshot",
+    projectId: input.base.projectId,
+    period: input.base.period,
+    trigger: input.trigger,
+    baseManifestSha256: input.base.manifestSha256,
+    manifestSha256: input.manifestSha256,
+    sourceSnapshotSha256: input.base.sourceSnapshotSha256,
+    allocationSequence: input.allocationSequence,
+    network: input.network,
+    vault: input.vault,
+    asset: input.asset,
+    capBase: input.base.capBase,
+    totalGrossBase: total.toString(),
+    frozenAt: input.frozenAt,
+    awards,
+  } satisfies ExecutionSnapshot
+}
+
+function participationBanned(actor: Statement) {
+  return sql`EXISTS (SELECT 1 FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${actor} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id))`
+}
+
+export effect function revisionFence(projectId: string, current: CurrentRevision) {
+  return try (try Registry).fence({ projectId, revision: current.number, manifestSha256: current.manifestSha256, repositoryKeys: [] })
+}
+
+export function actorClear(actor: number | undefined): Statement {
+  return actor === undefined ? sql`1` : sql`NOT ${participationBanned(sql`${String(actor)}`)}`
+}
+
+effect function freezeWrites(key: MonthKey, loaded: Loaded, next: Monthly, actor: number | undefined) {
+  const current = loaded.facts.current
+  const found = loaded.rows.base
+  if (current === undefined || found === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "the month has no proposal or current revision" })
+  const manifest = try manifestOf(key.projectId, current.manifest)
+  const deployment = servedDeploymentOf(manifest, loaded.facts.served)
+  if (deployment === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "no single served vault" })
+  const frozenAt = try isoAt(next.now * 1000)
+  const snapshot = try executionSnapshot({
+    base: { projectId: key.projectId, period: formatPeriod(key.period), manifestSha256: found.manifest_sha256, sourceSnapshotSha256: found.source_snapshot_sha256, capBase: found.cap_base },
+    rows: loaded.rows.proposed.map((row) => ({
+      githubUserId: row.github_user_id,
+      login: row.github_login,
+      grossBase: fromAmount(next.shares.find((share) => String(share.actor) === row.github_user_id)?.amount ?? [0]),
+      sourceDigest: row.source_digest,
+    })),
+    allocationSequence: next.sequence,
+    trigger: actor === undefined ? "automatic" : "owner",
+    manifestSha256: current.manifestSha256,
+    network: deployment.network,
+    vault: deployment.vault,
+    asset: deployment.asset,
+    frozenAt,
+  })
+  const text = JSON.stringify(snapshot)
+  const digest = try sha256Hex(text)
+  const fence = try revisionFence(key.projectId, current)
+  return [sql`INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) SELECT ${key.projectId}, ${formatPeriod(key.period)}, ${snapshot.trigger}, ${actor === undefined ? null : String(actor)}, ${next.sequence}, ${text}, ${digest}, ${deployment.network}, ${deployment.vault}, ${snapshot.totalGrossBase}, ${frozenAt}, NULL WHERE ${fence} AND ${actorClear(actor)} ON CONFLICT (project_id, period) DO NOTHING`]
+}
+
+function fundingGuard(key: MonthKey, run: RunRow, next: Monthly, funding: FundingFacts) {
+  const decisions = JSON.stringify([...next.obligations.map((entry) => ({ githubUserId: String(entry.actor), banned: 0 })), ...next.banned.map((entry) => ({ githubUserId: String(entry.actor), banned: 1 }))])
+  const reading = funding.vault
+  const vault = reading === undefined ? sql`1` : sql`EXISTS (SELECT 1 FROM vault_snapshots WHERE project_id = ${key.projectId} AND network = ${run.network} AND vault = ${run.vault} AND asset_address = ${reading.asset} AND free_balance = ${reading.free} AND observed_at = ${reading.observedAt})`
+  return sql`(SELECT count(*) FROM monthly_payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.outstanding} AND (SELECT count(*) FROM payment_obligations WHERE network = ${run.network} AND vault = ${run.vault}) = ${funding.reserved} AND ${vault} AND NOT EXISTS (SELECT 1 FROM json_each(${decisions}) d WHERE (${participationBanned(sql`json_extract(d.value, '$.githubUserId')`)}) <> json_extract(d.value, '$.banned'))`
+}
+
+effect function fundingWrites(key: MonthKey, loaded: Loaded, next: Monthly, funding: FundingFacts | undefined) {
+  const run = loaded.rows.run
+  if (run === undefined) throw new RowMismatch({ text: "monthly run", issue: "the month is not frozen" })
+  const period = formatPeriod(key.period)
+  if (funding === undefined) throw new FundingFactsMissing({ projectId: key.projectId, period })
+  const created = try isoAt(next.now * 1000)
+  const proposed = new Map(loaded.rows.proposed.map((row) => [row.github_user_id, row]))
+  const createdRun = sql`FROM monthly_payment_runs r WHERE r.project_id = ${key.projectId} AND r.period = ${period} AND r.obligations_created_at = ${created}`
+  const writes: Statement[] = [sql`UPDATE monthly_payment_runs SET obligations_created_at = ${created} WHERE project_id = ${key.projectId} AND period = ${period} AND obligations_created_at IS NULL AND ${fundingGuard(key, run, next, funding)}`]
+  for (const ban of next.banned) {
+    const row = proposed.get(String(ban.actor))
+    writes.push(sql`INSERT INTO monthly_payment_exclusions (project_id, period, github_user_id, network, vault, source_digest, enforcement_id, created_at) SELECT r.project_id, r.period, ${String(ban.actor)}, r.network, r.vault, ${row?.source_digest ?? ""}, (SELECT b.enforcement_id FROM project_maintainer_bans b WHERE b.rowid = ${ban.ban} AND b.github_id = ${String(ban.actor)}), r.obligations_created_at ${createdRun} ON CONFLICT DO NOTHING`)
+  }
+  for (const obligation of next.obligations) {
+    const row = proposed.get(String(obligation.actor))
+    const gross = fromAmount(obligation.amount)
+    writes.push(sql`INSERT INTO monthly_payment_obligations (project_id, period, github_user_id, github_login, gross_base, fee_base, source_digest, network, vault, created_at) SELECT r.project_id, r.period, ${String(obligation.actor)}, ${row?.github_login ?? ""}, ${gross.toString()}, ${ordinaryFeeBase(gross).toString()}, ${row?.source_digest ?? ""}, r.network, r.vault, r.obligations_created_at ${createdRun} ON CONFLICT DO NOTHING`)
+  }
+  return writes
+}
+
+effect function adjustWrites(key: MonthKey, next: Monthly, event: Extract<Event, { type: "adjust" }>) {
+  const period = formatPeriod(key.period)
+  const created = try isoAt(next.now * 1000)
+  const change = sql`INSERT INTO monthly_allocation_changes (project_id, period, sequence, github_user_id, gross_base, actor_id, created_at) VALUES (${key.projectId}, ${period}, ${next.sequence}, ${String(event.actor)}, ${fromAmount(event.amount).toString()}, ${String(event.fact.actor)}, ${created})`
+  const cut = next.cuts.find((entry) => entry.sequence === next.sequence)
+  if (cut === undefined) return [change]
+  return [change, sql`INSERT INTO monthly_allocation_cut_reasons (project_id, period, sequence, github_user_id, proposed_gross_base, gross_base, reason, actor_id, created_at) VALUES (${key.projectId}, ${period}, ${cut.sequence}, ${String(cut.actor)}, ${fromAmount(cut.proposed).toString()}, ${fromAmount(cut.amount).toString()}, ${cut.reason}, ${String(event.fact.actor)}, ${created})`]
+}
+
+effect function writesFor(key: MonthKey, loaded: Loaded, next: Monthly, event: Event, extra: Extra) {
+  const alongside = extra.alongside ?? []
+  if (event.type === "propose") {
+    const current = loaded.facts.current
+    if (current === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "the project has no current revision" })
+    return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map())), ...alongside]
+  }
+  if (event.type === "adjust") return [...(try adjustWrites(key, next, event)), ...alongside]
+  if (event.type === "finalize") return [...(try freezeWrites(key, loaded, next, event.fact.actor)), ...alongside]
+  if (event.type === "autoFreeze") return [...(try freezeWrites(key, loaded, next, undefined)), ...alongside]
+  if (event.type === "createObligations") return [...(try fundingWrites(key, loaded, next, extra.funding)), ...alongside]
+  return alongside
+}
+
+effect function landed(key: MonthKey, event: Event) {
+  if (event.type !== "finalize" && event.type !== "autoFreeze" && event.type !== "createObligations") return
+  const run = (try readRows(key)).run
+  if (run === undefined) throw new ProjectChanged({ projectId: key.projectId, write: "monthly freeze" })
+  if (event.type === "createObligations" && run.obligations_created_at === null) throw new FundingStale({ projectId: key.projectId, period: formatPeriod(key.period) })
+}
+
+export effect function sendMonth(key: MonthKey, event: Event, extra: Extra = {}) {
+  const facts = try (try MonthlyFacts).of(key.projectId)
+  const now = try nowSeconds()
+  const next = try update(aggregate(key, facts, now), (loaded) => effect {
+    const next = try apply(loaded.state, event)
+    return { value: next, writes: try writesFor(key, loaded, next, event, extra) } satisfies Decision<Monthly>
+  })
+  try landed(key, event)
+  return next
+}
+
+export function withoutProposal(state: Monthly): Monthly {
+  return canCloseProposalWindow(state) ? closeProposalWindow(state) : state
+}
+
+export schema MonthlyAwardRow {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number | null
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly state: "awaiting-reservation" | "underfunded" | "conflict"
+}
+
+export interface MonthlyAward extends Omit<MonthlyAwardRow, "assetDecimals"> {
+  readonly assetDecimals: number
+  readonly chain: string
+}
+
+export function monthlyAwardsQuery(githubUserId: string): Statement {
+  return sql`SELECT json_group_array(json_object('projectId', project_id, 'period', period, 'network', network, 'assetAddress', asset, 'assetDecimals', decimals, 'grossBase', gross, 'feeBase', fee, 'netBase', net, 'state', state)) AS items FROM (SELECT r.project_id, r.period, r.network, json_extract(r.snapshot, '$.asset') AS asset, coalesce((SELECT v.asset_decimals FROM vault_snapshots v WHERE v.project_id = r.project_id AND v.network = r.network AND v.vault = r.vault AND lower(v.asset_address) = lower(json_extract(r.snapshot, '$.asset'))), CASE WHEN lower(json_extract(b.manifest, '$.rewardAsset.address')) = lower(json_extract(r.snapshot, '$.asset')) THEN json_extract(b.manifest, '$.rewardAsset.decimals') END) AS decimals, json_extract(a.value, '$.grossBase') AS gross, json_extract(a.value, '$.feeBase') AS fee, json_extract(a.value, '$.netBase') AS net, CASE WHEN EXISTS (SELECT 1 FROM payment_obligations c WHERE c.network = r.network AND c.vault = r.vault AND c.source_digest = json_extract(a.value, '$.sourceDigest')) THEN 'conflict' WHEN r.obligations_created_at IS NULL THEN 'underfunded' ELSE 'awaiting-reservation' END AS state FROM monthly_payment_runs r JOIN monthly_reward_bases b ON b.project_id = r.project_id AND b.period = r.period, json_each(r.snapshot, '$.awards') a WHERE json_extract(a.value, '$.githubUserId') = ${githubUserId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_exclusions e WHERE e.project_id = r.project_id AND e.period = r.period AND e.source_digest = json_extract(a.value, '$.sourceDigest')) AND NOT EXISTS (SELECT 1 FROM payment_obligations o WHERE o.network = r.network AND o.vault = r.vault AND o.source_digest = json_extract(a.value, '$.sourceDigest') AND o.github_user_id = json_extract(a.value, '$.githubUserId') AND o.gross_base = json_extract(a.value, '$.grossBase')) ORDER BY r.period DESC, r.project_id)`
+}
+
+export effect function monthlyAwardsOf(items: string) {
+  const parsed = try Effect.try({ try: () => JSON.parse(items) as unknown, catch: () => new RowMismatch({ text: "monthly awards", issue: "not JSON" }) })
+  const rows = Schema.decodeUnknownEffect(Schema.Array(MonthlyAwardRow))(parsed) catch effect () => {
+    throw new RowMismatch({ text: "monthly awards", issue: "not monthly award rows" })
+  }
+  const awards: MonthlyAward[] = []
+  for (const row of rows) {
+    const network = isNetworkKey(row.network) ? NETWORKS[row.network] : undefined
+    const decimals = row.assetDecimals ?? network?.assets.find((entry) => entry.address.toLowerCase() === row.assetAddress.toLowerCase())?.decimals
+    if (network === undefined || decimals === undefined || !Number.isInteger(decimals)) throw new MonthlyAwardAssetUnreviewed({ network: row.network, asset: row.assetAddress })
+    awards.push({ ...row, assetDecimals: decimals, chain: network.chain })
+  }
+  return awards
+}
+
+schema AwardItems { readonly items: string }
+
+export effect function monthlyAwards(githubUserId: string) {
+  const found = try first(AwardItems, monthlyAwardsQuery(githubUserId))
+  return try monthlyAwardsOf(found?.items ?? "[]")
+}

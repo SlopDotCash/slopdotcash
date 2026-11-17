@@ -1,0 +1,171 @@
+// spec/settlement/reserveRelease.md, "Only complete, untouched, finalized retained evidence admits an allocation"; spec/settlement/reserveRelease.md, "A reserve retains the admitted root and complete allocation"
+import { type Address, type BlockRef, type Hex, EvmRpc } from "@repo/platform/chain/evm"
+import { rows, sql } from "@repo/platform/d1"
+import type { RetainedAllocation } from "../../gen/settlement__reserveRelease.effect.vibe"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeAddress, decodeUint, evmAddress, factoryGetter } from "../chain/evm/abi.ts"
+import { type MonthlyEntry, type MonthlyReserveState, MONTHLY_RESERVE_VERSION, MONTHLY_RESERVE_VERSION_CALL, decodeMonthlyReserve, inspectWrongSum, monthlyReserveCall, monthlyRootCall, sumTree } from "../chain/evm/monthlyRoot.ts"
+import { TOTALS_CALL, decodeCounters } from "../chain/evm/totals.ts"
+import { U64_MAX } from "../chain/solana/bytes.ts"
+import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import type { Period } from "../kernels/calendar.ts"
+import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import type { EvmDeployment } from "../vault/policy.vibe"
+
+export interface ReleaseRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+}
+
+export error RetainedMismatch { message: string }
+export error EvidenceUnreadable { message: string }
+export error EvidenceRefused { message: string }
+
+schema RunRow {
+  readonly snapshot_sha256: string
+  readonly network: string
+  readonly vault: string
+}
+
+schema AuthorizationRow {
+  readonly authorization: string
+}
+
+schema RetainedEntry {
+  readonly githubUserId: string
+  readonly grossMicro: string
+  readonly sourceDigest: string
+}
+
+schema RetainedPlan {
+  readonly family: string
+  readonly request: { readonly projectId: string; readonly period: string; readonly network: string; readonly snapshotSha256: string }
+  readonly deployment: { readonly network: string; readonly vault: string }
+  readonly entries: ReadonlyArray<RetainedEntry>
+  readonly evmReservation?: { readonly version: number; readonly allocationRoot: string }
+}
+
+schema SignedAuthorization {
+  readonly plan: RetainedPlan
+  readonly legacyAuthorization?: { readonly plan: RetainedPlan }
+}
+
+export type Retained = RetainedPlan
+
+export interface Capture {
+  readonly allocationDigest: Bytes32
+  readonly entries: ReadonlyArray<MonthlyEntry>
+}
+
+function mismatch(message: string) {
+  return new RetainedMismatch({ message })
+}
+
+effect function signedAuthorization(text: string) {
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return Schema.decodeUnknownEffect(SignedAuthorization)(value) catch effect () => {
+    throw mismatch("Retained monthly allocation is incomplete")
+  }
+}
+
+export effect function retainedAllocations(request: ReleaseRequest) {
+  const [run] = try rows(RunRow, sql`SELECT snapshot_sha256, network, vault FROM monthly_payment_runs WHERE project_id = ${request.projectId} AND period = ${request.period} AND obligations_created_at IS NOT NULL`)
+  if (run === undefined || run.network !== request.network) return []
+  const signed = try rows(AuthorizationRow, sql`SELECT authorization FROM monthly_payment_authorizations WHERE project_id = ${request.projectId} AND period = ${request.period} AND network = ${request.network} UNION SELECT authorization FROM monthly_payment_authorization_attempts WHERE project_id = ${request.projectId} AND period = ${request.period} AND network = ${request.network}`)
+  const plans: RetainedPlan[] = []
+  const seen = new Set<string>()
+  for (const row of signed) {
+    const authorization = try signedAuthorization(row.authorization)
+    for (const plan of [authorization.plan, authorization.legacyAuthorization?.plan]) {
+      if (plan === undefined) continue
+      if (plan.request.projectId !== request.projectId || plan.request.period !== request.period || plan.request.network !== request.network
+        || plan.request.snapshotSha256 !== run.snapshot_sha256 || plan.deployment.network !== request.network || plan.deployment.vault !== run.vault || plan.entries.length === 0)
+        throw mismatch("Retained monthly allocation does not match its frozen month")
+      const key = JSON.stringify(plan)
+      if (!seen.has(key)) {
+        seen.add(key)
+        plans.push(plan)
+      }
+    }
+  }
+  return plans
+}
+
+export effect function captureOf(plan: RetainedPlan) {
+  const allocationDigest = bytes32(`0x${plan.request.snapshotSha256}`)
+  const entries = plan.entries.map((entry) => {
+    const actor = parseBaseUnits(entry.githubUserId, U64_MAX)
+    const gross = parseBaseUnits(entry.grossMicro)
+    const sourceDigest = bytes32(entry.sourceDigest)
+    return actor === undefined || gross === undefined || sourceDigest === undefined ? undefined : ({ actor, gross, sourceDigest } satisfies MonthlyEntry)
+  })
+  if (allocationDigest === undefined || entries.some((entry) => entry === undefined)) throw mismatch("Retained monthly allocation is incomplete")
+  return { allocationDigest, entries: entries as ReadonlyArray<MonthlyEntry> } satisfies Capture
+}
+
+export interface FinalizedMonth {
+  readonly height: bigint
+  readonly month: MonthlyReserveState
+  readonly free: bigint
+  readonly implementation: EvmAddress
+  readonly identityAuthority: EvmAddress
+}
+
+function unreadable() {
+  return new EvidenceUnreadable({ message: "The release request could not be encoded" })
+}
+
+effect function read(to: EvmAddress, data: Hex, block: BlockRef) {
+  return try (try EvmRpc).call({ to: to as Address, data, block })
+}
+
+function refusedEvidence(message: string) {
+  return new EvidenceRefused({ message })
+}
+
+export effect function finalizedMonth(deployment: EvmDeployment, period: Period) {
+  const vault = evmAddress(deployment.vault)
+  const factory = evmAddress(deployment.factory)
+  if (vault === undefined || factory === undefined) throw refusedEvidence("Monthly deployment unavailable")
+  const rpc = try EvmRpc
+  const head = try rpc.head("finalized")
+  const block = head.number
+  try verifyEvmDeployment(deployment, block)
+  const version = decodeUint(try read(vault, MONTHLY_RESERVE_VERSION_CALL, block), U256_MAX)
+  if (version !== MONTHLY_RESERVE_VERSION) throw refusedEvidence("Unreviewed monthly reserve version")
+  const rootCall = try Effect.try({ try: () => monthlyRootCall(period), catch: unreadable })
+  const reserveCall = try Effect.try({ try: () => monthlyReserveCall(period), catch: unreadable })
+  const month = decodeMonthlyReserve({ root: try read(vault, rootCall, block), reserve: try read(vault, reserveCall, block) })
+  const counters = decodeCounters(try read(vault, TOTALS_CALL, block))
+  const slot = try rpc.storageAt(vault as Address, IMPLEMENTATION_SLOT, block)
+  const implementation = evmAddress(`0x${slot.slice(-40)}`)
+  const identityAuthority = decodeAddress(try read(factory, factoryGetter("identityAuthority"), block))
+  if (month === undefined || counters === undefined || implementation === undefined || identityAuthority === undefined)
+    throw new EvidenceUnreadable({ message: "The finalized vault state could not be decoded" })
+  const canonical = try rpc.blockByNumber(block)
+  if (canonical === undefined || canonical.number !== block || canonical.hash.toLowerCase() !== head.hash.toLowerCase()) throw refusedEvidence("Finalized monthly evidence changed")
+  return { height: block, month, free: counters.free, implementation, identityAuthority } satisfies FinalizedMonth
+}
+
+export effect function matchesMonth(capture: Capture, month: MonthlyReserveState) {
+  const inspected = Effect.try(() => inspectWrongSum(capture, month)) catch () => undefined
+  return inspected !== undefined && !(inspected.status === "held" && (inspected.reason === "allocation-mismatch" || inspected.reason === "allocation-unavailable"))
+}
+
+export effect function retainedAllocation(capture: Capture, observed: FinalizedMonth) {
+  const { month } = observed
+  const tree = try Effect.try({ try: () => sumTree(capture.entries), catch: unreadable })
+  const settled = month.total >= month.remaining ? month.total - month.remaining : 0n
+  return {
+    root: month.root,
+    allocationRoot: tree.root.hash,
+    allocationTotal: try Effect.try({ try: () => toAmount(tree.root.total), catch: unreadable }),
+    reserve: try Effect.try({ try: () => toAmount(month.remaining), catch: unreadable }),
+    free: try Effect.try({ try: () => toAmount(observed.free), catch: unreadable }),
+    settled: try Effect.try({ try: () => toAmount(settled), catch: unreadable }),
+    released: try Effect.try({ try: () => toAmount(0n), catch: unreadable }),
+    leafCount: month.count,
+    retainedLeaves: capture.entries.length,
+    height: Number(observed.height),
+  } satisfies RetainedAllocation
+}

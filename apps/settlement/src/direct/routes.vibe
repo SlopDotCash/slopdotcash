@@ -1,0 +1,322 @@
+// spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
+import { isoNow } from "@repo/platform/clock"
+import type { Statement } from "@repo/platform/d1"
+import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
+import { type DirectBounty, type Event, type Network, type Transfer, Rejected, authorizedWallets, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
+import { type Purpose, type PaymentRail, fullRailAdmission, validSplit } from "../../gen/settlement__payment.effect.vibe"
+import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type DirectRefusal, type DirectSettlementView, type PaymentAsset, type PaymentWallet, type PrepareDetail, type PreparePaymentBody, type RemainingTransfer, type VerifyDetail, type VerifyPaymentBody } from "../client/direct.vibe"
+import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
+import { EVM_NATIVE_ASSET, NETWORKS } from "../kernels/networks.ts"
+import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, modelOfChain, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
+import { type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
+
+export interface CaseContext {
+  readonly caseId: string
+  readonly revision: number
+  readonly reporterGithubId: string
+  readonly actorGithubId: string
+}
+
+export error DirectRefused { reason: DirectRefusal }
+
+export type FrozenAward = ApprovedAward & { readonly network?: string }
+
+effect function refuse(reason: DirectRefusal): never!DirectRefused {
+  throw new DirectRefused({ reason })
+}
+
+const noRelease = { rail: "DirectFull", decision: "", reviewedRevision: 0, qualificationRun: "" } as const
+
+function purposeOf(award: ApprovedAward): { readonly purpose: Purpose; readonly rail: PaymentRail } {
+  return award.split === "FullAward" ? { purpose: "PrivateFull", rail: "DirectFull" } : { purpose: "PrivateStandard", rail: "DirectStandard" }
+}
+
+effect function directAward(caseId: string) {
+  const award: FrozenAward | undefined = try (try ApprovedAwards).forCase(caseId)
+  if (award === undefined || !award.direct) return try refuse("railUnavailableTheProgramHasNo")
+  const { purpose, rail } = purposeOf(award)
+  if (!fullRailAdmission(purpose, rail, noRelease)) return try refuse("railUnavailableTheBountyVaultPays")
+  return award
+}
+
+export function assetFor(award: ApprovedAward, rail: EvmDirectRail): PaymentAsset | undefined {
+  const address = award.asset.toLowerCase()
+  if (address === EVM_NATIVE_ASSET) return { address: EVM_NATIVE_ASSET, decimals: 18, symbol: "ETH" }
+  const reference = NETWORKS[rail.network].assets.find((asset) => asset.address === address)
+  return reference === undefined ? undefined : { address: reference.address, decimals: reference.decimals, symbol: reference.symbol }
+}
+
+effect function railFor(network: string, missing: DirectRefusal) {
+  const rail = try (try EvmDirectRails).rail(network)
+  if (rail === undefined) return try refuse(missing)
+  return rail
+}
+
+effect function frozenRail(award: FrozenAward, network: string, missing: DirectRefusal) {
+  const rail = try railFor(network, missing)
+  const frozen = award.network === undefined ? undefined : modelOfChain(award.network)
+  if (frozen === undefined || award.network !== NETWORKS[rail.network].chain) return try refuse(missing)
+  return { rail, network: frozen }
+}
+
+effect function effectiveWallet(githubId: string, network: Network) {
+  return try (try Wallets).effective({ githubId, network })
+}
+
+function sameWallet(left: EffectiveWallet | undefined, right: EffectiveWallet | undefined) {
+  return left !== undefined && right !== undefined && left.claimId === right.claimId && left.digest === right.digest && sameAddress(left.address, right.address)
+}
+
+function unassignedPayer(reporterGithubId: string) {
+  return reporterGithubId === "1" ? "2" : "1"
+}
+
+function walletOfIntent(wallet: PaymentWallet): EffectiveWallet {
+  return { address: wallet.address, claimId: wallet.id, digest: wallet.digest }
+}
+
+function sameAddress(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase()
+}
+
+function consentDeployment(intent: DirectIntent | undefined, network: string, asset: PaymentAsset, recipient: PaymentWallet, generation: number) {
+  return intent === undefined
+    ? { rail: "direct", network, asset, recipient }
+    : { rail: "direct-recovery", network, asset: intent.asset, recipient, generation }
+}
+
+function consentBlocked(state: DirectBounty, actor: number): DirectRefusal | undefined {
+  if (!state.admitted) return "railUnavailable"
+  if (actor !== state.terms.reporterActor) return "forbiddenOnlyTheReporterMay"
+  if (state.researcherReceipt.transaction !== "") return "paymentAlreadyVerified"
+  return undefined
+}
+
+function consentRefusal(state: DirectBounty, actor: number, recipient: PaymentWallet) {
+  const address = recipient.address.toLowerCase()
+  const conflict = state.intent.active && (address === state.intent.payer.address || address === state.terms.feeWallet)
+  return new DirectRefused({ reason: consentBlocked(state, actor) ?? (conflict ? "paymentWalletConflict" : "staleRevision") })
+}
+
+function prepareRefusal(error: Rejected) {
+  if (!error.state.admitted) return new DirectRefused({ reason: "railUnavailable" })
+  return new DirectRefused({ reason: error.event.type === "prepare" && !authorizedWallets(error.state, error.event.intent) ? "paymentConsentRequired" : "paymentPreparationChanged" })
+}
+
+function verifyRefusal(error: Rejected) {
+  return new DirectRefused({ reason: error.state.admitted ? "paymentUnverified" : "railUnavailableReceiptVerificationIsUnavailable" })
+}
+
+function consentedTo(journal: Journal, deployment: string) {
+  const latest = journal.consents.at(-1)
+  return latest !== undefined && JSON.stringify(latest.deployment) === deployment
+}
+
+export effect function consentPayment(context: CaseContext, body: ConsentPaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true) return try refuse("confirmationRequiredAcceptPublicChainVisibility")
+  const award = try directAward(context.caseId)
+  const existing = try journalFor(context.caseId)
+  const prepared = currentIntent(existing)
+  if (prepared !== undefined && prepared.network !== body.network) return try refuse("invalidRequestUseThePaymentS")
+  const { rail, network } = try frozenRail(award, body.network, "railUnavailable")
+  const asset = assetFor(award, rail)
+  if (asset === undefined) return try refuse("railUnavailable")
+  const found = try effectiveWallet(context.reporterGithubId, network)
+  const recipient = storedWallet(found)
+  if (found === undefined || recipient === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const payerGithubId = prepared?.payerGithubId ?? unassignedPayer(context.reporterGithubId)
+  const payerWallet = prepared === undefined ? undefined : walletOfIntent(prepared.payer)
+  const now = try isoNow()
+  const detail = { network: body.network, publicChainVisibilityAccepted: true } satisfies ConsentDetail
+  return try commit(context.caseId, (current) => effect {
+    const deployment = JSON.stringify(consentDeployment(currentIntent(current), body.network, asset, recipient, generationOf(current)))
+    const facts: Facts = { approval: award, network, rail, caseRevision: context.revision, reporterGithubId: context.reporterGithubId, payerGithubId, payerWallet, reporterWallet: found, otherUses: [] }
+    const actor = Number(context.actorGithubId)
+    if (consentedTo(current, deployment)) {
+      const blocked = consentBlocked((try snapshotOf(current, facts)).state, actor)
+      if (blocked !== undefined) return try refuse(blocked)
+      return { value: detail, writes: [] }
+    }
+    const { writes } = decided(current, facts, [], ({ state, claims }) => ({ type: "consent", wallet: walletModel(claims, recipient), observedRevision: state.caseRevision, chainVisibility: true }), actor, { kind: "consent", deployment, reporterGithubId: context.actorGithubId, acceptedAt: now }) catch effect (error) => match (error) {
+      when Rejected: throw consentRefusal(error.state, actor, recipient);
+      default: throw error;
+    }
+    return { value: detail, writes }
+  }, alongside)
+}
+
+effect function refreshed(context: CaseContext, award: FrozenAward, network: string, alongside: ReadonlyArray<Statement>) {
+  return try commit(context.caseId, (current) => effect {
+    const intent = currentIntent(current)
+    if (intent === undefined || current.paid) return try refuse("paymentNotPending")
+    const model = evmModel(intent.network)
+    if (model === undefined) return try refuse("railUnavailableDirectPaymentIsUnavailable")
+    if (!legPaid(current, 0)) {
+      const found = try effectiveWallet(context.reporterGithubId, model)
+      if (found === undefined || found.claimId !== intent.recipient.id || found.digest !== intent.recipient.digest) return try refuse("paymentWalletChanged")
+    }
+    if (intent.network !== network) return try refuse("paymentNetworkChanged")
+    try frozenRail(award, intent.network, "railUnavailableDirectPaymentIsUnavailable")
+    return { value: { network, rail: "direct", refreshed: true } satisfies PrepareDetail, writes: [] }
+  }, alongside)
+}
+
+export effect function preparePayment(context: CaseContext, body: PreparePaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true) return try refuse("confirmationRequiredConfirmTheExact75")
+  const award = try directAward(context.caseId)
+  const existing = try journalFor(context.caseId)
+  if (currentIntent(existing) !== undefined) return try refreshed(context, award, body.network, alongside)
+  const { rail, network } = try frozenRail(award, body.network, "railUnavailable")
+  const asset = assetFor(award, rail)
+  if (asset === undefined) return try refuse("railUnavailable")
+  const reporterWallet = try effectiveWallet(context.reporterGithubId, network)
+  const recipient = storedWallet(reporterWallet)
+  if (reporterWallet === undefined || recipient === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const consentedDeployment = JSON.stringify(consentDeployment(undefined, body.network, asset, recipient, 0))
+  if (!consentedTo(existing, consentedDeployment)) return try refuse("paymentConsentRequired")
+  const payerWallet = try effectiveWallet(context.actorGithubId, network)
+  const payer = storedWallet(payerWallet)
+  if (payerWallet === undefined || payer === undefined) return try refuse("paymentWalletRequiredConfirmAPayoutWallet")
+  const gross = grossOf(award)
+  const feeBase = bountyFeeBase(gross)
+  const netBase = bountyResearcherBase(gross)
+  if (!validSplit("PrivateStandard", asAmount(gross), asAmount(netBase), asAmount(feeBase))) return try refuse("railUnavailableTheBountyVaultPays")
+  if (sameAddress(payer.address, recipient.address) || sameAddress(payer.address, rail.feeRecipient) || sameAddress(recipient.address, rail.feeRecipient)) return try refuse("paymentWalletConflictPayerReporterAndPlatform")
+  proofAvailable(rail, asset, payer.address) catch effect () => { throw new DirectRefused({ reason: "paymentProofUnavailable" }) }
+  const chain = try payerChain(rail, payer.address)
+  const reserved = try highestReservedNonce(body.network, payer.address)
+  const first = reserved !== undefined && reserved >= chain.pendingNonce ? reserved + 1n : chain.pendingNonce
+  if (first + 2n > 9007199254740991n) return try refuse("paymentNonceUnavailable")
+  const transfers = [{ recipient: recipient.address, amountBase: netBase.toString() }, { recipient: rail.feeRecipient, amountBase: feeBase.toString() }]
+  const intent = storedIntent({
+    preparedAt: try isoNow(),
+    afterBlock: chain.head,
+    network: body.network,
+    chain: NETWORKS[rail.network].chain,
+    asset,
+    payer,
+    recipient,
+    grossBase: gross,
+    feeBase,
+    netBase,
+    transfers,
+    transactions: evmTransactions(rail, payer.address, asset, transfers, [first + 1n, first]),
+    payerGithubId: context.actorGithubId,
+  })
+  return try commit(context.caseId, (current) => effect {
+    if (!consentedTo(current, consentedDeployment)) return try refuse("paymentPreparationChanged")
+    if (!sameWallet(try effectiveWallet(context.reporterGithubId, network), reporterWallet) || !sameWallet(try effectiveWallet(context.actorGithubId, network), payerWallet)) return try refuse("paymentPreparationChanged")
+    const facts: Facts = { approval: award, network, rail, caseRevision: context.revision, reporterGithubId: context.reporterGithubId, payerGithubId: context.actorGithubId, payerWallet, reporterWallet, otherUses: [] }
+    const { writes } = decided(current, facts, [payer, recipient], ({ state, claims }) => ({ type: "prepare", intent: intentModel(intent, 0, claims), observedRevision: state.caseRevision, proofAvailable: true, nonceReserved: true }), Number(context.actorGithubId), { kind: "intent", intent }) catch effect (error) => match (error) {
+      when Rejected: throw prepareRefusal(error);
+      default: throw error;
+    }
+    return { value: { network: body.network, rail: "direct" } satisfies PrepareDetail, writes }
+  }, alongside)
+}
+
+effect function verifiedLegs(rail: EvmDirectRail, intent: DirectIntent, transactionIds: ReadonlyArray<string>) {
+  return verifyEvmLegs(rail, {
+    payer: intent.payer.address,
+    asset: intent.asset,
+    transfers: intent.transfers,
+    transactions: (intent.transactions ?? []).map((transaction) => ({ ...transaction, nonce: transaction.nonce ?? "" })),
+    afterBlocks: intent.afterBlocks ?? intent.transfers.map(() => intent.afterBlock),
+    transactionIds,
+  }) catch effect (error) => match (error) {
+    when ProofUnavailable: throw new DirectRefused({ reason: "paymentProofUnavailable" });
+    default: throw new DirectRefused({ reason: "paymentUnverified" });
+  }
+}
+
+export function receiptEvent(state: DirectBounty, transfers: ReadonlyArray<Transfer>): Event {
+  const researcher = transfers.find((transfer) => transfer.lane === "Researcher")
+  const fee = transfers.find((transfer) => transfer.lane === "Fee")
+  const progress = { observedRevision: state.caseRevision, generation: state.intent.generation, verifiedApprover: true }
+  return researcher !== undefined && fee !== undefined
+    ? { type: "recordPair", pair: { researcher, fee }, ...progress }
+    : { type: "recordTransfer", transfer: transfers[0] ?? noTransfer, ...progress }
+}
+
+export effect function verifyPayment(context: CaseContext, body: VerifyPaymentBody, alongside: ReadonlyArray<Statement>) {
+  if (body.confirmation !== true || body.transactionIds.length < 1 || body.transactionIds.length > 2) return try refuse("invalidRequestConfirmOneOrTwo")
+  const existing = try journalFor(context.caseId)
+  const prepared = currentIntent(existing)
+  if (prepared === undefined) return try refuse("paymentNotPreparedPrepareTheExactPayment")
+  if (existing.paid) return try refuse("paymentAlreadyVerifiedThisPaymentIsAlready")
+  const award: FrozenAward | undefined = try (try ApprovedAwards).forCase(context.caseId)
+  if (award === undefined) return try refuse("railUnavailableReceiptVerificationIsUnavailable")
+  const { rail, network } = try frozenRail(award, prepared.network, "railUnavailableReceiptVerificationIsUnavailable")
+  if (prepared.protocolVersion !== 2 || prepared.transactions?.length !== prepared.transfers.length || prepared.transactions.some((transaction) => transaction.nonce === undefined)) return try refuse("paymentUnverified")
+  const proofs = try verifiedLegs(rail, prepared, body.transactionIds)
+  const uses = try usedElsewhere(context.caseId, prepared.network, proofs.map((proof) => proof.transactionId))
+  for (const proof of proofs) {
+    if (uses.ordinary.includes(proof.transactionId)) return try refuse("paymentReplay")
+    if (uses.recorded.includes(proof.transactionId) || existing.legs.some((leg) => leg.transactionId.toLowerCase() === proof.transactionId)) return try refuse("paymentReplayThisTransferIsAlready")
+    if (legPaid(existing, proof.legIndex)) return try refuse("paymentLegAlreadyVerified")
+  }
+  const reporterWallet = try effectiveWallet(context.reporterGithubId, network)
+  const now = try isoNow()
+  return try commit(context.caseId, (current) => effect {
+    const intent = currentIntent(current) ?? prepared
+    const facts: Facts = { approval: award, network, rail, caseRevision: context.revision, reporterGithubId: context.reporterGithubId, payerGithubId: intent.payerGithubId ?? unassignedPayer(context.reporterGithubId), payerWallet: walletOfIntent(intent.payer), reporterWallet, otherUses: [...uses.ordinary, ...uses.recorded].map((transaction) => ({ network: rail.model, transaction })) }
+    const evidence = proofs.map((proof) => ({ legIndex: proof.legIndex, transactionId: proof.transactionId, blockHash: proof.blockHash, blockNumber: proof.blockNumber, finalizedAt: proof.finalizedAt }))
+    const { writes } = decided(current, facts, [], ({ state }) => receiptEvent(state, evidence.map((proof) => transferModel(rail.model, intent, state.intent, proof.legIndex, proof))), Number(context.actorGithubId), { kind: "receipts", network: intent.network, verifiedAt: now, proofs: evidence }) catch effect (error) => match (error) {
+      when Rejected: throw verifyRefusal(error);
+      default: throw error;
+    }
+    return { value: { verified: true, rail: "direct" } satisfies VerifyDetail, writes }
+  }, alongside)
+}
+
+const heldNotice = "The reporter's wallet changed. Payment is held. Existing exact transfers can still be verified."
+const externalNotice = "The external wallet signs and sends these transfers. Chain records reveal the payer, recipients, asset and amounts. Slop verifies final receipts and never signs or broadcasts."
+
+function roleOf(index: number) {
+  return index === 0 ? "researcher" as const : "fee" as const
+}
+
+export effect function settlementView(context: CaseContext) {
+  const current = try journalFor(context.caseId)
+  const intent = currentIntent(current)
+  if (intent === undefined) return undefined
+  const model = evmModel(intent.network)
+  const found = model === undefined ? undefined : try effectiveWallet(context.reporterGithubId, model)
+  const recipientCurrent = found !== undefined && found.claimId === intent.recipient.id && found.digest === intent.recipient.digest
+  const confirmed = current.legs.map((leg) => leg.evidence.transactionId)
+  const remainingTransfers: RemainingTransfer[] = intent.transfers.flatMap((transfer, index) => legPaid(current, index) ? [] : [{ ...transfer, role: roleOf(index) }])
+  const walletReviewRequired = !current.paid && !legPaid(current, 0) && !recipientCurrent
+  const pending = (intent.transactions ?? [])
+    .map((transaction, index) => ({ transaction, transfer: { ...intent.transfers[index] ?? { recipient: "", amountBase: "0" }, role: roleOf(index) }, index }))
+    .filter((item) => !legPaid(current, item.index) && (!walletReviewRequired || (intent.protocolVersion === 2 && item.index !== 0)))
+    .sort((left, right) => Number(left.transaction.nonce ?? "0") - Number(right.transaction.nonce ?? "0"))
+  return {
+    rail: "direct",
+    state: current.paid ? "paid" : "awaiting-external-payment",
+    network: intent.network,
+    generation: generationOf(current),
+    asset: intent.asset.address,
+    grossBase: intent.grossBase,
+    feeBase: intent.feeBase,
+    netBase: intent.netBase,
+    transactionIds: confirmed,
+    confirmedTransactionIds: confirmed,
+    remainingTransfers,
+    transactionId: confirmed.length === 0 ? null : confirmed.join(", "),
+    submittedTransactionId: null,
+    walletReviewRequired,
+    privacyNotice: walletReviewRequired ? heldNotice : externalNotice,
+    ownerRequest: current.paid || (walletReviewRequired && pending.length === 0) ? null : {
+      ...intent,
+      transfers: intent.transactions === undefined ? remainingTransfers : pending.map((item) => item.transfer),
+      ...intent.transactions === undefined ? {} : { transactions: pending.map((item) => item.transaction) },
+    },
+  } satisfies DirectSettlementView
+}
+
+export const directPaymentActions = {
+  "consent-payment": consentPayment,
+  "prepare-payment": preparePayment,
+  "verify-payment": verifyPayment,
+}

@@ -1,0 +1,23 @@
+// spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"
+import { rows, sql } from "@repo/platform/d1"
+import type { AccountStanding, BanRead } from "../../../gen/backend__projectComposition.effect.vibe"
+
+schema BanRow { enforcement_id: string }
+
+export effect function activeBans(githubId: string) {
+  return (try rows(BanRow, sql`SELECT b.enforcement_id FROM project_maintainer_bans b WHERE b.github_id = ${githubId} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) ORDER BY b.enforcement_id`)).map((row) => row.enforcement_id)
+}
+
+export effect function banRead(githubId: string) {
+  const bans = activeBans(githubId) catch effect () => { return "unavailable" as const }
+  return (bans === "unavailable" ? "BanUnavailable" : bans.length === 0 ? "NotBanned" : "AccountBanned") satisfies BanRead
+}
+
+export effect function accountStanding(accounts: { readonly actor: number; readonly steward: number }) {
+  return {
+    actor: accounts.actor,
+    steward: accounts.steward,
+    actorBan: try banRead(String(accounts.actor)),
+    stewardBan: try banRead(String(accounts.steward)),
+  } satisfies AccountStanding
+}

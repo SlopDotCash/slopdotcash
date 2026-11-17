@@ -1,0 +1,406 @@
+// spec/points/reviews.md, "Review records preserve first qualification and highest band"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews"; spec/points/reviews.md, "Pool shares use ten-Point largest remainder and the original review order"; spec/points/reviews.md, "A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment"; spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"
+import { sizePoints } from "../../gen/points__allocation.effect.vibe"
+import { type ReviewEvidence, enabled, poolPoints, reviewShare } from "../../gen/points__reviews.effect.vibe"
+import { changedAcceptedOutcome, outcomeReviewWinner, reviewAwardPoints, reviewTiming, valuePolicyAt } from "../kernels/scoring/legacyV2.ts"
+import { reviewExclusionReason } from "../kernels/scoring/reviewBody.ts"
+import { reviewTierPoints, valueTierBand } from "../kernels/scoring/tiers.ts"
+import { ReviewRecords } from "./book.vibe"
+import { type Actor, type ClosedPull, FactsRefused, type MergedPull, type Review, type ReviewDecision, type ReviewExclusion, type ReviewExclusionReason, type ReviewLoad, type ReviewValue, type ScoreEvent, compareCodeUnits, isBot, millisAt, sameActor, workUnitSlug } from "./facts.vibe"
+import type { Merges } from "./merges.vibe"
+
+export interface Credit {
+  credit(event: ScoreEvent): boolean!FactsRefused
+}
+
+export interface Ledger extends Credit {
+  scored(repository: string, sourceId: string): boolean
+  amend(id: string, history: ReadonlyArray<ReviewDecision>): void
+}
+
+export interface ReviewContext {
+  readonly windowFrom: number
+  readonly windowTo: number
+  readonly reviewCutoff: number
+  readonly bans: ReadonlyMap<string, number>
+  readonly merges: Merges
+  readonly held: ReadonlySet<string>
+  readonly ledger: Ledger
+}
+
+type Source = MergedPull | ClosedPull
+type Exclude = (review: Review, reason: ReviewExclusionReason) => void
+
+interface Valued {
+  readonly value: ReviewValue
+  readonly sizePoints: number
+  readonly digest: string
+  readonly recordedAt: string
+  readonly actors: ReadonlySet<string>
+}
+
+interface Candidate {
+  readonly review: Review
+  readonly actor: Actor
+  readonly submittedAt: string
+  readonly at: number
+  readonly points: number
+  readonly valued: Valued
+}
+
+const automatedThirds: Record<ReviewLoad, number> = { triage: 1, standard: 3, deep: 9, specialist: 24 }
+
+function compareReviews(left: Review, right: Review) {
+  if (left.submittedAt === right.submittedAt) return left.id.localeCompare(right.id, "en")
+  if (left.submittedAt === null) return -1
+  if (right.submittedAt === null) return 1
+  return left.submittedAt.localeCompare(right.submittedAt)
+}
+
+export function orderedReviews(reviews: ReadonlyArray<Review>) {
+  const byId = new Map<string, Review>()
+  for (const review of reviews) if (!byId.has(review.id)) byId.set(review.id, review)
+  return [...byId.values()].sort(compareReviews)
+}
+
+function bannedAt(context: ReviewContext, actor: Actor, at: number) {
+  const banned = context.bans.get(actor.id)
+  return banned !== undefined && at >= banned
+}
+
+function reviewSource(pull: Source, review: Review) {
+  return { id: review.id, kind: "review" as const, number: pull.number, title: pull.title, url: review.url }
+}
+
+function sizeOf(tier: Parameters<typeof valueTierBand>[0] | null) {
+  return tier === null ? 0 : sizePoints(valueTierBand(tier))
+}
+
+function singleDecided(pull: Source, context: ReviewContext) {
+  return "mergedAt" in pull ? context.merges.assessed.has(pull.id) : true
+}
+
+function assessedSize(pull: Source, review: Review, context: ReviewContext) {
+  const joint = context.merges.joint.get(pull.id)
+  if (joint !== undefined) {
+    if (joint.spans || joint.member.head !== pull.headRefOid) return 0
+    return sizeOf(joint.decision.units.find((unit) => unit.reviewValues.some((value) => value.reviewId === review.id))?.tier ?? null)
+  }
+  const assessment = pull.assessment
+  if (assessment === null || assessment.head !== pull.headRefOid || !singleDecided(pull, context) || !pull.reviewValues.some((value) => value.reviewId === review.id)) return 0
+  return sizeOf(assessment.tier)
+}
+
+effect function valuedReview(pull: Source, review: Review, context: ReviewContext) {
+  const joint = context.merges.joint.get(pull.id)
+  if (joint !== undefined) {
+    if (joint.spans) return null
+    if (joint.member.head !== pull.headRefOid) throw new FactsRefused({ reason: "Joint review decision does not match the current head", sourceId: review.id })
+    const unit = joint.decision.units.find((candidate) => candidate.reviewValues.some((value) => value.reviewId === review.id))
+    const value = unit?.reviewValues.find((item) => item.reviewId === review.id)
+    if (unit === undefined || value === undefined) throw new FactsRefused({ reason: "Joint decision omitted a collected formal review", sourceId: review.id })
+    const actors = joint.unitActors.get(unit.workUnitId)
+    if (actors === null || actors === undefined) return null
+    return { value, sizePoints: sizeOf(unit.tier), digest: joint.decision.digest, recordedAt: joint.decision.recordedAt, actors: new Set([...actors, ...(pull.author === null ? [] : [pull.author.id])]) } satisfies Valued
+  }
+  const assessment = pull.assessment
+  if (assessment === null) return null
+  if (assessment.head !== pull.headRefOid) throw new FactsRefused({ reason: "Value review decision does not match the current head", sourceId: review.id })
+  if (!singleDecided(pull, context)) return null
+  const value = pull.reviewValues.find((item) => item.reviewId === review.id)
+  if (value === undefined) throw new FactsRefused({ reason: "Value decision omitted a collected formal review", sourceId: review.id })
+  return { value, sizePoints: sizeOf(assessment.tier), digest: assessment.digest, recordedAt: assessment.recordedAt, actors: new Set<string>() } satisfies Valued
+}
+
+effect function valueCandidate(pull: Source, review: Review, acceptedAt: number, credited: ReadonlySet<string>, context: ReviewContext, exclude: Exclude) {
+  if (pull.externalPrize) return null
+  if (review.author === null) return exclude(review, "missing-reviewer")
+  if (isBot(review.author)) return exclude(review, "bot-reviewer")
+  if (review.submittedAt === null) return exclude(review, "missing-submission-time")
+  const submitted = try millisAt(review.submittedAt, review.id)
+  if (submitted >= acceptedAt) return exclude(review, "post-merge")
+  const valued = try valuedReview(pull, review, context)
+  if (valued === null) return null
+  if (submitted < valuePolicyAt) return exclude(review, "review-credit-before-policy")
+  const points = reviewTierPoints(valued.value.tier)
+  if (points === 0) return exclude(review, "review-credit-zero-share")
+  if (valued.actors.has(review.author.id) || credited.has(review.author.id) || sameActor(review.author, pull.author)) return exclude(review, "self-review")
+  return { review, actor: review.author, submittedAt: review.submittedAt, at: submitted, points, valued } satisfies Candidate
+}
+
+effect function allocateValueReviews(pull: Source, acceptedAt: number, candidates: ReadonlyArray<Candidate>, awarded: ReadonlySet<string>, sizeFloor: number, context: ReviewContext, exclude: Exclude) {
+  const eligible: Candidate[] = []
+  for (const candidate of candidates) {
+    if (awarded.has(candidate.actor.id)) exclude(candidate.review, "already-awarded-reviewer")
+    else eligible.push(candidate)
+  }
+  if (eligible.length === 0) return []
+  const inWindow: Candidate[] = []
+  const allocationFrom = acceptedAt - (context.windowTo - context.windowFrom)
+  for (const candidate of eligible) {
+    if (bannedAt(context, candidate.actor, candidate.at)) exclude(candidate.review, "review-credit-account-banned")
+    else if (candidate.at < allocationFrom || candidate.at >= context.windowTo) exclude(candidate.review, "review-credit-outside-window")
+    else inWindow.push(candidate)
+  }
+  if (inWindow.length === 0) return []
+  inWindow.sort((left, right) => left.at - right.at || compareCodeUnits(left.review.id, right.review.id))
+  const book = try ReviewRecords
+  const merged = try book.send(pull.id, { type: "observeMerge", at: acceptedAt })
+  try book.send(pull.id, { type: "assess", points: Math.max(sizeFloor, ...eligible.map((candidate) => candidate.valued.sizePoints)) })
+  const local = new Map<string, number>()
+  const localActor = (actor: Actor) => {
+    const known = local.get(actor.id)
+    if (known !== undefined) return known
+    const next = local.size + 1
+    const number = next >= merged.prAuthor ? next + 1 : next
+    local.set(actor.id, number)
+    return number
+  }
+  const sources = new Map<number, Candidate>()
+  const byActor = new Map<number, Candidate[]>()
+  for (const [index, candidate] of inWindow.entries()) {
+    const actor = localActor(candidate.actor)
+    const evidence: ReviewEvidence = { reviewId: index + 1, actor, actorKind: "HumanUser", prAuthor: merged.prAuthor, at: candidate.at, band: candidate.points, repeated: false, emptyOrDuplicate: false }
+    const current = try book.get(pull.id)
+    if (!enabled(current, { type: "recordReview", evidence })) {
+      if (current.reviewers.length < 5) throw new FactsRefused({ reason: "review evidence is not in occurrence order", sourceId: candidate.review.id })
+      exclude(candidate.review, "review-credit-reviewer-limit")
+      continue
+    }
+    try book.send(pull.id, { type: "recordReview", evidence })
+    byActor.set(actor, [...(byActor.get(actor) ?? []), candidate])
+    const source = sources.get(actor)
+    if (source === undefined || candidate.points > source.points) sources.set(actor, candidate)
+  }
+  const record = try book.get(pull.id)
+  const poolThirds = poolPoints(record) / 10
+  const creditedActors: string[] = []
+  for (const [index, reviewer] of record.reviewers.entries()) {
+    const source = sources.get(reviewer.actor)
+    if (source === undefined) continue
+    const repeats = (byActor.get(reviewer.actor) ?? []).filter((candidate) => candidate !== source)
+    const shareThirds = reviewShare(record, reviewer) / 10
+    if (shareThirds === 0) {
+      for (const candidate of [source, ...repeats]) exclude(candidate.review, "review-credit-zero-share")
+      continue
+    }
+    creditedActors.push(source.actor.id)
+    for (const candidate of repeats) exclude(candidate.review, "already-awarded-reviewer")
+    if (source.at < context.windowFrom) {
+      exclude(source.review, "review-credit-outside-window")
+      continue
+    }
+    try context.ledger.credit({
+      id: `${pull.id}:value-review:${source.review.id}`,
+      actor: source.actor,
+      category: "substantive-review",
+      points: shareThirds / 3,
+      scoreThirds: shareThirds,
+      workUnitId: `wu_value_review_${workUnitSlug(source.review.id)}`,
+      scoreDecisionSourceId: `value:${source.valued.digest}`,
+      scoreDecisionAt: source.valued.recordedAt,
+      occurredAt: source.submittedAt,
+      repository: pull.repository,
+      source: reviewSource(pull, source.review),
+      reason: `Provisional ${source.valued.value.tier} review value; reviewer ${index + 1} of ${record.reviewers.length} credited, ${shareThirds} of ${poolThirds} review-credit thirds: ${source.valued.value.finding} ${source.valued.value.outcome}`,
+    })
+  }
+  return creditedActors
+}
+
+function qualifies(pull: MergedPull, review: Review, submitted: number, mergedAt: number) {
+  return reviewExclusionReason(
+    { author: review.author, state: review.state, submittedAt: submitted, body: review.body, inlineCommentCount: review.inlineCommentCount },
+    { author: pull.author, mergedAt },
+  )
+}
+
+function legacyAward(pull: MergedPull, review: Review, actor: Actor, outcomeBound: boolean): ScoreEvent {
+  const thirds = reviewAwardPoints(outcomeBound) / 10
+  const occurredAt = review.submittedAt ?? pull.mergedAt
+  const workUnitId = `wu_${pull.project}_${workUnitSlug(review.id)}`
+  const bonus = review.traceUpload ? { evidenceBonusBasisPoints: 1_500 } : {}
+  if (outcomeBound) return {
+    id: `${pull.id}:reviewer:${actor.id}`,
+    actor,
+    category: "substantive-review",
+    points: thirds / 3,
+    scoreThirds: thirds,
+    ...bonus,
+    occurredAt,
+    repository: pull.repository,
+    source: reviewSource(pull, review),
+    reason: "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+    workUnitId,
+  }
+  return {
+    id: `${pull.id}:reviewer:${actor.id}`,
+    actor,
+    category: "substantive-review",
+    points: thirds / 3,
+    ...bonus,
+    occurredAt,
+    repository: pull.repository,
+    source: reviewSource(pull, review),
+    reason: "First qualifying substantive, non-self review submitted before merge.",
+    scoreThirds: thirds,
+    workUnitId,
+  }
+}
+
+effect function automatedReviews(pull: MergedPull, mergedAt: number, credited: ReadonlySet<string>, awarded: Set<string>, context: ReviewContext, local: Credit) {
+  for (const review of pull.automatedReviews) {
+    if (sameActor(review.author, pull.author) || credited.has(review.author.id) || review.workUnitId.includes("_legacy_")) continue
+    if (pull.ratification === null || !pull.ratification.proposals.includes(review.id)) continue
+    if ((try millisAt(review.createdAt, review.id)) > mergedAt || context.ledger.scored(pull.repository, review.id)) continue
+    const thirds = automatedThirds[review.reviewLoad]
+    const scored = try local.credit({
+      id: `${pull.id}:automated-review:${review.id}`,
+      actor: review.author,
+      category: "substantive-review",
+      points: thirds / 3,
+      scoreThirds: thirds,
+      evidenceBonusBasisPoints: review.traceUpload ? 1_500 : 0,
+      workUnitId: `${review.workUnitId}_review_${workUnitSlug(review.author.id)}`,
+      occurredAt: review.createdAt,
+      repository: pull.repository,
+      source: { id: review.id, kind: review.kind, number: pull.number, title: pull.title, url: review.url },
+      reason: `Automated ${review.reviewLoad} review${review.traceUpload ? " with finalized private trace" : " without private trace"}; maintainer scoring remains authoritative.`,
+    })
+    if (scored) awarded.add(review.author.id)
+  }
+}
+
+effect function reviewHistories(pull: MergedPull, reviews: ReadonlyArray<Review>, mergedAt: number, events: ReadonlyArray<ScoreEvent>, context: ReviewContext) {
+  for (const event of events) {
+    if (event.category !== "substantive-review" || event.source.kind !== "review") continue
+    const firstIndex = reviews.findIndex((review) => review.id === event.source.id)
+    const first = reviews[firstIndex]
+    if (first === undefined || first.commitId === null || first.submittedAt === null || qualifies(pull, first, try millisAt(first.submittedAt, first.id), mergedAt) !== "qualifies") continue
+    const heads = new Set<string>()
+    const history: ReviewDecision[] = []
+    for (const review of reviews.slice(firstIndex)) {
+      if (review.author?.id !== event.actor.id || review.commitId === null || review.submittedAt === null || heads.has(review.commitId)) continue
+      const submitted = try millisAt(review.submittedAt, review.id)
+      if (bannedAt(context, review.author, submitted) || qualifies(pull, review, submitted, mergedAt) !== "qualifies") continue
+      heads.add(review.commitId)
+      history.push({ sourceId: review.id, state: review.state === "APPROVED" ? "APPROVED" : "CHANGES_REQUESTED", commitId: review.commitId, submittedAt: review.submittedAt, url: review.url })
+    }
+    if (history.length > 1) context.ledger.amend(event.id, history)
+  }
+}
+
+effect function ratifierFallback(pull: MergedPull, credited: ReadonlySet<string>, awarded: ReadonlySet<string>, local: Credit) {
+  const ratification = pull.ratification
+  if (ratification === null || sameActor(ratification.maintainer, pull.author) || credited.has(ratification.maintainer.id) || awarded.has(ratification.maintainer.id)) return
+  try local.credit({
+    id: `${pull.id}:ratifier:${ratification.sourceId}`,
+    actor: ratification.maintainer,
+    category: "substantive-review",
+    points: 1 / 3,
+    scoreThirds: 1,
+    workUnitId: `${ratification.workUnitId}_ratification`,
+    occurredAt: ratification.at,
+    repository: pull.repository,
+    source: { id: ratification.sourceId, kind: "comment", number: pull.number, title: pull.title, url: ratification.url },
+    reason: "Immutable maintainer score ratification for an accepted outcome.",
+  })
+}
+
+function excluder(pull: Source, exclusions: ReviewExclusion[]): Exclude {
+  return (review, reason) => {
+    exclusions.push({
+      id: `${pull.id}:review-exclusion:${review.id}`,
+      reviewId: review.id,
+      pullRequestId: pull.id,
+      pullRequestNumber: pull.number,
+      repository: pull.repository,
+      url: review.url,
+      reason,
+      ...(review.author === null ? {} : { reviewer: review.author }),
+    })
+  }
+}
+
+effect function mergedReviews(pull: MergedPull, context: ReviewContext, exclude: Exclude) {
+  const mergedAt = try millisAt(pull.mergedAt, pull.id)
+  const credited = context.merges.creditActors.get(pull.id) ?? new Set<string>()
+  const events: ScoreEvent[] = []
+  const local: Credit = {
+    effect credit(event: ScoreEvent) {
+      if (!(try context.ledger.credit(event))) return false
+      events.push(event)
+      return true
+    },
+  }
+  const awarded = new Set<string>()
+  try automatedReviews(pull, mergedAt, credited, awarded, context, local)
+  const reviews = orderedReviews(pull.reviews)
+  const valuePolicy = mergedAt >= valuePolicyAt
+  const candidates: Candidate[] = []
+  const outcomes: Array<{ readonly review: Review; readonly actor: Actor }> = []
+  let sizeFloor = 0
+  effect function award(review: Review, actor: Actor, outcomeBound: boolean) {
+    if (try local.credit(legacyAward(pull, review, actor, outcomeBound))) awarded.add(actor.id)
+    else exclude(review, "reviewer-cycle-cap")
+  }
+  for (const review of reviews) {
+    const submitted = review.submittedAt === null ? -1 : try millisAt(review.submittedAt, review.id)
+    if (valuePolicy && submitted >= 0 && submitted < valuePolicyAt) sizeFloor = Math.max(sizeFloor, assessedSize(pull, review, context))
+    if (context.ledger.scored(pull.repository, review.id)) continue
+    if (valuePolicy) {
+      if (pull.ratification !== null && review.author !== null && credited.has(review.author.id)) {
+        exclude(review, "self-review")
+        continue
+      }
+      const candidate = try valueCandidate(pull, review, mergedAt, credited, context, exclude)
+      if (candidate !== null && candidate !== undefined) candidates.push(candidate)
+      continue
+    }
+    const qualification = qualifies(pull, review, submitted, mergedAt)
+    const reason = qualification === "qualifies" && review.author !== null && credited.has(review.author.id) ? "self-review" : qualification
+    if (reason !== "qualifies") {
+      exclude(review, reason)
+      continue
+    }
+    const actor = review.author
+    if (actor === null) throw new FactsRefused({ reason: "Qualifying review lost its reviewer", sourceId: review.id })
+    if (awarded.has(actor.id)) exclude(review, "already-awarded-reviewer")
+    else if (pull.externalPrize) exclude(review, "external-prize-policy")
+    else if (bannedAt(context, actor, submitted)) exclude(review, "review-credit-account-banned")
+    else match (reviewTiming(submitted, context.reviewCutoff, changedAcceptedOutcome(review.state, review.commitId ?? "", pull.headRefOid))) {
+      when "first-before-cutoff": try award(review, actor, false);
+      when "outcome-candidate": outcomes.push({ review, actor });
+      when "unchanged-outcome": exclude(review, "unchanged-outcome");
+    }
+  }
+  if (valuePolicy) for (const actor of try allocateValueReviews(pull, mergedAt, candidates, awarded, sizeFloor, context, exclude)) awarded.add(actor)
+  const winner = outcomeReviewWinner(outcomes.length)
+  for (const [index, { review, actor }] of outcomes.entries()) {
+    if (index === winner) try award(review, actor, true)
+    else exclude(review, "pull-request-review-awarded")
+  }
+  try reviewHistories(pull, reviews, mergedAt, events, context)
+  try ratifierFallback(pull, credited, awarded, local)
+}
+
+effect function closedReviews(pull: ClosedPull, context: ReviewContext, exclude: Exclude) {
+  const closedAt = try millisAt(pull.closedAt, pull.id)
+  if (closedAt < valuePolicyAt) return
+  const candidates: Candidate[] = []
+  let sizeFloor = 0
+  for (const review of pull.reviews) {
+    const submitted = review.submittedAt === null ? -1 : try millisAt(review.submittedAt, review.id)
+    if (submitted >= 0 && submitted < valuePolicyAt) sizeFloor = Math.max(sizeFloor, assessedSize(pull, review, context))
+    if (context.ledger.scored(pull.repository, review.id)) continue
+    const candidate = try valueCandidate(pull, review, closedAt, new Set(), context, exclude)
+    if (candidate !== null && candidate !== undefined) candidates.push(candidate)
+  }
+  try allocateValueReviews(pull, closedAt, candidates, new Set(), sizeFloor, context, exclude)
+}
+
+export effect function reviewCredit(pulls: ReadonlyArray<MergedPull>, closed: ReadonlyArray<ClosedPull>, context: ReviewContext) {
+  const exclusions: ReviewExclusion[] = []
+  for (const pull of pulls) if (!context.held.has(pull.id)) try mergedReviews(pull, context, excluder(pull, exclusions))
+  for (const pull of closed) if (!context.held.has(pull.id)) try closedReviews(pull, context, excluder(pull, exclusions))
+  return exclusions
+}

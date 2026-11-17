@@ -1,0 +1,79 @@
+// spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"
+import { D1 } from "@repo/platform/d1"
+import { Wallets } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { heldPayouts, indexPaymentEvent } from "../payments/ledger.vibe"
+import type { EventReference, PaymentDeployment } from "../payments/terms.vibe"
+import { WalletHistory } from "../payments/wallets.vibe"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+
+export schema ScanKind = "reserved" | "paid"
+
+export schema ScanEvent {
+  readonly projectId: string
+  readonly network: string
+  readonly transactionId: string
+  readonly eventIndex: number
+  readonly kind: ScanKind
+  readonly obligationId: string
+}
+
+export schema IndexOutcome = "Indexed" | "Refused" | "Held"
+
+export error IndexUnavailable { reason: string }
+
+export interface ScanScope {
+  readonly projectId: string
+  readonly network: string
+}
+
+export service PaymentIndexer {
+  index(event: ScanEvent, deployment: RegisteredDeployment): IndexOutcome!IndexUnavailable
+  heldBlocks(deployment: RegisteredDeployment): ReadonlyArray<number>!IndexUnavailable
+}
+
+export error ScanRefused { message: string }
+
+export function paymentDeploymentOf(deployment: RegisteredDeployment, rpc: PaymentRpc.Shape): PaymentDeployment | undefined {
+  const urls = rpc.urls[deployment.network]
+  if (urls === undefined) return undefined
+  const common = {
+    projectId: deployment.projectId,
+    network: deployment.network,
+    vault: deployment.vault,
+    owner: deployment.owner,
+    feeRecipient: deployment.feeRecipient,
+    scope: deployment.scope === "security-bounty" ? "PrivateBounty" as const : "Ordinary" as const,
+    rpc: urls,
+  }
+  return deployment.family === "evm"
+    ? { ...common, family: "evm", chain: deployment.chain, chainId: deployment.chainId }
+    : { ...common, family: "solana", chain: "solana", program: deployment.programId, project: deployment.projectPda, mint: deployment.asset, genesis: rpc.genesis[deployment.network] ?? "" }
+}
+
+export const PaymentIndexerLive = Layer.effect(PaymentIndexer, effect {
+  const services = try Effect.context<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | Notices | WalletHistory | Wallets>()
+  const rpc = try PaymentRpc
+  effect function target(deployment: RegisteredDeployment) {
+    const payment = paymentDeploymentOf(deployment, rpc)
+    if (payment === undefined) throw new IndexUnavailable({ reason: "Private RPC configuration unavailable" })
+    return payment
+  }
+  return {
+    index: (event, deployment) => effect {
+      const reference: EventReference = { kind: event.kind, transactionId: event.transactionId, eventIndex: event.eventIndex, obligationId: event.obligationId }
+      const indexed = Effect.provide(indexPaymentEvent(try target(deployment), reference), services) catch effect (error) => {
+        if (error._tag === "EvidenceRefused") return undefined
+        throw new IndexUnavailable({ reason: error._tag })
+      }
+      return (indexed === undefined ? "Refused" : indexed.kind === "Held" ? "Held" : "Indexed") satisfies IndexOutcome
+    },
+    heldBlocks: (deployment) => effect {
+      const held = Effect.provide(heldPayouts(try target(deployment)), services) catch effect (error) => {
+        throw new IndexUnavailable({ reason: error._tag })
+      }
+      return held.map((row) => Number(row.block)).filter((block) => Number.isSafeInteger(block))
+    },
+  } satisfies PaymentIndexer.Shape
+})

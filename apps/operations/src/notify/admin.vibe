@@ -1,0 +1,62 @@
+// spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+import { randomId } from "@repo/platform/crypto"
+import { json, jsonBody } from "@repo/platform/http"
+import { notifyPostV1SlopbotSpend } from "../client/refusals.vibe"
+import { SlopbotFailureNotice, SlopbotSpendNotice } from "../notifications/contracts.schema.vibe"
+import { NotifySettings, senderValid } from "./config.vibe"
+import { type AdminNotice, adminNoticeMime } from "./letters.vibe"
+import { Mail } from "./send.vibe"
+
+const refusals = notifyPostV1SlopbotSpend
+
+export type AdminKind = AdminNotice["kind"]
+
+function refused(row: { readonly status: number; readonly error: string }) {
+  return json({ error: row.error }, row.status)
+}
+
+effect function jsonRequested() {
+  const request = try HttpServerRequest.HttpServerRequest
+  return (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() === "application/json"
+}
+
+effect function noticeOf(kind: AdminKind) {
+  if (!(try jsonRequested())) return undefined
+  const body = jsonBody(8) catch () => undefined
+  if (body === undefined) return undefined
+  const strict = { onExcessProperty: "error" } as const
+  if (kind === "spend") {
+    const notice = Schema.decodeUnknownEffect(SlopbotSpendNotice)(body, strict) catch () => undefined
+    return notice === undefined ? undefined : { kind, notice } satisfies AdminNotice
+  }
+  const notice = Schema.decodeUnknownEffect(SlopbotFailureNotice)(body, strict) catch () => undefined
+  return notice === undefined ? undefined : { kind, notice } satisfies AdminNotice
+}
+
+export effect function mailAdmins(admin: AdminNotice) {
+  const settings = try NotifySettings
+  const recipients = settings.adminEmails
+  if (recipients === undefined || !senderValid(settings.from)) {
+    try Effect.logError("slop notify sender or recipients are misconfigured")
+    return { kind: "misconfigured" } as const
+  }
+  const mail = try Mail
+  const at = try Clock.currentTimeMillis
+  let sent = 0
+  for (const to of recipients) {
+    const raw = try adminNoticeMime(admin, { from: settings.from, to, at, messageId: try randomId() })
+    const delivered = Effect.as(mail.send({ from: settings.from, to, raw }), true) catch () => false
+    if (delivered) sent += 1
+    else try Effect.logError("slop notify delivery failed")
+  }
+  return { kind: sent === recipients.length ? "sent" : "failed", sent, recipients: recipients.length } as const
+}
+
+export effect function adminNotice(kind: AdminKind) {
+  const admin = try noticeOf(kind)
+  if (admin === undefined) return refused(refusals.invalidRequestNoStore)
+  const outcome = try mailAdmins(admin)
+  if (outcome.kind === "misconfigured") return refused(refusals.serviceMisconfigured)
+  if (outcome.kind === "failed") return json({ error: refusals.deliveryFailed.error, sent: outcome.sent }, refusals.deliveryFailed.status)
+  return json({ status: "sent", recipients: outcome.recipients }, 202)
+}

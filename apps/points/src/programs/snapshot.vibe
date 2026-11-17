@@ -1,0 +1,28 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { adaptPullRequestFile } from "../snapshot/adaptPr.vibe"
+import { restoreSnapshot } from "../snapshot/restore.vibe"
+import { defaultSnapshotPath, packTransport } from "../snapshot/write.vibe"
+
+export error SnapshotUsage { message: string }
+
+const usage = "snapshot pack [path] | snapshot restore <published URL> <output> | snapshot adapt-pr <input> <output> <registry>"
+
+export effect function snapshot(args: ReadonlyArray<string>) {
+  const [command, ...rest] = args
+  if (command === "pack" && rest.length <= 1) {
+    const packed = try packTransport(rest[0] ?? defaultSnapshotPath)
+    try Console.log(`[Slop] leaderboard transport ${JSON.stringify(packed)}`)
+    return
+  }
+  if (command === "restore" && rest.length === 2) {
+    const bytes = try restoreSnapshot(rest[0] ?? "", rest[1] ?? "")
+    try Console.log(`[Slop] restored ${bytes} published leaderboard bytes`)
+    return
+  }
+  if (command === "adapt-pr" && rest.length === 3) {
+    const version = try adaptPullRequestFile(rest[0] ?? "", rest[1] ?? "", rest[2] ?? "")
+    try Console.log(`[Slop] prepared schema ${version} pull-request ledger from deployed public data`)
+    return
+  }
+  throw new SnapshotUsage({ message: `Usage: ${usage}` })
+}

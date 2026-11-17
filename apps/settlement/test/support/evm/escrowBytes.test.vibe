@@ -1,0 +1,289 @@
+import { assert, layer } from "@effect/vitest"
+import { anvil } from "@repo/platform/testing/chains"
+import { type Address, encodeFunctionData } from "viem"
+import { type AwardState, type Bytes32, type EvmAddress, type Hex, awardCall, awardId, bindingCall, decodeAward, decodeBinding, decodeBytes32, decodeUint, escrowAbi, escrowGetter, evmAddress, factoryAbi } from "../../../src/chain/evm/abi.ts"
+import { commitAwardCalldata, payCalldata } from "../../../src/chain/evm/actions.ts"
+import { type DecodedLog, decodeEscrowLogs } from "../../../src/chain/evm/events.ts"
+import { vaultKey } from "../../../src/chain/evm/factories.ts"
+import {
+  type MonthlyEntry,
+  type MonthlyReservation,
+  allocationRoot,
+  commitMonthlyCalldata,
+  commitMonthlyLeafCalldata,
+  decodeMonthlyReserve,
+  inspectWrongSum,
+  monthlyDigest,
+  monthlyReleaseDigest,
+  monthlyReservation,
+  monthlyReserveCall,
+  monthlyReserveDigest,
+  monthlyRootCall,
+  monthlyStruct,
+  releaseMonthlyReserveCalldata,
+  releaseStruct,
+  reserveMonthlyCalldata,
+  reserveStruct,
+  SOURCE_SEQUENCE_CALL,
+  sumTree,
+} from "../../../src/chain/evm/monthlyRoot.ts"
+import { DECIMALS_CALL, PENDING_MONTHLY_CALL, TOKEN_CALL, TOTALS_CALL, conservedTotals, needsPendingMonthly, readTotals } from "../../../src/chain/evm/totals.ts"
+import { contractSignature, readSignedType2, transactionId } from "../../../src/chain/evm/transactions.ts"
+import { type BindingInput, bindCalldata, bindingDigest, bindingTypedData, domainSeparator, walletTypedData } from "../../../src/chain/evm/typedData.ts"
+import { type EscrowStack, NOVEMBER_2026 as november, entriesFrom, escrowStack, word } from "./deploy.ts"
+
+service Stack {
+  readonly escrow: EscrowStack
+}
+
+const windowOpen = 1796346000
+const farFuture = 4102444800n
+
+const Started = Layer.effect(Stack, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  return { escrow }
+})
+
+function tuple(entry: MonthlyEntry) {
+  return { actorId: entry.actor, gross: entry.gross, sourceDigest: entry.sourceDigest }
+}
+
+function described(decoded: DecodedLog) {
+  return decoded.kind === "event" ? decoded.event : { name: decoded.kind }
+}
+
+effect function address(account: Address) {
+  const parsed = evmAddress(account)
+  if (parsed === undefined) return try die(new Error(`${account} is not an address`))
+  return parsed
+}
+
+effect function read(to: EvmAddress, data: Hex) {
+  const { escrow } = try Stack
+  return try promise(() => escrow.call(to, data))
+}
+
+effect function opened(project: bigint) {
+  const { escrow } = try Stack
+  const owner = try address(escrow.roles.owner.address)
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(project), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: true }))
+  return { vault, domain: { chainId: escrow.chainId, vault }, from: (try promise(() => escrow.head())) + 1n }
+}
+
+effect function events(vault: EvmAddress, from: bigint) {
+  const { escrow } = try Stack
+  const through = try promise(() => escrow.head())
+  const logs = try promise(() => escrow.logs(vault, from, through))
+  return decodeEscrowLogs(vault, logs).map(described)
+}
+
+effect function bound(vault: EvmAddress, binding: BindingInput) {
+  const { escrow } = try Stack
+  const domain = { chainId: escrow.chainId, vault }
+  const typedData = try Effect.try(() => bindingTypedData(domain, binding))
+  const walletSignature = try promise(() => escrow.signTypedData(binding.destination, typedData))
+  const data = try Effect.try(() => bindCalldata({ ...binding, walletSignature }))
+  const raw = try promise(() => escrow.signTransaction(escrow.roles.authority.address, vault, data))
+  const receipt = try promise(() => escrow.sendRaw(raw))
+  return { walletSignature, data, raw, receipt }
+}
+
+effect function sent(from: Address, to: EvmAddress, build: Hex!unknown) {
+  const { escrow } = try Stack
+  const data = try build
+  return try promise(() => escrow.send(from, to, data))
+}
+
+effect function attested(typedData: unknown) {
+  const { escrow } = try Stack
+  return try promise(() => escrow.signTypedData(escrow.roles.authority.address, typedData))
+}
+
+effect function totals(vault: EvmAddress) {
+  const read0 = readTotals({ totals: try read(vault, TOTALS_CALL), token: try read(vault, TOKEN_CALL), decimals: try read(vault, DECIMALS_CALL) })
+  if (typeof read0 === "string") return { kind: "Refused" as const, refusal: read0 }
+  const pendingMonthly = needsPendingMonthly(read0.counters) ? try read(vault, PENDING_MONTHLY_CALL) : undefined
+  return conservedTotals(read0, { pendingMonthly, nativeBalance: undefined })
+}
+
+effect function reserved(vault: EvmAddress) {
+  return decodeMonthlyReserve({ root: try read(vault, try Effect.try(() => monthlyRootCall(november))), reserve: try read(vault, try Effect.try(() => monthlyReserveCall(november))) })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('The escrow built from @repo/contracts computes the same domain, award id, vault key, binding digest, V1 root and monthly digests as the codecs, and binds a wallet-signed destination sent as the authority\'s type-2 transaction (spec/settlement/bindingAuthority.md, "Only the current authority binds, for the current version and before expiry, with the wallet\'s own signature"; spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once")', () => effect {
+    const { escrow } = try Stack
+    const { vault, domain, from } = try opened(1n)
+    const owner = try address(escrow.roles.owner.address)
+    const authority = try address(escrow.roles.authority.address)
+    const recipient = try address(escrow.roles.recipient.address)
+    const binding: BindingInput = { actor: 42n, destination: recipient, expectedVersion: 0n, claimDigest: word(0x77n), expiresAt: farFuture }
+    const entries = entriesFrom(0xa0n, [1_000_013n, 2_000_026n, 3_000_039n, 4_000_052n, 5_000_065n])
+    const tree = try Effect.try(() => sumTree(entries))
+    const reservation: MonthlyReservation = { allocationDigest: word(0xd1n), allocationRoot: tree.root.hash, wholeGross: 20_000_000n, remainingGross: tree.root.total, count: entries.length, sourceSequence: 0n }
+    const ours = try Effect.try(() => ({
+      separator: domainSeparator(domain),
+      award: awardId(escrow.chainId, vault, word(2n)),
+      key: vaultKey({ owner, projectId: word(1n), asset: escrow.dollar, purpose: "OrdinaryPurpose" }),
+      binding: bindingDigest(domain, binding),
+      root: allocationRoot(entries),
+      monthly: monthlyDigest(domain, november, allocationRoot(entries)),
+      reserve: monthlyReserveDigest(domain, november, reservation),
+    }))
+    const calls = try Effect.try(() => ({
+      award: encodeFunctionData({ abi: escrowAbi, functionName: "awardId", args: [word(2n)] }),
+      key: encodeFunctionData({ abi: factoryAbi, functionName: "vaultKey", args: [owner, word(1n), escrow.dollar, 0] }),
+      binding: encodeFunctionData({ abi: escrowAbi, functionName: "bindingDigest", args: [binding.actor, binding.destination, binding.expectedVersion, binding.claimDigest, binding.expiresAt] }),
+      root: encodeFunctionData({ abi: escrowAbi, functionName: "allocationRoot", args: [entries.map(tuple)] }),
+      monthly: encodeFunctionData({ abi: escrowAbi, functionName: "monthlyDigest", args: [november, ours.root] }),
+      reserve: encodeFunctionData({ abi: escrowAbi, functionName: "monthlyReserveDigest", args: [november, { ...reservation, count: reservation.count }] }),
+    }))
+    const theirs = {
+      separator: decodeBytes32(try read(vault, escrowGetter("domainSeparator"))),
+      award: decodeBytes32(try read(vault, calls.award)),
+      key: decodeBytes32(try read(escrow.factory, calls.key)),
+      binding: decodeBytes32(try read(vault, calls.binding)),
+      root: decodeBytes32(try read(vault, calls.root)),
+      monthly: decodeBytes32(try read(vault, calls.monthly)),
+      reserve: decodeBytes32(try read(vault, calls.reserve)),
+    }
+    const sent = try bound(vault, binding)
+    const signed = readSignedType2(sent.raw)
+    const stored = decodeBinding(try read(vault, bindingCall(42n)))
+    const decoded = try events(vault, from)
+    try Effect.try(() => assert.deepStrictEqual({
+      theirs,
+      walletSignature: contractSignature(sent.walletSignature) === sent.walletSignature.toLowerCase(),
+      signed: signed === undefined ? undefined : { sender: signed.sender, to: signed.request.to, data: signed.request.data, chainId: signed.request.chainId, id: signed.id },
+      receipt: { id: sent.receipt.transactionHash.toLowerCase(), status: sent.receipt.status },
+      stored: stored === undefined ? undefined : { destination: stored.destination, version: stored.version, claimDigest: stored.claimDigest, cancelled: stored.cancelled },
+      decoded: decoded.map((event) => event.name === "DestinationBound" ? { ...event, activatesAt: event.activatesAt >= BigInt(windowOpen) } : event),
+    }, {
+      theirs: ours,
+      walletSignature: true,
+      signed: { sender: authority, to: vault, data: sent.data.toLowerCase(), chainId: 8453, id: transactionId(sent.raw) },
+      receipt: { id: transactionId(sent.raw), status: "success" },
+      stored: { destination: recipient, version: 1n, claimDigest: word(0x77n), cancelled: false },
+      decoded: [{ name: "DestinationBound", actor: 42n, destination: recipient, version: 1n, claimDigest: word(0x77n), activatesAt: true }],
+    }))
+  })
+
+  it.effect('A deposit, an award, its payment, a version-2 monthly reserve and its proven leaves decode in canonical order, and the totals conserve with the pending reserve (spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/settlement/escrow.md, "A proven leaf reclassifies pool gross into one award without debiting free funds"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals")', () => effect {
+    const { escrow } = try Stack
+    const { vault, domain, from } = try opened(2n)
+    const recipient = try address(escrow.roles.recipient.address)
+    const donor = escrow.roles.donor.address
+    try promise(() => escrow.fund(vault, 100_000_000n, donor))
+    const manual = try Effect.try(() => awardId(escrow.chainId, vault, word(0x5001n)))
+    try sent(escrow.roles.owner.address, vault, Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id: manual, actor: 42n, gross: 5_000_000n, sourceDigest: word(0x5001n) })))
+    try bound(vault, { actor: 42n, destination: recipient, expectedVersion: 0n, claimDigest: word(0x78n), expiresAt: farFuture })
+    try sent(donor, vault, Effect.try(() => payCalldata(manual, 1n)))
+    const entries = entriesFrom(0xb0n, [1_000_000n, 2_000_000n, 3_000_000n])
+    const ids = try Effect.try(() => entries.map((entry) => awardId(escrow.chainId, vault, entry.sourceDigest)))
+    const awards: AwardState[] = []
+    for (const id of ids) {
+      const state = decodeAward(try read(vault, awardCall(id)))
+      if (state === undefined) return try die(new Error("malformed award state"))
+      awards.push(state)
+    }
+    const sequence = decodeUint(try read(vault, SOURCE_SEQUENCE_CALL), (1n << 256n) - 1n)
+    if (sequence === undefined) return try die(new Error("malformed source sequence"))
+    const planned = try Effect.try(() => monthlyReservation({ allocationDigest: word(0xd2n), entries, awards, sourceSequence: sequence }))
+    const reserveSignature = try attested(try Effect.try(() => walletTypedData(domain, reserveStruct(november, planned.reservation))))
+    try sent(donor, vault, Effect.try(() => reserveMonthlyCalldata(november, planned.reservation, reserveSignature)))
+    const leaf = effect (index: number) => {
+      const entry = planned.remaining[index]
+      const proof = planned.tree.proofs[index]
+      if (entry === undefined || proof === undefined) return try die(new Error(`no leaf ${index}`))
+      try sent(donor, vault, Effect.try(() => commitMonthlyLeafCalldata(november, entry, index, proof)))
+    }
+    try leaf(0)
+    try leaf(1)
+    const partway = try totals(vault)
+    try leaf(2)
+    const settled = try totals(vault)
+    const month = try reserved(vault)
+    const decoded = try events(vault, from)
+    const depositor = try address(donor)
+    const fee = (gross: bigint) => (gross + 49n) / 50n
+    try Effect.try(() => assert.deepStrictEqual({
+      sequence: sequence > 0n,
+      reservation: { count: planned.reservation.count, remainingGross: planned.reservation.remainingGross, wholeGross: planned.reservation.wholeGross },
+      partway: partway.kind === "Totals" ? { pending: partway.totals.pendingMonthly, reserved: partway.totals.reserved !== undefined, free: partway.totals.counters.free } : partway,
+      settled: settled.kind === "Totals" ? { pending: settled.totals.pendingMonthly, reserved: settled.totals.reserved, free: settled.totals.counters.free, paid: settled.totals.counters.paid, payoutFees: settled.totals.counters.payoutFees } : settled,
+      month: month === undefined ? undefined : { total: month.total, remaining: month.remaining, count: month.count, root: month.root },
+      decoded: decoded.map((event) => event.name === "DestinationBound" ? event.name : event),
+    }, {
+      sequence: true,
+      reservation: { count: 3, remainingGross: 6_000_000n, wholeGross: 6_000_000n },
+      partway: { pending: 3_000_000n, reserved: true, free: 89_000_000n },
+      settled: { pending: 0n, reserved: undefined, free: 89_000_000n, paid: 4_900_000n, payoutFees: 100_000n },
+      month: { total: 6_000_000n, remaining: 0n, count: 3, root: planned.tree.root.hash },
+      decoded: [
+        { name: "Deposited", depositor, amount: 100_000_000n },
+        { name: "AwardCommitted", id: manual, actor: 42n, gross: 5_000_000n, fee: 100_000n, sourceDigest: word(0x5001n) },
+        "DestinationBound",
+        { name: "Paid", id: manual, actor: 42n, destination: recipient, version: 1n, gross: 5_000_000n, net: 4_900_000n, fee: 100_000n },
+        { name: "MonthlyReserved", period: november, allocationDigest: word(0xd2n), allocationRoot: planned.tree.root.hash, wholeGross: 6_000_000n, remainingGross: 6_000_000n, count: 3, sourceSequence: sequence },
+        ...entries.map((entry, index) => ({ name: "AwardCommitted", id: ids[index], actor: entry.actor, gross: entry.gross, fee: fee(entry.gross), sourceDigest: entry.sourceDigest })),
+      ],
+    }))
+  })
+
+  it.effect('A legacy V1 commitment commits its leaves at once, and a reserve with an attested wrong total is proved unsettleable and released whole with the authority\'s signature (spec/settlement/escrow.md, "On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once"; spec/settlement/escrow.md, "A proven leaf reclassifies pool gross into one award without debiting free funds")', () => effect {
+    const { escrow } = try Stack
+    const donor = escrow.roles.donor.address
+    const legacy = try opened(3n)
+    try promise(() => escrow.fund(legacy.vault, 20_000_000n, donor))
+    const legacyEntries = entriesFrom(0xc0n, [1_500_000n, 2_500_000n])
+    const root = try Effect.try(() => allocationRoot(legacyEntries))
+    const legacySignature = try attested(try Effect.try(() => walletTypedData(legacy.domain, monthlyStruct(november, root))))
+    try sent(donor, legacy.vault, Effect.try(() => commitMonthlyCalldata(november, legacyEntries, legacySignature)))
+    const legacyEvents = try events(legacy.vault, legacy.from)
+
+    const faulty = try opened(4n)
+    try promise(() => escrow.fund(faulty.vault, 20_000_000n, donor))
+    const entries = entriesFrom(0xe0n, [1_000_000n, 2_000_000n])
+    const tree = try Effect.try(() => sumTree(entries))
+    const sequence = decodeUint(try read(faulty.vault, SOURCE_SEQUENCE_CALL), (1n << 256n) - 1n)
+    if (sequence === undefined) return try die(new Error("malformed source sequence"))
+    const wrong: MonthlyReservation = { allocationDigest: word(0xd3n), allocationRoot: tree.root.hash, wholeGross: 3_000_007n, remainingGross: 3_000_007n, count: 2, sourceSequence: sequence }
+    const reserveSignature = try attested(try Effect.try(() => walletTypedData(faulty.domain, reserveStruct(november, wrong))))
+    try sent(donor, faulty.vault, Effect.try(() => reserveMonthlyCalldata(november, wrong, reserveSignature)))
+    const month = try reserved(faulty.vault)
+    if (month === undefined) return try die(new Error("malformed monthly reserve"))
+    const inspected = try Effect.try(() => ({
+      missing: inspectWrongSum(undefined, month),
+      other: inspectWrongSum({ allocationDigest: word(0xd4n), entries }, month),
+      proved: inspectWrongSum({ allocationDigest: word(0xd3n), entries }, month),
+    }))
+    const proved = inspected.proved
+    if (proved.status !== "provably-unsettleable") return try die(new Error(`held: ${proved.reason}`))
+    const terms = { allocationDigest: proved.allocationDigest, allocationRoot: proved.allocationRoot, expectedRemaining: proved.expectedRemaining, releasedGross: proved.releasedGross }
+    const ourRelease = try Effect.try(() => monthlyReleaseDigest(faulty.domain, november, terms))
+    const theirRelease = decodeBytes32(try read(faulty.vault, try Effect.try(() => encodeFunctionData({ abi: escrowAbi, functionName: "monthlyReleaseDigest", args: [november, terms.expectedRemaining, terms.releasedGross] }))))
+    const releaseSignature = try attested(try Effect.try(() => walletTypedData(faulty.domain, releaseStruct(november, terms))))
+    try sent(escrow.roles.owner.address, faulty.vault, Effect.try(() => releaseMonthlyReserveCalldata(november, terms, releaseSignature)))
+    const after = try totals(faulty.vault)
+    const faultyEvents = try events(faulty.vault, faulty.from)
+    try Effect.try(() => assert.deepStrictEqual({
+      legacyEvents: legacyEvents.map((event) => event.name === "AwardCommitted" ? [event.name, event.actor, event.gross, event.fee] : event.name === "MonthlyCommitted" ? [event.name, event.allocationRoot, event.gross, event.awards] : [event.name]),
+      held: [inspected.missing, inspected.other],
+      proved: { computed: proved.computedTotal, stored: proved.storedTotal, released: proved.releasedGross, count: proved.count, root: proved.allocationRoot },
+      release: theirRelease === ourRelease,
+      after: after.kind === "Totals" ? { pending: after.totals.pendingMonthly, free: after.totals.counters.free } : after,
+      faultyEvents: faultyEvents.map((event) => event.name),
+      released: faultyEvents.at(-1),
+    }, {
+      legacyEvents: [["Deposited"], ["AwardCommitted", 100n, 1_500_000n, 30_000n], ["AwardCommitted", 101n, 2_500_000n, 50_000n], ["MonthlyCommitted", root, 4_000_000n, 2n]],
+      held: [{ status: "held", reason: "allocation-unavailable" }, { status: "held", reason: "allocation-mismatch" }],
+      proved: { computed: 3_000_000n, stored: 3_000_007n, released: 3_000_007n, count: 2, root: tree.root.hash },
+      release: true,
+      after: { pending: 0n, free: 20_000_000n },
+      faultyEvents: ["Deposited", "MonthlyReserved", "MonthlyReserveReleased"],
+      released: { name: "MonthlyReserveReleased", period: november, allocationDigest: word(0xd3n), remainingGross: 3_000_007n, releasedGross: 3_000_007n },
+    }))
+  })
+})
+

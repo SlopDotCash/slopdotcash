@@ -1,0 +1,146 @@
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"
+import type { D1Database, R2Bucket } from "@repo/platform/bindings"
+import { noEdgeCache } from "@repo/platform/cache"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, first, sql } from "@repo/platform/d1"
+import { ActorChanged, Caller, Unauthenticated, handle, refuse } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ReportingReadiness } from "@repo/ports/slopbot"
+import { intakeSettings } from "../../../src/intake/availability.vibe"
+import { intakeRoutes } from "../../../src/intake/routes.vibe"
+import { reportBucket } from "../../../src/privacy/reads.vibe"
+import { ReportingPrograms } from "../../../src/receipt/program.vibe"
+import { faults, faultyBucket } from "./faults.ts"
+import { receiptNotices } from "./notices.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly PRIVATE_TRACES: R2Bucket
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly SLOP_PRIVATE_INTAKE_MODE: string
+  readonly BANNED_GITHUB_IDS: string
+}
+
+const plan = faults()
+const sessionToken = /^[A-Za-z0-9_-]{40,128}$/u
+const githubId = /^[1-9][0-9]{0,19}$/u
+
+const caller = Layer.effect(Caller, effect {
+  const db = try D1
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    current: () => effect {
+      const request = try HttpServerRequest.HttpServerRequest
+      const token = request.cookies["__Host-slop_points"] ?? ""
+      if (!sessionToken.test(token)) throw new Unauthenticated()
+      const hash = try provideService(sha256Hex(token), Experimental.Crypto.Crypto, crypto)
+      const now = try isoNow()
+      const [member] = try db.all(sql`SELECT m.actor_id, m.github_id, m.login FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${now} AND m.closed_at IS NULL`)
+      if (member === undefined || typeof member.github_id !== "string" || typeof member.login !== "string" || typeof member.actor_id !== "string") throw new Unauthenticated()
+      const expected = request.headers["x-slop-expected-github-id"]
+      if (expected !== undefined && !githubId.test(expected)) throw refuse(400, "invalid_expected_actor", "Expected GitHub actor is invalid")
+      if (expected !== undefined && expected !== member.github_id) throw new ActorChanged({ expected })
+      return { githubId: member.github_id, login: member.login, actorId: member.actor_id }
+    },
+  } satisfies Caller.Shape
+})
+
+function fixture(projectId: string, restricted: boolean): ProjectView {
+  return {
+    projectId,
+    revision: 1,
+    manifestSha256: "a".repeat(64),
+    rowStatus: restricted ? "Paused" : "Active",
+    manifestStatus: restricted ? "Paused" : "Active",
+    listingTier: restricted ? "Retired" : "Community",
+    retirement: restricted ? "RestrictionRetired" : "NotRetired",
+    stewardGithubId: "900",
+    repositories: [{ id: "1001", nodeId: "R_intake", fullName: "slop-test/intake", integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+const projects: ReadonlyMap<string, ProjectView> = new Map([
+  ["intake-fixture", fixture("intake-fixture", false)],
+  ["intake-unpaid", fixture("intake-unpaid", false)],
+  ["intake-restricted", fixture("intake-restricted", true)],
+])
+
+const paidTerms = { grossMinor: "1000000", researcherMinor: "750000", slopMinor: "250000", currency: "USDC", decimals: 6, network: "base", capacityAwards: 3, eligibility: "in-scope-security", fundingPolicy: "after-approval" }
+
+schema PublishedRow { created_at: string }
+schema StatusRow { enabled: number | null; verified_at: string | null; repository_id: string | null; failure: string | null }
+
+function ports(env: Env) {
+  const banned = new Set(env.BANNED_GITHUB_IDS.split(",").map((id) => id.trim()).filter((id) => id !== ""))
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projects.get(projectId)),
+      byRepository: () => succeed(undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([...projects.values()]),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: (id) => succeed({ banned: banned.has(id) }),
+      project: (projectId) => succeed({ restricted: projects.get(projectId)?.retirement === "RestrictionRetired" }),
+    } satisfies Restrictions.Shape),
+    Layer.effect(ReportingPrograms, effect {
+      const db = try D1
+      return {
+        current: (projectId) => succeed(projects.has(projectId)
+          ? { repository: "slop-test/intake", approvers: { technical: ["701"], financial: ["702"], dispute: [], sponsor: [] }, status: projectId === "intake-unpaid" ? "paused" : "open", closesAt: undefined }
+          : undefined),
+        atReceipt: (read) => provideService(effect {
+          const published = try first(PublishedRow, sql`SELECT created_at FROM project_revisions WHERE project_id=${read.projectId} AND created_at<=${read.receivedAt} ORDER BY revision DESC LIMIT 1`)
+          if (published === undefined) return undefined
+          return { revision: 1, publishedAt: published.created_at, terms: read.projectId === "intake-fixture" ? paidTerms : undefined }
+        }, D1, db),
+        unbanned: (id) => succeed(banned.has(id) ? sql`0` : sql`1`),
+      } satisfies ReportingPrograms.Shape
+    }),
+    Layer.effect(ReportingReadiness, effect {
+      const db = try D1
+      return {
+        current: (projectId) => provideService(effect {
+          const row = try first(StatusRow, sql`SELECT enabled, verified_at, repository_id, failure FROM repository_reporting_status WHERE project_id=${projectId} ORDER BY project_revision DESC LIMIT 1`)
+          if (row === undefined || row.verified_at === null) return { readiness: "ReadinessUnobserved" as const, identityMatches: row !== undefined, refreshFailed: row?.failure !== null && row !== undefined }
+          return { readiness: row.enabled === 1 ? "ReadinessEnabled" as const : "ReadinessDisabled" as const, identityMatches: row.repository_id === "1001", refreshFailed: row.failure !== null, verifiedAt: row.verified_at }
+        }, D1, db),
+      } satisfies ReportingReadiness.Shape
+    }),
+    receiptNotices,
+  )
+}
+
+schema FaultPlan { lostPuts: number; failedPuts: number }
+
+const faultRoute = route({ method: "POST", path: "/api/v1/test/intake-faults", access: "public", limitKib: 1, request: FaultPlan, answer: FaultPlan, rejected: "rejected", cache: "no-store" })
+
+const testRoutes = handle(faultRoute, (input) => effect {
+  plan.lostPuts = input.body.lostPuts
+  plan.failedPuts = input.body.failedPuts
+  return { lostPuts: plan.lostPuts, failedPuts: plan.failedPuts }
+})
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.SLOP_DB),
+    webCrypto,
+    noEdgeCache,
+    rolesFrom(env),
+    reportBucket(faultyBucket(env.PRIVATE_TRACES, plan)),
+    intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: false }),
+    Layer.provide(caller, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+    Layer.provide(ports(env), d1(env.SLOP_DB)),
+  ),
+  routes: Layer.mergeAll(intakeRoutes, testRoutes),
+})

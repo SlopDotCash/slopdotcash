@@ -1,0 +1,137 @@
+// spec/slopbot/closure.md, "A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"
+import type { SavedConsent } from "../../gen/backend__closureConsent.effect.vibe"
+import { type CategoryOverride, type FileValue, type PolicyFile, type RepositoryFile, effectiveClosure, fileClosureOf, fileDailyCloseCap, fileReadLimitBytes, policyFileOf, unknownSource } from "../../gen/slopbot__closure.effect.vibe"
+
+export const configPath = ".github/slopbot.json"
+export const configLimitBytes = fileReadLimitBytes
+
+export type ModeName = "off" | "label" | "close"
+export type CategoryKey = "spam" | "scam" | "empty" | "duplicate" | "out_of_scope" | "busywork" | "missing_evidence" | "gaming" | "low_quality"
+export type AudienceName = "protection" | "participants"
+
+export interface RepositoryConfig {
+  readonly version: 1
+  readonly audience: AudienceName
+  readonly issues: boolean
+  readonly pullRequests: boolean
+  readonly closure: boolean
+  readonly reviewExempt: boolean
+  readonly dailyCloseCap: number
+  readonly categories: Readonly<Record<CategoryKey, ModeName>>
+}
+
+export interface FileText {
+  readonly text: string
+  readonly truncated: boolean
+}
+
+export interface PolicyFileRead {
+  readonly file: PolicyFile
+  readonly fileClosure: boolean
+  readonly config: RepositoryConfig
+}
+
+const defaultCategories: Readonly<Record<CategoryKey, ModeName>> = {
+  spam: "close",
+  scam: "close",
+  empty: "close",
+  duplicate: "close",
+  out_of_scope: "label",
+  busywork: "close",
+  missing_evidence: "label",
+  gaming: "close",
+  low_quality: "label",
+}
+
+const categoryKeys = Object.keys(defaultCategories) as ReadonlyArray<CategoryKey>
+const absentFile = JSON.stringify({ version: 1, audience: "protection", closure: true })
+
+export const labelOnly: RepositoryConfig = {
+  version: 1,
+  audience: "protection",
+  issues: true,
+  pullRequests: true,
+  closure: false,
+  reviewExempt: false,
+  dailyCloseCap: fileDailyCloseCap({ ...shapeOf(undefined), jsonObject: false }),
+  categories: Object.fromEntries(categoryKeys.map((key) => [key, "label"])) as Record<CategoryKey, ModeName>,
+}
+
+function objectOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+function kindOf(value: unknown): FileValue {
+  if (value === undefined) return "ValueMissing"
+  if (typeof value === "boolean") return "ValueBool"
+  if (typeof value === "number") return Number.isSafeInteger(value) ? "ValueInteger" : "ValueOther"
+  if (typeof value === "string") return "ValueText"
+  return objectOf(value) === undefined ? "ValueOther" : "ValueObject"
+}
+
+function shapeOf(raw: unknown): RepositoryFile {
+  const value = objectOf(raw) ?? {}
+  const categories = objectOf(value.categories) ?? {}
+  return {
+    jsonObject: objectOf(raw) !== undefined,
+    truncated: false,
+    fileKeys: Object.keys(value),
+    versionValue: kindOf(value.version),
+    versionNumber: typeof value.version === "number" && Number.isSafeInteger(value.version) ? value.version : 0,
+    audienceValue: kindOf(value.audience),
+    audienceText: typeof value.audience === "string" ? value.audience : "",
+    issuesValue: kindOf(value.issues),
+    pullRequestsValue: kindOf(value.pullRequests),
+    closureValue: kindOf(value.closure),
+    closureSetting: value.closure === true,
+    reviewExemptValue: kindOf(value.reviewExempt),
+    capValue: kindOf(value.dailyCloseCap),
+    capNumber: typeof value.dailyCloseCap === "number" && Number.isSafeInteger(value.dailyCloseCap) ? value.dailyCloseCap : 0,
+    categoriesValue: kindOf(value.categories),
+    overrides: Object.entries(categories).map(([categoryKey, mode]) => ({ categoryKey, modeName: typeof mode === "string" ? mode : "" }) satisfies CategoryOverride),
+  }
+}
+
+function isCategoryKey(key: string): key is CategoryKey {
+  return (categoryKeys as ReadonlyArray<string>).includes(key)
+}
+
+function isModeName(mode: string): mode is ModeName {
+  return mode === "off" || mode === "label" || mode === "close"
+}
+
+function configOf(raw: unknown, shape: RepositoryFile): RepositoryConfig {
+  const value = objectOf(raw) ?? {}
+  const categories = { ...defaultCategories }
+  for (const { categoryKey, modeName } of shape.overrides) if (isCategoryKey(categoryKey) && isModeName(modeName)) categories[categoryKey] = modeName
+  return {
+    version: 1,
+    audience: value.audience === "participants" ? "participants" : "protection",
+    issues: value.issues !== false,
+    pullRequests: value.pullRequests !== false,
+    closure: fileClosureOf(shape),
+    reviewExempt: value.reviewExempt === true,
+    dailyCloseCap: fileDailyCloseCap(shape),
+    categories,
+  }
+}
+
+effect function parsedJson(text: string) {
+  return Effect.try(() => ({ value: JSON.parse(text) as unknown })) catch () => undefined
+}
+
+export effect function parsePolicyFile(found: FileText | undefined) {
+  const parsed = found === undefined || found.truncated ? undefined : try parsedJson(found.text)
+  const read = found === undefined ? try parsedJson(absentFile) : parsed
+  const shape = read === undefined ? { ...shapeOf(undefined), truncated: found?.truncated === true } : shapeOf(read.value)
+  const file = policyFileOf(found !== undefined, shape)
+  return {
+    file,
+    fileClosure: file === "FileValid" && fileClosureOf(shape),
+    config: file === "FileInvalid" || read === undefined ? labelOnly : configOf(read.value, shape),
+  } satisfies PolicyFileRead
+}
+
+export function projectConfig(read: PolicyFileRead, consent: SavedConsent): RepositoryConfig {
+  return { ...read.config, closure: effectiveClosure({ ...unknownSource, consent, file: read.file, fileClosure: read.fileClosure }) }
+}

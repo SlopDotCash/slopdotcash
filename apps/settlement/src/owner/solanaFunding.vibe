@@ -1,0 +1,180 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
+import { type Address, type Blockhash, type FetchedTransaction, SolanaRpc, base64Encode, decodeTokenAccount } from "@repo/platform/chain/solana"
+import { type U64, U64_MAX, u64 } from "../chain/solana/bytes.ts"
+import { tokenAccountAddress } from "../chain/solana/pda.ts"
+import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { normalizedNativeDelta } from "../kernels/budget.ts"
+import { ordinaryFeeBase } from "../kernels/fees.ts"
+import { ordinaryFeeEvidenceMatches } from "../../gen/settlement__money.effect.vibe"
+import type { PlanKind, ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { type FundingOperation, fundingInstructions } from "./ownerInstructions.ts"
+import { type VerifiedDeployment, finalizedFunds } from "./solanaDeployment.vibe"
+import { type WalletMessage, WalletActionRefused, checkWalletTransaction, prepareWalletTransaction, walletMessage } from "./solanaWallet.vibe"
+import { type Capture, type Outcome, outcomeOf, reviewed, submitted } from "./store.vibe"
+
+export interface FundingIntent {
+  readonly operation: FundingOperation
+  readonly wallet: Address
+  readonly gross: U64
+}
+
+export interface FundingPlan {
+  readonly operation: FundingOperation
+  readonly wallet: string
+  readonly gross: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly tokenProgram: string
+  readonly fee: string
+  readonly net: string
+  readonly decimals: number
+  readonly freeBalance: string | null
+}
+
+const NATIVE_TOKEN_PROGRAM = "11111111111111111111111111111111"
+
+function refused(message: string) {
+  return new WalletActionRefused({ message })
+}
+
+effect function withdrawalFeeAccepted(gross: bigint, fee: bigint) {
+  if (fee < 0n || fee > gross) return false
+  const amounts = Effect.try(() => [toAmount(gross), toAmount(fee)] as const) catch () => undefined
+  return amounts !== undefined && ordinaryFeeEvidenceMatches(amounts[0], amounts[1], true)
+}
+
+export function planKind(operation: FundingOperation): PlanKind {
+  return operation === "deposit" ? "DepositPlan" : "WithdrawPlan"
+}
+
+export effect function grossOf(text: string) {
+  const parsed = parseBaseUnits(text, U64_MAX)
+  const value = parsed === undefined || parsed === 0n ? undefined : u64(parsed)
+  if (value === undefined) throw refused("The amount is outside the Solana vault's supported range.")
+  return value
+}
+
+effect function instructionsFor(verified: VerifiedDeployment, intent: FundingIntent) {
+  if (intent.operation === "withdraw" && intent.wallet !== verified.owner) throw refused("Only the vault owner's wallet can withdraw free funds.")
+  return fundingInstructions({ program: verified.program, project: verified.project, owner: verified.owner, asset: verified.asset, operation: intent.operation, wallet: intent.wallet, gross: intent.gross })
+}
+
+export effect function fundingMessage(verified: VerifiedDeployment, intent: FundingIntent, blockhash: Blockhash) {
+  return try walletMessage(intent.wallet, blockhash, try instructionsFor(verified, intent))
+}
+
+effect function depositorHolds(verified: VerifiedDeployment, intent: FundingIntent) {
+  const rpc = try SolanaRpc
+  const { asset } = verified
+  if (asset.kind === "Native") {
+    const wallet = try rpc.account(intent.wallet, "finalized")
+    if ((wallet?.lamports ?? 0n) < intent.gross) throw refused("Your SOL balance is too low for this deposit.")
+    return
+  }
+  const account = try rpc.account(tokenAccountAddress(intent.wallet, asset.mint, asset.tokenProgram), "finalized")
+  if (account === undefined) throw refused("Your wallet has no token account for this deposit.")
+  const held = decodeTokenAccount(account.data)
+  if (account.owner !== asset.tokenProgram || held.kind !== "decoded") throw refused("The deposit token account could not be verified.")
+  if (held.value.mint !== asset.mint || held.value.owner !== intent.wallet || held.value.state !== 1) throw refused("The deposit token account is unavailable or frozen.")
+  if (held.value.amount < intent.gross) throw refused("Your token balance is too low for this deposit.")
+}
+
+export effect function reviewFunding(verified: VerifiedDeployment, intent: FundingIntent, capture: Capture, facts: ReviewFacts) {
+  const instructions = try instructionsFor(verified, intent)
+  const funds = try finalizedFunds(verified)
+  if (intent.operation === "withdraw" && intent.gross > funds.free) throw refused("The amount exceeds the vault's free balance. Reserved awards cannot be withdrawn.")
+  if (intent.operation === "deposit") try depositorHolds(verified, intent)
+  const prepared = try prepareWalletTransaction(intent.wallet, instructions)
+  if (verified.asset.kind === "Native" && intent.operation === "deposit") {
+    const wallet = try (try SolanaRpc).account(intent.wallet, "finalized")
+    if ((wallet?.lamports ?? 0n) < intent.gross + prepared.networkFee) throw refused("Your wallet needs enough SOL for this deposit and the network fee.")
+  }
+  const message = try fundingMessage(verified, intent, prepared.blockhash)
+  try reviewed(capture, planKind(intent.operation), facts, base64Encode(message.bytes))
+  const fee = intent.operation === "withdraw" ? ordinaryFeeBase(intent.gross) : 0n
+  return {
+    operation: intent.operation,
+    wallet: intent.wallet,
+    gross: intent.gross.toString(),
+    blockhash: prepared.blockhash,
+    lastValidBlockHeight: prepared.lastValidBlockHeight,
+    transaction: prepared.transaction,
+    networkFeeLamports: prepared.networkFeeLamports,
+    tokenProgram: verified.asset.kind === "Native" ? NATIVE_TOKEN_PROGRAM : verified.asset.tokenProgram,
+    fee: fee.toString(),
+    net: (intent.gross - fee).toString(),
+    decimals: verified.decimals,
+    freeBalance: funds.free.toString(),
+  } satisfies FundingPlan
+}
+
+effect function lamportDeltas(fetched: FetchedTransaction, keys: ReadonlyArray<Address>) {
+  const { preBalances, postBalances, fee } = fetched.meta
+  if (preBalances.length !== keys.length || postBalances.length !== keys.length) throw refused("Finalized SOL balances are unavailable.")
+  return new Map(keys.map((key, index) => [key, normalizedNativeDelta(preBalances[index] ?? 0n, postBalances[index] ?? 0n, fee, index === 0)] as const))
+}
+
+effect function tokenBalances(fetched: FetchedTransaction, keys: ReadonlyArray<Address>, mint: Address, side: "pre" | "post") {
+  const result = new Map<Address, bigint>()
+  for (const entry of side === "pre" ? fetched.meta.preTokenBalances : fetched.meta.postTokenBalances) {
+    if (entry.mint !== mint) continue
+    const owner = keys[entry.accountIndex]
+    if (owner === undefined || result.has(owner)) throw refused("Finalized token balances are invalid.")
+    result.set(owner, entry.amount)
+  }
+  return result
+}
+
+effect function verifiedMovements(verified: VerifiedDeployment, intent: FundingIntent, fetched: FetchedTransaction, keys: ReadonlyArray<Address>) {
+  const { asset, vault, owner } = verified
+  const gross = intent.gross
+  if (asset.kind === "Native") {
+    const deltas = try lamportDeltas(fetched, keys)
+    const walletDelta = deltas.get(intent.wallet)
+    const vaultDelta = deltas.get(vault)
+    if (intent.operation === "deposit") {
+      if (walletDelta !== -gross || vaultDelta !== gross) throw refused("Finalized SOL movements do not match this deposit.")
+      return
+    }
+    const net = walletDelta ?? -1n
+    const accepted = try withdrawalFeeAccepted(gross, gross - net)
+    if (net < 0n || vaultDelta !== -net || !accepted) throw refused("Finalized SOL movements do not match this withdrawal.")
+    return
+  }
+  const before = try tokenBalances(fetched, keys, asset.mint, "pre")
+  const after = try tokenBalances(fetched, keys, asset.mint, "post")
+  const moved = (key: Address) => (after.get(key) ?? 0n) - (before.get(key) ?? 0n)
+  const ownerTokens = tokenAccountAddress(owner, asset.mint, asset.tokenProgram)
+  const walletTokens = tokenAccountAddress(intent.wallet, asset.mint, asset.tokenProgram)
+  const fee = intent.operation === "withdraw" ? gross - moved(ownerTokens) : 0n
+  if (intent.operation === "withdraw") {
+    const accepted = try withdrawalFeeAccepted(gross, fee)
+    if (!accepted) throw refused("The withdrawal fee is not 2% of the amount.")
+  }
+  const expected: ReadonlyArray<readonly [Address, bigint]> = intent.operation === "deposit"
+    ? [[vault, gross], [walletTokens, -gross]]
+    : [[vault, fee - gross], [ownerTokens, gross - fee]]
+  if (expected.some(([key, delta]) => !after.has(key) || moved(key) !== delta)) throw refused("Finalized token movements do not match this action.")
+}
+
+export effect function checkFunding(verified: VerifiedDeployment, intent: FundingIntent, blockhash: Blockhash, transactionId: string, capture: Capture, facts: ReviewFacts) {
+  const message = try fundingMessage(verified, intent, blockhash)
+  const text = base64Encode(message.bytes)
+  const request = try reviewed(capture, planKind(intent.operation), facts, text)
+  const checked = try checkWalletTransaction(intent.wallet, message, transactionId, intent.operation === "deposit")
+  if (checked.status === "finalized") try verifiedMovements(verified, intent, checked.fetched, checked.accountKeys)
+  const prefix = checked.status === "pending" ? "" : checked.prefix
+  const result = {
+    transaction: transactionId,
+    message: text,
+    finalized: checked.status !== "pending",
+    succeeded: checked.status === "finalized",
+    expired: checked.status === "pending" && checked.expired,
+  }
+  const next = try submitted(request, { message: text, prefix, signature: transactionId, transaction: transactionId }, result)
+  return outcomeOf(next) satisfies Outcome
+}
+
+export type { WalletMessage }

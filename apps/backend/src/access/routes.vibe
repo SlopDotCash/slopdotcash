@@ -1,0 +1,39 @@
+// spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"
+import { millisOf } from "@repo/platform/clock"
+import { type Actor, handleRaw, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { accountAppeals, accountBans } from "../client/admin.vibe"
+import { cachedPublic } from "../projects/public/cache.vibe"
+import { accountAppeal, activeBans, loadAccess, restrictionStateOf } from "./store.vibe"
+
+export const projectContract = { "x-slop-project-api-contract": "project-registry-v1" }
+
+function byGithubId(left: { readonly githubId: string }, right: { readonly githubId: string }) {
+  return left.githubId.length - right.githubId.length || (left.githubId < right.githubId ? -1 : left.githubId > right.githubId ? 1 : 0)
+}
+
+effect function appealsOf(actor: Actor) {
+  const loaded = try loadAccess()
+  const projectIds = [...new Set(activeBans(loaded).filter((ban) => ban.githubId === actor.githubId).map((ban) => ban.projectId))]
+  return json({
+    appeals: projectIds.map((projectId) => ({ projectId, state: restrictionStateOf(loaded, projectId), appeal: accountAppeal(loaded, projectId, actor.githubId) })),
+  }, 200, projectContract)
+}
+
+effect function publicBans() {
+  const loaded = try loadAccess()
+  const since = new Map<string, string>()
+  for (const ban of activeBans(loaded)) {
+    const current = since.get(ban.githubId)
+    if (current === undefined || millisOf(ban.bannedAt) < millisOf(current)) since.set(ban.githubId, ban.bannedAt)
+  }
+  return json({
+    schemaVersion: "slop-account-bans:v1",
+    bans: [...since].map(([githubId, bannedAt]) => ({ githubId, bannedAt })).toSorted(byGithubId),
+  }, 200, { ...projectContract, "cache-control": cacheControl(accountBans.cache) })
+}
+
+export const AccessRoutes = Layer.mergeAll(
+  handleRaw(accountAppeals, (input) => appealsOf(input.actor)),
+  handleRaw(accountBans, () => cachedPublic(publicBans())),
+)

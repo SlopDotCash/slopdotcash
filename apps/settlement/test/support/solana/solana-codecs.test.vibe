@@ -1,0 +1,39 @@
+import { assert, layer } from "@effect/vitest"
+import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { outbound } from "@repo/platform/http"
+import { type Deployment, type Scenario, escrowDeployment, expectedParity, nativeMonth, tokenProjects, transactionParity } from "./escrow.ts"
+
+service Escrow {
+  readonly deployment: Deployment
+}
+
+const Started = Layer.effect(Escrow, effect {
+  const deployment = try acquireRelease(promise(() => escrowDeployment()), (started) => promise(() => started.close()))
+  return { deployment }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function observed(scenario: Scenario) {
+  const { validator } = (try Escrow).deployment.chain
+  provide solanaRpc({ urls: Redacted.make([validator.url]), genesis: validator.genesis }) {
+    const rpc = try SolanaRpc
+    const accounts = try rpc.accounts(scenario.reads, "finalized")
+    const fetched = try Effect.forEach(scenario.sent, (sent) => rpc.transaction(sent.signature, "finalized"))
+    return { state: scenario.observe(accounts.value), transactions: transactionParity(scenario.program, scenario.sent, fetched) }
+  }
+}
+
+effect function journey(run: (deployment: Deployment) => Promise<Scenario>) {
+  const { deployment } = try Escrow
+  const scenario = try promise(() => run(deployment))
+  try same(try observed(scenario), { state: scenario.expected, transactions: expectedParity(scenario.sent) })
+}
+
+layer(Layer.mergeAll(Started, outbound), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('An attested month is admitted, its leaves commit or release, a co-signed wallet binding pays, and every transaction finalizes as the exact codec bytes (spec/settlement/monthlyCommitment.md, "Solana signs one freeze time and refuses a month whose source is already consumed"; spec/settlement/escrow.md, "On Solana an uncommittable leaf returns to free funds and a later hand commit strands it"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order"; spec/contracts/solanaEscrow.md, "Anyone records a signed, fully funded allocation once per period inside its window"; spec/contracts/solanaEscrow.md, "The identity authority and the destination both sign a binding for the project\'s network"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => journey(nativeMonth))
+
+  it.effect('A classic SPL award pays into the wallet\'s new token account, an admitted Token-2022 project takes deposits, and the refused Token-2022 mint starts no project (spec/contracts/solanaEscrow.md, "A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner"; spec/contracts/solanaEscrow.md, "Anyone pays a matured obligation to its actor\'s latest unvetoed binding"; spec/settlement/escrow.md, "Events apply once, in canonical block and event order")', () => journey(tokenProjects))
+})

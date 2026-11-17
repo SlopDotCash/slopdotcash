@@ -1,0 +1,34 @@
+// spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"
+import { D1 } from "@repo/platform/d1"
+import type { Network } from "@repo/ports/backend"
+import { DirectBounty, type DirectLeg } from "@repo/ports/settlement"
+import { type Journal, currentIntent, journalFor } from "./journal.vibe"
+
+const networks: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
+
+export function legsOf(current: Journal): ReadonlyArray<DirectLeg> {
+  const intent = currentIntent(current)
+  const network = intent === undefined ? undefined : networks[intent.chain]
+  if (intent === undefined || network === undefined) return []
+  return intent.transfers.map((transfer, index) => {
+    const leg = current.legs.find((entry) => entry.legIndex === (intent.chain === "solana" ? 0 : index))
+    return {
+      lane: index === 0 ? "Researcher" : "Fee",
+      state: leg === undefined ? "Unsent" : "PaidExact",
+      network,
+      asset: intent.asset.address,
+      baseUnits: transfer.amountBase,
+      ...leg === undefined ? {} : { transaction: leg.transactionId },
+      ...leg?.evidence.finalizedAt === undefined ? {} : { finalizedAt: leg.evidence.finalizedAt },
+    } satisfies DirectLeg
+  })
+}
+
+export const DirectBountyLive = Layer.effect(DirectBounty, effect {
+  const services = try Effect.context<D1>()
+  return {
+    legs: (caseId) => effect {
+      return legsOf(try Effect.provide(journalFor(caseId), services))
+    },
+  } satisfies DirectBounty.Shape
+})

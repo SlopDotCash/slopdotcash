@@ -1,0 +1,280 @@
+// spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomToken, sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
+import { type Actor, ActorChanged, Caller, Refused, Unauthenticated, bytesBody, handleRaw, sameOriginWrite } from "@repo/platform/http"
+import { Conflict } from "@repo/platform/stored"
+import { Rejected, mailService, otherAccountsRecent, senderMember } from "../../gen/backend__accounts.effect.vibe"
+import { consentOutcome, requestOutcome } from "../../gen/backend__email.effect.vibe"
+import type { Accounts, Event } from "../../gen/backend__accounts.ts"
+import { boundedObject } from "../accounts/routes/membership.vibe"
+import { type Row, privateBare, privateJson, unsubscribeRows } from "../accounts/routes/refusals.vibe"
+import { type Facts, noFacts } from "../accounts/store/codec.vibe"
+import { EmailUnavailable, type Intent, send } from "../accounts/store/store.vibe"
+import { emailConsent, emailPreference, emailUnsubscribe, emailVerification, emailVerify } from "../client/email.vibe"
+import { getNotificationsEmail, postNotificationsEmail, postNotificationsEmailVerification, postNotificationsEmailVerify } from "../client/refusals.vibe"
+import { presentedTokenHash } from "../session.vibe"
+import { type Eligibility, eligibility, enrollmentAvailable, sendVerification } from "./mailService.vibe"
+
+schema PreferenceView { enabled: number; security_enabled: number | null; destination_version: string | null; revision: number }
+schema DestinationView { email: string; destination_version: string }
+schema PendingRow { email: string; expires_at: string; state: string }
+schema RequestRow { email: string; activity_enabled: number; security_enabled: number }
+schema RecentRow { github_id: string; created_at: string }
+
+type Signed =
+  | { readonly kind: "actor"; readonly actor: Actor; readonly hash: string }
+  | { readonly kind: "refused"; readonly response: HttpServerResponse.HttpServerResponse }
+
+const emailAddress = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/u
+const requestKeyShape = /^[A-Za-z0-9_-]{16,128}$/u
+const emailToken = /^[a-f0-9]{64}$/u
+const unsubscribeToken = /^[a-f0-9]{64}\.[a-f0-9]{64}$/u
+const oneClickBody = "List-Unsubscribe=One-Click"
+const bodyBytes = 2048
+const oneClickBytes = 128
+const minuteMillis = 60_000
+const hourMillis = 3_600_000
+
+function refusal(row: Row): Signed {
+  return { kind: "refused", response: privateBare(row) }
+}
+
+effect function signedActor() {
+  const actor = try (try Caller).current()
+  return { kind: "actor", actor, hash: try presentedTokenHash() } satisfies Signed
+}
+
+effect function signedIn() {
+  const rows = getNotificationsEmail
+  return signedActor() catch effect (error) => match (error) {
+    when Unauthenticated: refusal(rows.notSignedIn);
+    when ActorChanged: refusal(rows.actorChangedPrivateNoStore);
+    when Refused: refusal(rows.invalidExpectedActorPrivateNoStore);
+    default: throw error;
+  }
+}
+
+effect function emailAnswer<E, R>(program: HttpServerResponse.HttpServerResponse!E!R) {
+  return program catch effect () => {
+    try Effect.logError("notifications API failure")
+    return privateBare(getNotificationsEmail.internalErrorPrivateNoStore)
+  }
+}
+
+effect function preferenceOf(githubId: string) {
+  return try first(PreferenceView, sql`SELECT enabled, security_enabled, destination_version, revision FROM notification_email_preferences WHERE github_id = ${githubId}`)
+}
+
+effect function enrolledOf(githubId: string) {
+  return try first(DestinationView, sql`SELECT email, destination_version FROM notification_email_destinations WHERE github_id = ${githubId}`)
+}
+
+effect function destinationOf(githubId: string) {
+  const registered = try enrolledOf(githubId)
+  if (registered !== undefined) return { available: true, email: registered.email, destinationVersion: registered.destination_version } satisfies Eligibility
+  return try eligibility(githubId)
+}
+
+effect function view(githubId: string, status = 200) {
+  const enrollment = try enrollmentAvailable()
+  const saved = try preferenceOf(githubId)
+  const destination = try destinationOf(githubId)
+  const current = destination?.available === true ? destination.destinationVersion : undefined
+  const bound = current === undefined || saved?.destination_version === current
+  const pending = try first(PendingRow, sql`SELECT email, expires_at, state FROM notification_email_verifications WHERE github_id = ${githubId} AND consumed_at IS NULL AND cancelled_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`)
+  const now = try Clock.currentTimeMillis
+  return privateJson({
+    enabled: saved?.enabled === 1 && bound,
+    securityEnabled: saved?.security_enabled === 1 && bound,
+    enrollmentAvailable: enrollment,
+    pending: pending === undefined ? null : { email: pending.email, expiresAt: pending.expires_at, state: millisOf(pending.expires_at) <= now ? "expired" : pending.state },
+    availability: destination === undefined ? "unavailable" : destination.available ? "verified" : "unverified",
+    ...destination?.available === true ? { email: destination.email, destinationVersion: destination.destinationVersion } : {},
+  }, status)
+}
+
+effect function preference() {
+  const signed = try signedIn()
+  if (signed.kind === "refused") return signed.response
+  return try view(signed.actor.githubId)
+}
+
+function consentRefusal(event: Event, state: Accounts, by: number): Row {
+  const rows = postNotificationsEmail
+  if (event.type !== "setEmailConsent") return rows.invalidRequestS400
+  switch (consentOutcome(senderMember(state, by).email, event.activity, event.choice, event.suppliedVersion, event.checkedRevision)) {
+    case "ConsentInvalid": return rows.invalidRequestS400
+    case "VerificationChanged": return rows.verificationChanged
+    case "PreferenceChanged": return rows.preferenceChanged
+    case "ConsentSaved": return rows.notSignedIn
+  }
+}
+
+effect function pilotFor(githubId: string) {
+  if ((try enrolledOf(githubId)) !== undefined) return { kind: "enrolled" } as const
+  const found = try eligibility(githubId)
+  if (found === undefined) return { kind: "unavailable" } as const
+  if (!found.available) return { kind: "unverified" } as const
+  return { kind: "pilot", pilot: { githubId, version: found.destinationVersion } } as const
+}
+
+effect function saveConsent() {
+  const rows = postNotificationsEmail
+  if (!(try sameOriginWrite())) return privateBare(rows.originForbiddenPrivateNoStore)
+  const signed = try signedIn()
+  if (signed.kind === "refused") return signed.response
+  const githubId = signed.actor.githubId
+  const value = try boundedObject(bodyBytes)
+  if (value === undefined) return privateBare(rows.invalidRequestS400)
+  const securityPresent = value.securityEnabled !== undefined
+  const enabling = value.enabled === true || value.securityEnabled === true
+  const suppliedVersion = value.destinationVersion !== undefined
+  const expectedKeys = ["enabled", ...securityPresent ? ["securityEnabled"] : [], ...suppliedVersion ? ["destinationVersion"] : []].sort().join()
+  const activity = value.enabled
+  const security = value.securityEnabled
+  const version = value.destinationVersion
+  if (typeof activity !== "boolean" || (securityPresent && typeof security !== "boolean") || (suppliedVersion && (!enabling || typeof version !== "string")) || Object.keys(value).sort().join() !== expectedKeys) return privateBare(rows.invalidRequestS400)
+  const prior = try preferenceOf(githubId)
+  const withdraws = (prior?.enabled === 1 && activity === false) || (prior?.security_enabled === 1 && security === false)
+  const versionText = typeof version === "string" ? version : ""
+  const requiresVersion = (activity && prior?.enabled !== 1) || (security === true && prior?.security_enabled !== 1) || (suppliedVersion && (!withdraws || versionText !== prior?.destination_version))
+  let facts: Facts = noFacts
+  if (requiresVersion && suppliedVersion) {
+    const pilot = try pilotFor(githubId)
+    if (pilot.kind === "unavailable") return privateBare(rows.emailUnavailable)
+    if (pilot.kind === "unverified") return privateBare(rows.verificationChanged)
+    if (pilot.kind === "pilot") facts = { ...noFacts, pilot: pilot.pilot }
+  }
+  const intent: Intent = {
+    kind: "setEmailConsent",
+    activity,
+    choice: !securityPresent ? "KeepSecurity" : security === true ? "SecurityOn" : "SecurityOff",
+    suppliedVersion: versionText,
+    checkedRevision: prior === undefined ? -1 : prior.revision,
+  }
+  const saved = send(intent, { kind: "session", hash: signed.hash }, facts) catch effect (error) => match (error) {
+    when Rejected: consentRefusal(error.event, error.state, error.by);
+    when Conflict: rows.preferenceChanged;
+    when EmailUnavailable: rows.emailUnavailable;
+    default: throw error;
+  }
+  if ("status" in saved) return privateBare(saved)
+  return privateJson({ enabled: activity, ...securityPresent ? { securityEnabled: security } : {} })
+}
+
+effect function retryAfterOf(githubId: string, addressKey: string) {
+  const now = try Clock.currentTimeMillis
+  const recent = try rows(RecentRow, sql`SELECT github_id, created_at FROM notification_email_verifications WHERE (github_id = ${githubId} OR address_key = ${addressKey}) AND created_at > ${try isoAt(now - hourMillis)} ORDER BY created_at DESC`)
+  const actorLast = recent.find((row) => row.github_id === githubId)
+  const third = recent[2]
+  const retryAt = Math.max(now + 1000, actorLast === undefined ? 0 : millisOf(actorLast.created_at) + minuteMillis, recent.length >= 3 && third !== undefined ? millisOf(third.created_at) + hourMillis : 0)
+  return Math.ceil((retryAt - now) / 1000)
+}
+
+effect function replayedOrLimited(githubId: string, requestKey: string, email: string, activity: boolean, security: boolean, addressKey: string) {
+  const rows = postNotificationsEmailVerification
+  const replay = try first(RequestRow, sql`SELECT email, activity_enabled, security_enabled FROM notification_email_verifications WHERE github_id = ${githubId} AND request_key = ${requestKey}`)
+  if (replay !== undefined && replay.email === email && replay.activity_enabled === Number(activity) && replay.security_enabled === Number(security)) return try view(githubId, 202)
+  if (replay !== undefined) return privateBare(rows.idempotencyConflict)
+  return privateBare(rows.verificationRateLimited, { retryAfter: try retryAfterOf(githubId, addressKey) })
+}
+
+effect function requestRefused(error: Rejected, githubId: string, requestKey: string, email: string, activity: boolean, security: boolean, addressKey: string) {
+  const rows = postNotificationsEmailVerification
+  const { event, state, by } = error
+  if (event.type !== "requestEmail") return privateBare(rows.invalidRequestS400)
+  const member = senderMember(state, by)
+  const outcome = requestOutcome(member.email, state.now, event.requestKey, event.address, event.addressKey, event.activity, event.security, otherAccountsRecent(state, member.githubId, event.addressKey), state.mailAvailable)
+  switch (outcome) {
+    case "RequestReplayed": return try view(githubId, 202)
+    case "IdempotencyConflict": return privateBare(rows.idempotencyConflict)
+    case "EnrollmentUnavailable": return privateBare(rows.emailUnavailable)
+    case "VerificationRateLimited": return try replayedOrLimited(githubId, requestKey, email, activity, security, addressKey)
+    case "InvalidEmailRequest": return privateBare(rows.invalidRequestS400)
+    case "RequestAccepted": return privateBare(rows.notSignedIn)
+  }
+}
+
+effect function requestVerification() {
+  const rows = postNotificationsEmailVerification
+  if (!(try sameOriginWrite())) return privateBare(rows.originForbiddenPrivateNoStore)
+  const signed = try signedIn()
+  if (signed.kind === "refused") return signed.response
+  const githubId = signed.actor.githubId
+  const value = try boundedObject(bodyBytes)
+  if (value === undefined) return privateBare(rows.invalidRequestS400)
+  const { email: address, enabled: activity, idempotencyKey: requestKey, securityEnabled: security } = value
+  if (Object.keys(value).sort().join() !== "email,enabled,idempotencyKey,securityEnabled" || typeof address !== "string" || address.length > 254 || !emailAddress.test(address.trim())
+    || typeof requestKey !== "string" || !requestKeyShape.test(requestKey) || typeof activity !== "boolean" || typeof security !== "boolean") return privateBare(rows.invalidRequestS400)
+  const email = address.trim()
+  const addressKey = try sha256Hex(email.toLowerCase())
+  const mailAvailable = try enrollmentAvailable()
+  const token = try randomToken(32)
+  const verificationId = try randomToken(32)
+  const intent: Intent = { kind: "requestEmail", requestKey, address: email, addressKey, activity, security, verificationId, tokenHash: try sha256Hex(token) }
+  const requested = send(intent, { kind: "session", hash: signed.hash }, { ...noFacts, mailAvailable }) catch effect (error) => match (error) {
+    when Rejected: try requestRefused(error, githubId, requestKey, email, activity, security, addressKey);
+    when Conflict: try replayedOrLimited(githubId, requestKey, email, activity, security, addressKey);
+    when ConstraintViolation: try replayedOrLimited(githubId, requestKey, email, activity, security, addressKey);
+    default: throw error;
+  }
+  if (!("event" in requested)) return requested
+  if (!(try sendVerification(githubId, verificationId, token))) {
+    send({ kind: "markEmailDelivery", githubId, verificationId, nextState: "DeliveryUnknown" }, { kind: "service", id: mailService }) catch effect (error) => match (error) {
+      when Rejected: undefined;
+      default: throw error;
+    }
+  }
+  return try view(githubId, 202)
+}
+
+effect function verify() {
+  const rows = postNotificationsEmailVerify
+  if (!(try sameOriginWrite())) return privateBare(rows.originForbiddenPrivateNoStore)
+  const signed = try signedIn()
+  if (signed.kind === "refused") return signed.response
+  const githubId = signed.actor.githubId
+  const value = try boundedObject(bodyBytes)
+  const token = value?.token
+  if (value === undefined || Object.keys(value).join() !== "token" || typeof token !== "string" || !emailToken.test(token)) return privateBare(rows.invalidRequestS400)
+  const prior = try preferenceOf(githubId)
+  const intent: Intent = { kind: "verifyEmail", tokenHash: try sha256Hex(token), checkedRevision: prior === undefined ? -1 : prior.revision, destinationVersion: try randomToken(32) }
+  const verified = send(intent, { kind: "session", hash: signed.hash }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    default: throw error;
+  }
+  if (verified === undefined) return privateBare(rows.verificationInvalid)
+  return try view(githubId)
+}
+
+effect function oneClickToken(query: URLSearchParams) {
+  if ([...query.keys()].length !== 1) return undefined
+  const bytes = bytesBody(oneClickBytes, ["application/x-www-form-urlencoded"]) catch () => undefined
+  if (bytes === undefined || new TextDecoder().decode(bytes) !== oneClickBody) return undefined
+  return { token: query.get("token") }
+}
+
+effect function unsubscribe(query: URLSearchParams) {
+  const rows = postNotificationsEmail
+  const oneClick = query.has("token")
+  if (!oneClick && !(try sameOriginWrite())) return privateBare(rows.originForbiddenPrivateNoStore)
+  const value = oneClick ? try oneClickToken(query) : try boundedObject(bodyBytes)
+  const token = value?.token
+  if (value === undefined || Object.keys(value).join() !== "token" || typeof token !== "string" || !unsubscribeToken.test(token)) return privateBare(rows.invalidRequestS400)
+  const withdrawn = send({ kind: "unsubscribe", tokenHash: try sha256Hex(token) }, { kind: "session", hash: "" }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (withdrawn === undefined) return privateBare(unsubscribeRows.unsubscribeInvalid)
+  return privateJson({ enabled: false, securityEnabled: false })
+}
+
+export const EmailRoutes = Layer.mergeAll(
+  handleRaw(emailPreference, () => emailAnswer(preference())),
+  handleRaw(emailConsent, () => emailAnswer(saveConsent())),
+  handleRaw(emailVerification, () => emailAnswer(requestVerification())),
+  handleRaw(emailVerify, () => emailAnswer(verify())),
+  handleRaw(emailUnsubscribe, (input) => emailAnswer(unsubscribe(input.query))),
+)

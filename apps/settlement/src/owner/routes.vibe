@@ -1,0 +1,143 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "The pending request is saved before the wallet call and recovered without resubmission"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { RpcMalformed, RpcRefused, RpcUnavailable, WrongChain } from "@repo/platform/chain/rpc"
+import { type Address, type Blockhash, GenesisPinMissing, address, isBlockhash, solanaRpc } from "@repo/platform/chain/solana"
+import { Caller, Refused, handle, sameOriginWrite } from "@repo/platform/http"
+import type { Refusal } from "@repo/platform/route"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Rejected } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import type { ReviewFacts } from "../../gen/settlement__ownerTransactions.effect.vibe"
+import { type FundingAction, paymentsSolanaFunding } from "../client/owner.vibe"
+import { postPaymentsProjectsByIdSolanaFunding as parity } from "../client/refusals.vibe"
+import { MAX_BASE_UNITS, parseDecimalAmount } from "../kernels/amounts.ts"
+import { type NetworkKey, NETWORKS, isNetworkKey } from "../kernels/networks.ts"
+import { registryDeployments } from "../vault/deployments.vibe"
+import type { SolanaDeployment } from "../vault/policy.vibe"
+import { PaymentNetworks } from "./networks.vibe"
+import type { FundingOperation } from "./ownerInstructions.ts"
+import { DeploymentUnverified, verifiedDeployment } from "./solanaDeployment.vibe"
+import { type FundingIntent, checkFunding, grossOf, reviewFunding } from "./solanaFunding.vibe"
+import { WalletActionRefused } from "./solanaWallet.vibe"
+import type { Capture } from "./store.vibe"
+
+function row(entry: { readonly status: number; readonly error: string; readonly message?: string }): Refusal {
+  return { status: entry.status, code: entry.error, message: entry.message ?? "" }
+}
+
+const refusals = {
+  origin: row(parity.originForbiddenPrivateNoStore),
+  invalidAction: row(parity.invalidFundingAction),
+  invalidAmount: row(parity.invalidFundingAmount),
+  vaultNotFound: row(parity.fundingVaultNotFound),
+  unavailable: row(parity.paymentsUnavailable),
+} satisfies Readonly<Record<string, Refusal>>
+
+const withdrawalAuthority = "Only the project steward with current repository authority can withdraw free funds from an unrestricted project."
+
+function refusedWith(refusal: Refusal) {
+  return new Refused(refusal)
+}
+
+function actionRejected(message: string) {
+  return new Refused({ status: parity.fundingActionRejected.status, code: parity.fundingActionRejected.error, message })
+}
+
+type Step =
+  | { readonly step: "review"; readonly operation: FundingOperation; readonly network: NetworkKey; readonly vault: string; readonly wallet: Address; readonly amount: string }
+  | { readonly step: "check"; readonly operation: FundingOperation; readonly network: NetworkKey; readonly vault: string; readonly wallet: Address; readonly gross: string; readonly blockhash: Blockhash; readonly transactionId: string }
+
+effect function stepOf(body: FundingAction) {
+  const wallet = address(body.wallet)
+  const operation: FundingOperation | undefined = body.operation === "deposit" ? "deposit" : body.operation === "withdraw" ? "withdraw" : undefined
+  if (wallet === undefined || operation === undefined || (body.step !== "review" && body.step !== "check")) throw refusedWith(refusals.invalidAction)
+  if (!isNetworkKey(body.network) || NETWORKS[body.network].family !== "solana") throw refusedWith(refusals.unavailable)
+  const common = { operation, network: body.network, vault: body.vault, wallet }
+  if (body.step === "review") {
+    if (body.amount === undefined || body.amount.length > 80) throw refusedWith(refusals.invalidAction)
+    return { ...common, step: "review", amount: body.amount } satisfies Step
+  }
+  const { gross, blockhash, transactionId } = body
+  if (gross === undefined || !/^[1-9][0-9]{0,19}$/u.test(gross) || blockhash === undefined || !isBlockhash(blockhash) || transactionId === undefined || transactionId.length > 100)
+    throw refusedWith(refusals.invalidAction)
+  return { ...common, step: "check", gross, blockhash, transactionId } satisfies Step
+}
+
+effect function registered(projectId: string, network: NetworkKey, vault: string) {
+  const networks = try PaymentNetworks
+  if (!networks.served.includes(network)) throw refusedWith(refusals.unavailable)
+  const registry = registryDeployments([network], "ordinary") catch () => undefined
+  if (registry === undefined) throw refusedWith(refusals.unavailable)
+  const matches = registry.deployments.filter((deployment) => deployment.projectId === projectId && deployment.network === network && deployment.vault === vault)
+  const [deployment] = matches
+  if (matches.length !== 1 || deployment === undefined || deployment.family !== "solana") throw refusedWith(refusals.vaultNotFound)
+  const urls = try networks.urls(network)
+  if (urls === undefined) throw refusedWith(refusals.unavailable)
+  return { deployment: deployment satisfies SolanaDeployment, urls }
+}
+
+effect function currentProject(projectId: string) {
+  const project = (try Registry).project(projectId) catch () => undefined
+  if (project === undefined) throw refusedWith(refusals.unavailable)
+  return project
+}
+
+effect function withdrawalFacts(project: ProjectView) {
+  const actor = try (try Caller).current()
+  const fresh = try currentProject(project.projectId)
+  const repositoryId = fresh.repositories[0]?.id ?? ""
+  const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId })
+  const closure = (try Restrictions).project(fresh.projectId) catch () => undefined
+  if (closure === undefined) throw refusedWith(refusals.unavailable)
+  return {
+    steward: fresh.stewardGithubId === actor.githubId,
+    repositoryAuthority: read.permission === "PermissionVerified" && read.installation === "Installed",
+    revision: fresh.revision,
+    restricted: closure.restricted,
+    networkServed: true,
+    snapshotDigest: "",
+    obligationFunded: false,
+  } satisfies ReviewFacts
+}
+
+function depositFacts(capture: Capture): ReviewFacts {
+  return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false }
+}
+
+effect function factsFor(operation: FundingOperation, project: ProjectView, capture: Capture) {
+  return operation === "deposit" ? depositFacts(capture) : try withdrawalFacts(project)
+}
+
+effect function fund(projectId: string, step: Step) {
+  const { deployment, urls } = try registered(projectId, step.network, step.vault)
+  const project = try currentProject(projectId)
+  const capture: Capture = { revision: project.revision, snapshotDigest: "" }
+  provide solanaRpc({ urls, genesis: deployment.genesisHash }) {
+    const verified = try verifiedDeployment(deployment)
+    if (step.step === "check") {
+      const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(step.gross) }
+      return { status: try checkFunding(verified, intent, step.blockhash, step.transactionId, capture, try factsFor(step.operation, project, capture)) }
+    }
+    const parsed = parseDecimalAmount({ text: step.amount, decimals: verified.decimals, maximum: MAX_BASE_UNITS })
+    if (parsed.kind === "Refused") throw refusedWith(refusals.invalidAmount)
+    const intent: FundingIntent = { operation: step.operation, wallet: step.wallet, gross: try grossOf(parsed.amount.toString()) }
+    return { plan: try reviewFunding(verified, intent, capture, try factsFor(step.operation, project, capture)) }
+  }
+}
+
+effect function answer(projectId: string, body: FundingAction) {
+  if (!(try sameOriginWrite())) throw refusedWith(refusals.origin)
+  const step = try stepOf(body)
+  return fund(projectId, step) catch effect (error) => match (error) {
+    when WalletActionRefused: throw actionRejected(error.message);
+    when Rejected: throw actionRejected(withdrawalAuthority);
+    when DeploymentUnverified: throw refusedWith(refusals.unavailable);
+    when RpcUnavailable: throw refusedWith(refusals.unavailable);
+    when RpcMalformed: throw refusedWith(refusals.unavailable);
+    when RpcRefused: throw refusedWith(refusals.unavailable);
+    when WrongChain: throw refusedWith(refusals.unavailable);
+    when GenesisPinMissing: throw refusedWith(refusals.unavailable);
+    default: throw error;
+  }
+}
+
+export const ownerRoutes = handle(paymentsSolanaFunding, (input) => answer(input.params.id ?? "", input.body))
+

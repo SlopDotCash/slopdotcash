@@ -1,0 +1,205 @@
+// spec/slopbot/spendAlerts.md, "Each new call appends an immutable cost row with zero customer charge"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"; spec/slopbot/spendAlerts.md, "A failed call notice is claimed before it is sent"
+import { isoNow } from "@repo/platform/clock"
+import { type NonEmpty, RowMismatch, type Statement, decoded, list, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { type FailureKind, NotAState, type Receipt, type Spend, apply, claimedTop, decodeState, interval, monthTotal } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { budgetExhausted } from "../route/route.vibe"
+
+schema LedgerRow {
+  id: number
+  month: string
+  amount: number
+  provider: string
+  outcome: string
+  failure: string | null
+  requested_model: string
+  created_at: string
+  billed: number
+  historical: number
+  known: number
+}
+
+schema AlertRow { month: string; threshold: number; recorded: number; outcome: string | null }
+
+schema NoticeRow { call_id: number; claimed: number; outcome: string | null }
+
+export interface LedgerCall {
+  readonly id: number
+  readonly month: string
+  readonly known: boolean
+  readonly model: string
+  readonly occurredAt: string
+  readonly outcome: string
+  readonly failure: string | null
+}
+
+export interface Ledger {
+  readonly spend: Spend
+  readonly calls: ReadonlyArray<LedgerCall>
+}
+
+export interface ClaimedMilestone {
+  readonly month: string
+  readonly thresholdMicroUsd: number
+  readonly recordedMicroUsd: number
+  readonly estimatedCalls: number
+}
+
+interface Scope {
+  readonly name: string
+  readonly costs: Statement
+  readonly alerts: Statement
+}
+
+export const emptySpend: Spend = { costs: [], alerts: [], failures: [], lowBalanceThreshold: 0, lowBalanceNotices: [] }
+
+export function monthNumber(text: string) {
+  return Number(text.slice(0, 4)) * 12 + Number(text.slice(5, 7))
+}
+
+export function monthOf(iso: string) {
+  return iso.slice(0, 7)
+}
+
+export function failureKindOf(outcome: string, failure: string | null): FailureKind {
+  if (outcome === "ok") return "NotFailed"
+  return failure === budgetExhausted ? "BudgetExhausted" : "RequestFailed"
+}
+
+function receiptOf(outcome: string | null): Receipt {
+  if (outcome === "accepted") return "Accepted"
+  return outcome === "ambiguous" ? "Ambiguous" : "NoReceipt"
+}
+
+function providerOf(provider: string) {
+  if (provider === "orbio") return "Orbio"
+  return provider === "surplus" ? "Surplus" : provider
+}
+
+function costReads(scope: Statement) {
+  return sql`SELECT c.id, substr(c.created_at, 1, 7) AS month, coalesce(c.provider_cost_micro_usd, c.cost_micro_usd) AS amount, c.provider, c.outcome, c.failure, c.requested_model, c.created_at,
+      CASE c.billing_rule WHEN 'call-v1' THEN c.billed_micro_usdc ELSE c.billable_cost_micro_usd END AS billed,
+      (NOT EXISTS (SELECT 1 FROM slopbot_provider_failure_notices n WHERE n.call_id = c.id) AND (c.billing_rule = 'call-v1' OR c.outcome = 'failed')) AS historical,
+      (c.provider_cost_micro_usd IS NOT NULL) AS known
+    FROM slopbot_costs c WHERE ${scope} ORDER BY c.id`
+}
+
+function alertReads(scope: Statement) {
+  return sql`SELECT a.month, a.threshold_micro_usd AS threshold, a.recorded_micro_usd AS recorded, r.outcome
+    FROM slopbot_spend_alerts a LEFT JOIN slopbot_spend_alert_receipts r ON r.month = a.month AND r.threshold_micro_usd = a.threshold_micro_usd
+    WHERE ${scope} ORDER BY a.rowid`
+}
+
+function noticeReads(scope: Statement) {
+  return sql`SELECT n.call_id, (n.claimed_at IS NOT NULL) AS claimed, r.outcome
+    FROM slopbot_provider_failure_notices n JOIN slopbot_costs c ON c.id = n.call_id LEFT JOIN slopbot_provider_failure_receipts r ON r.call_id = n.call_id
+    WHERE ${scope} ORDER BY n.call_id`
+}
+
+function version(scope: Scope) {
+  return sql`SELECT (SELECT count(*) || ':' || coalesce(max(c.id), 0) FROM slopbot_costs c WHERE ${scope.costs})
+    || '|' || coalesce((SELECT group_concat(month || ':' || threshold || ':' || coalesce(outcome, '-'), ',') FROM (${alertReads(scope.alerts)})), '')
+    || '|' || coalesce((SELECT group_concat(call_id || ':' || claimed || ':' || coalesce(outcome, '-'), ',') FROM (${noticeReads(scope.costs)})), '') AS version`
+}
+
+effect function ledgerOf([costRows, alertRows, noticeRows]: ReadonlyArray<Rows>) {
+  const costs = try decoded(LedgerRow, costRows ?? [], "slopbot costs")
+  const alerts = try decoded(AlertRow, alertRows ?? [], "slopbot spend alerts")
+  const notices = try decoded(NoticeRow, noticeRows ?? [], "slopbot provider failure notices")
+  const ordinal = new Map(costs.map((row, index) => [row.id, index + 1]))
+  const spend = try decodeState({
+    costs: costs.map((row, index) => ({
+      id: index + 1,
+      month: monthNumber(row.month),
+      amount: row.amount,
+      provider: providerOf(row.provider),
+      failure: failureKindOf(row.outcome, row.failure),
+      billed: row.billed,
+      historical: row.historical === 1,
+    })),
+    alerts: alerts.map((row) => ({ month: monthNumber(row.month), threshold: row.threshold, recorded: row.recorded, receipt: receiptOf(row.outcome) })),
+    failures: notices.map((row) => ({ call: ordinal.get(row.call_id) ?? 0, claimed: row.claimed === 1, receipt: receiptOf(row.outcome) })),
+    lowBalanceThreshold: 0,
+    lowBalanceNotices: [],
+  })
+  const calls = costs.map((row) => ({ id: row.id, month: row.month, known: row.known === 1, model: row.requested_model, occurredAt: row.created_at, outcome: row.outcome, failure: row.failure }) satisfies LedgerCall)
+  return { spend, calls } satisfies Ledger
+}
+
+function ledger(scope: Scope): Aggregate<Ledger, NotAState | RowMismatch, never> {
+  return {
+    name: scope.name,
+    version: version(scope),
+    reads: [costReads(scope.costs), alertReads(scope.alerts), noticeReads(scope.costs)],
+    decode: ledgerOf,
+  }
+}
+
+function months(texts: NonEmpty<string>): Scope {
+  const listed = list(texts)
+  return { name: `slopbot spend in ${texts.join(", ")}`, costs: sql`substr(c.created_at, 1, 7) IN ${listed}`, alerts: sql`a.month IN ${listed}` }
+}
+
+function call(callId: number): Scope {
+  return { name: `slopbot provider call ${callId}`, costs: sql`c.id = ${callId}`, alerts: sql`0` }
+}
+
+function ordinalOf(current: Ledger, callId: number) {
+  return current.calls.findIndex((found) => found.id === callId) + 1
+}
+
+export effect function spendIn(texts: NonEmpty<string>) {
+  return (try load(ledger(months(texts)))).state
+}
+
+export effect function claimMilestone(month: string) {
+  return try update(ledger(months([month])), (current) => effect {
+    const number = monthNumber(month)
+    try apply(current.spend, { type: "claimMilestone", month: number })
+    const claimed: ClaimedMilestone = {
+      month,
+      thresholdMicroUsd: claimedTop(current.spend, number) + interval,
+      recordedMicroUsd: monthTotal(current.spend, number),
+      estimatedCalls: current.calls.filter((found) => !found.known).length,
+    }
+    const at = try isoNow()
+    return {
+      value: claimed,
+      writes: [sql`INSERT INTO slopbot_spend_alerts (month, threshold_micro_usd, recorded_micro_usd, estimated_calls, claimed_at) VALUES (${month}, ${claimed.thresholdMicroUsd}, ${claimed.recordedMicroUsd}, ${claimed.estimatedCalls}, ${at})`],
+    } satisfies Decision<ClaimedMilestone>
+  })
+}
+
+export effect function recordMilestoneReceipt(month: string, threshold: number, accepted: boolean) {
+  return try update(ledger(months([month])), (current) => effect {
+    const next = try apply(current.spend, { type: "deliverMilestone", month: monthNumber(month), threshold, accepted })
+    const at = try isoNow()
+    return {
+      value: next,
+      writes: [sql`INSERT INTO slopbot_spend_alert_receipts (month, threshold_micro_usd, outcome, recorded_at) VALUES (${month}, ${threshold}, ${accepted ? "accepted" : "ambiguous"}, ${at})`],
+    } satisfies Decision<Spend>
+  })
+}
+
+export effect function claimFailureNotice(callId: number) {
+  return try update(ledger(call(callId)), (current) => effect {
+    try apply(current.spend, { type: "claimFailure", call: ordinalOf(current, callId) })
+    const at = try isoNow()
+    const [claimed] = current.calls
+    return {
+      value: claimed,
+      writes: [sql`UPDATE slopbot_provider_failure_notices SET claimed_at = ${at} WHERE call_id = ${callId} AND claimed_at IS NULL`],
+    } satisfies Decision<LedgerCall | undefined>
+  })
+}
+
+export effect function recordFailureReceipt(callId: number, accepted: boolean) {
+  return try update(ledger(call(callId)), (current) => effect {
+    const next = try apply(current.spend, { type: "deliverFailure", call: ordinalOf(current, callId), accepted })
+    const at = try isoNow()
+    return {
+      value: next,
+      writes: [sql`INSERT INTO slopbot_provider_failure_receipts (call_id, outcome, recorded_at) VALUES (${callId}, ${accepted ? "accepted" : "ambiguous"}, ${at})`],
+    } satisfies Decision<Spend>
+  })
+}

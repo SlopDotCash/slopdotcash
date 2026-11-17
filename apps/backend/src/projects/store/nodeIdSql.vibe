@@ -1,0 +1,42 @@
+// spec/backend/projectRegistry.md, "Each permanent repository id and each path key belongs to at most one project"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"
+import type { Statement } from "@repo/platform/d1"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "../nodeId.ts"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+const standard = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+const urlSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+export function githubUserId(node: string): string | undefined {
+  const id = githubUserIdFromNodeId(node)
+  return id > 0n ? id.toString() : undefined
+}
+
+function sextet(position: number, alphabet: string) {
+  return `(instr('${alphabet}', substr(n, ${position}, 1)) - 1)`
+}
+
+function legacyId() {
+  const groups = Array.from({ length: 6 }, (_, group) => {
+    const start = 9 + group * 4
+    const [a, b, c, d] = [0, 1, 2, 3].map((offset) => sextet(start + offset, standard))
+    return `CASE WHEN length(n) >= ${start + 3} THEN char((${a} << 2) | (${b} >> 4)) || CASE WHEN ${c} >= 0 THEN char(((${b} & 15) << 4) | (${c} >> 2)) ELSE '' END || CASE WHEN ${d} >= 0 THEN char(((${c} & 3) << 6) | ${d}) ELSE '' END ELSE '' END`
+  })
+  return `(SELECT CASE WHEN substr(t, 1, 1) = 'r' AND substr(t, 2) GLOB '[1-9]*' AND substr(t, 2) NOT GLOB '*[^0-9]*' AND length(t) <= 17 THEN substr(t, 2) END FROM (SELECT ${groups.join(" || ")} AS t))`
+}
+
+function currentId() {
+  const bits = (count: number) => Array.from({ length: count }, (_, index) => `(${sextet(7 + index, urlSafe)} << ${6 * (count - 1 - index)})`).join(" | ")
+  const valid = (count: number) => Array.from({ length: count }, (_, index) => `${sextet(7 + index, urlSafe)} >= 0`).join(" AND ")
+  return `CASE WHEN substr(n, 1, 6) = 'U_kgDO' AND length(n) = 12 AND ${valid(6)} THEN CAST(((${bits(6)}) >> 4) AS TEXT) WHEN substr(n, 1, 6) = 'U_kgDP' AND length(n) = 17 AND ${valid(11)} AND ${sextet(7, urlSafe)} = 0 THEN CAST((((${bits(10)}) << 4) | (${sextet(17, urlSafe)} >> 2)) AS TEXT) END`
+}
+
+const resolved = `CASE WHEN substr(n, 1, 8) = 'MDQ6VXNl' THEN ${legacyId()} WHEN substr(n, 1, 2) = 'U_' THEN ${currentId()} END`
+
+export function githubUserIdSql(node: Statement): Statement {
+  return { text: `(SELECT ${resolved} FROM (SELECT ${node.text} AS n))`, params: node.params }
+}

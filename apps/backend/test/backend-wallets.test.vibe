@@ -1,0 +1,224 @@
+import { assert, layer } from "@effect/vitest"
+import { base64Encode } from "@repo/platform/chain/solana"
+import { isoAt } from "@repo/platform/clock"
+import { base64url, ed25519Sign, hmacSha256, sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+
+const traceSecret = "wallet-journey-trace-secret-0123456789"
+const operatorId = "900"
+
+const Backend = areaLayer({
+  root: new URL("..", import.meta.url).pathname,
+  entry: "worker",
+  d1: { SLOP_DB: "slop-private" },
+  vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", OPERATOR_GITHUB_IDS: operatorId, TRACE_AUTH_SECRET: traceSecret },
+})
+
+interface Wallet {
+  readonly jwk: string
+  readonly address: string
+}
+
+const alpha: Wallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" }),
+  address: "FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+}
+const bravo: Wallet = {
+  jwk: JSON.stringify({ kty: "OKP", crv: "Ed25519", d: "TM0Imyj_ltqdtsNG7BFOD1uKMZ81q6Yk2oz27U-4pvs", x: "PUAXw-hDiVqStwqnTRt-vJyYLM8uxJaMwM1V8Sr0Zgw" }),
+  address: "586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5",
+}
+const offCurve = "8opHzTAnfzRpPEx21XtnrVTX28YQuCpAjcn1PczScKh"
+const identityPoint = "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM"
+const identityForgery = `AQ${"A".repeat(84)}==`
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(answer: Answer, name: string): unknown {
+  const body = answer.body
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>)[name] : undefined
+}
+
+function text(answer: Answer, name: string): string {
+  const value = field(answer, name)
+  return typeof value === "string" ? value : ""
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer, "error") ?? null]
+}
+
+effect function signIn(githubId: string) {
+  const area = try Area
+  const token = `wallet-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+effect function bearer(githubId: string, roles: ReadonlyArray<string>) {
+  const issued = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const claims = { iss: "slop.cash", aud: "private-trace-api", sub: `github:${githubId}`, githubId, githubLogin: `member-${githubId}`, roles, iat: issued, exp: issued + 300, jti: `wallet-journey-${githubId}-${roles.join("-")}` }
+  const payload = base64url(utf8(JSON.stringify(claims)))
+  const signature = base64url(try hmacSha256(Redacted.make(traceSecret), `v1.${payload}`))
+  return { authorization: `Bearer v1.${payload}.${signature}` }
+}
+
+effect function signed(wallet: Wallet, message: string) {
+  return base64Encode(try ed25519Sign(Redacted.make(wallet.jwk), utf8(message)))
+}
+
+effect function pay(member: Session, action: string, json: unknown) {
+  return try (try Area).request(`/api/v1/payments/wallets/${action}`, { json, as: member })
+}
+
+effect function trace(path: string, headers: Readonly<Record<string, string>>, json?: unknown) {
+  const area = try Area
+  return try area.request(`/api/v1/${path}`, json === undefined ? { method: "POST", headers } : { json, headers })
+}
+
+effect function read(path: string, headers: Readonly<Record<string, string>> = {}) {
+  return try (try Area).request(`/api/v1/${path}`, { headers })
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Replace a payout wallet without losing the current destination over HTTP (spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim")', () => effect {
+    const area = try Area
+    const member = try signIn("101")
+    const malformed = try pay(member, "register", { chain: "solana", address: "not-a-wallet" })
+    const forged = try pay(member, "register", { chain: "solana", address: alpha.address, signatureValid: true })
+    const registered = try pay(member, "register", { chain: "solana", address: alpha.address })
+    const retried = try pay(member, "register", { chain: "solana", address: alpha.address })
+    const first = text(registered, "claimId")
+
+    const challenged = try pay(member, "challenge", { claimId: first })
+    const message = text(challenged, "message")
+    const wrongKey = try pay(member, "authorize", { claimId: first, challengeId: text(challenged, "challengeId"), signature: try signed(bravo, message) })
+    const proof = { claimId: first, challengeId: text(challenged, "challengeId"), signature: try signed(alpha, message) }
+    const authorized = try pay(member, "authorize", proof)
+    const replayed = try pay(member, "authorize", proof)
+    const signedAgain = try pay(member, "challenge", { claimId: first })
+    const reauthorized = try pay(member, "authorize", { claimId: first, challengeId: text(signedAgain, "challengeId"), signature: try signed(alpha, text(signedAgain, "message")) })
+    const firstProof = try area.sql("SELECT challenge_id FROM payment_wallet_authorizations WHERE claim_id = ?", first)
+
+    const replaced = try pay(member, "register", { chain: "solana", address: bravo.address })
+    const second = text(replaced, "claimId")
+    const whilePending = try area.sql("SELECT id FROM effective_payment_wallet_claims WHERE github_user_id = ?", "101")
+    const stale = try pay(member, "challenge", { claimId: first })
+    const raceChallenge = try pay(member, "challenge", { claimId: second })
+    const raceProof = { claimId: second, challengeId: text(raceChallenge, "challengeId"), signature: try signed(bravo, text(raceChallenge, "message")) }
+    const raced = try.all [pay(member, "authorize", raceProof), pay(member, "authorize", raceProof)]
+    const afterwards = try area.sql("SELECT id FROM effective_payment_wallet_claims WHERE github_user_id = ?", "101")
+    const authorizations = try area.sql("SELECT claim_id FROM payment_wallet_authorizations WHERE github_user_id = ? ORDER BY rowid", "101")
+    const notices = try area.sql("SELECT event_key, kind, subject FROM notifications WHERE recipient_github_id = ? ORDER BY event_key", "101")
+    const audits = try area.sql("SELECT action, target FROM private_audit_events WHERE actor_github_id = ? ORDER BY target", "101")
+
+    const smallOrderMember = try signIn("102")
+    const smallOrder = try pay(smallOrderMember, "register", { chain: "solana", address: identityPoint })
+    const smallOrderChallenge = try pay(smallOrderMember, "challenge", { claimId: text(smallOrder, "claimId") })
+    const smallOrderForged = try pay(smallOrderMember, "authorize", { claimId: text(smallOrder, "claimId"), challengeId: text(smallOrderChallenge, "challengeId"), signature: identityForgery })
+
+    try same({
+      refused: [outcome(malformed), outcome(forged)],
+      registered: [registered.status, retried.status, text(retried, "claimId") === first],
+      challenged: [challenged.status, field(challenged, "address"), field(challenged, "chain"), message.includes(`Claim: ${first}`)],
+      signatures: [outcome(wrongKey), [authorized.status, field(authorized, "authorized")], outcome(replayed), [reauthorized.status, field(reauthorized, "authorized")]],
+      firstProof: firstProof.map((row) => row.challenge_id),
+      replaced: [replaced.status, second !== first, whilePending.map((row) => row.id), outcome(stale)],
+      raced: raced.map((answer) => answer.status === 200 ? "won" : answer.status === 403 || answer.status === 409 ? "lost" : String(answer.status)).sort(),
+      afterwards: afterwards.map((row) => row.id),
+      authorizations: authorizations.map((row) => row.claim_id),
+      notices,
+      audits,
+      smallOrder: [smallOrder.status, smallOrderChallenge.status, outcome(smallOrderForged)],
+    }, {
+      refused: [[400, "invalid_wallet"], [400, "invalid_wallet"]],
+      registered: [200, 200, true],
+      challenged: [200, alpha.address, "solana", true],
+      signatures: [[403, "wallet_signature_required"], [200, true], [403, "wallet_signature_required"], [200, true]],
+      firstProof: [text(challenged, "challengeId")],
+      replaced: [200, true, [first], [409, "claim_not_current"]],
+      raced: ["lost", "won"],
+      afterwards: [second],
+      authorizations: [first, second],
+      notices: [first, second].sort().map((claim) => ({ event_key: `wallet-claim:${claim}`, kind: "wallet_changed", subject: "solana" })),
+      audits: [first, second].sort().map((claim) => ({ action: "wallet_claim.created", target: `wallet-claim:${claim}` })),
+      smallOrder: [200, 200, [403, "wallet_signature_required"]],
+    })
+  })
+
+  it.effect(`Register through the trace API, prove possession and keep the first proof across an operator recovery (spec/backend/wallets.md, "The trace API's bearer claim registers through the same partition line, and current-claim reads change nothing"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"; spec/backend/wallets.md, "Story: Recover a wallet through the operator without giving the operator authority"; spec/backend/wallets.md, "An operator claim is digest-idempotent, keeps the claim line and authorizes nothing"; spec/backend/wallets.md, "Claim and proof history remains bound to one partition")`, () => effect {
+    const area = try Area
+    const contributor = try bearer("202", ["contributor"])
+    const operator = try bearer(operatorId, ["operator"])
+    const anonymous = try trace("wallet-claims", {}, { address: alpha.address })
+    const created = try trace("wallet-claims", contributor, { address: alpha.address })
+    const first = text(created, "claimId")
+    const unchanged = try trace("wallet-claims", contributor, { address: alpha.address, supersedesClaimId: first })
+    const stale = try trace("wallet-claims", contributor, { address: bravo.address })
+    const current = try read("wallet-claims/current", contributor)
+    const published = try read("wallet-claims/actors/202/current")
+    const nobody = try read("wallet-claims/actors/999/current")
+    const byId = try read(`wallet-claims/${first}`)
+    const unproven = try read(`wallet-claims/${first}/possession`)
+
+    const firstChallenge = try trace(`wallet-claims/${first}/possession-challenge`, contributor)
+    const challenge = field(firstChallenge, "challenge")
+    const challengeText = text(firstChallenge, "message")
+    const forgedSigner = try trace(`wallet-claims/${first}/possession`, contributor, { challenge, signature: try signed(bravo, challengeText) })
+    const burned = try trace(`wallet-claims/${first}/possession`, contributor, { challenge, signature: try signed(alpha, challengeText) })
+    const secondChallenge = try trace(`wallet-claims/${first}/possession-challenge`, contributor)
+    const attested = try trace(`wallet-claims/${first}/possession`, contributor, { challenge: field(secondChallenge, "challenge"), signature: try signed(alpha, text(secondChallenge, "message")) })
+    const repeated = try trace(`wallet-claims/${first}/possession-challenge`, contributor)
+    const proven = try read(`wallet-claims/${first}/possession`)
+
+    const offCurveOwner = try bearer("303", ["contributor"])
+    const offCurveClaim = try trace("wallet-claims", offCurveOwner, { address: offCurve })
+    const unsignable = try trace(`wallet-claims/${text(offCurveClaim, "claimId")}/possession-challenge`, offCurveOwner)
+
+    const smallOrderOwner = try bearer("404", ["contributor"])
+    const smallOrderClaim = try trace("wallet-claims", smallOrderOwner, { address: identityPoint })
+    const smallOrderChallenge = try trace(`wallet-claims/${text(smallOrderClaim, "claimId")}/possession-challenge`, smallOrderOwner)
+    const smallOrderForged = try trace(`wallet-claims/${text(smallOrderClaim, "claimId")}/possession`, smallOrderOwner, { challenge: field(smallOrderChallenge, "challenge"), signature: identityForgery })
+
+    const nowMillis = try Clock.currentTimeMillis
+    const observedAt = try isoAt(nowMillis - 60_000)
+    const recovery = { githubActorId: "202", githubLogin: "member-202", address: bravo.address, observedAt, sourceBodySha256: "a".repeat(64), supersedesClaimId: first }
+    const notOperator = try trace("operator/wallet-claims", contributor, recovery)
+    const future = try trace("operator/wallet-claims", operator, { ...recovery, observedAt: try isoAt(nowMillis + 3_600_000) })
+    const recovered = try trace("operator/wallet-claims", operator, recovery)
+    const replayed = try trace("operator/wallet-claims", operator, recovery)
+    const conflict = try trace("operator/wallet-claims", operator, { ...recovery, sourceBodySha256: "b".repeat(64) })
+    const keptProof = try read(`wallet-claims/${first}/possession`)
+    const newest = try read("wallet-claims/actors/202/current")
+    const authorizations = try area.sql("SELECT claim_id FROM payment_wallet_authorizations WHERE github_user_id = ?", "202")
+    const audits = try area.sql("SELECT action, actor_github_id FROM private_audit_events WHERE target IN (?, ?) ORDER BY action", `wallet-claim:${first}`, `wallet-claim:${text(recovered, "claimId")}`)
+
+    try same({
+      registered: [anonymous.status, created.status, field(created, "source"), field(created, "supersedesClaimId"), unchanged.status, text(unchanged, "claimId") === first, outcome(stale)],
+      reads: [current.status, text(current, "claimId") === first, published.status, published.headers["cache-control"], nobody.status, nobody.body, byId.status, byId.headers["cache-control"], field(unproven, "state")],
+      possession: [firstChallenge.status, outcome(forgedSigner), field(forgedSigner, "message"), outcome(burned), secondChallenge.status, attested.status, field(attested, "state"), repeated.status, field(repeated, "state"), field(proven, "state"), proven.headers["cache-control"]],
+      unsignable: [offCurveClaim.status, outcome(unsignable)],
+      smallOrder: [smallOrderClaim.status, smallOrderChallenge.status, outcome(smallOrderForged), field(smallOrderForged, "message")],
+      operator: [outcome(notOperator), outcome(future), recovered.status, field(recovered, "source"), field(recovered, "supersedesClaimId"), replayed.status, text(replayed, "claimId") === text(recovered, "claimId"), outcome(conflict)],
+      kept: [field(keptProof, "state"), field(keptProof, "challengeId") === field(proven, "challengeId"), field(keptProof, "signature") === field(proven, "signature"), text(newest, "claimId") === text(recovered, "claimId")],
+      authorizations,
+      audits,
+    }, {
+      registered: [401, 201, "d1_registry", null, 200, true, [409, "stale_wallet_claim"]],
+      reads: [200, true, 200, "public, max-age=60, must-revalidate", 200, null, 200, "public, max-age=31536000, immutable", "unproven"],
+      possession: [201, [400, "invalid_possession_proof"], "Wallet possession signature is invalid", [409, "possession_challenge_unavailable"], 201, 201, "proven", 200, "proven", "proven", "public, max-age=60, must-revalidate"],
+      unsignable: [201, [409, "address_not_signable"]],
+      smallOrder: [201, 201, [400, "invalid_possession_proof"], "Wallet possession signature is invalid"],
+      operator: [[403, "forbidden"], [400, "invalid_request"], 201, "d1_registry", first, 200, true, [409, "claim_conflict"]],
+      kept: ["proven", true, true, true],
+      authorizations: [],
+      audits: [
+        { action: "wallet_claim.created", actor_github_id: "202" },
+        { action: "wallet_claim.operator_recovery_created", actor_github_id: operatorId },
+        { action: "wallet_possession.attested", actor_github_id: "202" },
+      ],
+    })
+  })
+})

@@ -1,0 +1,42 @@
+// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"
+import type { Statement } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import type { ReadFailure } from "@repo/ports/backend"
+
+export interface EnforcementScope {
+  readonly version: Statement
+  readonly reads: ReadonlyArray<Statement>
+}
+
+export interface RegistryMirror {
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly repositoryGithubIds: ReadonlyArray<string>
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export interface ActiveRestriction {
+  readonly projectId: string
+  readonly repositoryGithubId: string
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export interface EnforcementChange {
+  readonly projectId: string
+  readonly event: unknown
+  readonly by: number
+  readonly before: unknown
+  readonly after: unknown
+  readonly registryBefore: RegistryMirror
+  readonly registryAfter: RegistryMirror
+  readonly at: string
+}
+
+export service EnforcementRows {
+  scope(projectId: string): EnforcementScope!!
+  decode(projectId: string, rows: ReadonlyArray<Rows>, registry: RegistryMirror): unknown!ReadFailure
+  writes(change: EnforcementChange): ReadonlyArray<Statement>!ReadFailure
+  generation(): Statement!!
+  restrictions(): ReadonlyArray<ActiveRestriction>!ReadFailure
+  recordedAt(enforcementIds: ReadonlyArray<string>): (string | undefined)!ReadFailure
+}

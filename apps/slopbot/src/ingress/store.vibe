@@ -1,0 +1,140 @@
+// spec/slopbot/webhookDelivery.md, "An ordinary pending receipt does not claim exclusive execution"; spec/slopbot/webhookDelivery.md, "An accepted reopen pins exact source before sending"; spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { type NonEmpty, RowMismatch, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { initial as noInstallation } from "../../gen/slopbot__installation.effect.vibe"
+import { type Event, NotAState, type ReopenSource, type Request, type Webhook, apply, decodeState, noReopen, noValue, request } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { type Change, type Numbered, installationOf, installationReads, installationVersion, installationWrites } from "../installation/store.vibe"
+import { githubEvent } from "./payload.vibe"
+import { ValueRequestRow, sameValue, valueRequestInsert, valueRequestRead, valueRequestVersion, valueSourceOf } from "./valueRequest.vibe"
+
+export interface Context {
+  readonly deliveryId: string
+  readonly eventName: string
+  readonly reopen: string | undefined
+  readonly installation: Change | undefined
+}
+
+schema DeliveryRow {
+  event: string
+  processed_at: string | null
+  installation_processed_at: string | null
+  reopen_source: string | null
+  reopen_confirmed_at: string | null
+}
+
+schema StoredReopen {
+  installationId: number
+  repositoryId: number
+  itemKind: "issue" | "pull_request"
+  number: number
+  senderId: number
+  itemNodeId: string
+  revision: string
+  occurredAt: string
+}
+
+export error ReopenUnrecorded { deliveryId: string }
+
+function deliveries(context: Context): NonEmpty<Numbered> {
+  return [{ deliveryId: context.deliveryId, number: 1 }]
+}
+
+effect function reopenOf(text: string) {
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text, issue: "reopen source is not JSON" }) })
+  const [stored] = try decoded(StoredReopen, typeof value === "object" && value !== null ? [value as Record<string, unknown>] : [], "reopen source")
+  if (stored === undefined) throw new RowMismatch({ text, issue: "reopen source is not an object" })
+  return { installation: stored.installationId, repository: stored.repositoryId, kind: stored.itemKind === "issue" ? "IssueItem" : "PullItem", number: stored.number, sender: stored.senderId, node: stored.itemNodeId, revision: stored.revision, occurred: millisOf(stored.occurredAt) } satisfies ReopenSource
+}
+
+effect function webhookOf(context: Context, requests: ReadonlyArray<Request>, rows: ReadonlyArray<Rows>) {
+  const [row] = try decoded(DeliveryRow, rows[0] ?? [], "slopbot delivery")
+  const [valueRow] = try decoded(ValueRequestRow, rows[1] ?? [], "slopbot value request")
+  const value = valueSourceOf(valueRow)
+  const firstEvent = row === undefined ? "Other" : githubEvent(row.event)
+  return try decodeState({
+    deliveryId: row !== undefined || valueRow !== undefined ? context.deliveryId : "",
+    receipt: row === undefined ? "NoReceipt" : row.processed_at === null ? "PendingReceipt" : "ProcessedReceipt",
+    firstEvent,
+    exists: row !== undefined,
+    installationProcessed: row?.installation_processed_at != null,
+    value,
+    reopen: row?.reopen_source == null ? noReopen : try reopenOf(row.reopen_source),
+    confirmed: row?.reopen_confirmed_at != null,
+    requests: [...requests],
+    sends: 0,
+    install: context.installation === undefined ? noInstallation : try installationOf(rows.slice(2), deliveries(context)),
+    installDelivery: row !== undefined && firstEvent === "Installation" ? 1 : 0,
+  } satisfies Webhook)
+}
+
+function aggregate(context: Context, requests: ReadonlyArray<Request>): Aggregate<Webhook, NotAState | RowMismatch, never> {
+  const { deliveryId, installation } = context
+  return {
+    name: `slopbot delivery ${deliveryId}`,
+    version: sql`SELECT coalesce((SELECT event || ':' || coalesce(processed_at, '-') || ':' || coalesce(installation_processed_at, '-') || ':' || coalesce(reopen_source, '-') || ':' || coalesce(reopen_confirmed_at, '-') FROM slopbot_deliveries WHERE delivery_id = ${deliveryId}), '') || '|' || ${valueRequestVersion(deliveryId)} || '|' || ${installation === undefined ? sql`''` : installationVersion(installation.installationId, deliveries(context))} AS version`,
+    reads: [
+      sql`SELECT event, processed_at, installation_processed_at, reopen_source, reopen_confirmed_at FROM slopbot_deliveries WHERE delivery_id = ${deliveryId}`,
+      valueRequestRead(deliveryId),
+      ...installation === undefined ? [] : installationReads(installation.installationId, deliveries(context)),
+    ],
+    decode: (rows) => webhookOf(context, requests, rows),
+  }
+}
+
+function released(deliveryId: string) {
+  return sql`DELETE FROM slopbot_deliveries WHERE delivery_id = ${deliveryId} AND reopen_source IS NULL AND NOT EXISTS (SELECT 1 FROM slopbot_value_requests v WHERE v.delivery_id = ${deliveryId})`
+}
+
+effect function reopenPin(context: Context) {
+  if (context.reopen === undefined) throw new ReopenUnrecorded({ deliveryId: context.deliveryId })
+  return sql`UPDATE slopbot_deliveries SET reopen_source = ${context.reopen} WHERE delivery_id = ${context.deliveryId} AND reopen_source IS NULL`
+}
+
+effect function writesFor(context: Context, current: Webhook, next: Webhook, event: Event) {
+  const at = try isoNow()
+  const id = context.deliveryId
+  const release = current.exists ? [released(id)] : []
+  switch (event.type) {
+    case "receive":
+    case "authenticate":
+    case "decode":
+      return []
+    case "claim":
+      return current.exists ? [] : [sql`INSERT OR IGNORE INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${id}, ${context.eventName}, ${at})`]
+    case "inspectValue": {
+      const inspected = request(next, event.requestId)
+      if (inspected.result === "Failed") return release
+      return inspected.valued && sameValue(current.value, noValue) ? [valueRequestInsert(id, inspected.body.value, at)] : []
+    }
+    case "bindReopen": {
+      const bound = request(next, event.requestId)
+      if (bound.result === "Failed") return release
+      return bound.phase === "SendQueue" && current.reopen.node === "" ? [try reopenPin(context)] : []
+    }
+    case "inspectQueue":
+    case "send":
+      return request(next, event.requestId).result === "Failed" ? release : []
+    case "complete":
+      return event.committed ? [sql`UPDATE slopbot_deliveries SET processed_at = ${at} WHERE delivery_id = ${id} AND processed_at IS NULL`] : release
+    case "confirmReopen":
+      return [sql`UPDATE slopbot_deliveries SET reopen_confirmed_at = ${at} WHERE delivery_id = ${id} AND reopen_source IS NOT NULL AND reopen_confirmed_at IS NULL`]
+    case "releaseOrdinary":
+      return release
+    case "finishInstallation":
+      return event.committed && context.installation !== undefined ? try installationWrites(context.installation, current.install) : []
+  }
+}
+
+effect function decide(context: Context, current: Webhook, event: Event) {
+  const next = try apply(current, event)
+  return { value: next, writes: try writesFor(context, current, next, event) } satisfies Decision<Webhook>
+}
+
+export effect function advance(context: Context, requests: ReadonlyArray<Request>, event: Event) {
+  return try update(aggregate(context, requests), (current) => decide(context, current, event))
+}
+
+export effect function delivery(context: Context, requests: ReadonlyArray<Request> = []) {
+  return (try load(aggregate(context, requests))).state
+}

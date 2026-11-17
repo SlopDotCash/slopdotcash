@@ -1,0 +1,33 @@
+// spec/slopbot/installation.md, "Only an applied removal or suspension notifies the project owners"
+import { type Statement, sql } from "@repo/platform/d1"
+import { ProjectAudience, Registry } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+
+export effect function servedProjects(repositoryIds: ReadonlyArray<number>) {
+  const registry = try Registry
+  const projects = new Set<string>()
+  for (const repositoryId of new Set(repositoryIds)) {
+    const view = try registry.byRepository(String(repositoryId))
+    if (view !== undefined) projects.add(view.projectId)
+  }
+  return [...projects].sort()
+}
+
+export effect function lostNotices(installationId: number, at: string, projectIds: ReadonlyArray<string>) {
+  const audience = try ProjectAudience
+  const notices = try Notices
+  const statements: Statement[] = []
+  for (const projectId of projectIds) {
+    const recipients = try audience.owners(sql`${projectId}`)
+    statements.push(...try notices.fanout({
+      eventKey: `slopbot-installation:${installationId}:${at}:${projectId}`,
+      recipients,
+      kind: "ProjectInstallationLost",
+      subject: projectId,
+      actionPath: `/projects/${projectId}`,
+      sourceAt: at,
+      onlyIf: sql`EXISTS (SELECT 1 FROM slopbot_installations i WHERE i.installation_id = ${installationId} AND (i.removed_at = ${at} OR i.suspended_at = ${at}))`,
+    }))
+  }
+  return statements
+}

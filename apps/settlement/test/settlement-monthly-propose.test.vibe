@@ -1,0 +1,233 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest } from "miniflare"
+import type { D1Database, ExecutionContext, SqlValue } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { worker } from "@repo/platform/worker"
+import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { ClosedMonth } from "@repo/ports/points"
+import { loadMonth, monthlyFacts } from "../src/monthly/store.vibe"
+import { monthlyCommitmentRoutes } from "../src/monthlyCommitment/publication.vibe"
+import { proposeMonth } from "../src/programs/proposeMonth.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+}
+
+interface Contributor {
+  readonly githubId: string
+  readonly login: string
+  readonly points: number
+}
+
+service Journey {
+  readonly env: Env
+}
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+const served = new Set(["base-sepolia"])
+const vault = `0x${"5".repeat(40)}`
+const asset = `0x${"6".repeat(40)}`
+const u128 = 340282366920938463463374607431768211455n
+
+const Started = Layer.effect(Journey, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "monthly-propose" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.filter((file) => file.error !== undefined)
+  if (failed.length > 0) return try die(new Error(`migration ${failed[0]?.file} failed: ${failed[0]?.error}`))
+  return { env: { SLOP_DB: try promise(() => database(mf, "SLOP_DB")) } }
+})
+
+function manifestOf(projectId: string, monthlyCapMinor: string) {
+  return JSON.stringify({
+    id: projectId,
+    status: "active",
+    name: projectId,
+    authority: { state: "verified" },
+    terms: { receiptPolicy: { state: "active" } },
+    reward: { kind: "monthly-pool", monthlyCapMinor, rewardStartAt: "2026-10-01T00:00:00.000Z" },
+    escrow: { chain: "base", effectiveCycle: "2026-11", feeMode: "deduct-from-gross", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, deployments: [{ network: "base-sepolia", vault, asset }] },
+  })
+}
+
+effect function seed(env: Env, text: string, ...params: ReadonlyArray<SqlValue>) {
+  try promise(() => env.SLOP_DB.prepare(text).bind(...params).run())
+}
+
+effect function registered(env: Env, projectId: string, monthlyCapMinor: string, view: Partial<ProjectView>) {
+  const manifest = manifestOf(projectId, monthlyCapMinor)
+  const manifestSha256 = try sha256Hex(manifest)
+  try seed(env, "INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'Activated automatically', '2026-10-01T00:00:00.000Z')", projectId, manifest, manifestSha256)
+  return { projectId, revision: 1, manifestSha256, rowStatus: "Active", manifestStatus: "Active", listingTier: "Community", retirement: "NotRetired", stewardGithubId: "77", repositories: [], closureConsent: false, ...view } satisfies ProjectView
+}
+
+interface Ledger {
+  readonly sha256: string
+  readonly weights: ReadonlyArray<Contributor>
+}
+
+effect function ledgersOf(contributors: Readonly<Record<string, ReadonlyArray<Contributor>>>) {
+  const ledgers: Record<string, Ledger> = {}
+  for (const [projectId, weights] of Object.entries(contributors)) ledgers[projectId] = { sha256: try sha256Hex(JSON.stringify(weights)), weights }
+  return ledgers
+}
+
+function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly<Record<string, Ledger>>) {
+  const registry = Layer.succeed(Registry, {
+    project: (projectId) => effect { return views.find((view) => view.projectId === projectId) },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return views },
+    fence: () => effect { return sql`1` },
+  })
+  const restrictions = Layer.succeed(Restrictions, {
+    account: () => effect { return { banned: false } },
+    project: () => effect { return { restricted: false } },
+  })
+  const closed = Layer.succeed(ClosedMonth, {
+    ledger: (month) => effect {
+      const ledger = ledgers[month.projectId]
+      return ledger === undefined || month.period !== "2026-11" ? undefined : ledger
+    },
+  })
+  const base = Layer.mergeAll(d1(env.SLOP_DB), insideWindow.layer, registry, restrictions)
+  return Layer.provideMerge(Layer.merge(monthlyFacts(served), closed), base)
+}
+
+schema BaseRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
+schema ProposalRow { readonly project_id: string; readonly cap_base: string; readonly recipient_count: number; readonly created_at: string }
+
+effect function proposals(env: Env) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT project_id, cap_base, recipient_count, created_at FROM monthly_reward_bases WHERE period = '2026-11' ORDER BY project_id").all())
+  return try Schema.decodeUnknownEffect(Schema.Array(ProposalRow))(found.results)
+}
+
+effect function proposedRows(env: Env, projectId: string) {
+  const found = try promise(() => env.SLOP_DB.prepare("SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE project_id = ? AND period = '2026-11' ORDER BY github_user_id").bind(projectId).all())
+  return try Schema.decodeUnknownEffect(Schema.Array(BaseRow))(found.results)
+}
+
+effect function origin(projectId: string, actor: string) {
+  return try sha256Hex(JSON.stringify(["slop-escrow-origin-v2", projectId, "2026-11", actor]))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const insideWindow = settableClock(Date.parse("2026-12-01T12:00:00.000Z"))
+
+const fixtureCaller = Layer.succeed(Caller, {
+  current: () => effect { throw new Unauthenticated() },
+})
+
+const outbound: string[] = []
+const recordingRpc = Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => effect {
+  outbound.push(request.url)
+  return try die(new Error("the public read must not call an RPC endpoint or a signer"))
+}))
+
+const site = worker({ services: (env: Env) => Layer.mergeAll(d1(env.SLOP_DB), fixtureCaller, recordingRpc), routes: monthlyCommitmentRoutes })
+
+effect function ask(env: Env, path: string) {
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: "GET" })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+  const text = try promise(() => response.text())
+  return { status: response.status, cache: response.headers.get("cache-control"), body: try orDie(Effect.try(() => JSON.parse(text) as unknown)) }
+}
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect(`A closed month is proposed once from the closed ledger, a repeat adds nothing, paused or retired projects get no proposal, and an unusable ledger fails the run (spec/settlement/monthly.md, "Story: Propose one month once from accepted work"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately")`, () => effect {
+    const { env } = try Journey
+    const active = try registered(env, "alpha", "1000", {})
+    const paused = try registered(env, "paused-pool", "1000", { rowStatus: "Paused", manifestStatus: "Paused" })
+    const retired = try registered(env, "retired-pool", "1000", { retirement: "OwnerRemoved", listingTier: "Retired" })
+    const ledgers = try ledgersOf({
+      alpha: [{ githubId: "1001", login: "first", points: 3 }, { githubId: "1002", login: "second", points: 1 }, { githubId: "1003", login: "idle", points: 0 }],
+      "paused-pool": [{ githubId: "1001", login: "first", points: 3 }],
+      "retired-pool": [{ githubId: "1001", login: "first", points: 3 }],
+    })
+    provide services(env, [active, paused, retired], ledgers) {
+      try proposeMonth(["--cycle", "2026-11"])
+      const first = try proposals(env)
+      const rows = try proposedRows(env, "alpha")
+      try proposeMonth(["--cycle", "2026-11"])
+      const again = try proposals(env)
+      const rowsAgain = try proposedRows(env, "alpha")
+      const month = try loadMonth({ projectId: "alpha", period: 202611 as never })
+      try same({
+        first: first.map((row) => [row.project_id, row.cap_base, row.recipient_count]),
+        rows,
+        repeated: [again, rowsAgain],
+        state: [month.state.phase, month.state.total, month.state.cap, month.state.shares],
+      }, {
+        first: [["alpha", "1000", 2]],
+        rows: [
+          { github_user_id: "1001", github_login: "first", gross_base: "750", source_digest: try origin("alpha", "1001") },
+          { github_user_id: "1002", github_login: "second", gross_base: "250", source_digest: try origin("alpha", "1002") },
+        ],
+        repeated: [first, rows],
+        state: ["Proposed", [0, 1], [0, 1], [{ actor: 1001, amount: [750] }, { actor: 1002, amount: [250] }]],
+      })
+    }
+    const broken = try registered(env, "broken-pool", "1000", {})
+    const brokenLedgers = try ledgersOf({ alpha: [], "broken-pool": [{ githubId: "not-a-number", login: "someone", points: 2 }] })
+    provide services(env, [active, broken], brokenLedgers) {
+      const refused = proposeMonth(["--cycle", "2026-11"]) catch effect (error) => {
+        return error._tag
+      }
+      const after = try proposals(env)
+      try same({ refused, proposed: after.map((row) => row.project_id) }, { refused: "ProposalsFailed", proposed: ["alpha"] })
+    }
+  })
+
+  it.effect(`Largest remainders break ties by numeric actor id and stay exact above 2^53 up to 2^128 - 1 (spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Contract amounts stay inside the unsigned integer range of their network")`, () => effect {
+    const { env } = try Journey
+    const big = try registered(env, "wide-pool", u128.toString(), {})
+    const ledgers = try ledgersOf({ "wide-pool": [{ githubId: "40", login: "forty", points: 1 }, { githubId: "10", login: "ten", points: 1 }, { githubId: "30", login: "thirty", points: 1 }, { githubId: "20", login: "twenty", points: 1 }] })
+    provide services(env, [big], ledgers) {
+      try proposeMonth(["--cycle", "2026-11"])
+      const rows = try proposedRows(env, "wide-pool")
+      const month = try loadMonth({ projectId: "wide-pool", period: 202611 as never })
+      const quarter = 1n << 126n
+      try same({
+        gross: rows.map((row) => [row.github_user_id, row.gross_base]),
+        total: (try orDie(Effect.try(() => rows.reduce((sum, row) => sum + BigInt(row.gross_base), 0n)))).toString(),
+        conserved: month.state.total === month.state.cap || JSON.stringify(month.state.total) === JSON.stringify(month.state.cap),
+      }, {
+        gross: [["10", quarter.toString()], ["20", quarter.toString()], ["30", quarter.toString()], ["40", (quarter - 1n).toString()]],
+        total: u128.toString(),
+        conserved: true,
+      })
+    }
+  })
+
+  it.effect(`The public authorization read answers the latest stored attempt from D1 alone and never calls a signer or RPC (spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/monthlyCommitment.md, "EVM signs the remaining sources at one finalized block; a source change makes a new attempt")`, () => effect {
+    const { env } = try Journey
+    const latestAuthorization = { plan: { family: "evm", allocationRoot: `0x${"b".repeat(64)}`, evmReservation: { version: 2, sourceSequence: "12" } }, signatureHex: "22" }
+    const first = JSON.stringify({ plan: { family: "evm", allocationRoot: `0x${"a".repeat(64)}`, evmReservation: { version: 2, sourceSequence: "7" } }, signatureHex: "11" })
+    const latest = JSON.stringify(latestAuthorization)
+    const digest = try sha256Hex("snapshot")
+    try seed(env, "INSERT INTO monthly_reward_bases (project_id, period, manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, created_at) VALUES ('published', '2026-11', '{}', ?, ?, '10', 0, '2026-12-01T12:00:00.000Z')", digest, digest)
+    try seed(env, "INSERT INTO monthly_payment_runs (project_id, period, trigger, actor_id, allocation_sequence, snapshot, snapshot_sha256, network, vault, total_gross_base, frozen_at, obligations_created_at) VALUES ('published', '2026-11', 'automatic', NULL, 0, 'snapshot', ?, 'base-sepolia', ?, '10', '2026-12-04T00:00:00.000Z', NULL)", digest, vault)
+    try seed(env, "UPDATE monthly_payment_runs SET obligations_created_at = '2026-12-04T00:05:00.000Z' WHERE project_id = 'published' AND period = '2026-11'")
+    try seed(env, "INSERT INTO monthly_payment_authorizations (project_id, period, network, snapshot_sha256, authorization, published_at) VALUES ('published', '2026-11', 'base-sepolia', ?, ?, '2026-12-04T00:10:00.000Z')", digest, first)
+    try seed(env, "INSERT INTO monthly_payment_authorization_attempts (project_id, period, network, source_sequence, authorization, published_at) VALUES ('published', '2026-11', 'base-sepolia', '7', ?, '2026-12-04T00:10:00.000Z')", first)
+    try seed(env, "INSERT INTO monthly_payment_authorization_attempts (project_id, period, network, source_sequence, authorization, published_at) VALUES ('published', '2026-11', 'base-sepolia', '12', ?, '2026-12-04T01:10:00.000Z')", latest)
+    const found = try ask(env, "/api/v1/payments/projects/published/monthly/2026-11/authorization/base-sepolia")
+    const missing = try ask(env, "/api/v1/payments/projects/published/monthly/2026-11/authorization/solana-devnet")
+    const malformed = try ask(env, "/api/v1/payments/projects/published/monthly/2026-13/authorization/base-sepolia")
+    try same({ answers: [found, missing, malformed], outbound }, {
+      answers: [
+        { status: 200, cache: "private, no-store", body: { authorization: latestAuthorization, publishedAt: "2026-12-04T01:10:00.000Z" } },
+        { status: 404, cache: "private, no-store", body: { error: "monthly_authorization_unavailable" } },
+        { status: 404, cache: "private, no-store", body: { error: "not_found" } },
+      ],
+      outbound: [],
+    })
+  })
+})

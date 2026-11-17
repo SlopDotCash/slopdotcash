@@ -1,10 +1,16 @@
-// spec/backend/referralCodes.md, "The reservation and change of active name commit together"
-import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+// spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"
+import { isoNow } from "@repo/platform/clock"
+import { D1, RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type CodeRecord, type Event, type LinkRegistry, NotAState, apply, decodeEvent, decodeState, recordFor } from "../../gen/backend__referralCodes.effect.vibe"
-import { isoNow } from "../clock.vibe"
+import { type CodeRecord, type Event, type LinkRegistry, type Lookup, NotAState, apply, decodeEvent, decodeState, recordFor } from "../../gen/backend__referralCodes.effect.vibe"
 
 schema CodeRow { code_key: string; code: string; github_id: string; retired_at: string | null }
+schema LinkedMember { github_id: string; login: string }
+
+export interface Followed {
+  readonly state: LinkRegistry
+  readonly membership: Lookup
+}
 
 effect function registry([rows]: ReadonlyArray<Rows>) {
   const codes = try decoded(CodeRow, rows ?? [], "referral codes")
@@ -18,13 +24,21 @@ effect function registry([rows]: ReadonlyArray<Rows>) {
   })
 }
 
+function codesIn(scope: Statement) {
+  return sql`SELECT code_key, code, github_id, retired_at FROM referral_codes WHERE ${scope} ORDER BY rowid`
+}
+
 function aggregate(name: string, scope: Statement): Aggregate<LinkRegistry, NotAState | RowMismatch, never> {
   return {
     name,
     version: sql`SELECT coalesce((SELECT group_concat(github_id || ':' || code_key || ':' || code || ':' || coalesce(retired_at, '-'), ',') FROM (SELECT * FROM referral_codes WHERE ${scope} ORDER BY rowid)), '') AS version`,
-    reads: [sql`SELECT code_key, code, github_id, retired_at FROM referral_codes WHERE ${scope} ORDER BY rowid`],
+    reads: [codesIn(scope)],
     decode: registry,
   }
+}
+
+function ownerOf(key: string) {
+  return sql`github_id = (SELECT github_id FROM referral_codes WHERE code_key = ${key})`
 }
 
 function namesOf(actor: string, key: string) {
@@ -58,4 +72,13 @@ export effect function send(event: Event, by: string) {
 
 export effect function receive(input: unknown, by: string) {
   return try send(try decodeEvent(input), by)
+}
+
+export effect function linkOf(key: string) {
+  const owner = ownerOf(key)
+  const [codes, member] = try (try D1).batch([codesIn(owner), sql`SELECT github_id, login FROM points_members WHERE ${owner} AND closed_at IS NULL`])
+  const state = try registry([codes?.rows ?? []])
+  const [found] = try decoded(LinkedMember, member?.rows ?? [], "referral link member")
+  const membership: Lookup = found === undefined ? { tag: "MemberAbsent" } : { tag: "MemberFound", actor: found.github_id, login: found.login }
+  return { state, membership } satisfies Followed
 }

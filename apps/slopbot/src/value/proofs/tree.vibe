@@ -1,0 +1,167 @@
+// spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
+import { concatBytes, gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { type PathLookup, type TreeRead, absenceProved, pathLookupLimit, treeVerified } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { baseName, entryTypeOfMode, isObjectId, isSafePath, isSafeSegment, parentPath } from "./gitObject.ts"
+import { type Fields, type Reads, fields, immutable, text, treeLimitBytes } from "./reads.vibe"
+
+export interface TreeEntry {
+  readonly path: string
+  readonly mode: string
+  readonly type: string
+  readonly sha: string
+}
+
+export type PathOutcome = { readonly kind: "present"; readonly entry: TreeEntry } | { readonly kind: "absent" }
+
+export interface TreeProof {
+  readonly treeSha: string
+  readonly entries: ReadonlyMap<string, TreeEntry>
+}
+
+function compareBytes(left: Uint8Array, right: Uint8Array) {
+  const shared = Math.min(left.length, right.length)
+  for (let index = 0; index < shared; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  return left.length - right.length
+}
+
+function objectIdBytes(sha: string) {
+  return Uint8Array.from({ length: 20 }, (_, index) => Number.parseInt(sha.slice(index * 2, index * 2 + 2), 16))
+}
+
+export function treeObjectSha(entries: ReadonlyArray<TreeEntry>) {
+  const named = entries.map((entry) => ({ entry, name: baseName(entry.path) }))
+  const keyed = named.map((item) => ({ ...item, key: textBytes(item.name + (item.entry.type === "tree" ? "/" : "\0")) }))
+  keyed.sort((a, b) => compareBytes(a.key, b.key))
+  const body = concatBytes(keyed.flatMap(({ entry, name }) => [textBytes(`${entry.mode.replace(/^0/u, "")} ${name}\0`), objectIdBytes(entry.sha)]))
+  return gitObjectId("tree", body)
+}
+
+function entryOf(value: unknown): TreeEntry | undefined {
+  const entry = fields(value)
+  const path = text(entry, "path")
+  const mode = text(entry, "mode")
+  const type = text(entry, "type")
+  const sha = text(entry, "sha")
+  return path === undefined || mode === undefined || type === undefined || sha === undefined ? undefined : { path, mode, type, sha }
+}
+
+function wellFormed(entry: TreeEntry | undefined, nested: boolean): entry is TreeEntry {
+  return entry !== undefined && (nested ? isSafePath(entry.path) : isSafeSegment(entry.path)) && isObjectId(entry.sha) && entryTypeOfMode(entry.mode) === entry.type
+}
+
+interface TreeObject { readonly sha: string | undefined; readonly truncated: unknown; readonly listed: ReadonlyArray<unknown> | undefined }
+
+function treeObjectOf(value: unknown): TreeObject {
+  const tree = fields(value)
+  const listed = tree?.["tree"]
+  return { sha: text(tree, "sha"), truncated: tree?.["truncated"], listed: Array.isArray(listed) ? listed : undefined }
+}
+
+effect function commitTree(repository: string, ref: string, reads: Reads | undefined) {
+  if (!isObjectId(ref)) return undefined
+  const commit: Fields | undefined = fields(try immutable(`/repos/${repository}/git/commits/${ref}`, treeLimitBytes, reads))
+  const treeSha = text(fields(commit?.["tree"]), "sha")
+  return text(commit, "sha") === ref && treeSha !== undefined && isObjectId(treeSha) ? treeSha : undefined
+}
+
+effect function treeProof(repository: string, ref: string, recursive: boolean, reads: Reads | undefined) {
+  const treeSha = try commitTree(repository, ref, reads)
+  if (treeSha === undefined) return undefined
+  const tree = treeObjectOf(try immutable(`/repos/${repository}/git/trees/${treeSha}${recursive ? "?recursive=1" : ""}`, treeLimitBytes, reads))
+  const listed = tree.listed ?? []
+  const entries = new Map<string, TreeEntry>()
+  const children = new Map<string, TreeEntry[]>()
+  let entriesWellFormed = tree.listed !== undefined
+  for (const value of listed) {
+    const entry = entryOf(value)
+    if (!wellFormed(entry, recursive) || entries.has(entry.path)) {
+      entriesWellFormed = false
+      break
+    }
+    entries.set(entry.path, entry)
+    const parent = parentPath(entry.path)
+    children.set(parent, [...children.get(parent) ?? [], entry])
+  }
+  if (entriesWellFormed) entriesWellFormed = [...children.keys()].every((parent) => parent === "" || entries.get(parent)?.type === "tree")
+  const subtrees = recursive ? [...entries.values()].filter((entry) => entry.type === "tree").map((entry) => [entry.path, entry.sha] as const) : []
+  const digestsMatch = entriesWellFormed && [["", treeSha] as const, ...subtrees].every(([path, expected]) => treeObjectSha(children.get(path) ?? []) === expected)
+  const read: TreeRead = {
+    commitMatches: true,
+    treeShaMatches: tree.sha === treeSha,
+    truncated: tree.truncated !== false,
+    entries: listed.length,
+    entriesWellFormed,
+    digestsMatch,
+  }
+  return treeVerified(read) ? { treeSha, entries } satisfies TreeProof : undefined
+}
+
+export effect function verifiedTree(repository: string, ref: string, reads?: Reads) {
+  return try treeProof(repository, ref, true, reads)
+}
+
+export effect function verifiedRootTree(repository: string, ref: string, reads?: Reads) {
+  return try treeProof(repository, ref, false, reads)
+}
+
+effect function childrenOf(repository: string, sha: string, total: number, reads: Reads | undefined) {
+  const tree = treeObjectOf(try immutable(`/repos/${repository}/git/trees/${sha}`, treeLimitBytes, reads))
+  const listed = tree.listed ?? []
+  const children = new Map<string, TreeEntry>()
+  let entriesWellFormed = tree.listed !== undefined
+  for (const value of listed) {
+    const entry = entryOf(value)
+    if (!wellFormed(entry, false) || children.has(entry.path)) {
+      entriesWellFormed = false
+      break
+    }
+    children.set(entry.path, entry)
+  }
+  const read: TreeRead = {
+    commitMatches: true,
+    treeShaMatches: tree.sha === sha,
+    truncated: tree.truncated !== false,
+    entries: total + listed.length,
+    entriesWellFormed,
+    digestsMatch: entriesWellFormed && treeObjectSha([...children.values()]) === sha,
+  }
+  return treeVerified(read) ? { children, read } : undefined
+}
+
+export effect function verifiedPaths(repository: string, ref: string, paths: ReadonlyArray<string>, reads?: Reads) {
+  if (paths.length === 0 || paths.length > pathLookupLimit || !paths.every(isSafePath)) return undefined
+  const rootSha = try commitTree(repository, ref, reads)
+  if (rootSha === undefined) return undefined
+  const trees = new Map<string, { readonly children: ReadonlyMap<string, TreeEntry>; readonly read: TreeRead }>()
+  const outcomes: Map<string, PathOutcome> = new Map()
+  let total = 0
+  for (const path of paths) {
+    let sha = rootSha
+    const parts = path.split("/")
+    const ancestors: TreeRead[] = []
+    for (const [depth, part] of parts.entries()) {
+      let tree = trees.get(sha)
+      if (tree === undefined) {
+        tree = try childrenOf(repository, sha, total, reads)
+        if (tree === undefined) return undefined
+        total = tree.read.entries
+        trees.set(sha, tree)
+      }
+      ancestors.push(tree.read)
+      const child = tree.children.get(part)
+      if (child === undefined) {
+        const lookup: PathLookup = { ancestors, childListed: false, contentsNotFound: false, lookupPaths: paths.length }
+        if (!absenceProved(lookup)) return undefined
+        outcomes.set(path, { kind: "absent" })
+        break
+      }
+      if (depth === parts.length - 1) outcomes.set(path, { kind: "present", entry: { ...child, path } })
+      else if (child.type !== "tree") return undefined
+      else sha = child.sha
+    }
+  }
+  return outcomes
+}

@@ -1,0 +1,258 @@
+// spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
+import { assert, it } from "@effect/vitest"
+import { type Role, templatePaths } from "../src/render/fields.ts"
+import { type GuideRequest, installClients, renderInstallGuide } from "../src/render/installGuide.ts"
+import { type InstallerAuthority, type InstallerText, createInstallCommand, productionAuthority } from "../src/render/installerProgram.ts"
+import { type Publication, buildProjectPublication } from "../src/render/publication.ts"
+import { generatedSkillName } from "../src/render/render.ts"
+import { type TemplateIndex, acceptedRevisions, guideRendererPaths, rendererSourcePaths, sha256Hex, sourceRepository, templateGroup, templateSha256 } from "../src/render/templateIndex.ts"
+
+module node {
+  import { spawnSync } from "node:child_process"
+  import { lstatSync, readFileSync, readdirSync } from "node:fs"
+  import { fileURLToPath } from "node:url"
+  export interface Run { readonly status: number | null; readonly stdout: string; readonly stderr: string }
+  /** @throws {never} */
+  export function repositoryRootOf(testFile: string): string {
+    return fileURLToPath(new URL("../../../", testFile))
+  }
+  function listed(root: string, prefix: string): string[] {
+    return readdirSync(`${root}/${prefix}`).flatMap((name) => {
+      const path = prefix === "" ? name : `${prefix}/${name}`
+      const stats = lstatSync(`${root}/${path}`)
+      if (stats.isSymbolicLink() || !(stats.isDirectory() || stats.isFile())) throw new TypeError(`${root}/${path} is not a regular file`)
+      return stats.isDirectory() ? listed(root, path) : [path]
+    })
+  }
+  /** @throws {Error} */
+  export function treeFiles(root: string, directory: string): Array<{ path: string; bytes: Uint8Array }> {
+    return listed(`${root}/${directory}`, "").map((path) => ({ path, bytes: new Uint8Array(readFileSync(`${root}/${directory}/${path}`)) }))
+  }
+  /** @throws {Error} */
+  export function repositoryBytes(root: string, path: string): Uint8Array {
+    return new Uint8Array(readFileSync(`${root}/${path}`))
+  }
+  /** @throws {Error} */
+  export function runNode(root: string, args: ReadonlyArray<string>, input: string): Run {
+    const run = spawnSync(process.execPath, [...args], { cwd: root, input, encoding: "utf8", env: { PATH: process.env.PATH ?? "" }, maxBuffer: 64 * 1024 * 1024 })
+    if (run.error !== undefined) throw run.error
+    return { status: run.status, stdout: run.stdout, stderr: run.stderr }
+  }
+}
+import { type Run, repositoryBytes, repositoryRootOf, runNode, treeFiles } from node
+
+const repositoryRoot = repositoryRootOf(import.meta.url)
+const frozenRenderer = "scripts/render-install-guide.mjs"
+const frozenCommit = "cc7cc3200e802917b92ca2e32682e2ef2f59aed6"
+const roles: ReadonlyArray<Role> = ["contributor", "reviewer"]
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+const frozenInstallCommand = `
+import { createInstallCommand } from "./src/lib/install-command.ts"
+let input = ""
+for await (const chunk of process.stdin) input += chunk
+const results = JSON.parse(input).map(({ origin, skillsRoot, options }) => {
+  try {
+    return { kind: "text", text: createInstallCommand(origin, skillsRoot, options) }
+  } catch (error) {
+    return { kind: "refused", message: error.message }
+  }
+})
+process.stdout.write(JSON.stringify(results))
+`
+
+effect function frozenGuide(request: GuideRequest) {
+  return try orDie(Effect.try(() => runNode(repositoryRoot, [
+    frozenRenderer,
+    "--artifact-origin", request.artifactOrigin,
+    "--client", request.client,
+    "--skill", request.skillName,
+    "--source", request.skillRepositoryPath,
+  ], "")))
+}
+
+function asRun(request: GuideRequest): Run {
+  const guide = renderInstallGuide(request)
+  return guide.kind === "guide"
+    ? { status: 0, stdout: guide.text, stderr: "" }
+    : { status: 1, stdout: "", stderr: `[Slop] installer guide refused: ${guide.message}\n` }
+}
+
+function skillRequests(projectId: string): ReadonlyArray<Omit<GuideRequest, "client">> {
+  const artifactOrigin = `https://slop.cash/projects/${projectId}`
+  return roles.map((role) => ({ artifactOrigin, skillName: generatedSkillName(role, projectId), skillRepositoryPath: templatePaths[role] }))
+}
+
+const fixtureSkills = [
+  ...skillRequests("slopdotcash"),
+  ...skillRequests("eliza"),
+  ...skillRequests("a"),
+  ...skillRequests("x".repeat(43)),
+  { artifactOrigin: "https://slop.cash/projects/slop", skillName: "slop", skillRepositoryPath: "skills/slop" },
+]
+
+const refusedGuides: ReadonlyArray<GuideRequest> = [
+  { artifactOrigin: "https://slop.cash/projects/a", client: "cursor", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "Contribute", skillRepositoryPath: "skills/Contribute" },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "codex", skillName: "slop", skillRepositoryPath: "skills/other" },
+  { artifactOrigin: "http://slop.cash/projects/a", client: "manual", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a/", client: "manual", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "claude-code", skillName: "contribute-to-a", skillRepositoryPath: templatePaths.reviewer },
+  { artifactOrigin: "https://slop.cash/projects/a", client: "claude-code", skillName: generatedSkillName("reviewer", "y".repeat(44)), skillRepositoryPath: templatePaths.reviewer },
+]
+
+const testAuthorities: ReadonlyArray<InstallerAuthority> = [
+  productionAuthority,
+  { kind: "test", apiOrigin: "file:///tmp/slop-api/", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "http://127.0.0.1:8080", rawOrigin: "http://127.0.0.1:8081/", registryOrigin: "http://127.0.0.1:8082/", requestTimeoutSeconds: 0.5 },
+  { kind: "test", apiOrigin: "https://api.github.com", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api", rawOrigin: "file:///tmp/slop-raw", requestTimeoutSeconds: 301 },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api?ref=main", rawOrigin: "file:///tmp/slop-raw" },
+  { kind: "test", apiOrigin: "file:///tmp/slop-api", rawOrigin: "file:///tmp/slop-raw", registryOrigin: "http://localhost:8082" },
+]
+
+const commandOrigins = ["https://slop.cash/projects/a/", "file:///tmp/slop-site", "http://127.0.0.1:3000/projects/a", "ftp://slop.cash/projects/a", "https://slop.cash/projects/a?x=1", "not a url"]
+
+const commandSkills = [
+  { skillName: "contribute-to-a", skillRepositoryPath: templatePaths.contributor },
+  { skillName: "review-a-contributions", skillRepositoryPath: templatePaths.reviewer },
+  { skillName: "slop", skillRepositoryPath: "skills/slop" },
+  { skillName: "slop", skillRepositoryPath: "skills/other" },
+  { skillName: "Slop", skillRepositoryPath: "skills/Slop" },
+]
+
+function frozenOptions(authority: InstallerAuthority, skill: { skillName: string; skillRepositoryPath: string }) {
+  if (authority.kind === "production") return skill
+  const { kind: _kind, ...testAuthority } = authority
+  return { ...skill, testAuthority }
+}
+
+effect function frozenTemplateIndex() {
+  const groups = [] as Array<{ role: Role; files: Array<{ path: string; bytes: Uint8Array }> }>
+  for (const role of roles) groups.push({ role, files: try orDie(Effect.try(() => treeFiles(repositoryRoot, templatePaths[role]))) })
+  const contributor = templateGroup("contributor", groups[0]?.files ?? [])
+  const reviewer = templateGroup("reviewer", groups[1]?.files ?? [])
+  if (contributor.kind !== "group" || reviewer.kind !== "group") return try die(new Error("the committed template trees are not bounded"))
+  const sources = [] as Array<{ path: string; sha256: string }>
+  for (const path of rendererSourcePaths) sources.push({ path, sha256: sha256Hex(try orDie(Effect.try(() => repositoryBytes(repositoryRoot, path)))) })
+  const index: TemplateIndex = {
+    schemaVersion: "1",
+    repository: sourceRepository,
+    commit: frozenCommit,
+    templateSha256: templateSha256({ contributor: contributor.group, reviewer: reviewer.group, rendererSources: sources, acceptedRevisions }),
+    revisionStatus: "committed",
+    contributor: contributor.group,
+    reviewer: reviewer.group,
+    renderer: { paths: [...guideRendererPaths], sources, revisionStatus: "committed" },
+    acceptedRevisions: [...acceptedRevisions],
+  }
+  const fetched = new Map(groups.flatMap(({ role, files }) => files.map((file) => [`${templatePaths[role]}/${file.path}`, file.bytes] as const)))
+  return { index, fetched }
+}
+
+function project(id: string, contribution: boolean) {
+  return {
+    id,
+    skill: { id: generatedSkillName("contributor", id), sourcePath: templatePaths.contributor },
+    reviewSkill: { id: generatedSkillName("reviewer", id), sourcePath: templatePaths.reviewer },
+    repositories: [{ id: "SlopDotCash/slopdotcash", integrationBranch: "development" }],
+    ...(contribution
+      ? {
+          contribution: {
+            approvedScope: "Settlement and scoring.",
+            contributionGuide: "Read CONTRIBUTING.md.",
+            supportedTasks: "Bugs, tests and 日本語 docs.",
+            requiredTests: "pnpm check",
+            reviewExpectations: "One maintainer review.",
+            securityContact: "security@example.org",
+            closurePolicy: "Stale work closes after 30 days.",
+            maintainerNotes: "",
+          },
+        }
+      : {}),
+  }
+}
+
+schema GuideRenderer { entrypoint: string; revision: string | null; revisionStatus: string; paths: ReadonlyArray<string>; arguments: ReadonlyArray<string> }
+schema GuideRecord { publicUrl: string; sha256: string; renderer: GuideRenderer }
+schema ManifestGuides { codex: GuideRecord; claude: GuideRecord; manual: GuideRecord }
+schema ArchiveRecord { sha256: string }
+schema SkillManifest { name: string; archive: ArchiveRecord; guides: ManifestGuides }
+
+function served(publication: Publication, path: string) {
+  return publication.kind === "published" ? publication.files.get(path) ?? new Uint8Array(0) : new Uint8Array(0)
+}
+
+it.effect('Every install guide equals the frozen renderer\'s bytes for every client and skill (spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential")', () => effect {
+  const requests = [...fixtureSkills.flatMap((skill) => installClients.map((client) => ({ ...skill, client }))), ...refusedGuides]
+  const frozen = [] as Array<Run>
+  for (const request of requests) frozen.push(try frozenGuide(request))
+  const production = requests.map(renderInstallGuide).filter((guide) => guide.kind === "guide").every((guide) => guide.text.includes("'https://api.github.com' 'https://raw.githubusercontent.com'"))
+  try Effect.try(() => assert.deepStrictEqual(
+    { guides: requests.map(asRun), production, refused: requests.map(asRun).filter((run) => run.status !== 0).length },
+    { guides: frozen, production: true, refused: refusedGuides.length },
+  ))
+})
+
+it.effect('The installer program text equals the frozen generator for production and test authorities (spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"; spec/contributor/skillAuthority.md, "Retry transient transport failures up to three attempts"; spec/contributor/installation.md, "Installation tracks verification, activation, and readback separately")', () => effect {
+  const cases = commandOrigins.flatMap((origin) => testAuthorities.flatMap((authority) => commandSkills.map((skill) => ({ origin, authority, skill }))))
+  const ours: ReadonlyArray<InstallerText> = cases.map(({ origin, authority, skill }) => createInstallCommand({ artifactOrigin: origin, skillsRoot: "${HOME}/.agents/skills", ...skill, authority }))
+  const run = try orDie(Effect.try(() => runNode(repositoryRoot, ["--input-type=module", "-e", frozenInstallCommand], JSON.stringify(cases.map(({ origin, authority, skill }) => ({ origin, skillsRoot: "${HOME}/.agents/skills", options: frozenOptions(authority, skill) }))))))
+  const frozen: unknown = try orDie(Effect.try(() => JSON.parse(run.stdout)))
+  try Effect.try(() => assert.deepStrictEqual(
+    { status: run.status, commands: ours, written: ours.filter((command) => command.kind === "text").length > 0, refused: ours.filter((command) => command.kind === "refused").length > 0 },
+    { status: 0, commands: frozen, written: true, refused: true },
+  ))
+})
+
+it.effect('A published project carries guides the bootstrap rebuilds from the frozen renderer and an archive matching its checksum (spec/contributor/publication.md, "The bootstrap\'s renderer contract names files that exist byte-identical at the build commit"; spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest")', () => effect {
+  const { index, fetched } = try frozenTemplateIndex()
+  const inputs = { index, fetched, revision: 4, manifestSha256: "b".repeat(64), generatedAt: "2026-11-01T00:00:00.000Z" }
+  const publication = buildProjectPublication({ ...inputs, manifest: project("slopdotcash", true) })
+  const checks = [] as Array<unknown>
+  for (const prefix of ["", "review-"]) {
+    const text = decoder.decode(served(publication, `${prefix}skill-manifest.json`))
+    const manifest = try orDie(Schema.decodeUnknownEffect(SkillManifest)(try orDie(Effect.try(() => JSON.parse(text)))))
+    const archive = served(publication, `downloads/${manifest.name}.skill`)
+    for (const [file, record] of [["codex.md", manifest.guides.codex], ["claude.md", manifest.guides.claude], ["manual.md", manifest.guides.manual]] as const) {
+      const rebuilt = try orDie(Effect.try(() => runNode(repositoryRoot, [record.renderer.entrypoint, ...record.renderer.arguments], "")))
+      const guide = decoder.decode(served(publication, `${prefix}${file}`))
+      checks.push({
+        rebuilt: rebuilt.status === 0 && rebuilt.stdout === guide,
+        digest: sha256Hex(encoder.encode(rebuilt.stdout)) === record.sha256,
+        contract: [record.renderer.revision, record.renderer.revisionStatus, record.renderer.paths, record.publicUrl.endsWith(`/projects/slopdotcash/${prefix}${file}`)],
+      })
+    }
+    checks.push({
+      checksum: decoder.decode(served(publication, `downloads/${manifest.name}.skill.sha256`)) === `${sha256Hex(archive)}  ${manifest.name}.skill\n`,
+      archive: manifest.archive.sha256 === sha256Hex(archive),
+      claudeAlias: decoder.decode(served(publication, `${prefix}claude-code.md`)) === decoder.decode(served(publication, `${prefix}claude.md`)),
+      mission: decoder.decode(served(publication, `${prefix}mission.md`)).startsWith(decoder.decode(served(publication, `${prefix}skill.md`))),
+    })
+  }
+  const tampered = new Map(fetched)
+  tampered.set(`${templatePaths.reviewer}/SKILL.md`, encoder.encode("tampered\n"))
+  const guide = { rebuilt: true, digest: true, contract: [frozenCommit, "committed", [...guideRendererPaths], true] }
+  const artifact = { checksum: true, archive: true, claudeAlias: true, mission: true }
+  try Effect.try(() => assert.deepStrictEqual(
+    {
+      paths: publication.kind === "published" ? [...publication.files.keys()] : publication.kind,
+      checks,
+      unpublished: buildProjectPublication({ ...inputs, manifest: project("slopdotcash", false) }),
+      tampered: buildProjectPublication({ ...inputs, fetched: tampered, manifest: project("slopdotcash", true) }),
+      uncommitted: buildProjectPublication({ ...inputs, index: { ...index, commit: "main" }, manifest: project("slopdotcash", true) }),
+    },
+    {
+      paths: roles.flatMap((role) => {
+        const prefix = role === "reviewer" ? "review-" : ""
+        const name = generatedSkillName(role, "slopdotcash")
+        return [...["skill.md", "mission.md", "codex.md", "claude.md", "claude-code.md", "manual.md", "skill-manifest.json"].map((file) => `${prefix}${file}`), `downloads/${name}.skill`, `downloads/${name}.skill.sha256`]
+      }),
+      checks: [guide, guide, guide, artifact, guide, guide, guide, artifact],
+      unpublished: { kind: "unpublished" },
+      tampered: { kind: "unavailable", problem: { reason: "templateFiles", role: "reviewer", failure: { kind: "digestMismatch", path: `${templatePaths.reviewer}/SKILL.md` } } },
+      uncommitted: { kind: "unavailable", problem: { reason: "commitNotFullSha" } },
+    },
+  ))
+})

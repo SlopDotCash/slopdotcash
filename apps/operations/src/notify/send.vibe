@@ -1,0 +1,136 @@
+// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"
+import type { EmailMessage, SendEmail } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { type AccessCheck, type ProviderResult, Rejected } from "../../gen/operations__notifications.effect.vibe"
+import { providerResultOf } from "../notifications/contracts.schema.vibe"
+import type { Channel, Projection, Release } from "../notifications/rows.vibe"
+import { observe, send } from "../notifications/store.vibe"
+import { type Claimed, type Located, type OutboxRow, claimOne, dueRows, expireStale } from "./claim.vibe"
+import { type Configured, NotifySettings, releaseFor, senderValid } from "./config.vibe"
+import { caseOf, escalateNotice, escalationScan } from "./escalate.vibe"
+import { activityNoticeText, caseNoticeText, inboxNoticeMime, unsubscribeUrlOf } from "./letters.vibe"
+import { caseAccess, destinationOf, factsOf, heldNotice, noticeAccess, unsubscribeToken } from "./prepare.vibe"
+
+export interface OutgoingMail {
+  readonly from: string
+  readonly to: string
+  readonly raw: string
+}
+
+export error MailRefused { result: Exclude<ProviderResult, "Accepted"> }
+
+export service Mail {
+  send(mail: OutgoingMail): void!MailRefused
+}
+
+export function mailVia(binding: SendEmail, envelope: (mail: OutgoingMail) => EmailMessage) {
+  return Layer.succeed(Mail, {
+    send: (mail) => tryPromise({ try: () => binding.send(envelope(mail)), catch: (thrown) => new MailRefused({ result: providerResultOf(thrown) }) }),
+  })
+}
+
+export error SenderInvalid
+
+export error PilotMisconfigured { channel: Channel }
+
+export error DispatchFailed { channel: Channel }
+
+effect function lostOwnership<A, E, R>(step: A!E!R) {
+  return step catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+}
+
+function at(found: Located, projection: Projection): Located {
+  return { ...found, projection }
+}
+
+effect function escalatedIfFailed(found: Located, access: AccessCheck, release: Release) {
+  if (found.channel !== "security") return
+  const state = heldNotice(found.projection, found.id).state
+  if (state === "Exhausted" || state === "Ambiguous") try escalateNotice(found, access, release)
+}
+
+effect function retryWithoutSend(claimed: Claimed, access: AccessCheck, release: Release) {
+  const retried = try lostOwnership(send(claimed.scope, { type: "failPreparation", id: claimed.id, attempt: claimed.attempt }, "", release))
+  if (retried !== undefined) try escalatedIfFailed(at(claimed, retried), access, release)
+}
+
+effect function stillOwned(claimed: Claimed, release: Release) {
+  const held = heldNotice(try observe(claimed.scope, release), claimed.id)
+  return held.state === "Sending" && held.attempts === claimed.attempt && held.prepared
+}
+
+effect function composed(claimed: Claimed, pilot: Configured, from: string) {
+  const destination = try destinationOf(claimed, pilot)
+  const token = destination.registeredVersion !== undefined && pilot.unsubscribeKey !== undefined ? try unsubscribeToken(pilot.unsubscribeKey, destination.registeredVersion) : undefined
+  const held = heldNotice(claimed.projection, claimed.id)
+  const text = claimed.channel === "security" ? caseNoticeText(held.template === "ReceiptTemplate", pilot.inboxUrl, token) : activityNoticeText(held.essential, pilot.inboxUrl, token)
+  const raw = try inboxNoticeMime({
+    from,
+    to: destination.address,
+    subject: claimed.channel === "security" ? "Slop private inbox notice" : "Slop inbox notice",
+    at: try Clock.currentTimeMillis,
+    deliveryId: claimed.outboxId,
+    attempt: claimed.attempt,
+    text,
+    ...token === undefined ? {} : { unsubscribeUrl: unsubscribeUrlOf(pilot.inboxUrl, token) },
+  })
+  return { from, to: destination.address, raw } satisfies OutgoingMail
+}
+
+effect function accessOf(claimed: Claimed) {
+  return claimed.channel === "security" ? try caseAccess(caseOf(claimed), claimed.recipient) : try noticeAccess(factsOf(claimed))
+}
+
+export effect function deliver(claimed: Claimed, pilot: Configured, from: string, release: Release) {
+  const access = try accessOf(claimed)
+  const preparing = send(claimed.scope, { type: "prepare", id: claimed.id, attempt: claimed.attempt, access }, "", release) catch effect (error) => match (error) {
+    when Rejected: "lost" as const;
+    default: "failed" as const;
+  }
+  if (preparing === "lost") return
+  if (preparing === "failed") return try retryWithoutSend(claimed, access, release)
+  const prepared = { ...claimed, projection: preparing } satisfies Claimed
+  if (!heldNotice(preparing, claimed.id).prepared) return try escalatedIfFailed(prepared, access, release)
+  const outgoing = composed(prepared, pilot, from) catch () => undefined
+  if (outgoing === undefined) return try retryWithoutSend(prepared, access, release)
+  const owned = stillOwned(prepared, release) catch () => undefined
+  if (owned === undefined) return try retryWithoutSend(prepared, access, release)
+  if (!owned) return
+  const result = Effect.as((try Mail).send(outgoing), "Accepted" as ProviderResult) catch (refused) => refused.result
+  const recorded = try lostOwnership(send(prepared.scope, { type: "send", id: claimed.id, attempt: claimed.attempt, result }, "", release))
+  if (recorded !== undefined) try escalatedIfFailed(at(prepared, recorded), access, release)
+}
+
+effect function deliverDue(channel: Channel, row: OutboxRow, pilot: Configured, from: string, release: Release) {
+  const claimed = try claimOne(channel, row, release)
+  if (claimed !== undefined) try deliver(claimed, pilot, from, release)
+}
+
+export effect function dispatch(channel: Channel, pilot: Configured, from: string, release: Release) {
+  if (!senderValid(from)) throw new SenderInvalid()
+  try expireStale(channel, release)
+  const due = try isoNow()
+  for (const row of try dueRows(channel, due)) try deliverDue(channel, row, pilot, from, release)
+  if (channel === "security") try escalationScan(release)
+}
+
+export effect function dispatchChannel(channel: Channel) {
+  const settings = try NotifySettings
+  const pilot = channel === "security" ? settings.security : settings.activity
+  if (pilot.kind !== "on") return pilot.kind
+  try dispatch(channel, pilot, settings.from, releaseFor(settings))
+  return "dispatched" as const
+}
+
+export effect function drain() {
+  const settings = try NotifySettings
+  const security = try exit(dispatchChannel("security"))
+  const activity = try exit(dispatchChannel("activity"))
+  if (settings.security.kind === "misconfigured") throw new PilotMisconfigured({ channel: "security" })
+  if (settings.activity.kind === "misconfigured") throw new PilotMisconfigured({ channel: "activity" })
+  if (Exit.isFailure(security)) throw new DispatchFailed({ channel: "security" })
+  if (Exit.isFailure(activity)) throw new DispatchFailed({ channel: "activity" })
+}

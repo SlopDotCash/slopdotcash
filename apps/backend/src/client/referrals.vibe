@@ -1,0 +1,25 @@
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema CodeFields { readonly code: Schema.Unknown }
+
+export schema ChosenCode { readonly code: string }
+
+export schema Referrer { readonly githubId: string; readonly githubLogin: string }
+
+export schema ReferredProject {
+  readonly projectId: string
+  readonly status: "active" | "paused"
+  readonly listedAt: string
+  readonly referrer: Referrer
+}
+
+export schema ReferredProjects {
+  readonly schema: "slop-referred-projects-v1"
+  readonly projects: ReadonlyArray<ReferredProject>
+}
+
+export const chooseCode = route({ method: "POST", path: "/api/v1/referrals/code", access: "sessionWrite", limitKib: 1, request: CodeFields, answer: ChosenCode, rejected: "code_taken", cache: "private" })
+export const referredProjects = route({ method: "GET", path: "/api/v1/referrals/projects", access: "public", limitKib: 1, request: undefined, answer: ReferredProjects, rejected: "not_found", cache: { browserSeconds: 300 } })
+
+export const api: ReadonlyArray<AnyRoute> = [chooseCode, referredProjects]

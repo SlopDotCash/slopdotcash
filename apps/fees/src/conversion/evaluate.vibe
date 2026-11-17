@@ -1,0 +1,68 @@
+// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
+import { type Quote, type RowState, canEvaluate, outcomeOf, remaining, spendable } from "../../gen/fees__conversion.effect.vibe"
+import { ConversionChain, type QuoteFound, type QuoteRead, quoteNumber, safeNumber, wideNumber } from "./chain.vibe"
+import { type Session, step } from "./session.vibe"
+
+module verified {
+  import { rescaleInput as rescaled } from "../kernels/arithmetic.ts"
+  /** @throws {never} */
+  export function rescaleInput(amount: bigint, remaining: bigint, quotedOut: bigint): bigint { return rescaled(amount, remaining, quotedOut) }
+}
+import { rescaleInput } from verified
+
+export const rescaleAttempts = 3
+
+export error QuoteUnrepresentable { token: string; field: string }
+
+export interface Evaluated { readonly state: RowState; readonly quote: QuoteFound | undefined }
+
+function probe(token: number, amountIn: number): Quote {
+  return { token, route: "Found", amountIn, output: 0, minimumOutput: 0, gasValue: 0, impactBps: 0 }
+}
+
+effect function valued(value: bigint, address: string, field: string) {
+  const number = quoteNumber(value)
+  if (number === undefined) throw new QuoteUnrepresentable({ token: address, field })
+  return number
+}
+
+effect function factOf(token: number, address: string, amountIn: number, read: QuoteRead) {
+  if (read.kind === "noRoute") return { token, route: "NoRouteResult", amountIn, output: 0, minimumOutput: 0, gasValue: 0, impactBps: -1 } satisfies Quote
+  return {
+    token,
+    route: "Found",
+    amountIn,
+    output: try valued(read.output, address, "output"),
+    minimumOutput: try valued(read.minimumOutput, address, "minimumOutput"),
+    gasValue: try valued(read.gasValue, address, "gasValue"),
+    impactBps: read.impactBps ?? -1,
+  } satisfies Quote
+}
+
+export effect function evaluateToken(session: Session, token: number, address: string, target: string) {
+  const chain = try ConversionChain
+  const available = spendable(session.state, token)
+  if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available))) return undefined
+  const held = try chain.balance(address)
+  let input = held < wideNumber(available) ? held : wideNumber(available)
+  if (input <= 0n) return undefined
+  const targetBalanceBefore = (try chain.balance(target)).toString()
+  let read = try chain.quote(address, input)
+  const cap = wideNumber(remaining(session.state))
+  for (let attempt = 0; attempt < rescaleAttempts && read.kind === "found" && read.output > cap && cap > 0n; attempt++) {
+    const scaled = rescaleInput(input, cap, read.output)
+    if (scaled <= 0n) break
+    input = scaled
+    read = try chain.quote(address, input)
+  }
+  const amountIn = safeNumber(input)
+  if (amountIn === undefined) throw new QuoteUnrepresentable({ token: address, field: "amountIn" })
+  const quote = try factOf(token, address, amountIn, read)
+  const outcome = outcomeOf(session.state, quote)
+  const facts = read.kind === "noRoute"
+    ? { targetToken: target, detail: read.detail, targetBalanceBefore }
+    : { targetToken: target, route: read.route, summary: read.summary.slice(0, 8192), targetBalanceBefore }
+  const next = try step(session, { type: "evaluate", runId: session.runId, quote }, facts)
+  if (next === undefined) return undefined
+  return { state: outcome.state, quote: read.kind === "found" ? { ...read, amountIn: input } : undefined } satisfies Evaluated
+}

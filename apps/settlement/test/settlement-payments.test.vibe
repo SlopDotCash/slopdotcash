@@ -1,0 +1,677 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { type Hex } from "@repo/platform/chain/evm"
+import { SolanaRpc, address as solanaAddress, publicKey, solanaRpc } from "@repo/platform/chain/solana"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, first, rows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { type Handler, database, migrate, startWorker } from "@repo/platform/testing"
+import { anvil, deploy, forgeBuild, forward, rpc, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { EffectiveWallet, type Network, Registry, Wallets } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { Response, fetch } from "miniflare"
+import { type Address, encodeFunctionData, parseAbi } from "viem"
+import { type Bytes32, type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress, uintWord } from "../src/chain/evm/abi.ts"
+import { commitAwardCalldata, payCalldata } from "../src/chain/evm/actions.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { type BindingInput, bindCalldata, bindingTypedData } from "../src/chain/evm/typedData.ts"
+import { decodeProject } from "../src/chain/solana/accounts.ts"
+import { decodeEscrowCall } from "../src/chain/solana/instructions.ts"
+import { readMint } from "../src/kernels/token2022.ts"
+import { chainAwards, holdsAward } from "../src/payments/chainAwards.vibe"
+import { type AttemptStatus, type PaymentRequest, ExecutorUnavailable, PaymentExecutor, type Retirement, dispatchPayment, releaseAuthorized, runPaymentDispatch } from "../src/payments/dispatch.vibe"
+import { type Indexed, indexPaymentEvent, obligationState, reindexHeld } from "../src/payments/ledger.vibe"
+import { reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
+import { type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
+import { AuthorizedWallet, WalletHistory } from "../src/payments/wallets.vibe"
+import type { EvmDeployment } from "../src/vault/policy.vibe"
+import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
+import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, tokenProjects } from "./support/solana/escrow.ts"
+
+interface Script {
+  readonly submits: PaymentRequest[]
+  readonly answers: Array<"lose" | string>
+  readonly statuses: Map<string, AttemptStatus>
+  readonly retirements: Map<string, Retirement>
+}
+
+type ReceiptEdit = (receipt: Readonly<Record<string, unknown>>) => unknown
+
+service Journey {
+  readonly escrow: EscrowStack
+  readonly db: D1Database
+  readonly script: Script
+  readonly edits: Map<string, ReceiptEdit>
+  readonly tampered: string
+}
+
+const windowOpen = 1796346000
+const farFuture = 4102444800n
+const network = "base-mainnet"
+const contracts = new URL("../../../packages/contracts/evm", import.meta.url).pathname
+const tokenAbi = parseAbi(["function mint(address to, uint256 amount)", "function transfer(address to, uint256 amount) returns (bool)"])
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function editedAnswer(request: string, answer: string, edits: ReadonlyMap<string, ReceiptEdit>): string {
+  try {
+    const calls: unknown = JSON.parse(request)
+    const results: unknown = JSON.parse(answer)
+    const callList: ReadonlyArray<unknown> = Array.isArray(calls) ? calls : [calls]
+    const resultList: ReadonlyArray<unknown> = Array.isArray(results) ? results : [results]
+    const mapped = resultList.map((item) => {
+      if (!isRecord(item) || !isRecord(item.result)) return item
+      const call = callList.find((candidate) => isRecord(candidate) && candidate.id === item.id)
+      if (!isRecord(call) || call.method !== "eth_getTransactionReceipt" || !Array.isArray(call.params)) return item
+      const edit = edits.get(String(call.params[0]).toLowerCase())
+      return edit === undefined ? item : { ...item, result: edit(item.result) }
+    })
+    return JSON.stringify(Array.isArray(results) ? mapped : mapped[0])
+  } catch {
+    return answer
+  }
+}
+
+function tampering(upstream: string, edits: ReadonlyMap<string, ReceiptEdit>): Handler {
+  return async (request) => {
+    const body = await request.text()
+    const answer = await fetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body })
+    return new Response(editedAnswer(body, await answer.text(), edits), { status: answer.status, headers: { "content-type": "application/json" } })
+  }
+}
+
+const Started = Layer.effect(Journey, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  chain.setFinalized(1_000_000_000_000n)
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const edits = new Map<string, ReceiptEdit>()
+  const tamper = try acquireRelease(promise(() => serve(tampering(chain.url, edits))), (served) => promise(() => served.close()))
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  try promise(() => db.prepare("CREATE TABLE journey_notices (event_key TEXT PRIMARY KEY, recipient TEXT NOT NULL, kind TEXT NOT NULL) STRICT").run())
+  return { escrow, db, script: { submits: [], answers: [], statuses: new Map(), retirements: new Map() }, edits, tampered: tamper.url }
+})
+
+const chains = { Base: "base", Ethereum: "ethereum", Robinhood: "robinhood", Solana: "solana" } as const satisfies Record<Network, string>
+
+const ports = Layer.mergeAll(
+  Layer.effect(WalletHistory, effect {
+    const db = try D1
+    return {
+      authorized: (owner) => provideService(rows(AuthorizedWallet, sql`SELECT w.id AS claimId, w.record_sha256 AS digest, w.wallet_address AS address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
+    }
+  }),
+  Layer.effect(Wallets, effect {
+    const db = try D1
+    return {
+      effective: (owner) => provideService(first(EffectiveWallet, sql`SELECT wallet_address AS address, id AS claimId, record_sha256 AS digest FROM effective_payment_wallet_claims WHERE github_user_id = ${owner.githubId} AND chain = ${chains[owner.network]}`), D1, db),
+    }
+  }),
+  Layer.succeed(Notices, {
+    statements: (batch) => effect { return batch.notices.map((notice) => sql`INSERT OR IGNORE INTO journey_notices (event_key, recipient, kind) VALUES (${notice.eventKey}, ${notice.recipientGithubId}, ${notice.kind})`) },
+    fanout: () => effect { return [] },
+  }),
+  Layer.succeed(Registry, {
+    project: (projectId) => effect { return { projectId, revision: 1, manifestSha256: "0".repeat(64), rowStatus: "Active" as const, manifestStatus: "Active" as const, listingTier: "Community" as const, retirement: "NotRetired" as const, stewardGithubId: "7", repositories: [], closureConsent: false } },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return [] },
+    fence: () => effect { return sql`SELECT 1` },
+  }),
+)
+
+function executorOf(script: Script) {
+  return Layer.succeed(PaymentExecutor, {
+    submit: (_family, payment) => effect {
+      script.submits.push(payment)
+      const answer = script.answers.shift()
+      if (answer === undefined || answer === "lose") throw new ExecutorUnavailable({ reason: "lost response" })
+      return { transactionId: answer }
+    },
+    status: (_family, identity) => effect {
+      const status = script.statuses.get(identity.idempotencyKey)
+      if (status === undefined) throw new ExecutorUnavailable({ reason: "journal unavailable" })
+      return status
+    },
+    cancelUnsubmitted: (_family, identity) => effect {
+      return script.retirements.get(identity.idempotencyKey) ?? { retired: false, transactionId: null }
+    },
+  })
+}
+
+type Shelled = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | WalletHistory | Wallets | Notices | Registry | PaymentExecutor
+
+effect function on<A, E>(db: D1Database, script: Script, program: A!E!Shelled) {
+  provide Layer.mergeAll(Layer.provideMerge(ports, Layer.mergeAll(d1(db), webCrypto, outbound)), executorOf(script)) {
+    return try program
+  }
+}
+
+effect function shell<A, E>(program: A!E!Shelled) {
+  const { db, script } = try Journey
+  return try on(db, script, program)
+}
+
+function said(error: unknown) {
+  return error instanceof EvidenceRefused ? `refused: ${error.reason}` : `refused: ${failureTag(error)}`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function address(account: Address) {
+  const parsed = evmAddress(account)
+  if (parsed === undefined) return try die(new Error(`${account} is not an address`))
+  return parsed
+}
+
+function hexBytes(hex: string) {
+  const bytes = new Uint8Array((hex.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(hex.slice(2 + index * 2, 4 + index * 2), 16)
+  return bytes
+}
+
+effect function codeDigest(at: string) {
+  const { escrow } = try Journey
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  return try sha256Hex(hexBytes(String(code)))
+}
+
+effect function reviewed(project: string, vault: EvmAddress, owner: EvmAddress) {
+  const { escrow } = try Journey
+  const slot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${slot.slice(-40)}`
+  return {
+    family: "evm", chain: "base", chainId: escrow.chainId, projectId: project, scope: "ordinary", network, vault, asset: escrow.dollar, owner,
+    identityAuthority: try address(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, deploymentTransaction: "", sourceCommit: "0".repeat(40),
+    codeSha256: try codeDigest(vault), bindingDelaySeconds: "0", scanPageBlocks: 2000n, gasCeiling: 500000n,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow.factory), registrar: try address(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try address(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+      history: [],
+    },
+    maxNativeCostWei: undefined,
+    bindingConsentNonceLimit: undefined,
+  } satisfies EvmDeployment
+}
+
+effect function opened(project: bigint, owner: Address) {
+  const { escrow } = try Journey
+  const ownerAddress = try address(owner)
+  const vault = try promise(() => escrow.createVault({ owner: ownerAddress, projectId: word(project), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: false }))
+  const projectId = `project-${project}`
+  const review = try reviewed(projectId, vault, ownerAddress)
+  const deployment: EvmPaymentDeployment = { family: "evm", projectId, network, chain: "base", chainId: escrow.chainId, vault, owner: ownerAddress, feeRecipient: FEE_RECIPIENT, scope: "Ordinary", rpc: Redacted.make([escrow.chain.url]), review }
+  try snapshot(projectId, vault, escrow.dollar)
+  return { vault, deployment, asset: { address: escrow.dollar, decimals: 6 } satisfies VaultAsset }
+}
+
+effect function tamperedFor(deployment: EvmPaymentDeployment) {
+  const { tampered } = try Journey
+  return { ...deployment, rpc: Redacted.make([tampered]) } satisfies EvmPaymentDeployment
+}
+
+function snapshotRow(projectId: string, networkKey: string, chain: string, vault: string, asset: string, decimals: number, now: string) {
+  return sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at) VALUES (${projectId}, ${networkKey}, ${chain}, ${vault}, ${asset}, ${decimals}, '0', '0', '0', '0', '0', '0', NULL, NULL, NULL, NULL, NULL, '1', ${now}, ${now})`
+}
+
+effect function snapshot(projectId: string, vault: string, asset: string) {
+  try written([snapshotRow(projectId, network, "base", vault, asset, 6, try isoNow())])
+}
+
+effect function written(statements: ReadonlyArray<Statement>) {
+  try shell(effect { try (try D1).batch(statements) })
+}
+
+effect function authorize(actor: string, wallet: string, claim: string, supersedes: string | null) {
+  const now = try isoNow()
+  const body = try sha256Hex(`${claim}:body`)
+  const record = try sha256Hex(`${claim}:record`)
+  try written([
+    sql`INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, issue_repository, issue_number, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at, chain) VALUES (${claim}, ${actor}, ${`member-${actor}`}, ${wallet}, 'd1_registry', NULL, NULL, ${body}, ${now}, ${record}, ${supersedes}, ${now}, 'base')`,
+    sql`INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at) VALUES (${`challenge-${claim}`}, ${claim}, ${actor}, 'journey', '2099-01-01T00:00:00.000Z', ${now})`,
+    sql`INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (${claim}, ${actor}, ${now}, ${`challenge-${claim}`}, 'journey')`,
+  ])
+  return record
+}
+
+effect function committed(vault: EvmAddress, source: bigint, actor: bigint, gross: bigint) {
+  const { escrow } = try Journey
+  const sourceDigest = word(source)
+  const id = try Effect.try(() => awardId(escrow.chainId, vault, sourceDigest))
+  const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor, gross, sourceDigest }))
+  const receipt = try promise(() => escrow.send(escrow.roles.owner.address, vault, data))
+  return { id, receipt, index: try eventIndex(vault, receipt.blockNumber, receipt.transactionHash, "AwardCommitted") }
+}
+
+effect function eventIndex(vault: EvmAddress, block: bigint, transaction: Hex, name: string) {
+  const { escrow } = try Journey
+  const logs = try promise(() => escrow.logs(vault, block, block))
+  const found = decodeEscrowLogs(vault, logs).find((decoded) => decoded.kind === "event" && decoded.event.name === name && decoded.at.transaction === transaction.toLowerCase())
+  if (found === undefined) return try die(new Error(`no ${name} in ${transaction}`))
+  return found.at.index
+}
+
+effect function bound(vault: EvmAddress, actor: bigint, destination: EvmAddress, expectedVersion: bigint, claimDigest: string) {
+  const { escrow } = try Journey
+  const binding: BindingInput = { actor, destination, expectedVersion, claimDigest: `0x${claimDigest}` as Bytes32, expiresAt: farFuture }
+  const typedData = try Effect.try(() => bindingTypedData({ chainId: escrow.chainId, vault }, binding))
+  const walletSignature = try promise(() => escrow.signTypedData(destination, typedData))
+  const data = try Effect.try(() => bindCalldata({ ...binding, walletSignature }))
+  const raw = try promise(() => escrow.signTransaction(escrow.roles.authority.address, vault, data))
+  return try promise(() => escrow.sendRaw(raw))
+}
+
+effect function paid(vault: EvmAddress, id: Bytes32, version: bigint) {
+  const { escrow } = try Journey
+  const data = try Effect.try(() => payCalldata(id, version))
+  const receipt = try promise(() => escrow.send(escrow.roles.donor.address, vault, data))
+  return { receipt, index: try eventIndex(vault, receipt.blockNumber, receipt.transactionHash, "Paid") }
+}
+
+effect function phaseOf(deployment: PaymentDeployment, id: string) {
+  const state = try shell(obligationState(deployment, id))
+  if (state === undefined) return { investigation: "Unknown", payment: "Unknown", queue: "Unknown" }
+  return { investigation: state.investigation.phase, payment: state.settlement.payment.phase, queue: state.settlement.delivery.queue }
+}
+
+effect function indexed(deployment: PaymentDeployment, kind: "reserved" | "paid", transactionId: string, eventIndex: number, obligationId: string) {
+  return shell(indexPaymentEvent(deployment, { kind, transactionId: transactionId.toLowerCase(), eventIndex, obligationId })) catch (error) => said(error)
+}
+
+function outcomeOf(indexedOutcome: Indexed | string) {
+  return typeof indexedOutcome === "string" ? indexedOutcome : indexedOutcome.kind === "Held" ? `held: ${indexedOutcome.reason}` : indexedOutcome.kind
+}
+
+function words(values: ReadonlyArray<bigint>) {
+  return `0x${values.map((value) => uintWord(value).slice(2)).join("")}`
+}
+
+function withWord(data: string, at: number, value: bigint) {
+  return `${data.slice(0, 2 + 64 * at)}${uintWord(value).slice(2)}${data.slice(2 + 64 * (at + 1))}`
+}
+
+function logIndexOf(log: Readonly<Record<string, unknown>>) {
+  return typeof log.logIndex === "string" && /^0x[0-9a-f]+$/u.test(log.logIndex) ? Number.parseInt(log.logIndex.slice(2), 16) : -1
+}
+
+function receiptLogs(receipt: Readonly<Record<string, unknown>>): ReadonlyArray<Readonly<Record<string, unknown>>> {
+  return Array.isArray(receipt.logs) ? receipt.logs.filter(isRecord) : []
+}
+
+function dataAt(index: number, data: (current: string) => string): ReceiptEdit {
+  return (receipt) => ({ ...receipt, logs: receiptLogs(receipt).map((log) => logIndexOf(log) === index && typeof log.data === "string" ? { ...log, data: data(log.data) } : log) })
+}
+
+function logsMoved(logs: ReadonlyArray<Readonly<Record<string, unknown>>>): ReceiptEdit {
+  return (receipt) => ({
+    ...receipt,
+    logs: logs.map((log, index) => ({ ...log, logIndex: `0x${index.toString(16)}`, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionHash: receipt.transactionHash, transactionIndex: receipt.transactionIndex })),
+  })
+}
+
+effect function rawLog(transaction: Hex, index: number) {
+  const { escrow } = try Journey
+  const receipt = try promise(() => rpc(escrow.chain.url, "eth_getTransactionReceipt", [transaction]))
+  const log = isRecord(receipt) ? receiptLogs(receipt).find((entry) => logIndexOf(entry) === index) : undefined
+  if (log === undefined) return try die(new Error(`no log ${index} in ${transaction}`))
+  return log
+}
+
+effect function throughTamper<A>(transaction: Hex, edit: ReceiptEdit, program: A!!(Journey | Scope)) {
+  const { edits } = try Journey
+  const key = transaction.toLowerCase()
+  edits.set(key, edit)
+  return try ensuring(program, sync(() => { edits.delete(key) }))
+}
+
+effect function secondToken() {
+  const { escrow } = try Journey
+  const built = try acquireRelease(promise(() => forgeBuild(contracts, ["integration/TestDollar.sol"])), (output) => promise(() => output.close()))
+  const deployed = try promise(() => deploy(escrow.chain, `${built.out}/TestDollar.sol/TestDollar.json`, [], escrow.roles.registrar.address))
+  return try address(deployed)
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('A payout to an unauthorized destination is held for investigation, never paid, and a later authorization of the same destination clears it as paid (spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"; spec/settlement/paymentInvestigation.md, "A later authorization of the same destination clears the hold as paid"; spec/settlement/paymentInvestigation.md, "Paid needs an authorized destination and every outcome keeps the finalized payout"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve")', () => effect {
+    const { escrow } = try Journey
+    const { vault, deployment } = try opened(11n, escrow.roles.owner.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const formerWallet = try address(escrow.roles.donor.address)
+    const recipient = try address(escrow.roles.recipient.address)
+    const firstDigest = try authorize("42", formerWallet, "claim-42-a", null)
+    const award = try committed(vault, 0x1101n, 42n, 5_000_000n)
+    const reserved = outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id))
+    try bound(vault, 42n, recipient, 0n, firstDigest)
+    const payout = try paid(vault, award.id, 1n)
+    const first = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    const whileHeld = try phaseOf(deployment, award.id)
+    const replayedWhileHeld = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    try authorize("42", recipient, "claim-42-b", "claim-42-a")
+    const cleared = (try shell(reindexHeld(deployment))).map(outcomeOf)
+    const afterAuthorization = try phaseOf(deployment, award.id)
+    const replayed = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    const stored = try shell(rows(Schema.Struct({ state: Schema.String, paid_transaction: Schema.NullOr(Schema.String), vault: Schema.String }), sql`SELECT state, paid_transaction, vault FROM payment_obligations WHERE id = ${award.id}`))
+    const notices = try shell(rows(Schema.Struct({ event_key: Schema.String, kind: Schema.String }), sql`SELECT event_key, kind FROM journey_notices WHERE event_key LIKE ${`%${award.id}%`} ORDER BY event_key`))
+    try same({ reserved, first, whileHeld, replayedWhileHeld, cleared, afterAuthorization, replayed, stored, notices }, {
+      reserved: "Recorded",
+      first: "held: UnauthorizedDestination",
+      whileHeld: { investigation: "Investigating", payment: "VaultReserved", queue: "Ready" },
+      replayedWhileHeld: "held: UnauthorizedDestination",
+      cleared: ["Recorded"],
+      afterAuthorization: { investigation: "Paid", payment: "Paid", queue: "Indexed" },
+      replayed: "Replayed",
+      stored: [{ state: "paid", paid_transaction: payout.receipt.transactionHash.toLowerCase(), vault: deployment.vault }],
+      notices: [{ event_key: `payment-paid:${award.id}`, kind: "PaymentPaid" }, { event_key: `payment-reserved:${award.id}`, kind: "AwardReserved" }],
+    })
+  })
+
+  it.effect('Amounts and fees: the ordinary fee is ceil(gross / 50), a 1-unit award reserves a zero net, and a finalized reservation carrying the legacy floor fee is held, never recorded (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/settlement/vault.md, "Reservations require the complete amount and never consume another reserve")', () => effect {
+    const { escrow } = try Journey
+    const { vault, deployment } = try opened(12n, escrow.roles.owner.address)
+    const funded = try promise(() => escrow.fund(vault, 20_000_000n, escrow.roles.donor.address))
+    const odd = try committed(vault, 0x1201n, 43n, 5_000_001n)
+    const unit = try committed(vault, 0x1202n, 44n, 1n)
+    const floorAward = try committed(vault, 0x1203n, 45n, 5_000_001n)
+    const outcomes = [
+      outcomeOf(try indexed(deployment, "reserved", odd.receipt.transactionHash, odd.index, odd.id)),
+      outcomeOf(try indexed(deployment, "reserved", unit.receipt.transactionHash, unit.index, unit.id)),
+    ]
+    const amounts = try shell(rows(Schema.Struct({ gross_base: Schema.String, fee_base: Schema.String }), sql`SELECT gross_base, fee_base FROM payment_obligations WHERE vault = ${vault} ORDER BY rowid`))
+    const tampered = try tamperedFor(deployment)
+    const floor = outcomeOf(try throughTamper(floorAward.receipt.transactionHash, dataAt(floorAward.index, (data) => withWord(data, 1, 100_000n)), indexed(tampered, "reserved", floorAward.receipt.transactionHash, floorAward.index, floorAward.id)))
+    const legacyRows = try shell(rows(Schema.Struct({ id: Schema.String }), sql`SELECT id FROM payment_obligations WHERE id = ${floorAward.id}`))
+    try same({ funded: funded.status, outcomes, amounts, floor, legacyRows }, {
+      funded: "success",
+      outcomes: ["Recorded", "Recorded"],
+      amounts: [{ gross_base: "5000001", fee_base: "100001" }, { gross_base: "1", fee_base: "1" }],
+      floor: "held: LegacyFloorFee",
+      legacyRows: [],
+    })
+  })
+
+  it.effect('An exact replay is acknowledged once, a legacy paid record replays without re-reading the chain, a distinct event never replaces the canonical record, and a finalized payout whose amounts differ from the award is refused with the obligation still reserved (spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentInvestigation.md, "Paid needs an authorized destination and every outcome keeps the finalized payout")', () => effect {
+    const { escrow } = try Journey
+    const { vault, deployment, asset } = try opened(13n, escrow.roles.owner.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const recipient = try address(escrow.roles.recipient.address)
+    const digest = try authorize("46", recipient, "claim-46-a", null)
+    const award = try committed(vault, 0x1301n, 46n, 10_000_000n)
+    const other = try committed(vault, 0x1302n, 46n, 2_000_000n)
+    const reserved = [
+      outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)),
+      outcomeOf(try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)),
+      outcomeOf(try indexed(deployment, "reserved", other.receipt.transactionHash, other.index, award.id)),
+    ]
+    try bound(vault, 46n, recipient, 0n, digest)
+    const payout = try paid(vault, award.id, 1n)
+    const tampered = try tamperedFor(deployment)
+    const served = (gross: bigint, net: bigint, fee: bigint) => throughTamper(payout.receipt.transactionHash, dataAt(payout.index, () => words([1n, gross, net, fee])), indexed(tampered, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    const partial = outcomeOf(try served(9_000_000n, 8_820_000n, 180_000n))
+    const over = outcomeOf(try served(11_000_000n, 10_780_000n, 220_000n))
+    const feeAbove = outcomeOf(try served(10_000_000n, 9_700_000n, 300_000n))
+    const stillReserved = try phaseOf(deployment, award.id)
+    const once = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    const twice = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, award.id))
+    const paidLog = try rawLog(payout.receipt.transactionHash, payout.index)
+    const distinct = outcomeOf(try throughTamper(other.receipt.transactionHash, logsMoved([paidLog]), indexed(tampered, "paid", other.receipt.transactionHash, 0, award.id)))
+    const events = try shell(rows(Schema.Struct({ kind: Schema.String, transaction_id: Schema.String }), sql`SELECT kind, transaction_id FROM payment_events WHERE obligation_id = ${award.id} ORDER BY rowid`))
+    const legacyId = `0x${"4c".repeat(32)}`
+    const legacyTransaction = `0x${"4d".repeat(32)}`
+    const legacyEvidence = try Effect.try(() => JSON.stringify({ kind: "paid", transactionId: legacyTransaction, eventIndex: 2, blockId: `0x${"4e".repeat(32)}`, obligationId: legacyId, projectId: deployment.projectId, network, chain: "base", vault: deployment.vault, githubUserId: "46", grossMicro: "3000000", netMicro: "2940000", feeMicro: "60000", sourceDigest: "4f".repeat(32), destination: recipient, assetAddress: asset.address, assetDecimals: asset.decimals }))
+    const now = try isoNow()
+    try written([
+      sql`INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (${legacyId}, ${deployment.projectId}, '46', ${network}, 'base', ${deployment.vault}, ${asset.address}, ${asset.decimals}, '3000000', '60000', ${"4f".repeat(32)}, 'paid', ${now}, ${legacyTransaction})`,
+      sql`INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES (${network}, ${legacyTransaction}, 2, ${`0x${"4e".repeat(32)}`}, 'paid', ${legacyId}, ${legacyEvidence}, ${now})`,
+    ])
+    const legacyReplay = outcomeOf(try indexed(deployment, "paid", legacyTransaction, 2, legacyId))
+    try same({ reserved, partial, over, feeAbove, stillReserved, once, twice, distinct, events, legacyReplay }, {
+      reserved: ["Recorded", "Replayed", "refused: Wrong event or obligation"],
+      partial: "refused: Chain event mismatch",
+      over: "refused: Chain event mismatch",
+      feeAbove: "refused: Chain event mismatch",
+      stillReserved: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
+      once: "Recorded",
+      twice: "Replayed",
+      distinct: "refused: Unknown or duplicate payout",
+      events: [{ kind: "reserved", transaction_id: award.receipt.transactionHash.toLowerCase() }, { kind: "paid", transaction_id: payout.receipt.transactionHash.toLowerCase() }],
+      legacyReplay: "Replayed",
+    })
+  })
+
+  it.effect('Uncertain attempts: a lost response keeps one retained attempt key, the executor journal classifies it, a missing or failing receipt read retires nothing, only a finalized canonical revert lets a fresh attempt start, and a refused cancellation leaves the attempt unknown (spec/settlement/paymentDispatch.md, "Acquire an exclusive token and retain the captured request identity"; spec/settlement/paymentDispatch.md, "Classify the exact executor journal result"; spec/settlement/paymentDispatch.md, "A reverted receipt names the attempt observed before the asynchronous read"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+    const { escrow, script } = try Journey
+    const { vault, deployment, asset } = try opened(14n, escrow.roles.owner.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const recipient = try address(escrow.roles.recipient.address)
+    try authorize("47", recipient, "claim-47-a", null)
+    const award = try committed(vault, 0x1401n, 47n, 4_000_000n)
+    try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)
+    script.answers.push("lose")
+    const lost = shell(dispatchPayment(deployment, asset, award.id)) catch (error) => failureTag(error)
+    const afterLoss = try phaseOf(deployment, award.id)
+    const wrongVersion = try Effect.try(() => payCalldata(award.id, 9n))
+    const reverted = try promise(() => escrow.chain.transact({ from: escrow.roles.donor.address, to: vault, data: wrongVersion }))
+    script.answers.push(reverted.transactionHash.toLowerCase())
+    const resent = try shell(dispatchPayment(deployment, asset, award.id))
+    const keys = script.submits.map((submitted) => submitted.idempotencyKey)
+    const faults = try Effect.try(() => rpcFaults(forward(escrow.chain.url), [{ method: "eth_getTransactionReceipt", fault: "timeout" }]))
+    const faulty = try acquireRelease(promise(() => serve(faults)), (served) => promise(() => served.close()))
+    const unreachable = shell(reconcileFailedAttempts([{ deployment: { ...deployment, rpc: Redacted.make([faulty.url]) }, asset }])) catch (error) => failureTag(error)
+    const beforeProof = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_attempts WHERE obligation_id = ${award.id} ORDER BY rowid`))
+    try shell(reconcileFailedAttempts([{ deployment, asset }]))
+    const afterProof = try shell(rows(Schema.Struct({ state: Schema.String }), sql`SELECT state FROM payment_attempts WHERE obligation_id = ${award.id} ORDER BY rowid`))
+    const failures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT f.attempt_id FROM payment_attempt_failures f JOIN payment_attempts a ON a.id = f.attempt_id WHERE a.obligation_id = ${award.id}`))
+    script.answers.push("lose")
+    shell(dispatchPayment(deployment, asset, award.id)) catch () => undefined
+    const fresh = script.submits.map((submitted) => submitted.idempotencyKey)
+    const newest = fresh[fresh.length - 1] ?? ""
+    script.statuses.set(newest, { transactionId: `0x${"77".repeat(32)}`, submitted: true })
+    try shell(recoverUncertainAttempts([{ deployment, asset }]))
+    const recovered = try shell(rows(Schema.Struct({ state: Schema.String, transaction_id: Schema.NullOr(Schema.String) }), sql`SELECT state, transaction_id FROM payment_attempts WHERE id = ${newest}`))
+    try authorize("51", recipient, "claim-51-a", null)
+    const second = try committed(vault, 0x1402n, 51n, 2_000_000n)
+    try indexed(deployment, "reserved", second.receipt.transactionHash, second.index, second.id)
+    script.answers.push("lose")
+    shell(dispatchPayment(deployment, asset, second.id)) catch () => undefined
+    const pending = script.submits[script.submits.length - 1]?.idempotencyKey ?? ""
+    script.statuses.set(pending, { transactionId: null })
+    try authorize("51", try address(escrow.roles.donor.address), "claim-51-b", "claim-51-a")
+    const refusedCancel = shell(recoverUncertainAttempts([{ deployment, asset }])) catch (error) => failureTag(error)
+    const afterRefusal = try shell(rows(Schema.Struct({ state: Schema.String, transaction_id: Schema.NullOr(Schema.String) }), sql`SELECT state, transaction_id FROM payment_attempts WHERE id = ${pending}`))
+    const refusalFailures = try shell(rows(Schema.Struct({ attempt_id: Schema.String }), sql`SELECT attempt_id FROM payment_attempt_failures WHERE attempt_id = ${pending}`))
+    try same({ lost, afterLoss, resent, sameKey: keys[0] === keys[1], unreachable, beforeProof, afterProof, failures: failures.length, freshKey: newest !== keys[0], recovered, queue: (try phaseOf(deployment, award.id)).queue, refusedCancel, afterRefusal, refusalFailures }, {
+      lost: "ExecutorUnavailable",
+      afterLoss: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
+      resent: "Submitted",
+      sameKey: true,
+      unreachable: "RecoveryFailed",
+      beforeProof: [{ state: "submitted" }],
+      afterProof: [{ state: "failed" }],
+      failures: 1,
+      freshKey: true,
+      recovered: [{ state: "submitted", transaction_id: `0x${"77".repeat(32)}` }],
+      queue: "Submitted",
+      refusedCancel: "RecoveryFailed",
+      afterRefusal: [{ state: "unknown", transaction_id: null }],
+      refusalFailures: [],
+    })
+  })
+
+  it.effect('A walletless award stays reserved with no dispatch row while an award with an authorized wallet is dispatched and paid (spec/settlement/composition.md, "A verified deposit can fund a walletless award"; spec/settlement/paymentDispatch.md, "New wallet authority keeps an uncertain former wallet attempt held")', () => effect {
+    const { escrow, script } = try Journey
+    const { vault, deployment, asset } = try opened(15n, escrow.roles.owner.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    const recipient = try address(escrow.roles.recipient.address)
+    const digest = try authorize("48", recipient, "claim-48-a", null)
+    const walleted = try committed(vault, 0x1501n, 48n, 3_000_000n)
+    const walletless = try committed(vault, 0x1502n, 49n, 3_000_000n)
+    try indexed(deployment, "reserved", walleted.receipt.transactionHash, walleted.index, walleted.id)
+    try indexed(deployment, "reserved", walletless.receipt.transactionHash, walletless.index, walletless.id)
+    try bound(vault, 48n, recipient, 0n, digest)
+    const payout = try paid(vault, walleted.id, 1n)
+    script.answers.push(payout.receipt.transactionHash.toLowerCase())
+    try shell(runPaymentDispatch([{ deployment, asset }]))
+    const indexedPayout = outcomeOf(try indexed(deployment, "paid", payout.receipt.transactionHash, payout.index, walleted.id))
+    const released = try shell(releaseAuthorized(deployment, asset))
+    const outbox = try shell(rows(Schema.Struct({ obligation_id: Schema.String, state: Schema.String }), sql`SELECT obligation_id, state FROM payment_outbox WHERE obligation_id IN (${walleted.id}, ${walletless.id}) ORDER BY rowid`))
+    const awards = try shell(chainAwards(network, vault))
+    try same({
+      indexedPayout,
+      released,
+      outbox,
+      walleted: try phaseOf(deployment, walleted.id),
+      walletless: try phaseOf(deployment, walletless.id),
+      holds: holdsAward(awards.get(word(0x1502n).slice(2)), { githubUserId: "49", grossBase: "3000000" }),
+      foreign: holdsAward(awards.get(word(0x1502n).slice(2)), { githubUserId: "48", grossBase: "3000000" }),
+    }, {
+      indexedPayout: "Recorded",
+      released: 0,
+      outbox: [{ obligation_id: walleted.id, state: "paid" }],
+      walleted: { investigation: "Paid", payment: "Paid", queue: "Indexed" },
+      walletless: { investigation: "Reserved", payment: "VaultReserved", queue: "NeedsWallet" },
+      holds: true,
+      foreign: false,
+    })
+  })
+
+  it.effect('Wrong asset and owner refusal: a transfer of a different ERC-20 to the recipient, a token transfer that is not an escrow payout, a payout from a vault the deployment does not bind, a payout whose vault owner differs from the reviewed deployment, and a reverted transaction are refused as paid evidence and the obligation stays reserved (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/paymentInvestigation.md, "Paid needs an authorized destination and every outcome keeps the finalized payout")', () => effect {
+    const { escrow } = try Journey
+    const { vault, deployment } = try opened(16n, escrow.roles.owner.address)
+    const foreign = try opened(17n, escrow.roles.donor.address)
+    try promise(() => escrow.fund(vault, 100_000_000n, escrow.roles.donor.address))
+    try promise(() => escrow.fund(foreign.vault, 100_000_000n, escrow.roles.donor.address))
+    const recipient = try address(escrow.roles.recipient.address)
+    const digest = try authorize("50", recipient, "claim-50-a", null)
+    const award = try committed(vault, 0x1601n, 50n, 6_000_000n)
+    try indexed(deployment, "reserved", award.receipt.transactionHash, award.index, award.id)
+    const foreignSource = word(0x1601n)
+    const foreignId = try Effect.try(() => awardId(escrow.chainId, foreign.vault, foreignSource))
+    const foreignAward = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id: foreignId, actor: 50n, gross: 6_000_000n, sourceDigest: foreignSource }))
+    try promise(() => escrow.send(escrow.roles.donor.address, foreign.vault, foreignAward))
+    try bound(foreign.vault, 50n, recipient, 0n, digest)
+    const foreignPayout = try paid(foreign.vault, foreignId, 1n)
+    const tokenTransfer = try promise(() => escrow.fund(foreign.vault, 6_000_000n, escrow.roles.donor.address))
+    const otherToken = try secondToken()
+    try promise(() => escrow.send(escrow.roles.donor.address, otherToken, encodeFunctionData({ abi: tokenAbi, functionName: "mint", args: [escrow.roles.donor.address, 6_000_000n] })))
+    const otherTransfer = try promise(() => escrow.send(escrow.roles.donor.address, otherToken, encodeFunctionData({ abi: tokenAbi, functionName: "transfer", args: [recipient, 6_000_000n] })))
+    const [transferLog] = try promise(() => escrow.logs(otherToken, otherTransfer.blockNumber, otherTransfer.blockNumber))
+    try bound(vault, 50n, recipient, 0n, digest)
+    const payout = try paid(vault, award.id, 1n)
+    const wrongOwner = try address(escrow.roles.donor.address)
+    const unbound = try Effect.try(() => payCalldata(award.id, 2n))
+    const reverted = try promise(() => escrow.chain.transact({ from: escrow.roles.donor.address, to: vault, data: unbound }))
+    const outcomes = [
+      outcomeOf(try indexed(deployment, "paid", otherTransfer.transactionHash, transferLog?.logIndex ?? 0, award.id)),
+      outcomeOf(try indexed(deployment, "paid", tokenTransfer.transactionHash, 0, award.id)),
+      outcomeOf(try indexed(deployment, "paid", foreignPayout.receipt.transactionHash, foreignPayout.index, award.id)),
+      outcomeOf(try indexed({ ...deployment, owner: wrongOwner, review: { ...deployment.review, owner: wrongOwner } }, "paid", payout.receipt.transactionHash, payout.index, award.id)),
+      outcomeOf(try indexed(deployment, "paid", reverted.transactionHash, 0, award.id)),
+    ]
+    try same({ outcomes, revertedStatus: reverted.status, phase: try phaseOf(deployment, award.id) }, {
+      outcomes: [
+        "refused: Event deployment or block mismatch",
+        "refused: Event deployment or block mismatch",
+        "refused: Event deployment or block mismatch",
+        "refused: Escrow asset, factory or registrar does not match reviewed deployment",
+        "refused: Unsuccessful or mismatched receipt",
+      ],
+      revertedStatus: "reverted",
+      phase: { investigation: "Reserved", payment: "VaultReserved", queue: "Ready" },
+    })
+  })
+})
+
+service SolanaJourney {
+  readonly escrow: SolanaEscrow
+  readonly scenario: Scenario
+  readonly db: D1Database
+}
+
+const SolanaStarted = Layer.effect(SolanaJourney, effect {
+  const escrow = try acquireRelease(promise(() => escrowDeployment()), (deployed) => promise(() => deployed.close()))
+  const scenario = try promise(() => tokenProjects(escrow))
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "settlement-payments-solana-journey" } })), (started) => promise(() => started.dispose()))
+  const failed = (try promise(() => migrate(mf, "SLOP_DB", migrationsDir))).find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new Error(`migration ${failed.file} failed: ${failed.error}`))
+  return { escrow, scenario, db: try promise(() => database(mf, "SLOP_DB")) }
+})
+
+const quietScript: Script = { submits: [], answers: [], statuses: new Map(), retirements: new Map() }
+
+effect function onSolana<A, E>(program: A!E!Shelled) {
+  const { db } = try SolanaJourney
+  return try on(db, quietScript, program)
+}
+
+effect function sentAs(label: string) {
+  const { scenario } = try SolanaJourney
+  const sent = scenario.sent.find((entry) => entry.label === label)
+  if (sent === undefined) return try die(new Error(`the scenario sent no ${label}`))
+  return sent
+}
+
+effect function solanaDeployment() {
+  const { escrow, scenario } = try SolanaJourney
+  const [project, vault] = scenario.reads
+  const mint = escrow.chain.mints.classic
+  const mintKey = publicKey(mint)
+  if (project === undefined || vault === undefined || mintKey === undefined) return try die(new Error("the scenario read no classic project"))
+  const urls = Redacted.make([escrow.chain.validator.url])
+  provide solanaRpc({ urls, genesis: escrow.chain.validator.genesis }) {
+    const rpcService = try SolanaRpc
+    const projectAccount = decodeProject(try rpcService.account(project, "finalized"), scenario.program)
+    const mintAccount = try rpcService.account(mint, "finalized")
+    if (projectAccount.kind !== "decoded" || mintAccount === undefined) return try die(new Error("the classic project or mint is missing"))
+    const read = readMint({ program: mintAccount.owner, bytes: mintAccount.data, mint: mintKey })
+    if (read.kind === "Refused") return try die(new Error("the classic mint was refused"))
+    const deployment: SolanaPaymentDeployment = {
+      family: "solana", chain: "solana", projectId: "solana-classic", network: "solana-localnet", vault, owner: projectAccount.value.owner,
+      feeRecipient: escrow.feeRecipient.address, scope: "Ordinary", rpc: urls, program: scenario.program, project, mint, genesis: escrow.chain.validator.genesis,
+    }
+    return { deployment, decimals: read.decimals }
+  }
+}
+
+effect function solanaIndexed(deployment: SolanaPaymentDeployment, kind: "reserved" | "paid", label: string, call: "commit" | "pay", obligationId: string) {
+  const { scenario } = try SolanaJourney
+  const sent = try sentAs(label)
+  const position = sent.instructions.findIndex((instruction) => instruction.program === scenario.program && decodeEscrowCall(instruction.data)?.name === call)
+  return onSolana(indexPaymentEvent(deployment, { kind, transactionId: sent.signature, eventIndex: position, obligationId })) catch (error) => said(error)
+}
+
+layer(Layer.mergeAll(SolanaStarted, webCrypto, outbound), { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Wrong mint and owner on Solana: a finalized payout checked against a deployment whose mint or owner differs from the project account is refused as paid evidence and the obligation stays reserved (spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues")', () => effect {
+    const { escrow } = try SolanaJourney
+    const { deployment, decimals } = try solanaDeployment()
+    const now = try isoNow()
+    try onSolana(effect { try (try D1).batch([snapshotRow(deployment.projectId, deployment.network, "solana", deployment.vault, deployment.mint, decimals, now)]) })
+    const award = (try sentAs("award classic")).calls.find((call) => call.name === "commit")
+    if (award === undefined || award.name !== "commit") return try die(new Error("the classic award was not committed"))
+    const reserved = outcomeOf(try solanaIndexed(deployment, "reserved", "award classic", "commit", award.awardId))
+    const otherMint = solanaAddress(escrow.chain.mints.token2022)
+    if (otherMint === undefined) return try die(new Error("the token-2022 mint is not an address"))
+    const wrongMint = outcomeOf(try solanaIndexed({ ...deployment, mint: otherMint }, "paid", "pay classic", "pay", award.awardId))
+    const wrongOwner = outcomeOf(try solanaIndexed({ ...deployment, owner: escrow.identity.address }, "paid", "pay classic", "pay", award.awardId))
+    const state = try onSolana(obligationState(deployment, award.awardId))
+    try same({ reserved, wrongMint, wrongOwner, phase: state?.investigation.phase, stored: state?.reservation.gross }, {
+      reserved: "Recorded",
+      wrongMint: "refused: Escrow owner, mint or fee recipient does not match reviewed deployment",
+      wrongOwner: "refused: Escrow owner, mint or fee recipient does not match reviewed deployment",
+      phase: "Reserved",
+      stored: 1_000_000n,
+    })
+  })
+})

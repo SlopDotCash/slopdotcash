@@ -1,0 +1,136 @@
+// spec/frontend/snapshotCache.md, "Each subscriber receives a unique current read binding"; spec/frontend/snapshotCache.md, "Deferred disposal cancels transport only after the last matching consumer leaves"; spec/frontend/snapshotCache.md, "A stale response can update only its still-owned view and never replace the current cache"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"
+import { type Cache, type Event, Machine, initial, machineOver, pendingRead, readEntry, retryRead, snapshotCacheFresh, snapshotRetryDelayMs, snapshotStale, snapshotStaleAfterMs } from "../../gen/frontend__snapshotCache.effect.vibe"
+import { untilTime } from "../platform/clock.vibe"
+
+interface Transport<K, T, E> {
+  readonly key: K
+  readonly done: Deferred.Deferred<T, E>
+  fiber: Fiber.Fiber<void> | undefined
+  completedAt: number | undefined
+}
+
+type Plan<K, T, E> = { readonly kind: "hit"; readonly value: T } | { readonly kind: "bound"; readonly read: number; readonly lease: number; readonly transport: Transport<K, T, E> }
+
+export interface SharedSnapshot<K, T, E> {
+  readonly machine: Machine.Shape
+  consumer(): number
+  read(consumer: number, key: K, force: boolean): T!E
+  shown(consumer: number): (T | undefined)!!
+  dispatch(event: Event): boolean!!
+}
+
+export effect function stale(generatedAt: number) {
+  return snapshotStale(try Clock.currentTimeMillis, generatedAt)
+}
+
+export effect function untilStale(generatedAt: number) {
+  try untilTime(generatedAt + snapshotStaleAfterMs + 1)
+}
+
+export effect function sharedSnapshot<K, T, E, R>(load: (key: K, attempt: number, retry: number) => T!E!R) {
+  const services = try Effect.context<R>()
+  const lock = try Semaphore.make(1)
+  const transports = new Map<number, Transport<K, T, E>>()
+  const values = new Map<number, T>()
+  let consumers = 0
+  let leases = 0
+
+  function kept(next: Cache) {
+    const versions = new Set([next.cacheVersion, ...next.displayed.map((shown) => shown.version)])
+    for (const version of [...values.keys()]) if (!versions.has(version)) values.delete(version)
+    for (const read of [...transports.keys()]) if (read !== next.cacheVersion && !pendingRead(next, read)) transports.delete(read)
+  }
+
+  const machine = try machineOver(initial, (next) => sync(() => kept(next)))
+  const locked = <A, X>(work: A!X) => Semaphore.withPermit(lock, work)
+
+  effect function send(event: Event) {
+    const sent = machine.send(event) catch () => undefined
+    return sent !== undefined
+  }
+
+  effect function attempt(key: K, read: number, retry: number): T!E!R {
+    return load(key, read, retry) catch effect (failed) => {
+      if (!retryRead(retry, false)) throw failed
+      try sleep(snapshotRetryDelayMs)
+      return try attempt(key, read, retry + 1)
+    }
+  }
+
+  effect function transfer(read: number, transport: Transport<K, T, E>) {
+    const outcome = try exit(attempt(transport.key, read, 0))
+    const completedAt = try Clock.currentTimeMillis
+    try locked(effect {
+      if (Exit.isSuccess(outcome)) {
+        values.set(read, outcome.value)
+        transport.completedAt = completedAt
+        try send({ type: "complete", read, version: read, validSnapshot: true })
+      } else {
+        try send({ type: "failRead", read })
+      }
+    })
+    try Deferred.done(transport.done, outcome)
+  }
+
+  effect function begin(read: number, key: K) {
+    try send({ type: "beginRead", read })
+    const transport: Transport<K, T, E> = { key, done: try Deferred.make<T, E>(), fiber: undefined, completedAt: undefined }
+    transports.set(read, transport)
+    transport.fiber = try Effect.forkDetach(Effect.provideContext(transfer(read, transport), services))
+    return transport
+  }
+
+  effect function bind(consumer: number, key: K, force: boolean, now: number): Plan<K, T, E>!! {
+    const cache = try machine.get()
+    const cached = transports.get(cache.cacheVersion)
+    const value = values.get(cache.cacheVersion)
+    const fresh = cached !== undefined && cached.key === key && cached.completedAt !== undefined && snapshotCacheFresh(now - cached.completedAt)
+    if (!force && fresh && value !== undefined && (try send({ type: "cacheHit", consumer }))) return { kind: "hit", value }
+    const joined = transports.get(cache.newest)
+    const shared = !force && joined !== undefined && joined.key === key && pendingRead(cache, cache.newest)
+    const read = shared ? cache.newest : cache.newest + 1
+    const transport = shared && joined !== undefined ? joined : try begin(read, key)
+    leases += 1
+    const lease = leases
+    try send({ type: "acquire", consumer, lease })
+    return { kind: "bound", read, lease, transport }
+  }
+
+  effect function flush(read: number) {
+    const aborted = try locked(effect {
+      if (!(try send({ type: "flushRelease", read }))) return undefined
+      return readEntry(try machine.get(), read).aborted ? transports.get(read) : undefined
+    })
+    if (aborted === undefined) return
+    if (aborted.fiber !== undefined) try Fiber.interrupt(aborted.fiber)
+    try Deferred.interrupt(aborted.done)
+  }
+
+  effect function release(consumer: number, lease: number, read: number) {
+    if (!(try locked(send({ type: "release", consumer, lease, read })))) return
+    try Effect.forkDetach(effect {
+      try yieldNow
+      try flush(read)
+    })
+  }
+
+  return {
+    machine,
+    consumer: () => {
+      consumers += 1
+      return consumers
+    },
+    effect read(consumer: number, key: K, force: boolean) {
+      const now = try Clock.currentTimeMillis
+      const plan = try locked(bind(consumer, key, force, now))
+      if (plan.kind === "hit") return plan.value
+      return try Effect.onExit(Deferred.await(plan.transport.done), () => release(consumer, plan.lease, plan.read))
+    },
+    effect shown(consumer: number) {
+      const cache = try machine.get()
+      const version = cache.displayed.find((shown) => shown.consumer === consumer)?.version
+      return version === undefined ? undefined : values.get(version)
+    },
+    dispatch: (event: Event) => locked(send(event)),
+  } satisfies SharedSnapshot<K, T, E>
+}

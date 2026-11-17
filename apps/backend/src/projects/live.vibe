@@ -1,0 +1,116 @@
+// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+import { D1, type NonEmpty, type Statement, first, list, rows, sql } from "@repo/platform/d1"
+import { type Network, type ProjectView, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { closureOf, listedById } from "../projectRegistry/claims.vibe"
+import { listedStablecoins, retirementOf, tierOf } from "./store/codec.vibe"
+import { EnforcementRows } from "./store/enforcementRows.vibe"
+import { activeBans } from "./store/facts.vibe"
+import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from "./store/rows.vibe"
+
+schema ListedBy { github_id: string | null }
+schema KeyHolder { project_id: string }
+schema ProjectId { id: string }
+
+const networks: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
+
+function networkOf(manifest: Manifest): Network | undefined {
+  return networks[manifest.rewardAsset?.network ?? manifest.reward.chain ?? ""]
+}
+
+function assetAddressOf(manifest: Manifest): string | undefined {
+  if (manifest.rewardAsset !== undefined) return manifest.rewardAsset.address
+  return listedStablecoins[manifest.reward.chain ?? ""]?.address
+}
+
+function repositoriesOf(manifest: Manifest) {
+  return manifest.repositories.map((repository, index) => ({
+    id: index === 0 ? String(manifest.authority.repositoryId) : repository.githubId ?? "",
+    nodeId: index === 0 ? manifest.authority.repositoryNodeId : repository.nodeId ?? "",
+    fullName: repository.id,
+    integrationBranch: repository.integrationBranch ?? "",
+    aliases: repository.aliases ?? [],
+  }))
+}
+
+effect function projectView(projectId: string) {
+  const row = try first(ProjectRow, sql`SELECT id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login FROM projects WHERE id = ${projectId}`)
+  if (row === undefined) return undefined
+  const manifest = try manifestOf(row.manifest, `project ${projectId}`)
+  const [revisionRows] = try (try D1).batch([revisionRead(projectId)])
+  const revisions = try revisionsOf(projectId, revisionRows?.rows ?? [])
+  const listing = tierOf(manifest.listingTier)
+  const retirement = retirementOf(revisions)
+  const listedBy = try first(ListedBy, sql`SELECT COALESCE(a.applicant_github_id, r.actor_github_id) AS github_id FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 AND p.source_application_id IS NULL WHERE p.id = ${projectId}`)
+  return {
+    projectId,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    rowStatus: row.status === "active" ? "Active" : "Paused",
+    manifestStatus: manifest.status === "active" ? "Active" : "Paused",
+    listingTier: listing,
+    retirement: listing === "Retired" && retirement === "NotRetired" ? "RetirementProofUnavailable" : retirement,
+    stewardGithubId: manifest.steward.github.actorId,
+    listedByGithubId: listedBy?.github_id ?? undefined,
+    repositories: repositoriesOf(manifest),
+    network: networkOf(manifest),
+    asset: assetAddressOf(manifest),
+    closureConsent: manifest.slopbot?.automaticClosure === true,
+  } satisfies ProjectView
+}
+
+effect function byRepository(repositoryId: string) {
+  const [projectId] = try listedById(repositoryId)
+  return projectId === undefined ? undefined : try projectView(projectId)
+}
+
+effect function byPath(fullName: string) {
+  const key = fullName.toLowerCase()
+  const holder = try first(KeyHolder, sql`SELECT project_id FROM project_repositories WHERE repository_key = ${key}`)
+  if (holder === undefined) return undefined
+  const project = try projectView(holder.project_id)
+  if (project === undefined) return undefined
+  const current = project.repositories.find((repository) => repository.fullName.toLowerCase() === key)
+  if (current !== undefined) return { match: "CurrentPath" as const, registeredRepositoryId: current.id, project }
+  const aliased = project.repositories.find((repository) => repository.aliases.some((alias) => alias.toLowerCase() === key))
+  return aliased === undefined ? undefined : { match: "AliasOnly" as const, registeredRepositoryId: aliased.id, project }
+}
+
+effect function active() {
+  const views: ProjectView[] = []
+  for (const { id } of try rows(ProjectId, sql`SELECT id FROM projects WHERE status = 'active' AND json_extract(manifest, '$.status') = 'active' AND json_extract(manifest, '$.listingTier') <> 'retired' ORDER BY id`)) {
+    const view = try projectView(id)
+    if (view !== undefined) views.push(view)
+  }
+  return views
+}
+
+export function registryFence(pin: RegistryPin): Statement {
+  const keys = [...new Set(pin.repositoryKeys.map((key) => key.toLowerCase()))]
+  const present = keys.length === 0 ? sql`1` : sql`(SELECT count(DISTINCT k.repository_key) FROM project_repositories k WHERE k.project_id = p.id AND k.repository_key IN (${list(keys as unknown as NonEmpty<string>)})) = ${keys.length}`
+  return sql`EXISTS (SELECT 1 FROM projects p WHERE p.id = ${pin.projectId} AND p.revision = ${pin.revision} AND p.manifest_sha256 = ${pin.manifestSha256} AND p.status = 'active' AND json_extract(p.manifest, '$.status') = 'active' AND json_extract(p.manifest, '$.listingTier') <> 'retired' AND ${present})`
+}
+
+export const RegistryLive = Layer.effect(Registry, effect {
+  const db = try D1
+  return {
+    project: (projectId) => provideService(projectView(projectId), D1, db),
+    byRepository: (repositoryId) => provideService(byRepository(repositoryId), D1, db),
+    byPath: (fullName) => provideService(byPath(fullName), D1, db),
+    active: () => provideService(active(), D1, db),
+    fence: (pin) => effect { return registryFence(pin) },
+  } satisfies Registry.Shape
+})
+
+export const RestrictionsLive = Layer.effect(Restrictions, effect {
+  const db = try D1
+  const enforcement = try EnforcementRows
+  return {
+    account: (githubId) => provideService(effect {
+      const bans = try activeBans(githubId)
+      if (bans.length === 0) return { banned: false }
+      const bannedAt = try enforcement.recordedAt(bans)
+      return bannedAt === undefined ? { banned: true } : { banned: true, bannedAt }
+    }, D1, db),
+    project: (projectId) => provideService(provideService(closureOf(projectId), EnforcementRows, enforcement), D1, db),
+  } satisfies Restrictions.Shape
+})

@@ -1,0 +1,204 @@
+import { it } from "@effect/vitest"
+import { holds } from "vibestack/testing"
+import { errorText } from "../src/kernels/errorText.ts"
+import { type TraversalBlock, expiryBlocksPerRun, expiryTraversalStep } from "../src/kernels/expiryCoverage.ts"
+import { type RouteBinding, type RouteExpectedKeys, routeBindingError, routeValue } from "../src/kernels/jupiterPolicy.ts"
+import { type NativeFeeEarning, type NativeLiabilityEntry, nativeDailyLiability, nativeFeeEarnings, nativeFeeRemainder } from "../src/kernels/nativeLiability.ts"
+import { type RouteTokenBalance, firstDebitedHolding, routeTokenCredit } from "../src/kernels/routeCredit.ts"
+import { parseSolanaWire } from "../src/kernels/solanaWire.ts"
+
+const amount = (maximum: bigint) => Arbitrary.schema(Schema.BigInt.check(Schema.isBetweenBigInt({ minimum: 0n, maximum })))
+const whole = (minimum: number, maximum: number) => Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum, maximum })))
+const wei = amount(10n ** 30n)
+const pick = <const L extends ReadonlyArray<string>>(literals: L) => Arbitrary.schema(Schema.Literals(literals))
+
+function oldMessage(text: string) {
+  return text.split(/Request body:/u)[0].replace(/[a-z][a-z0-9+.-]*:\/\/\S+/giu, "<url>").replace(/\s+/gu, " ").trim().slice(0, 400) || "unknown error"
+}
+
+const messagePart = pick(["https://rpc.example/v2/key-123", "wss://node.example:8443/abc?k=1", "Xa1.b-c+d://x", "1abc://after-digit", "plain", " ", "\t\n", "\u00a0", "\u2028", "\u3000", "Request body:", " {\"secret\":\"x\"}", ":// ", "://", "http:/", "Error:", "\u00fcn\u00efcode", "a".repeat(37)])
+const messages = Arbitrary.map(Arbitrary.array(messagePart, { maxLength: 30 }), (parts) => parts.join(""))
+
+it.effect('Failure text keeps no RPC URL, no request body and at most 400 characters (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+  try holds(messages, (text) => errorText(text) === oldMessage(text))
+  try holds(messages, (text) => { const out = errorText(text); return out.length > 0 && out.length <= 400 && !out.includes("Request body:") && !out.includes("rpc.example") })
+})
+
+const bindingName = pick(["user_transfer_authority", "user_source_token_account", "source_token_account", "user_destination_token_account", "destination_token_account", "source_mint", "destination_mint", "source_token_program", "destination_token_program", "program", "token_program", "platform_fee_account", "token_2022_program", "unrelated"])
+const key = pick(["wallet", "source", "destination", "inputMint", "outputMint", "inputProgram", "outputProgram", "program", "attacker"])
+const bindings = Arbitrary.array(Arbitrary.map(Arbitrary.all([bindingName, key]), ([name, value]): RouteBinding => ({ name, value })), { maxLength: 24 })
+const expected: RouteExpectedKeys = { wallet: "wallet", source: "source", destination: "destination", inputMint: "inputMint", outputMint: "outputMint", inputProgram: "inputProgram", outputProgram: "outputProgram", program: "program" }
+
+function lastValue(list: ReadonlyArray<RouteBinding>, name: string) {
+  return list.findLast((binding) => binding.name === name)?.value ?? ""
+}
+
+function boundToReview(list: ReadonlyArray<RouteBinding>, shared: boolean) {
+  const value = (name: string) => lastValue(list, name)
+  const optional = (name: string, ...allowed: string[]) => value(name) === "" || allowed.includes(value(name))
+  return value("user_transfer_authority") === expected.wallet
+    && (value("user_source_token_account") === "" ? value("source_token_account") === expected.source : value("user_source_token_account") === expected.source)
+    && (value("user_destination_token_account") === "" ? value("destination_token_account") === expected.destination : value("user_destination_token_account") === expected.destination && optional("destination_token_account", expected.program, expected.destination))
+    && optional("source_mint", expected.inputMint) && value("destination_mint") === expected.outputMint
+    && optional("source_token_program", expected.inputProgram) && optional("destination_token_program", expected.outputProgram)
+    && optional("program", expected.program) && optional("token_program", shared ? expected.outputProgram : expected.inputProgram)
+    && optional("platform_fee_account", expected.program) && optional("token_2022_program", expected.program, expected.inputProgram, expected.outputProgram)
+}
+
+it.effect('A Jupiter route binds every account to the reviewed swap before it is accepted (spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks")', () => effect {
+  try holds(Arbitrary.all([bindings, bindingName]), ([list, name]) => routeValue(list, name) === lastValue(list, name))
+  try holds(Arbitrary.all([bindings, Arbitrary.schema(Schema.Boolean)]), ([list, shared]) => (routeBindingError(list, expected, shared) === "") === boundToReview(list, shared))
+})
+
+const liabilityEntry = Arbitrary.map(Arbitrary.all([pick(["abandoned", "actual", "undatedActual", "unsettled"]), pick(["2026-11-15", "2026-11-16"]), wei, whole(0, 5)]), ([kind, day, value, bucket]): NativeLiabilityEntry =>
+  kind === "abandoned" ? { kind } : kind === "unsettled" ? { kind, bucket, maximum: value } : { kind: "actual", settlement: kind === "actual" ? { kind: "dated", day } : { kind: "undated" }, amount: value })
+
+function liabilityOracle(entries: ReadonlyArray<NativeLiabilityEntry>, day: string) {
+  const maxima = new Map<number, bigint>()
+  let settled = 0n
+  for (const entry of entries) {
+    if (entry.kind === "actual" && entry.settlement.kind === "dated" && entry.settlement.day === day) settled += entry.amount
+    if (entry.kind === "unsettled") maxima.set(entry.bucket, (maxima.get(entry.bucket) ?? 0n) > entry.maximum ? maxima.get(entry.bucket) ?? 0n : entry.maximum)
+  }
+  return [...maxima.values()].reduce((total, maximum) => total + maximum, settled)
+}
+
+const earning = Arbitrary.map(Arbitrary.all([pick(["direct", "claim", "conversion"]), pick(["fee-wallet", "someone-else"]), wei, pick(["2026-11-14T10:00:00.000Z", "2026-11-15T09:00:00.000Z", "2026-11-16T08:00:00.000Z"])]), ([kind, recipient, value, at]): NativeFeeEarning =>
+  kind === "direct" ? { kind, recipient, amount: value, at } : kind === "claim" ? { kind, amount: value, at } : { kind, amount: value })
+
+it.effect('Native gas counts settled cost today and the largest open ceiling per nonce, and only received fees fund it (spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are")', () => effect {
+  try holds(Arbitrary.array(liabilityEntry, { maxLength: 40 }), (entries) => nativeDailyLiability(6, entries, "2026-11-16") === liabilityOracle(entries, "2026-11-16"))
+  try holds(Arbitrary.array(earning, { maxLength: 40 }), (entries) => {
+    const credited = entries.filter((entry) => entry.kind === "claim" || (entry.kind === "direct" && entry.recipient === "fee-wallet"))
+    const total = entries.reduce((sum, entry) => (entry.kind === "conversion" ? sum - entry.amount : credited.includes(entry) ? sum + entry.amount : sum), 0n)
+    const first = credited.map((entry) => (entry.kind === "conversion" ? "" : entry.at)).sort()[0]
+    const earned = nativeFeeEarnings(entries, "fee-wallet")
+    return earned.amount === total && (first === undefined ? earned.receipt.kind === "absent" : earned.receipt.kind === "first" && earned.receipt.at === first) && earned.hasDirectCredit === credited.some((entry) => entry.kind === "direct")
+  })
+  try holds(Arbitrary.all([wei, Arbitrary.array(Arbitrary.map(Arbitrary.all([whole(0, 5), wei]), ([bucket, maximum]): NativeLiabilityEntry => ({ kind: "unsettled", bucket, maximum })), { maxLength: 20 })]), ([earned, entries]) => {
+    const pending = liabilityOracle(entries, "")
+    return nativeFeeRemainder(earned, 6, entries) === (earned > pending ? earned - pending : 0n)
+  })
+})
+
+const balance = Arbitrary.map(Arbitrary.all([whole(0, 5), whole(0, 2), whole(0, 2), whole(0, 1), wei]), ([accountIndex, owner, mint, programId, value]): RouteTokenBalance => ({ accountIndex, owner, mint, programId, amount: value }))
+const balances = Arbitrary.array(balance, { maxLength: 8 })
+const holding = Arbitrary.map(Arbitrary.all([whole(0, 2), pick(["input", "output", "foreign"]), amount(3n)]), ([accountIndex, identity, value]): RouteTokenBalance =>
+  identity === "input" ? { accountIndex, owner: 0, mint: 0, programId: 0, amount: value } : identity === "output" ? { accountIndex, owner: 0, mint: 1, programId: 1, amount: value } : { accountIndex, owner: 1, mint: 0, programId: 1, amount: value })
+const holdings = Arbitrary.array(holding, { maxLength: 6 })
+
+function creditOracle(before: ReadonlyArray<RouteTokenBalance>, after: ReadonlyArray<RouteTokenBalance>, nativeInput: boolean, amountIn: bigint, minimumOut: bigint) {
+  const at = (list: ReadonlyArray<RouteTokenBalance>, index: number) => list.find((entry) => entry.accountIndex === index)
+  const fits = (entry: RouteTokenBalance | undefined, mint: number, program: number) => entry === undefined || (entry.owner === 0 && entry.mint === mint && entry.programId === program)
+  const refused = (error: number) => ({ error, amount: 0n })
+  const sourceBefore = at(before, 0), sourceAfter = at(after, 0), destinationBefore = at(before, 1), destinationAfter = at(after, 1)
+  if (!fits(sourceBefore, 0, 0) || !fits(sourceAfter, 0, 0)) return refused(1)
+  if (sourceAfter === undefined || (sourceBefore === undefined && !nativeInput)) return refused(2)
+  if (!fits(destinationBefore, 1, 1) || !fits(destinationAfter, 1, 1)) return refused(1)
+  if (destinationAfter === undefined) return refused(2)
+  const debit = (sourceBefore?.amount ?? 0n) - sourceAfter.amount
+  const credit = destinationAfter.amount - (destinationBefore?.amount ?? 0n)
+  return debit !== (nativeInput ? 0n : amountIn) || credit < minimumOut ? refused(3) : { error: 0, amount: credit }
+}
+
+it.effect('A route credit is the exact delta of the reviewed destination after the exact source debit, and no other holding of the wallet loses value (spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are")', () => effect {
+  try holds(Arbitrary.all([holdings, holdings, amount(3n), amount(3n), Arbitrary.schema(Schema.Boolean)]), ([before, after, amountIn, minimumOut, nativeInput]) => {
+    const result = routeTokenCredit(before, after, 0, 1, 0, 0, 1, 0, 1, nativeInput, amountIn, minimumOut)
+    const want = creditOracle(before, after, nativeInput, amountIn, minimumOut)
+    return result.error === want.error && result.amount === want.amount
+  })
+  try holds(Arbitrary.all([balances, balances]), ([before, after]) => {
+    const found = firstDebitedHolding(before, after, 0, 0, 1)
+    const debited = (entry: RouteTokenBalance) => {
+      const post = after.find((candidate) => candidate.accountIndex === entry.accountIndex)
+      return entry.owner === 0 && entry.accountIndex !== 0 && entry.accountIndex !== 1 && (post === undefined || post.owner !== entry.owner || post.mint !== entry.mint || post.programId !== entry.programId || post.amount < entry.amount)
+    }
+    return found === before.findIndex(debited)
+  })
+})
+
+function chain(length: number, tip: number) {
+  const slots = globalThis.Array.from({ length: length + 1 }, (_, index) => tip - index * 2)
+  const blocks = slots.map((slot, index): TraversalBlock & { slot: number } => ({ slot, blockhash: `hash-${slot}`, previousBlockhash: `hash-${slots[index + 1] ?? slot - 2}`, parentSlot: slots[index + 1] ?? slot - 2, signatures: [`other-${slot}`] }))
+  return blocks
+}
+
+function walk(blocks: ReadonlyArray<TraversalBlock & { slot: number }>, txId: string) {
+  const anchor = blocks[blocks.length - 1]
+  let current = blocks[0].slot
+  let expectedHash = blocks[0].blockhash
+  for (let count = 0; count < expiryBlocksPerRun; count++) {
+    const block = blocks.find((candidate) => candidate.slot === current)
+    if (block === undefined) return "refused"
+    const step = expiryTraversalStep(txId, anchor.blockhash, anchor.slot, current, expectedHash, block)
+    if (step.kind !== "advance") return step.kind
+    current = step.nextSlot
+    expectedHash = step.expectedHash
+  }
+  return "incomplete"
+}
+
+it.effect('Expiry is proven only by walking every finalized block back to the signed blockhash without the transaction (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it")', () => effect {
+  try holds(Arbitrary.all([whole(0, 40), whole(-1, 40)]), ([length, landed]) => {
+    const blocks = chain(length, 900000)
+    if (landed >= 0 && landed <= length) blocks[landed] = { ...blocks[landed], signatures: [...blocks[landed].signatures, "tx"] }
+    const outcome = walk(blocks, "tx")
+    return landed >= 0 && landed <= length ? outcome === (landed < expiryBlocksPerRun ? "refused" : "incomplete") : outcome === (length < expiryBlocksPerRun ? "complete" : "incomplete")
+  })
+})
+
+function compact(value: number) {
+  return value < 128 ? [value] : value < 16384 ? [(value % 128) + 128, Math.floor(value / 128)] : [(value % 128) + 128, (Math.floor(value / 128) % 128) + 128, Math.floor(value / 16384)]
+}
+
+const wireShape = Arbitrary.all([
+  Arbitrary.schema(Schema.Boolean),
+  whole(1, 3),
+  whole(1, 6),
+  Arbitrary.array(Arbitrary.all([whole(0, 8), whole(0, 3), whole(0, 40)]), { maxLength: 4 }),
+  Arbitrary.array(Arbitrary.all([whole(0, 3), whole(0, 3)]), { maxLength: 2 }),
+])
+
+function encode([legacy, signers, extra, instructions, lookups]: [boolean, number, number, ReadonlyArray<[number, number, number]>, ReadonlyArray<[number, number]>]) {
+  const keyCount = signers + extra
+  const tables = legacy ? [] : lookups
+  const total = keyCount + tables.reduce((sum, [w, r]) => sum + w + r, 0)
+  const bytes: number[] = [...compact(signers), ...globalThis.Array.from({ length: signers * 64 }, () => 7)]
+  const messageOffset = bytes.length
+  if (!legacy) bytes.push(128)
+  bytes.push(signers, 0, 0, ...compact(keyCount))
+  const staticStart = bytes.length
+  bytes.push(...globalThis.Array.from({ length: keyCount * 32 }, () => 9))
+  const blockhashOffset = bytes.length
+  bytes.push(...globalThis.Array.from({ length: 32 }, () => 5), ...compact(instructions.length))
+  const spans = instructions.map(([program, accounts, data]) => {
+    bytes.push(program % keyCount, ...compact(accounts))
+    const accountsStart = bytes.length
+    bytes.push(...globalThis.Array.from({ length: accounts }, (_, index) => index % total))
+    bytes.push(...compact(data))
+    const dataStart = bytes.length
+    bytes.push(...globalThis.Array.from({ length: data }, () => 3))
+    return { program: program % keyCount, accounts: { start: accountsStart, end: accountsStart + accounts }, data: { start: dataStart, end: dataStart + data } }
+  })
+  if (!legacy) {
+    bytes.push(...compact(tables.length))
+    for (const [w, r] of tables) bytes.push(...globalThis.Array.from({ length: 32 }, () => 1), ...compact(w), ...globalThis.Array.from({ length: w }, (_, index) => index), ...compact(r), ...globalThis.Array.from({ length: r }, (_, index) => index))
+  }
+  return { bytes: Uint8Array.from(bytes), expected: { signatureCount: signers, messageOffset, requiredSignatures: signers, keyCount, staticStart, blockhashOffset, legacy, spans } }
+}
+
+it.effect('A signed Solana transaction is parsed into exact spans, and anything but the whole signed bytes is refused (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it")', () => effect {
+  try holds(wireShape, (shape) => {
+    const { bytes, expected: want } = encode(shape)
+    const parsed = parseSolanaWire(bytes)
+    if (parsed.kind !== "transaction") return false
+    const { value } = parsed
+    return value.signatureCount === want.signatureCount && value.messageOffset === want.messageOffset && value.requiredSignatures === want.requiredSignatures && value.keyCount === want.keyCount && value.staticStart === want.staticStart && value.blockhashOffset === want.blockhashOffset && value.legacy === want.legacy && JSON.stringify(value.instructions) === JSON.stringify(want.spans)
+  })
+  try holds(Arbitrary.all([wireShape, whole(0, 2000)]), ([shape, cut]) => {
+    const { bytes } = encode(shape)
+    const shorter = parseSolanaWire(bytes.slice(0, cut % bytes.length))
+    const longer = parseSolanaWire(Uint8Array.from([...bytes, 0]))
+    return shorter.kind === "failure" && longer.kind === "failure"
+  })
+})

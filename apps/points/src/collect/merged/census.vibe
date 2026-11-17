@@ -1,0 +1,201 @@
+// spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/workUnits.md, "Story: Value one logical work unit once"
+import { Graphql, ensureStartingBudget, graphqlPageSize } from "../../ingestion/graphql.vibe"
+import { type SearchStats, collectSearch, searchRange } from "../../ingestion/search.vibe"
+import { collectReviewCensus, type ReviewCensus } from "../../census/reviews.vibe"
+import { type CommitLineLoader, completeOutcomeCommits } from "./commits.vibe"
+import { ActorNode, MergedRecordInvalid, type MergedOutcome, type NodeReference, type OutcomeCommitIdentity, OutcomeCommitConnection, type ReferenceKind, actorOf, commitSha, decoded, outcomeCommitsOf, preflightQuery, searchReferencesQuery } from "./wire.vibe"
+
+export const detailedMergedPullRequestsPerMonth = 5
+
+export type SearchQualifier = "closed" | "merged"
+export type KindQualifier = "is:issue is:closed" | "is:pr is:merged" | "is:pr is:closed is:unmerged"
+
+export interface SearchTarget {
+  readonly owner: string
+  readonly name: string
+  readonly expectedNodeId: string | null
+}
+
+export interface Preflight {
+  readonly id: string
+  readonly updatedAt: string
+}
+
+schema PreflightData { readonly repository: { readonly id: string; readonly isPrivate: boolean; readonly updatedAt: string } }
+schema SearchKind { readonly __typename: string; readonly id: string }
+schema SearchPullRequest {
+  readonly __typename: string
+  readonly id: string
+  readonly state: string
+  readonly number: number
+  readonly title: string
+  readonly url: string
+  readonly body: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly mergedAt: string | null
+  readonly author: ActorNode | null
+  readonly additions: number
+  readonly deletions: number
+  readonly baseRefName: string
+  readonly baseRefOid: string
+  readonly headRefOid: string
+  readonly commits?: OutcomeCommitConnection
+}
+
+const SearchData = Schema.Struct({
+  search: Schema.Struct({
+    issueCount: Schema.Number,
+    pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean, endCursor: Schema.NullOr(Schema.String) }),
+    nodes: Schema.Array(Schema.Unknown),
+  }),
+})
+
+export effect function preflightRepository(target: SearchTarget, requireStartingBudget: boolean) {
+  const data = try (try Graphql).execute(preflightQuery, { owner: target.owner, name: target.name })
+  const { repository } = try decoded(PreflightData, data, "data")
+  if (repository.isPrivate !== false) throw new MergedRecordInvalid({ message: "Leaderboard ingestion requires a public repository" })
+  if (target.expectedNodeId !== null && repository.id !== target.expectedNodeId) {
+    throw new MergedRecordInvalid({ message: `Repository alias ${target.owner}/${target.name} resolved to ${repository.id}, expected immutable node ${target.expectedNodeId}` })
+  }
+  if (requireStartingBudget) try ensureStartingBudget()
+  return { id: repository.id, updatedAt: repository.updatedAt } satisfies Preflight
+}
+
+export effect function pullRequestOutcome(node: SearchPullRequest, path: string) {
+  if (node.__typename !== "PullRequest") throw new MergedRecordInvalid({ message: `${path} must be a PullRequest` })
+  if (node.state !== "MERGED") throw new MergedRecordInvalid({ message: `${path} changed state during outcome collection` })
+  if (node.mergedAt === null || node.mergedAt === "") throw new MergedRecordInvalid({ message: `${path}.mergedAt must be present` })
+  return {
+    id: node.id,
+    number: node.number,
+    title: node.title,
+    url: node.url,
+    body: node.body,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    mergedAt: node.mergedAt,
+    headRefOid: try commitSha(node.headRefOid, `${path}.headRefOid`),
+    author: try actorOf(node.author, `${path}.author`),
+    additions: node.additions,
+    deletions: node.deletions,
+    baseRefName: node.baseRefName,
+    commits: null,
+  } satisfies MergedOutcome
+}
+
+export effect function searchReference(value: unknown, path: string, expectedKind: ReferenceKind, merged: boolean) {
+  const kind = try decoded(SearchKind, value, path)
+  if (kind.__typename !== expectedKind) throw new MergedRecordInvalid({ message: `${path} must be a ${expectedKind}` })
+  if (expectedKind !== "PullRequest" || !merged) return { id: kind.id, kind: expectedKind, outcome: null, commitPage: null } satisfies NodeReference
+  const node = try decoded(SearchPullRequest, value, path)
+  if (node.commits === undefined) throw new MergedRecordInvalid({ message: `${path}.commits must be an object` })
+  const commits = node.commits
+  return {
+    id: node.id,
+    kind: expectedKind,
+    outcome: try pullRequestOutcome(node, path),
+    commitPage: {
+      baseRefOid: try commitSha(node.baseRefOid, `${path}.baseRefOid`),
+      headRefOid: try commitSha(node.headRefOid, `${path}.headRefOid`),
+      totalCount: commits.totalCount,
+      pageInfo: commits.pageInfo,
+      commits: try outcomeCommitsOf(commits.nodes, `${path}.commits`),
+    },
+  } satisfies NodeReference
+}
+
+effect function searchPage(target: SearchTarget, qualifier: SearchQualifier, kindQualifier: KindQualifier, expectedKind: ReferenceKind, range: string, after: string | null, pageSize: number) {
+  const data = try (try Graphql).execute(searchReferencesQuery, {
+    searchQuery: `repo:${target.owner}/${target.name} ${kindQualifier} ${qualifier}:${range}`,
+    after,
+    pageSize,
+    withMergeCommits: qualifier === "merged",
+  })
+  const { search } = try decoded(SearchData, data, "data")
+  const nodes: NodeReference[] = []
+  for (const [index, node] of search.nodes.entries()) nodes.push(try searchReference(node, `data.search.nodes[${index}]`, expectedKind, qualifier === "merged"))
+  return { totalCount: search.issueCount, nodes, hasNextPage: search.pageInfo.hasNextPage, endCursor: search.pageInfo.endCursor }
+}
+
+export interface SearchCensus<E, R> {
+  readonly target: SearchTarget
+  readonly fromMs: number
+  readonly toMs: number
+  readonly qualifier: SearchQualifier
+  readonly kindQualifier: KindQualifier
+  readonly expectedKind: ReferenceKind
+  readonly stats: SearchStats
+  readonly commitLines: CommitLineLoader<E, R>
+  readonly repositoryNodeId: string | null
+  readonly pageSize?: number
+}
+
+export effect function collectSearchReferences<E, R>(census: SearchCensus<E, R>) {
+  const pageSize = census.pageSize ?? graphqlPageSize
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > graphqlPageSize) throw new MergedRecordInvalid({ message: "Initial search page size must be an integer from 1 to 100" })
+  const references = try collectSearch({
+    read: (range, after) => searchPage(census.target, census.qualifier, census.kindQualifier, census.expectedKind, range, after, pageSize),
+    id: (reference: NodeReference) => reference.id,
+    stats: census.stats,
+  }, census.fromMs, census.toMs)
+  const completed: { readonly reference: NodeReference; readonly outcome: MergedOutcome; readonly commits: ReadonlyArray<OutcomeCommitIdentity> }[] = []
+  for (const reference of references) {
+    const commits = try completeOutcomeCommits(reference, census.target)
+    if (commits !== null && reference.outcome !== null) completed.push({ reference, outcome: reference.outcome, commits })
+  }
+  if (completed.length === 0) return references.map((reference) => ({ ...reference, commitPage: null }) satisfies NodeReference)
+  if (census.repositoryNodeId === null) throw new MergedRecordInvalid({ message: "Commit statistics require a verified repository identity" })
+  const hydrated = try census.commitLines.hydrate(census.repositoryNodeId, completed.flatMap((entry) => entry.commits))
+  const outcomes = new Map<string, MergedOutcome>()
+  let offset = 0
+  for (const entry of completed) {
+    outcomes.set(entry.reference.id, { ...entry.outcome, commits: hydrated.slice(offset, offset + entry.commits.length) })
+    offset += entry.commits.length
+  }
+  return references.map((reference) => ({ ...reference, outcome: outcomes.get(reference.id) ?? reference.outcome, commitPage: null }) satisfies NodeReference)
+}
+
+export effect function countSearchResults(target: SearchTarget, fromMs: number, toMs: number, qualifier: SearchQualifier, kindQualifier: KindQualifier, expectedKind: ReferenceKind, stats: SearchStats) {
+  stats.searchSliceCount += 1
+  const page = try searchPage(target, qualifier, kindQualifier, expectedKind, try searchRange(fromMs, toMs), null, 1)
+  return page.totalCount
+}
+
+export interface HydrationCandidate {
+  readonly outcome: MergedOutcome
+  readonly projectId: string
+}
+
+export interface HydrationPlan {
+  readonly detailEligibleIds: ReadonlySet<string>
+  readonly hydratedIds: ReadonlySet<string>
+  readonly reviewCounts: ReviewCensus
+}
+
+export function selectDetailedMergedPullRequestIds(candidates: ReadonlyArray<HydrationCandidate>, verificationFromMs: number, reviewedPullRequestIds: ReadonlySet<string> = new Set()): ReadonlySet<string> {
+  const usage = new Map<string, number>()
+  const selected = new Set<string>()
+  for (const { outcome } of candidates) {
+    if (reviewedPullRequestIds.has(outcome.id) && Date.parse(outcome.mergedAt) >= verificationFromMs) selected.add(outcome.id)
+  }
+  const ordered = [...candidates].sort((left, right) =>
+    right.outcome.mergedAt.localeCompare(left.outcome.mergedAt) || right.outcome.number - left.outcome.number || left.outcome.id.localeCompare(right.outcome.id))
+  for (const { outcome, projectId } of ordered) {
+    if (outcome.author === null || outcome.author.kind === "Bot" || Date.parse(outcome.mergedAt) < verificationFromMs) continue
+    const key = `${projectId}\u0000${outcome.author.id}\u0000${outcome.mergedAt.slice(0, 7)}`
+    const count = usage.get(key) ?? 0
+    if (count >= detailedMergedPullRequestsPerMonth) continue
+    usage.set(key, count + 1)
+    selected.add(outcome.id)
+  }
+  return selected
+}
+
+export effect function planMergedPullRequestHydration(candidates: ReadonlyArray<HydrationCandidate>, verificationFromMs: number) {
+  if (!Number.isFinite(verificationFromMs)) throw new MergedRecordInvalid({ message: "verificationWindowFrom must be a valid date" })
+  const detailEligibleIds = selectDetailedMergedPullRequestIds(candidates, verificationFromMs)
+  const reviewCounts = try collectReviewCensus(candidates.map(({ outcome }) => ({ id: outcome.id })), 2)
+  const reviewed = new Set([...reviewCounts].flatMap(([id, entry]) => entry.reviewCount > 0 ? [id] : []))
+  return { detailEligibleIds, hydratedIds: selectDetailedMergedPullRequestIds(candidates, verificationFromMs, reviewed), reviewCounts } satisfies HydrationPlan
+}

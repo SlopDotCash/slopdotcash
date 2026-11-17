@@ -1,0 +1,109 @@
+// spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent"
+import { type SlopbotFailureNotice, type SlopbotSpendNotice, safeProviderFailure } from "../notifications/contracts.schema.vibe"
+import { adminMime, inboxMime } from "./mime.ts"
+import { utcText } from "./utc.ts"
+
+type SpendNotice = typeof SlopbotSpendNotice.Type
+type FailureNotice = typeof SlopbotFailureNotice.Type
+
+effect function utcAt(millis: number) {
+  return try orDie(Effect.try(() => utcText(millis)))
+}
+
+interface InboxMail {
+  readonly from: string
+  readonly to: string
+  readonly subject: string
+  readonly at: number
+  readonly deliveryId: string
+  readonly attempt: number
+  readonly text: string
+  readonly unsubscribeUrl?: string
+}
+
+export effect function inboxNoticeMime(mail: InboxMail) {
+  return inboxMime({
+    from: mail.from,
+    to: mail.to,
+    subject: mail.subject,
+    date: try utcAt(mail.at),
+    deliveryId: mail.deliveryId,
+    attempt: mail.attempt,
+    text: mail.text,
+    unsubscribeUrl: mail.unsubscribeUrl ?? "",
+  })
+}
+
+export function unsubscribeUrlOf(inboxUrl: string, token: string): string {
+  return `${new URL(inboxUrl).origin}/api/v1/notifications/email/unsubscribe?token=${token}`
+}
+
+function stopLine(inboxUrl: string, token: string | undefined): string {
+  return token === undefined ? "" : `\nStop email notifications: ${inboxUrl}#unsubscribe-email=${token}\n`
+}
+
+export function caseNoticeText(receipt: boolean, inboxUrl: string, token: string | undefined): string {
+  const body = receipt
+    ? `Your private Slop inbox has a new notice.\n\nSign in: ${inboxUrl}\n\nDo not reply with evidence, approvals or payment details.\n`
+    : `Your private Slop inbox needs attention.\n\nSign in: ${inboxUrl}\n\nAcknowledge the notice in Slop. Do not reply with evidence, approvals or payment details.\n`
+  return body + stopLine(inboxUrl, token)
+}
+
+export function activityNoticeText(essential: boolean, inboxUrl: string, token: string | undefined): string {
+  const opening = essential ? "Your Slop account has a security notice." : "Your Slop inbox has an activity update."
+  return `${opening}\n\nSign in: ${inboxUrl}\n\nDo not reply with approvals, evidence or payment details.\n${stopLine(inboxUrl, token)}`
+}
+
+export function verificationText(link: string): string {
+  return `You requested email notifications for your Slop account.\n\nOpen this link, sign in to the same account, and choose Verify email:\n${link}\n\nThis link expires in 30 minutes and works once. If you did not request it, ignore this email.\n`
+}
+
+function spendDollars(micro: number): string {
+  return `$${Math.floor(micro / 1_000_000)}.${String(Math.floor((micro % 1_000_000) / 10_000)).padStart(2, "0")}`
+}
+
+export type AdminNotice = { readonly kind: "spend"; readonly notice: SpendNotice } | { readonly kind: "failure"; readonly notice: FailureNotice }
+
+function adminSubject(admin: AdminNotice): string {
+  return admin.kind === "failure" ? "Slopbot: Surplus request failed" : `Slopbot API cost: ${admin.notice.month} crossed ${spendDollars(admin.notice.thresholdMicroUsd)}`
+}
+
+function adminText(admin: AdminNotice): string {
+  if (admin.kind === "failure") {
+    const notice = admin.notice
+    return [
+      notice.kind === "budget-exhausted" ? "Surplus refused a Slopbot request because its provider budget was exhausted." : "A Slopbot request to Surplus did not produce a valid result.",
+      `Model: ${notice.model}. Recorded at: ${notice.occurredAt}.`,
+      `Internal cost record: ${notice.callId}.`,
+      `Cause: ${safeProviderFailure(notice.failure)}.`,
+      "The failed call remains recorded. A fallback may have completed the assessment; otherwise it stays pending for retry.",
+      "Check provider availability and budget settings. Unknown charges remain unknown.",
+      "This notice does not change a spending limit, publish a score or approve a payout.",
+      "Review Slopbot: https://slop.cash/admin",
+      "",
+    ].join("\n")
+  }
+  const notice = admin.notice
+  return [
+    `Slopbot recorded API cost crossed ${spendDollars(notice.thresholdMicroUsd)} for ${notice.month} (UTC).`,
+    `Recorded total: ${spendDollars(notice.recordedMicroUsd)}.`,
+    `Calls priced from estimates rather than provider-reported charges: ${notice.estimatedCalls}.`,
+    "Provider-reported charges are used where available; estimates are not a settled invoice.",
+    "This includes failed provider calls. Contributor charges and the service markup are not API cost.",
+    "This alert does not change a budget, authorize spending, or approve a payout.",
+    "Review Slopbot costs: https://slop.cash/admin",
+    "",
+  ].join("\n")
+}
+
+interface AdminMail {
+  readonly from: string
+  readonly to: string
+  readonly at: number
+  readonly messageId: string
+}
+
+export effect function adminNoticeMime(admin: AdminNotice, mail: AdminMail) {
+  const date = (try utcAt(mail.at)).replace(/ GMT$/u, " +0000")
+  return adminMime({ from: mail.from, to: mail.to, subject: adminSubject(admin), date, messageId: mail.messageId, text: adminText(admin) })
+}

@@ -1,0 +1,98 @@
+// spec/backend/referralProjects.md, "The route exposes only successful public reads and fails explicitly when the registry is unavailable"; spec/backend/referralProjects.md, "Only current public projects with complete immutable attribution appear, in registry order"
+import { rows, sql } from "@repo/platform/d1"
+import { answered, fixedHeaders, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { Restrictions } from "@repo/ports/backend"
+import { type Method, type Path, type PublicProject, type Registration, publicRead, referredProjects as visibleProjects, responseHasBody } from "../../gen/backend__referralProjects.effect.vibe"
+import { getReferralsProjects } from "../client/refusals.vibe"
+import { type ReferredProject, type ReferredProjects, referredProjects } from "../client/referrals.vibe"
+
+schema ReferredRow {
+  id: string
+  status: string
+  created_at: string
+  referrer_github_id: string
+  referrer_github_login: string
+  retired: number
+}
+
+const listing = "slop-referred-projects-v1"
+const listedCache = cacheControl(referredProjects.cache)
+
+function methodOf(method: string): Method {
+  if (method === "GET") return "Get"
+  return method === "HEAD" ? "Head" : "OtherMethod"
+}
+
+function pathOf(pathname: string): Path {
+  const rest = pathname.slice(referredProjects.path.length)
+  if (rest === "") return "BasePath"
+  return rest === "/" ? "TrailingSlash" : "ChildPath"
+}
+
+effect function registrations() {
+  const restrictions = try Restrictions
+  const found = try rows(ReferredRow, sql`SELECT id, status, created_at, referrer_github_id, referrer_github_login, coalesce(json_extract(manifest, '$.listingTier'), '') = 'retired' AS retired FROM projects WHERE referrer_github_id IS NOT NULL AND referrer_github_login IS NOT NULL ORDER BY created_at, id`)
+  const registered: Registration[] = []
+  for (const row of found) {
+    const hidden = row.retired === 0 ? (try restrictions.project(row.id)).restricted : true
+    registered.push({
+      projectId: row.id,
+      status: row.status === "active" ? "Active" : "Paused",
+      listedAt: row.created_at,
+      publicListing: !hidden,
+      referrerId: row.referrer_github_id,
+      referrerLogin: row.referrer_github_login,
+    })
+  }
+  return registered
+}
+
+effect function registry(method: Method, path: Path) {
+  if (method === "OtherMethod" || path === "ChildPath") return []
+  return registrations() catch effect (failure) => {
+    try Effect.logError("referred projects API failure", failure._tag)
+    return undefined
+  }
+}
+
+function shown(project: PublicProject): ReferredProject {
+  return {
+    projectId: project.projectId,
+    status: project.status === "Active" ? "active" : "paused",
+    listedAt: project.listedAt,
+    referrer: { githubId: project.referrerId, githubLogin: project.referrerLogin },
+  }
+}
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+  readonly headers: { readonly "cache-control": string }
+}
+
+function refusal(row: Row) {
+  return json(row.message === undefined ? { error: row.error } : { error: row.error, message: row.message }, row.status, { "cache-control": row.headers["cache-control"] })
+}
+
+function listed(method: Method, path: Path, registered: ReadonlyArray<Registration>) {
+  const headers = { "cache-control": listedCache }
+  if (!responseHasBody(method, path, true)) return HttpServerResponse.empty({ status: 200, headers: { ...fixedHeaders, ...headers, "content-type": "application/json; charset=utf-8" } })
+  return json({ schema: listing, projects: visibleProjects([...registered]).map(shown) } satisfies ReferredProjects, 200, headers)
+}
+
+effect function answer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const method = methodOf(request.method)
+  const path = pathOf(new URL(request.originalUrl).pathname)
+  const registered = try registry(method, path)
+  switch (publicRead(method, path, registered !== undefined)) {
+    case "Listed": return listed(method, path, registered ?? [])
+    case "MethodNotAllowed": return refusal(getReferralsProjects.otherMethods.methodNotAllowed)
+    case "NotFound": return refusal(getReferralsProjects.notFoundPublicMaxAge300)
+    case "Unavailable": return refusal(getReferralsProjects.internalErrorInternalError)
+  }
+}
+
+export const ReferredProjectRoutes = HttpRouter.add("*", `${referredProjects.path}/*`, answered(answer()))

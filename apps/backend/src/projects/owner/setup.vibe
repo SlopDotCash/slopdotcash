@@ -1,0 +1,243 @@
+// spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "A cleared, ready project is activated by the setup refresh"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"
+import { isoNow } from "@repo/platform/clock"
+import type { Registry, SetupState } from "../../../gen/backend__projectComposition.effect.vibe"
+import type { InstallationRead, SetupCheck } from "../../../gen/backend__projects.effect.vibe"
+import { canActivate, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { basis, latestOf } from "../../../gen/security__enforcement.effect.vibe"
+import { type AccessActor, type AccessCheck, type Checked, checkAuthority, currentPath, installationOf, modelRead, readAccess, scopeNote, slopbotInstallUrl } from "../../authority/live.vibe"
+import type { SetupStatus } from "../../client/projectSetup.vibe"
+import { idOf } from "../store/codec.vibe"
+import { accountStanding } from "../store/facts.vibe"
+import { loadProject, send } from "../store/store.vibe"
+import { type Json, type StoredProject, objectOf, storedProject } from "./records.vibe"
+
+export interface ListedRead {
+  readonly path: string
+  readonly githubId: string
+  readonly access: AccessCheck
+}
+
+export interface Reads {
+  readonly checked: Checked
+  readonly listed: ReadonlyArray<ListedRead>
+}
+
+function entries(manifest: Json): ReadonlyArray<Json> {
+  return Array.isArray(manifest.repositories) ? manifest.repositories.map((entry) => objectOf(entry) ?? {}) : []
+}
+
+export function primaryOf(manifest: Json) {
+  const first = entries(manifest)[0] ?? {}
+  const authority = objectOf(manifest.authority) ?? {}
+  const id = typeof first.id === "string" ? first.id : ""
+  return { path: currentPath(typeof first.githubUrl === "string" ? first.githubUrl : undefined) ?? id, id, githubId: String(authority.repositoryId ?? "") }
+}
+
+export effect function primaryAuthority(manifest: Json, actor: AccessActor) {
+  const primary = primaryOf(manifest)
+  return try checkAuthority({ path: primary.path, githubId: primary.githubId }, actor)
+}
+
+export effect function listedReads(manifest: Json, actor: AccessActor) {
+  const reads: ListedRead[] = []
+  for (const entry of entries(manifest).slice(1)) {
+    const id = typeof entry.id === "string" ? entry.id : ""
+    const githubId = typeof entry.githubId === "string" ? entry.githubId : ""
+    const path = currentPath(typeof entry.githubUrl === "string" ? entry.githubUrl : undefined) ?? id
+    const access = githubId === "" ? ({ state: "retry", message: `Slop has no permanent GitHub identity for ${id}.` } satisfies AccessCheck) : try readAccess({ path, githubId }, actor)
+    reads.push({ path: id, githubId, access })
+  }
+  return reads
+}
+
+export function setupCheckOf(manifest: Json, reads: Reads, actor: number): SetupCheck {
+  const primary = primaryOf(manifest)
+  const installations: InstallationRead[] = [
+    { repository: idOf(primary.githubId), installation: installationOf(reads.checked.access) },
+    ...reads.listed.map((read) => ({ repository: idOf(read.githubId), installation: installationOf(read.access) })),
+  ]
+  return { authority: modelRead(reads.checked, actor, idOf(primary.githubId)), installations }
+}
+
+type Restriction = Registry["security"]["restriction"]
+type Security = Registry["security"]
+
+function restrictionText(restriction: Restriction): string {
+  return restriction === "FlagQuarantine" || restriction === "ModeratorQuarantine" ? "quarantined" : restriction === "Clear" ? "clear" : "banned"
+}
+
+interface Check {
+  readonly state: string
+  readonly message: string
+}
+
+interface Scan extends Check {
+  readonly exempt?: true
+  readonly exemptionKind?: "existing-project" | "owner-approved-admission"
+  readonly guidance?: string
+}
+
+export type ScanRequest = "queue" | "check" | "rescan" | "none"
+
+const scanUnavailable: Scan = { state: "unavailable", message: "The scan service is unavailable. Check again later." }
+
+function installationCheck(manifest: Json, reads: Reads): Check & { readonly repository: string } {
+  const primary = primaryOf(manifest)
+  const all = [{ repositoryId: primary.id, access: reads.checked.access }, ...reads.listed.map((read) => ({ repositoryId: read.path, access: read.access }))]
+  const unmet = all.find((read) => read.access.state === "retry" || read.access.access.installation !== "installed")
+  const repository = unmet?.repositoryId ?? primary.id
+  if (unmet === undefined) {
+    const named = all.length === 1 ? repository : `${all.slice(0, -1).map((read) => read.repositoryId).join(", ")} and ${all.at(-1)?.repositoryId ?? ""}`
+    return { state: "installed", message: `Slopbot is installed on ${named}.`, repository }
+  }
+  if (unmet.access.state === "retry") return { state: "retry", message: unmet.access.message, repository }
+  if (unmet.access.access.installation === "suspended") return { state: "suspended", message: `The Slopbot installation for ${repository} is suspended on GitHub.`, repository }
+  return { state: "missing", message: `Slopbot is not installed on ${repository}.`, repository }
+}
+
+function repositoryScan(security: Security, repository: number): Scan {
+  const latest = latestOf(security, repository)
+  const cleared = basis(security, repository)
+  if (cleared === "Scanned") return { state: "cleared", message: `Repository admission passed at revision ${latest.revision}.` }
+  if (cleared === "FrozenExemption") return { state: "cleared", exempt: true, exemptionKind: "existing-project", message: "Existing project, permanently exempt from scan clearance." }
+  if (cleared === "OwnerApprovedExemption") return { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved admission exemption. No passed scan is claimed." }
+  if (latest.state === "APending") return { state: "queued", message: "The security scan is queued. Nothing is needed from you." }
+  if (latest.state === "AClean") return { state: "unverified", message: "The clean assessment has no current complete authorized canonical assembly and retained evidence. Its assembly may be incomplete or absent, or evidence may be unavailable, corrupt or expired." }
+  if (latest.state === "AIncomplete") return { state: "quarantined", message: "The last scan could not finish, so it did not clear the project.", guidance: "Fix the cause if you know it, then request a new scan." }
+  if (latest.state === "AMalicious") return { state: "quarantined", message: "Findings block clearance.", guidance: "Review the scan result before requesting a new scan." }
+  return { state: "unscanned", message: "This revision has not been scanned yet." }
+}
+
+function repositoryPaths(manifest: Json): ReadonlyMap<number, string> {
+  const primary = primaryOf(manifest)
+  return new Map([[idOf(primary.githubId), primary.id], ...entries(manifest).slice(1).map((entry) => [idOf(typeof entry.githubId === "string" ? entry.githubId : ""), String(entry.id ?? "")] as const)])
+}
+
+function recordedScan(state: Registry, manifest: Json): Scan {
+  const security = state.security
+  if (security.restriction === "ServiceBan" || security.restriction === "ModeratorBan") return { state: "banned", message: "A confirmed malicious finding blocks this project." }
+  const primary = idOf(primaryOf(manifest).githubId)
+  const unmet = security.repositories.map((repository) => ({ repository, scan: repositoryScan(security, repository) })).find((read) => read.scan.state !== "cleared")
+  if (unmet === undefined) return repositoryScan(security, primary)
+  if (unmet.repository === primary) return unmet.scan
+  return { ...unmet.scan, message: `${repositoryPaths(manifest).get(unmet.repository) ?? String(unmet.repository)}: ${unmet.scan.message}` }
+}
+
+function scanQueued(request: ScanRequest, setup: SetupState, authority: Checked["authority"], scan: Scan): boolean {
+  if (request === "queue") return true
+  if (request === "none" || setup === "SetupRestricted" || authority.state !== "verified") return false
+  return scan.state === "unscanned" || (request === "rescan" && scan.state === "quarantined")
+}
+
+function scanCheck(state: Registry, manifest: Json, setup: SetupState, authority: Checked["authority"], request: ScanRequest): Scan {
+  const scan = recordedScan(state, manifest)
+  return scanQueued(request, setup, authority, scan) ? scanUnavailable : scan
+}
+
+function admissionNote(state: Registry, manifest: Json): string {
+  const repository = idOf(primaryOf(manifest).githubId)
+  const cleared = basis(state.security, repository)
+  if (cleared === "FrozenExemption") return "Grandfathered before security scans"
+  if (cleared === "OwnerApprovedExemption") return "Owner-approved admission exemption"
+  return `Admission scan of revision ${latestOf(state.security, repository).revision}`
+}
+
+function fundingOf(manifest: Json): unknown {
+  const bounty = objectOf(manifest.securityBounty)
+  if (bounty?.rewardMode === "bounty-only") {
+    const amount = objectOf(bounty.amount) ?? {}
+    return { mode: "bounty", network: amount.network, symbol: amount.currency, awardAmountMinor: amount.grossMinor, decimals: amount.decimals, state: objectOf(bounty.funding)?.state === "pledged" ? "pledged" : "verified" }
+  }
+  const reward = objectOf(manifest.reward) ?? {}
+  if (reward.kind !== "monthly-pool" || typeof reward.monthlyCapMinor !== "string" || !/^[0-9]*[1-9][0-9]*$/u.test(reward.monthlyCapMinor)) return { mode: "none" }
+  const decimals = objectOf(manifest.rewardAsset)?.decimals
+  return { mode: "monthly", network: String(reward.chain), symbol: String(reward.currency), monthlyAmountMinor: reward.monthlyCapMinor, decimals: typeof decimals === "number" ? decimals : 6, state: reward.fundingState === "committed" ? "committed" : "pledged", payments: reward.paymentMode }
+}
+
+const stateNames: Readonly<Record<SetupState, SetupStatus["state"]>> = {
+  SetupRestricted: "restricted",
+  SetupRetry: "retry",
+  SetupActionRequired: "action_required",
+  SetupWaiting: "waiting",
+  SetupReady: "ready",
+}
+
+function action(kind: string, message: string, href: string | null = null) {
+  return { kind, message, href }
+}
+
+function nextActionOf(setup: SetupState, state: Registry, installation: Check & { readonly repository: string }, reads: Reads, scan: Scan) {
+  const authority = reads.checked.authority
+  if (setup === "SetupRestricted") {
+    const restriction = state.security.restriction
+    return action("restricted", restriction !== "Clear" ? `This project is ${restrictionText(restriction)}. Contributor work is closed. The steward or the account that created the project may request reinstatement.` : "This project is delisted. Its history stays public.")
+  }
+  if (installation.state === "retry") return action("retry_installation", installation.message)
+  if (installation.state !== "installed") return action("install_slopbot", `${installation.message} Install it to continue. It is free. ${scopeNote(installation.repository)}`, slopbotInstallUrl)
+  if (authority.state === "retry") return action("retry_authority", authority.message)
+  if (authority.state === "denied") return action("ask_maintainer", authority.message)
+  if (setup === "SetupReady") return action("none", "Contributors can find this project and its skills.")
+  if (scan.state === "cleared") {
+    return state.project.fieldsComplete
+      ? action("activate_project", `${scan.message} Your edit kept the project paused. Check again to activate it.`)
+      : action("complete_skill_fields", `${scan.message} The project stays paused until its contributor guide and skill fields are complete. Add them in a project update.`)
+  }
+  if (scan.state === "queued") return action("wait_for_scan", scan.message)
+  if (scan.state === "quarantined") return action("request_scan", `${scan.message} ${scan.guidance ?? ""}`.trim())
+  return action("retry_scan", scan.message)
+}
+
+export function setupStatusOf(row: StoredProject, manifest: Json, state: Registry, reads: Reads, check: SetupCheck, request: ScanRequest, activatedRevision: number | null, checkedAt: string): SetupStatus {
+  const setup = setupState(state, check)
+  const installation = installationCheck(manifest, reads)
+  const scan = scanCheck(state, manifest, setup, reads.checked.authority, request)
+  const { guidance: _guidance, ...shown } = scan
+  return {
+    projectId: row.id,
+    name: typeof manifest.name === "string" ? manifest.name : "",
+    slug: typeof manifest.slug === "string" ? manifest.slug : "",
+    revision: row.revision,
+    status: row.status,
+    state: stateNames[setup],
+    nextAction: nextActionOf(setup, state, installation, reads, scan),
+    checks: { authority: reads.checked.authority, installation: { state: installation.state, message: installation.message }, scan: shown },
+    funding: fundingOf(manifest),
+    activatedRevision,
+    checkedAt,
+  }
+}
+
+export interface Refresh {
+  readonly projectId: string
+  readonly actor: AccessActor
+  readonly checked?: Checked
+  readonly allowActivation: boolean
+  readonly scanRequest: ScanRequest
+}
+
+export effect function refreshSetup(refresh: Refresh) {
+  const before = try storedProject(refresh.projectId)
+  if (before === undefined) return undefined
+  const checked = refresh.checked ?? (try primaryAuthority(before.manifest, refresh.actor))
+  const reads = { checked, listed: try listedReads(before.manifest, refresh.actor) } satisfies Reads
+  const by = idOf(refresh.actor.githubId)
+  const check = setupCheckOf(before.manifest, reads, by)
+  const state = (try loadProject(refresh.projectId)).state
+  const account = try accountStanding({ actor: by, steward: state.project.steward })
+  if (!refresh.allowActivation || !canActivate(state, by, check, account)) return setupStatusOf(before.row, before.manifest, state, reads, check, refresh.scanRequest, null, try isoNow())
+  const access = checked.access
+  const installation = access.state === "read" && access.access.installation === "installed" ? access.access.installationId : 0
+  const committed = try send({
+    projectId: refresh.projectId,
+    event: { type: "activate", check, account },
+    by,
+    revision: {
+      manifestText: JSON.stringify({ ...before.manifest, status: "active" }),
+      reason: `Activated automatically after setup checks for @${refresh.actor.login}: ${checked.authority.message} Slopbot installation ${installation}. ${admissionNote(state, before.manifest)}.`,
+      actor: { githubId: refresh.actor.githubId, login: refresh.actor.login },
+    },
+  })
+  const after = try storedProject(refresh.projectId)
+  if (after === undefined) return undefined
+  return setupStatusOf(after.row, after.manifest, committed.after, reads, check, "none", after.row.revision, try isoNow())
+}

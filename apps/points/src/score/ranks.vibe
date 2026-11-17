@@ -1,0 +1,26 @@
+// spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"
+import { compareCodeUnits } from "./facts.vibe"
+import { rankOf } from "./standing.ts"
+
+export interface Standing {
+  readonly actor: { readonly id: string }
+  readonly scoreThirds: number
+}
+
+export function compareStandings(left: Standing, right: Standing) {
+  return right.scoreThirds - left.scoreThirds || compareCodeUnits(left.actor.id, right.actor.id)
+}
+
+export interface Ranked<T> {
+  readonly rank: number
+  readonly standing: T
+}
+
+export function ranked<T extends Standing>(standings: ReadonlyArray<T>): ReadonlyArray<Ranked<T>> {
+  const totals = standings.map((standing) => Math.round(standing.scoreThirds * 10))
+  return [...standings].sort(compareStandings).map((standing) => ({ rank: rankOf(totals, Math.round(standing.scoreThirds * 10)), standing }))
+}
+
+export function sortedModels(models: Iterable<string>) {
+  return [...new Set(models)].sort((left, right) => left.localeCompare(right, "en"))
+}

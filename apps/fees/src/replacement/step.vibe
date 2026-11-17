@@ -1,0 +1,116 @@
+// spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
+import type { Hex } from "@repo/platform/chain/evm"
+import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
+import { type EvmFees, type Event, type Fee, type NetworkFeeObservation, feesOf, firstAttempt, latestAttempt, nextFees, replacementDeadlineMarginMs, replacementStepValid, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
+import { replacementSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import { exactNumber, parsedType2, wholeBig } from "../evm/abi.ts"
+import { type Broadcast, baseFee, broadcast } from "../evm/client.vibe"
+import type { Facts } from "../journal/store.vibe"
+import { type KyberSettings, nativeValue } from "../kyber/route.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { type EvmSigned, FeeWallet, SignRefused, signedFacts } from "../signer/feeWallet.vibe"
+import type { EvmNetwork, EvmReplacement, FirstEvmIntent } from "../signer/intents.ts"
+
+module verified {
+  import { nativeUnits as units, nativeWei as wei } from "../journal/amounts.ts"
+  /** @throws {never} */
+  export function gweiCeiling(value: bigint): bigint { return units(value, false) }
+  /** @throws {never} */
+  export function weiOfGwei(value: bigint): bigint { return wei(value, false) }
+}
+import { gweiCeiling, weiOfGwei } from verified
+
+export interface ReplacementInput {
+  readonly fee: Fee
+  readonly runId: number
+  readonly rowId: number
+  readonly recorded: FirstEvmIntent
+  readonly attempts: readonly [Hex, ...Hex[]]
+}
+
+export interface ReplacementSettings {
+  readonly limits: NativeLimits
+  readonly kyber: KyberSettings
+}
+
+export type ReplacementPlan =
+  | { readonly kind: "Wait"; readonly reason: string }
+  | { readonly kind: "Replace"; readonly intent: EvmReplacement; readonly networkFee: NetworkFeeObservation }
+
+export interface Replaced { readonly kind: "Replaced"; readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation; readonly broadcast: Broadcast }
+
+function wait(reason: string): ReplacementPlan {
+  return { kind: "Wait", reason }
+}
+
+function fitted(target: bigint, units: number) {
+  const ceiling = wholeBig(units)
+  if (ceiling === undefined || ceiling <= 0n) return undefined
+  const highest = weiOfGwei(ceiling)
+  const lowest = weiOfGwei(ceiling - 1n) + 1n
+  return target > highest ? highest : target < lowest ? lowest : target
+}
+
+export effect function replacementPlan(input: ReplacementInput, settings: ReplacementSettings) {
+  const { fee, rowId, recorded, attempts } = input
+  const row = fee.rows[rowId - 1]
+  if (row === undefined || row.id !== rowId || fee.network === "Solana") return wait("the row is not an EVM send of this journal")
+  const network: EvmNetwork = fee.network
+  if (!replacementSigns(fee.runtime, network)) return wait("same-nonce replacement is not activated for this network")
+  if (row.attempts.length !== attempts.length) return wait("the journaled attempts differ from the row's attempts")
+  const latest = latestAttempt(row)
+  if (fee.clock - latest.at < replacementWaitMs) return wait("the latest attempt has waited less than three minutes")
+  if (row.kind === "Conversion" && fee.clock + replacementDeadlineMarginMs >= row.deadline) return wait("router deadline too close; a same-nonce replacement would revert")
+  const original = parsedType2(attempts[0])
+  const previous = parsedType2(attempts[attempts.length - 1] ?? attempts[0])
+  if (original === undefined || previous === undefined) return wait("the journaled bytes are not a replaceable EVM send")
+  const current = try baseFee()
+  if (current <= previous.maxFeePerGas) return wait("the signed fee covers the current network fee")
+  const maxFeeNeeded = exactNumber(gweiCeiling(current))
+  if (maxFeeNeeded === undefined) return wait("the current network fee is outside the journal's exact range")
+  const ceiling = Math.floor(transactionCeilingOf(network) / (row.gasLimit > 0 ? row.gasLimit : 1))
+  const first: EvmFees = feesOf(firstAttempt(row))
+  const last: EvmFees = feesOf(latest)
+  if (!replacementStepValid(first, last, ceiling)) return wait("fee replacement cap reached")
+  const stepped = nextFees(first, last, ceiling)
+  const target = nextReplacement({
+    original: { maxFeePerGas: original.maxFeePerGas, maxPriorityFeePerGas: original.maxPriorityFeePerGas },
+    latest: { maxFeePerGas: previous.maxFeePerGas, maxPriorityFeePerGas: previous.maxPriorityFeePerGas },
+    ceiling: original.maxFeePerGas * 3n,
+  })
+  if (target.kind === "Keep") return wait("fee replacement cap reached")
+  const maxFeePerGas = fitted(target.fees.maxFeePerGas, stepped.maxFee)
+  const maxPriorityFeePerGas = fitted(target.fees.maxPriorityFeePerGas, stepped.priority)
+  if (maxFeePerGas === undefined || maxPriorityFeePerGas === undefined || maxPriorityFeePerGas > maxFeePerGas) return wait("the stepped fees cannot be signed exactly")
+  const priced = try nativeValue(network, original.gas * maxFeePerGas + settings.limits.additionalFeeReserve, settings.kyber)
+  const worstCaseMicro = priced === undefined ? -1 : exactNumber(priced) ?? -1
+  if (worstCaseMicro < 0 || worstCaseMicro * 10 > row.valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
+  const valueMicro = wholeBig(row.valueMicro)
+  if (valueMicro === undefined) return wait("the send has no recorded value to bound its fee")
+  return {
+    kind: "Replace",
+    intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro },
+    networkFee: { maxFeeNeeded, observedAt: fee.clock, worstCaseMicro },
+  } satisfies ReplacementPlan
+}
+
+export function replaceEvent(input: ReplacementInput, tx: number, networkFee: NetworkFeeObservation): Event {
+  return { type: "replace", runId: input.runId, id: input.rowId, tx, networkFee }
+}
+
+export function replaceFacts(signed: EvmSigned): Facts {
+  return signedFacts(signed)
+}
+
+export effect function replaceSend<E, R>(input: ReplacementInput, settings: ReplacementSettings, journal: (replaced: { readonly signed: EvmSigned; readonly networkFee: NetworkFeeObservation }) => void!E!R) {
+  const plan = try replacementPlan(input, settings)
+  if (plan.kind === "Wait") return plan
+  const signed = try (try FeeWallet).sign(plan.intent, () => Effect.void)
+  if (signed.family !== "evm") throw new SignRefused({ step: "sign", issue: "an EVM replacement was not signed as an EVM send" })
+  try journal({ signed, networkFee: plan.networkFee })
+  return { kind: "Replaced", signed, networkFee: plan.networkFee, broadcast: try broadcast(signed.rawTx) } satisfies Replaced
+}
+
+export effect function resendLatest(attempts: readonly [Hex, ...Hex[]]) {
+  return try broadcast(attempts[attempts.length - 1] ?? attempts[0])
+}

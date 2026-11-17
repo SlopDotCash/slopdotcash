@@ -1,0 +1,183 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, rows, sql } from "@repo/platform/d1"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import type { Event, Quote, SignedSend } from "../gen/fees__conversion.ts"
+import type { Sender, WorkerConfig } from "../gen/fees__runtime.ts"
+import type { Instance } from "../src/journal/codec.vibe"
+import { journaledAttempts } from "../src/journal/queries.vibe"
+import { type Facts, journal, send } from "../src/journal/store.vibe"
+import { type GenerationNames, factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
+
+service Fixture { readonly db: D1Database }
+
+const Started = Layer.effect(Fixture, effect {
+  const started = try acquireRelease(promise(() => journalDatabase("fees-journal")), (opened) => promise(() => opened[Symbol.asyncDispose]()))
+  return { db: started.db }
+})
+
+interface World {
+  instance: Instance
+  elapsed: number
+  readonly names: GenerationNames
+  readonly clock: SettableClock
+  readonly db: D1Database
+  readonly signed: Map<string, string>
+}
+
+const liveBase = { source: 1, converterMode: "Live", buybackMode: "Off", networks: ["Base"], keys: ["Base"], nativeLimits: ["Base"], evmWallet: 1, solanaWallet: 2 } satisfies WorkerConfig
+
+function quote(token: number): Quote {
+  return { token, route: "Found", amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: 50 }
+}
+
+function approval(tx: number, nonce: number): SignedSend {
+  return { kind: "Approval", tx, nonce, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 500000000 }
+}
+
+function services(world: World) {
+  return Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer)
+}
+
+effect function opened(generation: number) {
+  const { db } = try Fixture
+  const instance = generationInstance(generation)
+  return { instance, elapsed: 0, names: generationNames(generation), clock: settableClock(instance.epoch), db, signed: new Map<string, string>() } satisfies World
+}
+
+effect function step(world: World, event: Event, by: Sender = "Worker", extra: Facts = {}) {
+  const state = event.type === "replace" ? (try Effect.provide(journal(world.instance, world.names), services(world))).state : undefined
+  const facts = { ...(try promise(() => factsFor(event, world.names, world.instance, state))), ...extra }
+  if (facts.txId !== undefined && facts.rawTx !== undefined) world.signed.set(facts.txId, facts.rawTx)
+  const sent = try Effect.provide(send(world.instance, world.names, event, by, facts), services(world))
+  world.instance = sent.instance
+  return sent.state
+}
+
+effect function tried(world: World, event: Event, by: Sender = "Worker") {
+  return Effect.as(step(world, event, by), "accepted") catch (error) => error._tag
+}
+
+effect function advance(world: World, elapsed: number) {
+  try step(world, { type: "advanceClock", elapsed })
+  world.elapsed += elapsed
+  world.clock.set(world.instance.epoch + world.elapsed)
+}
+
+effect function live(world: World) {
+  try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
+  try step(world, { type: "publishWorker", config: liveBase }, "ReleaseWorkflow")
+  try step(world, { type: "verifyReadiness", listedWallet: 1 }, "Owner")
+  try step(world, { type: "setReplacement", active: true }, "Owner")
+  for (const token of [1, 2]) {
+    try step(world, { type: "addToken", asset: "ProjectToken" })
+    try step(world, { type: "receiveFee", transfer: { receipt: token, token, amount: 1000000000, toFeeWallet: true, sameAsset: true, finalized: true } })
+  }
+}
+
+effect function direct(world: World, statement: Statement) {
+  return Effect.as(Effect.provide(effect { return try (try D1).run(statement) }, d1(world.db)), "changed") catch (error) => error._tag
+}
+
+schema GasCheck { nonce: number; tx_id: string | null; state: string; actual_wei: string | null }
+schema ReasonCheck { reason: string }
+
+effect function gasRows(world: World) {
+  const scope = world.instance.scope
+  return try Effect.provide(rows(GasCheck, sql`SELECT nonce, tx_id, state, actual_wei FROM fee_native_gas WHERE substr(run_id, 1, ${scope.length}) = ${scope} ORDER BY rowid`), d1(world.db))
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A lost broadcast answer keeps the journaled bytes, the nonce floor spans tokens, and a same-nonce group settles once (spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "Only a finalized receipt of one of the row\'s own attempts settles it"; spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change")', () => effect {
+    const world = try opened(1)
+    try live(world)
+    try step(world, { type: "acquireLease", runId: 1, trigger: "Recovery" })
+    try step(world, { type: "evaluate", runId: 1, quote: quote(1) })
+    try step(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })
+    try step(world, { type: "sign", runId: 1, send: approval(11, 0) })
+    try step(world, { type: "broadcastFail", runId: 1, id: 1 })
+    const restarted = (try Effect.provide(journal(world.instance, world.names), services(world))).state
+    const journaled = (try Effect.provide(journaledAttempts("base"), d1(world.db))).filter((attempt) => attempt.txId === world.names.text("tx", 11))
+    const reasons = try Effect.provide(rows(ReasonCheck, sql`SELECT reason FROM fee_conversions WHERE substr(run_id, 1, ${world.instance.scope.length}) = ${world.instance.scope} AND reason IS NOT NULL ORDER BY rowid`), d1(world.db))
+
+    try step(world, { type: "evaluate", runId: 1, quote: quote(2) })
+    const reusedNonce = try tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })
+    try step(world, { type: "reserveGas", runId: 1, nonce: 1, maximum: 50000 })
+    try step(world, { type: "sign", runId: 1, send: approval(13, 1) })
+    try step(world, { type: "rebroadcast", runId: 1, id: 1, accepted: true })
+
+    try advance(world, 180000)
+    try step(world, { type: "renewLease", runId: 1 })
+    try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000, worstCaseMicro: 1000 } })
+    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 500000000, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true }
+    const settled = try step(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
+    const again = try tried(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
+    const gas = try gasRows(world)
+    const finalRow = String(world.names.text("tx", 12))
+    const rewritten = try direct(world, sql`UPDATE fee_conversions SET state = 'submitted' WHERE landed_tx_id = ${finalRow}`)
+    const erased = try direct(world, sql`DELETE FROM fee_native_gas WHERE tx_id = ${finalRow}`)
+
+    try same({
+      restarted: [restarted.rows[0]?.state, restarted.rows[0]?.kind, restarted.rows[0]?.attempts.map((attempt) => attempt.tx)],
+      journaled: journaled.map((attempt) => [attempt.attempt, attempt.nonce, attempt.rawTx === world.signed.get(attempt.txId)]),
+      reasons: reasons.map((row) => row.reason),
+      reusedNonce,
+      settled: [settled.rows[0]?.state, settled.rows[0]?.attempts.length, settled.holdings[0]?.allowance, settled.gas.map((entry) => [entry.nonce, entry.settled, entry.actual])],
+      again,
+      gas: gas.map((row) => [row.nonce, row.tx_id === null ? "-" : row.tx_id === finalRow ? "landed" : "other", row.state, row.actual_wei]),
+      immutable: [rewritten, erased],
+    }, {
+      restarted: ["Unknown", "Approval", [11]],
+      journaled: [[0, 0, true]],
+      reasons: ["broadcast: journal broadcastFail answer withheld from <url>"],
+      reusedNonce: "Rejected",
+      settled: ["Finalized", 2, 500000000, [[0, true, 0], [1, false, 0], [0, true, 40000]]],
+      again: "Rejected",
+      gas: [[0, "other", "signed", "0"], [1, "other", "signed", null], [0, "landed", "signed", "40000000000000"]],
+      immutable: ["ConstraintViolation", "ConstraintViolation"],
+    })
+  })
+
+  it.effect('A stale run cannot sign after a later run takes the expired lease, and concurrent reservations commit once (spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row")', () => effect {
+    const world = try opened(2)
+    try live(world)
+    const takers = try.all [tried(world, { type: "acquireLease", runId: 1, trigger: "Receipts" }), tried(world, { type: "acquireLease", runId: 1, trigger: "Receipts" })]
+    try step(world, { type: "evaluate", runId: 1, quote: quote(1) })
+    const overCeiling = try tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 100001 })
+    const reservers = try.all [tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 }), tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })]
+    const busy = try tried(world, { type: "acquireLease", runId: 2, trigger: "Recovery" })
+    try advance(world, 840001)
+    try step(world, { type: "acquireLease", runId: 2, trigger: "Recovery" })
+    const stale = try tried(world, { type: "sign", runId: 1, send: approval(11, 0) })
+    const renewed = try tried(world, { type: "renewLease", runId: 1 })
+    const loaded = (try Effect.provide(journal(world.instance, world.names), services(world))).state
+    const gas = try gasRows(world)
+
+    try same({
+      takers: [...takers].sort(),
+      overCeiling,
+      reservers: [...reservers].sort(),
+      busy,
+      stale,
+      renewed,
+      lease: [loaded.lease.holder, loaded.nextRun, loaded.trigger],
+      gas: gas.map((row) => [row.nonce, row.state]),
+      intent: [loaded.rows[0]?.state, loaded.rows[0]?.runId],
+    }, {
+      takers: ["Rejected", "accepted"],
+      overCeiling: "Rejected",
+      reservers: ["Rejected", "accepted"],
+      busy: "Rejected",
+      stale: "Rejected",
+      renewed: "Rejected",
+      lease: [2, 3, "Recovery"],
+      gas: [[0, "abandoned"]],
+      intent: ["Quoted", 1],
+    })
+  })
+})

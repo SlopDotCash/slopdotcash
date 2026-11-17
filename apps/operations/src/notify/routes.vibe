@@ -1,0 +1,160 @@
+// spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
+import { handleRaw, json, jsonBody } from "@repo/platform/http"
+import { type AnyRoute, route } from "@repo/platform/route"
+import {
+  notifyPostV1ActivityNotificationsDispatch,
+  notifyPostV1ActivityNotificationsEligibility,
+  notifyPostV1ActivityNotificationsReconcile,
+  notifyPostV1EmailVerification,
+  notifyPostV1SecurityNotificationsDispatch,
+  notifyPostV1SecurityNotificationsReconcile,
+  notifyPostV1SlopbotSpend,
+} from "../client/refusals.vibe"
+import { notifyInternalHost, slopbotFailureNoticePath, slopbotSpendNoticePath } from "../notifications/contracts.schema.vibe"
+import type { Channel } from "../notifications/rows.vibe"
+import { adminNotice } from "./admin.vibe"
+import { NotifySettings, type Pilot, enrollmentOpen, releaseFor } from "./config.vibe"
+import { EmailEnrollment } from "./ports.vibe"
+import { reconcile, reconcileRequest } from "./reconcile.vibe"
+import { dispatch } from "./send.vibe"
+import { sendVerification } from "./verification.vibe"
+
+function internal(path: `/${string}`, limitKib: number) {
+  return route({ method: "POST", path, access: "public", limitKib, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: "no-store" })
+}
+
+const securityDispatchRoute = internal("/v1/security-notifications/dispatch", 8)
+const securityReconcileRoute = internal("/v1/security-notifications/reconcile", 8)
+const activityEligibilityRoute = internal("/v1/activity-notifications/eligibility", 8)
+const activityDispatchRoute = internal("/v1/activity-notifications/dispatch", 8)
+const activityReconcileRoute = internal("/v1/activity-notifications/reconcile", 8)
+const emailCapabilitiesRoute = internal("/v1/email/capabilities", 2)
+const emailVerificationRoute = internal("/v1/email/verification", 2)
+const slopbotSpendRoute = internal(slopbotSpendNoticePath, 8)
+const slopbotFailureRoute = internal(slopbotFailureNoticePath, 8)
+
+export const notifyApi: ReadonlyArray<AnyRoute> = [
+  securityDispatchRoute,
+  securityReconcileRoute,
+  activityEligibilityRoute,
+  activityDispatchRoute,
+  activityReconcileRoute,
+  emailCapabilitiesRoute,
+  emailVerificationRoute,
+  slopbotSpendRoute,
+  slopbotFailureRoute,
+]
+
+interface Row {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+}
+
+const bare = { "cache-control": "private, no-store" } as const
+const plain = { "cache-control": "private, no-store", "content-type": "application/json" } as const
+
+function answer(row: Row) {
+  return HttpServerResponse.empty({ status: row.status, headers: row.headers })
+}
+
+function plainJson(body: unknown) {
+  return HttpServerResponse.jsonUnsafe(body, { status: 200, headers: { "cache-control": plain["cache-control"] }, contentType: plain["content-type"] })
+}
+
+const security = { ...notifyPostV1SecurityNotificationsDispatch, ...notifyPostV1SecurityNotificationsReconcile }
+const activity = { ...notifyPostV1ActivityNotificationsEligibility, ...notifyPostV1ActivityNotificationsDispatch, ...notifyPostV1ActivityNotificationsReconcile }
+const verification = notifyPostV1EmailVerification
+
+effect function internalRequest() {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  return url.host === notifyInternalHost && url.search === ""
+}
+
+effect function guarded<E, R>(name: string, failure: Row, program: HttpServerResponse.HttpServerResponse!E!R) {
+  if (!(try internalRequest())) return json({ error: notifyPostV1SlopbotSpend.notFoundNoStore.error }, notifyPostV1SlopbotSpend.notFoundNoStore.status)
+  return program catch effect (error) => {
+    try Effect.logError("notify_route_failed", { route: name, kind: typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "unknown" })
+    return answer(failure)
+  }
+}
+
+effect function objectBody(limitKib: number) {
+  const body: unknown = jsonBody(limitKib) catch () => undefined
+  return typeof body === "object" && body !== null && !Array.isArray(body) ? body as Readonly<Record<string, unknown>> : undefined
+}
+
+effect function dispatched(channel: Channel, pilot: Pilot, unavailable: Row, invalid: Row, done: Row) {
+  const settings = try NotifySettings
+  if (pilot.kind !== "on") return answer(unavailable)
+  const body = try objectBody(8)
+  if (body === undefined || Object.keys(body).length !== 0) return answer(invalid)
+  try dispatch(channel, pilot, settings.from, releaseFor(settings))
+  return answer(done)
+}
+
+effect function reconciled(channel: Channel, pilot: Pilot, unavailable: Row, invalid: Row, refused: Row, done: Row) {
+  const settings = try NotifySettings
+  if (pilot.kind !== "on") return answer(unavailable)
+  const body = try objectBody(8)
+  if (body === undefined) return answer(invalid)
+  const request = try reconcileRequest(body)
+  if (request === undefined) return answer(refused)
+  return answer((try reconcile(channel, request, releaseFor(settings))) ? done : refused)
+}
+
+const githubId = /^[1-9]\d{0,19}$/u
+
+effect function eligibility() {
+  const settings = try NotifySettings
+  const pilot = settings.activity
+  if (pilot.kind !== "on") return answer(activity.status503)
+  const body = try objectBody(8)
+  const requested = body?.githubId
+  if (body === undefined || Object.keys(body).join() !== "githubId" || typeof requested !== "string" || !githubId.test(requested)) return answer(activity.status400)
+  const registered = pilot.generalEmail ? try (try EmailEnrollment).registered(requested) : undefined
+  if (registered !== undefined) return plainJson({ available: true, email: registered.address, destinationVersion: registered.version })
+  const destination = pilot.recipients.get(requested)
+  if (destination === undefined || Date.parse(destination.verifiedAt) > (try Clock.currentTimeMillis)) return plainJson({ available: false })
+  return plainJson({ available: true, email: destination.email, destinationVersion: destination.digest })
+}
+
+effect function verified() {
+  const settings = try NotifySettings
+  const pilot = settings.activity
+  if (!enrollmentOpen(pilot)) return answer(verification.status503)
+  const body = try objectBody(2)
+  if (body === undefined) return answer(verification.status400)
+  return answer({ status: (try sendVerification(body, pilot, settings.from)) ? 204 : 409, headers: plain })
+}
+
+effect function capabilities() {
+  return plainJson({ enrollmentAvailable: enrollmentOpen((try NotifySettings).activity) })
+}
+
+effect function securityPilot() {
+  return (try NotifySettings).security
+}
+
+effect function activityPilot() {
+  return (try NotifySettings).activity
+}
+
+export const notifyRoutes = Layer.mergeAll(
+  handleRaw(securityDispatchRoute, () => guarded("/v1/security-notifications/dispatch", security.status500PrivateNoStore, effect {
+    return try dispatched("security", try securityPilot(), security.status503PrivateNoStore, security.status400PrivateNoStore, { status: 204, headers: bare })
+  })),
+  handleRaw(securityReconcileRoute, () => guarded("/v1/security-notifications/reconcile", security.status500PrivateNoStore, effect {
+    return try reconciled("security", try securityPilot(), security.status503PrivateNoStore, security.status400PrivateNoStore, security.status409PrivateNoStore, { status: 204, headers: bare })
+  })),
+  handleRaw(activityEligibilityRoute, () => guarded("/v1/activity-notifications/eligibility", activity.status500, eligibility())),
+  handleRaw(activityDispatchRoute, () => guarded("/v1/activity-notifications/dispatch", activity.status500, effect {
+    return try dispatched("activity", try activityPilot(), activity.status503, activity.status400, { status: 204, headers: plain })
+  })),
+  handleRaw(activityReconcileRoute, () => guarded("/v1/activity-notifications/reconcile", activity.status500, effect {
+    return try reconciled("activity", try activityPilot(), activity.status503, activity.status400, activity.status409, { status: 204, headers: plain })
+  })),
+  handleRaw(emailCapabilitiesRoute, () => guarded("/v1/email/capabilities", verification.status500, capabilities())),
+  handleRaw(emailVerificationRoute, () => guarded("/v1/email/verification", verification.status500, verified())),
+  handleRaw(slopbotSpendRoute, () => guarded(slopbotSpendNoticePath, notifyPostV1SlopbotSpend.serviceMisconfigured, adminNotice("spend"))),
+  handleRaw(slopbotFailureRoute, () => guarded(slopbotFailureNoticePath, notifyPostV1SlopbotSpend.serviceMisconfigured, adminNotice("failure"))),
+)

@@ -1,0 +1,152 @@
+// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "The assertion is consumed atomically by its own audience before it expires"; spec/contributor/sessionExchange.md, "The provider callback is claimed once and either completes or fails terminally"
+import { randomId } from "@repo/platform/crypto"
+import { answered, fixedHeaders, handleRaw, json } from "@repo/platform/http"
+import { authorizeUrl } from "@repo/platform/github/oauth"
+import { Rejected, flowById, flowLifetime, githubExchange, identityComplete } from "../../gen/backend__identity.effect.vibe"
+import { assertionsConsume, identityInternalHost, oauthAuthorize, oauthCallback, oauthPoll, oauthStart } from "../client/identity.vibe"
+import { identityGetV1OauthAuthorize as authorizeRows, identityGetV1OauthCallback as callbackRows, identityPostV1AssertionsConsume as consumeRows } from "../client/refusals.vibe"
+import { localFlowOrigin } from "../local/origin.vibe"
+import { LocalRoutes } from "../local/routes.vibe"
+import { IdentitySettings } from "./config.vibe"
+import { bare, capabilityShape, flowShape, httpsGate, pollFlow, publicGate, readJson, refusedBy, startFlow } from "./flows.vibe"
+import { callbackUrl, resolveIdentity } from "./github.vibe"
+import { challengeOf, openVerifier, sameText } from "./pkce.vibe"
+import { audienceOf } from "./projection.vibe"
+import { type PageCopy, contentSecurityPolicy, failurePage, signedInPage } from "./signInPage.ts"
+import { type ResolvedIdentity, authorizable, claimCallback, completeCallback, consume, failCallback } from "./store.vibe"
+
+interface PageRow {
+  readonly status: number
+  readonly html: PageCopy
+}
+
+const stateCookie = "__Host-slop_oauth_state"
+const codeShape = /^[A-Za-z0-9_./-]{8,512}$/u
+const bearerAssertion = /^Bearer (slop_assert_v1_[A-Za-z0-9_-]{40,128})$/u
+const htmlType = "text/html; charset=utf-8"
+
+function stateCookieOf(value: string, maxAge: number) {
+  return `${stateCookie}=${value}; Path=/; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=Lax`
+}
+
+effect function htmlAnswer(status: number, page: (nonce: string) => string, headers: Readonly<Record<string, string>> = {}) {
+  const nonce = try randomId()
+  return HttpServerResponse.text(page(nonce), { status, contentType: htmlType, headers: { ...fixedHeaders, "content-security-policy": contentSecurityPolicy(nonce), ...headers } })
+}
+
+effect function failed(row: PageRow) {
+  const { site } = try IdentitySettings
+  return try htmlAnswer(row.status, () => failurePage(row.html, site))
+}
+
+effect function authorize() {
+  const gated = try publicGate()
+  if (gated !== undefined) return gated
+  const settings = try IdentitySettings
+  const query = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).searchParams
+  const flowId = query.get("flow_id")
+  const state = query.get("state")
+  if (flowId === null || !flowShape.test(flowId) || state === null || !capabilityShape.test(state)) throw refusedBy(authorizeRows.invalidRequestInvalidAuthorizationLink)
+  const flow = try authorizable(flowId, state)
+  if (flow === undefined || flow.encrypted_pkce_verifier === null || flow.pkce_iv === null) throw refusedBy(authorizeRows.flowExpired)
+  const verifier = try openVerifier(settings.stateKey, { iv: flow.pkce_iv, ciphertext: flow.encrypted_pkce_verifier }, flow.id)
+  const location = authorizeUrl({ clientId: Redacted.value(settings.clientId), redirectUri: callbackUrl(settings.publicOrigin), state, challenge: try challengeOf(verifier) })
+  return HttpServerResponse.empty({ status: 302, headers: { ...fixedHeaders, "content-type": "text/plain; charset=utf-8", location, "set-cookie": stateCookieOf(state, flowLifetime) } })
+}
+
+effect function abandon(flowId: string) {
+  const ended = failCallback(githubExchange, flowId) catch effect (error) => match (error) {
+    when Rejected: flowId;
+    default: throw error;
+  }
+  return ended
+}
+
+function lateOrIncomplete(error: Rejected): PageRow {
+  const { event } = error
+  return event.type === "completeCallback" && !identityComplete(flowById(error.state, 1), event.github) ? callbackRows.signInFailedGitHubAccountIdentityIs : callbackRows.signInExpiredTheSignInTook
+}
+
+effect function completion(flowId: string, identity: ResolvedIdentity) {
+  try completeCallback(githubExchange, flowId, identity)
+  return undefined
+}
+
+effect function callback() {
+  const gated = try publicGate()
+  if (gated !== undefined) return gated
+  const request = try HttpServerRequest.HttpServerRequest
+  const query = new URL(request.originalUrl).searchParams
+  const state = query.get("state")
+  const code = query.get("code") ?? ""
+  const refusedByGitHub = query.has("error")
+  const cookie = request.cookies[stateCookie]
+  if (state === null || !capabilityShape.test(state) || cookie === undefined || !sameText(state, cookie) || (!refusedByGitHub && !codeShape.test(code))) return try failed(callbackRows.signInFailed)
+  const flow = claimCallback(state, cookie) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (flow === undefined || flow.encrypted_pkce_verifier === null || flow.pkce_iv === null) return try failed(callbackRows.signInExpired)
+  if (refusedByGitHub) {
+    try abandon(flow.id)
+    return try failed(callbackRows.signInFailed)
+  }
+  const settings = try IdentitySettings
+  const verifier = openVerifier(settings.stateKey, { iv: flow.pkce_iv, ciphertext: flow.encrypted_pkce_verifier }, flow.id) catch effect (error) => {
+    try abandon(flow.id)
+    throw error
+  }
+  const identity = resolveIdentity(code, verifier) catch () => undefined
+  if (identity === undefined) {
+    try abandon(flow.id)
+    return try failed(callbackRows.signInFailedGitHubIdentityCouldNot)
+  }
+  const missed = completion(flow.id, identity) catch effect (error) => match (error) {
+    when Rejected: lateOrIncomplete(error);
+    default: throw error;
+  }
+  if (missed !== undefined) {
+    try abandon(flow.id)
+    return try failed(missed)
+  }
+  const local = localFlowOrigin(flow.id)
+  const site = local === undefined ? settings.site : `${local}/login`
+  return try htmlAnswer(200, (nonce) => signedInPage(site, nonce), { "set-cookie": stateCookieOf("", 0) })
+}
+
+effect function consumeAssertion() {
+  const refused = try httpsGate()
+  if (refused !== undefined) return refused
+  const request = try HttpServerRequest.HttpServerRequest
+  if (new URL(request.originalUrl).host !== identityInternalHost) return bare(consumeRows.notFoundNoStore)
+  const token = bearerAssertion.exec(request.headers.authorization ?? "")?.[1]
+  if (token === undefined) throw refusedBy(consumeRows.unauthorizedIdentityAssertionIsInvalid)
+  const body = try readJson()
+  const audience = body.audience
+  if ((audience !== "private-trace-api" && audience !== "slop-points-web") || Object.keys(body).length !== 1) throw refusedBy(consumeRows.invalidRequestInvalidAssertionAudience)
+  const assertion = consume(token, audienceOf[audience]) catch effect (error) => match (error) {
+    when Rejected: throw refusedBy(consumeRows.unauthorizedIdentityAssertionIsInvalidUsedOrExpired);
+    default: throw error;
+  }
+  return json({
+    githubActorId: assertion.github_actor_id,
+    githubLogin: assertion.github_login,
+    audience: assertion.audience,
+    ...assertion.github_node_id === null ? {} : { githubNodeId: assertion.github_node_id },
+  })
+}
+
+effect function unrouted() {
+  const gated = try publicGate()
+  return gated ?? bare(consumeRows.notFoundNoStore)
+}
+
+export const IdentityRoutes = Layer.mergeAll(
+  handleRaw(oauthStart, () => startFlow(false)),
+  handleRaw(oauthPoll, () => pollFlow(false)),
+  handleRaw(oauthAuthorize, () => authorize()),
+  handleRaw(oauthCallback, () => callback()),
+  handleRaw(assertionsConsume, () => consumeAssertion()),
+  LocalRoutes,
+  HttpRouter.add("*", "*", answered(unrouted())),
+)

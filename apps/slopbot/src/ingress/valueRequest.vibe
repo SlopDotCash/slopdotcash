@@ -1,0 +1,33 @@
+// spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+import { type Statement, sql } from "@repo/platform/d1"
+import { type ValueSource, noValue } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+
+export schema ValueRequestRow {
+  installation_id: number
+  repository_id: number
+  owner: string
+  repo: string
+  pull_request_number: number
+}
+
+export function valueRequestRead(deliveryId: string): Statement {
+  return sql`SELECT installation_id, repository_id, owner, repo, pull_request_number FROM slopbot_value_requests WHERE delivery_id = ${deliveryId}`
+}
+
+export function valueRequestVersion(deliveryId: string): Statement {
+  return sql`coalesce((SELECT installation_id || ':' || repository_id || ':' || owner || ':' || repo || ':' || pull_request_number FROM slopbot_value_requests WHERE delivery_id = ${deliveryId}), '')`
+}
+
+export function valueSourceOf(row: ValueRequestRow | undefined): ValueSource {
+  return row === undefined ? noValue : { installation: row.installation_id, repository: row.repository_id, owner: row.owner, repo: row.repo, pull: row.pull_request_number }
+}
+
+export function sameValue(a: ValueSource, b: ValueSource) {
+  return a.installation === b.installation && a.repository === b.repository && a.owner === b.owner && a.repo === b.repo && a.pull === b.pull
+}
+
+export function valueRequestInsert(deliveryId: string, value: ValueSource, at: string): Statement {
+  return sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+    SELECT ${deliveryId}, ${value.installation}, ${value.repository}, ${value.owner}, ${value.repo}, ${value.pull}, ${at}
+    WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_requests WHERE delivery_id = ${deliveryId})`
+}

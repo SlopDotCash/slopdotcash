@@ -1,0 +1,229 @@
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { webCrypto } from "@repo/platform/crypto"
+import { GitHub, github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import { discussionCache } from "../src/ingestion/discussions.vibe"
+import { Graphql, executeNodeBatch, graphqlClient } from "../src/ingestion/graphql.vibe"
+import { Ingestion, ingestionGitHub } from "../src/ingestion/read.vibe"
+import { checkpointDirectoryName, restoreCheckpoint } from "../src/ingestion/restore.vibe"
+import { type ArchivedFile, type Checkpoint, checkedOutCommit, checkpointOf, resumedRun, servedCheckpoint } from "./support/u3/archive.ts"
+import { failNext, fetcherOf, gatewayText, notModified, pullNodeIds, repository, seeded, start, statuses, withEtag, withRateLimit } from "./support/u3/github.ts"
+
+schema Repo { id: number; full_name: string }
+schema Commit { sha: string }
+schema Pull { number: number; node_id: string; html_url: string }
+
+const repoPath = `/repos/${repository}`
+const repoMatch = /^GET \/repos\/ada\/widgets$/u
+const pullMatch = /^GET \/repos\/ada\/widgets\/pulls\/1$/u
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+it.live('Rate-limited reads wait only for a rate limit, never retry a write and stop at the checkpoint (spec/points/ingestion.md, "Story: Read GitHub without retrying writes or inventing success"; spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const waits: number[] = []
+  const reads = ingestionGitHub({
+    token: Redacted.make(world.token),
+    deadlineMs: start + 600_000,
+    sleep: (millis) => effect {
+      waits.push(millis)
+      clock.advance(millis)
+    },
+  })
+  const live = Layer.provide(reads, outboundVia(fetcherOf(fake)))
+  provide live, clock.layer {
+    const github = try GitHub
+    const ingestion = try Ingestion
+
+    effect function counted<A, E>(read: A!E) {
+      const before = fake.requests.length
+      const waited = waits.length
+      const value = read catch (error: E) => (error as { readonly _tag: string })._tag
+      return { value, statuses: statuses(fake, before), waits: waits.slice(waited) }
+    }
+
+    failNext(fake, repoMatch, { status: 429 })
+    const unhinted = try counted(github.json(repoPath, Repo))
+    failNext(fake, repoMatch, { rateLimit: { secondary: false, retryAfterSeconds: 30 } })
+    const primary = try counted(github.json(repoPath, Repo))
+    failNext(fake, repoMatch, { rateLimit: { secondary: true, retryAfterSeconds: 5 } })
+    const secondary = try counted(github.json(repoPath, Repo))
+    failNext(fake, repoMatch, { status: 403, message: "Resource not accessible by integration" })
+    const refused = try counted(github.json(repoPath, Repo))
+    failNext(fake, repoMatch, { status: 429 }, 5)
+    const exhausted = try counted(github.json(repoPath, Repo))
+    const commitPath = `${repoPath}/git/commits/${world.commit}`
+    const immutable = try counted(effect {
+      const first = try github.json(commitPath, Commit)
+      const second = try github.json(commitPath, Commit)
+      return [first.sha === world.commit, second.sha === world.commit]
+    })
+    failNext(fake, /^POST \/repos\/ada\/widgets\/issues$/u, { status: 429 })
+    const write = try counted(github.send("POST", `${repoPath}/issues`, { title: "Never twice" }))
+    const beforeCheckpoint = try counted(ingestion.assertNoCheckpoint())
+    failNext(fake, repoMatch, { rateLimit: { secondary: true, retryAfterSeconds: 600 } })
+    const checkpointed = try counted(github.json(repoPath, Repo))
+    const asserted = try counted(ingestion.assertNoCheckpoint())
+    const later = try counted(github.json(repoPath, Repo))
+    const widgets = { id: 7001, full_name: repository }
+    try same(
+      { unhinted, primary, secondary, refused, exhausted, immutable, write, beforeCheckpoint, checkpointed, asserted, later, elapsed: clock.now() - start },
+      {
+        unhinted: { value: widgets, statuses: [429, 200], waits: [60_000] },
+        primary: { value: widgets, statuses: [403, 200], waits: [31_000] },
+        secondary: { value: widgets, statuses: [403, 200], waits: [5_000] },
+        refused: { value: "GitHubRefused", statuses: [403], waits: [] },
+        exhausted: { value: "RateLimited", statuses: [429, 429, 429, 429, 429], waits: [60_000, 60_000, 60_000, 60_000] },
+        immutable: { value: [true, true], statuses: [200], waits: [] },
+        write: { value: "RateLimited", statuses: [429], waits: [] },
+        beforeCheckpoint: { value: undefined, statuses: [], waits: [] },
+        checkpointed: { value: "GitHubUnavailable", statuses: [403], waits: [] },
+        asserted: { value: "IngestionCheckpoint", statuses: [], waits: [] },
+        later: { value: "GitHubUnavailable", statuses: [], waits: [] },
+        elapsed: 336_000,
+      },
+    )
+  }
+})
+
+it.live('A trusted main run revalidates a checkpointed discussion with its recorded validator and refetches when the validator changed (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  provide NodeServices.layer, webCrypto, clock.layer {
+    const fs = try FileSystem.FileSystem
+    const outcome = try scoped(effect {
+      const directory = try fs.makeTempDirectoryScoped()
+      const repositories = [{ name: repository, nodeId: world.nodeId }]
+
+      effect function pass(answer: "etag" | "notModified", etag: string) {
+        const cache = try discussionCache({ directory, repositories })
+        const live = Layer.provide(ingestionGitHub({ token: Redacted.make(world.token), discussions: cache }), outboundVia(fetcherOf(fake)))
+        if (answer === "etag") withEtag(fake, pullMatch, etag)
+        else notModified(fake, pullMatch, etag)
+        const before = fake.requests.length
+        provide live {
+          const pull = try (try GitHub).json(`${repoPath}/pulls/${world.pull}`, Pull)
+          return { number: pull.number, statuses: statuses(fake, before), entries: (try fs.readDirectory(directory)).length }
+        }
+      }
+
+      const observed = try pass("etag", "\"v1\"")
+      const revalidated = try pass("notModified", "\"v1\"")
+      const changed = try pass("notModified", "\"v2\"")
+      return { observed, revalidated, changed }
+    })
+    try same(outcome, {
+      observed: { number: 1, statuses: [200], entries: 1 },
+      revalidated: { number: 1, statuses: [304], entries: 1 },
+      changed: { number: 1, statuses: [304, 200], entries: 1 },
+    })
+  }
+})
+
+const nodesQuery = "query BatchNodes($ids: [ID!]!) { nodes(ids: $ids) { __typename ... on PullRequest { id number } } rateLimit { cost limit remaining resetAt } }"
+const rateLimitQuery = "query LeaderboardRateLimit { rateLimit { cost limit remaining resetAt } }"
+
+it.live('A GitHub GraphQL collection splits a batch the gateway cannot build, waits once for a drained window and then stops (spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const ids = try Effect.try(() => pullNodeIds(fake, 4))
+  const waits: number[] = []
+  const client = graphqlClient({
+    token: Redacted.make(world.token),
+    sleep: (millis) => effect {
+      waits.push(millis)
+      clock.advance(millis)
+    },
+  })
+  provide Layer.provide(client, outboundVia(fetcherOf(fake))), clock.layer {
+    const graphql = try Graphql
+    gatewayText(fake, 5)
+    const before = fake.requests.length
+    const batch = try executeNodeBatch(nodesQuery, ids)
+    const nodes = Array.isArray(batch.nodes) ? batch.nodes.map((node: unknown) => (node as { readonly id?: unknown }).id) : []
+    const split = { nodes, statuses: statuses(fake, before), waits: waits.splice(0) }
+    const resetAt = start + 7_200_000
+    withRateLimit(fake, 150, resetAt)
+    try graphql.execute(rateLimitQuery)
+    const drainedAt = clock.now()
+    try graphql.ensureBudget(100)
+    const waited = { waits: waits.splice(0), remaining: (try graphql.rateLimit()).remaining }
+    const spendable = graphql.ensureBudget(100) catch (error) => error._tag
+    withRateLimit(fake, 50, resetAt)
+    try graphql.execute(rateLimitQuery)
+    const stopped = graphql.ensureBudget(100) catch (error) => error._tag
+    try same(
+      { split, waited, spendable, stopped, requests: try graphql.requestCount() },
+      {
+        split: { nodes: ids, statuses: [502, 502, 502, 502, 502, 200, 200], waits: [250, 500, 1_000, 2_000] },
+        waited: { waits: [resetAt - drainedAt + 1_000], remaining: 5_000 },
+        spendable: undefined,
+        stopped: "BudgetExceeded",
+        requests: 9,
+      },
+    )
+  }
+})
+
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+it.live('A resumed collection restores only the exact trusted checkpoint and refuses a mismatched digest or an unsafe entry (spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit")', () => effect {
+  const clock = settableClock(start)
+  const world = try Effect.try(() => seeded(clock.now))
+  const fake = world.fake
+  const headSha = try Effect.try(() => checkedOutCommit())
+  const stored: ArchivedFile = { name: `${"a".repeat(64)}.bin`, content: encoder.encode("{\"cached\":1}"), deflated: false }
+  const deflated: ArchivedFile = { name: `${"b".repeat(64)}.bin`, content: encoder.encode("{\"cached\":2}".repeat(40)), deflated: true }
+  const good = checkpointOf([stored, deflated])
+  const unsafe = checkpointOf([stored, { name: "../x.bin", content: stored.content, deflated: false }])
+  const live = Layer.provideMerge(github({ token: Redacted.make(world.token), userAgent: "slopbot" }), outboundVia(fetcherOf(fake)))
+  provide NodeServices.layer, webCrypto, clock.layer, live {
+    const fs = try FileSystem.FileSystem
+
+    effect function restored(checkpoint: Checkpoint, digest: string) {
+      return try scoped(effect {
+        const runnerTemp = try fs.makeTempDirectoryScoped()
+        const destination = `${runnerTemp}/${checkpointDirectoryName}`
+        servedCheckpoint(fake, { headSha, createdAt: start - 3_600_000, checkpoint, digest })
+        const before = fake.requests.length
+        const environment = ConfigProvider.layer(ConfigProvider.fromUnknown({
+          GITHUB_REPOSITORY: repository,
+          GITHUB_SHA: headSha,
+          RESUME_RUN: String(resumedRun),
+          GITHUB_RUN_ID: String(resumedRun + 1),
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_EVENT_NAME: "workflow_dispatch",
+          RUNNER_TEMP: runnerTemp,
+        }))
+        const path = Effect.provide(restoreCheckpoint({ token: Redacted.make(world.token) }), environment) catch (error) => error._tag === "CheckpointInvalid" ? error.message : error._tag
+        const outcome = path === destination ? "restored" : path
+        const files = (try fs.exists(destination)) ? [...(try fs.readDirectory(destination))].sort() : []
+        const contents: string[] = []
+        for (const name of files) contents.push(decoder.decode(try fs.readFile(`${destination}/${name}`)))
+        return { outcome, files, contents, statuses: statuses(fake, before) }
+      })
+    }
+
+    const restoredGood = try restored(good, good.digest)
+    const mismatched = try restored(good, unsafe.digest)
+    const escaping = try restored(unsafe, unsafe.digest)
+    const served: ReadonlyArray<number | "disconnected"> = [200, 200, 302, 200]
+    try same(
+      { restoredGood, mismatched, escaping },
+      {
+        restoredGood: { outcome: "restored", files: [stored.name, deflated.name], contents: [decoder.decode(stored.content), decoder.decode(deflated.content)], statuses: served },
+        mismatched: { outcome: "Checkpoint archive did not match its GitHub digest", files: [], contents: [], statuses: served },
+        escaping: { outcome: "Invalid checkpoint archive entry", files: [], contents: [], statuses: served },
+      },
+    )
+  }
+})

@@ -1,0 +1,386 @@
+// spec/settlement/composition.md, "A verified deposit can fund a walletless award"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/paymentInvestigation.md, "Paid needs an authorized destination and every outcome keeps the finalized payout"; spec/settlement/vault.md, "Reservations require the complete amount and never consume another reserve"
+import { millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { RowMismatch, decoded, sql } from "@repo/platform/d1"
+import type { Aggregate, Rows } from "@repo/platform/stored"
+import { type Settlement, decodeState as decodeSettlement } from "../../gen/settlement__composition.effect.vibe"
+import { type Investigation, type PaidEvent, decodeState as decodeInvestigation, noEvent } from "../../gen/settlement__paymentInvestigation.effect.vibe"
+import { type Payment, initial as paymentInitial } from "../../gen/settlement__payment.effect.vibe"
+import { type Attempt, type AttemptState, type Binding, type Dispatch, type DispatchRequest, type Inspection, type Queue, type Receipt, type Target, initial as dispatchInitial, noBinding, noReceipt } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { type Vault, initial as vaultInitial } from "../../gen/settlement__vault.effect.vibe"
+import { zero } from "../../gen/settlement__money.effect.vibe"
+import { parseBaseUnits } from "../kernels/amounts.ts"
+import { type ObligationTerms, type PaymentDeployment, type VaultAsset, bindingOf, canonicalAddress, limbs, targetOf, termsDigest } from "./terms.vibe"
+import type { AuthorizedWallet } from "./wallets.vibe"
+
+export schema ObligationRow {
+  readonly id: string
+  readonly project_id: string
+  readonly github_user_id: string
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly gross_base: string
+  readonly fee_base: string
+  readonly source_digest: string
+  readonly state: "reserved" | "paid"
+  readonly paid_transaction: string | null
+}
+
+export schema EventRow {
+  readonly network: string
+  readonly transaction_id: string
+  readonly event_index: number
+  readonly block_id: string
+  readonly kind: string
+  readonly evidence_json: string
+  readonly observed_at: string
+}
+
+export schema OutboxRow {
+  readonly state: "ready" | "processing" | "submitted" | "paid" | "held"
+  readonly lease_token: string | null
+  readonly lease_until: string | null
+  readonly updated_at: string
+}
+
+export schema AttemptRow {
+  readonly id: string
+  readonly claim_id: string
+  readonly transaction_id: string | null
+  readonly state: "prepared" | "submitted" | "finalized" | "unknown" | "failed"
+}
+
+schema PaidEvidence {
+  readonly destination: string
+  readonly blockNumber?: string
+  readonly vault: string
+  readonly network: string
+  readonly githubUserId: string
+  readonly grossMicro: string
+  readonly netMicro: string
+  readonly feeMicro: string
+}
+
+export interface ObligationRows {
+  readonly id: string
+  readonly obligation: ObligationRow | undefined
+  readonly events: ReadonlyArray<EventRow>
+  readonly outbox: OutboxRow | undefined
+  readonly attempts: ReadonlyArray<AttemptRow>
+}
+
+effect function rowsOf(id: string, [obligations, events, outboxes, attempts]: ReadonlyArray<Rows>) {
+  return {
+    id,
+    obligation: (try decoded(ObligationRow, obligations ?? [], "payment obligation"))[0],
+    events: try decoded(EventRow, events ?? [], "payment events"),
+    outbox: (try decoded(OutboxRow, outboxes ?? [], "payment outbox"))[0],
+    attempts: try decoded(AttemptRow, attempts ?? [], "payment attempts"),
+  } satisfies ObligationRows
+}
+
+export function obligationAggregate(id: string): Aggregate<ObligationRows, RowMismatch, never> {
+  return {
+    name: `payment obligation ${id}`,
+    version: sql`SELECT coalesce((SELECT state || ':' || coalesce(paid_transaction, '-') FROM payment_obligations WHERE id = ${id}), '-')
+      || '|' || coalesce((SELECT group_concat(network || ':' || transaction_id || ':' || event_index || ':' || kind, ',') FROM (SELECT * FROM payment_events WHERE obligation_id = ${id} ORDER BY rowid)), '')
+      || '|' || coalesce((SELECT state || ':' || coalesce(lease_token, '-') || ':' || coalesce(lease_until, '-') || ':' || updated_at FROM payment_outbox WHERE obligation_id = ${id}), '-')
+      || '|' || coalesce((SELECT group_concat(id || ':' || state || ':' || coalesce(transaction_id, '-'), ',') FROM (SELECT * FROM payment_attempts WHERE obligation_id = ${id} ORDER BY rowid)), '') AS version`,
+    reads: [
+      sql`SELECT id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, paid_transaction FROM payment_obligations WHERE id = ${id}`,
+      sql`SELECT network, transaction_id, event_index, block_id, kind, evidence_json, observed_at FROM payment_events WHERE obligation_id = ${id} ORDER BY rowid`,
+      sql`SELECT state, lease_token, lease_until, updated_at FROM payment_outbox WHERE obligation_id = ${id}`,
+      sql`SELECT id, claim_id, transaction_id, state FROM payment_attempts WHERE obligation_id = ${id} ORDER BY rowid`,
+    ],
+    decode: (found) => rowsOf(id, found),
+  }
+}
+
+export interface Projection {
+  readonly deployment: PaymentDeployment
+  readonly asset: VaultAsset
+  readonly history: ReadonlyArray<AuthorizedWallet>
+  readonly effective: AuthorizedWallet | undefined
+  readonly nowSeconds: number
+  readonly lease: string | undefined
+  readonly requests: ReadonlyArray<DispatchRequest>
+  readonly inspections: ReadonlyArray<Inspection>
+}
+
+export interface Reservation {
+  readonly obligationId: string
+  readonly githubUserId: string
+  readonly gross: bigint
+  readonly fee: bigint
+  readonly sourceDigest: string
+}
+
+export const ownToken = 2
+export const foreignToken = 1
+export const leaseHorizon = 2
+
+effect function amountOf(text: string, label: string) {
+  const value = parseBaseUnits(text)
+  if (value === undefined) throw new RowMismatch({ text: label, issue: "not a base-unit amount" })
+  return value
+}
+
+export effect function obligationTerms(projection: Projection, reservation: Reservation) {
+  const { deployment, asset } = projection
+  return {
+    scope: deployment.scope,
+    chain: deployment.chain,
+    projectId: deployment.projectId,
+    vault: deployment.vault,
+    obligationId: reservation.obligationId,
+    githubUserId: reservation.githubUserId,
+    asset,
+    sourceDigest: reservation.sourceDigest,
+    termsDigest: try termsDigest(reservation.gross, reservation.fee, deployment.feeRecipient),
+  } satisfies ObligationTerms
+}
+
+export effect function reservationOf(row: ObligationRow) {
+  return {
+    obligationId: row.id,
+    githubUserId: row.github_user_id,
+    gross: try amountOf(row.gross_base, "gross_base"),
+    fee: try amountOf(row.fee_base, "fee_base"),
+    sourceDigest: row.source_digest,
+  } satisfies Reservation
+}
+
+export interface PaidRecord {
+  readonly transaction: string
+  readonly eventIndex: number
+  readonly blockId: string
+  readonly destination: string
+  readonly height: number
+  readonly evidenceDigest: string
+  readonly vault: string
+  readonly network: string
+  readonly githubUserId: string
+  readonly gross: bigint
+  readonly net: bigint
+  readonly fee: bigint
+}
+
+export effect function paidRecordOf(row: EventRow) {
+  const parsed = try Effect.try({ try: () => JSON.parse(row.evidence_json) as unknown, catch: () => new RowMismatch({ text: "payment evidence", issue: "not JSON" }) })
+  const evidence = Schema.decodeUnknownEffect(PaidEvidence)(parsed) catch effect () => { throw new RowMismatch({ text: "payment evidence", issue: "not a finalized payout" }) }
+  const block = evidence.blockNumber
+  if (block === undefined) throw new RowMismatch({ text: "payment evidence", issue: "legacy evidence names no finalized block" })
+  const height = Number(block)
+  if (!/^[1-9][0-9]*$/u.test(block) || !Number.isSafeInteger(height)) throw new RowMismatch({ text: "payment evidence", issue: "finalized block out of range" })
+  return {
+    transaction: row.transaction_id,
+    eventIndex: row.event_index,
+    blockId: row.block_id,
+    destination: evidence.destination,
+    height,
+    evidenceDigest: try sha256Hex(row.evidence_json),
+    vault: evidence.vault,
+    network: evidence.network,
+    githubUserId: evidence.githubUserId,
+    gross: try amountOf(evidence.grossMicro, "grossMicro"),
+    net: try amountOf(evidence.netMicro, "netMicro"),
+    fee: try amountOf(evidence.feeMicro, "feeMicro"),
+  } satisfies PaidRecord
+}
+
+export function receiptOf(target: Target, paid: PaidRecord, chain: PaymentDeployment["chain"]): Receipt {
+  return {
+    target,
+    tx: paid.transaction,
+    eventIndex: paid.eventIndex,
+    block: paid.blockId,
+    destination: canonicalAddress(chain, paid.destination),
+    evidenceDigest: paid.evidenceDigest,
+    finalized: true,
+    succeeded: true,
+    observedAsset: true,
+  }
+}
+
+const queues = { ready: "Ready", processing: "Processing", submitted: "Submitted", paid: "Indexed", held: "Held" } as const satisfies Record<OutboxRow["state"], Queue>
+
+const statuses = { prepared: "Prepared", unknown: "Unknown", submitted: "AttemptSubmitted", failed: "Failed", finalized: "AttemptFinalized" } as const satisfies Record<AttemptRow["state"], AttemptState>
+
+export const outboxStates = { Ready: "ready", Processing: "processing", Submitted: "submitted", Indexed: "paid", Held: "held" } as const
+
+export const attemptStates = { Prepared: "prepared", Unknown: "unknown", AttemptSubmitted: "submitted", Failed: "failed", AttemptFinalized: "finalized" } as const
+
+function bindingFor(projection: Projection, claim: string): Binding {
+  const known = projection.history.find((wallet) => wallet.claimId === claim)
+  return known === undefined ? { claim, digest: "", address: "" } : bindingOf(projection.deployment.chain, known)
+}
+
+export function attemptOf(projection: Projection, row: AttemptRow): Attempt {
+  return { key: row.id, binding: bindingFor(projection, row.claim_id), status: statuses[row.state], tx: row.transaction_id ?? "" }
+}
+
+export function paidEventOf(rows: ObligationRows): EventRow | undefined {
+  return rows.events.find((event) => event.kind === "paid")
+}
+
+export function dispatchOf(projection: Projection, rows: ObligationRows, target: Target, receipt: Receipt | undefined): Dispatch {
+  const { deployment, nowSeconds, lease } = projection
+  const outbox = rows.outbox
+  const paid = rows.obligation?.state === "paid"
+  const queue: Queue = paid ? "Indexed" : outbox === undefined ? "NeedsWallet" : queues[outbox.state]
+  const processing = queue === "Processing" && outbox !== undefined
+  const leaseUntil = processing && outbox.lease_until !== null ? Math.max(1, Math.ceil(millisOf(outbox.lease_until) / 1000)) : 0
+  return {
+    ...dispatchInitial,
+    admitted: rows.obligation !== undefined,
+    target,
+    queue,
+    now: nowSeconds,
+    token: processing ? (outbox.lease_token !== null && outbox.lease_token === lease ? ownToken : foreignToken) : 0,
+    leaseUntil: processing ? leaseUntil : 0,
+    highestToken: rows.obligation === undefined ? 0 : leaseHorizon,
+    wallet: projection.effective === undefined ? noBinding : bindingOf(deployment.chain, projection.effective),
+    authorized: projection.history.map((wallet) => bindingOf(deployment.chain, wallet)),
+    requests: [...projection.requests],
+    attempts: rows.attempts.map((row) => attemptOf(projection, row)),
+    inspections: [...projection.inspections],
+    receipt: receipt ?? noReceipt,
+  }
+}
+
+function vaultOf(projection: Projection, reservation: Reservation, gross: ReadonlyArray<number>, paid: { readonly receipt: Receipt; readonly height: number } | undefined, reserved: boolean): Vault {
+  const { deployment, asset } = projection
+  const amount = [...gross]
+  return {
+    ...vaultInitial,
+    id: canonicalAddress(deployment.chain, deployment.vault),
+    obligations: reserved || paid !== undefined ? [1] : [],
+    reservations: reserved ? [{ obligation: 1, actor: reservation.githubUserId, amount }] : [],
+    settled: paid === undefined ? [] : [{ obligation: 1, actor: reservation.githubUserId, recipient: paid.receipt.destination, amount, receipt: 1, height: paid.height, transaction: paid.receipt.tx }],
+    receipts: paid === undefined ? [] : [1],
+    asset: asset.address,
+    refund: canonicalAddress(deployment.chain, deployment.owner),
+    free: reserved || paid !== undefined ? zero : amount,
+    reserved: reserved ? amount : zero,
+    paid: paid === undefined ? zero : amount,
+    refunded: zero,
+    deposited: amount,
+    reservation: reserved,
+  }
+}
+
+effect function paymentOf(projection: Projection, reservation: Reservation, target: Target, paid: { readonly receipt: Receipt; readonly height: number } | undefined) {
+  const { deployment, asset } = projection
+  const gross = try limbs(reservation.gross)
+  const principal = try limbs(reservation.gross - reservation.fee)
+  const fee = try limbs(reservation.fee)
+  return {
+    ...paymentInitial,
+    configured: true,
+    phase: paid === undefined ? "VaultReserved" : "Paid",
+    purpose: "Ordinary",
+    rail: "OrdinaryVault",
+    feeRecipient: "fees",
+    obligation: 1,
+    vault: canonicalAddress(deployment.chain, deployment.vault),
+    asset: asset.address,
+    target,
+    vaultReceipt: paid === undefined ? noReceipt : paid.receipt,
+    gross,
+    principal,
+    fee,
+    finalizedHeight: paid === undefined ? 0 : paid.height,
+    observedPrincipal: paid === undefined ? zero : principal,
+    observedFee: paid === undefined ? zero : fee,
+  } satisfies Payment
+}
+
+export effect function unreservedSettlement(projection: Projection, reservation: Reservation) {
+  const target = targetOf(try obligationTerms(projection, reservation))
+  const gross = try limbs(reservation.gross)
+  return try decodeSettlement({
+    vault: vaultOf(projection, reservation, gross, undefined, false),
+    payment: { ...paymentInitial, vault: target.vault, asset: target.asset, target },
+    delivery: dispatchInitial,
+  })
+}
+
+export interface Projected {
+  readonly reservation: Reservation
+  readonly target: Target
+  readonly paid: PaidRecord | undefined
+  readonly settlement: Settlement
+  readonly investigation: Investigation
+}
+
+export function walletAuthorizations(projection: Projection, actor: number) {
+  return projection.history.map((wallet) => ({ actor, network: projection.deployment.network, address: canonicalAddress(projection.deployment.chain, wallet.address), claim: wallet.claimId }))
+}
+
+effect function actorOf(text: string) {
+  const actor = Number(text)
+  if (!/^[1-9][0-9]*$/u.test(text) || !Number.isSafeInteger(actor)) throw new RowMismatch({ text: "github_user_id", issue: "not a GitHub account id" })
+  return actor
+}
+
+effect function modelInteger(value: bigint, label: string) {
+  if (value > 9007199254740991n) throw new RowMismatch({ text: label, issue: "beyond the investigation model's integer range" })
+  return Number(value)
+}
+
+export effect function payoutOf(projection: Projection, obligationId: string, paid: PaidRecord) {
+  const { chain } = projection.deployment
+  return {
+    obligation: obligationId,
+    vault: canonicalAddress(chain, paid.vault),
+    network: paid.network,
+    actor: try actorOf(paid.githubUserId),
+    transaction: paid.transaction,
+    index: paid.eventIndex,
+    destination: canonicalAddress(chain, paid.destination),
+    gross: try modelInteger(paid.gross, "paid gross"),
+    fee: try modelInteger(paid.fee, "paid fee"),
+    net: try modelInteger(paid.net, "paid net"),
+    block: paid.height,
+  } satisfies PaidEvent
+}
+
+export effect function project(projection: Projection, rows: ObligationRows) {
+  const row = rows.obligation
+  if (row === undefined) throw new RowMismatch({ text: `payment obligation ${rows.id}`, issue: "not reserved" })
+  const reservation = try reservationOf(row)
+  const target = targetOf(try obligationTerms(projection, reservation))
+  const event = paidEventOf(rows)
+  const paid = event === undefined ? undefined : try paidRecordOf(event)
+  const settled = row.state === "paid" && paid !== undefined ? { receipt: receiptOf(target, paid, projection.deployment.chain), height: paid.height } : undefined
+  if (row.state === "paid" && settled === undefined) throw new RowMismatch({ text: `payment obligation ${row.id}`, issue: "paid without its finalized event" })
+  const gross = try limbs(reservation.gross)
+  const settlement = try decodeSettlement({
+    vault: vaultOf(projection, reservation, gross, settled, settled === undefined),
+    payment: try paymentOf(projection, reservation, target, settled),
+    delivery: dispatchOf(projection, rows, target, settled?.receipt),
+  })
+  const actor = try actorOf(reservation.githubUserId)
+  const phase = row.state === "paid" ? "Paid" : paid === undefined ? "Reserved" : "Investigating"
+  const investigation = try decodeInvestigation({
+    phase,
+    terms: {
+      obligation: reservation.obligationId,
+      vault: canonicalAddress(projection.deployment.chain, projection.deployment.vault),
+      network: projection.deployment.network,
+      actor,
+      gross: try modelInteger(reservation.gross, "gross_base"),
+      fee: try modelInteger(reservation.fee, "fee_base"),
+    },
+    wallets: walletAuthorizations(projection, actor),
+    payout: paid === undefined ? noEvent : try payoutOf(projection, reservation.obligationId, paid),
+    decision: { resolver: "NoResolver", resumesIndexing: false },
+    resolvedBy: "",
+    cursorHeld: phase === "Investigating",
+    replays: 0,
+  })
+  return { reservation, target, paid, settlement, investigation } satisfies Projected
+}

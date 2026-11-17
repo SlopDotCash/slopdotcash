@@ -1,0 +1,58 @@
+// spec/backend/identity.md, "The callback claims a pending flow once and clears its verifier before contacting GitHub"; spec/backend/identity.md, "At most one poll receives the flow's identity"
+import { aesGcmOpen, aesGcmSeal, base64url, fromBase64url, hmacSha256, randomBytes, sha256Hex, timingSafeEqual, utf8 } from "@repo/platform/crypto"
+
+export interface FlowSecrets {
+  readonly flowId: string
+  readonly state: string
+  readonly capability: string
+  readonly verifier: string
+}
+
+export interface Sealed {
+  readonly iv: string
+  readonly ciphertext: string
+}
+
+export error VerifierInvalid
+
+const verifierShape = /^[A-Za-z0-9_-]{43,128}$/u
+
+function associated(flowId: string) {
+  return `slop-identity-pkce:v1:${flowId}`
+}
+
+export effect function randomText(bytes: number) {
+  return base64url(try randomBytes(bytes))
+}
+
+export effect function digestOf(text: string) {
+  return try sha256Hex(text)
+}
+
+export function sameText(left: string, right: string) {
+  return timingSafeEqual(utf8(left), utf8(right))
+}
+
+export effect function sealVerifier(key: Redacted.Redacted<string>, verifier: string, flowId: string) {
+  const [iv = "", ciphertext = ""] = (try aesGcmSeal(key, utf8(verifier), associated(flowId))).split(".")
+  return { iv, ciphertext } satisfies Sealed
+}
+
+export effect function openVerifier(key: Redacted.Redacted<string>, sealed: Sealed, flowId: string) {
+  const plain = try aesGcmOpen(key, `${sealed.iv}.${sealed.ciphertext}`, associated(flowId))
+  const verifier = try Effect.try({ try: () => new TextDecoder("utf-8", { fatal: true }).decode(plain), catch: () => new VerifierInvalid() })
+  if (!verifierShape.test(verifier)) throw new VerifierInvalid()
+  return verifier
+}
+
+export effect function challengeOf(verifier: string) {
+  const crypto = try Experimental.Crypto.Crypto
+  return base64url(try orDie(crypto.digest("SHA-256", utf8(verifier))))
+}
+
+export effect function assertionToken(key: Redacted.Redacted<string>, flowId: string, capability: string, actorId: string) {
+  const secret = fromBase64url(Redacted.value(key))
+  if (secret === undefined || secret.length !== 32) return try die(new Error("IDENTITY_ASSERTION_KEY is not 32 bytes of unpadded base64url"))
+  const mac = try hmacSha256(secret, `slop-identity-assertion:v1:${flowId}:${capability}:${actorId}`)
+  return `slop_assert_v1_${base64url(mac)}`
+}

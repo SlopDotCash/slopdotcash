@@ -1,0 +1,79 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import type { FileChange } from "../proofs/changes.vibe"
+import type {
+  AcceptedRange,
+  Comment,
+  Commit,
+  CommitChanges,
+  EvidenceRefused,
+  IndirectAcceptance,
+  Limitation,
+  NativeMergeAcceptance,
+  NoChangePromotion,
+  Pull,
+  RegisteredRepository,
+  RetainedMergeReference,
+  Review,
+} from "./types.vibe"
+
+export const nativeMergeContext = "Native ancestor acceptance requires its complete accepted carrier source"
+export const noChangePromotionContext = "Unchanged branch promotion requires complete original accepted sources"
+
+export type AcceptanceFailure = GitHubFailure | EvidenceRefused
+
+export interface CollectedChanges {
+  readonly commit: CommitChanges | null
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+export type CommitReader = (sha: string) => CollectedChanges!AcceptanceFailure!GitHub
+
+export interface MergedSource {
+  readonly repository: string
+  readonly pull: Pull
+  readonly files: ReadonlyArray<FileChange>
+  readonly mergeCommitEvidence: CommitChanges
+}
+
+export interface IndirectSource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryPolicy: RegisteredRepository | null
+  readonly pull: Pull
+  readonly commits: ReadonlyArray<Commit>
+  readonly comments: ReadonlyArray<Comment>
+}
+
+export interface RetainedSource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pull: Pull
+  readonly comments: ReadonlyArray<Comment>
+  readonly reviews: ReadonlyArray<Review>
+}
+
+export interface PromotionSource {
+  readonly repository: string
+  readonly pull: Pull
+  readonly mergeCommitEvidence: CommitChanges | null
+}
+
+export interface IndirectOutcome {
+  readonly acceptance: IndirectAcceptance | undefined
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+export interface RetainedOutcome {
+  readonly references: ReadonlyArray<RetainedMergeReference>
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+export service Acceptance {
+  range(source: MergedSource): (AcceptedRange | undefined)!AcceptanceFailure!GitHub
+  native(source: MergedSource): (NativeMergeAcceptance | undefined)!AcceptanceFailure!GitHub
+  indirect(source: IndirectSource, changes: CommitReader): IndirectOutcome!AcceptanceFailure!GitHub
+  retained(source: RetainedSource): RetainedOutcome!AcceptanceFailure!GitHub
+  promotion(source: PromotionSource): (NoChangePromotion | undefined)!AcceptanceFailure!GitHub
+}

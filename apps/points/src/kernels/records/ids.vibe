@@ -1,0 +1,70 @@
+// spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Award, type Journal, type KeyParts, type Revision, type RevisionBody, journalText, keyText, revisionBodyText, revisionText } from "./canonical.ts"
+import { coverageOrdered, revisionFault } from "./chain.ts"
+import { PointRevision, PointsJournal } from "./records.schema.ts"
+
+export error JournalBytesDiffer
+export error RevisionMismatch { id: string; check: string }
+export error CoverageUnordered { repository: string }
+
+const workUnitPattern = /^wu_[a-f0-9]{64}$/u
+const pullPath = /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*$/u
+const decodeRevision = Schema.decodeUnknownEffect(Schema.fromJsonString(PointRevision))
+const decodeJournal = Schema.decodeUnknownEffect(Schema.fromJsonString(PointsJournal))
+
+export effect function pointKey(parts: KeyParts) {
+  return try sha256Hex(keyText(parts))
+}
+
+export effect function pointRevisionId(body: RevisionBody) {
+  return try sha256Hex(revisionBodyText(body))
+}
+
+export effect function batchDigest(journal: Journal) {
+  return try sha256Hex(journalText(journal))
+}
+
+export effect function awardKeyHolds(award: Award) {
+  const parts = { projectId: award.projectId, actorId: award.actor.id, category: award.category, sourceId: award.sourceId }
+  if (award.key === (try pointKey(parts))) return true
+  return award.category === "merged-pull-request" && workUnitPattern.test(award.workUnitId) && award.key === (try pointKey({ ...parts, workUnitId: award.workUnitId }))
+}
+
+function sourceFault(award: Award): string {
+  const url = URL.parse(award.sourceUrl)
+  if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "") return "source"
+  if (award.category !== "slopbot-penalty") return ""
+  return url.origin === "https://github.com" && pullPath.test(url.pathname) ? "" : "penalty"
+}
+
+effect function verify(revision: Revision, prior: Revision | null, asOf: string) {
+  if ((try pointRevisionId(revision)) !== revision.id) throw new RevisionMismatch({ id: revision.id, check: "id" })
+  if (!(try awardKeyHolds(revision.award))) throw new RevisionMismatch({ id: revision.id, check: "key" })
+  const fault = revisionFault(revision, prior, asOf)
+  const check = fault === "" ? sourceFault(revision.award) : fault
+  if (check !== "") throw new RevisionMismatch({ id: revision.id, check })
+}
+
+export effect function storedRevision(stored: { text: string; prior: Revision | null; asOf: string }) {
+  const revision = try decodeRevision(stored.text, { onExcessProperty: "error" })
+  if (revisionText(revision) !== stored.text) throw new RevisionMismatch({ id: revision.id, check: "bytes" })
+  try verify(revision, stored.prior, stored.asOf)
+  return revision
+}
+
+export effect function journalFile(text: string) {
+  const journal = try decodeJournal(text, { onExcessProperty: "error" })
+  if (`${journalText(journal)}\n` !== text) throw new JournalBytesDiffer()
+  const latest = new Map<string, Revision>()
+  const seen = new Set<string>()
+  for (const revision of journal.revisions) {
+    if (seen.has(revision.id)) throw new RevisionMismatch({ id: revision.id, check: "duplicate" })
+    try verify(revision, latest.get(revision.award.key) ?? null, journal.generatedAt)
+    latest.set(revision.award.key, revision)
+    seen.add(revision.id)
+  }
+  const unordered = journal.coverage.find((entry) => !coverageOrdered(entry))
+  if (unordered !== undefined) throw new CoverageUnordered({ repository: unordered.repository })
+  return journal
+}

@@ -1,0 +1,215 @@
+// spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/escrow.md, "Anyone may pay a matured award; net goes to the destination and the fee accrues"; spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"
+import { type Hex, EvmRpc, evmRpc } from "@repo/platform/chain/evm"
+import { type Address, type FetchedTransaction, SolanaRpc, address, base58Encode, isSignature, publicKey, solanaRpc } from "@repo/platform/chain/solana"
+import { evmAddress } from "../chain/evm/abi.ts"
+import { decodeEscrowLogs } from "../chain/evm/events.ts"
+import { type VaultAccount, decodeAward, decodeProject, decodeVault } from "../chain/solana/accounts.ts"
+import { digest, readU64 } from "../chain/solana/bytes.ts"
+import { type EscrowInvocation, escrowInvocations } from "../chain/solana/instructions.ts"
+import { type TokenProgram, awardAddress, awardId, tokenAccountAddress, vaultAddress } from "../chain/solana/pda.ts"
+import { resolvedKeys } from "../chain/solana/transactions.ts"
+import { normalizedNativeDelta } from "../kernels/budget.ts"
+import { readMint, readTokenAccount } from "../kernels/token2022.ts"
+import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import { type EventReference, type EvmPaymentDeployment, type FinalizedPaymentEvent, type PaymentDeployment, type SolanaPaymentDeployment, refused, sameAddress } from "./terms.vibe"
+
+const evmHash = /^0x[0-9a-f]{64}$/u
+const solanaDigest = /^[0-9a-f]{64}$/u
+const transferChecked = 12
+
+effect function checkedReference(reference: EventReference, obligation: RegExp) {
+  if (!Number.isSafeInteger(reference.eventIndex) || reference.eventIndex < 0 || !obligation.test(reference.obligationId)) throw refused("Invalid chain event request")
+}
+
+function reviewedAs(deployment: EvmPaymentDeployment) {
+  const { review } = deployment
+  return review.projectId === deployment.projectId && review.network === deployment.network && review.chain === deployment.chain && review.chainId === deployment.chainId
+    && sameAddress(deployment.chain, review.vault, deployment.vault) && sameAddress(deployment.chain, review.owner, deployment.owner) && sameAddress(deployment.chain, review.feeRecipient, deployment.feeRecipient)
+    && (review.scope === "security-bounty") === (deployment.scope === "PrivateBounty")
+}
+
+effect function reviewedAt(deployment: EvmPaymentDeployment, block: bigint) {
+  verifyEvmDeployment(deployment.review, block, block) catch effect (error) => match (error) {
+    when DeploymentMismatch: throw refused(error.message);
+    default: throw error;
+  }
+}
+
+effect function verifyEvm(deployment: EvmPaymentDeployment, reference: EventReference, storedSource: string | undefined) {
+  try checkedReference(reference, evmHash)
+  if (!evmHash.test(reference.transactionId)) throw refused("Invalid chain event request")
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined || !reviewedAs(deployment)) throw refused("Invalid deployment or event index")
+  provide evmRpc({ urls: deployment.rpc, chainId: deployment.chainId }) {
+    const receipt = try (try EvmRpc).finalizedReceipt(reference.transactionId as Hex)
+    if (receipt === undefined) throw refused("Receipt is not finalized")
+    if (receipt.status !== "success" || receipt.transactionHash.toLowerCase() !== reference.transactionId) throw refused("Unsuccessful or mismatched receipt")
+    try reviewedAt(deployment, receipt.blockNumber)
+    const logs = receipt.logs.filter((log) => log.logIndex === reference.eventIndex)
+    if (logs.length !== 1) throw refused("Missing or duplicate event index")
+    const [decoded] = decodeEscrowLogs(vault, logs)
+    if (decoded === undefined || decoded.kind !== "event") throw refused("Event deployment or block mismatch")
+    const common = {
+      kind: reference.kind,
+      transactionId: reference.transactionId,
+      eventIndex: reference.eventIndex,
+      obligationId: reference.obligationId,
+      blockId: receipt.blockHash.toLowerCase(),
+      blockNumber: receipt.blockNumber,
+      projectId: deployment.projectId,
+      network: deployment.network,
+      chain: deployment.chain,
+      vault: deployment.vault,
+      feeRecipient: deployment.review.feeRecipient,
+    }
+    const event = decoded.event
+    if (reference.kind === "reserved") {
+      if (event.name !== "AwardCommitted" || event.id !== reference.obligationId) throw refused("Wrong event or obligation")
+      return { ...common, githubUserId: event.actor.toString(), gross: event.gross, net: event.gross - event.fee, fee: event.fee, sourceDigest: event.sourceDigest.slice(2), destination: undefined, bindingVersion: undefined } satisfies FinalizedPaymentEvent
+    }
+    if (event.name !== "Paid" || event.id !== reference.obligationId) throw refused("Wrong event or obligation")
+    if (storedSource === undefined) throw refused("Reservation must be indexed before payout")
+    return { ...common, githubUserId: event.actor.toString(), gross: event.gross, net: event.net, fee: event.fee, sourceDigest: storedSource, destination: event.destination, bindingVersion: event.version.toString() } satisfies FinalizedPaymentEvent
+  }
+}
+
+function account(list: ReadonlyArray<Address>, at: number) {
+  return list[at] ?? ""
+}
+
+effect function nativeDestination(fetched: FetchedTransaction, invocation: EscrowInvocation, deployment: SolanaPaymentDeployment, net: bigint) {
+  if (invocation.children.length !== 0) throw refused("Unexpected native payout instructions")
+  const keys = resolvedKeys(fetched.transaction.message, { writable: fetched.meta.loadedWritable, readonly: fetched.meta.loadedReadonly })
+  const destination = account(invocation.accounts, 4)
+  const delta = (key: string) => {
+    const at = keys.indexOf(key as Address)
+    const before = fetched.meta.preBalances[at]
+    const after = fetched.meta.postBalances[at]
+    return at < 0 || before === undefined || after === undefined ? undefined : normalizedNativeDelta(before, after, fetched.meta.fee, at === 0)
+  }
+  if (delta(deployment.vault) !== -net || delta(destination) !== net) throw refused("Native payout balances differ from award")
+  return destination
+}
+
+interface AdmittedMint {
+  readonly mint: Address
+  readonly program: TokenProgram
+  readonly decimals: number
+}
+
+effect function tokenDestination(fetched: FetchedTransaction, invocation: EscrowInvocation, deployment: SolanaPaymentDeployment, mint: AdmittedMint, net: bigint) {
+  const payee = account(invocation.accounts, 5)
+  const expected = net === 0n ? [] : [{ to: payee, amount: net }]
+  if (invocation.children.length !== expected.length) throw refused("Unexpected payout instructions")
+  for (const [at, child] of invocation.children.entries()) {
+    const transfer = expected[at]
+    const valid = transfer !== undefined && child.program === mint.program && child.data.length === 10 && child.data[0] === transferChecked
+      && readU64(child.data, 1) === transfer.amount && child.data[9] === mint.decimals
+      && account(child.accounts, 0) === deployment.vault && account(child.accounts, 1) === deployment.mint
+      && account(child.accounts, 2) === transfer.to && account(child.accounts, 3) === deployment.project
+    if (!valid) throw refused("Payout transfer differs from award")
+  }
+  const keys = resolvedKeys(fetched.transaction.message, { writable: fetched.meta.loadedWritable, readonly: fetched.meta.loadedReadonly })
+  const index = keys.indexOf(payee as Address)
+  const balance = [...fetched.meta.postTokenBalances, ...fetched.meta.preTokenBalances].find((item) =>
+    item.accountIndex === index && item.mint === mint.mint && item.owner !== undefined && tokenAccountAddress(item.owner, mint.mint, mint.program) === payee)
+  if (index < 0 || balance?.owner === undefined) throw refused("Payout account balance missing")
+  return balance.owner
+}
+
+effect function admittedMint(deployment: SolanaPaymentDeployment, holding: VaultAccount) {
+  if (holding.kind === "Native") return undefined
+  const mint = address(deployment.mint)
+  const mintKey = publicKey(deployment.mint)
+  if (mint === undefined || mintKey === undefined) throw refused("Invalid deployment")
+  const mintAccount = try (try SolanaRpc).account(mint, "finalized")
+  if (mintAccount === undefined) throw refused("Payout mint missing")
+  const read = readMint({ program: mintAccount.owner, bytes: mintAccount.data, mint: mintKey })
+  if (read.kind === "Refused" || read.program !== holding.tokenProgram) throw refused("Payout mint refused")
+  if (readTokenAccount({ mint: read, program: holding.tokenProgram, bytes: holding.data }).kind === "Refused") throw refused("Escrow vault token account refused")
+  return { mint, program: holding.tokenProgram, decimals: read.decimals } satisfies AdmittedMint
+}
+
+effect function payee(fetched: FetchedTransaction, invocation: EscrowInvocation, deployment: SolanaPaymentDeployment, mint: AdmittedMint | undefined, net: bigint) {
+  if (mint === undefined) return try nativeDestination(fetched, invocation, deployment, net)
+  return try tokenDestination(fetched, invocation, deployment, mint, net)
+}
+
+effect function verifySolana(deployment: SolanaPaymentDeployment, reference: EventReference) {
+  try checkedReference(reference, solanaDigest)
+  const signature = reference.transactionId
+  const program = address(deployment.program)
+  const project = address(deployment.project)
+  const mint = address(deployment.mint)
+  const obligation = digest(reference.obligationId)
+  if (!isSignature(signature) || program === undefined || project === undefined || mint === undefined || obligation === undefined) throw refused("Invalid chain event request")
+  if (vaultAddress(program, project) !== deployment.vault) throw refused("Escrow vault does not match reviewed deployment")
+  provide solanaRpc({ urls: deployment.rpc, genesis: deployment.genesis }) {
+    const rpc = try SolanaRpc
+    const [status] = try rpc.signatureStatuses([signature])
+    if (status === undefined || status.err || status.confirmationStatus !== "finalized") throw refused("Transaction not finalized")
+    const fetched = try rpc.transaction(signature, "finalized")
+    if (fetched === undefined) throw refused("Transaction not finalized")
+    const first = fetched.transaction.signatures[0]
+    if (fetched.meta.err || first === undefined || base58Encode(first) !== signature || fetched.slot !== status.slot) throw refused("Transaction mismatch")
+    const invocations = escrowInvocations(fetched, program)
+    if (invocations.kind !== "decoded") throw refused("Exact escrow instruction missing")
+    const invocation = invocations.value.find((entry) => entry.position === reference.eventIndex)
+    const call = invocation?.call
+    if (invocation === undefined || call === undefined) throw refused("Exact escrow instruction missing")
+    const awardAccount = awardAddress(program, project, obligation)
+    const award = decodeAward(try rpc.account(awardAccount, "finalized"), program)
+    if (award.kind !== "decoded") throw refused("Ambiguous or missing durable award")
+    const { gross, actor, principal, fee, source } = award.value
+    if (gross === 0n || actor === 0n || gross !== principal + fee || awardId(project, source) !== obligation || award.value.project !== project) throw refused("Invalid award accounting")
+    const projectAccount = decodeProject(try rpc.account(project, "finalized"), program)
+    if (projectAccount.kind !== "decoded") throw refused("Project account missing")
+    const reviewed = projectAccount.value
+    if (reviewed.owner !== deployment.owner || reviewed.mint !== mint || reviewed.feeRecipient !== deployment.feeRecipient) throw refused("Escrow owner, mint or fee recipient does not match reviewed deployment")
+    const holding = decodeVault(try rpc.account(deployment.vault as Address, "finalized"), { program, project, mint })
+    if (holding.kind !== "decoded") throw refused("Escrow vault does not match reviewed deployment")
+    const admitted = try admittedMint(deployment, holding.value)
+    const accounts = invocation.accounts
+    if (reference.kind === "reserved") {
+      const monthly = call.name === "commit_monthly_award"
+      const direct = call.name === (deployment.scope === "PrivateBounty" ? "commit_bounty" : "commit")
+      if (!(monthly && deployment.scope === "Ordinary") && !direct) throw refused("Reservation differs from award")
+      const matches = (call.name === "commit_monthly_award" || call.name === "commit" || call.name === "commit_bounty")
+        && account(accounts, 1) === project && account(accounts, monthly ? 5 : 4) === awardAccount
+        && call.awardId === obligation && call.source === source && call.actor === actor && call.gross === gross
+      if (!matches) throw refused("Reservation differs from award")
+    } else {
+      const native = admitted === undefined
+      const shaped = award.value.paid && account(accounts, 0) === project && account(accounts, 1) === awardAccount
+        && (native ? call.name === "pay_native" && account(accounts, 3) === deployment.vault : call.name === "pay" && account(accounts, 3) === deployment.mint && account(accounts, 4) === deployment.vault)
+      if (!shaped) throw refused("Payment differs from award")
+    }
+    const destination = reference.kind === "reserved" ? undefined : try payee(fetched, invocation, deployment, admitted, principal)
+    const block = try rpc.block(fetched.slot, "finalized")
+    if (block === undefined) throw refused("Finalized block missing")
+    return {
+      kind: reference.kind,
+      transactionId: signature,
+      eventIndex: reference.eventIndex,
+      obligationId: obligation,
+      blockId: block.blockhash,
+      blockNumber: try orDie(Effect.try(() => BigInt(fetched.slot))),
+      projectId: deployment.projectId,
+      network: deployment.network,
+      chain: deployment.chain,
+      vault: deployment.vault,
+      githubUserId: actor.toString(),
+      gross,
+      net: principal,
+      fee,
+      sourceDigest: source,
+      destination,
+      bindingVersion: call.name === "pay" || call.name === "pay_native" ? call.version.toString() : undefined,
+      feeRecipient: reviewed.feeRecipient,
+    } satisfies FinalizedPaymentEvent
+  }
+}
+
+export effect function verifyFinalized(deployment: PaymentDeployment, reference: EventReference, storedSource: string | undefined) {
+  return deployment.family === "evm" ? try verifyEvm(deployment, reference, storedSource) : try verifySolana(deployment, reference)
+}

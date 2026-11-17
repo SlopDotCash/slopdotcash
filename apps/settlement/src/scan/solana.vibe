@@ -1,0 +1,126 @@
+// spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"; spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"
+import { type Address, type FetchedTransaction, SolanaRpc, address, chainIdentity, isSignature, solanaRpc } from "@repo/platform/chain/solana"
+import { type ChainIdentity, type Observation, type Scan } from "../../gen/settlement__solanaScan.effect.vibe"
+import { decodeAward } from "../chain/solana/accounts.ts"
+import { type EscrowInvocation, anchorDiscriminator, escrowInvocations } from "../chain/solana/instructions.ts"
+import { sameBytes } from "../chain/solana/bytes.ts"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { PaymentIndexer, type ScanEvent, ScanRefused } from "./index.vibe"
+import { type Listed, sendSolanaScan, storedScan } from "./solanaStore.vibe"
+
+export type SolanaScanDeployment = Extract<RegisteredDeployment, { family: "solana" }>
+
+const PAGE_SIZE = 1000
+const PER_RUN = 100
+const RESERVED = ["commit", "commit_bounty", "commit_monthly_award"].map((name) => anchorDiscriminator(name))
+const PAID = ["pay", "pay_native"].map((name) => anchorDiscriminator(name))
+
+function tagged(data: Uint8Array, tags: ReadonlyArray<Uint8Array>): boolean {
+  return tags.some((tag) => sameBytes(data.slice(0, 8), tag))
+}
+
+function identityOf(text: string): ChainIdentity {
+  return text === "PinnedGenesis" ? "PinnedGenesis" : text === "WrongGenesis" ? "WrongGenesis" : text === "MissingPin" ? "MissingPin" : "GenesisUnavailable"
+}
+
+effect function obligationOf(invocation: EscrowInvocation, program: Address) {
+  const call = invocation.call
+  if (call !== undefined && (call.name === "commit" || call.name === "commit_bounty" || call.name === "commit_monthly_award")) return call.awardId
+  if (call === undefined || (call.name !== "pay" && call.name !== "pay_native")) return undefined
+  const awardAccount = invocation.accounts[1]
+  if (awardAccount === undefined) return undefined
+  const award = decodeAward(try (try SolanaRpc).account(awardAccount, "finalized"), program)
+  return award.kind === "decoded" ? award.value.awardId : undefined
+}
+
+effect function indexInvocation(deployment: SolanaScanDeployment, program: Address, signature: string, invocation: EscrowInvocation) {
+  const reserved = tagged(invocation.data, RESERVED)
+  const paid = tagged(invocation.data, PAID)
+  if (!reserved && !paid) return "Unrelated"
+  const project = invocation.accounts[reserved ? 1 : 0]
+  if (project !== deployment.projectPda) return "Unrelated"
+  const obligationId = try obligationOf(invocation, program)
+  if (obligationId === undefined) return "Incomplete"
+  const event: ScanEvent = { projectId: deployment.projectId, network: deployment.network, transactionId: signature, eventIndex: invocation.position, kind: reserved ? "reserved" : "paid", obligationId }
+  const outcome = try (try PaymentIndexer).index(event, deployment)
+  return outcome === "Indexed" ? "Indexed" : "Incomplete"
+}
+
+effect function observe(deployment: SolanaScanDeployment, program: Address, entry: Listed) {
+  if (entry.err) return "ListedFailure" satisfies Observation
+  if (!isSignature(entry.signature)) return "Incomplete" satisfies Observation
+  const fetched: FetchedTransaction | undefined = try (try SolanaRpc).transaction(entry.signature, "finalized")
+  if (fetched === undefined || fetched.meta.err) return "Incomplete" satisfies Observation
+  const invocations = escrowInvocations(fetched, program)
+  if (invocations.kind === "malformed") return "Incomplete" satisfies Observation
+  let relevant = false
+  for (const invocation of invocations.value) {
+    const result = try indexInvocation(deployment, program, entry.signature, invocation)
+    if (result === "Incomplete") return "Incomplete" satisfies Observation
+    if (result === "Indexed") relevant = true
+  }
+  return (relevant ? "FullyIndexed" : "FinalizedUnrelated") satisfies Observation
+}
+
+effect function discover(deployment: SolanaScanDeployment, scope: { readonly projectId: string; readonly network: string }, scan: Scan, identity: ChainIdentity) {
+  const project = address(deployment.projectPda)
+  if (project === undefined) throw new ScanRefused({ message: "Solana project deployment missing" })
+  const before = isSignature(scan.beforeSignature) ? scan.beforeSignature : undefined
+  const until = isSignature(scan.frozenUntil) ? scan.frozenUntil : undefined
+  const listed = try (try SolanaRpc).signatures(project, { before, until, limit: PAGE_SIZE }, "finalized")
+  const oldestFirst = [...listed].reverse().map((entry) => ({ signature: entry.signature, err: entry.err }) satisfies Listed)
+  try sendSolanaScan(scope, {
+    type: "discoverPage",
+    generation: scan.generation,
+    revision: scan.revision,
+    identity,
+    oldestFirst: oldestFirst.map((entry) => entry.signature),
+    coverage: listed.length < PAGE_SIZE ? "ShortPage" : "FullPage",
+  }, oldestFirst)
+}
+
+effect function processPage(deployment: SolanaScanDeployment, scope: { readonly projectId: string; readonly network: string }, identity: ChainIdentity) {
+  const program = address(deployment.programId)
+  if (program === undefined) throw new ScanRefused({ message: "Solana project deployment missing" })
+  const first = try storedScan(scope)
+  const generation = first.scan.generation
+  let revision = first.scan.revision
+  for (const entry of (first.top?.entries ?? []).slice(0, PER_RUN)) {
+    const observation = try observe(deployment, program, entry)
+    if (observation === "Incomplete") throw new ScanRefused({ message: "Finalized transaction unavailable" })
+    const advanced = sendSolanaScan(scope, { type: "checkpoint", generation, revision, identity, signature: entry.signature, observation }) catch effect (error) => {
+      if (error._tag === "Rejected" || error._tag === "Conflict") return undefined
+      throw error
+    }
+    if (advanced === undefined) return
+    revision = advanced.revision
+  }
+}
+
+effect function invocation(deployment: SolanaScanDeployment, identity: ChainIdentity) {
+  const scope = { projectId: deployment.projectId, network: deployment.network }
+  const opened = try storedScan(scope)
+  const scan = opened.scan.phase === "Idle"
+    ? try sendSolanaScan(scope, { type: "openInterval", generation: Math.max(try Clock.currentTimeMillis, opened.scan.generation + 1), identity })
+    : opened.scan
+  if (scan.phase === "Discovering") return try discover(deployment, scope, scan, identity)
+  if (scan.pending.length === 0) {
+    try sendSolanaScan(scope, { type: "closeInterval", generation: scan.generation, revision: scan.revision, identity })
+    return
+  }
+  try processPage(deployment, scope, identity)
+}
+
+export effect function scanSolanaPayments(deployment: SolanaScanDeployment) {
+  const configured = try PaymentRpc
+  const urls = configured.urls[deployment.network]
+  if (urls === undefined) throw new ScanRefused({ message: "Private RPC configuration unavailable" })
+  const options = { urls, genesis: configured.genesis[deployment.network] ?? "" }
+  const identity = identityOf(try chainIdentity(options))
+  if (identity === "MissingPin") throw new ScanRefused({ message: "Solana genesis trust root unavailable" })
+  if (identity !== "PinnedGenesis") throw new ScanRefused({ message: "Wrong Solana cluster" })
+  provide solanaRpc(options) {
+    try invocation(deployment, identity)
+  }
+}

@@ -1,0 +1,360 @@
+import { assert, it, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { rolesFrom } from "@repo/platform/roles"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { Restrictions, Wallets } from "@repo/ports/backend"
+import { fileClosedMonths } from "../src/referrals/accrualJobs.vibe"
+import { type ReferralVars, decodeProgram, referralProgram } from "../src/referrals/config.vibe"
+import { buildTree, leafHash, verifyProof } from "../src/referrals/merkle.ts"
+import { type ReferralAttribution, ReferralAttributions } from "../src/referrals/source.vibe"
+import { distributorVectors, reviewedVars } from "./support/referralVectors.ts"
+
+module parsing {
+  /** @throws {never} */
+  export function parsedJson(text: unknown): unknown {
+    try {
+      return JSON.parse(String(text))
+    } catch {
+      return undefined
+    }
+  }
+}
+import { parsedJson } from parsing
+
+error MigrationFailed { file: string }
+
+service Ledgers {
+  readonly filing: D1Database
+  readonly outcomes: D1Database
+  readonly wallets: D1Database
+  readonly modes: D1Database
+}
+
+interface World {
+  readonly attributions: ReferralAttribution[]
+  readonly banned: Set<string>
+}
+
+const bindings = ["FILING", "OUTCOMES", "WALLETS", "MODES"] as const
+
+effect function migrated(mf: ReturnType<typeof startWorker>, binding: string) {
+  const applied = try promise(() => migrate(mf, binding, migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return try promise(() => database(mf, binding))
+}
+
+const Started = Layer.effect(Ledgers, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: Object.fromEntries(bindings.map((binding) => [binding, `referral-${binding.toLowerCase()}`])) })), (started) => promise(() => started.dispose()))
+  return {
+    filing: try migrated(mf, "FILING"),
+    outcomes: try migrated(mf, "OUTCOMES"),
+    wallets: try migrated(mf, "WALLETS"),
+    modes: try migrated(mf, "MODES"),
+  }
+})
+
+const roles = rolesFrom({ ADMIN_GITHUB_IDS: "18633264", PROJECT_MODERATOR_GITHUB_IDS: "" })
+const usdc = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+
+function world(): World {
+  return { attributions: [], banned: new Set() }
+}
+
+function attribution(projectId: string, referrerGithubId: string): ReferralAttribution {
+  return { projectId, applicantGithubId: "301", stewardGithubId: "302", referrerGithubId, referrerGithubLogin: `referrer-${referrerGithubId}` }
+}
+
+function ports(db: D1Database, facts: World) {
+  return Layer.mergeAll(
+    Layer.succeed(ReferralAttributions, { referred: () => effect { return [...facts.attributions] } }),
+    Layer.succeed(Restrictions, {
+      account: (githubId) => effect { return { banned: facts.banned.has(githubId) } },
+      project: () => effect { return { restricted: false } },
+    }),
+    Layer.succeed(Wallets, {
+      effective: ({ githubId }) => effect {
+        const [row] = try rowsOf(db, "SELECT wallet_address, id, record_sha256 FROM effective_payment_wallet_claims WHERE github_user_id = ? AND chain = 'robinhood'", githubId)
+        return row === undefined ? undefined : { address: String(row.wallet_address), claimId: String(row.id), digest: String(row.record_sha256) }
+      },
+    }),
+  )
+}
+
+effect function run(db: D1Database, clock: SettableClock, facts: World, vars: ReferralVars = reviewedVars) {
+  provide Layer.mergeAll(d1(db), webCrypto, clock.layer, roles, referralProgram(vars), ports(db, facts)) {
+    return try fileClosedMonths()
+  }
+}
+
+interface Paid {
+  readonly obligation: string
+  readonly project: string
+  readonly gross: string
+  readonly paidAt: string
+  readonly asset?: string
+  readonly decimals?: number
+}
+
+effect function pay(db: D1Database, payout: Paid) {
+  const transaction = `tx-${payout.obligation}`
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO payment_obligations (id, project_id, github_user_id, network, chain, vault, asset_address, asset_decimals, gross_base, fee_base, source_digest, state, created_at, paid_transaction) VALUES (?, ?, '1', 'base-mainnet', 'base', ?, ?, ?, ?, '0', ?, 'paid', ?, ?)")
+      .bind(payout.obligation, payout.project, `0x${"5".repeat(40)}`, payout.asset ?? usdc, payout.decimals ?? 6, payout.gross, payout.obligation.padEnd(64, "0").slice(0, 64), payout.paidAt, transaction),
+    db.prepare("INSERT INTO payment_events (network, transaction_id, event_index, block_id, kind, obligation_id, evidence_json, observed_at) VALUES ('base-mainnet', ?, 0, '0xblock', 'paid', ?, '{}', ?)")
+      .bind(transaction, payout.obligation, payout.paidAt),
+  ]))
+}
+
+effect function registerProject(db: D1Database, projectId: string) {
+  const manifest = JSON.stringify({ id: projectId, status: "active" })
+  const at = "2026-10-01T00:00:00.000Z"
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind(projectId, manifest, "a".repeat(64), at),
+    db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind(projectId, manifest, "a".repeat(64), at, at),
+  ]))
+}
+
+effect function rowsOf(db: D1Database, text: string, ...params: ReadonlyArray<string>) {
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function register(db: D1Database, githubId: string, address: string, authorized: boolean) {
+  const claim = `claim-${githubId}-${address}`
+  const registeredAt = "2026-10-15T00:00:00.000Z"
+  const [tip] = try rowsOf(db, "SELECT w.id FROM wallet_claims w WHERE w.github_user_id = ? AND w.chain = 'robinhood' AND NOT EXISTS (SELECT 1 FROM wallet_claims n WHERE n.supersedes_claim_id = w.id)", githubId)
+  const supersedes = tip === undefined ? null : String(tip.id)
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO wallet_claims (id, github_user_id, github_login, wallet_address, source, source_body_sha256, observed_at, record_sha256, supersedes_claim_id, created_at, chain) VALUES (?, ?, ?, ?, 'd1_registry', ?, ?, ?, ?, ?, 'robinhood')")
+      .bind(claim, githubId, `referrer-${githubId}`, address, "b".repeat(64), registeredAt, `${address.slice(2)}${githubId}`.padEnd(64, "0"), supersedes, registeredAt),
+    ...(authorized ? [
+      db.prepare("INSERT INTO payment_wallet_challenges (id, claim_id, github_user_id, message, expires_at, consumed_at) VALUES (?, ?, ?, 'journey', '2099-01-01T00:00:00.000Z', ?)").bind(`challenge-${claim}`, claim, githubId, registeredAt),
+      db.prepare("INSERT INTO payment_wallet_authorizations (claim_id, github_user_id, authorized_at, challenge_id, signature) VALUES (?, ?, ?, ?, 'journey')").bind(claim, githubId, registeredAt, `challenge-${claim}`),
+    ] : []),
+  ]))
+}
+
+effect function referrersOf(db: D1Database, period: string) {
+  const [row] = try rowsOf(db, "SELECT body FROM referral_accrual_files WHERE period = ?", period)
+  const body = parsedJson(row?.body) as { readonly referrers?: ReadonlyArray<{ readonly githubId: string; readonly cumulativeBase: string; readonly wallet: string | null }> } | undefined
+  return (body?.referrers ?? []).map((referrer) => [referrer.githubId, referrer.cumulativeBase, referrer.wallet])
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const at = (iso: string) => Date.parse(iso)
+
+layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('File November and December once, in order, under one lease (spec/settlement/referralAccrual.md, "Story: File every closed month once at its historical rate"; spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically")', () => effect {
+    const { filing: db } = try Ledgers
+    const facts = world()
+    facts.attributions.push(attribution("proj-alpha", "401"))
+    try register(db, "401", "0x00000000000000000000000000000000000000a1", true)
+    try pay(db, { obligation: "obl-nov-alpha", project: "proj-alpha", gross: "1000000", paidAt: "2026-11-10T12:00:00.000Z" })
+    try pay(db, { obligation: "obl-nov-unreferred", project: "proj-unreferred", gross: "5000000", paidAt: "2026-11-11T12:00:00.000Z" })
+    try pay(db, { obligation: "obl-dec-alpha", project: "proj-alpha", gross: "2000000", paidAt: "2026-12-05T00:00:00.000Z" })
+    const clock = settableClock(at("2027-01-02T00:00:00.000Z"))
+    const first = try run(db, clock, facts)
+    const filedRows = try rowsOf(db, "SELECT obligation_id, period, outcome, computed_base, accrued_base, reason FROM referral_accruals ORDER BY rowid")
+    const files = try rowsOf(db, "SELECT period, epoch, mode, merkle_root, tree_total_base, leaf_count, body_sha256, body FROM referral_accrual_files ORDER BY epoch")
+    const digests: boolean[] = []
+    provide webCrypto {
+      for (const file of files) digests.push((try sha256Hex(String(file.body))) === file.body_sha256)
+    }
+    const decemberBody = parsedJson(files[1]?.body) as Record<string, unknown> | undefined
+    const leaves = try Effect.try(() => [3_000_000_000_000_000_000n, 9_000_000_000_000_000_000n].map((cumulativeBase) => leafHash({ address: "0x00000000000000000000000000000000000000a1", cumulativeBase })))
+    try promise(() => db.prepare("INSERT INTO referral_accrual_locks (scope, run_id, expires_at) VALUES ('accrual', 'rrun_other-live-run', '2027-02-02T00:10:00.000Z')").run())
+    clock.set(at("2027-02-02T00:05:00.000Z"))
+    const locked = try run(db, clock, facts)
+    const filesWhileLocked = (try rowsOf(db, "SELECT period FROM referral_accrual_files")).length
+    clock.set(at("2027-02-02T00:11:00.000Z"))
+    const restarted = try run(db, clock, facts)
+    const again = try run(db, clock, facts)
+    try same({
+      first,
+      filedRows,
+      files: files.map((file) => [file.period, file.epoch, file.mode, file.merkle_root, file.tree_total_base, file.leaf_count]),
+      digests,
+      decemberKeys: Object.keys(decemberBody ?? {}),
+      locked,
+      filesWhileLocked,
+      restarted,
+      again,
+      januaryRows: (try rowsOf(db, "SELECT count(*) AS n FROM referral_accruals WHERE period = '2027-01'"))[0]?.n,
+      pins: try rowsOf(db, "SELECT referrer_github_id, wallet, pinned_period FROM referral_claim_wallets ORDER BY rowid"),
+      lease: try rowsOf(db, "SELECT run_id FROM referral_accrual_locks WHERE run_id <> 'rrun_other-live-run'"),
+    }, {
+      first: { status: "ran", filed: [{ period: "2026-11", epoch: 0, rows: 1, leafCount: 1 }, { period: "2026-12", epoch: 1, rows: 1, leafCount: 1 }] },
+      filedRows: [
+        { obligation_id: "obl-nov-alpha", period: "2026-11", outcome: "accrued", computed_base: "3000000000000000000", accrued_base: "3000000000000000000", reason: null },
+        { obligation_id: "obl-dec-alpha", period: "2026-12", outcome: "accrued", computed_base: "6000000000000000000", accrued_base: "6000000000000000000", reason: null },
+      ],
+      files: [
+        ["2026-11", 0, "dry_run", leaves[0], "3000000000000000000", 1],
+        ["2026-12", 1, "dry_run", leaves[1], "9000000000000000000", 1],
+      ],
+      digests: [true, true],
+      decemberKeys: ["schema", "ruleVersion", "period", "epoch", "mode", "generatedAt", "runId", "parameters", "accruals", "totals", "referrers", "merkle"],
+      locked: { status: "locked" },
+      filesWhileLocked: 2,
+      restarted: { status: "ran", filed: [{ period: "2027-01", epoch: 2, rows: 0, leafCount: 1 }] },
+      again: { status: "ran", filed: [] },
+      januaryRows: 0,
+      pins: [{ referrer_github_id: "401", wallet: "0x00000000000000000000000000000000000000a1", pinned_period: "2026-11" }],
+      lease: [],
+    })
+  })
+
+  it.effect(`Caps, window, hold, team, ban and asset each file their exact outcome (spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralHolds.md, "An operator hold zeroes a project's later accruals until its single lift, and no hold is ever deleted"; spec/settlement/money.md, "Story: Preserve every base unit")`, () => effect {
+    const { outcomes: db } = try Ledgers
+    const facts = world()
+    const capped = ["p01", "p02", "p03", "p04", "p05", "p06", "p07", "p08", "p09"]
+    for (const project of capped) facts.attributions.push(attribution(project, "501"))
+    facts.attributions.push(attribution("p10", "502"), attribution("p11", "18633264"), attribution("p12", "202660855"), attribution("p13", "601"), attribution("p14", "503"), attribution("p15", "701"))
+    facts.banned.add("601")
+    try registerProject(db, "p10")
+    try promise(() => db.prepare("INSERT INTO referral_holds (id, project_id, reason, actor_github_id, actor_github_login, created_at) VALUES ('rhold_p10-dispute', 'p10', 'Disputed referral', '9', 'operator', '2026-10-30T00:00:00.000Z')").run())
+    try pay(db, { obligation: "obl-p15-first", project: "p15", gross: "1000000", paidAt: "2026-11-01T10:00:00.000Z" })
+    for (const [index, project] of capped.slice(0, 8).entries()) try pay(db, { obligation: `obl-${project}`, project, gross: "100000000000", paidAt: `2026-11-0${index + 2}T00:00:00.000Z` })
+    try pay(db, { obligation: "obl-p09", project: "p09", gross: "1000000", paidAt: "2026-11-20T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-p10", project: "p10", gross: "1000000", paidAt: "2026-11-21T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-p11", project: "p11", gross: "1000000", paidAt: "2026-11-22T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-p12", project: "p12", gross: "1000000", paidAt: "2026-11-23T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-p13", project: "p13", gross: "1000000", paidAt: "2026-11-24T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-p14", project: "p14", gross: "1000000000000000000", paidAt: "2026-11-25T00:00:00.000Z", asset: "0x4200000000000000000000000000000000000006", decimals: 18 })
+    try pay(db, { obligation: "obl-p15-late", project: "p15", gross: "1000000", paidAt: "2027-11-20T00:00:00.000Z" })
+    const result = try run(db, settableClock(at("2027-12-02T00:00:00.000Z")), facts)
+    const cap = "250000000000000000000000"
+    try same({
+      filed: result.status === "ran" ? result.filed.map((entry) => entry.period) : [],
+      rows: try rowsOf(db, "SELECT obligation_id, outcome, asset_symbol, computed_base, accrued_base, reason FROM referral_accruals ORDER BY rowid"),
+      november: try rowsOf(db, "SELECT tree_total_base, leaf_count, merkle_root FROM referral_accrual_files WHERE period = '2026-11'"),
+    }, {
+      filed: ["2026-11", "2026-12", "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06", "2027-07", "2027-08", "2027-09", "2027-10", "2027-11"],
+      rows: [
+        { obligation_id: "obl-p15-first", outcome: "accrued", asset_symbol: "USDC", computed_base: "3000000000000000000", accrued_base: "3000000000000000000", reason: null },
+        ...capped.slice(0, 7).map((project) => ({ obligation_id: `obl-${project}`, outcome: "project_cap", asset_symbol: "USDC", computed_base: "300000000000000000000000", accrued_base: cap, reason: "project lifetime cap reached" })),
+        { obligation_id: "obl-p08", outcome: "pool_cap", asset_symbol: "USDC", computed_base: "300000000000000000000000", accrued_base: "249997000000000000000000", reason: "program pool exhausted" },
+        { obligation_id: "obl-p09", outcome: "pool_cap", asset_symbol: "USDC", computed_base: "3000000000000000000", accrued_base: "0", reason: "program pool exhausted" },
+        { obligation_id: "obl-p10", outcome: "held", asset_symbol: "USDC", computed_base: "0", accrued_base: "0", reason: "rhold_p10-dispute: Disputed referral" },
+        { obligation_id: "obl-p11", outcome: "referrer_excluded", asset_symbol: "USDC", computed_base: "0", accrued_base: "0", reason: "team account" },
+        { obligation_id: "obl-p12", outcome: "referrer_excluded", asset_symbol: "USDC", computed_base: "0", accrued_base: "0", reason: "team account" },
+        { obligation_id: "obl-p13", outcome: "referrer_excluded", asset_symbol: "USDC", computed_base: "0", accrued_base: "0", reason: "participation ban" },
+        { obligation_id: "obl-p14", outcome: "asset_not_eligible", asset_symbol: "unknown", computed_base: "0", accrued_base: "0", reason: "payout asset is not a reference stablecoin of its network" },
+        { obligation_id: "obl-p15-late", outcome: "window_closed", asset_symbol: "USDC", computed_base: "0", accrued_base: "0", reason: "referral window ended 2027-11-01T10:00:00.000Z (first payout 2026-11-01T10:00:00.000Z)" },
+      ],
+      november: [{ tree_total_base: "0", leaf_count: 0, merkle_root: null }],
+    })
+  })
+
+  it.effect('A late wallet enters a later tree, a shared wallet keeps the earlier account, an unauthorized wallet is never pinned or a leaf, and pins never move (spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry"; spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically")', () => effect {
+    const { wallets: db } = try Ledgers
+    const facts = world()
+    facts.attributions.push(attribution("w1", "801"), attribution("w2", "802"), attribution("w3", "803"), attribution("w4", "804"))
+    const shared = "0x00000000000000000000000000000000000000aa"
+    const late = "0x00000000000000000000000000000000000000bb"
+    const moved = "0x00000000000000000000000000000000000000cc"
+    const unproved = "0x00000000000000000000000000000000000000dd"
+    try register(db, "802", shared, true)
+    try register(db, "804", unproved, false)
+    try pay(db, { obligation: "obl-w1-nov", project: "w1", gross: "1000000", paidAt: "2026-11-03T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-w2-nov", project: "w2", gross: "1000000", paidAt: "2026-11-04T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-w4-nov", project: "w4", gross: "1000000", paidAt: "2026-11-05T00:00:00.000Z" })
+    try run(db, settableClock(at("2026-12-02T00:00:00.000Z")), facts)
+    const november = try referrersOf(db, "2026-11")
+    try register(db, "801", late, true)
+    try register(db, "802", moved, true)
+    try register(db, "803", shared, true)
+    try pay(db, { obligation: "obl-w1-dec", project: "w1", gross: "1000000", paidAt: "2026-12-03T00:00:00.000Z" })
+    try pay(db, { obligation: "obl-w3-dec", project: "w3", gross: "1000000", paidAt: "2026-12-04T00:00:00.000Z" })
+    try run(db, settableClock(at("2027-01-02T00:00:00.000Z")), facts)
+    const december = try referrersOf(db, "2026-12")
+    const [decemberFile] = try rowsOf(db, "SELECT merkle_root, tree_total_base, leaf_count FROM referral_accrual_files WHERE period = '2026-12'")
+    const tree = try Effect.try(() => buildTree([{ address: late, cumulativeBase: 6_000_000_000_000_000_000n }, { address: shared, cumulativeBase: 3_000_000_000_000_000_000n }]))
+    try same({
+      november,
+      december,
+      decemberFile,
+      pins: try rowsOf(db, "SELECT referrer_github_id, wallet, pinned_period FROM referral_claim_wallets ORDER BY rowid"),
+    }, {
+      november: [["801", "3000000000000000000", null], ["802", "3000000000000000000", shared], ["804", "3000000000000000000", null]],
+      december: [["801", "6000000000000000000", late], ["802", "3000000000000000000", shared], ["803", "3000000000000000000", null], ["804", "3000000000000000000", null]],
+      decemberFile: { merkle_root: tree?.root, tree_total_base: "9000000000000000000", leaf_count: 2 },
+      pins: [
+        { referrer_github_id: "802", wallet: shared, pinned_period: "2026-11" },
+        { referrer_github_id: "801", wallet: late, pinned_period: "2026-12" },
+      ],
+    })
+  })
+
+  it.effect('Off files nothing, DryRun files without posting, and the codec refuses any other mode (spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralAccrual.md, "Verified token units and approved reactivation precede dry-run accrual")', () => effect {
+    const { modes: db } = try Ledgers
+    const facts = world()
+    facts.attributions.push(attribution("m1", "901"))
+    try pay(db, { obligation: "obl-m1", project: "m1", gross: "1000000", paidAt: "2026-11-05T00:00:00.000Z" })
+    const clock = settableClock(at("2026-12-02T00:00:00.000Z"))
+    const off = try run(db, clock, facts, { ...reviewedVars, REFERRAL_ACCRUAL_MODE: "Off" })
+    const filesWhenOff = (try rowsOf(db, "SELECT period FROM referral_accrual_files")).length
+    const refused: string[] = []
+    for (const vars of [
+      { ...reviewedVars, REFERRAL_ACCRUAL_MODE: "dry_run" },
+      { ...reviewedVars, REFERRAL_ACCRUAL_MODE: "live" },
+      { ...reviewedVars, REFERRAL_ACCRUAL_MODE: "Posting" },
+      { ...reviewedVars, REFERRAL_TOKEN_DECIMALS: "6" },
+      { ...reviewedVars, REFERRAL_RATE_BASE_PER_MICRO: "3000000" },
+      { ...reviewedVars, REFERRAL_FIRST_PERIOD: "2026-10" },
+    ]) {
+      const decoded = decodeProgram(vars) catch (error) => error.name
+      refused.push(typeof decoded === "string" ? decoded : decoded.mode)
+    }
+    const dryRun = try run(db, clock, facts)
+    try same({
+      off,
+      filesWhenOff,
+      refused,
+      dryRun,
+      modes: try rowsOf(db, "SELECT period, mode FROM referral_accrual_files"),
+      posts: (try rowsOf(db, "SELECT count(*) AS n FROM referral_root_posts"))[0]?.n,
+    }, {
+      off: { status: "off" },
+      filesWhenOff: 0,
+      refused: ["REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_ACCRUAL_MODE", "REFERRAL_TOKEN_DECIMALS", "REFERRAL_RATE_BASE_PER_MICRO", "REFERRAL_FIRST_PERIOD"],
+      dryRun: { status: "ran", filed: [{ period: "2026-11", epoch: 0, rows: 1, leafCount: 0 }] },
+      modes: [{ period: "2026-11", mode: "dry_run" }],
+      posts: 0,
+    })
+  })
+})
+
+it.effect('The Merkle leaves, roots and proofs equal the ReferralDistributor vectors (spec/settlement/referralPublication.md, "The next immutable filed tree supplies every root entry")', () => effect {
+  const { alice, bob, carol } = distributorVectors
+  const computed = try Effect.try(() => {
+    const two = buildTree([bob, alice])
+    const three = buildTree([carol, alice, bob])
+    return {
+      leaves: [leafHash(alice), leafHash(bob)],
+      twoRoot: two?.root,
+      threeRoot: three?.root,
+      carolProof: three?.leaves.find((leaf) => leaf.address === carol.address)?.proof,
+      proofsVerify: [
+        ...(two?.leaves ?? []).map((leaf) => verifyProof(distributorVectors.twoLeafRoot, leaf, leaf.proof)),
+        ...(three?.leaves ?? []).map((leaf) => verifyProof(distributorVectors.threeLeafRoot, leaf, leaf.proof)),
+      ],
+      single: buildTree([alice])?.root === leafHash(alice),
+    }
+  })
+  try same(computed, {
+    leaves: [distributorVectors.aliceLeaf, distributorVectors.bobLeaf],
+    twoRoot: distributorVectors.twoLeafRoot,
+    threeRoot: distributorVectors.threeLeafRoot,
+    carolProof: [distributorVectors.twoLeafRoot],
+    proofsVerify: [true, true, true, true, true],
+    single: true,
+  })
+})

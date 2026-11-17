@@ -1,0 +1,353 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import { utf8 } from "@repo/platform/crypto"
+import { at, compareCodeUnits, isRecord, isScoreThirds, isUnavailableModel, pointsOf } from "../client/snapshot/checks.vibe"
+import { leaderboardMethodology } from "../client/snapshot/methodology.vibe"
+import {
+  type RegisteredRepository, type RepositoryRegistry, RepositoryRegistry as RegistrySchema, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt,
+  publishedRepositoryKeys, ruleVersion, schemaVersion, scoreV2EffectiveAt, scoreWindowDays, verificationWindowDays,
+} from "../client/snapshot/schema.vibe"
+import { eventThirds } from "../client/snapshot/shares.vibe"
+import { validatePublishable, validateSnapshot } from "../client/snapshot/validate.vibe"
+import { atomicWrite, attempt, boundedFile, readSnapshotFile } from "./files.vibe"
+
+export error AdaptRefused { message: string }
+
+type Json = Readonly<Record<string, unknown>>
+
+const futureMillis = 5 * 60 * 1000
+const outcomeFirstPolicyAt = "2026-10-01T00:00:00.000Z"
+const maxRegistryBytes = 16 * 1024 * 1024
+
+function published(repository: RegisteredRepository, role: unknown): Json {
+  return { id: repository.id, owner: repository.owner, name: repository.name, displayName: repository.displayName, githubUrl: repository.githubUrl, description: repository.description, integrationBranch: repository.integrationBranch, projectId: repository.projectId, role }
+}
+
+function records(value: unknown): ReadonlyArray<unknown> | undefined {
+  return Array.isArray(value) ? value : undefined
+}
+
+function rebound(candidate: Json, registry: RepositoryRegistry): Json | string {
+  const repositories = records(candidate.repositories)
+  if (repositories === undefined) return "snapshot.repositories must be an array"
+  let changed = false
+  const next: Json[] = []
+  for (let index = 0; index < repositories.length; index++) {
+    const path = `snapshot.repositories[${index}]`
+    const deployed = repositories[index]
+    if (!isRecord(deployed)) return `${path} must be an object`
+    const current = registry.registered.find((repository) => repository.id === deployed.id)
+    if (current === undefined) return `${path}.id is not registered`
+    if (Object.keys(deployed).length !== publishedRepositoryKeys.length || publishedRepositoryKeys.some((key) => !Object.hasOwn(deployed, key))) return `${path} must publish exactly the registry fields`
+    for (const key of ["id", "description", "integrationBranch", "projectId"] as const) {
+      if (deployed[key] !== current[key]) return `${path}.${key} cannot change during a transfer`
+    }
+    const identity = `${String(deployed.owner)}/${String(deployed.name)}`
+    if (![current.id, ...current.aliases].some((name) => name.toLowerCase() === identity.toLowerCase()) || deployed.displayName !== identity || deployed.githubUrl !== `https://github.com/${identity}`) {
+      return `${path} is not a registered stable repository identity or alias`
+    }
+    const replacement = published(current, deployed.role)
+    changed ||= publishedRepositoryKeys.some((key) => key !== "role" && deployed[key] !== replacement[key])
+    next.push(replacement)
+  }
+  return changed ? { ...candidate, repositories: next } : candidate
+}
+
+function activated(candidate: Json, registry: RepositoryRegistry): Json | string {
+  const repositories = records(candidate.repositories)
+  const source = candidate.source
+  const sourceRepositories = records(at(source, "repositories"))
+  if (repositories === undefined) return "snapshot.repositories must be an array"
+  if (!isRecord(source)) return "snapshot.source must be an object"
+  if (sourceRepositories === undefined) return "snapshot.source.repositories must be an array"
+  const deployedIds = repositories.map((entry) => String(at(entry, "id")))
+  const targetIds = registry.targets.map((repository) => repository.id)
+  let cursor = 0
+  for (const id of deployedIds) {
+    cursor = targetIds.indexOf(id, cursor)
+    if (cursor < 0) return candidate
+    cursor += 1
+  }
+  if (deployedIds.length === targetIds.length) return candidate
+  const nextRepositories: unknown[] = []
+  const nextSources: unknown[] = []
+  for (const target of registry.targets) {
+    const index = deployedIds.indexOf(target.id)
+    if (index >= 0) {
+      nextRepositories.push(repositories[index])
+      nextSources.push(sourceRepositories[index])
+      continue
+    }
+    if (target.nodeId === "") return `activated repository ${target.id} has no recorded GraphQL node ID`
+    nextRepositories.push(published(target, "member"))
+    nextSources.push({ id: target.id, repositoryId: target.nodeId })
+  }
+  return {
+    ...candidate,
+    repository: at(nextRepositories[0], "id"),
+    repositories: nextRepositories.map((entry, index) => ({ ...(isRecord(entry) ? entry : {}), role: index === 0 ? "primary" : "member" })),
+    source: { ...source, repositoryId: at(nextSources[0], "repositoryId"), repositories: nextSources },
+  }
+}
+
+function emptyRegistrySnapshot(input: Json): Json | Refusal {
+  const shapes = [[input.window, "snapshot.window"], [input.source, "snapshot.source"], [at(input, "source", "rateLimit"), "snapshot.source.rateLimit"], [at(input, "source", "evidenceVerification"), "snapshot.source.evidenceVerification"]] as const
+  const malformed = shapes.find(([value]) => !isRecord(value))
+  if (malformed !== undefined) return { refused: `${malformed[1]} must be an object` }
+  const rateLimit = at(input, "source", "rateLimit")
+  const evidence = at(input, "source", "evidenceVerification")
+  const generatedAt = String(input.generatedAt)
+  const from = String(at(input, "window", "from"))
+  const to = String(at(input, "window", "to"))
+  const snapshot: Json = {
+    schemaVersion,
+    repository: null,
+    repositories: [],
+    ruleVersion,
+    generatedAt,
+    sourceUpdatedAt: to,
+    stale: false,
+    window: { days: scoreWindowDays, from, to },
+    methodology: leaderboardMethodology,
+    source: {
+      provider: "github-graphql",
+      fetchedAt: generatedAt,
+      cutoffAt: to,
+      repositoryId: null,
+      repositories: [],
+      requestCount: 1,
+      searchSliceCount: 0,
+      rateLimit: { cost: Number(at(rateLimit, "cost")), limit: Number(at(rateLimit, "limit")), remaining: Number(at(rateLimit, "remaining")), resetAt: String(at(rateLimit, "resetAt")) },
+      counts: { mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+      verificationWindow: { days: verificationWindowDays, from, to },
+      evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: Number(at(evidence, "maxSources")), maxArtifacts: Number(at(evidence, "maxArtifacts")) },
+    },
+    leaders: [],
+    ledger: [],
+    reviewExclusions: [],
+    penalties: [],
+    opportunities: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
+    workQueue: { issues: [], pullRequests: [] },
+  }
+  return Date.parse(to) > Date.parse(outcomeFirstPolicyAt)
+    ? { ...snapshot, paymentReviewBasisOmitted: { policy: paymentReviewPolicy, effectiveAt: paymentReviewPolicyAt, reason: paymentReviewBasisOmittedReason } }
+    : snapshot
+}
+
+function compareRanked(left: Json, right: Json): number {
+  const actorId = (entry: Json) => String(at(entry, "actor", "id"))
+  return Number(right.scoreThirds) - Number(left.scoreThirds) || compareCodeUnits(actorId(left), actorId(right))
+}
+
+function rankedLeaders(leaders: ReadonlyArray<Json>): ReadonlyArray<Json> {
+  const entries = leaders.map((leader) => ({ ...leader })).sort(compareRanked)
+  const ranked: Json[] = []
+  entries.forEach((entry, index) => {
+    const previous = ranked[index - 1]
+    ranked.push({ ...entry, rank: previous !== undefined && Number(previous.scoreThirds) === Number(entry.scoreThirds) ? previous.rank : index + 1 })
+  })
+  return ranked
+}
+
+function actorIdOf(value: unknown): string | Refusal {
+  if (!isRecord(value)) return { refused: "actor must be an object" }
+  return typeof value.id === "string" && value.id.length > 0 ? value.id : { refused: "actor.id must be a non-empty string" }
+}
+
+interface Refusal {
+  readonly refused: string
+}
+
+function isRefusal(value: unknown): value is Refusal {
+  return isRecord(value) && typeof value.refused === "string"
+}
+
+function migrateEvent(registry: RepositoryRegistry, value: unknown): Json | null | Refusal {
+  if (!isRecord(value)) return { refused: "ledger event must be an object" }
+  if (typeof value.occurredAt !== "string" || Date.parse(value.occurredAt) < Date.parse(scoreV2EffectiveAt)) return value
+  if (value.category !== "merged-pull-request" && value.category !== "evaluated-contribution") return null
+  const repository = registry.registered.find((candidate) => candidate.id === value.repository)
+  if (repository === undefined) return { refused: `unknown repository ${String(value.repository)}` }
+  const scoreThirds = value.category === "merged-pull-request" ? 1 : Math.max(1, Math.round(Number(value.points) * 3))
+  return {
+    ...value,
+    points: scoreThirds / 3,
+    scoreThirds,
+    workUnitId: `wu_${repository.projectId}_${String(at(value, "source", "id")).toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")}`,
+    reason: value.category === "merged-pull-request"
+      ? "Accepted outcome has provisional micro credit pending immutable maintainer ratification."
+      : "Reviewed evaluated contribution migrated to integer-thirds credit.",
+  }
+}
+
+function causalAttributions(values: ReadonlyArray<unknown>, ledger: ReadonlyArray<Json>): ReadonlyArray<unknown> | Refusal {
+  const causal = new Set<string>()
+  const resolved = new Set<string>()
+  for (const event of ledger) {
+    const id = actorIdOf(event.actor)
+    if (isRefusal(id)) return id
+    const source = at(event, "source")
+    if (at(source, "kind") === "pull-request") causal.add(`${id}\0artifact\0${String(at(source, "id"))}`)
+    if ((event.category === "substantive-review" && at(source, "kind") === "review") || (event.category === "evaluated-contribution" && at(source, "kind") === "comment")) causal.add(`${id}\0source\0${String(at(source, "id"))}`)
+    const eventId = String(event.id)
+    const separator = eventId.lastIndexOf(":resolved-by:")
+    if (event.category === "resolved-issue" && separator >= 0) resolved.add(`${id}\0${eventId.slice(separator + ":resolved-by:".length)}`)
+  }
+  const retained: unknown[] = []
+  for (const value of values) {
+    if (!isRecord(value)) return { refused: "attribution must be an object" }
+    if (value.actor === null) continue
+    const id = actorIdOf(value.actor)
+    if (isRefusal(id)) return id
+    if (causal.has(`${id}\0artifact\0${String(value.artifactId)}`) || causal.has(`${id}\0source\0${String(value.sourceId)}`) || resolved.has(`${id}\0${String(value.artifactId)}`)) retained.push(value)
+  }
+  return retained
+}
+
+const categoryKeys: Readonly<Record<string, readonly [string, string]>> = {
+  "merged-pull-request": ["mergedPullRequests", "mergedPullRequests"],
+  "resolved-issue": ["resolvedIssues", "resolvedIssues"],
+  "material-test-change": ["materialTestChanges", "materialTestChanges"],
+  evidence: ["evidence", "evidenceCategories"],
+  "substantive-review": ["substantiveReviews", "substantiveReviews"],
+}
+
+function addedThirds(left: number, right: number): number | Refusal {
+  if (!isScoreThirds(left) || !isScoreThirds(right)) return { refused: "score thirds must represent nonnegative whole Points" }
+  const points = pointsOf(left) + pointsOf(right)
+  if (!Number.isSafeInteger(points)) return { refused: "combined score exceeds safe integer Points" }
+  return pointsOf(points / 10) === points ? points / 10 : { refused: "combined score cannot preserve exact whole Points" }
+}
+
+function rebuiltLeaders(legacyLeaders: ReadonlyArray<unknown>, ledger: ReadonlyArray<Json>, attributions: ReadonlyArray<unknown>): ReadonlyArray<Json> | Refusal {
+  const legacyByActor = new Map<string, Json>()
+  for (const value of legacyLeaders) {
+    if (!isRecord(value)) return { refused: "legacy leader must be an object" }
+    const id = actorIdOf(value.actor)
+    if (isRefusal(id)) return id
+    legacyByActor.set(id, value)
+  }
+  const eventsByActor = new Map<string, Json[]>()
+  for (const event of ledger) {
+    const id = actorIdOf(event.actor)
+    if (isRefusal(id)) return id
+    eventsByActor.set(id, [...(eventsByActor.get(id) ?? []), event])
+  }
+  const models = new Map<string, Set<string>>()
+  for (const value of attributions) {
+    if (!isRecord(value) || value.actor === null) continue
+    const id = actorIdOf(value.actor)
+    if (isRefusal(id)) return id
+    if (typeof value.identifier !== "string") return { refused: "attribution.identifier must be a string" }
+    if (typeof value.model === "string" && isUnavailableModel(value.model)) continue
+    models.set(id, (models.get(id) ?? new Set<string>()).add(value.identifier))
+  }
+  const leaders: Json[] = []
+  for (const [id, events] of eventsByActor) {
+    const legacy = legacyByActor.get(id)
+    if (legacy === undefined) return { refused: `ledger actor ${id} has no legacy leader` }
+    const pointThirds: Record<string, number> = { mergedPullRequests: 0, resolvedIssues: 0, materialTestChanges: 0, evidence: 0, substantiveReviews: 0, evaluatedContributions: 0 }
+    const acceptedOutcomes: Record<string, number> = { mergedPullRequests: 0, resolvedIssues: 0, materialTestChanges: 0, evidenceCategories: 0, substantiveReviews: 0, evaluatedContributions: 0 }
+    for (const event of events) {
+      const [pointKey, outcomeKey] = categoryKeys[String(event.category)] ?? ["evaluatedContributions", "evaluatedContributions"]
+      const sum = addedThirds(pointThirds[pointKey] ?? 0, eventThirds({ points: Number(event.points), ...(typeof event.scoreThirds === "number" ? { scoreThirds: event.scoreThirds } : {}) }))
+      if (isRefusal(sum)) return sum
+      pointThirds[pointKey] = sum
+      acceptedOutcomes[outcomeKey] = (acceptedOutcomes[outcomeKey] ?? 0) + 1
+    }
+    let scoreThirds = 0
+    for (const thirds of Object.values(pointThirds)) {
+      const sum = addedThirds(scoreThirds, thirds)
+      if (isRefusal(sum)) return sum
+      scoreThirds = sum
+    }
+    leaders.push({
+      rank: 0,
+      actor: legacy.actor,
+      score: Math.floor(scoreThirds / 3),
+      scoreThirds,
+      points: Object.fromEntries(Object.entries(pointThirds).map(([key, thirds]) => [key, thirds / 3])),
+      pointThirds,
+      acceptedOutcomes,
+      rawActivity: legacy.rawActivity,
+      reportedModels: [...(models.get(id) ?? [])].sort((left, right) => left.localeCompare(right)),
+    })
+  }
+  return rankedLeaders(leaders)
+}
+
+function migratedSchemaFive(candidate: Json, registry: RepositoryRegistry): Json | Refusal {
+  if (!Array.isArray(candidate.ledger)) return { refused: "snapshot.ledger must be an array" }
+  const ledger: Json[] = []
+  for (const value of candidate.ledger) {
+    const event = migrateEvent(registry, value)
+    if (isRefusal(event)) return event
+    if (event !== null) ledger.push(event)
+  }
+  ledger.sort((left, right) => Number(right.points) - Number(left.points) || Number(at(left, "source", "number")) - Number(at(right, "source", "number")) || String(left.id).localeCompare(String(right.id)))
+  if (!Array.isArray(candidate.attributions)) return { refused: "snapshot.attributions must be an array" }
+  const attributions = causalAttributions(candidate.attributions, ledger)
+  if (isRefusal(attributions)) return attributions
+  if (!Array.isArray(candidate.leaders)) return { refused: "snapshot.leaders must be an array" }
+  const leaders = rebuiltLeaders(candidate.leaders, ledger, attributions)
+  if (isRefusal(leaders)) return leaders
+  return { ...candidate, schemaVersion, ruleVersion, methodology: leaderboardMethodology, leaders, ledger, attributions }
+}
+
+export effect function adaptPullRequestLedger(value: unknown, registry: RepositoryRegistry) {
+  if (!isRecord(value)) throw new AdaptRefused({ message: "snapshot must be an object" })
+  const now = try Clock.currentTimeMillis
+  if (typeof value.generatedAt !== "string" || Date.parse(value.generatedAt) > now + futureMillis) throw new AdaptRefused({ message: "snapshot.generatedAt cannot be in the future" })
+  if (registry.targets.length === 0) {
+    const empty = emptyRegistrySnapshot(value)
+    if (isRefusal(empty)) throw new AdaptRefused({ message: empty.refused })
+    try validatePublishable(empty, registry, now)
+    return empty
+  }
+  const transferred = rebound(value, registry)
+  if (typeof transferred === "string") throw new AdaptRefused({ message: transferred })
+  const candidate = activated(transferred, registry)
+  if (typeof candidate === "string") throw new AdaptRefused({ message: candidate })
+  if (candidate.schemaVersion === schemaVersion) {
+    try validateSnapshot(candidate, registry)
+    return { ...candidate, leaders: rankedLeaders((records(candidate.leaders) ?? []).filter(isRecord)) }
+  }
+  if (candidate.schemaVersion !== "5") throw new AdaptRefused({ message: "deployed ledger is not schema 5 or 6" })
+  const migrated = migratedSchemaFive(candidate, registry)
+  if (isRefusal(migrated)) throw new AdaptRefused({ message: migrated.refused })
+  try validateSnapshot(migrated, registry)
+  return migrated
+}
+
+effect function jsonFile(path: string, limitBytes: number) {
+  const bytes = try boundedFile(path, limitBytes)
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new AdaptRefused({ message: `${path} is not UTF-8 JSON` })
+  }
+  return value
+}
+
+export effect function readRegistry(path: string) {
+  const value = try jsonFile(path, maxRegistryBytes)
+  const registry = Schema.decodeUnknownEffect(RegistrySchema)(value) catch effect () => {
+    throw new AdaptRefused({ message: "The repository registry snapshot is not valid" })
+  }
+  return registry
+}
+
+export effect function adaptPullRequestFile(input: string, output: string, registryPath: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const registry = try readRegistry(registryPath)
+  const bytes = try readSnapshotFile(files.resolve(input))
+  const parsed: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new AdaptRefused({ message: "The deployed ledger is not UTF-8 JSON" })
+  }
+  const snapshot = try adaptPullRequestLedger(parsed, registry)
+  const target = files.resolve(output)
+  try attempt(fs.makeDirectory(files.dirname(target), { recursive: true }), target, "Pull-request ledger directory could not be created")
+  try atomicWrite(target, utf8(`${JSON.stringify(snapshot)}\n`))
+  return String(snapshot.schemaVersion)
+}

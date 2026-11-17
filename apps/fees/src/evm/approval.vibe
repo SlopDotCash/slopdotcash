@@ -1,0 +1,49 @@
+// spec/fees/conversion.md, "A conversion approval grants exactly the intent's input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"
+import type { Address, Hex } from "@repo/platform/chain/evm"
+import { dln, kyberswap } from "../runtime/pins.ts"
+import { decodedApproval } from "./abi.ts"
+import { type Landed, allowanceOf } from "./client.vibe"
+
+export error ApprovalRefused { issue: string }
+
+export type Spender = "Router" | "Bridge"
+
+export function spenderAddress(spender: Spender): Address {
+  return (spender === "Router" ? kyberswap.router : dln.source) as Address
+}
+
+export function isNative(token: string) {
+  return token.toLowerCase() === kyberswap.native
+}
+
+export function boundedApproval(data: Hex, value: bigint, spender: Spender, amount: bigint) {
+  const approval = decodedApproval(data)
+  return value === 0n && approval !== undefined && approval.spender === spenderAddress(spender) && approval.amount === amount
+}
+
+export effect function approvalNeeded(token: Address, amount: bigint, spender: Spender) {
+  if (isNative(token)) throw new ApprovalRefused({ issue: "a native asset carries its input as value and never approves" })
+  if (amount <= 0n) throw new ApprovalRefused({ issue: "an approval needs a positive amount" })
+  return (try allowanceOf(token, spenderAddress(spender), "finalized")) < amount
+}
+
+export effect function allowanceCovers(token: Address, amount: bigint, spender: Spender) {
+  if (isNative(token)) return
+  const allowance = try allowanceOf(token, spenderAddress(spender), "finalized")
+  if (allowance < amount) throw new ApprovalRefused({ issue: `the finalized allowance ${allowance} does not cover the input ${amount}` })
+}
+
+export interface ApprovalEvidence { readonly succeeded: boolean; readonly allowance: bigint }
+
+export interface ExpectedApproval { readonly token: Address; readonly spender: Spender; readonly amount: bigint; readonly nonce: bigint }
+
+export effect function approvalSettled(landed: Landed, expected: ExpectedApproval) {
+  const { transaction, receipt } = landed
+  if (transaction.to?.toLowerCase() !== expected.token.toLowerCase() || transaction.nonce !== expected.nonce
+    || !boundedApproval(transaction.input, transaction.value, expected.spender, expected.amount))
+    throw new ApprovalRefused({ issue: "Approval receipt differs from its bounded intent" })
+  const allowance = try allowanceOf(expected.token, spenderAddress(expected.spender), receipt.blockNumber)
+  const succeeded = receipt.status === "success"
+  if (succeeded && allowance !== expected.amount) throw new ApprovalRefused({ issue: "Finalized approval allowance differs" })
+  return { succeeded, allowance } satisfies ApprovalEvidence
+}

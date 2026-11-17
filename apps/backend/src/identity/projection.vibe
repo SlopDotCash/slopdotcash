@@ -1,0 +1,128 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"
+import { millisOf } from "@repo/platform/clock"
+import { type Assertion, type Audience, type Flow, type FlowMode, type FlowStatus, type GitHubIdentity, type RateScope, type RateWindow, decodeState } from "../../gen/backend__identity.effect.vibe"
+import type { IdentityAudience } from "../client/identity.vibe"
+import { localFlowOrigin } from "../local/origin.vibe"
+import type { Counted } from "./rateWindow.vibe"
+
+export schema WireStatus = "pending" | "callback_processing" | "callback_complete" | "assertion_issued" | "callback_failed"
+
+export schema FlowRow {
+  readonly id: string
+  readonly state_hash: string
+  readonly poll_capability_hash: string
+  readonly encrypted_pkce_verifier: string | null
+  readonly pkce_iv: string | null
+  readonly audience: "private-trace-api" | "slop-points-web"
+  readonly status: WireStatus
+  readonly github_actor_id: string | null
+  readonly github_login: string | null
+  readonly github_node_id: string | null
+  readonly created_at: string
+  readonly expires_at: string
+}
+
+export schema AssertionRow {
+  readonly token_hash: string
+  readonly github_actor_id: string
+  readonly github_login: string
+  readonly github_node_id: string | null
+  readonly audience: "private-trace-api" | "slop-points-web"
+  readonly created_at: string
+  readonly expires_at: string
+  readonly consumed_at: string | null
+}
+
+export interface WindowView {
+  readonly scope: RateScope
+  readonly counted: Counted
+}
+
+export const audienceOf: Readonly<Record<IdentityAudience, Audience>> = { "private-trace-api": "PrivateTrace", "slop-points-web": "PointsWeb" }
+export const wireAudience: Readonly<Record<Audience, IdentityAudience>> = { PrivateTrace: "private-trace-api", PointsWeb: "slop-points-web" }
+const statusOf: Readonly<Record<WireStatus, FlowStatus>> = {
+  pending: "Pending",
+  callback_processing: "CallbackProcessing",
+  callback_complete: "CallbackComplete",
+  assertion_issued: "AssertionIssued",
+  callback_failed: "CallbackFailed",
+}
+
+function secondsOf(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+export function modeOf(flowId: string): FlowMode {
+  return localFlowOrigin(flowId) === undefined ? "Production" : "LocalHandoff"
+}
+
+export function githubOf(actorId: string | null, login: string | null, nodeId: string | null | undefined): GitHubIdentity {
+  return { actor: actorId === null ? 0 : Number(actorId), login: login ?? "", nodeId: nodeId === null || nodeId === undefined ? 0 : 1 }
+}
+
+function flowOf(row: FlowRow, id: number): Flow {
+  return {
+    id,
+    oauthState: id,
+    capability: id,
+    audience: audienceOf[row.audience],
+    mode: modeOf(row.id),
+    status: statusOf[row.status],
+    pkceStored: row.encrypted_pkce_verifier !== null,
+    github: githubOf(row.github_actor_id, row.github_login, row.github_node_id),
+    createdAt: secondsOf(row.created_at),
+    expiresAt: secondsOf(row.expires_at),
+  }
+}
+
+function assertionOf(row: AssertionRow, token: number): Assertion {
+  return {
+    token,
+    audience: audienceOf[row.audience],
+    github: githubOf(row.github_actor_id, row.github_login, row.github_node_id),
+    createdAt: secondsOf(row.created_at),
+    expiresAt: secondsOf(row.expires_at),
+    consumed: row.consumed_at !== null,
+    consumedAt: row.consumed_at === null ? 0 : secondsOf(row.consumed_at),
+  }
+}
+
+function windowOf(view: WindowView, client: number): RateWindow {
+  return { client, scope: view.scope, count: view.counted.count, expiresAt: view.counted.expiresAt }
+}
+
+function delivered(flow: Flow) {
+  return flow.status === "AssertionIssued"
+}
+
+export effect function requestState(now: number, flow: FlowRow | undefined, assertion: AssertionRow | undefined, window: WindowView | undefined) {
+  const flows = flow === undefined ? [] : [flowOf(flow, 1)]
+  const issuedFlows = flows.filter(delivered)
+  const issued = flow === undefined ? (assertion === undefined ? [] : [1]) : issuedFlows.filter((found) => found.mode === "Production").map((found) => found.id)
+  return try decodeState({
+    now,
+    flows,
+    assertions: assertion === undefined ? [] : [assertionOf(assertion, 1)],
+    windows: window === undefined ? [] : [windowOf(window, 1)],
+    lastFlow: flow === undefined && assertion === undefined ? 0 : 1,
+    issued,
+    localDelivered: issuedFlows.filter((found) => found.mode === "LocalHandoff").map((found) => found.id),
+    consumedTokens: assertion === undefined || assertion.consumed_at === null ? [] : [1],
+  })
+}
+
+export effect function expiredState(now: number, flowRows: ReadonlyArray<FlowRow>, assertionRows: ReadonlyArray<AssertionRow>, windows: ReadonlyArray<WindowView>) {
+  const flows = flowRows.map((row, index) => flowOf(row, index + 1))
+  const assertions = assertionRows.map((row, index) => assertionOf(row, flows.length + index + 1))
+  const issuedFlows = flows.filter(delivered)
+  return try decodeState({
+    now,
+    flows,
+    assertions,
+    windows: windows.map((view, index) => windowOf(view, index + 1)),
+    lastFlow: flows.length + assertions.length,
+    issued: [...issuedFlows.filter((found) => found.mode === "Production").map((found) => found.id), ...assertions.map((found) => found.token)],
+    localDelivered: issuedFlows.filter((found) => found.mode === "LocalHandoff").map((found) => found.id),
+    consumedTokens: assertions.filter((found) => found.consumed).map((found) => found.token),
+  })
+}

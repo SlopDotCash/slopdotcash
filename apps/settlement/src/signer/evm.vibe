@@ -1,0 +1,412 @@
+// spec/settlement/signer.md, "A signer stack signs only for its own networks, and production signs only enabled mainnets as the attester"; spec/settlement/signer.md, "Only the identity authority in force signs; a rotated-out authority cannot sign or cancel"; spec/settlement/signer.md, "Every attester EVM transaction stays under its deployment gas ceiling, a 10 gwei fee cap and its frozen native-cost cap"
+import { secp256k1 } from "@noble/curves/secp256k1.js"
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js"
+import { EvmRpc, type Hex, evmRpc, keccak } from "@repo/platform/chain/evm"
+import { ConfigInvalid, jsonVar } from "@repo/platform/config"
+import { type ServiceNetwork, type Stack, attesterTransactionAllowed, gasCeilingValid, reviewedActivation, stackMaySign } from "../../gen/settlement__signer.effect.vibe"
+import { type EvmAddress, decodeAddress, escrowGetter, evmAddress } from "../chain/evm/abi.ts"
+import { type SignedType2, type Type2Request, readSignedType2, signedType2, signingHash } from "../chain/evm/transactions.ts"
+import { parseBaseUnits, parseNativeCostLimit, toAmount } from "../kernels/amounts.ts"
+import { MAX_FEE_PER_GAS, gasWithMargin, sendFees } from "../kernels/attesterLimits.ts"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import type { Entries } from "../journal/journal.vibe"
+import { DeploymentMismatch, verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import type { EvmDeployment, EvmUpgrade, SupersededReview } from "../vault/policy.vibe"
+import { type IntentKind, intentOperation } from "./intents.ts"
+
+export const signerMarker = "slop-signer:identity-attester"
+
+export error NotActivated { network: string; intent: string }
+export error DeploymentRefused { reason: string }
+export error LimitRefused { reason: string }
+export error AttemptHeld { reason: string }
+export error SignerUnavailable { reason: string }
+
+export schema PinnedReview {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+}
+
+export schema PinnedSupersededReview {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+  readonly supersededAtBlock: string
+}
+
+export schema PinnedUpgrade {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+  readonly history?: ReadonlyArray<PinnedSupersededReview>
+}
+
+export schema PinnedDeployment {
+  readonly network: string
+  readonly chain: string
+  readonly chainId: string
+  readonly projectId: string
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly identityAuthority: string
+  readonly feeRecipient: string
+  readonly deploymentTransaction: string
+  readonly sourceCommit: string
+  readonly codeSha256: string
+  readonly factory: string | null
+  readonly factoryCodeSha256: string | null
+  readonly registrar: string | null
+  readonly gasCeiling: string
+  readonly bindingDelaySeconds: string
+  readonly evmUpgrade?: PinnedUpgrade
+  readonly maxNativeCostWei?: string
+  readonly bindingConsentNonceLimit?: number
+  readonly payoutPolicy?: "ordinary" | "security-bounty"
+}
+
+const Pins = Schema.Array(PinnedDeployment)
+const RpcUrls = Schema.Record(Schema.String, Schema.String)
+
+export interface StackSecrets {
+  readonly evmSecret: "TEST_SIGNER_PRIVATE_KEY" | "SIGNER_PRIVATE_KEY"
+  readonly solanaSecret: "TEST_SOLANA_SIGNER_SEED" | "SOLANA_SIGNER_SEED"
+  readonly journal: "dedicated-test-signer-v1" | "production-signer-v1"
+}
+
+export const SIGNER_STACKS = Object.freeze({
+  TestStack: Object.freeze({ evmSecret: "TEST_SIGNER_PRIVATE_KEY", solanaSecret: "TEST_SOLANA_SIGNER_SEED", journal: "dedicated-test-signer-v1" }),
+  ProductionStack: Object.freeze({ evmSecret: "SIGNER_PRIVATE_KEY", solanaSecret: "SOLANA_SIGNER_SEED", journal: "production-signer-v1" }),
+} as const satisfies Record<Stack, StackSecrets>)
+
+export function signerStack(value: string | undefined): Stack | undefined {
+  if (value === undefined || value === "test") return "TestStack"
+  if (value === "production") return "ProductionStack"
+  return undefined
+}
+
+export type Activation = { readonly kind: "Activated"; readonly network: NetworkKey; readonly service: ServiceNetwork } | { readonly kind: "NotActivated" }
+
+export function activation(stack: Stack, network: string, intent: IntentKind): Activation {
+  if (!isNetworkKey(network)) return { kind: "NotActivated" }
+  const service = NETWORKS[network].service
+  return stackMaySign([...reviewedActivation], stack, service, intentOperation[intent]) ? { kind: "Activated", network, service } : { kind: "NotActivated" }
+}
+
+export service AttesterConfig {
+  readonly stack: Stack
+  readonly pins: ReadonlyArray<PinnedDeployment>
+  readonly rpcUrls: Redacted.Redacted<Readonly<Record<string, string>>>
+  readonly evmKey: Redacted.Redacted<string> | undefined
+}
+
+export interface AttesterVars {
+  readonly SIGNER_STACK?: string
+  readonly PAYMENT_RPC_URLS?: string
+  readonly SIGNER_PRIVATE_KEY?: string
+  readonly TEST_SIGNER_PRIVATE_KEY?: string
+}
+
+export effect function attesterConfig(vars: AttesterVars, pins: string | undefined) {
+  const stack = signerStack(vars.SIGNER_STACK)
+  if (stack === undefined) throw new ConfigInvalid({ name: "SIGNER_STACK", issue: "neither test nor production" })
+  const key = vars[SIGNER_STACKS[stack].evmSecret]
+  return {
+    stack,
+    pins: try jsonVar("PAYMENT_DEPLOYMENTS", pins, Pins),
+    rpcUrls: Redacted.make(try jsonVar("PAYMENT_RPC_URLS", vars.PAYMENT_RPC_URLS, RpcUrls)),
+    evmKey: key === undefined || key === "" ? undefined : Redacted.make(key),
+  } satisfies AttesterConfig.Shape
+}
+
+export interface Envelope {
+  readonly gas: bigint
+  readonly maxFeePerGas: bigint
+  readonly maxPriorityFeePerGas: bigint
+  readonly value: bigint
+}
+
+export const MAX_GAS_CEILING = 9_999_999_999n
+const SAFE_VALUE = 9_007_199_254_740_991n
+
+function gasCeilingOf(text: string) {
+  const ceiling = /^[1-9][0-9]{0,9}$/u.test(text) ? parseBaseUnits(text) : undefined
+  return ceiling !== undefined && gasCeilingValid(Number(ceiling)) ? ceiling : undefined
+}
+
+export effect function transactionAllowed(envelope: Envelope, gasCeiling: bigint, caps: ReadonlyArray<bigint | undefined>) {
+  const { gas, maxFeePerGas, maxPriorityFeePerGas, value } = envelope
+  if (gasCeiling < 1n || gasCeiling > MAX_GAS_CEILING || gas < 0n || gas > MAX_GAS_CEILING || maxFeePerGas < 0n || maxFeePerGas > MAX_FEE_PER_GAS) return false
+  if (maxPriorityFeePerGas < 0n || maxPriorityFeePerGas > MAX_FEE_PER_GAS || value < 0n || value > SAFE_VALUE) return false
+  const limits: bigint[] = []
+  for (const cap of caps) if (cap !== undefined) limits.push(cap)
+  if (limits.some((cap) => cap <= 0n)) return false
+  const amounts = try orDie(Effect.try(() => limits.map(toAmount)))
+  return attesterTransactionAllowed({ gas: Number(gas), maxFee: Number(maxFeePerGas), priorityFee: Number(maxPriorityFeePerGas), value: Number(value) }, Number(gasCeiling), amounts)
+}
+
+export interface Deployment {
+  readonly pin: PinnedDeployment
+  readonly review: EvmDeployment
+  readonly network: NetworkKey
+  readonly service: ServiceNetwork
+  readonly chainId: bigint
+  readonly vault: EvmAddress
+  readonly identityAuthority: EvmAddress
+  readonly owner: EvmAddress
+  readonly gasCeiling: bigint
+  readonly maxNativeCost: bigint | undefined
+  readonly consentNonceLimit: boolean
+  readonly bounty: boolean
+}
+
+export effect function servedNetwork(network: string, intent: IntentKind) {
+  const { stack } = try AttesterConfig
+  const decided = activation(stack, network, intent)
+  if (decided.kind === "NotActivated") throw new NotActivated({ network, intent })
+  return decided
+}
+
+const DIGEST = /^[0-9a-f]{64}$/u
+const MAX_U64 = (1n << 64n) - 1n
+
+function reviewAccepted(review: PinnedReview, pin: PinnedDeployment) {
+  return [review.authority, review.vaultImplementation, review.factoryImplementation].every((address) => evmAddress(address) !== undefined)
+    && DIGEST.test(review.vaultImplementationCodeSha256) && DIGEST.test(review.factoryImplementationCodeSha256)
+    && ![pin.feeRecipient, pin.identityAuthority].some((role) => role.toLowerCase() === review.authority.toLowerCase())
+}
+
+effect function reviewedUpgrade(pin: PinnedDeployment) {
+  const upgrade = pin.evmUpgrade
+  if (upgrade === undefined) return undefined
+  const history: SupersededReview[] = []
+  for (const earlier of upgrade.history ?? []) {
+    const block = /^[1-9][0-9]{0,19}$/u.test(earlier.supersededAtBlock) ? parseBaseUnits(earlier.supersededAtBlock, MAX_U64) : undefined
+    if (block === undefined || !reviewAccepted(earlier, pin)) throw new DeploymentRefused({ reason: "Escrow upgrade review is invalid" })
+    history.push({ authority: earlier.authority, vaultImplementation: earlier.vaultImplementation, vaultImplementationCodeSha256: earlier.vaultImplementationCodeSha256, factoryImplementation: earlier.factoryImplementation, factoryImplementationCodeSha256: earlier.factoryImplementationCodeSha256, supersededAtBlock: block })
+  }
+  if (!reviewAccepted(upgrade, pin)) throw new DeploymentRefused({ reason: "Escrow upgrade review is invalid" })
+  return { authority: upgrade.authority, vaultImplementation: upgrade.vaultImplementation, vaultImplementationCodeSha256: upgrade.vaultImplementationCodeSha256, factoryImplementation: upgrade.factoryImplementation, factoryImplementationCodeSha256: upgrade.factoryImplementationCodeSha256, history } satisfies EvmUpgrade
+}
+
+export effect function reviewedDeployment(network: string, vault: string, intent: IntentKind) {
+  const served = try servedNetwork(network, intent)
+  const { pins } = try AttesterConfig
+  const selected = pins.filter((pin) => pin.network === network && pin.vault.toLowerCase() === vault.toLowerCase())
+  const [pin] = selected
+  const registry = NETWORKS[served.network]
+  if (pin === undefined || selected.length !== 1 || registry.family !== "evm" || pin.chain !== registry.chain || pin.chainId !== String(registry.chainId)) throw new DeploymentRefused({ reason: "Test deployment required" })
+  if (pin.bindingConsentNonceLimit !== undefined && pin.bindingConsentNonceLimit !== 1) throw new DeploymentRefused({ reason: "Test deployment required" })
+  const gasCeiling = gasCeilingOf(pin.gasCeiling)
+  if (gasCeiling === undefined) throw new DeploymentRefused({ reason: "Reviewed gas ceiling required" })
+  const maxNativeCost = pin.maxNativeCostWei === undefined ? undefined : parseNativeCostLimit(pin.maxNativeCostWei)
+  if (pin.maxNativeCostWei !== undefined && maxNativeCost === undefined) throw new DeploymentRefused({ reason: "Invalid EVM native cost limit" })
+  const [address, factory, identityAuthority, owner, registrar] = [evmAddress(pin.vault), evmAddress(pin.factory ?? ""), evmAddress(pin.identityAuthority), evmAddress(pin.owner), evmAddress(pin.registrar ?? "")]
+  if (address === undefined || factory === undefined || identityAuthority === undefined || owner === undefined || registrar === undefined || evmAddress(pin.feeRecipient) === undefined || !DIGEST.test(pin.codeSha256) || !DIGEST.test(pin.factoryCodeSha256 ?? "") || parseBaseUnits(pin.bindingDelaySeconds, MAX_U64) === undefined) throw new DeploymentRefused({ reason: "Reviewed deployment identity is incomplete" })
+  const chainId = try orDie(Effect.try(() => BigInt(registry.chainId)))
+  const review = {
+    projectId: pin.projectId,
+    scope: pin.payoutPolicy ?? "ordinary",
+    network: served.network,
+    vault: address,
+    asset: pin.asset,
+    owner,
+    identityAuthority,
+    feeRecipient: pin.feeRecipient,
+    deploymentTransaction: pin.deploymentTransaction,
+    sourceCommit: pin.sourceCommit,
+    codeSha256: pin.codeSha256,
+    bindingDelaySeconds: pin.bindingDelaySeconds,
+    family: "evm",
+    chain: registry.chain,
+    chainId,
+    scanPageBlocks: registry.scanPageBlocks,
+    gasCeiling,
+    factory,
+    factoryCodeSha256: pin.factoryCodeSha256 ?? "",
+    registrar,
+    evmUpgrade: try reviewedUpgrade(pin),
+    maxNativeCostWei: pin.maxNativeCostWei,
+    bindingConsentNonceLimit: pin.bindingConsentNonceLimit === 1 ? 1 : undefined,
+  } satisfies EvmDeployment
+  return {
+    pin,
+    review,
+    network: served.network,
+    service: served.service,
+    chainId,
+    vault: address,
+    identityAuthority,
+    owner,
+    gasCeiling,
+    maxNativeCost,
+    consentNonceLimit: pin.bindingConsentNonceLimit === 1,
+    bounty: pin.payoutPolicy === "security-bounty",
+  } satisfies Deployment
+}
+
+export effect function rpcUrlsOf(deployment: Deployment) {
+  const url = Redacted.value((try AttesterConfig).rpcUrls)[deployment.network]
+  if (url === undefined || url === "") throw new DeploymentRefused({ reason: "Private RPC configuration missing" })
+  return Redacted.make([url])
+}
+
+export effect function onChain<A, E, R>(deployment: Deployment, program: A!E!R) {
+  const urls = try rpcUrlsOf(deployment)
+  provide evmRpc({ urls, chainId: deployment.chainId }) {
+    return try program
+  }
+}
+
+effect function finalizedAddress(target: EvmAddress, data: Hex) {
+  return decodeAddress(try (try EvmRpc).call({ to: target, data, block: "finalized" }))
+}
+
+export effect function preflight(deployment: Deployment) {
+  verifyEvmDeployment(deployment.review, "finalized") catch effect (error) => match (error) {
+    when DeploymentMismatch: throw new DeploymentRefused({ reason: error.message });
+    default: throw error;
+  }
+}
+
+export effect function authorityInForce(deployment: Deployment) {
+  const authority = try finalizedAddress(deployment.vault, escrowGetter("identityAuthority"))
+  if (authority === undefined) throw new DeploymentRefused({ reason: "Identity authority unavailable" })
+  return authority
+}
+
+export interface AttesterAccount {
+  readonly address: EvmAddress
+  sign(request: Type2Request): Hex!SignerUnavailable
+}
+
+function addressOfKey(key: Uint8Array) {
+  const point = secp256k1.getPublicKey(key, false)
+  return evmAddress(`0x${keccak(point.slice(1)).slice(-40)}`)
+}
+
+export effect function attesterAccount(deployment: Deployment) {
+  const configured = (try AttesterConfig).evmKey
+  if (configured === undefined) throw new SignerUnavailable({ reason: "Signer unavailable" })
+  const text = Redacted.value(configured)
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(text)) throw new SignerUnavailable({ reason: "Signer unavailable" })
+  const key = try Effect.try({ try: () => hexToBytes(text.slice(2)), catch: () => new SignerUnavailable({ reason: "Signer unavailable" }) })
+  const address = try Effect.try({ try: () => addressOfKey(key), catch: () => new SignerUnavailable({ reason: "Signer unavailable" }) })
+  if (address === undefined || address !== deployment.identityAuthority) throw new SignerUnavailable({ reason: "Wrong identity signer" })
+  return {
+    address,
+    sign: (request) => effect {
+      const hash = try Effect.try({ try: () => signingHash(request), catch: () => new SignerUnavailable({ reason: "Unsignable transaction" }) })
+      const signature = try Effect.try({ try: () => secp256k1.sign(hexToBytes(hash.slice(2)), key, { prehash: false, lowS: true, format: "recovered" }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
+      const recovery = signature[0]
+      if (recovery !== 0 && recovery !== 1) throw new SignerUnavailable({ reason: "Signing failed" })
+      return try Effect.try({ try: () => signedType2(request, { r: `0x${bytesToHex(signature.slice(1, 33))}` as never, s: `0x${bytesToHex(signature.slice(33, 65))}` as never, yParity: recovery }), catch: () => new SignerUnavailable({ reason: "Signing failed" }) })
+    },
+  } satisfies AttesterAccount
+}
+
+export schema Attempt {
+  readonly obligationId?: string
+  readonly monthlyPeriod?: string
+  readonly network: string
+  readonly vault: string
+  readonly fingerprint: string
+  readonly rawTransaction: string
+  readonly transactionId: string
+  readonly bindingNonceBudgetKey?: string
+  readonly bindingConsentBudgetKey?: string
+  readonly maxNativeCostWei?: string
+}
+
+const StoredAttempt = Schema.NullOr(Attempt)
+
+export effect function readAttempt(entries: Entries, key: string) {
+  const stored = try entries.get(key)
+  if (stored === undefined) return undefined
+  return Schema.decodeUnknownEffect(StoredAttempt)(stored) catch effect () => { throw new AttemptHeld({ reason: "Journaled attempt is malformed" }) }
+}
+
+export function sameAttempt(left: Attempt | null | undefined, right: Attempt) {
+  return left !== null && left !== undefined && JSON.stringify(Object.entries(left).sort()) === JSON.stringify(Object.entries(right).sort())
+}
+
+export function nonceKey(deployment: Deployment) {
+  return `nonce:${deployment.chainId}:${deployment.identityAuthority}`
+}
+
+export function frozenLimit(attempt: Attempt | undefined) {
+  return attempt?.maxNativeCostWei === undefined ? undefined : parseNativeCostLimit(attempt.maxNativeCostWei)
+}
+
+export effect function signedWithin(deployment: Deployment, raw: string, attempt: Attempt | undefined, current: boolean) {
+  const signed = readSignedType2(raw as Hex)
+  if (signed === undefined) throw new AttemptHeld({ reason: "Signed EVM gas envelope unavailable" })
+  const caps = [frozenLimit(attempt), current ? deployment.maxNativeCost : undefined]
+  if (attempt?.maxNativeCostWei !== undefined && caps[0] === undefined) throw new AttemptHeld({ reason: "Invalid EVM native cost limit" })
+  if (!(try transactionAllowed({ gas: signed.request.gas, maxFeePerGas: signed.request.maxFeePerGas, maxPriorityFeePerGas: signed.request.maxPriorityFeePerGas, value: signed.request.value }, deployment.gasCeiling, caps))) throw new LimitRefused({ reason: "EVM transaction exceeds native cost limit" })
+  return signed
+}
+
+export interface Prepared {
+  readonly chainNonce: bigint
+  readonly gas: bigint
+  readonly maxFeePerGas: bigint
+  readonly maxPriorityFeePerGas: bigint
+}
+
+export effect function prepareSend(deployment: Deployment, data: Hex) {
+  const rpc = try EvmRpc
+  const chainNonce = try rpc.nonce(deployment.identityAuthority, "pending")
+  const latest = try rpc.head("latest")
+  const fees = sendFees(latest.baseFeePerGas ?? 0n)
+  if (!fees.ok) throw new LimitRefused({ reason: "Gas fee exceeds test signer policy" })
+  const gas = gasWithMargin(try rpc.estimateGas({ from: deployment.identityAuthority, to: deployment.vault, data, value: 0n }))
+  if (gas > deployment.gasCeiling) throw new LimitRefused({ reason: "Gas exceeds narrow operation policy" })
+  const envelope = { gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas, value: 0n }
+  if (!(try transactionAllowed(envelope, deployment.gasCeiling, [deployment.maxNativeCost]))) throw new LimitRefused({ reason: "EVM transaction exceeds native cost limit" })
+  return { chainNonce, gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } satisfies Prepared
+}
+
+const NonceCursor = Schema.Number
+
+export effect function signNext(entries: Entries, deployment: Deployment, account: AttesterAccount, prepared: Prepared, data: Hex) {
+  const key = nonceKey(deployment)
+  const stored = try entries.get(key)
+  const cursor = stored === undefined ? 0 : Schema.decodeUnknownEffect(NonceCursor)(stored) catch effect () => { throw new AttemptHeld({ reason: "Invalid signer nonce" }) }
+  const chainNonce = Number(prepared.chainNonce)
+  const nonce = Math.max(chainNonce, cursor)
+  if (!Number.isSafeInteger(nonce) || nonce < 0) throw new AttemptHeld({ reason: "Invalid signer nonce" })
+  const request = { chainId: Number(deployment.chainId), nonce, gas: prepared.gas, maxFeePerGas: prepared.maxFeePerGas, maxPriorityFeePerGas: prepared.maxPriorityFeePerGas, to: deployment.vault, value: 0n, data } satisfies Type2Request
+  const rawTransaction = try account.sign(request)
+  const signed = readSignedType2(rawTransaction)
+  if (signed === undefined || signed.sender !== deployment.identityAuthority) throw new SignerUnavailable({ reason: "Signed transaction differs from its signer" })
+  try entries.put(key, nonce + 1)
+  return { raw: rawTransaction, signed }
+}
+
+export effect function knownTransaction(id: string) {
+  return (try (try EvmRpc).transaction(id as Hex)) !== undefined
+}
+
+export effect function broadcast(raw: string, id: string) {
+  const rpc = try EvmRpc
+  const sent = rpc.sendRaw(raw as Hex) catch effect (error) => {
+    const known = knownTransaction(id) catch () => false
+    if (!known) throw error
+    return id
+  }
+  if (sent.toLowerCase() !== id.toLowerCase()) throw new AttemptHeld({ reason: "Transaction hash mismatch" })
+}
+
+export effect function plainSigner(deployment: Deployment) {
+  if ((try (try EvmRpc).code(deployment.identityAuthority, "latest")) !== "0x") throw new AttemptHeld({ reason: "Cancellation requires a plain signer account" })
+}
+
+export type { SignedType2 }

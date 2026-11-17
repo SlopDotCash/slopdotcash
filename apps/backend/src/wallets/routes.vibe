@@ -1,0 +1,458 @@
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The trace API's bearer claim registers through the same partition line, and current-claim reads change nothing"; spec/backend/wallets.md, "The server issues an expiring challenge for the exact current registry claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"; spec/backend/wallets.md, "An operator claim is digest-idempotent, keeps the claim line and authorizes nothing"; spec/backend/wallets.md, "The legacy possession verifier issues single-use challenges and keeps one attestation per claim"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation } from "@repo/platform/d1"
+import { type Actor, type Bearer, Refused, body, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { cacheControl } from "@repo/platform/route"
+import { Conflict } from "@repo/platform/stored"
+import { type OperatorClaim, type Registration, type WalletChain, Rejected, authorizationReadback, canReadProof, challengeLifetime, currentClaimRead, operatorOutcome, possessionLifetime, registrationReadback, walletOperator } from "../../gen/backend__wallets.effect.vibe"
+import { getWalletClaimsActorsByGithubIdCurrent, getWalletClaimsById, getWalletClaimsByIdPossession, getWalletClaimsCurrent, postOperatorWalletClaims, postPaymentsWalletsAuthorize, postPaymentsWalletsChallenge, postPaymentsWalletsRegister, postWalletClaims, postWalletClaimsByIdPossession, postWalletClaimsByIdPossessionChallenge } from "../client/refusals.vibe"
+import { AuthorizeFields, BearerClaimFields, ChallengeFields, OperatorClaimFields, PossessionFields, RegisterFields, actorWalletClaim, authorizeWallet, createWalletClaim, currentWalletClaim, operatorWalletClaim, possessionChallenge, possessionProof, registerWallet, walletChallenge, walletClaim, walletPossession } from "../client/wallets.vibe"
+import { type StoredClaim, chainName, chainOf, operatorDigest, paymentWalletMessage, possessionView, registryDigests, validActorId, validIdentifier, validIsoTimestamp, validLogin, validSha256, walletClaimRepository, walletClaimView } from "./records.vibe"
+import { assertPossessionChallenge, paymentSigner, possessionAudience, possessionKind, possessionMessage, possessionSchemaVersion, signableSolanaAddress, solanaKey, verifyPossession, walletAddressValid } from "./signatures.vibe"
+import { type AttestationFacts, type ClaimFacts, type Loaded, type Partition, attestationOf, claimAt, claimByDigest, claimById, contextOf, freshContext, loadPartition, noFacts, positionOf, send } from "./store.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+function refused(row: Row, message?: string) {
+  return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
+}
+
+const traceContract = { "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" }
+const oneMinute = "public, max-age=60, must-revalidate"
+const immutable = "public, max-age=31536000, immutable"
+const writerRoles = ["contributor", "project_owner", "operator"]
+
+function traced(answer: unknown, status: number, cache: string) {
+  return json(answer, status, { ...traceContract, "cache-control": cache })
+}
+
+const traceBodyBytes = 65536
+
+effect function paymentBody<S extends Schema.Constraint>(schema: S, invalid: Refused) {
+  if (!(try sameOriginWrite())) throw refused(postPaymentsWalletsRegister.originForbiddenPrivateNoStore)
+  return body(schema, 4) catch effect () => { throw invalid }
+}
+
+function paid(answer: unknown) {
+  return json(answer, 200, { "cache-control": cacheControl("private") })
+}
+
+effect function now() {
+  return try Clock.currentTimeMillis
+}
+
+effect function claimOrDie(loaded: Loaded, position: number) {
+  const claim = claimAt(loaded, position)
+  if (claim === undefined) return try die(new Error(`wallet claim ${position} is missing from its partition`))
+  return claim
+}
+
+function storedClaim(partition: Partition, id: string, login: string, address: string, facts: ClaimFacts, digest: string, supersedes: string | null, source: "github_issue" | "d1_registry"): StoredClaim {
+  return {
+    id,
+    github_user_id: partition.actor,
+    github_login: login,
+    wallet_address: address,
+    chain: chainName(partition.chain),
+    source,
+    issue_repository: facts.issueRepository,
+    issue_number: facts.issueNumber,
+    source_body_sha256: facts.sourceBodySha256,
+    observed_at: facts.observedAt,
+    record_sha256: digest,
+    supersedes_claim_id: supersedes,
+  }
+}
+
+effect function registryFacts(id: string, login: string, actor: string, sourceBodySha256: string, observedAt: string, recordDigest: string, supersedesClaimId: string | null) {
+  return {
+    kind: "claim",
+    id,
+    login,
+    sourceBodySha256,
+    issueRepository: null,
+    issueNumber: null,
+    observedAt,
+    audit: { actorGithubId: actor, action: "wallet_claim.created", requestId: try randomId(), details: { recordDigest, supersedesClaimId } },
+  } satisfies ClaimFacts
+}
+
+effect function registerForPayments(actor: Actor) {
+  const fields = try paymentBody(RegisterFields, refused(postPaymentsWalletsRegister.invalidWallet))
+  const stale = refused(postPaymentsWalletsRegister.staleWalletClaim)
+  const chain = chainOf(fields.chain)
+  const address = fields.address
+  if (chain === undefined || typeof address !== "string" || !walletAddressValid(chain, address)) throw refused(postPaymentsWalletsRegister.invalidWallet)
+  const partition = { actor: actor.githubId, chain }
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const known = registrationReadback(loaded.state, address, actor.githubId)
+  if (known > 0) return paid({ claimId: (try claimOrDie(loaded, known)).id })
+  const supersedesClaimId = claimAt(loaded, loaded.state.claims.length)?.id ?? null
+  const observedAt = try isoAt(loaded.state.clock)
+  const { sourceBodySha256, recordDigest } = try registryDigests({ githubActorId: actor.githubId, githubLogin: actor.login, address, chain, observedAt, supersedesClaimId })
+  const id = try randomId()
+  const facts = try registryFacts(id, actor.login, actor.githubId, sourceBodySha256, observedAt, recordDigest, supersedesClaimId)
+  const registration: Registration = { wallet: address, digest: recordDigest, predecessor: loaded.state.claims.length }
+  const sent = send(partition, () => [{ event: { type: "register", registration }, by: actor.githubId, facts }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: throw stale;
+    when Conflict: throw stale;
+    when ConstraintViolation: throw stale;
+    default: throw error;
+  }
+  const position = registrationReadback(sent.state, address, actor.githubId)
+  if (position === 0) throw stale
+  return paid({ claimId: position > sent.loaded.claims.length ? id : (try claimOrDie(sent.loaded, position)).id })
+}
+
+effect function ownClaim(actor: string, claimId: string, refusal: Refused) {
+  const claim = try claimById(claimId)
+  const chain = chainOf(claim?.chain)
+  if (claim === undefined || claim.github_user_id !== actor || chain === undefined) throw refusal
+  return { claim, partition: { actor, chain } satisfies Partition }
+}
+
+effect function challengeForPayments(actor: Actor) {
+  const invalid = refused(postPaymentsWalletsChallenge.invalidRequestS400)
+  const claimId = (try paymentBody(ChallengeFields, invalid)).claimId
+  if (typeof claimId !== "string") throw invalid
+  const notCurrent = refused(postPaymentsWalletsChallenge.claimNotCurrent)
+  const { claim, partition } = try ownClaim(actor.githubId, claimId, notCurrent)
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const nonce = try randomId()
+  const expiresAt = try isoAt(loaded.state.clock + challengeLifetime)
+  const message = paymentWalletMessage({ actorId: actor.githubId, chain: claim.chain, address: claim.wallet_address, claimId: claim.id, claimDigest: claim.record_sha256, nonce, expiresAt })
+  const position = positionOf(loaded, claim.id)
+  send(partition, (current) => [{
+    event: { type: "issue", claim: position, challengeId: Object.keys(current.state.challenges).length + 1, messageDigest: message },
+    by: actor.githubId,
+    facts: { kind: "challenge", id: nonce, message },
+  }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: throw notCurrent;
+    default: throw error;
+  }
+  return paid({ challengeId: nonce, message, address: claim.wallet_address, chain: claim.chain, expiresAt })
+}
+
+effect function authorizeForPayments(actor: Actor) {
+  const invalid = refused(postPaymentsWalletsAuthorize.invalidRequestS400)
+  const { claimId, challengeId, signature } = try paymentBody(AuthorizeFields, invalid)
+  if (typeof claimId !== "string" || typeof challengeId !== "string" || typeof signature !== "string") throw invalid
+  const unsigned = refused(postPaymentsWalletsAuthorize.walletSignatureRequired)
+  const notCurrent = refused(postPaymentsWalletsAuthorize.claimNotCurrent)
+  const { claim, partition } = try ownClaim(actor.githubId, claimId, unsigned)
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const challengePosition = loaded.challenges.findIndex((row) => row.id === challengeId) + 1
+  const challenge = loaded.challenges[challengePosition - 1]
+  if (challenge === undefined) throw unsigned
+  const proof = {
+    requestId: 1,
+    challengeId: challengePosition,
+    claim: positionOf(loaded, claim.id),
+    recoveredSigner: try paymentSigner(partition.chain, claim.wallet_address, challenge.message, signature),
+    messageDigest: challenge.message,
+  }
+  if (!canReadProof(loaded.state, proof, actor.githubId)) throw unsigned
+  const consumed = send(partition, () => [
+    { event: { type: "readProof", proof }, by: actor.githubId, facts: noFacts },
+    { event: { type: "consume", requestId: proof.requestId }, by: actor.githubId, facts: noFacts },
+  ], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: throw refused(postPaymentsWalletsAuthorize.challengeConsumed);
+    default: throw error;
+  }
+  const committed = send(partition, () => [
+    { event: { type: "commitAuthorization", requestId: proof.requestId, storageSucceeded: true }, by: actor.githubId, facts: { kind: "authorization", signature } },
+  ], contextOf(consumed.state)) catch effect (error) => match (error) {
+    when Rejected: throw notCurrent;
+    default: throw error;
+  }
+  if (!authorizationReadback(committed.state, proof.claim, actor.githubId)) throw notCurrent
+  return paid({ authorized: true })
+}
+
+function requestedChain(query: URLSearchParams, invalid: Refused): WalletChain | Refused {
+  const values = query.getAll("chain")
+  if (values.length === 0) return "Solana"
+  return values.length === 1 ? chainOf(values[0]) ?? invalid : invalid
+}
+
+effect function currentOf(actor: string, chain: WalletChain) {
+  const loaded = try loadPartition({ actor, chain }, freshContext(try now()))
+  return claimAt(loaded, currentClaimRead(loaded.state))
+}
+
+effect function currentForBearer(bearer: Bearer, query: URLSearchParams) {
+  const chain = requestedChain(query, refused(getWalletClaimsCurrent.invalidRequestInvalidWalletChain))
+  if (chain instanceof Refused) throw chain
+  const claim = try currentOf(bearer.githubId, chain)
+  if (claim === undefined) throw refused(getWalletClaimsCurrent.notFoundWalletClaimNotFound)
+  return traced(walletClaimView(claim), 200, "no-store")
+}
+
+effect function currentForActor(githubId: string, query: URLSearchParams) {
+  if (!validActorId(githubId)) throw refused(getWalletClaimsActorsByGithubIdCurrent.invalidRequestInvalidGitHubActorId)
+  const chain = requestedChain(query, refused(getWalletClaimsActorsByGithubIdCurrent.invalidRequestInvalidWalletChain))
+  if (chain instanceof Refused) throw chain
+  const claim = try currentOf(githubId, chain)
+  return claim === undefined ? traced(null, 200, "no-store") : traced(walletClaimView(claim), 200, oneMinute)
+}
+
+effect function publicClaim(claimId: string) {
+  if (!validIdentifier(claimId)) throw refused(getWalletClaimsById.invalidRequestInvalidClaimId)
+  const claim = try claimById(claimId)
+  if (claim === undefined) throw refused(getWalletClaimsById.notFoundWalletClaimNotFound)
+  return traced(walletClaimView(claim), 200, immutable)
+}
+
+effect function publicPossession(claimId: string) {
+  if (!validIdentifier(claimId)) throw refused(getWalletClaimsByIdPossession.invalidRequestInvalidClaimId)
+  const claim = try claimById(claimId)
+  if (claim === undefined) throw refused(getWalletClaimsByIdPossession.notFoundWalletClaimNotFound)
+  if (claim.chain !== "solana") throw refused(getWalletClaimsByIdPossession.unsupportedChain)
+  return traced(possessionView(claim.wallet_address, try attestationOf(claim.id)), 200, oneMinute)
+}
+
+function isWriter(bearer: Bearer): boolean {
+  return bearer.roles.some((role) => writerRoles.includes(role))
+}
+
+effect function createBearerClaim(bearer: Bearer) {
+  if (!isWriter(bearer)) throw refused(postWalletClaims.forbiddenWriteAccessIsNot)
+  const fields = try strictBody(BearerClaimFields, traceBodyBytes)
+  const stale = refused(postWalletClaims.staleWalletClaimWalletClaimChangedReload)
+  const chain = fields.chain === undefined ? "Solana" : chainOf(fields.chain)
+  if (chain === undefined) throw refused(postWalletClaims.invalidRequestInvalidWalletChain)
+  const address = fields.address
+  if (typeof address !== "string" || !walletAddressValid(chain, address)) throw refused(postWalletClaims.invalidRequestV3, chain === "Solana" ? "Invalid Solana address" : "Invalid EVM address")
+  const requested = fields.supersedesClaimId
+  if (requested !== undefined && requested !== null && !validIdentifier(requested)) throw refused(postWalletClaims.invalidRequestInvalidSupersedesClaimId)
+  const supersedesClaimId = typeof requested === "string" ? requested : null
+  const partition = { actor: bearer.githubId, chain }
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const observedAt = try isoAt(loaded.state.clock)
+  const { sourceBodySha256, recordDigest } = try registryDigests({ githubActorId: bearer.githubId, githubLogin: bearer.login, address, chain, observedAt, supersedesClaimId })
+  const id = try randomId()
+  const facts = try registryFacts(id, bearer.login, bearer.githubId, sourceBodySha256, observedAt, recordDigest, supersedesClaimId)
+  const predecessor = supersedesClaimId === null ? 0 : positionOf(loaded, supersedesClaimId) || -1
+  const registration: Registration = { wallet: address, digest: recordDigest, predecessor }
+  const sent = send(partition, () => [{ event: { type: "registerByBearer", registration }, by: bearer.githubId, facts }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    when ConstraintViolation: undefined;
+    default: throw error;
+  }
+  if (sent === undefined) {
+    const replayed = try claimByDigest(recordDigest)
+    if (replayed !== undefined) return traced(walletClaimView(replayed), 200, "no-store")
+    throw stale
+  }
+  const kept = claimAt(sent.loaded, registrationReadback(sent.state, address, bearer.githubId))
+  if (kept !== undefined) return traced(walletClaimView(kept), 200, "no-store")
+  return traced(walletClaimView(storedClaim(partition, id, bearer.login, address, facts, recordDigest, supersedesClaimId, "d1_registry")), 201, "no-store")
+}
+
+interface OwnedRefusals {
+  readonly forbidden: Row
+  readonly invalidId: Row
+  readonly notFound: Row
+  readonly unsupported: Row
+}
+
+effect function ownedSolanaClaim(bearer: Bearer, claimId: string, rows: OwnedRefusals) {
+  if (!isWriter(bearer)) throw refused(rows.forbidden)
+  if (!validIdentifier(claimId)) throw refused(rows.invalidId)
+  const claim = try claimById(claimId)
+  if (claim === undefined || claim.github_user_id !== bearer.githubId) throw refused(rows.notFound)
+  if (claim.chain !== "solana") throw refused(rows.unsupported)
+  return claim
+}
+
+effect function issuePossessionChallenge(bearer: Bearer, claimId: string) {
+  const rows = postWalletClaimsByIdPossessionChallenge
+  const claim = try ownedSolanaClaim(bearer, claimId, { forbidden: rows.forbiddenWriteAccessIsNot, invalidId: rows.invalidRequestInvalidClaimId, notFound: rows.notFoundWalletClaimNotFound, unsupported: rows.unsupportedChain })
+  if (!signableSolanaAddress(claim.wallet_address)) throw refused(rows.addressNotSignable)
+  const existing = try attestationOf(claim.id)
+  if (existing !== undefined) return traced(possessionView(claim.wallet_address, existing), 200, "no-store")
+  const partition = { actor: bearer.githubId, chain: "Solana" } satisfies Partition
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const challengeId = (try sha256Hex(try randomId())).slice(0, 32)
+  const challenge = assertPossessionChallenge({
+    kind: possessionKind,
+    schemaVersion: possessionSchemaVersion,
+    audience: possessionAudience,
+    challengeId,
+    claimId: claim.id,
+    githubActorId: bearer.githubId,
+    address: claim.wallet_address,
+    issuedAt: try isoAt(loaded.state.clock),
+    expiresAt: try isoAt(loaded.state.clock + possessionLifetime),
+  }) catch effect () => {
+    return try die(new Error("an issued possession challenge is not canonical"))
+  }
+  const position = positionOf(loaded, claim.id)
+  const sent = send(partition, () => [{ event: { type: "issuePossessionChallenge", claim: position }, by: bearer.githubId, facts: { kind: "possessionChallenge", id: challengeId } }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (sent === undefined) {
+    const raced = try attestationOf(claim.id)
+    if (raced === undefined) return try die(new Error("a possession challenge was refused without an attestation"))
+    return traced(possessionView(claim.wallet_address, raced), 200, "no-store")
+  }
+  return traced({ schemaVersion: 1, challenge, message: possessionMessage(challenge) }, 201, "no-store")
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+effect function attestationFacts(actor: string, challengeId: string, signature: string, message: string) {
+  const messageSha256 = try sha256Hex(message)
+  return {
+    kind: "attestation",
+    id: try randomId(),
+    signature,
+    messageSha256,
+    audit: { actorGithubId: actor, action: "wallet_possession.attested", requestId: try randomId(), details: { challengeId, messageDigest: messageSha256 } },
+  } satisfies AttestationFacts
+}
+
+effect function attestPossession(bearer: Bearer, claimId: string) {
+  const rows = postWalletClaimsByIdPossession
+  const unavailable = refused(rows.possessionChallengeUnavailable)
+  const claim = try ownedSolanaClaim(bearer, claimId, { forbidden: rows.forbiddenWriteAccessIsNot, invalidId: rows.invalidRequestInvalidClaimId, notFound: rows.notFoundWalletClaimNotFound, unsupported: rows.unsupportedChain })
+  const existing = try attestationOf(claim.id)
+  if (existing !== undefined) return traced(possessionView(claim.wallet_address, existing), 200, "no-store")
+  const fields = try strictBody(PossessionFields, traceBodyBytes)
+  const submitted = fields.challenge
+  const challengeId = isRecord(submitted) && typeof submitted.challengeId === "string" ? submitted.challengeId : ""
+  if (!validIdentifier(challengeId)) throw refused(rows.invalidRequestInvalidPossessionChallenge)
+  const partition = { actor: bearer.githubId, chain: "Solana" } satisfies Partition
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const challengePosition = loaded.possession.findIndex((row) => row.challenge_id === challengeId) + 1
+  const stored = loaded.possession[challengePosition - 1]
+  const boundHere = stored !== undefined && stored.claim_id === claim.id && stored.wallet_address === claim.wallet_address
+  const verified = verifyPossession({ challenge: submitted, signature: fields.signature, claimId: claim.id, githubActorId: bearer.githubId, address: claim.wallet_address, now: loaded.state.clock }) catch (error) => error.message
+  const proof = typeof verified === "string" ? undefined : verified
+  const windowHeld = proof !== undefined && stored !== undefined && proof.challenge.issuedAt === stored.issued_at && proof.challenge.expiresAt === stored.expires_at
+  const proven = boundHere && windowHeld && proof !== undefined
+  const facts = proof === undefined || !proven ? noFacts : try attestationFacts(bearer.githubId, challengeId, proof.signature, possessionMessage(proof.challenge))
+  const event = { type: "attestPossession", claim: positionOf(loaded, claim.id), challengeId: challengePosition, recoveredSigner: proven ? claim.wallet_address : "" } as const
+  const sent = send(partition, () => [{ event, by: bearer.githubId, facts }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (sent === undefined) {
+    const raced = try attestationOf(claim.id)
+    if (raced !== undefined) return traced(possessionView(claim.wallet_address, raced), 200, "no-store")
+    throw unavailable
+  }
+  if (facts.kind === "attestation" && sent.state.attestations.length > sent.loaded.state.attestations.length) {
+    return traced(possessionView(claim.wallet_address, { challenge_id: challengeId, signature: facts.signature, message_sha256: facts.messageSha256, attested_at: try isoAt(loaded.state.clock) }), 201, "no-store")
+  }
+  if (!boundHere) throw unavailable
+  if (typeof verified === "string") throw refused(rows.invalidPossessionProof, verified)
+  throw refused(rows.invalidPossessionProofWalletPossessionChallengeWindow)
+}
+
+interface OperatorInput {
+  readonly githubActorId: string
+  readonly githubLogin: string
+  readonly address: string
+  readonly observedAt: string
+  readonly sourceBodySha256: string
+  readonly supersedesClaimId: string | null
+  readonly source: "github_issue" | "d1_registry"
+  readonly issueRepository: string | null
+  readonly issueNumber: number | null
+}
+
+effect function operatorInput(fields: OperatorClaimFields) {
+  const rows = postOperatorWalletClaims
+  const { githubActorId, githubLogin, address, observedAt, sourceBodySha256, supersedesClaimId, source } = fields
+  if (!validActorId(githubActorId)) throw refused(rows.invalidRequestInvalidGithubActorId)
+  if (!validLogin(githubLogin)) throw refused(rows.invalidRequestInvalidGithubLogin)
+  if (typeof address !== "string" || solanaKey(address) === undefined) throw refused(rows.invalidRequestInvalidSolanaAddress)
+  if (typeof observedAt !== "string" || !(try validIsoTimestamp(observedAt))) throw refused(rows.invalidRequestInvalidObservedAt)
+  if (millisOf(observedAt) > (try now())) throw refused(rows.invalidRequestWalletObservationCannotBe)
+  if (!validSha256(sourceBodySha256)) throw refused(rows.invalidRequestInvalidSourceBodySha256)
+  if (supersedesClaimId !== undefined && supersedesClaimId !== null && !validIdentifier(supersedesClaimId)) throw refused(rows.invalidRequestInvalidSupersedesClaimId)
+  if (source !== undefined && source !== "github_issue" && source !== "d1_registry") throw refused(rows.invalidRequestInvalidWalletClaimSource)
+  const fromIssue = source === "github_issue"
+  const issueRepository = fromIssue && fields.issueRepository === walletClaimRepository ? walletClaimRepository : null
+  const issueNumber = fromIssue && Number.isSafeInteger(fields.issueNumber) && Number(fields.issueNumber) > 0 ? Number(fields.issueNumber) : null
+  if (fromIssue && (issueRepository === null || issueNumber === null)) throw refused(rows.invalidRequestInvalidGitHubIssueSource)
+  return {
+    githubActorId,
+    githubLogin,
+    address,
+    observedAt,
+    sourceBodySha256,
+    supersedesClaimId: typeof supersedesClaimId === "string" ? supersedesClaimId : null,
+    source: fromIssue ? "github_issue" : "d1_registry",
+    issueRepository,
+    issueNumber,
+  } satisfies OperatorInput
+}
+
+effect function createOperatorClaim(bearer: Bearer) {
+  const rows = postOperatorWalletClaims
+  const conflict = refused(rows.claimConflict)
+  if (!bearer.roles.includes("operator") || !(try (try Roles).has(bearer.githubId, "operator"))) throw refused(rows.forbiddenOperatorAccessIsRequired)
+  const input = try operatorInput(try strictBody(OperatorClaimFields, traceBodyBytes))
+  const digest = try operatorDigest(input)
+  const replayed = try claimByDigest(digest)
+  if (replayed !== undefined) return traced(walletClaimView(replayed), 200, "no-store")
+  const partition = { actor: input.githubActorId, chain: "Solana" } satisfies Partition
+  const loaded = try loadPartition(partition, freshContext(try now()))
+  const predecessor = input.supersedesClaimId === null ? 0 : positionOf(loaded, input.supersedesClaimId) || -1
+  const request: OperatorClaim = { wallet: input.address, digest, predecessor, source: input.source === "github_issue" ? "FromGithubIssue" : "FromRegistry", observedAt: millisOf(input.observedAt) }
+  if (operatorOutcome(loaded.state, request) !== "OperatorClaimCreated") throw conflict
+  const id = try randomId()
+  const facts = {
+    kind: "claim",
+    id,
+    login: input.githubLogin,
+    sourceBodySha256: input.sourceBodySha256,
+    issueRepository: input.issueRepository,
+    issueNumber: input.issueNumber,
+    observedAt: input.observedAt,
+    audit: {
+      actorGithubId: bearer.githubId,
+      action: input.source === "github_issue" ? "wallet_claim.historical_issue_migrated" : "wallet_claim.operator_recovery_created",
+      requestId: try randomId(),
+      details: { githubActorId: input.githubActorId, recordDigest: digest },
+    },
+  } satisfies ClaimFacts
+  const sent = send(partition, () => [{ event: { type: "operatorClaim", request }, by: walletOperator, facts }], freshContext(loaded.state.clock)) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when Conflict: undefined;
+    when ConstraintViolation: undefined;
+    default: throw error;
+  }
+  if (sent === undefined) {
+    const raced = try claimByDigest(digest)
+    if (raced !== undefined) return traced(walletClaimView(raced), 200, "no-store")
+    throw conflict
+  }
+  return traced(walletClaimView(storedClaim(partition, id, input.githubLogin, input.address, facts, digest, input.supersedesClaimId, input.source)), 201, "no-store")
+}
+
+export const WalletRoutes = Layer.mergeAll(
+  handleRaw(registerWallet, (input) => registerForPayments(input.actor)),
+  handleRaw(walletChallenge, (input) => challengeForPayments(input.actor)),
+  handleRaw(authorizeWallet, (input) => authorizeForPayments(input.actor)),
+  handleRaw(currentWalletClaim, (input) => currentForBearer(input.actor, input.query)),
+  handleRaw(actorWalletClaim, (input) => currentForActor(input.params.githubId ?? "", input.query)),
+  handleRaw(walletClaim, (input) => publicClaim(input.params.id ?? "")),
+  handleRaw(walletPossession, (input) => publicPossession(input.params.id ?? "")),
+  handleRaw(createWalletClaim, (input) => createBearerClaim(input.actor)),
+  handleRaw(possessionChallenge, (input) => issuePossessionChallenge(input.actor, input.params.id ?? "")),
+  handleRaw(possessionProof, (input) => attestPossession(input.actor, input.params.id ?? "")),
+  handleRaw(operatorWalletClaim, (input) => createOperatorClaim(input.actor)),
+)

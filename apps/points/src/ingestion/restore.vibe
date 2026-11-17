@@ -1,0 +1,198 @@
+// spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
+import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { boundedBytes } from "@repo/platform/browser"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub, githubApi } from "@repo/platform/github"
+import { type ZipEntry, zipContent, zipEntries } from "./archive.ts"
+import { CheckpointInvalid, entryName, maxDiscussionAgeMs, maxDiscussionBodyBytes, maxDiscussionBytes, maxDiscussionEntries, maxMetadataBytes, refuseIf } from "./discussions.vibe"
+
+export const maxEntryBytes = maxDiscussionBodyBytes + maxMetadataBytes
+export const maxArchiveBytes = maxDiscussionBytes + maxDiscussionEntries * 512
+export const checkpointDirectoryName = "leaderboard-discussions"
+export const downloadTimeoutMs = 180_000
+
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const positiveId = /^[1-9][0-9]{0,17}$/u
+const commitSha = /^[a-f0-9]{40}$/u
+const archiveDigest = /^sha256:[a-f0-9]{64}$/u
+const regularFile = 0o100000
+const redirects: ReadonlyArray<number> = [301, 302, 303, 307, 308]
+
+export interface RestoreOptions {
+  readonly token: Redacted.Redacted<string>
+  readonly authority?: string
+  readonly userAgent?: string
+}
+
+interface Run {
+  readonly id: string
+  readonly headSha: string
+  readonly attempt: string
+}
+
+interface Artifact {
+  readonly id: string
+  readonly digest: string
+  readonly size: number
+}
+
+export schema WorkflowRun {
+  readonly id: number
+  readonly head_sha: string
+  readonly head_branch: string
+  readonly event: string
+  readonly path: string
+  readonly status: string
+  readonly run_attempt: number
+  readonly repository: { readonly full_name: string }
+  readonly head_repository: { readonly full_name: string }
+}
+
+export schema ArtifactListing {
+  readonly artifacts: ReadonlyArray<{ readonly id: number; readonly name: string; readonly digest?: string | null; readonly size_in_bytes: number; readonly expired: boolean; readonly created_at: string; readonly workflow_run: { readonly id: number; readonly head_sha: string } }>
+}
+
+const untrustedRun = "Checkpoint producer is not a completed trusted main release"
+const untrustedArtifact = "Checkpoint archive is expired, oversized or has unverified identity"
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function collectedText(stream: Stream.Stream<Uint8Array, unknown>, limit: number) {
+  let text = ""
+  let size = 0
+  const decoder = new TextDecoder()
+  for try (const chunk of stream) {
+    size += chunk.length
+    if (size > limit) break
+    text += decoder.decode(chunk, { stream: true })
+  }
+  return text
+}
+
+effect function git(args: ReadonlyArray<string>, seconds: number, failure: string) {
+  const ran = scoped(effect {
+    const spawner = try ChildProcessSpawner.ChildProcessSpawner
+    const handle = try spawner.spawn(ChildProcess.make("git", args, { stdin: "ignore", stderr: "ignore" }))
+    const [stdout, code] = try.all [collectedText(handle.stdout, 4_096), handle.exitCode]
+    return { status: Number(code), stdout }
+  })
+  return timeout(ran, Duration.seconds(seconds)) catch effect () => {
+    throw new CheckpointInvalid({ message: failure })
+  }
+}
+
+export function validRun(run: WorkflowRun, repo: string, runId: string): Run | undefined {
+  const attempt = String(run.run_attempt)
+  const valid = String(run.id) === runId &&
+    run.repository.full_name === repo && run.head_repository.full_name === repo &&
+    run.head_branch === "main" && (run.event === "push" || run.event === "workflow_dispatch") &&
+    run.path === ".github/workflows/deploy.yml" && run.status === "completed" &&
+    commitSha.test(run.head_sha) && positiveId.test(attempt)
+  return valid ? { id: runId, headSha: run.head_sha, attempt } : undefined
+}
+
+export function selectedArtifact(listing: ArtifactListing, run: Run, now: number): Artifact | string {
+  const candidates = listing.artifacts.filter((artifact) => artifact.name === `leaderboard-discussions-${run.attempt}`)
+  const artifact = candidates.length === 1 ? candidates[0] : undefined
+  if (artifact === undefined) return "Expected one checkpoint from the exact last attempt"
+  const created = Date.parse(artifact.created_at)
+  const id = String(artifact.id)
+  const digest = artifact.digest ?? ""
+  const size = artifact.size_in_bytes
+  const valid = !artifact.expired && Number.isFinite(created) && now - created >= 0 && now - created <= maxDiscussionAgeMs &&
+    positiveId.test(id) && archiveDigest.test(digest) &&
+    Number.isSafeInteger(size) && size > 0 && size <= maxArchiveBytes &&
+    String(artifact.workflow_run.id) === run.id && artifact.workflow_run.head_sha === run.headSha
+  return valid ? { id, digest, size } : untrustedArtifact
+}
+
+export function checkedEntries(entries: ReadonlyArray<ZipEntry>) {
+  if (entries.length === 0 || entries.length > maxDiscussionEntries) return "Invalid checkpoint entry count"
+  if (entries.reduce((total, entry) => total + entry.size, 0) > maxDiscussionBytes) return "Checkpoint payload exceeds its total byte limit"
+  const names = new Set<string>()
+  for (const entry of entries) {
+    if (!entryName.test(entry.name) || names.has(entry.name) || (entry.fileType !== 0 && entry.fileType !== regularFile) || entry.size <= 0 || entry.size > maxEntryBytes) return "Invalid checkpoint archive entry"
+    names.add(entry.name)
+  }
+  return undefined
+}
+
+effect function downloaded(options: RestoreOptions, repo: string, artifact: Artifact) {
+  const client = try HttpClient.HttpClient
+  const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
+  const headers = { accept: "application/vnd.github+json", authorization: `Bearer ${Redacted.value(options.token)}`, "user-agent": options.userAgent ?? "slopbot", "x-github-api-version": "2022-11-28" }
+  const download = effect {
+    const first = try client.execute(HttpClientRequest.get(`${authority}/repos/${repo}/actions/artifacts/${artifact.id}/zip`, { headers }))
+    const location = first.headers.location
+    const target = redirects.includes(first.status) && location !== undefined ? URL.parse(location, authority) : null
+    const response = target === null ? first : try client.execute(HttpClientRequest.get(target.href, { headers: { "user-agent": headers["user-agent"] } }))
+    if (response.status !== 200) throw new CheckpointInvalid({ message: "Checkpoint download failed" })
+    return boundedBytes(response, artifact.size, "checkpoint archive") catch effect (error) => {
+      throw new CheckpointInvalid({ message: error._tag === "BodyTooLarge" ? "Checkpoint download exceeded its trusted size" : "Checkpoint download failed" })
+    }
+  }
+  const manual = provideService(download, FetchHttpClient.RequestInit, { redirect: "manual" })
+  const bytes = timeout(manual, Duration.millis(downloadTimeoutMs)) catch effect (error) => {
+    if (error._tag === "CheckpointInvalid") throw error
+    throw new CheckpointInvalid({ message: "Checkpoint download failed" })
+  }
+  try refuseIf(bytes.length !== artifact.size || artifact.digest !== `sha256:${try sha256Hex(bytes)}`, "Checkpoint archive did not match its GitHub digest")
+  return bytes
+}
+
+effect function extracted(bytes: Uint8Array, destination: string) {
+  const fs = try FileSystem.FileSystem
+  const entries = Effect.try(() => zipEntries(bytes)) catch effect () => {
+    throw new CheckpointInvalid({ message: "Invalid checkpoint archive" })
+  }
+  const issue = checkedEntries(entries)
+  if (issue !== undefined) throw new CheckpointInvalid({ message: issue })
+  try fs.makeDirectory(destination, { mode: 0o700 })
+  for (const entry of entries) {
+    const content = Effect.try(() => zipContent(bytes, entry)) catch effect () => {
+      throw new CheckpointInvalid({ message: "Invalid checkpoint archive entry" })
+    }
+    try fs.writeFile(`${destination}/${entry.name}`, content, { flag: "wx", mode: 0o600 })
+  }
+}
+
+export effect function restoreCheckpoint(options: RestoreOptions) {
+  const repo = try environment("GITHUB_REPOSITORY")
+  const currentSha = try environment("GITHUB_SHA")
+  const runId = try environment("RESUME_RUN")
+  const ownRun = try environment("GITHUB_RUN_ID")
+  const ref = try environment("GITHUB_REF")
+  const event = try environment("GITHUB_EVENT_NAME")
+  const runnerTemp = try environment("RUNNER_TEMP")
+  try refuseIf(!repositoryName.test(repo) || !commitSha.test(currentSha) || !positiveId.test(runId) || runId === ownRun || ref !== "refs/heads/main" || event !== "workflow_dispatch" || runnerTemp === "", "Invalid discussion checkpoint request")
+  const checkedOut = try git(["rev-parse", "HEAD"], 10, "Restore checkout is not the event commit")
+  try refuseIf(checkedOut.status !== 0 || checkedOut.stdout.trim() !== currentSha, "Restore checkout is not the event commit")
+  const github = try GitHub
+  const base = `/repos/${repo}/actions/runs/${runId}`
+  const answered = github.json(base, WorkflowRun) catch effect (error) => {
+    if (error._tag === "GitHubMalformed") throw new CheckpointInvalid({ message: untrustedRun })
+    throw error
+  }
+  const run = validRun(answered, repo, runId)
+  if (run === undefined) throw new CheckpointInvalid({ message: untrustedRun })
+  const ancestry = try git(["merge-base", "--is-ancestor", run.headSha, currentSha], 30, "Checkpoint producer is not an ancestor of the event commit")
+  try refuseIf(ancestry.status !== 0, "Checkpoint producer is not an ancestor of the event commit")
+  const listing = github.json(`${base}/artifacts?per_page=100`, ArtifactListing) catch effect (error) => {
+    if (error._tag === "GitHubMalformed") throw new CheckpointInvalid({ message: untrustedArtifact })
+    throw error
+  }
+  const artifact = selectedArtifact(listing, run, try Clock.currentTimeMillis)
+  if (typeof artifact === "string") throw new CheckpointInvalid({ message: artifact })
+  const bytes = try downloaded(options, repo, artifact)
+  const fs = try FileSystem.FileSystem
+  try scoped(effect {
+    const temporary = try fs.makeTempDirectoryScoped({ directory: runnerTemp })
+    const staging = `${temporary}/verified`
+    try extracted(bytes, staging)
+    try fs.rename(staging, `${runnerTemp}/${checkpointDirectoryName}`)
+  })
+  try Console.log(`Restored discussion checkpoint from trusted run ${runId}, attempt ${run.attempt}`)
+  return `${runnerTemp}/${checkpointDirectoryName}`
+}

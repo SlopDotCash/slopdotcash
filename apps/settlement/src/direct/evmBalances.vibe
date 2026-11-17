@@ -1,0 +1,220 @@
+// spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"
+import type { JsonRpc } from "@repo/platform/chain/rpc"
+
+export error ProofUnavailable { reason: string }
+export error BalancesDiffer { reason: string }
+
+module traces {
+  export interface Account {
+    readonly balance?: string
+    readonly nonce?: number
+    readonly code?: string
+    readonly storage?: Readonly<Record<string, string>>
+  }
+  export type State = Readonly<Record<string, Account>>
+
+  const word = /^0x[\da-f]{64}$/iu
+  const zeroWord = `0x${"0".repeat(64)}`
+
+  function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+  }
+
+  function accountOf(row: unknown): Account | undefined {
+    if (!isRecord(row)) return undefined
+    const { balance, nonce, code, storage } = row
+    if (balance !== undefined && (typeof balance !== "string" || !/^0x[\da-f]+$/iu.test(balance))) return undefined
+    if (nonce !== undefined && (typeof nonce !== "number" || !Number.isSafeInteger(nonce) || nonce < 0)) return undefined
+    if (code !== undefined && (typeof code !== "string" || !/^0x(?:[\da-f]{2})*$/iu.test(code))) return undefined
+    if (storage !== undefined && !isRecord(storage)) return undefined
+    const slots: Record<string, string> = {}
+    for (const [key, slot] of Object.entries(storage ?? {})) {
+      if (!word.test(key) || typeof slot !== "string" || !word.test(slot)) return undefined
+      slots[key] = slot
+    }
+    return {
+      ...balance === undefined ? {} : { balance },
+      ...nonce === undefined ? {} : { nonce },
+      ...code === undefined ? {} : { code },
+      ...storage === undefined ? {} : { storage: slots },
+    }
+  }
+
+  /** @throws {never} */
+  export function stateOf(value: unknown): State | undefined {
+    if (!isRecord(value)) return undefined
+    const entries = Object.entries(value)
+    if (entries.length > 256) return undefined
+    const state: Record<string, Account> = {}
+    for (const [address, row] of entries) {
+      const account = accountOf(row)
+      if (!/^0x[\da-f]{40}$/iu.test(address) || account === undefined) return undefined
+      state[address.toLowerCase()] = account
+    }
+    return state
+  }
+
+  /** @throws {never} */
+  export function diffOf(value: unknown): { readonly pre: State; readonly post: State } | undefined {
+    if (!isRecord(value)) return undefined
+    const pre = stateOf(value.pre)
+    const post = stateOf(value.post)
+    return pre === undefined || post === undefined ? undefined : { pre, post }
+  }
+
+  /** @throws {never} */
+  export function nativeDelta(before: State, pre: State, post: State, raw: string): bigint | undefined {
+    const address = raw.toLowerCase()
+    const prior = before[address]?.balance
+    if (prior === undefined) return undefined
+    const next = post[address]?.balance ?? (pre[address]?.balance !== undefined ? "0x0" : prior)
+    return BigInt(next) - BigInt(prior)
+  }
+
+  /** @throws {never} */
+  export function after(before: State, pre: State, post: State): State | undefined {
+    const next: Record<string, Account> = { ...before }
+    for (const address of new Set([...Object.keys(pre), ...Object.keys(post)])) {
+      const changed = post[address]
+      if (changed === undefined) return undefined
+      const slots: Record<string, string> = { ...next[address]?.storage ?? {} }
+      for (const key of Object.keys(pre[address]?.storage ?? {})) slots[key] = zeroWord
+      Object.assign(slots, changed.storage ?? {})
+      next[address] = { ...next[address], ...changed, storage: slots }
+    }
+    return next
+  }
+
+  /** @throws {never} */
+  export function overrides(accounts: State): Readonly<Record<string, unknown>> {
+    return Object.fromEntries(Object.entries(accounts).map(([address, account]) => [address, {
+      ...account.balance === undefined ? {} : { balance: account.balance },
+      ...account.nonce === undefined ? {} : { nonce: `0x${account.nonce.toString(16)}` },
+      ...account.code === undefined ? {} : { code: account.code },
+      stateDiff: account.storage ?? {},
+    }]))
+  }
+
+  /** @throws {never} */
+  export function onlyWitnessed(read: State, known: State): boolean {
+    return Object.entries(read).every(([address, accessed]) => {
+      const account = known[address]
+      return account !== undefined
+        && (accessed.code === undefined || accessed.code === account.code)
+        && (accessed.balance === undefined || accessed.balance === account.balance)
+        && (accessed.nonce === undefined || accessed.nonce === account.nonce)
+        && Object.entries(accessed.storage ?? {}).every(([key, value]) => account.storage?.[key] === value)
+    })
+  }
+
+  /** @throws {never} */
+  export function outputWord(value: unknown): bigint | undefined {
+    if (!isRecord(value) || value.error !== undefined || typeof value.output !== "string" || !word.test(value.output)) return undefined
+    return BigInt(value.output)
+  }
+
+  /** @throws {never} */
+  export function balanceOfData(owner: string): string {
+    return `0x70a08231${owner.toLowerCase().replace(/^0x/u, "").padStart(64, "0")}`
+  }
+}
+import { type State, after, balanceOfData, diffOf, nativeDelta, onlyWitnessed, outputWord, overrides, stateOf } from traces
+
+const prestate = { tracer: "prestateTracer", timeout: "10s" }
+const prestateDiff = { tracer: "prestateTracer", tracerConfig: { diffMode: true }, timeout: "10s" }
+
+effect function traced(rpc: JsonRpc, method: string, params: ReadonlyArray<unknown>) {
+  return rpc.call(method, params, Schema.Unknown) catch effect () => { throw new ProofUnavailable({ reason: "Payment balance tracing is unavailable" }) }
+}
+
+effect function stateFrom(value: unknown) {
+  const state = stateOf(value)
+  if (state === undefined) throw new ProofUnavailable({ reason: "A traced account state is malformed" })
+  return state
+}
+
+effect function diffFrom(value: unknown) {
+  const diff = diffOf(value)
+  if (diff === undefined) throw new ProofUnavailable({ reason: "A traced state difference is malformed" })
+  return diff
+}
+
+export effect function assertTokenProofAvailable(rpc: JsonRpc, token: string, payer: string) {
+  const call = { from: payer, to: token, data: balanceOfData(payer) }
+  const [output, witness] = try.all [
+    traced(rpc, "debug_traceCall", [call, "latest", { tracer: "callTracer", timeout: "10s" }]),
+    traced(rpc, "debug_traceCall", [call, "latest", prestate]),
+  ]
+  if (outputWord(output) === undefined) throw new ProofUnavailable({ reason: "The token balance read is not traceable" })
+  try stateFrom(witness)
+}
+
+export effect function assertNativeProofAvailable(rpc: JsonRpc, payer: string) {
+  const call = { from: payer, to: payer, value: "0x0", data: "0x" }
+  const [witness, difference] = try.all [
+    traced(rpc, "debug_traceCall", [call, "latest", prestate]),
+    traced(rpc, "debug_traceCall", [call, "latest", prestateDiff]),
+  ]
+  const before = try stateFrom(witness)
+  if (before[payer.toLowerCase()]?.balance === undefined) throw new ProofUnavailable({ reason: "The payer balance is not witnessed" })
+  try diffFrom(difference)
+}
+
+effect function transactionStates(rpc: JsonRpc, transaction: string) {
+  const [witness, difference] = try.all [
+    traced(rpc, "debug_traceTransaction", [transaction, prestate]),
+    traced(rpc, "debug_traceTransaction", [transaction, prestateDiff]),
+  ]
+  return { before: try stateFrom(witness), diff: try diffFrom(difference) }
+}
+
+export interface NativeTransfer {
+  readonly payer: string
+  readonly recipient: string
+  readonly amount: bigint
+  readonly transaction: string
+  readonly gasCost: bigint
+}
+
+export effect function verifyNativeBalanceChanges(rpc: JsonRpc, transfer: NativeTransfer) {
+  const { before, diff } = try transactionStates(rpc, transfer.transaction)
+  const received = nativeDelta(before, diff.pre, diff.post, transfer.recipient)
+  const spent = nativeDelta(before, diff.pre, diff.post, transfer.payer)
+  if (received === undefined || spent === undefined) throw new ProofUnavailable({ reason: "A transfer balance is not witnessed" })
+  if (received !== transfer.amount || spent !== -transfer.amount - transfer.gasCost) throw new BalancesDiffer({ reason: "The native balances do not match the exact payment" })
+}
+
+export interface TokenTransfer {
+  readonly token: string
+  readonly payer: string
+  readonly recipient: string
+  readonly amount: bigint
+  readonly transaction: string
+  readonly blockHash: string
+}
+
+effect function tokenBalance(rpc: JsonRpc, transfer: TokenTransfer, accounts: State, owner: string) {
+  const call = { from: transfer.payer, to: transfer.token, data: balanceOfData(owner) }
+  const config = { stateOverrides: overrides(accounts), timeout: "10s" }
+  const [read, output] = try.all [
+    traced(rpc, "debug_traceCall", [call, transfer.blockHash, { ...config, tracer: "prestateTracer" }]),
+    traced(rpc, "debug_traceCall", [call, transfer.blockHash, { ...config, tracer: "callTracer" }]),
+  ]
+  if (!onlyWitnessed(try stateFrom(read), accounts)) throw new ProofUnavailable({ reason: "A balance read used state the transaction did not witness" })
+  const balance = outputWord(output)
+  if (balance === undefined) throw new ProofUnavailable({ reason: "A traced token balance is malformed" })
+  return balance
+}
+
+export effect function verifyTokenBalanceChanges(rpc: JsonRpc, transfer: TokenTransfer) {
+  const { before, diff } = try transactionStates(rpc, transfer.transaction)
+  const settled = after(before, diff.pre, diff.post)
+  if (settled === undefined) throw new BalancesDiffer({ reason: "Token payment deletes a witnessed account" })
+  const [payerBefore, payerAfter, recipientBefore, recipientAfter] = try.all [
+    tokenBalance(rpc, transfer, before, transfer.payer),
+    tokenBalance(rpc, transfer, settled, transfer.payer),
+    tokenBalance(rpc, transfer, before, transfer.recipient),
+    tokenBalance(rpc, transfer, settled, transfer.recipient),
+  ]
+  if (payerBefore - payerAfter !== transfer.amount || recipientAfter - recipientBefore !== transfer.amount) throw new BalancesDiffer({ reason: "The token balances do not match the exact payment" })
+}

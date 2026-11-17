@@ -1,0 +1,240 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { type Anvil, anvil } from "@repo/platform/testing/chains"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { ApprovedAwards } from "@repo/ports/security"
+import type { Address } from "viem"
+import { reviewedFactory } from "../src/chain/evm/factories.ts"
+import { DirectIntent } from "../src/client/direct.vibe"
+import { evmDirectRails } from "../src/direct/evm.vibe"
+import { DirectBountyLive } from "../src/direct/port.vibe"
+import { type CaseContext, DirectRefused, type FrozenAward, consentPayment, preparePayment, settlementView, verifyPayment } from "../src/direct/routes.vibe"
+import { DirectBounty } from "@repo/ports/settlement"
+
+module numbers {
+  /** @throws {never} */
+  export function big(value: unknown): bigint {
+    try {
+      return BigInt(String(value))
+    } catch {
+      return -1n
+    }
+  }
+  /** @throws {never} */
+  export function parsedJson(text: unknown): unknown {
+    try {
+      return JSON.parse(String(text))
+    } catch {
+      return undefined
+    }
+  }
+}
+import { big, parsedJson } from numbers
+
+error MigrationFailed { file: string }
+
+service Ledger {
+  readonly db: D1Database
+}
+
+service Chain {
+  readonly chain: Anvil
+}
+
+effect function ledger() {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "direct-bounty" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  return { db: try promise(() => database(mf, "SLOP_DB")) }
+}
+
+const LedgerStarted = Layer.effect(Ledger, ledger())
+
+const baseOperatorFeeOracle = "0x420000000000000000000000000000000000000f"
+
+const ChainStarted = Layer.mergeAll(LedgerStarted, Layer.effect(Chain, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453 })), (started) => promise(() => started.close()))
+  try promise(() => chain.rpc("anvil_setCode", [baseOperatorFeeOracle, "0x60206000f3"]))
+  return { chain }
+}))
+
+const awards = new Map<string, FrozenAward>()
+const wallets = new Map<string, EffectiveWallet>()
+
+const fakePorts = Layer.mergeAll(
+  Layer.succeed(ApprovedAwards, { forCase: (caseId) => effect { return awards.get(caseId) } }),
+  Layer.succeed(Wallets, { effective: ({ githubId }) => effect { return wallets.get(githubId) } }),
+)
+
+const projectManifestSha = "a".repeat(64)
+
+effect function seedCase(db: D1Database, caseId: string, projectId: string, reporterGithubId: string, grossBase: string) {
+  const now = "2026-11-16T00:00:00.000Z"
+  const manifest = JSON.stringify({ id: projectId, status: "active" })
+  try promise(() => db.batch([
+    db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind(projectId, manifest, projectManifestSha, now),
+    db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind(projectId, manifest, projectManifestSha, now, now),
+    db.prepare("INSERT INTO security_cases (id, project_id, advisory_repository, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at, root_cause_key) VALUES (?, ?, 'owner/repo', ?, 'reporter', 'verified', ?, ?, '7', 1, '{}', 'confirmed', 'resolved', 'approved', 'not-applicable', 'embargoed', 'private', 'none', 3, ?, ?, ?)").bind(caseId, projectId, reporterGithubId, now, now, now, now, `root-${caseId}`),
+    db.prepare("INSERT INTO security_direct_awards (case_id, project_id, root_cause_key, terms, gross_base, approved_at) VALUES (?, ?, ?, '{}', ?, ?)").bind(caseId, projectId, `root-${caseId}`, grossBase, now),
+  ]))
+}
+
+function approved(caseId: string, projectId: string, grossBaseUnits: string, split: FrozenAward["split"]): FrozenAward {
+  return { caseId, projectId, caseRevision: 3, termsRevision: 1, direct: true, split, grossBaseUnits, asset: "0x0000000000000000000000000000000000000000", network: "base", rootCauseKey: `root-${caseId}`, approvedAt: "2026-11-16T00:00:00.000Z" }
+}
+
+effect function reasonOf<A, E, R>(run: A!E!R) {
+  const answer = run catch effect (error) => {
+    if (error instanceof DirectRefused) return error.reason
+    throw error
+  }
+  return typeof answer === "string" ? answer : "accepted"
+}
+
+effect function rowsOf(db: D1Database, text: string, ...params: ReadonlyArray<string>) {
+  return (try promise(() => db.prepare(text).bind(...params).all())).results
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(LedgerStarted, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A full-award case is never payable until a released path exists (spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"; spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts")', () => effect {
+    const { db } = try Ledger
+    const caseId = "sc_full_award_case"
+    try seedCase(db, caseId, "full-award-project", "202", "4000")
+    awards.set(caseId, approved(caseId, "full-award-project", "4000", "FullAward"))
+    wallets.set("202", { address: "0x00000000000000000000000000000000000000b2", claimId: "claim-reporter-full", digest: "d".repeat(64) })
+    wallets.set("101", { address: "0x00000000000000000000000000000000000000a1", claimId: "claim-payer-full", digest: "e".repeat(64) })
+    const reporter: CaseContext = { caseId, revision: 3, reporterGithubId: "202", actorGithubId: "202" }
+    const payer: CaseContext = { ...reporter, actorGithubId: "101" }
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, evmDirectRails(JSON.stringify({ "base-mainnet": "http://127.0.0.1:9" })), fakePorts) {
+      const outcomes = [
+        try reasonOf(consentPayment(reporter, { network: "base-mainnet", confirmation: true }, [])),
+        try reasonOf(preparePayment(payer, { network: "base-mainnet", confirmation: true }, [])),
+        try reasonOf(verifyPayment(payer, { transactionIds: [`0x${"1".repeat(64)}`], confirmation: true }, [])),
+      ]
+      const legs = try legsFor(caseId)
+      const view = try settlementView(payer)
+      try same({
+        outcomes,
+        legs,
+        view,
+        journal: [
+          try rowsOf(db, "SELECT case_id FROM security_payment_consents WHERE case_id = ?", caseId),
+          try rowsOf(db, "SELECT case_id FROM security_direct_payments WHERE case_id = ?", caseId),
+          try rowsOf(db, "SELECT case_id FROM security_direct_nonce_reservations WHERE case_id = ?", caseId),
+        ],
+      }, {
+        outcomes: ["railUnavailableTheBountyVaultPays", "railUnavailableTheBountyVaultPays", "paymentNotPreparedPrepareTheExactPayment"],
+        legs: [],
+        view: undefined,
+        journal: [[], [], []],
+      })
+    }
+  })
+})
+
+effect function balance(chain: Anvil, address: string) {
+  return big(try promise(() => chain.rpc("eth_getBalance", [address, "latest"])))
+}
+
+effect function legsFor(caseId: string) {
+  provide DirectBountyLive {
+    return try (try DirectBounty).legs(caseId)
+  }
+}
+
+layer(ChainStarted, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('75/25 award: two legs verified on anvil; paid only when both reconcile; no 2% ordinary fee (spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"; spec/settlement/payment.md, "Direct reconciliation requires a retained exact attempt")', () => effect {
+    const { db } = try Ledger
+    const { chain } = try Chain
+    const caseId = "sc_standard_direct_award"
+    const gross = 4_000_000_000_000_000n
+    const [payerAccount, reporterAccount] = chain.accounts
+    const feeRecipient = reviewedFactory("base-mainnet")?.feeRecipient ?? ""
+    if (payerAccount === undefined || reporterAccount === undefined) return try die(new Error("anvil has no accounts"))
+    try seedCase(db, caseId, "standard-award-project", "202", gross.toString())
+    awards.set(caseId, approved(caseId, "standard-award-project", gross.toString(), "StandardSplit"))
+    wallets.set("202", { address: reporterAccount.address.toLowerCase(), claimId: "claim-reporter", digest: "b".repeat(64) })
+    wallets.set("101", { address: payerAccount.address.toLowerCase(), claimId: "claim-payer", digest: "c".repeat(64) })
+    const reporter = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "202", actorGithubId: "202" })
+    const payer = (revision: number): CaseContext => ({ caseId, revision, reporterGithubId: "202", actorGithubId: "101" })
+    provide Layer.mergeAll(d1(db), outbound, webCrypto, evmDirectRails(JSON.stringify({ "base-mainnet": chain.url })), fakePorts) {
+      const unconsented = try reasonOf(preparePayment(payer(3), { network: "base-mainnet", confirmation: true }, []))
+      const otherNetwork = try reasonOf(consentPayment(reporter(3), { network: "ethereum", confirmation: true }, []))
+      const consented = try consentPayment(reporter(3), { network: "base-mainnet", confirmation: true }, [])
+      const reconsented = try consentPayment(reporter(4), { network: "base-mainnet", confirmation: true }, [])
+      const prepared = try preparePayment(payer(4), { network: "base-mainnet", confirmation: true }, [])
+      const refreshed = try preparePayment(payer(5), { network: "base-mainnet", confirmation: true }, [])
+      const [stored] = try rowsOf(db, "SELECT intent FROM security_direct_payments WHERE case_id = ?", caseId)
+      const intent = try Schema.decodeUnknownEffect(DirectIntent)(parsedJson(stored?.intent))
+      const nonces = try rowsOf(db, "SELECT leg_index, nonce FROM security_direct_nonce_reservations WHERE case_id = ? ORDER BY leg_index", caseId)
+      const before = { reporter: try balance(chain, reporterAccount.address), fee: try balance(chain, feeRecipient) }
+      const feeLeg = try promise(() => chain.transact({ from: payerAccount.address, to: feeRecipient as Address, value: big(intent.feeBase) }))
+      const researcherLeg = try promise(() => chain.transact({ from: payerAccount.address, to: reporterAccount.address, value: big(intent.netBase) }))
+      try promise(() => chain.mine(80))
+      const firstLeg = try verifyPayment(payer(5), { transactionIds: [feeLeg.transactionHash], confirmation: true }, [])
+      const partial = try legsFor(caseId)
+      const partlyPaid = try rowsOf(db, "SELECT case_id FROM security_direct_payment_receipts WHERE case_id = ?", caseId)
+      const replayed = try reasonOf(verifyPayment(payer(6), { transactionIds: [feeLeg.transactionHash], confirmation: true }, []))
+      const secondLeg = try verifyPayment(payer(6), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, [])
+      const settled = try legsFor(caseId)
+      const after = { reporter: try balance(chain, reporterAccount.address), fee: try balance(chain, feeRecipient) }
+      const again = try reasonOf(verifyPayment(payer(7), { transactionIds: [researcherLeg.transactionHash], confirmation: true }, []))
+      const view = try settlementView(payer(7))
+      try same({
+        unconsented,
+        otherNetwork,
+        consented,
+        reconsented,
+        consents: (try rowsOf(db, "SELECT case_id FROM security_payment_consents WHERE case_id = ?", caseId)).length,
+        prepared,
+        refreshed,
+        amounts: [intent.grossBase, intent.netBase, intent.feeBase],
+        transfers: intent.transfers.map((transfer) => transfer.recipient.toLowerCase()),
+        nonceGap: nonces.map((row) => big(row.nonce)).reduce((left, right) => left - right),
+        firstLeg,
+        partial: partial.map((leg) => [leg.lane, leg.state, leg.baseUnits]),
+        partlyPaid,
+        replayed,
+        secondLeg,
+        settled: settled.map((leg) => [leg.lane, leg.state, leg.baseUnits, leg.transaction]),
+        received: { reporter: after.reporter - before.reporter, fee: after.fee - before.fee },
+        paid: (try rowsOf(db, "SELECT count(*) AS legs FROM security_direct_transaction_uses WHERE case_id = ?", caseId))[0]?.legs,
+        again,
+        state: view?.state,
+        ownerRequest: view?.ownerRequest ?? null,
+      }, {
+        unconsented: "paymentConsentRequired",
+        otherNetwork: "railUnavailable",
+        consented: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        reconsented: { network: "base-mainnet", publicChainVisibilityAccepted: true },
+        consents: 1,
+        prepared: { network: "base-mainnet", rail: "direct" },
+        refreshed: { network: "base-mainnet", rail: "direct", refreshed: true },
+        amounts: [gross.toString(), (gross * 3n / 4n).toString(), (gross / 4n).toString()],
+        transfers: [reporterAccount.address.toLowerCase(), feeRecipient.toLowerCase()],
+        nonceGap: 1n,
+        firstLeg: { verified: true, rail: "direct" },
+        partial: [["Researcher", "Unsent", (gross * 3n / 4n).toString()], ["Fee", "PaidExact", (gross / 4n).toString()]],
+        partlyPaid: [],
+        replayed: "paymentReplayThisTransferIsAlready",
+        secondLeg: { verified: true, rail: "direct" },
+        settled: [["Researcher", "PaidExact", (gross * 3n / 4n).toString(), researcherLeg.transactionHash.toLowerCase()], ["Fee", "PaidExact", (gross / 4n).toString(), feeLeg.transactionHash.toLowerCase()]],
+        received: { reporter: gross * 3n / 4n, fee: gross / 4n },
+        paid: 2,
+        again: "paymentAlreadyVerifiedThisPaymentIsAlready",
+        state: "paid",
+        ownerRequest: null,
+      })
+    }
+  })
+})

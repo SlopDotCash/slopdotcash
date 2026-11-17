@@ -1,0 +1,222 @@
+import { assert, layer } from "@effect/vitest"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type Answer, type Session, areaLayer } from "@repo/platform/testing/area"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type Internet, internet } from "@repo/platform/testing/internet"
+
+const moderatorA = "18633264"
+const moderatorB = "202660855"
+const administrator = "7"
+const responsible = "41"
+const steward = "51"
+const roles = { ADMIN_GITHUB_IDS: `${moderatorA},${moderatorB},${administrator}`, PROJECT_MODERATOR_GITHUB_IDS: `${moderatorA},${moderatorB}` }
+
+service World {
+  readonly github: GitHubFake
+  readonly net: Internet
+}
+
+const Built = Layer.effect(World, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try orDie(Effect.try(() => {
+    github.world.addUser({ id: 41, login: "responsible-41" })
+    github.world.addUser({ id: 18633264, login: "moderator-a" })
+  }))
+  return { github, net: internet({ github: github.handler }) }
+})
+
+const Backend = Layer.provideMerge(Layer.unwrap(effect {
+  const { net } = try World
+  return areaLayer({ root: new URL("..", import.meta.url).pathname, entry: "worker", d1: { SLOP_DB: "slop-private" }, vars: roles, internet: net })
+}), Built)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function field(value: unknown, ...path: ReadonlyArray<string>): unknown {
+  return path.reduce<unknown>((current, key) => typeof current === "object" && current !== null ? (current as Record<string, unknown>)[key] : undefined, value)
+}
+
+function outcome(answer: Answer) {
+  return [answer.status, field(answer.body, "error") ?? null]
+}
+
+effect function member(githubId: string) {
+  const area = try Area
+  const token = `enforcement-session-${githubId}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return { cookie: `__Host-slop_points=${token}`, actorId: `actor-${githubId}`, githubId, login: `member-${githubId}` } satisfies Session
+}
+
+function manifest(id: string, status: string, listingTier: string, repositoryId: string) {
+  return {
+    id,
+    name: `Project ${id}`,
+    status,
+    listingTier,
+    steward: { github: { actorId: steward, nodeId: "U_steward", login: "member-51" } },
+    authority: { repositoryId, repositoryNodeId: `R_${repositoryId}` },
+    terms: { repositoryLicense: { state: "verified", spdx: "MIT", url: "https://example.test/license", commitSha: "a".repeat(40), fileSha256: "b".repeat(64) } },
+    repositories: [{ id: `owner/${id}`, integrationBranch: "main" }],
+    reward: { chain: "base", fundingState: "unfunded", committedMinor: "0", paymentMode: "disabled" },
+    funding: {},
+  }
+}
+
+effect function project(id: string, revisions: ReadonlyArray<{ readonly status: string; readonly tier: string; readonly kind: string }>, repositoryId: string) {
+  const area = try Area
+  let last = { text: "", digest: "", status: "" }
+  for (const [index, revision] of revisions.entries()) {
+    const text = JSON.stringify(manifest(id, revision.status, revision.tier, repositoryId))
+    const digest = try sha256Hex(text)
+    try area.sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id, index + 1, text, digest, "Seeded revision", index === 0 ? steward : null, index === 0 ? "member-51" : null, `2026-11-0${index + 1}T00:00:00.000Z`)
+    if (index > 0) try area.sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, ?)", id, index + 1, revision.kind)
+    last = { text, digest, status: revision.status }
+  }
+  try area.sql("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", id, last.status, revisions.length, last.text, last.digest, "2026-11-01T00:00:00.000Z", "2026-11-01T00:00:00.000Z")
+  try area.sql("INSERT INTO project_repositories (repository_key, project_id) VALUES (?, ?)", `owner/${id}`, id)
+  return last.digest
+}
+
+effect function vettingBan(id: string, repositoryId: string, digest: string) {
+  try (try Area).sql(
+    "INSERT INTO project_enforcements (id, project_id, sequence, action, state_after, appeal_after, reason, evidence_reference, repository_github_id, repository_keys, actor_github_id, actor_github_login, system_issuer, actor_role, decision_source, before_revision, before_manifest_sha256, after_revision, after_manifest_sha256, result, created_at) VALUES (?, ?, 1, 'ban', 'banned', 'none', 'Confirmed malicious scan result', 'assessment-1', ?, ?, NULL, NULL, ?, 'vetting-service', 'standing-rule', 1, ?, 2, ?, 'revision_appended', '2026-11-02T00:00:00.000Z')",
+    `enf_${id.replaceAll("-", "")}vetting`, id, repositoryId, JSON.stringify([`owner/${id}`]), JSON.stringify({ kind: "vetting-service", keySha256: "c".repeat(64), assessmentId: "assessment-1", policyVersion: "1", rule: "confirmed-malicious" }), digest, digest,
+  )
+}
+
+effect function decide(as: Session, projectId: string, json: unknown, preview = false) {
+  return try (try Area).request(`/api/v1/admin/projects/${projectId}/enforcement${preview ? "-preview" : ""}`, { json, as })
+}
+
+effect function nextFence(as: Session, projectId: string) {
+  const listed = try (try Area).request("/api/v1/admin/projects", { as })
+  const entry = (field(listed.body, "projects") as ReadonlyArray<unknown>).find((candidate) => field(candidate, "id") === projectId)
+  return { expectedRevision: Number(field(entry, "revision")), expectedSequence: Number(field(entry, "enforcement", "nextSequence")) }
+}
+
+effect function act(as: Session, projectId: string, action: string, extra: Readonly<Record<string, unknown>> = {}) {
+  const fence = try nextFence(as, projectId)
+  return try decide(as, projectId, { action, reason: `${action} for the journey`, evidenceReference: "journey-evidence", ...fence, ...extra })
+}
+
+effect function revised(as: Session, expectedRevision: number, next: unknown) {
+  return try (try Area).request("/api/v1/admin/projects/admin-demo/manifest", { method: "PUT", json: { manifest: next, expectedRevision, reason: "Administrator exception" }, as })
+}
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Moderators restrict, decide malice and decide appeals independently (spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing")', () => effect {
+    const area = try Area
+    const [a, b, admin, owner, outsider] = [try member(moderatorA), try member(moderatorB), try member(administrator), try member(steward), try member("61")]
+    try project("clear-demo", [{ status: "active", tier: "community", kind: "Created" }], "1001")
+    const fence = try nextFence(a, "clear-demo")
+    const anonymous = try area.request("/api/v1/admin/projects")
+    const notAdmin = try area.request("/api/v1/admin/projects", { as: outsider })
+    const adminOnly = try decide(admin, "clear-demo", { action: "quarantine", reason: "r", evidenceReference: "e", ...fence })
+    const badAction = try decide(a, "clear-demo", { action: "erase", reason: "r", evidenceReference: "e", ...fence })
+    const accountsWithoutMalice = try decide(a, "clear-demo", { action: "quarantine", reason: "r", evidenceReference: "e", ...fence, responsibleAccounts: [{ githubLogin: "responsible-41" }] })
+    const preview = try decide(a, "clear-demo", { action: "quarantine", reason: "Suspicious install script", evidenceReference: "report-1", ...fence }, true)
+    const stale = try decide(a, "clear-demo", { action: "quarantine", reason: "Suspicious install script", evidenceReference: "report-1", ...fence, expectedSequence: fence.expectedSequence + 1 })
+    const quarantined = try act(a, "clear-demo", "quarantine")
+    const banned = try act(a, "clear-demo", "ban")
+    const appealed = try area.request("/api/v1/project-appeals", { json: { projectId: "clear-demo", reason: "We removed the script", evidenceReference: "commit-abc" }, as: owner })
+    const strangerAppeal = try area.request("/api/v1/project-appeals", { json: { projectId: "clear-demo", reason: "Let it go", evidenceReference: "none" }, as: outsider })
+    const placerDenies = try act(a, "clear-demo", "deny_reinstatement")
+    const independentDenies = try act(b, "clear-demo", "deny_reinstatement")
+    const rows = try area.sql("SELECT sequence, action, state_after, appeal_after, actor_role FROM project_enforcements WHERE project_id = 'clear-demo' ORDER BY sequence")
+    const listing = try area.sql("SELECT status, json_extract(manifest, '$.listingTier') AS tier, revision FROM projects WHERE id = 'clear-demo'")
+    try same({
+      refused: [outcome(anonymous), outcome(notAdmin), outcome(adminOnly), outcome(badAction), outcome(accountsWithoutMalice), outcome(stale)],
+      preview: [preview.status, field(preview.body, "preview", "stateBefore"), field(preview.body, "preview", "stateAfter"), field(preview.body, "preview", "revision", "listingTierAfter")],
+      decided: [outcome(quarantined), field(quarantined.body, "record", "action"), outcome(banned), field(banned.body, "record", "stateAfter")],
+      appeals: [outcome(appealed), field(appealed.body, "record", "appealAfter"), outcome(strangerAppeal), outcome(placerDenies), outcome(independentDenies)],
+      rows,
+      listing,
+    }, {
+      refused: [[401, "unauthorized"], [403, "forbidden"], [403, "forbidden"], [400, "invalid_request"], [400, "invalid_request"], [409, "stale_enforcement"]],
+      preview: [200, "clear", "quarantined", "retired"],
+      decided: [[200, null], "quarantine", [200, null], "banned"],
+      appeals: [[200, null], "requested", [403, "forbidden"], [409, "rejected"], [200, null]],
+      rows: [
+        { sequence: 1, action: "quarantine", state_after: "quarantined", appeal_after: "none", actor_role: "project-moderator" },
+        { sequence: 2, action: "ban", state_after: "banned", appeal_after: "none", actor_role: "project-moderator" },
+        { sequence: 3, action: "request_reinstatement", state_after: "banned", appeal_after: "requested", actor_role: "project-steward" },
+        { sequence: 4, action: "deny_reinstatement", state_after: "banned", appeal_after: "denied", actor_role: "project-moderator" },
+      ],
+      listing: [{ status: "paused", tier: "retired", revision: 2 }],
+    })
+  })
+
+  it.effect('Ban responsible accounts on confirmed malice, appeal and reinstate them independently (spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service\'s ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal")', () => effect {
+    const area = try Area
+    const a = try member(moderatorA)
+    const b = try member(moderatorB)
+    const account = try member(responsible)
+    const digest = try project("malice-demo", [{ status: "active", tier: "community", kind: "Created" }, { status: "paused", tier: "retired", kind: "RestrictionRetirement" }], "2002")
+    try vettingBan("malice-demo", "2002", digest)
+    const selfBan = try act(a, "malice-demo", "ban", { responsibleAccounts: [{ githubLogin: "moderator-a" }] })
+    const decided = try act(a, "malice-demo", "ban", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
+    const publicBans = try area.request("/api/v1/project-account-bans")
+    const appealed = try area.request("/api/v1/project-appeals", { json: { projectId: "malice-demo", reason: "I did not write that code", evidenceReference: "pr-12", appealScope: "account" }, as: account })
+    const again = try area.request("/api/v1/project-appeals", { json: { projectId: "malice-demo", reason: "Still innocent", evidenceReference: "pr-12", appealScope: "account" }, as: account })
+    const mine = try area.request("/api/v1/project-appeals", { as: account })
+    const bannerReinstates = try act(a, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
+    const independentReinstates = try act(b, "malice-demo", "reinstate_accounts", { responsibleAccounts: [{ githubLogin: "responsible-41" }] })
+    const afterRelease = try area.request("/api/v1/project-account-bans")
+    const stored = try area.sql("SELECT b.github_id, b.github_login, (SELECT COUNT(*) FROM project_account_reinstatements r WHERE r.ban_enforcement_id = b.enforcement_id AND r.github_id = b.github_id) AS released FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE e.project_id = 'malice-demo'")
+    try same({
+      selfBan: outcome(selfBan),
+      decided: [outcome(decided), field(decided.body, "preview", "maintainerBans")],
+      publicBans: [publicBans.status, publicBans.headers["cache-control"], publicBans.headers["access-control-allow-origin"], (field(publicBans.body, "bans") as ReadonlyArray<unknown>).map((ban) => field(ban, "githubId"))],
+      appeals: [outcome(appealed), field(appealed.body, "record", "actorRole"), outcome(again), field(mine.body, "appeals")],
+      reinstated: [outcome(bannerReinstates), outcome(independentReinstates), field(independentReinstates.body, "record", "accountReinstatements")],
+      afterRelease: field(afterRelease.body, "bans"),
+      stored,
+    }, {
+      selfBan: [409, "rejected"],
+      decided: [[200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
+      publicBans: [200, "public, max-age=0, s-maxage=30", "*", [responsible]],
+      appeals: [[200, null], "banned-account", [409, "rejected"], [{ projectId: "malice-demo", state: "banned", appeal: "requested" }]],
+      reinstated: [[409, "rejected"], [200, null], [{ githubId: responsible, githubLogin: "responsible-41" }]],
+      afterRelease: [],
+      stored: [{ github_id: responsible, github_login: "responsible-41", released: 1 }],
+    })
+  })
+
+  it.effect('Administrators hold, delist, change the steward or place a project, and a redeploy closes moderation (spec/backend/projects.md, "Story: Administrators handle exceptions and restrictions, not routine approval"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban")', () => effect {
+    const area = try Area
+    const admin = try member("8")
+    const a = try member(moderatorA)
+    try area.redeploy({ vars: { ...roles, ADMIN_GITHUB_IDS: `${roles.ADMIN_GITHUB_IDS},8` } })
+    try project("admin-demo", [{ status: "active", tier: "community", kind: "Created" }], "3003")
+    const base = manifest("admin-demo", "active", "community", "3003")
+    const revise = (expectedRevision: number, next: unknown) => revised(admin, expectedRevision, next)
+    const placed = try revise(1, { ...base, listingTier: "featured" })
+    const twoFields = try revise(2, { ...base, listingTier: "community", status: "paused" })
+    const stale = try revise(1, { ...base, status: "paused" })
+    const unchanged = try revise(2, { ...base, listingTier: "featured" })
+    const reordered = try revise(2, Object.fromEntries(Object.entries({ ...base, listingTier: "featured" }).toReversed()))
+    const other = try revise(2, { ...base, listingTier: "featured", name: "Renamed" })
+    const held = try revise(2, { ...base, listingTier: "featured", status: "paused" })
+    const stewarded = try revise(3, { ...base, listingTier: "featured", status: "paused", steward: { github: { actorId: "52", nodeId: "U_next", login: "member-52" } } })
+    const delisted = try revise(4, { ...base, listingTier: "retired", status: "paused", steward: { github: { actorId: "52", nodeId: "U_next", login: "member-52" } } })
+    const kinds = try area.sql("SELECT revision, kind FROM project_revision_kinds WHERE project_id = 'admin-demo' ORDER BY revision")
+    try area.redeploy({ vars: { ...roles, ADMIN_GITHUB_IDS: `${roles.ADMIN_GITHUB_IDS},8`, PROJECT_MODERATOR_GITHUB_IDS: "" } })
+    const closed = try act(a, "admin-demo", "quarantine")
+    const listed = try area.request("/api/v1/admin/projects", { as: a })
+    const moderation = (field(listed.body, "projects") as ReadonlyArray<unknown>).map((entry) => field(entry, "enforcement", "moderation"))
+    try same({
+      revisions: [outcome(placed), field(placed.body, "project", "revision"), outcome(twoFields), outcome(stale), outcome(unchanged), outcome(reordered), outcome(other), outcome(held), outcome(stewarded), outcome(delisted), field(delisted.body, "project", "status")],
+      kinds,
+      closed: outcome(closed),
+      moderation: [...new Set(moderation)],
+    }, {
+      revisions: [[200, null], 2, [422, "invalid_manifest"], [409, "stale_revision"], [422, "no_change"], [422, "no_change"], [422, "invalid_manifest"], [200, null], [200, null], [200, null], "paused"],
+      kinds: [{ revision: 2, kind: "Placement" }, { revision: 3, kind: "AdminHold" }, { revision: 4, kind: "AdminException" }, { revision: 5, kind: "AdminDelist" }],
+      closed: [403, "moderation_unavailable"],
+      moderation: ["unconfigured"],
+    })
+  })
+})

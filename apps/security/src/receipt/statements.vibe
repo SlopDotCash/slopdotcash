@@ -1,0 +1,141 @@
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+import { type Statement, sql } from "@repo/platform/d1"
+import type { Json } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import type { FrozenTerms } from "./program.vibe"
+
+export type ReceiptSource = "github-verified" | "slop-received"
+
+export type CaseRole = "reporter" | "security-maintainer" | "triager" | "financial" | "dispute"
+
+export interface Reporter {
+  readonly githubId: string
+  readonly login: string
+}
+
+export interface VerifiedReceipt {
+  readonly receivedAt: string
+  readonly verifiedBy: string
+  readonly policyRevision: number | null
+  readonly terms: FrozenTerms | undefined
+  readonly source?: ReceiptSource
+  readonly receiptEvidenceDigest?: string
+}
+
+export interface CaseInsert {
+  readonly id: string
+  readonly projectId: string
+  readonly repository: string
+  readonly advisory: string | null
+  readonly reporter: Reporter
+  readonly verified: VerifiedReceipt | undefined
+  readonly ownerGithubId: string | null
+  readonly nextAction?: string
+  readonly nextActionDueAt?: string | null
+  readonly at: string
+  readonly guard?: Statement
+}
+
+export function caseInsert(input: CaseInsert): Statement {
+  const verified = input.verified
+  const where = input.guard === undefined ? sql`` : sql` WHERE ${input.guard}`
+  return sql`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, evidence_digest, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, owner_github_id, next_action, next_action_due_at, received_at_source, receipt_evidence_digest, revision, created_at, updated_at)
+    SELECT ${input.id}, ${input.projectId}, ${input.repository}, ${input.advisory}, ${input.reporter.githubId}, ${input.reporter.login}, ${verified === undefined ? "claimed" : "verified"}, ${verified?.receivedAt ?? null}, ${verified === undefined ? null : input.at}, ${verified?.verifiedBy ?? null}, ${verified?.policyRevision ?? null}, ${verified?.terms === undefined ? null : JSON.stringify(verified.terms)}, NULL, 'received', 'not-started', ${verified?.terms === undefined ? "not-applicable" : "pending"}, 'not-applicable', 'embargoed', 'private', 'none', ${input.ownerGithubId}, ${input.nextAction ?? null}, ${input.nextActionDueAt ?? null}, ${verified?.source ?? null}, ${verified?.receiptEvidenceDigest ?? null}, 1, ${input.at}, ${input.at}${where}`
+}
+
+export interface CaseEvent {
+  readonly caseId: string
+  readonly revision: number
+  readonly kind: string
+  readonly actorGithubId: string
+  readonly role: CaseRole
+  readonly idempotencyKey: string
+  readonly reason: string | null
+  readonly evidenceReference: string | null
+  readonly detail: { readonly [key: string]: Json }
+  readonly at: string
+  readonly guard: boolean
+}
+
+export function caseEvent(input: CaseEvent): Statement {
+  const values = sql`${input.caseId}, ${input.revision}, ${input.kind}, ${input.actorGithubId}, ${input.role}, ${input.idempotencyKey}, ${input.reason}, ${input.evidenceReference}, ${JSON.stringify(input.detail)}, ${input.at}`
+  return input.guard
+    ? sql`INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, reason, evidence_reference, detail, at) SELECT ${values} WHERE (SELECT revision FROM security_cases WHERE id = ${input.caseId}) = ${input.revision}`
+    : sql`INSERT INTO security_case_events (case_id, case_revision, kind, actor_github_id, actor_role, idempotency_key, reason, evidence_reference, detail, at) VALUES (${values})`
+}
+
+export interface StoredReport {
+  readonly key: string
+  readonly digest: string
+  readonly bytes: number
+}
+
+export interface SlopReceipt {
+  readonly caseId: string
+  readonly submissionId: string
+  readonly projectId: string
+  readonly repository: string
+  readonly reporter: Reporter
+  readonly idempotencyKey: string
+  readonly marker: string
+  readonly receivedAt: string
+  readonly policyRevision: number
+  readonly terms: FrozenTerms | undefined
+  readonly report: StoredReport
+  readonly ownerGithubId: string | null
+  readonly unbanned: Statement
+}
+
+function submissionExists(id: string) {
+  return sql`EXISTS(SELECT 1 FROM security_submissions WHERE id=${id})`
+}
+
+export effect function slopReceipt(input: SlopReceipt) {
+  const at = input.receivedAt
+  const id = input.submissionId
+  const notices = try (try Notices).statements({
+    notices: [{
+      eventKey: `security-receipt:${input.caseId}`,
+      recipientGithubId: input.reporter.githubId,
+      kind: "SecurityReportReceived",
+      subject: input.caseId,
+      actionPath: `/inbox?submission=${id}`,
+      sourceAt: at,
+    }],
+    onlyIf: sql`EXISTS(SELECT 1 FROM security_cases WHERE id=${input.caseId} AND submission_state='verified' AND verified_at IS NOT NULL)`,
+  })
+  return [
+    caseInsert({
+      id: input.caseId,
+      projectId: input.projectId,
+      repository: input.repository,
+      advisory: null,
+      reporter: input.reporter,
+      verified: { receivedAt: at, verifiedBy: "slop", policyRevision: input.policyRevision, terms: input.terms, source: "slop-received", receiptEvidenceDigest: input.report.digest },
+      ownerGithubId: input.ownerGithubId,
+      nextAction: "Review the saved private report",
+      at,
+      guard: input.unbanned,
+    }),
+    sql`INSERT INTO security_submissions (id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at)
+      SELECT ${id}, ${input.projectId}, ${input.repository}, ${input.reporter.githubId}, ${input.reporter.login}, 'slop', ${input.idempotencyKey}, ${input.marker}, 'draft', 0, NULL, NULL, NULL, NULL, NULL, ${input.caseId}, 1, ${at}, ${at} WHERE EXISTS(SELECT 1 FROM security_cases WHERE id=${input.caseId})`,
+    sql`INSERT INTO security_submission_events(submission_id,revision,kind,detail,actor_github_id,at) SELECT ${id},1,'create',${JSON.stringify({ origin: "slop", durable: true })},${input.reporter.githubId},${at} WHERE ${submissionExists(id)}`,
+    sql`INSERT INTO security_submission_intake(submission_id,case_id,received_at,screening_state) SELECT ${id},${input.caseId},${at},'queued' WHERE ${submissionExists(id)}`,
+    sql`INSERT INTO security_intake_reports(submission_id,version,object_key,content_sha256,byte_count,created_at) SELECT ${id},1,${input.report.key},${input.report.digest},${input.report.bytes},${at} WHERE ${submissionExists(id)}`,
+    sql`INSERT INTO security_intake_events(submission_id,revision,kind,actor_github_id,at) SELECT ${id},1,'receive',${input.reporter.githubId},${at} WHERE ${submissionExists(id)}`,
+    caseEvent({
+      caseId: input.caseId,
+      revision: 1,
+      kind: "submit",
+      actorGithubId: input.reporter.githubId,
+      role: "reporter",
+      idempotencyKey: input.idempotencyKey,
+      reason: null,
+      evidenceReference: null,
+      detail: { submissionId: id, receivedAt: at, receivedAtSource: "slop-received" },
+      at,
+      guard: true,
+    }),
+    ...notices,
+  ]
+}

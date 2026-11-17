@@ -1,0 +1,323 @@
+// spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"; spec/settlement/vaultSnapshots.md, "Retry recognizes the exact creation transaction before checking a revision"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { D1, type D1Error, RowMismatch, rows, sql } from "@repo/platform/d1"
+import {
+  type Balance,
+  type Chain,
+  type Event,
+  type Identity,
+  type MonthStart,
+  type Observation,
+  type Purpose,
+  type Registration,
+  type RequestRow,
+  type Revision,
+  type Snapshots,
+  NotAState,
+  NotAnEvent,
+  Rejected,
+  apply,
+  decodeEvent,
+  decodeState,
+  deployment,
+  initial,
+  noObservation,
+  registered,
+  requestRow,
+  sameMonthStart,
+  writable,
+} from "../../gen/settlement__vaultSnapshots.effect.vibe"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
+import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
+import type { ReviewedDeployment } from "./policy.vibe"
+
+module limbs {
+  import type { Amount } from "../../gen/settlement__money.ts"
+  import { toAmount } from "../kernels/amounts.ts"
+  /** @throws {never} */
+  export function limbsOf(value: bigint): Amount { return toAmount(value < 0n ? 0n : value) }
+}
+import { limbsOf } from limbs
+
+const MODEL_NETWORKS: Readonly<Record<NetworkKey, string>> = {
+  "base-mainnet": "Base",
+  ethereum: "Ethereum",
+  "robinhood-mainnet": "Robinhood Chain",
+  "base-sepolia": "Base Sepolia",
+  "ethereum-sepolia": "Ethereum Sepolia",
+  "robinhood-testnet": "Robinhood Chain Testnet",
+  "solana-mainnet": "Solana",
+  "solana-devnet": "Solana Devnet",
+  "solana-testnet": "Solana Testnet",
+}
+
+const NETWORK_KEYS = Object.keys(MODEL_NETWORKS).filter(isNetworkKey)
+
+export function modelNetwork(key: NetworkKey): string {
+  return MODEL_NETWORKS[key]
+}
+
+export function networkKeyOf(name: string): NetworkKey | undefined {
+  return NETWORK_KEYS.find((key) => MODEL_NETWORKS[key] === name)
+}
+
+export function modelChain(key: NetworkKey): Chain {
+  return NETWORKS[key].family === "evm" ? "Evm" : key === "solana-mainnet" ? "SolanaMain" : "SolanaOther"
+}
+
+export function amountOfBigint(value: bigint): Amount {
+  return limbsOf(value)
+}
+
+export function amountText(amount: Amount): string {
+  return fromAmount(amount).toString()
+}
+
+export interface SnapshotScope {
+  readonly projectId: string
+}
+
+export interface RegistryPart {
+  readonly revision: Revision
+  readonly history: ReadonlyArray<Revision>
+  readonly ordinary: Registration
+  readonly privateBounty: Registration
+}
+
+export const unregistered: RegistryPart = {
+  revision: initial.revision,
+  history: initial.history,
+  ordinary: initial.ordinary.registration,
+  privateBounty: initial.privateBounty.registration,
+}
+
+export function identityOf(deployment: ReviewedDeployment, decimals: number): Identity {
+  return {
+    chain: modelChain(deployment.network),
+    network: modelNetwork(deployment.network),
+    vault: deployment.vault,
+    readVault: deployment.family === "solana" ? deployment.projectPda : deployment.vault,
+    asset: deployment.asset,
+    decimals,
+    rules: deployment.codeSha256,
+  }
+}
+
+export function registrationOf(deployment: ReviewedDeployment & { readonly revision: number }, decimals: number): Registration {
+  return { tx: deployment.deploymentTransaction, revision: deployment.revision, identity: identityOf(deployment, decimals) }
+}
+
+export function registryOf(registrations: { readonly revision: number; readonly ordinary?: Registration; readonly privateBounty?: Registration }): RegistryPart {
+  const revision: Revision = { number: registrations.revision, ordinaryPolicy: 1, privatePolicy: 2 }
+  return { revision, history: [revision], ordinary: registrations.ordinary ?? unregistered.ordinary, privateBounty: registrations.privateBounty ?? unregistered.privateBounty }
+}
+
+schema SnapshotRow {
+  readonly network: string
+  readonly chain: string
+  readonly vault: string
+  readonly asset_address: string
+  readonly asset_decimals: number
+  readonly total_deposited: string
+  readonly total_paid: string
+  readonly total_payout_fees: string
+  readonly total_gross_withdrawn: string
+  readonly total_withdrawal_fees: string
+  readonly total_service_fees: string
+  readonly free_balance: string | null
+  readonly reserved_principal: string | null
+  readonly reserved_fees: string | null
+  readonly accrued_fees: string | null
+  readonly reserved: string | null
+  readonly block_number: string
+  readonly block_time: string
+  readonly observed_at: string
+}
+
+schema MonthStartRow {
+  readonly network: string
+  readonly vault: string
+  readonly period: string
+  readonly free_balance: string
+  readonly total_gross_withdrawn: string
+  readonly block_time: string
+}
+
+const PERIOD = /^(\d{4})-(\d{2})$/u
+
+effect function amountOf(text: string, column: string) {
+  const value = parseBaseUnits(text)
+  if (value === undefined) throw new RowMismatch({ text: column, issue: "not canonical base units" })
+  return limbsOf(value)
+}
+
+effect function balanceOf(text: string | null, column: string) {
+  return (text === null ? { present: false, amount: [0] } : { present: true, amount: try amountOf(text, column) }) satisfies Balance
+}
+
+effect function secondsOf(iso: string, column: string) {
+  const millis = millisOf(iso)
+  if (!Number.isFinite(millis)) throw new RowMismatch({ text: column, issue: "not an ISO time" })
+  return Math.floor(millis / 1000)
+}
+
+effect function observationOf(row: SnapshotRow, purpose: Purpose, registration: Registration) {
+  if (!isNetworkKey(row.network) || NETWORKS[row.network].chain !== row.chain) throw new RowMismatch({ text: "vault_snapshots.network", issue: "not a reviewed network and chain" })
+  const identity: Identity = { ...registration.identity, chain: modelChain(row.network), network: modelNetwork(row.network), vault: row.vault, asset: row.asset_address, decimals: row.asset_decimals }
+  return {
+    exists: true,
+    identity,
+    purpose,
+    block: try amountOf(row.block_number, "vault_snapshots.block_number"),
+    blockTime: try secondsOf(row.block_time, "vault_snapshots.block_time"),
+    observedAt: try secondsOf(row.observed_at, "vault_snapshots.observed_at"),
+    counters: {
+      deposits: try amountOf(row.total_deposited, "vault_snapshots.total_deposited"),
+      payments: try amountOf(row.total_paid, "vault_snapshots.total_paid"),
+      payoutFees: try amountOf(row.total_payout_fees, "vault_snapshots.total_payout_fees"),
+      withdrawals: try amountOf(row.total_gross_withdrawn, "vault_snapshots.total_gross_withdrawn"),
+      withdrawalFees: try amountOf(row.total_withdrawal_fees, "vault_snapshots.total_withdrawal_fees"),
+    },
+    balances: {
+      free: try balanceOf(row.free_balance, "vault_snapshots.free_balance"),
+      principal: try balanceOf(row.reserved_principal, "vault_snapshots.reserved_principal"),
+      feesReserved: try balanceOf(row.reserved_fees, "vault_snapshots.reserved_fees"),
+      feesAccrued: try balanceOf(row.accrued_fees, "vault_snapshots.accrued_fees"),
+      reserved: try balanceOf(row.reserved, "vault_snapshots.reserved"),
+    },
+    legacyServiceFees: try amountOf(row.total_service_fees, "vault_snapshots.total_service_fees"),
+  } satisfies Observation
+}
+
+effect function observed(found: ReadonlyArray<SnapshotRow>, purpose: Purpose, registration: Registration) {
+  const network = networkKeyOf(registration.identity.network)
+  const row = registered(registration) ? found.find((candidate) => candidate.network === network && candidate.vault === registration.identity.vault) : undefined
+  return row === undefined ? noObservation : try observationOf(row, purpose, registration)
+}
+
+effect function monthStartOfRow(row: MonthStartRow) {
+  const match = PERIOD.exec(row.period)
+  if (match === null || !isNetworkKey(row.network)) throw new RowMismatch({ text: "vault_month_starts", issue: "not a reviewed network and YYYY-MM period" })
+  return {
+    network: modelNetwork(row.network),
+    vault: row.vault,
+    period: Number(match[1]) * 100 + Number(match[2]),
+    free: try amountOf(row.free_balance, "vault_month_starts.free_balance"),
+    withdrawn: try amountOf(row.total_gross_withdrawn, "vault_month_starts.total_gross_withdrawn"),
+    blockTime: try secondsOf(row.block_time, "vault_month_starts.block_time"),
+  } satisfies MonthStart
+}
+
+export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, requests: ReadonlyArray<RequestRow>) {
+  const found = try rows(SnapshotRow, sql`SELECT network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, total_service_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, block_number, block_time, observed_at FROM vault_snapshots WHERE project_id = ${scope.projectId}`)
+  const starts = try rows(MonthStartRow, sql`SELECT network, vault, period, free_balance, total_gross_withdrawn, block_time FROM vault_month_starts WHERE project_id = ${scope.projectId} ORDER BY rowid`)
+  const monthStarts: MonthStart[] = []
+  for (const row of starts) monthStarts.push(try monthStartOfRow(row))
+  return try decodeState({
+    revision: registry.revision,
+    history: registry.history,
+    ordinary: { registration: registry.ordinary, observation: try observed(found, "Ordinary", registry.ordinary) },
+    privateBounty: { registration: registry.privateBounty, observation: try observed(found, "PrivateBounty", registry.privateBounty) },
+    requests,
+    monthStarts,
+  })
+}
+
+function optionalText(balance: Balance): string | null {
+  return balance.present ? amountText(balance.amount) : null
+}
+
+function periodText(period: number): string {
+  return `${Math.trunc(period / 100)}-${String(period % 100).padStart(2, "0")}`
+}
+
+effect function networkOf(name: string) {
+  const network = networkKeyOf(name)
+  if (network === undefined) throw new RowMismatch({ text: "vault_snapshots.network", issue: "not a reviewed network" })
+  return network
+}
+
+effect function upsert(scope: SnapshotScope, observation: Observation) {
+  const { counters, balances } = observation
+  const network = try networkOf(observation.identity.network)
+  const blockTime = try isoAt(observation.blockTime * 1000)
+  const observedAt = try isoAt(observation.observedAt * 1000)
+  return try (try D1).run(sql`INSERT INTO vault_snapshots (project_id, network, chain, vault, asset_address, asset_decimals, total_deposited, total_paid, total_payout_fees, total_gross_withdrawn, total_withdrawal_fees, free_balance, reserved_principal, reserved_fees, accrued_fees, reserved, total_service_fees, block_number, block_time, observed_at)
+    VALUES (${scope.projectId}, ${network}, ${NETWORKS[network].chain}, ${observation.identity.vault}, ${observation.identity.asset}, ${observation.identity.decimals},
+      ${amountText(counters.deposits)}, ${amountText(counters.payments)}, ${amountText(counters.payoutFees)}, ${amountText(counters.withdrawals)}, ${amountText(counters.withdrawalFees)},
+      ${optionalText(balances.free)}, ${optionalText(balances.principal)}, ${optionalText(balances.feesReserved)}, ${optionalText(balances.feesAccrued)}, ${optionalText(balances.reserved)},
+      '0', ${amountText(observation.block)}, ${blockTime}, ${observedAt})
+    ON CONFLICT (project_id, network, vault) DO UPDATE SET
+      total_deposited = excluded.total_deposited, total_paid = excluded.total_paid, total_payout_fees = excluded.total_payout_fees,
+      total_gross_withdrawn = excluded.total_gross_withdrawn, total_withdrawal_fees = excluded.total_withdrawal_fees,
+      free_balance = excluded.free_balance, reserved_principal = excluded.reserved_principal, reserved_fees = excluded.reserved_fees,
+      accrued_fees = excluded.accrued_fees, reserved = excluded.reserved,
+      block_number = excluded.block_number, block_time = excluded.block_time, observed_at = excluded.observed_at
+    WHERE CAST(excluded.block_number AS INTEGER) >= CAST(vault_snapshots.block_number AS INTEGER)
+      AND (CAST(excluded.block_number AS INTEGER) > CAST(vault_snapshots.block_number AS INTEGER) OR julianday(excluded.observed_at) >= julianday(vault_snapshots.observed_at))
+      AND excluded.asset_address = vault_snapshots.asset_address AND excluded.asset_decimals = vault_snapshots.asset_decimals AND excluded.chain = vault_snapshots.chain
+      AND (length(excluded.total_deposited) > length(vault_snapshots.total_deposited) OR (length(excluded.total_deposited) = length(vault_snapshots.total_deposited) AND excluded.total_deposited >= vault_snapshots.total_deposited))
+      AND (length(excluded.total_paid) > length(vault_snapshots.total_paid) OR (length(excluded.total_paid) = length(vault_snapshots.total_paid) AND excluded.total_paid >= vault_snapshots.total_paid))
+      AND (length(excluded.total_payout_fees) > length(vault_snapshots.total_payout_fees) OR (length(excluded.total_payout_fees) = length(vault_snapshots.total_payout_fees) AND excluded.total_payout_fees >= vault_snapshots.total_payout_fees))
+      AND (length(excluded.total_gross_withdrawn) > length(vault_snapshots.total_gross_withdrawn) OR (length(excluded.total_gross_withdrawn) = length(vault_snapshots.total_gross_withdrawn) AND excluded.total_gross_withdrawn >= vault_snapshots.total_gross_withdrawn))
+      AND (length(excluded.total_withdrawal_fees) > length(vault_snapshots.total_withdrawal_fees) OR (length(excluded.total_withdrawal_fees) = length(vault_snapshots.total_withdrawal_fees) AND excluded.total_withdrawal_fees >= vault_snapshots.total_withdrawal_fees))`)
+}
+
+effect function recordMonthStart(scope: SnapshotScope, start: MonthStart, observation: Observation) {
+  const period = periodText(start.period)
+  const network = try networkOf(start.network)
+  const blockTime = try isoAt(start.blockTime * 1000)
+  const observedAt = try isoAt(observation.observedAt * 1000)
+  try (try D1).run(sql`INSERT INTO vault_month_starts (project_id, network, vault, period, free_balance, total_gross_withdrawn, block_number, block_time, observed_at)
+    SELECT ${scope.projectId}, ${network}, ${start.vault}, ${period}, ${amountText(start.free)}, ${amountText(start.withdrawn)}, ${amountText(observation.block)}, ${blockTime}, ${observedAt}
+    WHERE NOT EXISTS (SELECT 1 FROM vault_month_starts WHERE project_id = ${scope.projectId} AND network = ${network} AND vault = ${start.vault} AND period = ${period})`)
+}
+
+type WriteEvent = Extract<Event, { type: "write" }>
+
+type SessionFailure = D1Error | RowMismatch | NotAState
+
+effect function written(scope: SnapshotScope, before: Snapshots, event: WriteEvent, attempts = 3): Snapshots!(Rejected | SessionFailure)!D1 {
+  const accepted = try apply(before, event)
+  const request = requestRow(before, event.requestId)
+  const prior = deployment(before, request.purpose).observation
+  if (event.reply === "WriteFailed" || !writable(request.incoming, prior)) return accepted
+  const changes = upsert(scope, request.incoming) catch () => -1
+  if (changes < 0) return try apply(before, { ...event, reply: "WriteFailed" })
+  if (changes === 1) {
+    const start = accepted.monthStarts.find((candidate) => !before.monthStarts.some((existing) => sameMonthStart(existing, candidate)))
+    if (start !== undefined) recordMonthStart(scope, start, request.incoming) catch () => undefined
+    return accepted
+  }
+  const fresh = try stateOf(scope, registryPartOf(before), before.requests)
+  if (attempts > 1 && writable(request.incoming, deployment(fresh, request.purpose).observation)) return try written(scope, fresh, event, attempts - 1)
+  return try apply(fresh, { ...event, reply: attempts > 1 ? "WriteAcknowledged" : "WriteFailed" })
+}
+
+function registryPartOf(state: Snapshots): RegistryPart {
+  return { revision: state.revision, history: state.history, ordinary: state.ordinary.registration, privateBounty: state.privateBounty.registration }
+}
+
+export interface VaultSession {
+  current(): Snapshots!SessionFailure!D1
+  send(event: Event): Snapshots!(Rejected | SessionFailure)!D1
+  receive(input: unknown): Snapshots!(Rejected | SessionFailure | NotAnEvent)!D1
+}
+
+export effect function openSession(scope: SnapshotScope, registry: RegistryPart) {
+  let held: { readonly registry: RegistryPart; readonly requests: ReadonlyArray<RequestRow> } = { registry, requests: [] }
+  effect function current() {
+    return try stateOf(scope, held.registry, held.requests)
+  }
+  effect function send(event: Event) {
+    const before = try current()
+    const next = event.type === "write" ? try written(scope, before, event) : try apply(before, event)
+    held = { registry: registryPartOf(next), requests: next.requests }
+    return next
+  }
+  effect function receive(input: unknown) {
+    return try send(try decodeEvent(input))
+  }
+  return { current, send, receive } satisfies VaultSession
+}

@@ -1,0 +1,63 @@
+// spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/slopbot/repositoryScope.md, "Scope follows registration, status, retirement and restriction in a fixed order"
+import { type Retirement as ProjectRetirement, Registry, Restrictions } from "@repo/ports/backend"
+import { Enforcement, type Restriction as EnforcementRestriction } from "@repo/ports/security"
+import { type FlagState, type RegistryObservation, type Restriction, type Retirement, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+
+export interface RepositoryRef {
+  readonly owner: string
+  readonly repo: string
+  readonly repositoryId: number
+}
+
+export interface Observed {
+  readonly observation: RegistryObservation
+  readonly projectId: string | undefined
+}
+
+export const unregistered: RegistryObservation = { lookup: "NoRow", registeredId: 0, observedId: 0, rowActive: false, manifestActive: false, retirement: "NotRetired", restriction: "Clear", flags: "NotFlagged" }
+
+const retirements: Readonly<Record<ProjectRetirement, Retirement>> = {
+  NotRetired: "NotRetired",
+  OwnerRemoved: "OwnerRetired",
+  AdminDelisted: "OwnerRetired",
+  RestrictionRetired: "RestrictionRetired",
+  RetirementProofUnavailable: "RetirementProofUnavailable",
+}
+
+const enforced: Readonly<Record<EnforcementRestriction, { readonly restriction: Restriction; readonly flags: FlagState }>> = {
+  Clear: { restriction: "Clear", flags: "NotFlagged" },
+  FlagQuarantine: { restriction: "Quarantined", flags: "Flagged" },
+  ModeratorQuarantine: { restriction: "Quarantined", flags: "NotFlagged" },
+  ServiceBan: { restriction: "Banned", flags: "NotFlagged" },
+  ModeratorBan: { restriction: "Banned", flags: "NotFlagged" },
+}
+
+function repositoryNumber(id: string) {
+  return /^[1-9][0-9]{0,14}$/u.test(id) ? Number(id) : 0
+}
+
+export effect function observe(ref: RepositoryRef) {
+  const found = try (try Registry).byPath(`${ref.owner}/${ref.repo}`)
+  if (found === undefined) return { observation: { ...unregistered, observedId: ref.repositoryId }, projectId: undefined } satisfies Observed
+  const { project } = found
+  const closure = try (try Restrictions).project(project.projectId)
+  const view = try (try Enforcement).project(closure.sourceProjectId ?? project.projectId)
+  const { restriction, flags } = enforced[view.restriction]
+  return {
+    observation: {
+      lookup: found.match,
+      registeredId: repositoryNumber(found.registeredRepositoryId),
+      observedId: ref.repositoryId,
+      rowActive: project.rowStatus === "Active",
+      manifestActive: project.manifestStatus === "Active",
+      retirement: retirements[project.retirement],
+      restriction: closure.restricted && restriction === "Clear" ? "RestrictionUnknown" : restriction,
+      flags,
+    },
+    projectId: project.projectId,
+  } satisfies Observed
+}
+
+export effect function scopeOf(ref: RepositoryRef) {
+  return slopbotScope((try observe(ref)).observation)
+}

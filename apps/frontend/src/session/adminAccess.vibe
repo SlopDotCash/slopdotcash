@@ -1,0 +1,34 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import type { CallFailure } from "../platform/api.vibe"
+import { Session } from "./session.vibe"
+
+export error AdminAccessLoss { message: string }
+
+const accessLossStatuses: ReadonlySet<number> = new Set([401, 403, 404, 410])
+
+export function isAdminActionAccessLoss(failure: CallFailure | AdminAccessLoss): boolean {
+  switch (failure._tag) {
+    case "AdminAccessLoss":
+    case "ActorChanged":
+      return true
+    case "Refused": return accessLossStatuses.has(failure.status) || failure.error === "actor_changed"
+    case "InvalidResponse": return accessLossStatuses.has(failure.status)
+    case "NetworkError": return false
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+export effect function requireAdminActionActor(actorGithubId: string) {
+  const current = (try Session).current() catch effect () => { throw new AdminAccessLoss({ message: "Your admin session could not be checked. Retry." }) }
+  if (current === null || current.githubId !== actorGithubId || !current.admin) throw new AdminAccessLoss({ message: "Your admin account or access changed. Reload this page." })
+  return current
+}
+
+export effect function checkedAdminActionFailure<F extends CallFailure>(failure: F, actorGithubId: string) {
+  if (isAdminActionAccessLoss(failure)) return failure
+  const checked = requireAdminActionActor(actorGithubId) catch (loss) => ({ loss })
+  return "loss" in checked ? checked.loss : failure
+}

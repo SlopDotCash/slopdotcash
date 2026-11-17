@@ -1,57 +1,125 @@
-// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"
-import { first, sql } from "@repo/platform/d1"
-import { Refused, answered, body, json } from "@repo/platform/http"
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"; spec/backend/referralCodes.md, "A current reservation resolves through current open membership"; spec/backend/referralCodes.md, "The referral path without a name opens Settings without a database read"
+import { ConstraintViolation, first, sql } from "@repo/platform/d1"
+import { Refused, admission, answered, body, handle } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import type { Refusal } from "@repo/platform/route"
 import { Conflict } from "@repo/platform/stored"
-import { type Choice, Rejected, choice } from "../../gen/backend__referralCodes.effect.vibe"
-import { sessionActor } from "../session.vibe"
-import { githubEvidence, nameEvidence } from "./name.vibe"
-import { send } from "./store.vibe"
+import { type Choice, type Lookup, type ReferralPath, type ReferralRoute, Rejected, choice, initial, linkRoute } from "../../gen/backend__referralCodes.effect.vibe"
+import { CodeFields, chooseCode } from "../client/referrals.vibe"
+import { getReferralByCode, postReferralsCode } from "../client/refusals.vibe"
+import { type GitHubLookup, githubEvidence, nameEvidence, referralCode } from "./name.vibe"
+import { ReferredProjectRoutes } from "./projects.vibe"
+import { type Followed, linkOf, send } from "./store.vibe"
 
-export service TeamAccounts {
-  readonly ids: ReadonlySet<string>
-}
-
-schema CodeRequest { code: string }
 schema Reservation { github_id: string }
 
-const refusals: Record<Exclude<Choice, "Accepted">, readonly [number, string]> = {
-  OriginForbidden: [403, "origin_forbidden"],
-  ActorRequired: [401, "sign_in_required"],
-  InvalidName: [422, "invalid_code"],
-  TeamAccount: [422, "team_account"],
-  ReservedName: [422, "reserved_code"],
-  NameTaken: [409, "code_taken"],
-  OtherGitHubLogin: [409, "code_is_github_account"],
-  GitHubUnavailable: [503, "github_unavailable"],
-  AtLifetimeLimit: [409, "code_limit"],
+const linkPrefix = "/referral/"
+const projectForm = "/projects/new"
+const referralSettings = "/account#referral"
+
+function parity(row: { readonly status: number; readonly error: string; readonly message: string }): Refusal {
+  return { status: row.status, code: row.error, message: row.message }
 }
 
-function refused(outcome: Choice) {
-  const [status, code] = outcome === "Accepted" ? [409, "changed_concurrently"] as const : refusals[outcome]
-  return new Refused({ status, code })
+const refusals: Record<Exclude<Choice, "Accepted" | "GitHubUnavailable">, Refusal> = {
+  OriginForbidden: admission.origin,
+  ActorRequired: parity(postReferralsCode.unauthorizedSignInWithGitHub),
+  InvalidName: parity(postReferralsCode.invalidCode),
+  TeamAccount: parity(postReferralsCode.teamAccount),
+  ReservedName: parity(postReferralsCode.reservedCode),
+  NameTaken: parity(postReferralsCode.codeTaken),
+  OtherGitHubLogin: parity(postReferralsCode.codeIsGithubAccount),
+  AtLifetimeLimit: parity(postReferralsCode.codeLimit),
 }
 
-effect function sameOrigin() {
-  const request = try HttpServerRequest.HttpServerRequest
-  return request.headers.origin === new URL(request.originalUrl).origin
+const lostRace = parity(postReferralsCode.codeTaken)
+
+function refused(outcome: Choice, lookup: GitHubLookup) {
+  if (outcome === "Accepted") return new Refused(lostRace)
+  if (outcome === "GitHubUnavailable") return new Refused(parity(lookup.limited ? postReferralsCode.githubRateLimitedInternalError : postReferralsCode.githubUnavailablePrivateNoStore))
+  return new Refused(refusals[outcome])
 }
 
-effect function chooseName() {
-  return try answered(effect {
-    if (!(try sameOrigin())) throw new Refused({ status: 403, code: "origin_forbidden" })
-    const actor = try sessionActor()
-    const { code } = try body(CodeRequest, 1)
-    const name = nameEvidence(code)
-    const team = (try TeamAccounts).ids.has(actor)
-    const decided = !name.syntaxValid || name.reserved || team || (try first(Reservation, sql`SELECT github_id FROM referral_codes WHERE code_key = ${name.key}`)) !== undefined
-    const github = try githubEvidence(code, actor, decided)
-    const next = send({ type: "choose", name, sameOrigin: true, team, github }, actor) catch effect (error) => match (error) {
-      when Rejected: throw refused(choice(error.state, name, true, team, github, actor));
-      when Conflict: throw new Refused({ status: 409, code: "changed_concurrently" });
-      default: throw error;
+effect function chooseName(actor: string) {
+  const { code } = try body(CodeFields, chooseCode.limitKib)
+  const name = nameEvidence(typeof code === "string" ? code : "")
+  const team = try (try Roles).isTeam(actor)
+  const decided = !name.syntaxValid || team || name.reserved || (try first(Reservation, sql`SELECT github_id FROM referral_codes WHERE code_key = ${name.key}`)) !== undefined
+  const lookup = try githubEvidence(name.text, actor, decided)
+  const next = send({ type: "choose", name, sameOrigin: true, team, github: lookup.evidence }, actor) catch effect (error) => match (error) {
+    when Rejected: throw refused(choice(error.state, name, true, team, lookup.evidence, actor), lookup);
+    when Conflict: throw new Refused(lostRace);
+    when ConstraintViolation: throw new Refused(lostRace);
+    default: throw error;
+  }
+  return { code: next.reservations[`$${name.key}`]?.text ?? name.text }
+}
+
+function pathOf(pathname: string): ReferralPath {
+  if (pathname === linkPrefix || pathname === linkPrefix.slice(0, -1)) return "BareReferral"
+  return pathname.startsWith(linkPrefix) ? "NamedReferral" : "OutsideReferral"
+}
+
+const unread: Followed = { state: initial, membership: { tag: "MemberAbsent" } }
+const unavailable: Lookup = { tag: "ReadUnavailable" }
+
+effect function followed(key: string | undefined) {
+  if (key === undefined) return unread
+  return linkOf(key) catch effect () => {
+    try Effect.logError("referral link read failure")
+    return { state: initial, membership: unavailable } satisfies Followed
+  }
+}
+
+const linkHeaders = getReferralByCode.thisReferralLinkIs.headers
+
+function plain(row: { readonly status: number; readonly text: string }) {
+  return HttpServerResponse.text(row.text, { status: row.status, headers: linkHeaders, contentType: linkHeaders["content-type"] })
+}
+
+function redirect(target: URL) {
+  return HttpServerResponse.empty({ status: 302, headers: { ...linkHeaders, location: target.toString() } })
+}
+
+function form(origin: string, login: string | undefined) {
+  const target = new URL(projectForm, origin)
+  if (login !== undefined) target.searchParams.set("ref", login)
+  return redirect(target)
+}
+
+function linkAnswer(route: ReferralRoute, origin: string) {
+  switch (route.tag) {
+    case "FallThrough": return HttpServerResponse.empty({ status: 404, headers: linkHeaders })
+    case "ReferralSettings": return redirect(new URL(referralSettings, origin))
+    case "RedirectResult": {
+      const result = route.result
+      switch (result.tag) {
+        case "MethodDenied": return plain(getReferralByCode.otherMethods.methodNotAllowedNoStore)
+        case "Form": return form(origin, undefined)
+        case "FormWithRef": return form(origin, result.login)
+        case "LinkUnavailable": return plain(getReferralByCode.thisReferralLinkIs)
+      }
     }
-    return json({ code: next.reservations[`$${name.key}`]?.text ?? code })
-  })
+  }
 }
 
-export const ReferralRoutes = HttpRouter.add("POST", "/api/v1/referrals/code", chooseName())
+effect function followLink() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const url = new URL(request.originalUrl)
+  const path = pathOf(url.pathname)
+  const safeMethod = request.method === "GET" || request.method === "HEAD"
+  const code = path === "NamedReferral" ? url.pathname.slice(linkPrefix.length).replace(/\/$/u, "") : ""
+  const syntaxValid = referralCode.test(code)
+  const key = syntaxValid ? code.toLowerCase() : ""
+  const link = try followed(safeMethod && syntaxValid ? key : undefined)
+  return linkAnswer(linkRoute(link.state, path, safeMethod, key, syntaxValid, link.membership), url.origin)
+}
+
+const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
+
+export const ReferralRoutes = Layer.mergeAll(
+  handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
+  HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
+  HttpRouter.add("*", `${linkPrefix}*`, answered(followLink())),
+  ReferredProjectRoutes,
+)

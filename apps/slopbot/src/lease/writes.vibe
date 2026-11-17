@@ -1,0 +1,53 @@
+// spec/slopbot/reviewLease.md, "An expired claim can be replaced and cannot finalize while waiting for takeover"; spec/slopbot/reviewLease.md, "A late worker cannot publish a failed, skipped or complete review"
+import { type Statement, sql } from "@repo/platform/d1"
+
+export interface ReviewRow {
+  readonly reviewKey: string
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly itemKind: "issue" | "pull_request"
+  readonly itemNumber: number
+  readonly itemNodeId: string
+  readonly authorId: number
+  readonly revision: string
+  readonly contentDigest: string
+  readonly policyDigest: string
+}
+
+export type Prior = "absent" | "skipped" | "retryable"
+export type Finished = "completed" | "failed" | "skipped"
+
+export interface FinishDetail {
+  readonly skipReason?: string
+  readonly verdict?: unknown
+  readonly action?: string
+}
+
+export interface Claiming {
+  readonly row: ReviewRow
+  readonly token: string
+  readonly expiresAt: string
+  readonly at: string
+  readonly prior: Prior
+}
+
+export function claimWrite(claiming: Claiming): Statement {
+  const { row, token, expiresAt, at } = claiming
+  if (claiming.prior === "absent") return sql`INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number,
+      item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at)
+    VALUES (${row.reviewKey}, ${row.installationId}, ${row.repositoryId}, ${row.itemKind}, ${row.itemNumber}, ${row.itemNodeId}, ${row.authorId},
+      ${row.revision}, ${row.contentDigest}, ${row.policyDigest}, 'running', ${at}, ${token}, ${expiresAt})`
+  if (claiming.prior === "skipped") return sql`UPDATE slopbot_reviews SET status = 'running', content_digest = ${row.contentDigest},
+      created_at = CASE WHEN EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ${row.reviewKey}) THEN created_at ELSE ${at} END,
+      skip_reason = NULL, completed_at = NULL, claim_token = ${token}, lease_expires_at = ${expiresAt}
+    WHERE review_key = ${row.reviewKey} AND status = 'skipped'`
+  return sql`UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ${token}, lease_expires_at = ${expiresAt}
+    WHERE review_key = ${row.reviewKey} AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= ${at}))`
+}
+
+export function finishWrite(reviewKey: string, token: string, status: Finished, detail: FinishDetail, at: string): Statement {
+  return sql`UPDATE slopbot_reviews SET status = ${status}, skip_reason = ${detail.skipReason ?? null},
+      verdict = ${detail.verdict === undefined ? null : JSON.stringify(detail.verdict)}, action = ${detail.action ?? null},
+      completed_at = ${at}, lease_expires_at = NULL
+    WHERE review_key = ${reviewKey} AND claim_token = ${token} AND status = 'running' AND lease_expires_at > ${at}`
+}

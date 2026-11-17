@@ -1,0 +1,132 @@
+// spec/slopbot/webhookDelivery.md, "Story: Authenticate exact bytes before claiming a receipt"; spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"
+import type { D1Database, Queue } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type D1Error, DatabaseFailure, d1, sql } from "@repo/platform/d1"
+import { Caller, Unauthenticated } from "@repo/platform/http"
+import { worker } from "@repo/platform/worker"
+import { ProjectAudience, ProjectStatus, type ProjectView, Registry, Restrictions, Retirement } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { Enforcement, Restriction } from "@repo/ports/security"
+import { ingressRoutes } from "../../src/ingress/routes.vibe"
+import { webhookSettings } from "../../src/ingress/webhook.vibe"
+import { type Job, JobQueue, QueueUnavailable, jobQueue } from "../../src/jobs/job.vibe"
+import type { JobBatch } from "../../src/jobs/message.ts"
+import { type Handled, ReviewBusy, consumer } from "../../src/jobs/retry.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly SLOPBOT_QUEUE: Queue<Job>
+  readonly SLOPBOT_WEBHOOK_SECRET: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly TEST_REGISTRY: string
+}
+
+export const busyNumber = 999
+export const lostQueueNumber = 4040
+
+schema TestProject {
+  projectId: string
+  path: string
+  repositoryId: string
+  rowStatus: ProjectStatus
+  manifestStatus: ProjectStatus
+  retirement: Retirement
+  restriction: Restriction
+  owner: string
+}
+
+schema TestRegistry {
+  projects: ReadonlyArray<TestProject>
+  unavailable: ReadonlyArray<string>
+}
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 1,
+    manifestSha256: "0".repeat(64),
+    rowStatus: project.rowStatus,
+    manifestStatus: project.manifestStatus,
+    listingTier: project.retirement === "NotRetired" ? "Community" : "Retired",
+    retirement: project.retirement,
+    stewardGithubId: project.owner,
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function portsOver(text: string) {
+  return Layer.unwrap(effect {
+    const registry = try jsonVar("TEST_REGISTRY", text, TestRegistry)
+    const byId = (projectId: string) => registry.projects.find((project) => project.projectId === projectId)
+    const refused = (path: string) => new DatabaseFailure({ operation: "registry", message: `registry unavailable for ${path}` })
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = registry.projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          if (registry.unavailable.includes(fullName.toLowerCase())) throw refused(fullName)
+          const found = registry.projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return registry.projects.map(viewOf) },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+      }),
+      Layer.succeed(Enforcement, {
+        project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(ProjectAudience, {
+        listedBy: (project) => effect { return sql`SELECT json_extract(value, '$.owner') AS recipient FROM json_each(${text}, '$.projects') WHERE json_extract(value, '$.projectId') = ${project}` },
+        owners: (project) => effect { return sql`SELECT json_extract(value, '$.owner') AS recipient FROM json_each(${text}, '$.projects') WHERE json_extract(value, '$.projectId') = ${project}` },
+      }),
+      Layer.succeed(Notices, {
+        statements: () => effect { return [] },
+        fanout: (fanout) => effect {
+          return [sql`WITH audience(recipient) AS (${fanout.recipients})
+            INSERT INTO ingress_notices (event_key, recipient, kind, source_at)
+            SELECT ${fanout.eventKey}, recipient, ${fanout.kind}, ${fanout.sourceAt} FROM audience WHERE (${fanout.onlyIf ?? sql`1`})
+            ON CONFLICT (event_key, recipient) DO NOTHING`]
+        },
+      }),
+    )
+  })
+}
+
+function queueOver(binding: Queue<Job>) {
+  return Layer.effect(JobQueue, effect {
+    const real = try JobQueue
+    return {
+      send: (job: Job) => job.number === lostQueueNumber ? Effect.fail(new QueueUnavailable({ kind: job.kind })) : real.send(job),
+    }
+  }).pipe(Layer.provide(jobQueue(binding)))
+}
+
+const callerFixture = Layer.succeed(Caller, { current: () => effect { throw new Unauthenticated() } })
+
+function services(env: Env) {
+  return Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, queueOver(env.SLOPBOT_QUEUE), webhookSettings(env), portsOver(env.TEST_REGISTRY), callerFixture)
+}
+
+function recorded(queue: string) {
+  return (job: Job): Handled!(ReviewBusy | D1Error)!D1 => effect {
+    try (try D1).run(sql`INSERT INTO ingress_jobs (queue, delivery, kind, number) VALUES (${queue}, ${job.deliveryId}, ${job.kind}, ${job.number})`)
+    if (queue === "slopbot-jobs" && job.number === busyNumber) throw new ReviewBusy({ remainingSeconds: 0 })
+    const done: Handled = "Done"
+    return done
+  }
+}
+
+const app = worker({ services, routes: ingressRoutes })
+const jobs = consumer(services, recorded("slopbot-jobs"))
+const deadLetters = consumer(services, recorded("slopbot-jobs-dlq"))
+
+export default {
+  fetch: app.fetch,
+  queue: (batch: JobBatch, env: Env) => batch.queue === "slopbot-jobs-dlq" ? deadLetters(batch, env) : jobs(batch, env),
+}

@@ -1,0 +1,167 @@
+// spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+import type { PenaltyHistoryRecord } from "../../client/snapshot/schema.vibe"
+import { type Penalties, type PenaltyRow, type ReversalReason, decodeState } from "../../../gen/points__penalties.effect.vibe"
+import { periodOf } from "../../../gen/points__periods.effect.vibe"
+import { type Category, moderatorReview } from "../../../gen/slopbot__categories.effect.vibe"
+import { instantOf } from "../../kernels/records/instants.ts"
+import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
+import { PenaltyPage, PenaltyRow as PublishedRow, historyOrigin, maximumPageRecords, penaltiesPath, penaltiesVersion, penaltyHistoryVersion } from "./wire.vibe"
+
+const penaltyFeed = "penalties"
+const envelopeRefused = "Penalty feed page has invalid identity or pagination"
+const recordRefused = "Invalid penalty history record"
+
+export type PenaltyFeedRecord = Omit<PenaltyHistoryRecord, "projectId" | "reversedAt" | "reversal">
+
+export type PenaltyRead =
+  | { readonly kind: "history"; readonly records: ReadonlyArray<PenaltyHistoryRecord> }
+  | { readonly kind: "active"; readonly records: ReadonlyArray<PenaltyFeedRecord> }
+
+export interface PenaltyState {
+  readonly penalties: ReadonlyArray<PenaltyFeedRecord>
+  readonly history: ReadonlyArray<PenaltyHistoryRecord> | null
+}
+
+const categories: Readonly<Record<string, Category>> = {
+  none: "NoFinding",
+  spam: "Spam",
+  scam: "Scam",
+  empty: "EmptyItem",
+  duplicate: "Duplicate",
+  out_of_scope: "OutOfScope",
+  busywork: "Busywork",
+  missing_evidence: "MissingEvidence",
+  gaming: "Gaming",
+  low_quality: "LowQuality",
+}
+
+const reversals: Readonly<Record<string, ReversalReason>> = {
+  appeal_upheld: "AppealUpheld",
+  maintainer_reopen: "MaintainerReopen",
+}
+
+effect function refuse(reason: string) {
+  throw new FeedRefused({ feed: penaltyFeed, reason })
+}
+
+effect function historyRecord(row: PublishedRow, projectId: string) {
+  if (row.reversed_at === undefined || row.reversal === undefined) try refuse(recordRefused)
+  return { itemNodeId: row.item_node_id, authorGithubId: row.author_github_id, category: row.category, tableVersion: row.table_version, debitThirds: row.debit_thirds, period: row.period, recordedAt: row.recorded_at, projectId, reversedAt: row.reversed_at ?? null, reversal: row.reversal ?? null } satisfies PenaltyHistoryRecord
+}
+
+effect function penaltyRecords(projectId: string, history: boolean, allowLegacy: boolean, timeoutMs: number) {
+  const full: PenaltyHistoryRecord[] = []
+  const active: PenaltyFeedRecord[] = []
+  let after = ""
+  let version: string | undefined = undefined
+  while (true) {
+    const url = new URL(penaltiesPath, historyOrigin)
+    url.searchParams.set("project", projectId)
+    url.searchParams.set("after", after)
+    if (history) url.searchParams.set("history", "1")
+    const body = try feedJson({ feed: penaltyFeed, url: url.href, unavailable: "Authoritative penalty feed is unavailable", oversized: "Authoritative penalty feed exceeds its page bound", notFoundIsOutage: true, timeoutMs })
+    const page = try decodedFeed(PenaltyPage, body, penaltyFeed, envelopeRefused)
+    const nextAfter = page.nextAfter
+    const versionAllowed = page.schemaVersion === (history ? penaltyHistoryVersion : penaltiesVersion) || (allowLegacy && page.schemaVersion === penaltiesVersion)
+    if (!versionAllowed || (version !== undefined && version !== page.schemaVersion) || page.project !== projectId || page.records.length > maximumPageRecords || !(nextAfter === null || nextAfter > after)) try refuse(envelopeRefused)
+    version = page.schemaVersion
+    for (const raw of page.records) {
+      const row = try decodedFeed(PublishedRow, raw, penaltyFeed, recordRefused)
+      if (row.item_node_id <= after || (nextAfter !== null && row.item_node_id > nextAfter)) try refuse("Penalty feed page is out of order")
+      if (version === penaltyHistoryVersion) full.push(try historyRecord(row, projectId))
+      else active.push({ itemNodeId: row.item_node_id, authorGithubId: row.author_github_id, category: row.category, tableVersion: row.table_version, debitThirds: row.debit_thirds, period: row.period, recordedAt: row.recorded_at })
+    }
+    if (nextAfter === null) return (version === penaltyHistoryVersion ? { kind: "history", records: full } : { kind: "active", records: active }) satisfies PenaltyRead
+    const last = version === penaltyHistoryVersion ? full.at(-1)?.itemNodeId : active.at(-1)?.itemNodeId
+    if (nextAfter !== last) try refuse("Penalty feed cursor skips records")
+    after = nextAfter
+  }
+}
+
+function canonicalInstant(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+}
+
+function recordValid(row: PenaltyHistoryRecord, projectIds: ReadonlyArray<string>, through: string | undefined) {
+  const reversed = row.reversedAt === null
+    ? row.reversal === null
+    : canonicalInstant(row.reversedAt) && row.reversedAt >= row.recordedAt && (through === undefined || row.reversedAt <= through) && (row.reversal === "appeal_upheld" || row.reversal === "maintainer_reopen")
+  return projectIds.includes(row.projectId)
+    && /^[A-Za-z0-9_=-]{1,100}$/u.test(row.itemNodeId)
+    && /^[1-9][0-9]*$/u.test(row.authorGithubId)
+    && /^[a-z_]{1,40}$/u.test(row.category)
+    && /^slopbot-penalties-v[1-9][0-9]*$/u.test(row.tableVersion)
+    && Number.isSafeInteger(row.debitThirds) && row.debitThirds >= 1 && Number.isSafeInteger(row.debitThirds * 10)
+    && canonicalInstant(row.recordedAt) && row.period === row.recordedAt.slice(0, 7)
+    && (through === undefined || row.recordedAt <= through)
+    && reversed
+}
+
+export effect function assertPenaltyHistory(records: ReadonlyArray<PenaltyHistoryRecord>, projectIds: ReadonlyArray<string>, through?: string) {
+  const seen = new Set<string>()
+  for (const row of records) {
+    if (!recordValid(row, projectIds, through)) try refuse(recordRefused)
+    const key = `${row.projectId}\u0000${row.itemNodeId}`
+    if (seen.has(key)) try refuse("Penalty history repeats a pull request")
+    seen.add(key)
+  }
+  return records
+}
+
+export effect function projectPenalties(projectId: string, timeoutMs = feedTimeoutMs) {
+  const read = try penaltyRecords(projectId, false, false, timeoutMs)
+  return read.records satisfies ReadonlyArray<PenaltyFeedRecord>
+}
+
+export effect function projectPenaltyHistory(projectId: string, timeoutMs = feedTimeoutMs) {
+  const read = try penaltyRecords(projectId, true, false, timeoutMs)
+  if (read.kind !== "history") return try refuse(envelopeRefused)
+  return try assertPenaltyHistory(read.records, [projectId])
+}
+
+export effect function projectPenaltyState(projectId: string, timeoutMs = feedTimeoutMs) {
+  const read = try penaltyRecords(projectId, true, true, timeoutMs)
+  if (read.kind === "active") return { penalties: read.records, history: null } satisfies PenaltyState
+  const history = try assertPenaltyHistory(read.records, [projectId])
+  return { penalties: history.filter((row) => row.reversedAt === null), history } satisfies PenaltyState
+}
+
+effect function instantFrom(iso: string) {
+  const instant = instantOf(iso)
+  if (instant === null || instant <= 0) return try refuse(recordRefused)
+  return instant
+}
+
+effect function ledgerRow(record: PenaltyHistoryRecord, project: number) {
+  const category = categories[record.category]
+  const version = /^slopbot-penalties-v([1-9][0-9]*)$/u.exec(record.tableVersion)
+  const actor = Number(record.authorGithubId)
+  if (category === undefined || version === null || !Number.isSafeInteger(actor) || actor <= 0) return try refuse(recordRefused)
+  const recordedAt = try instantFrom(record.recordedAt)
+  const reason = record.reversal === null ? "AppealUpheld" : reversals[record.reversal]
+  if (reason === undefined) return try refuse(recordRefused)
+  return {
+    item: record.itemNodeId,
+    bucket: { actor, project, period: periodOf(recordedAt) },
+    revision: "",
+    category,
+    tableVersion: Number(version[1]),
+    debit: record.debitThirds * 10,
+    recordedAt,
+    moderatorReview: moderatorReview(category),
+    reversed: record.reversedAt !== null,
+    reason,
+    reversedAt: record.reversedAt === null ? 0 : try instantFrom(record.reversedAt),
+  } satisfies PenaltyRow
+}
+
+export effect function penaltyState(records: ReadonlyArray<PenaltyHistoryRecord>) {
+  const projects = [...new Set(records.map((record) => record.projectId))].sort()
+  const rows: PenaltyRow[] = []
+  for (const record of records) rows.push(try ledgerRow(record, projects.indexOf(record.projectId) + 1))
+  const state: Penalties = decodeState({ credits: [], rows, reopens: [], frozen: [] }) catch effect () => {
+    throw new FeedRefused({ feed: penaltyFeed, reason: "Penalty history breaks the published penalty table" })
+  }
+  return state
+}
+

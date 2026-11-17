@@ -1,0 +1,164 @@
+// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import { first, rows, sql } from "@repo/platform/d1"
+import { Caller, handle, handleRaw, jsonBody, sameOriginWrite, strictBody } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import type { Access, Route } from "@repo/platform/route"
+import { SecurityNoticeAccess } from "@repo/ports/security"
+import { audienceHolds } from "../../gen/operations__notifications.effect.vibe"
+import { AcknowledgeFields, acknowledgeCaseNotice, appealPrefix, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark, openAppealReview, openScamReview, otherInboxMethods, scamReviewPrefix } from "../client/inbox.vibe"
+import type { Release } from "../notifications/rows.vibe"
+import { deliveryScope, noticeIdOf, observe, readMany, send } from "../notifications/store.vibe"
+import { cursorOf, inboxPage, noAudience, readableKeys } from "./projection.vibe"
+import { inboxRefusals as refusals, refused } from "./refusals.vibe"
+
+const inboxRelease: Release = { routes: [], generalEmail: false }
+
+const privateJson = {
+  "cache-control": "private, no-store",
+  "content-type": "application/json; charset=utf-8",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+}
+
+const githubOwner = /^[A-Za-z0-9_.-]{1,39}$/u
+const githubRepository = /^[A-Za-z0-9_.-]{1,100}$/u
+const storedOwnerOrRepository = /^[A-Za-z0-9_.-]+$/u
+
+schema ScamReview { readonly author: number; readonly stands: number }
+
+schema CaseDelivery { readonly id: string; readonly acknowledged_at: string | null }
+
+schema AppealJobRow { readonly job_json: string }
+
+schema AppealJob {
+  readonly owner: string
+  readonly repo: string
+  readonly number: number
+  readonly itemKind: "pull_request" | "issue"
+}
+
+function inside<B, A, X extends Access>(descriptor: Route<B, A, X>): Route<undefined, A, "public"> {
+  return { ...descriptor, access: "public", request: undefined }
+}
+
+effect function member() {
+  return (try Caller).current() catch effect (error) => {
+    if (error._tag === "Unauthenticated") throw refused(refusals.notSignedIn)
+    if (error._tag === "ActorChanged") throw refused(refusals.actorChanged)
+    if (error._tag === "Refused" && error.code === refusals.invalidExpectedActor.code) throw refused(refusals.invalidExpectedActor)
+    throw error
+  }
+}
+
+effect function moderator(githubId: string) {
+  return try (try Roles).has(githubId, "moderator")
+}
+
+effect function requestPath() {
+  return new URL((try HttpServerRequest.HttpServerRequest).originalUrl).pathname
+}
+
+function redirect(location: string) {
+  return HttpServerResponse.empty({ status: 302, headers: { ...privateJson, location } })
+}
+
+effect function listed(query: URLSearchParams) {
+  const actor = try member()
+  const text = query.get("cursor")
+  const cursor = text === null ? undefined : try cursorOf(text)
+  if (text !== null && cursor === undefined) throw refused(refusals.invalidCursor)
+  return try inboxPage(actor.githubId, try moderator(actor.githubId), cursor)
+}
+
+function markedKeys(input: unknown): ReadonlyArray<string> | undefined {
+  if (typeof input !== "object" || input === null || Object.keys(input).length !== 1 || !("eventKeys" in input)) return undefined
+  const keys: unknown = input.eventKeys
+  if (!Array.isArray(keys) || keys.length < 1 || keys.length > maxNotificationMark) return undefined
+  const checked = keys.filter(isNotificationEventKey)
+  return checked.length === keys.length && new Set(checked).size === checked.length ? checked : undefined
+}
+
+effect function marked() {
+  if (!(try sameOriginWrite())) throw refused(refusals.originForbidden)
+  const actor = try member()
+  const input = jsonBody(32) catch effect () => { throw refused(refusals.invalidRequest) }
+  const eventKeys = markedKeys(input)
+  if (eventKeys === undefined) throw refused(refusals.invalidRequest)
+  const readable = try readableKeys(actor.githubId, try moderator(actor.githubId), eventKeys)
+  if (readable.length === 0) return { marked: 0 }
+  return { marked: (try readMany({ recipientGithubId: actor.githubId, eventKeys: readable }, inboxRelease)).marked }
+}
+
+effect function acknowledged(caseId: string, githubId: string) {
+  const access = try (try SecurityNoticeAccess).forCase({ caseId, githubId })
+  if (!access.allowed) throw refused(refusals.caseNotFound)
+  const fields = try strictBody(AcknowledgeFields, 64 * 1024)
+  const eventKey = fields.eventKey
+  if (typeof eventKey !== "string") throw refused(refusals.eventKeyRequired)
+  const delivery = try first(CaseDelivery, sql`SELECT id, acknowledged_at FROM security_notification_outbox
+    WHERE case_id = ${caseId} AND event_key = ${eventKey} AND recipient_github_id = ${githubId}
+    ORDER BY template_version = 'security-inbox-v1' DESC LIMIT 1`)
+  if (delivery === undefined) throw refused(refusals.caseNotFound)
+  if (delivery.acknowledged_at !== null) return { acknowledged: true }
+  const scope = deliveryScope("security", delivery.id, [githubId])
+  const id = noticeIdOf(try observe(scope, inboxRelease), "security", delivery.id)
+  const change = { type: "acknowledge", id, access: { tag: "Allowed", acknowledgeHours: access.acknowledgeHours } } as const
+  const settled = send(scope, change, githubId, inboxRelease) catch effect (error) => {
+    if (error._tag !== "Rejected") throw error
+    return { inbox: error.state }
+  }
+  if ((settled.inbox.notices[id - 1]?.acknowledgedAt ?? 0) === 0) throw refused(refusals.caseNotFound)
+  return { acknowledged: true }
+}
+
+function scamReviewTarget(path: string): string | undefined {
+  const parts = path.slice(scamReviewPrefix.length).split("/")
+  const [owner = "", repository = "", kind = "", number = ""] = parts
+  const valid = parts.length === 4 && (kind === "pull" || kind === "issues") && /^[1-9]\d{0,15}$/u.test(number) && githubOwner.test(owner) && githubRepository.test(repository)
+  return valid ? `https://github.com/${owner}/${repository}/${kind}/${number}` : undefined
+}
+
+effect function scamReview() {
+  const actor = try member()
+  if (!(try moderator(actor.githubId))) throw refused(refusals.notAuthorized)
+  const path = try requestPath()
+  const target = scamReviewTarget(path)
+  if (target === undefined) throw refused(refusals.notFound)
+  const reviews = try rows(ScamReview, sql`SELECT p.author_github_id = n.recipient_github_id AS author,
+      (p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL) AS stands
+    FROM notifications n JOIN slopbot_penalties p ON n.event_key = 'slopbot-scam-review:' || p.item_node_id
+    WHERE n.recipient_github_id = ${actor.githubId} AND n.kind = 'slopbot_scam_review' AND n.action_path = ${path}`)
+  const open = reviews.some((review) => audienceHolds("SlopbotScamReview", { ...noAudience, moderator: true, scamPenaltyStands: review.stands === 1, author: review.author === 1 }))
+  if (!open) throw refused(refusals.notFound)
+  return redirect(target)
+}
+
+effect function appealTarget(jobJson: string) {
+  const job = try orDie(Effect.try(() => JSON.parse(jobJson) as unknown))
+  const target = try orDie(Schema.decodeUnknownEffect(AppealJob)(job))
+  const valid = storedOwnerOrRepository.test(target.owner) && storedOwnerOrRepository.test(target.repo) && Number.isSafeInteger(target.number) && target.number >= 1
+  if (!valid) return try die(new Error("Invalid stored appeal target"))
+  return `https://github.com/${target.owner}/${target.repo}/${target.itemKind === "pull_request" ? "pull" : "issues"}/${target.number}`
+}
+
+effect function appealReview() {
+  const actor = try member()
+  if (!(try moderator(actor.githubId))) throw refused(refusals.notAuthorized)
+  const encoded = (try requestPath()).slice(appealPrefix.length)
+  const key = try Effect.try({ try: () => decodeURIComponent(encoded), catch: () => refused(refusals.invalidAppealKey) })
+  const appeal = try first(AppealJobRow, sql`SELECT a.job_json FROM slopbot_appeals a
+    JOIN notifications n ON n.event_key = 'slopbot-' || a.appeal_key
+    WHERE a.appeal_key = ${key} AND a.escalated_at IS NOT NULL AND n.recipient_github_id = ${actor.githubId}
+      AND n.kind = 'slopbot_appeal_review' AND a.appellant_github_id <> ${actor.githubId}`)
+  if (appeal === undefined) throw refused(refusals.notFound)
+  return redirect(try appealTarget(appeal.job_json))
+}
+
+export const inboxRoutes = Layer.mergeAll(
+  handle(inside(listNotices), (input) => listed(input.query)),
+  handle(inside(markNoticesRead), () => marked()),
+  handle({ ...acknowledgeCaseNotice, request: undefined }, (input) => acknowledged(input.params.id ?? "", input.actor.githubId)),
+  handleRaw(inside(openScamReview), () => scamReview()),
+  handleRaw(inside(openAppealReview), () => appealReview()),
+  ...otherInboxMethods.map((descriptor) => handle(descriptor, () => effect { throw refused(refusals.methodNotAllowed) })),
+)

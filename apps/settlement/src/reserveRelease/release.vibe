@@ -1,0 +1,282 @@
+// spec/settlement/reserveRelease.md, "Only complete, untouched, finalized retained evidence admits an allocation"; spec/settlement/reserveRelease.md, "Current authority and fresh complete wrong-total evidence permit approval"; spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve"
+import { type Address, type Hex, EvmRpc, recoverDigest } from "@repo/platform/chain/evm"
+import { Authority, type ProjectView, Registry } from "@repo/ports/backend"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { type Event, type RetainedAllocation, type ReserveRelease, canAdmitRetained, canChangeOwner, canCheck, canObserve, canPinImplementation, canQualifyUpgrade } from "../../gen/settlement__reserveRelease.effect.vibe"
+import { type Bytes32, type EvmAddress, evmAddress } from "../chain/evm/abi.ts"
+import { decodeMonthlyReserve, monthlyReleaseDigest, monthlyReserveCall, releaseMonthlyReserveCalldata } from "../chain/evm/monthlyRoot.ts"
+import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { type Period, parsePeriod } from "../kernels/calendar.ts"
+import { verifyEvmDeployment } from "../vault/evmTotals.vibe"
+import type { EvmDeployment } from "../vault/policy.vibe"
+import { type Capture, type FinalizedMonth, type ReleaseRequest, type Retained, EvidenceUnreadable, captureOf, finalizedMonth, matchesMonth, retainedAllocation, retainedAllocations } from "./evidence.vibe"
+import { type ReleaseScope, attemptTransaction, planOf, recordAttempt, release, retainPlan, send } from "./store.vibe"
+
+export interface ApprovalRequest {
+  readonly network: string
+  readonly vault: EvmAddress
+  readonly period: string
+  readonly digest: Bytes32
+  readonly identityAuthority: EvmAddress
+}
+
+export error ApprovalRefused { reason: string }
+export error ReleaseRefused { message: string }
+
+export service ReleaseApprover {
+  approve(request: ApprovalRequest): Hex!ApprovalRefused
+}
+
+export interface OwnerReleaseRequest extends ReleaseRequest {
+  readonly manifestSha256: string
+}
+
+export interface ReleaseCheckRequest extends OwnerReleaseRequest {
+  readonly planId: string
+  readonly transactionId: string
+}
+
+export type RegisteredEvmDeployment = EvmDeployment & { readonly revision: number }
+
+export interface ReleaseOwner {
+  readonly githubId: string
+}
+
+schema PlannedTransaction {
+  readonly from: string
+  readonly to: string
+  readonly data: string
+  readonly value: "0"
+}
+
+schema PlannedTerms {
+  readonly allocationDigest: string
+  readonly allocationRoot: string
+  readonly root: string
+  readonly expectedRemaining: string
+  readonly releasedGross: string
+}
+
+schema PlannedRequest {
+  readonly projectId: string
+  readonly period: string
+  readonly network: string
+  readonly manifestSha256: string
+}
+
+export schema ReleasePlan {
+  readonly status: "ready"
+  readonly family: "evm"
+  readonly request: PlannedRequest
+  readonly vault: string
+  readonly signatureHex: string
+  readonly transaction: PlannedTransaction
+  readonly terms: PlannedTerms
+}
+
+export type HeldReason = "allocation-unavailable" | "allocation-mismatch" | "allocation-not-admissible" | "no-wrong-sum-fault" | "prior-reserve-transition" | "upgrade-unqualified" | "evidence-stale"
+
+export type PreparedRelease = { readonly status: "held"; readonly reason: HeldReason } | (ReleasePlan & { readonly planId: string })
+
+export type CheckedRelease = { readonly status: "pending" | "failed" | "finalized" }
+
+function refused(message: string) {
+  return new ReleaseRefused({ message })
+}
+
+effect function periodOf(text: string) {
+  const period = parsePeriod(text)
+  if (period === undefined) throw refused("Invalid release period")
+  return period
+}
+
+effect function unchangedProject(request: OwnerReleaseRequest) {
+  const project = try (try Registry).project(request.projectId)
+  if (project === undefined || project.manifestSha256 !== request.manifestSha256) throw refused("Project policy changed")
+  return project
+}
+
+effect function ownedProject(request: OwnerReleaseRequest, owner: ReleaseOwner) {
+  const project = try unchangedProject(request)
+  if (project.stewardGithubId !== owner.githubId) throw refused("Only the current project steward can manage this project's awards.")
+  const repositoryId = project.repositories[0]?.id
+  if (repositoryId === undefined) throw refused("Current GitHub maintainer authority could not be verified.")
+  const read = try (try Authority).repository({ actorGithubId: owner.githubId, repositoryId })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused("GitHub authority could not be checked. Retry.")
+  if (read.permission !== "PermissionVerified" || read.installation !== "Installed") throw refused("Current GitHub maintainer authority could not be verified.")
+  return project
+}
+
+effect function unchanged(request: OwnerReleaseRequest, project: ProjectView, retained: string) {
+  const current = try (try Registry).project(request.projectId)
+  const plans = JSON.stringify(try retainedAllocations(request))
+  if (current === undefined || current.manifestSha256 !== request.manifestSha256 || current.revision !== project.revision || plans !== retained) throw refused("Monthly release evidence changed")
+}
+
+effect function selected(plans: ReadonlyArray<Retained>, observed: FinalizedMonth) {
+  for (const plan of plans) {
+    if (plan.evmReservation === undefined) continue
+    const capture = try captureOf(plan)
+    if (try matchesMonth(capture, observed.month)) return capture
+  }
+  return undefined
+}
+
+effect function step(scope: ReleaseScope, current: ReserveRelease, event: Event, by: string, allowed: boolean) {
+  return allowed ? try send(scope, event, by) : current
+}
+
+function heldReason(state: ReserveRelease, total: Amount): HeldReason {
+  if (!state.upgradeQualified) return "upgrade-unqualified"
+  if (state.hasSettled || fromAmount(state.settledAmount) > 0n) return "prior-reserve-transition"
+  if (fromAmount(total) === fromAmount(state.reserved)) return "no-wrong-sum-fault"
+  return "evidence-stale"
+}
+
+function admissionReason(evidence: RetainedAllocation, height: number): HeldReason {
+  if (fromAmount(evidence.settled) > 0n || fromAmount(evidence.released) > 0n || fromAmount(evidence.reserve) === 0n) return "prior-reserve-transition"
+  if (evidence.retainedLeaves !== evidence.leafCount || evidence.root !== evidence.allocationRoot) return "allocation-mismatch"
+  if (evidence.height !== height) return "evidence-stale"
+  return "allocation-not-admissible"
+}
+
+function unencodable() {
+  return refused("The release plan could not be encoded")
+}
+
+effect function admitted(scope: ReleaseScope, capture: Capture, observed: FinalizedMonth, pin: { readonly revision: number; readonly implementation: EvmAddress }, revision: number) {
+  const height = Number(observed.height)
+  let state = try release(scope)
+  state = try step(scope, state, { type: "observe", height }, "attester", canObserve(state, height))
+  state = try step(scope, state, { type: "pinImplementation", pin }, "attester", canPinImplementation(state, pin))
+  const qualification = { implementation: observed.implementation, height }
+  state = try step(scope, state, { type: "qualifyUpgrade", qualification }, "attester", canQualifyUpgrade(state, qualification))
+  state = try step(scope, state, { type: "changeOwner", revision }, "attester", canChangeOwner(state, revision))
+  const evidence = try retainedAllocation(capture, observed)
+  if (state.phase === "Absent") {
+    if (!canAdmitRetained(state, evidence)) return { kind: "held", reason: admissionReason(evidence, state.observedHeight) } as const
+    state = try send(scope, { type: "admitRetained", evidence }, "attester")
+  }
+  if (state.phase === "Reserved") {
+    if (!canCheck(state, evidence.root, evidence.allocationTotal, height, revision, "owner")) return { kind: "held", reason: heldReason(state, evidence.allocationTotal) } as const
+    state = try send(scope, { type: "check", root: evidence.root, total: evidence.allocationTotal, height, requestRevision: revision }, "owner")
+  }
+  if ((state.phase === "Checked" || state.phase === "Approved") && state.evidenceHeight !== height) return { kind: "held", reason: "evidence-stale" } as const
+  return { kind: "checked", state } as const
+}
+
+effect function pinned(deployment: RegisteredEvmDeployment, request: OwnerReleaseRequest) {
+  const vault = evmAddress(deployment.vault)
+  const owner = evmAddress(deployment.owner)
+  const implementation = deployment.evmUpgrade === undefined ? undefined : evmAddress(deployment.evmUpgrade.vaultImplementation)
+  if (vault === undefined || owner === undefined || implementation === undefined || deployment.network !== request.network || deployment.projectId !== request.projectId)
+    throw refused("Monthly deployment unavailable")
+  return { vault, owner, pin: { revision: deployment.revision, implementation } }
+}
+
+effect function retainedFor(request: OwnerReleaseRequest, vault: EvmAddress) {
+  const plans = try retainedAllocations(request)
+  for (const plan of plans) if (plan.family !== "evm" || evmAddress(plan.deployment.vault) !== vault) throw refused("Retained monthly deployment mismatch")
+  return plans
+}
+
+effect function simulated(deployment: RegisteredEvmDeployment, transaction: { readonly from: EvmAddress; readonly to: EvmAddress; readonly data: Hex }) {
+  try verifyEvmDeployment(deployment, "latest")
+  const answer = try (try EvmRpc).call({ from: transaction.from as Address, to: transaction.to as Address, data: transaction.data, block: "latest" })
+  if (answer !== "0x") throw refused("Monthly release simulation returned unexpected data")
+}
+
+export effect function prepareRelease(request: OwnerReleaseRequest, deployment: RegisteredEvmDeployment, owner: ReleaseOwner) {
+  const period = try periodOf(request.period)
+  const { vault, owner: wallet, pin } = try pinned(deployment, request)
+  const project = try ownedProject(request, owner)
+  const plans = try retainedFor(request, vault)
+  if (plans.length === 0) return { status: "held", reason: "allocation-unavailable" } satisfies PreparedRelease
+  const retained = JSON.stringify(plans)
+  const observed = try finalizedMonth(deployment, period)
+  const capture = try selected(plans, observed)
+  if (capture === undefined) return { status: "held", reason: "allocation-mismatch" } satisfies PreparedRelease
+  const scope: ReleaseScope = { network: request.network, vault, period: request.period }
+  const outcome = try admitted(scope, capture, observed, pin, project.revision)
+  if (outcome.kind === "held") return { status: "held", reason: outcome.reason } satisfies PreparedRelease
+  const state = outcome.state
+  if (state.phase !== "Checked" && state.phase !== "Approved") throw refused("A signed release attempt is already outstanding")
+  const terms = { allocationDigest: capture.allocationDigest, allocationRoot: observed.month.root, expectedRemaining: observed.month.remaining, releasedGross: observed.month.remaining }
+  const digest = try Effect.try({ try: () => monthlyReleaseDigest({ chainId: deployment.chainId, vault }, period, terms), catch: unencodable })
+  try unchanged(request, project, retained)
+  const signature = try (try ReleaseApprover).approve({ network: request.network, vault, period: request.period, digest, identityAuthority: observed.identityAuthority })
+  const signer = recoverDigest(digest, signature)
+  if (signer === undefined || signer.toLowerCase() !== observed.identityAuthority) throw refused("Release signer is not the current identity authority")
+  if (state.phase === "Checked") try send(scope, { type: "approve" }, "attester")
+  const data = (try Effect.try({ try: () => releaseMonthlyReserveCalldata(period, terms, signature), catch: unencodable })).toLowerCase() as Hex
+  try simulated(deployment, { from: wallet, to: vault, data })
+  try unchanged(request, project, retained)
+  const plan = {
+    status: "ready",
+    family: "evm",
+    request: { projectId: request.projectId, period: request.period, network: request.network, manifestSha256: request.manifestSha256 },
+    vault,
+    signatureHex: signature.slice(2).toLowerCase(),
+    transaction: { from: wallet, to: vault, data, value: "0" },
+    terms: { allocationDigest: capture.allocationDigest, allocationRoot: terms.allocationRoot, root: observed.month.root, expectedRemaining: terms.expectedRemaining.toString(), releasedGross: terms.releasedGross.toString() },
+  } satisfies ReleasePlan
+  const planId = try retainPlan(plan)
+  return { ...plan, planId } satisfies PreparedRelease
+}
+
+effect function storedPlan(request: ReleaseCheckRequest) {
+  const found = try planOf(request.planId)
+  const plan = found === undefined ? undefined : Schema.decodeUnknownEffect(ReleasePlan)(found) catch () => undefined
+  if (plan === undefined || plan.request.projectId !== request.projectId || plan.request.period !== request.period || plan.request.network !== request.network) throw refused("Unknown release request")
+  return plan
+}
+
+effect function signedAttempt(scope: ReleaseScope, transaction: string) {
+  const state = try release(scope)
+  if (state.phase === "Approved") {
+    const attempt = state.retiredAttempts.length + 1
+    const recorded = try recordAttempt(scope, attempt, transaction)
+    if (recorded !== transaction) throw refused("Another transaction already holds this release attempt")
+    return try send(scope, { type: "ownerSign", attempt }, "owner")
+  }
+  if (state.phase === "OwnerSigned" || state.phase === "Released") {
+    if ((try attemptTransaction(scope, state.signedAttempt)) !== transaction) throw refused("Transaction does not match the reviewed release")
+    return state
+  }
+  throw refused("This release needs a fresh review")
+}
+
+export effect function checkRelease(request: ReleaseCheckRequest, deployment: RegisteredEvmDeployment) {
+  const plan = try storedPlan(request)
+  try unchangedProject(request)
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined || vault !== plan.vault || deployment.network !== request.network) throw refused("Project policy changed")
+  const hash = request.transactionId.toLowerCase()
+  if (!/^0x[0-9a-f]{64}$/u.test(hash)) throw refused("Invalid transaction hash")
+  const rpc = try EvmRpc
+  const mined = try rpc.transaction(hash as Hex)
+  if (mined === undefined) return { status: "pending" } satisfies CheckedRelease
+  const expected = plan.transaction
+  if (mined.from.toLowerCase() !== expected.from || mined.to?.toLowerCase() !== expected.to || mined.input.toLowerCase() !== expected.data || mined.value !== 0n)
+    throw refused("Transaction does not match the reviewed release")
+  const scope: ReleaseScope = { network: request.network, vault, period: request.period }
+  const state = try signedAttempt(scope, hash)
+  if (state.phase === "Released") return { status: "finalized" } satisfies CheckedRelease
+  const receipt = try rpc.finalizedReceipt(hash as Hex)
+  if (receipt === undefined) return { status: "pending" } satisfies CheckedRelease
+  const height = Number(receipt.blockNumber)
+  if (receipt.status === "reverted") {
+    try send(scope, { type: "retireFailedAttempt", failure: { attempt: state.signedAttempt, root: plan.terms.root, height, canonicalFailure: true } }, "attester")
+    return { status: "failed" } satisfies CheckedRelease
+  }
+  const period = try periodOf(request.period)
+  const call = try Effect.try({ try: () => monthlyReserveCall(period), catch: unencodable })
+  const after = decodeMonthlyReserve({ root: plan.terms.root, reserve: try rpc.call({ to: vault as Address, data: call, block: receipt.blockNumber }) })
+  if (after === undefined) throw new EvidenceUnreadable({ message: "The finalized vault state could not be decoded" })
+  const expectedRemaining = parseBaseUnits(plan.terms.expectedRemaining)
+  if (expectedRemaining === undefined || after.remaining > expectedRemaining) throw refused("The finalized release does not match the reviewed reserve")
+  const releasedAmount = try Effect.try({ try: () => toAmount(expectedRemaining - after.remaining), catch: unencodable })
+  const settledAmount = try Effect.try({ try: () => toAmount(0n), catch: unencodable })
+  try send(scope, { type: "finalize", receipt: { attempt: state.signedAttempt, root: plan.terms.root, height, releasedAmount, settledAmount, finalized: true, succeeded: true } }, "attester")
+  return { status: "finalized" } satisfies CheckedRelease
+}

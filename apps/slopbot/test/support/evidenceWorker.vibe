@@ -1,0 +1,191 @@
+// spec/slopbot/valueEvidence.md, "Story: Value only evidence that is complete and hash-verified"
+import type { Fetcher } from "@repo/platform/bindings"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { Acceptance } from "../../src/value/evidence/acceptance.vibe"
+import type { RegisteredRepository } from "../../src/value/evidence/types.vibe"
+import { rewriteNext } from "./proofsWorker.vibe"
+
+export const repository = "ada/widgets"
+export const widgetCount = 120
+export const mergedAt = "2026-11-10T12:00:00Z"
+export const policyText = "# Contributing\n\nPull requests target `develop`.\n"
+const fencedPolicyText = "# Contributing\n\n```\nPull requests target `develop`.\n```\n"
+
+export function widgetName(index: number) {
+  return `src/w${String(index).padStart(3, "0")}.ts`
+}
+
+export function widgetText(index: number) {
+  return `export const w${String(index).padStart(3, "0")} = ${index};`
+}
+
+export function widgetPatch(index: number) {
+  return `@@ -0,0 +1 @@\n+${widgetText(index)}`
+}
+
+export interface Seeded {
+  readonly fake: GitHubFake
+  readonly token: string
+  readonly repositoryNodeId: string
+  readonly authorNodeId: string
+  readonly base: string
+  readonly head: string
+  readonly merge: string
+  readonly policyCommit: string
+  readonly fencedPolicyCommit: string
+  readonly reviewId: number
+  readonly selfReviewId: number
+  readonly commentId: number
+  readonly inlineId: number
+  readonly referencesPull: number
+}
+
+export function policyOf(world: Seeded): RegisteredRepository {
+  return { id: repository, projectId: "widgets", integrationBranch: "main", expectedNodeId: world.repositoryNodeId, aliases: [] }
+}
+
+export effect function seeded() {
+  const fake = try Effect.try(() => githubFake())
+  const world = fake.world
+  const author = try Effect.try(() => world.addUser({ id: 101, login: "ada" }))
+  try Effect.try(() => world.addUser({ id: 102, login: "grace" }))
+  try Effect.try(() => world.addUser({ id: 103, login: "carol" }))
+  const created = try Effect.try(() => world.addRepo({ id: 7397, owner: "ada", name: "widgets", files: { "README.md": "hello\n" } }))
+  try Effect.try(() => world.addRepo({ id: 7398, owner: "carol", name: "secret", private: true, files: { "README.md": "private\n" } }))
+  const widgets = Object.fromEntries(Array.from({ length: widgetCount }, (_, index) => [widgetName(index), widgetText(index)]))
+  const base = try Effect.try(() => world.addCommit(repository, { message: "Base", author: "ada", date: "2026-11-01T00:00:00Z", files: { "notes.md": "notes\n" } }))
+  const head = try Effect.try(() => world.addCommit(repository, { branch: "feature", parents: [base], message: "Add widgets", author: "ada", date: "2026-11-09T09:00:00Z", files: widgets }))
+  const merge = try Effect.try(() => world.addCommit(repository, { branch: "merged", parents: [base, head], message: "Merge pull request #1", author: "ada", date: mergedAt, files: widgets }))
+  const policyCommit = try Effect.try(() => world.addCommit(repository, { branch: "policy", parents: [base], message: "Policy", author: "ada", files: { "CONTRIBUTING.md": policyText } }))
+  const fencedPolicyCommit = try Effect.try(() => world.addCommit(repository, { branch: "fenced", parents: [base], message: "Fenced policy", author: "ada", files: { "CONTRIBUTING.md": fencedPolicyText } }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 2, author: "grace", title: "Earlier widgets", createdAt: "2026-11-02T00:00:00Z" }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 3, author: "grace", title: "Widget docs", createdAt: "2026-11-03T00:00:00Z" }))
+  try Effect.try(() => world.addPull({
+    repo: repository,
+    number: 1,
+    author: "ada",
+    title: "Add widgets",
+    body: "Adds the widget set.",
+    createdAt: "2026-11-09T10:00:00Z",
+    headSha: head,
+    commits: [head],
+    mergedAt,
+    mergeCommit: merge,
+    files: Array.from({ length: widgetCount }, (_, index) => ({ path: widgetName(index), status: "added" as const, additions: 1, deletions: 0, patch: widgetPatch(index) })),
+  }))
+  try Effect.try(() => world.setBranch(repository, "main", merge))
+  const reviewId = try Effect.try(() => world.addReview(repository, 1, { author: "grace", state: "APPROVED", body: "Looks right.", submittedAt: "2026-11-10T10:00:00Z" }))
+  const selfReviewId = try Effect.try(() => world.addReview(repository, 1, { author: "ada", state: "COMMENTED", body: "Self note.", submittedAt: "2026-11-10T10:30:00Z" }))
+  const commentId = try Effect.try(() => world.addComment(repository, 1, { author: "grace", body: "Related to #2.", createdAt: "2026-11-10T11:00:00Z" }))
+  const inlineId = try Effect.try(() => world.addComment(repository, 1, { author: "grace", body: "Nice name.", path: widgetName(0), createdAt: "2026-11-10T11:10:00Z" }))
+  try Effect.try(() => world.addTimelineEvent(repository, 1, { event: "cross-referenced", actor: "grace", createdAt: "2026-11-10T11:20:00Z", source: { repo: repository, number: 3 } }))
+  const referencesPull = try Effect.try(() => world.addPull({
+    repo: repository,
+    number: 4,
+    author: "grace",
+    title: "Follow-up",
+    createdAt: "2026-11-11T00:00:00Z",
+    body: [
+      "Negative result #23.",
+      "See carol/secret#5.",
+      "```text\n#3\n```",
+      "[#44](docs/guide.md#44) and `#3`.",
+      "Supersedes https://github.com/ada/widgets/pull/2.",
+    ].join("\n"),
+  }))
+  const token = try Effect.try(() => fake.tokens.user("ada"))
+  return {
+    fake,
+    token,
+    repositoryNodeId: created.nodeId,
+    authorNodeId: author.nodeId,
+    base,
+    head,
+    merge,
+    policyCommit,
+    fencedPolicyCommit,
+    reviewId,
+    selfReviewId,
+    commentId,
+    inlineId,
+    referencesPull,
+  } satisfies Seeded
+}
+
+function fetcherOf(fake: GitHubFake): Fetcher {
+  return {
+    fetch: async (request) => {
+      try {
+        return await fake.fetch(request)
+      } catch (cause) {
+        throw cause
+      }
+    },
+  }
+}
+
+export function githubOver(world: Seeded) {
+  return Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-evidence" }), outboundVia(fetcherOf(world.fake)))
+}
+
+function pageOfPatched(page: number) {
+  return (body: Readonly<Record<string, unknown>>) => {
+    const files = body["files"]
+    if (!Array.isArray(files)) return body
+    const listed: ReadonlyArray<Readonly<Record<string, unknown>>> = files
+    return {
+      ...body,
+      files: listed.slice((page - 1) * 100, page * 100).map((file) => {
+        const name = typeof file["filename"] === "string" ? file["filename"] : ""
+        const index = Number(/^src\/w(\d{3})\.ts$/u.exec(name)?.[1] ?? Number.NaN)
+        return Number.isSafeInteger(index) ? { ...file, patch: widgetPatch(index) } : file
+      }),
+    }
+  }
+}
+
+export function commitPage(sha: string, page: number) {
+  return `GET /repos/${repository}/commits/${sha}?per_page=100&page=${page}`
+}
+
+export effect function patchCommitPage(world: Seeded, sha: string, page: number) {
+  try rewriteNext(world.fake, commitPage(sha, page), pageOfPatched(page))
+}
+
+export effect function patchCommitPages(world: Seeded, sha: string) {
+  try patchCommitPage(world, sha, 1)
+  try patchCommitPage(world, sha, 2)
+}
+
+export function requested(world: Seeded, match: RegExp) {
+  return world.fake.requests.filter((request) => match.test(`${request.method} ${new URL(request.url).pathname}${new URL(request.url).search}`)).length
+}
+
+export function acceptanceRecorder() {
+  const asked: string[] = []
+  const layer = Layer.succeed(Acceptance, {
+    range: (source) => effect {
+      asked.push(`range ${source.pull.number}`)
+      return undefined
+    },
+    native: (source) => effect {
+      asked.push(`native ${source.pull.number}`)
+      return undefined
+    },
+    indirect: (source) => effect {
+      asked.push(`indirect ${source.pull.number}`)
+      return { acceptance: undefined, limitations: [] }
+    },
+    retained: (source) => effect {
+      asked.push(`retained ${source.pull.number}`)
+      return { references: [], limitations: [] }
+    },
+    promotion: (source) => effect {
+      asked.push(`promotion ${source.pull.number}`)
+      return undefined
+    },
+  } satisfies Acceptance.Shape)
+  return { asked, layer }
+}

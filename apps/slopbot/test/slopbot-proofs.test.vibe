@@ -1,0 +1,511 @@
+// spec/slopbot/valueEvidence.md, "Story: Value only evidence that is complete and hash-verified"
+import { assert, it } from "@effect/vitest"
+import { gitObjectId, sha256Of, textBytes } from "@repo/platform/git/bytes"
+import { type FileRecovery, type FileRequest, fileRequestsSha256 } from "@repo/platform/git/evidence"
+import { GitHub, GitHubMalformed } from "@repo/platform/github"
+import { acceptedPatchReplay } from "../src/value/proofs/acceptedReplay.vibe"
+import { type BinaryEvidence, addedBinaryRecovery, binarySourceLimitations, recoverRetainedBinaryAtMerge, validAddedBinaryProof } from "../src/value/proofs/binary.vibe"
+import { verifiedBlob } from "../src/value/proofs/blob.vibe"
+import {
+  type FileChange,
+  type RetainedAtMerge,
+  commitLinesAgree,
+  fileLines,
+  hasCompleteValuePatch,
+  valueAdditionCount,
+  valueDeletionCount,
+  valuePatch,
+} from "../src/value/proofs/changes.vibe"
+import {
+  addedValuePatchRecovery,
+  recoverAddedValueComparisons,
+  recoverFullValueComparisons,
+  recoverRemovedValueComparisons,
+  recoverUnchangedValueRenames,
+} from "../src/value/proofs/comparisons.vibe"
+import { base64Text } from "../src/value/proofs/encoding.ts"
+import { jsonDigest } from "../src/value/proofs/jsonDigest.ts"
+import { type RecoverySource, fileRecoveryCapture, recoveredFiles } from "../src/value/proofs/recovery.vibe"
+import { type PathOutcome, verifiedPaths, verifiedTree } from "../src/value/proofs/tree.vibe"
+import {
+  type Seeded,
+  addedTexts,
+  captureBytes,
+  captureNames,
+  captureSize,
+  captures,
+  failNext,
+  fixBlobSha,
+  fixGzipBase64,
+  fixSha256,
+  fixText,
+  gitHubOver,
+  logoBytes,
+  recoveryOf,
+  repository,
+  repositoryDatabaseId,
+  requestCount,
+  rewriteNext,
+  seeded,
+  textName,
+} from "./support/proofsWorker.vibe"
+
+schema CommitTree { sha: string; tree: { sha: string } }
+schema Shaped { number?: number; sha?: string }
+
+const recursiveTree = /^GET \/repos\/ada\/widgets\/git\/trees\/[0-9a-f]{40}\?recursive=1$/u
+const rootTree = /^GET \/repos\/ada\/widgets\/git\/trees\/[0-9a-f]{40}$/u
+const repositoryRoute = /^GET \/repos\/ada\/widgets$/u
+const fixContents = /^GET \/repos\/ada\/widgets\/contents\/fix\.ts\?ref=/u
+const logoContents = /^GET \/repos\/ada\/widgets\/contents\/logo\.bin\?ref=/u
+const contentsRoute = /\/contents\//u
+const forgedSha = "1".repeat(40)
+const mergedAt = "2026-11-16T00:00:00Z"
+const changedMetadata = "Source metadata changed during collection"
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function treeShaOf(ref: string) {
+  return (try (try GitHub).json(`/repos/${repository}/git/commits/${ref}`, CommitTree)).tree.sha
+}
+
+effect function issueOf(path: string) {
+  const github = try GitHub
+  const read = github.json(path, Shaped) catch effect (error) => match (error) {
+    when GitHubMalformed: error.issue;
+    default: throw error;
+  }
+  return typeof read === "string" ? read : "read"
+}
+
+function withForgedEntry(body: Readonly<Record<string, unknown>>) {
+  const listed = Array.isArray(body["tree"]) ? body["tree"] as ReadonlyArray<Readonly<Record<string, unknown>>> : []
+  return { ...body, tree: listed.map((entry, index) => index === 0 ? { ...entry, sha: forgedSha } : entry) }
+}
+
+function withRepo(side: unknown) {
+  return { ...(typeof side === "object" && side !== null ? side : {}), repo: { updated_at: "after" } }
+}
+
+function reorderedPull(body: Readonly<Record<string, unknown>>) {
+  return Object.fromEntries(Object.entries({ ...body, milestone: { title: "after" }, head: withRepo(body["head"]), base: withRepo(body["base"]) }).reverse())
+}
+
+function shaAt(outcomes: ReadonlyMap<string, PathOutcome> | undefined, path: string) {
+  const outcome = outcomes?.get(path)
+  return outcome?.kind === "present" ? outcome.entry.sha : outcome?.kind
+}
+
+function addedFile(filename: string, additions = 0): FileChange {
+  return { filename, status: "added", additions, deletions: 0, blob_url: null }
+}
+
+function comparison(before: string, after: string): FileChange {
+  const side = (text: string) => ({ blobSha: gitObjectId("blob", textBytes(text)), text })
+  return {
+    filename: "test.ts",
+    status: "modified",
+    additions: 0,
+    deletions: 0,
+    blob_url: null,
+    fullComparison: { baseSha: "a".repeat(40), headSha: "b".repeat(40), before: side(before), after: side(after) },
+  }
+}
+
+function addedLines(text: string) {
+  const lines = text === "" ? [] : text.split("\n")
+  if (text.endsWith("\n")) lines.pop()
+  return lines
+}
+
+function expectedAddedPatch(text: string) {
+  const lines = addedLines(text)
+  return lines.length === 0
+    ? ""
+    : `@@ -0,0 +1${lines.length === 1 ? "" : `,${lines.length}`} @@\n` + lines.map((line) => `+${line}`).join("\n") +
+      (text.endsWith("\n") ? "" : "\n\\ No newline at end of file")
+}
+
+function withRetained(files: ReadonlyArray<FileChange>, retainedAtMerge: RetainedAtMerge): ReadonlyArray<FileChange> {
+  return files.map((file) => file.addedBinary === undefined ? file : { ...file, addedBinary: { ...file.addedBinary, retainedAtMerge } })
+}
+
+function byJson(a: FileRequest, b: FileRequest) {
+  return JSON.stringify(a).localeCompare(JSON.stringify(b))
+}
+
+const malformedRetained: RetainedAtMerge = { mergeSha: "invalid", parentSha: "", mergeTreeSha: "", parentTreeSha: "" }
+
+const listedFiles: ReadonlyArray<FileChange> = [
+  { filename: "app.ts", status: "modified", additions: 0, deletions: 0, blob_url: null },
+  { filename: "fix.ts", status: "added", additions: 0, deletions: 0, blob_url: null },
+  { filename: "logo.bin", status: "added", additions: 0, deletions: 0, blob_url: null },
+  { filename: "README.md", status: "modified", additions: 2, deletions: 0, patch: "@@ -1 +1,3 @@\n hello\n+world", blob_url: null },
+]
+
+const submittedFiles: ReadonlyArray<FileChange> = [
+  { filename: "fix.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const fixed = true;", blob_url: null },
+  { filename: "app.ts", status: "modified", additions: 2, deletions: 1, patch: "@@ -1,2 +1,3 @@\n keep\n-old\n+new\n+more", blob_url: null },
+]
+
+const acceptedFiles: ReadonlyArray<FileChange> = [
+  { filename: "app.ts", status: "modified", additions: 2, deletions: 1, patch: "@@ -2,2 +2,3 @@\n keep\n-old\n+new\n+more", blob_url: null },
+  { filename: "fix.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+export const fixed = true;", blob_url: null },
+]
+
+effect function absenceAndHashes(world: Seeded) {
+  const headTree = try treeShaOf(world.head)
+  const proof = try verifiedTree(repository, world.head)
+  try rewriteNext(world.fake, recursiveTree, withForgedEntry)
+  const forgedTree = try verifiedTree(repository, world.head)
+  try rewriteNext(world.fake, recursiveTree, (body) => ({ ...body, truncated: true }))
+  const truncatedTree = try verifiedTree(repository, world.head)
+  const lookup = try verifiedPaths(repository, world.head, ["fix.ts", "gone.ts"])
+  try rewriteNext(world.fake, rootTree, withForgedEntry)
+  const forgedLookup = try verifiedPaths(repository, world.head, ["fix.ts", "gone.ts"])
+  try rewriteNext(world.fake, rootTree, (body) => ({ ...body, truncated: true }))
+  const truncatedLookup = try verifiedPaths(repository, world.head, ["gone.ts"])
+  const read = verifiedBlob(repository)
+  try failNext(world.fake, fixContents, { status: 404 })
+  const notFound = try read("fix.ts", world.head)
+  const absentFile = try read("gone.ts", world.head)
+  try rewriteNext(world.fake, fixContents, (body) => ({ ...body, size: 7, content: base64Text(textBytes("forged\n")) }))
+  const forgedBytes = try read("fix.ts", world.head)
+  const found = try read("fix.ts", world.head)
+  return {
+    tree: [proof?.treeSha === headTree, [...proof?.entries.keys() ?? []].sort()],
+    forgedTree,
+    truncatedTree,
+    lookup: ["fix.ts", "gone.ts"].map((path) => [path, shaAt(lookup, path)]),
+    forgedLookup,
+    truncatedLookup,
+    reads: [notFound, absentFile, forgedBytes, found === undefined ? undefined : [found.sha, new TextDecoder().decode(found.bytes)]],
+  }
+}
+
+effect function recoveredText(world: Seeded) {
+  const existingParent = try recoverAddedValueComparisons(repository, [addedFile("app.ts")], world.base, world.head)
+  try rewriteNext(world.fake, recursiveTree, (body) => ({ ...body, truncated: true }))
+  const truncatedTree = try recoverAddedValueComparisons(repository, [addedFile("fix.ts")], world.base, world.head)
+  try rewriteNext(world.fake, fixContents, (body) => ({ ...body, content: base64Text(textBytes("different bytes\n")) }))
+  const corruptBlob = try recoverAddedValueComparisons(repository, [addedFile("fix.ts")], world.base, world.head)
+  const removed = try recoverRemovedValueComparisons(repository, [{ filename: "README.md", status: "removed", additions: 0, deletions: 0, blob_url: null }], world.base, world.moved)
+  const renames = try recoverUnchangedValueRenames(repository, [
+    { filename: "guide.md", previous_filename: "notes.md", status: "renamed", additions: 0, deletions: 0, blob_url: null },
+    { filename: "src/helper.ts", previous_filename: "src/util.ts", status: "renamed", additions: 0, deletions: 0, blob_url: null },
+  ], world.base, world.moved)
+  const patches = try addedValuePatchRecovery(repository)(addedTexts.map((text, index) => addedFile(textName(index), addedLines(text).length)), world.texts)
+  const cached = comparison("old\n", "new\n")
+  const cachedBefore = valueAdditionCount(cached)
+  Object.assign(cached.fullComparison?.after ?? {}, { text: "forged\n" })
+  const tooManySteps = comparison("a\n".repeat(1500), "b\n".repeat(1500))
+  const tooManyLines = comparison("a\n".repeat(100_001), "b\n".repeat(100_000))
+  return {
+    addedHolds: [...existingParent, ...truncatedTree, ...corruptBlob].map((file) => file.addedComparison),
+    removed: removed.map((file) => [file.removedComparison?.before, fileLines(file)]),
+    renames: renames.map((file) => [file.unchangedRename, file.patch]),
+    patches: patches.map((file) => file.patch),
+    myers: [
+      cachedBefore,
+      valueAdditionCount(cached),
+      [valueAdditionCount(comparison("a", "a\n")), valueDeletionCount(comparison("a", "a\n"))],
+      [valueAdditionCount(comparison("a\na\nb\n", "a\nb\na\n")), valueDeletionCount(comparison("a\na\nb\n", "a\nb\na\n"))],
+      [tooManySteps, tooManyLines].map((file) => [valueAdditionCount(file), valueDeletionCount(file), fileLines(file).lineSource]),
+    ],
+  }
+}
+
+effect function retainedBinary(world: Seeded) {
+  const logo = try addedBinaryRecovery(repository)([addedFile("logo.bin")], world.base, world.head)
+  const evidenceAt = (mergeSha: string, files: ReadonlyArray<FileChange>, scopeFiles: ReadonlyArray<FileChange> = logo): BinaryEvidence => ({
+    repository,
+    repositoryNodeId: world.nodeId,
+    repositoryDatabaseId,
+    pull: { head: { sha: world.head }, merge_commit_sha: mergeSha, merged_at: mergedAt },
+    files,
+    mergeCommitEvidence: { sha: mergeSha, parents: [{ sha: world.retainedParent }, { sha: world.head }], files: [] },
+    commitAttribution: [{ sha: world.head, changedPaths: ["logo.bin"], files: scopeFiles }],
+    commits: [{ sha: world.head, parents: [{ sha: world.base }] }],
+  })
+  const retained = try recoverRetainedBinaryAtMerge(evidenceAt(world.retainedMerge, logo))
+  const changed = try recoverRetainedBinaryAtMerge(evidenceAt(world.changedMerge, logo))
+  try rewriteNext(world.fake, repositoryRoute, (body) => ({ ...body, private: true }))
+  const privateRepository = try recoverRetainedBinaryAtMerge(evidenceAt(world.retainedMerge, logo))
+  try rewriteNext(world.fake, recursiveTree, (body) => ({ ...body, truncated: true }))
+  const truncatedTree = try recoverRetainedBinaryAtMerge(evidenceAt(world.retainedMerge, logo))
+  const binding = retained[0]?.addedBinary?.retainedAtMerge
+  return {
+    retained: binding,
+    trees: [try treeShaOf(world.retainedMerge), try treeShaOf(world.retainedParent)],
+    held: [...changed, ...privateRepository, ...truncatedTree].map((file) => file.addedBinary?.retainedAtMerge),
+    clean: binarySourceLimitations(evidenceAt(world.retainedMerge, retained)),
+    wrongParent: binding === undefined
+      ? undefined
+      : binarySourceLimitations(evidenceAt(world.retainedMerge, withRetained(retained, { ...binding, parentSha: "e".repeat(40) })))
+          .includes("Added binary accepted identity is unavailable: logo.bin"),
+    malformedScope: binarySourceLimitations(evidenceAt(world.retainedMerge, retained, withRetained(logo, malformedRetained)))
+      .includes("Invalid added binary proof: logo.bin"),
+    malformedSubmitted: binarySourceLimitations(evidenceAt(world.retainedMerge, withRetained(logo, malformedRetained)))
+      .includes("Invalid added binary proof: logo.bin"),
+  }
+}
+
+effect function binaryBudget(world: Seeded) {
+  const bulk = try captures(world)
+  const requests: ReadonlyArray<FileRequest> = [bulk.submitted, bulk.merged].flatMap((ref) => captureNames.map((path) => ({ repository, repositoryNodeId: world.nodeId, ref, path })))
+  const recovered = try recoveredFiles(requests, recoveryOf(requests, bulk.bytes, try treeShaOf(bulk.submitted)))
+  const added = captureNames.map((name) => addedFile(name))
+  const contentsBefore = requestCount(world.fake, contentsRoute)
+  const submitted = try addedBinaryRecovery(repository, recovered)(added, world.base, bulk.submitted)
+  const accepted = try addedBinaryRecovery(repository, recovered)(added, world.base, bulk.merged)
+  const contentsReads = requestCount(world.fake, contentsRoute) - contentsBefore
+  const evidenceOf = (count: number, acceptedScope: ReadonlyArray<FileChange> = accepted): BinaryEvidence => ({
+    repository,
+    repositoryNodeId: world.nodeId,
+    repositoryDatabaseId,
+    pull: { head: { sha: bulk.submitted }, merge_commit_sha: bulk.merged, merged_at: mergedAt },
+    files: submitted.slice(0, count),
+    mergeCommitEvidence: { sha: bulk.merged, parents: [{ sha: world.base }], files: acceptedScope.slice(0, count) },
+    commitAttribution: [{ sha: bulk.submitted, changedPaths: captureNames.slice(0, count), files: submitted.slice(0, count) }],
+    commits: [{ sha: bulk.submitted, parents: [{ sha: world.base }] }],
+  })
+  const conflicting = accepted.map((file, index) =>
+    index === 0 && file.addedBinary !== undefined
+      ? { ...file, addedBinary: { ...file.addedBinary, contentBase64: base64Text(captureBytes(9, captureSize)) } }
+      : file)
+  const oversized = try addedBinaryRecovery(repository)([addedFile("huge.gz")], world.base, bulk.oversized)
+  return {
+    sizes: [...submitted, ...accepted].map((file) => file.addedBinary?.size),
+    contentsReads,
+    repeatedOnce: binarySourceLimitations(evidenceOf(3)),
+    overBudget: binarySourceLimitations(evidenceOf(5)),
+    conflicting: binarySourceLimitations(evidenceOf(3, conflicting)).includes("Invalid added binary proof: capture-0.gz"),
+    oversized: oversized.map((file) => file.addedBinary),
+  }
+}
+
+effect function recoveredBinary(world: Seeded) {
+  const requests: ReadonlyArray<FileRequest> = [{ repository, repositoryNodeId: world.nodeId, ref: world.head, path: "logo.bin" }]
+  const recovered = try recoveredFiles(requests, recoveryOf(requests, new Map([["logo.bin", logoBytes]]), try treeShaOf(world.head)))
+  try failNext(world.fake, logoContents, { status: 404 })
+  const refusedContents = try addedBinaryRecovery(repository)([addedFile("logo.bin")], world.base, world.head)
+  try failNext(world.fake, logoContents, { status: 404 })
+  const contentsBefore = requestCount(world.fake, contentsRoute)
+  const fromRecovery = try addedBinaryRecovery(repository, recovered)([addedFile("logo.bin")], world.base, world.head)
+  const contentsReads = requestCount(world.fake, contentsRoute) - contentsBefore
+  recovered.verified(repository, world.head, "logo.bin")?.bytes.fill(0)
+  return {
+    refusedContents: refusedContents.map((file) => file.addedBinary),
+    contentsReads,
+    fromRecovery: fromRecovery.map((file) => [validAddedBinaryProof(file), file.addedBinary?.contentBase64, file.addedBinary?.contentReview]),
+    bytes: recovered.verified(repository, world.head, "logo.bin")?.bytes,
+  }
+}
+
+effect function capturedSources(world: Seeded) {
+  const capture = fileRecoveryCapture()
+  const pullPath = `/repos/${repository}/pulls/${world.pull}`
+  const commitPath = `/repos/${repository}/commits/${world.head}`
+  const commitRoute = `GET ${commitPath}`
+  const exactCommit = new RegExp(`^${commitRoute}$`, "u")
+  const arrayPage = `/repos/${repository}/commits/${world.retainedMerge}?per_page=100&page=1`
+  const labelled = (labels: ReadonlyArray<number>, repo: number) => (body: Readonly<Record<string, unknown>>) =>
+    ({ ...body, labels: labels.map((id) => ({ id })), repo: { id: repo }, milestone: { id: 2 } })
+  const source: RecoverySource = {
+    repository,
+    repositoryNodeId: world.nodeId,
+    pull: { head: { sha: world.head } },
+    files: [{ filename: "app.ts", status: "modified", additions: 0, deletions: 0, blob_url: null }],
+  }
+  provide capture.layer {
+    const pullReads = [try issueOf(pullPath)]
+    try rewriteNext(world.fake, `GET ${pullPath}`, reorderedPull)
+    pullReads.push(try issueOf(pullPath))
+    try rewriteNext(world.fake, `GET ${pullPath}`, (body) => ({ ...body, title: "Changed" }))
+    pullReads.push(try issueOf(pullPath))
+    const commitReads: string[] = []
+    for (const [labels, repo] of [[[1, 2], 1], [[2, 1], 1], [[1, 2], 3], [[1, 2], 1]] as const) {
+      try rewriteNext(world.fake, exactCommit, labelled(labels, repo))
+      commitReads.push(try issueOf(commitPath))
+    }
+    try issueOf(`/repos/${repository}/compare/${world.base}...${world.head}`)
+    const page = try issueOf(`${commitPath}?per_page=100&page=1`)
+    try rewriteNext(world.fake, `GET ${arrayPage}`, (body) => [body])
+    const arrayRead = try issueOf(arrayPage)
+    const selected = try capture.requests([source])
+    const invalid = capture.requests([{ ...source, repositoryNodeId: "" }]) catch (error) => error.reason
+    return { pullReads, commitReads, page, arrayRead, selected, invalid }
+  }
+}
+
+it.live('A tree, blob or path counts only when its Git hash matches, and only a verified tree proves absence (spec/slopbot/valueEvidence.md, "Story: Value only evidence that is complete and hash-verified"; spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read")', () => effect {
+  const world = try seeded()
+  provide gitHubOver(world) {
+    try same(try absenceAndHashes(world), {
+      tree: [true, ["README.md", "app.ts", "fix.ts", "logo.bin", "notes.md", "src", "src/deep", "src/deep/leaf.ts", "src/util.ts"]],
+      forgedTree: undefined,
+      truncatedTree: undefined,
+      lookup: [["fix.ts", fixBlobSha], ["gone.ts", "absent"]],
+      forgedLookup: undefined,
+      truncatedLookup: undefined,
+      reads: [undefined, undefined, undefined, [fixBlobSha, fixText]],
+    })
+  }
+})
+
+it.live('Omitted counts come only from hash-verified text, a truncated patch stays incomplete, and added binary bytes carry both digests within one budget (spec/slopbot/valueEvidence.md, "Line counts come from the exact patch or from hash-verified file text, and must sum to the commit\'s totals"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order")', () => effect {
+  const world = try seeded()
+  provide gitHubOver(world) {
+    const compared = try recoverFullValueComparisons(repository, listedFiles, world.base, world.head)
+    const added = try recoverAddedValueComparisons(repository, compared, world.base, world.head)
+    const recovered = try addedBinaryRecovery(repository)(added, world.base, world.head)
+    const [app, fix, logo, readme] = recovered
+    const logoEntry = (try verifiedTree(repository, world.head))?.entries.get("logo.bin")
+    const proof = logo?.addedBinary
+    const forgedProof: FileChange | undefined = logo === undefined || proof === undefined
+      ? undefined
+      : { ...logo, addedBinary: { ...proof, contentBase64: base64Text(textBytes("forged bytes")) } }
+    const digest = try Effect.try(() => jsonDigest(recovered))
+    try same({
+      lines: recovered.map((file) => [file.filename, fileLines(file)]),
+      patches: [app === undefined ? undefined : hasCompleteValuePatch(app), fix === undefined ? undefined : valuePatch(fix), readme?.fullComparison === undefined],
+      totals: [
+        commitLinesAgree([app, fix].flatMap((file) => file === undefined ? [] : [file]), { additions: 3, deletions: 1 }),
+        commitLinesAgree(recovered, { additions: 5, deletions: 1 }),
+      ],
+      binary: [
+        proof?.blobSha === logoEntry?.sha && proof?.blobSha === gitObjectId("blob", logoBytes),
+        proof?.sha256 === sha256Of(logoBytes),
+        proof?.size,
+        logo === undefined ? undefined : validAddedBinaryProof(logo),
+        forgedProof === undefined ? undefined : validAddedBinaryProof(forgedProof),
+        fix?.addedBinary,
+      ],
+      digest: digest === sha256Of(JSON.stringify(recovered)),
+    }, {
+      lines: [
+        ["app.ts", { lineSource: "ComparedText", patchAdded: 0, patchRemoved: 0, additions: 2, deletions: 1, textVerified: true }],
+        ["fix.ts", { lineSource: "AddedText", patchAdded: 0, patchRemoved: 0, additions: 1, deletions: 0, textVerified: true }],
+        ["logo.bin", { lineSource: "NoLineSource", patchAdded: 0, patchRemoved: 0, additions: 0, deletions: 0, textVerified: false }],
+        ["README.md", { lineSource: "ExactPatch", patchAdded: 1, patchRemoved: 0, additions: 2, deletions: 0, textVerified: false }],
+      ],
+      patches: [false, "@@ -0,0 +1 @@\n+export const fixed = true;", false],
+      totals: [true, false],
+      binary: [true, true, logoBytes.length, true, false, undefined],
+      digest: true,
+    })
+    try same(try recoveredText(world), {
+      addedHolds: [undefined, undefined, undefined],
+      removed: [[{ blobSha: gitObjectId("blob", textBytes("hello\n")), text: "hello\n" }, { lineSource: "RemovedText", patchAdded: 0, patchRemoved: 0, additions: 0, deletions: 1, textVerified: true }]],
+      renames: [
+        [{ baseSha: world.base, headSha: world.moved, blobSha: gitObjectId("blob", textBytes("notes\n")) }, ""],
+        [undefined, undefined],
+      ],
+      patches: addedTexts.map(expectedAddedPatch),
+      myers: [1, 0, [1, 1], [1, 1], [[0, 0, "NoLineSource"], [0, 0, "NoLineSource"]]],
+    })
+    const retainedTrees = [try treeShaOf(world.retainedMerge), try treeShaOf(world.retainedParent)]
+    try same(try retainedBinary(world), {
+      retained: { mergeSha: world.retainedMerge, parentSha: world.retainedParent, mergeTreeSha: retainedTrees[0], parentTreeSha: retainedTrees[1] },
+      trees: retainedTrees,
+      held: [undefined, undefined, undefined],
+      clean: [],
+      wrongParent: true,
+      malformedScope: true,
+      malformedSubmitted: true,
+    })
+    try same(try binaryBudget(world), {
+      sizes: Array.from({ length: captureNames.length * 2 }, () => captureSize),
+      contentsReads: 0,
+      repeatedOnce: [],
+      overBudget: ["Added binary evidence exceeds the recovery budget"],
+      conflicting: true,
+      oversized: [undefined],
+    })
+  }
+})
+
+it.live('A squash counts only when every submitted file replays onto the accepted parent to the exact accepted bytes (spec/slopbot/valueEvidence.md, "An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes")', () => effect {
+  const world = try seeded()
+  provide gitHubOver(world) {
+    const merge = { sha: world.accepted, parents: [{ sha: world.acceptedParent }], files: acceptedFiles }
+    const proof = try acceptedPatchReplay(repository, world.head, submittedFiles, merge)
+    const acceptedEntries = try verifiedPaths(repository, world.accepted, ["app.ts", "fix.ts"])
+    const parentEntries = try verifiedPaths(repository, world.acceptedParent, ["app.ts", "fix.ts"])
+    const tampered = try acceptedPatchReplay(repository, world.head, submittedFiles, { ...merge, sha: world.tampered })
+    const twoParents = try acceptedPatchReplay(repository, world.head, submittedFiles, { ...merge, parents: [{ sha: world.acceptedParent }, { sha: world.head }] })
+    const missingFile = try acceptedPatchReplay(repository, world.head, submittedFiles.slice(0, 1), merge)
+    try same({
+      proof: proof === undefined ? undefined : [proof.headSha, proof.mergeSha, proof.parentSha, proof.files.map((file) => [file.path, file.mode, file.parentBlobSha, file.acceptedBlobSha])],
+      parentFix: shaAt(parentEntries, "fix.ts"),
+      tampered,
+      twoParents,
+      missingFile,
+    }, {
+      proof: [world.head, world.accepted, world.acceptedParent, [
+        ["app.ts", "100644", shaAt(parentEntries, "app.ts"), shaAt(acceptedEntries, "app.ts")],
+        ["fix.ts", "100644", null, fixBlobSha],
+      ]],
+      parentFix: "absent",
+      tampered: undefined,
+      twoParents: undefined,
+      missingFile: undefined,
+    })
+  }
+})
+
+it.live('Privately recovered blobs are reused only when every byte, digest and binding matches, and the capture binds every raw source response (spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read")', () => effect {
+  const world = try seeded()
+  provide gitHubOver(world) {
+    const requests: ReadonlyArray<FileRequest> = [{ repository, repositoryNodeId: world.nodeId, ref: world.head, path: "fix.ts" }]
+    const recovery: FileRecovery = {
+      inputSha256: fileRequestsSha256(requests),
+      entries: [{ repository, repositoryNodeId: world.nodeId, ref: world.head, path: "fix.ts", treeSha: try treeShaOf(world.head), mode: "100644", blobSha: fixBlobSha }],
+      blobs: [{ sha: fixBlobSha, sha256: fixSha256, size: fixText.length, gzipBase64: fixGzipBase64 }],
+    }
+    const recovered = try recoveredFiles(requests, recovery)
+    const before = requestCount(world.fake)
+    const blob = try verifiedBlob(repository, recovered)("fix.ts", world.head)
+    const reads = requestCount(world.fake) - before
+    const refused = [
+      { ...recovery, inputSha256: "0".repeat(64) },
+      { ...recovery, blobs: recovery.blobs.map((entry) => ({ ...entry, size: entry.size - 1 })) },
+      { ...recovery, blobs: recovery.blobs.map((entry) => ({ ...entry, sha256: "0".repeat(64) })) },
+      { ...recovery, blobs: [] },
+    ]
+    const reasons: string[] = []
+    for (const candidate of refused) {
+      const outcome = recoveredFiles(requests, candidate) catch (error) => error.reason
+      reasons.push(typeof outcome === "string" ? outcome : "recovered")
+    }
+    try same({ blob: blob === undefined ? undefined : [blob.sha, new TextDecoder().decode(blob.bytes)], reads, reasons }, {
+      blob: [fixBlobSha, fixText],
+      reads: 0,
+      reasons: ["File recovery identity mismatch", "Recovered Git blob bytes changed", "Recovered Git blob bytes changed", "Missing recovered Git blob"],
+    })
+    try same(try recoveredBinary(world), {
+      refusedContents: [undefined],
+      contentsReads: 0,
+      fromRecovery: [[true, base64Text(logoBytes), "unviewed"]],
+      bytes: logoBytes,
+    })
+    const request = (ref: string, path: string): FileRequest => ({ repository, repositoryNodeId: world.nodeId, ref, path })
+    try same(try capturedSources(world), {
+      pullReads: ["read", "read", changedMetadata],
+      commitReads: ["read", changedMetadata, changedMetadata, "read"],
+      page: "read",
+      arrayRead: "Recovery commit inventory is incomplete",
+      selected: [
+        request(world.head, "README.md"),
+        request(world.head, "app.ts"),
+        request(world.head, "fix.ts"),
+        request(world.head, "logo.bin"),
+        request(world.base, "README.md"),
+        request(world.base, "app.ts"),
+      ].sort(byJson),
+      invalid: "Invalid source file recovery selection",
+    })
+  }
+})

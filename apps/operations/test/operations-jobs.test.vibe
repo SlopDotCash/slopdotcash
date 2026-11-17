@@ -1,0 +1,234 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { JobAdmission } from "@repo/ports/operations"
+import type { Network, ServiceConfig } from "../gen/operations__paymentJobs.ts"
+import { jobAdmission } from "../src/jobs/live.vibe"
+import { type JobRun, type NetworkWork, type Scope, begin, configure, jobState, observed, report, resetRun, run, settleExecution, settleRead, settled, startRead } from "../src/jobs/runner.vibe"
+
+const leaseMs = 14 * 60 * 1000
+const clock = settableClock(Date.UTC(2030, 0, 1))
+
+const Started = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "jobs-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return d1(try promise(() => database(mf, "SLOP_DB")))
+})
+
+const Services = Layer.mergeAll(Layer.provideMerge(jobAdmission({ leaseMs }), Layer.merge(Started, webCrypto)), clock.layer)
+
+error RpcOutage { network: Network }
+error ResponseLost { network: Network }
+
+interface Plan {
+  readonly outage?: ReadonlyArray<Network>
+  readonly revoked?: ReadonlyArray<Network>
+  readonly lost?: ReadonlyArray<Network>
+  readonly runIds?: Set<string>
+}
+
+function work(calls: string[], plan: Plan): NetworkWork<string, never> {
+  return {
+    read: ({ network, runId }) => effect {
+      calls.push(`read ${network}`)
+      plan.runIds?.add(runId)
+      if (plan.outage?.includes(network) === true) throw new RpcOutage({ network })
+      return `${network} balances`
+    },
+    recheck: ({ network }) => effect {
+      calls.push(`recheck ${network}`)
+      return plan.revoked?.includes(network) === true ? { role: "RevokedAuthority", release: "Released" } as const : { role: "CurrentAuthority", release: "Released" } as const
+    },
+    execute: ({ network }, read) => effect {
+      calls.push(`execute ${read}`)
+      if (plan.lost?.includes(network) === true) throw new ResponseLost({ network })
+      return "ExecutionSucceeded" as const
+    },
+  }
+}
+
+function config(mode: ServiceConfig["mode"], networks: Network[], changes: Partial<ServiceConfig> = {}): ServiceConfig {
+  return { mode, verdict: "ValidConfig", role: "CurrentAuthority", release: "Released", networks, ...changes }
+}
+
+function job<A, R>(key: string, settings: ServiceConfig, plan: NetworkWork<A, R>, scope: Scope = "network"): JobRun<A, R> {
+  return { kind: scope === "network" ? "fee-converter" : "referral-accrual", key, scope, config: settings, work: plan }
+}
+
+function statuses(summary: { readonly job: { readonly rows: ReadonlyArray<{ readonly network: Network; readonly status: string }> } }) {
+  return summary.job.rows.map((row) => `${row.network} ${row.status}`)
+}
+
+effect function leases() {
+  return (try (try D1).all(sql`SELECT kind, job_key, network FROM job_admissions ORDER BY rowid`)).map((row) => [row.kind, row.job_key, row.network])
+}
+
+effect function lateCallback(plan: NetworkWork<string, never>) {
+  provide jobState() {
+    try configure(config("DryRun", ["Base"]))
+    try begin(1)
+    try startRead("Base", 1)
+    try settleRead("Base", 1, plan.read({ network: "Base", runId: "late-1" }))
+    try report()
+    try resetRun()
+    try configure(config("Execute", ["Base"]))
+    try begin(2)
+    try startRead("Base", 2)
+    const before = try observed()
+    const staleRead = settleRead("Base", 1, plan.read({ network: "Base", runId: "late-1" })) catch (error) => error._tag
+    const staleExecution = settleExecution("Base", 1, plan.execute({ network: "Base", runId: "late-1" }, "stale")) catch (error) => error._tag
+    const after = try observed()
+    return { refused: [staleRead, staleExecution], unchanged: JSON.stringify(after) === JSON.stringify(before), runId: after.runId }
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(Services, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Off, invalid, unauthorized and unreleased configurations start no work, and a dry run reads without executing (spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"; spec/operations/paymentJobs.md, "Dry runs can finish a read and cannot reach execution")', () => effect {
+    const calls: string[] = []
+    const plan = work(calls, {})
+    const off = try run(job("off", config("Off", ["Base"]), plan))
+    const invalid = try run(job("invalid", config("Execute", ["Base"], { verdict: "InvalidConfig" }), plan))
+    const unauthorized = try run(job("unauthorized", config("DryRun", ["Base"], { role: "AuthorityUnavailable" }), plan))
+    const unreleased = try run(job("unreleased", config("Execute", ["Base"], { release: "NotReleased" }), plan))
+    const empty = try run(job("empty", config("DryRun", []), plan))
+    const refusedCalls = [...calls]
+    const refusedLeases = try leases()
+    const dry = try run(job("dry", config("DryRun", ["Solana", "Base"], { release: "NotReleased" }), work(calls, { outage: ["Base"] })))
+    const verdicts: unknown[] = []
+    for (const summary of [off, invalid, unauthorized, unreleased, empty, dry]) {
+      const verdict = settled(summary) catch (error) => [error.refused, error.failed]
+      verdicts.push(verdict)
+    }
+    try same({
+      notStarted: [off, invalid, unauthorized, unreleased, empty].map((summary) => [summary.outcome, summary.job.phase, summary.job.executionAdmissions]),
+      refusedCalls,
+      refusedLeases,
+      dry: [dry.outcome, statuses(dry), dry.job.executionAdmissions],
+      dryCalls: calls,
+      leasesAfter: try leases(),
+      verdicts,
+    }, {
+      notStarted: [["NotStarted", "Configuring", 0], ["NotStarted", "Configuring", 0], ["NotStarted", "Configuring", 0], ["NotStarted", "Configuring", 0], ["NotStarted", "Configuring", 0]],
+      refusedCalls: [],
+      refusedLeases: [],
+      dry: ["Reported", ["Base Failed", "Solana Completed"], 0],
+      dryCalls: ["read Base", "read Solana"],
+      leasesAfter: [],
+      verdicts: [off, [true, []], [true, []], [true, []], [true, []], [false, ["Base"]]],
+    })
+  })
+
+  it.effect('An execute run isolates each network, reports an unknown send as uncertain, refuses an overlapping invocation, and leaves the other networks running while one network lease is held (spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/paymentJobs.md, "Dry runs can finish a read and cannot reach execution"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"; spec/operations/paymentJobs.md, "A completed summary preserves each network result and retries allocate a fresh run")', () => effect {
+    const calls: string[] = []
+    const overlapping: string[] = []
+    const runIds = new Set<string>()
+    const plan = work(calls, { outage: ["Ethereum"], revoked: ["Robinhood"], lost: ["Solana"], runIds })
+    const settings = config("Execute", ["Solana", "Robinhood", "Ethereum", "Base"])
+    const nested: NetworkWork<string, JobAdmission | Experimental.Crypto.Crypto> = {
+      ...plan,
+      read: (at) => effect {
+        if (at.network === "Base") {
+          const inner = try run(job("execute", settings, work([], {})))
+          overlapping.push(inner.outcome, ...inner.busy)
+        }
+        return try plan.read(at)
+      },
+    }
+    const first = try run(job("execute", settings, nested))
+    const failure = settled(first) catch (error) => ({ refused: error.refused, failed: error.failed, uncertain: error.uncertain })
+    const retry = try run(job("execute", config("Execute", ["Base"]), work(calls, {})))
+    const revokedRetry = try run(job("execute", config("Execute", ["Base"], { role: "RevokedAuthority" }), work(calls, {})))
+    const admission = try JobAdmission
+    const solana = { kind: "fee-converter", key: "execute", network: "Solana" } as const
+    const solanaHeld = try admission.admit(solana, "long solana run")
+    const partial = try run(job("execute", config("Execute", ["Solana", "Base"]), work(calls, {})))
+    const partialVerdict = (settled(partial) catch (error) => error._tag) === partial
+    const heldDuring = try leases()
+    try admission.finish(solana, "long solana run")
+    try same({
+      first: [first.outcome, statuses(first), first.job.executionAdmissions, first.busy],
+      boundRuns: [...runIds],
+      overlapping,
+      calls,
+      failure,
+      retry: [retry.outcome, statuses(retry), retry.job.executionAdmissions, retry.runId !== first.runId],
+      revokedRetry: [revokedRetry.outcome, revokedRetry.runId !== retry.runId],
+      partial: [solanaHeld, partial.outcome, statuses(partial), partial.job.executionAdmissions, partial.busy, partialVerdict],
+      heldDuring,
+      leases: try leases(),
+    }, {
+      first: ["Reported", ["Base Completed", "Ethereum Failed", "Robinhood Failed", "Solana Uncertain"], 2, []],
+      boundRuns: [first.runId],
+      overlapping: ["Busy", "Base", "Ethereum", "Robinhood", "Solana"],
+      calls: [
+        "read Base", "recheck Base", "execute Base balances",
+        "read Ethereum",
+        "read Robinhood", "recheck Robinhood",
+        "read Solana", "recheck Solana", "execute Solana balances",
+        "read Base", "recheck Base", "execute Base balances",
+        "read Base", "recheck Base", "execute Base balances",
+      ],
+      failure: { refused: false, failed: ["Ethereum", "Robinhood"], uncertain: ["Solana"] },
+      retry: ["Reported", ["Base Completed"], 1, true],
+      revokedRetry: ["NotStarted", true],
+      partial: ["Admitted", "Reported", ["Base Completed"], 1, ["Solana"], true],
+      heldDuring: [["fee-converter", "execute", "Solana"]],
+      leases: [],
+    })
+  })
+
+  it.effect('A late callback from an earlier run cannot change the next run, and a run that loses its lease signs nothing and never releases its successor (spec/operations/paymentJobs.md, "A completed summary preserves each network result and retries allocate a fresh run"; spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work")', () => effect {
+    const calls: string[] = []
+    const plan = work(calls, {})
+    const late = try lateCallback(plan)
+    const admission = try JobAdmission
+    const held = { kind: "referral-accrual", key: "accrual" }
+    const perNetwork = { kind: "fee-converter", key: "conversion", network: "Solana" } as const
+    const taken = [try admission.admit(held, "first"), try admission.admit(held, "second"), try admission.admit(perNetwork, "first")]
+    try admission.finish(perNetwork, "first")
+    clock.advance(leaseMs + 1)
+    const lapsedRenewal = try admission.renew(held, "first")
+    const successor = try admission.admit(held, "successor")
+    try admission.finish(held, "first")
+    const afterStaleFinish = try leases()
+    const successorRenewal = try admission.renew(held, "successor")
+    try admission.finish(held, "successor")
+    const lapsedCalls: string[] = []
+    const lapsedPlan = work(lapsedCalls, {})
+    const takeovers: string[] = []
+    const overtaken: NetworkWork<string, JobAdmission> = {
+      ...lapsedPlan,
+      read: (at) => effect {
+        clock.advance(leaseMs + 1)
+        takeovers.push(try (try JobAdmission).admit(held, "next cron"))
+        return try lapsedPlan.read(at)
+      },
+    }
+    const lapsed = try run(job("accrual", config("Execute", ["Base"]), overtaken, "job"))
+    const afterLapsedRun = try leases()
+    try admission.finish(held, "next cron")
+    try same({ late, calls, taken, lapsedRenewal, successor, afterStaleFinish, successorRenewal, lapsed: [lapsed.outcome, statuses(lapsed), lapsed.job.executionAdmissions], takeovers, lapsedCalls, afterLapsedRun, leases: try leases() }, {
+      late: { refused: ["NotCurrent", "NotCurrent"], unchanged: true, runId: 2 },
+      calls: ["read Base"],
+      taken: ["Admitted", "Busy", "Admitted"],
+      lapsedRenewal: false,
+      successor: "Admitted",
+      afterStaleFinish: [["referral-accrual", "accrual", ""]],
+      successorRenewal: true,
+      lapsed: ["Reported", ["Base Failed"], 0],
+      takeovers: ["Admitted"],
+      lapsedCalls: ["read Base"],
+      afterLapsedRun: [["referral-accrual", "accrual", ""]],
+      leases: [],
+    })
+  })
+})

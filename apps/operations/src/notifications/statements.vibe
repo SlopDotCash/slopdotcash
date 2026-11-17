@@ -1,0 +1,63 @@
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Consent binds one verified destination version and opt-out suppresses waiting mail"
+import { isoNow } from "@repo/platform/clock"
+import { type Statement, sql } from "@repo/platform/d1"
+import type { MailCategory } from "@repo/ports/backend"
+import { type Notice, NoticeOutbox, type NoticeFanout, Notices, type Suppression } from "@repo/ports/operations"
+import { storedKind } from "./rows.vibe"
+
+const always = sql`1`
+
+function canonicalGithubId(value: Statement): Statement {
+  return sql`typeof(${value}) = 'text' AND length(${value}) BETWEEN 1 AND 20 AND ${value} GLOB '[1-9]*' AND ${value} NOT GLOB '*[^0-9]*'`
+}
+
+export function saveNotice(notice: Notice, createdAt: string, onlyIf: Statement = always): Statement {
+  const recipient = sql`${notice.recipientGithubId}`
+  return sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+    SELECT ${notice.eventKey}, ${notice.recipientGithubId}, ${storedKind(notice.kind)}, ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${createdAt}
+    WHERE ${canonicalGithubId(recipient)} AND (${onlyIf})
+    ON CONFLICT (event_key, recipient_github_id) DO NOTHING`
+}
+
+export function fanoutNotice(fanout: NoticeFanout, createdAt: string): Statement {
+  return sql`WITH audience(recipient) AS (${fanout.recipients})
+    INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+    SELECT ${fanout.eventKey}, recipient, ${storedKind(fanout.kind)}, ${fanout.subject}, ${fanout.detail ?? null}, ${fanout.actionPath}, ${fanout.sourceAt}, ${createdAt}
+      FROM audience
+     WHERE ${canonicalGithubId(sql`recipient`)} AND recipient IS NOT ${fanout.excludedGithubId ?? null} AND (${fanout.onlyIf ?? always})
+    ON CONFLICT (event_key, recipient_github_id) DO NOTHING`
+}
+
+const waiting = sql`state IN ('queued', 'retrying')`
+
+function withdrawn(category: MailCategory, recipient: string, version: string, at: string): ReadonlyArray<Statement> {
+  const boundHere = sql`(destination_version IS NULL OR destination_version = ${version})`
+  return category === "SecurityMail"
+    ? [
+      sql`UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${recipient} AND ${waiting} AND ${boundHere}`,
+      sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${recipient} AND essential = 1 AND ${waiting} AND ${boundHere}`,
+    ]
+    : [sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE recipient_github_id = ${recipient} AND essential = 0 AND ${waiting} AND ${boundHere}`]
+}
+
+function suppressWaiting(suppression: Suppression, at: string): ReadonlyArray<Statement> {
+  return suppression.categories.flatMap((category) => withdrawn(category, suppression.recipientGithubId, suppression.version, at))
+}
+
+export const noticesLive = Layer.succeed(Notices, {
+  statements: (batch) => effect {
+    const at = try isoNow()
+    return batch.notices.map((notice) => saveNotice(notice, at, batch.onlyIf))
+  },
+  fanout: (fanout) => effect {
+    return [fanoutNotice(fanout, try isoNow())]
+  },
+})
+
+export const noticeOutboxLive = Layer.succeed(NoticeOutbox, {
+  suppress: (suppression) => effect {
+    return suppressWaiting(suppression, try isoNow())
+  },
+})
+
+export const noticePorts = Layer.mergeAll(noticesLive, noticeOutboxLive)

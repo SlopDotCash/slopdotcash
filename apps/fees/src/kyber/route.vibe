@@ -1,0 +1,192 @@
+// spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoNow, nowSeconds } from "@repo/platform/clock"
+import type { Address, Hex } from "@repo/platform/chain/evm"
+import type { EvmNetwork } from "../signer/intents.ts"
+import { definitions } from "../runtime/networks.vibe"
+import { kyberswap } from "../runtime/pins.ts"
+import { decimal, wholeBig } from "../evm/abi.ts"
+import { type SwapDescription, buildSlippage, decodedSwap, hopsOf, impactBps, usdMicro } from "./swap.ts"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { minimumOutput as floor } from "../kernels/arithmetic.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function minimumOutput(amountOut: bigint, slippageBps: bigint): bigint { return floor(amountOut, slippageBps) }
+}
+import { errorText, minimumOutput } from verified
+
+export error KyberUnavailable { path: string; detail: string }
+export error KyberRefused { path: string; status: number; message: string }
+export error RouteMismatch { issue: string }
+
+export interface KyberSettings {
+  readonly clientId: string
+  readonly buyback: boolean
+}
+
+export const responseLimitBytes = 2_000_000
+export const deadlineSeconds = 20 * 60
+
+const Envelope = Schema.Struct({ code: Schema.optionalKey(Schema.Number), message: Schema.optionalKey(Schema.String), data: Schema.optionalKey(Schema.Unknown) })
+const Routed = Schema.Struct({ routeSummary: Schema.Unknown, routerAddress: Schema.String })
+const Summary = Schema.Struct({
+  tokenIn: Schema.String,
+  tokenOut: Schema.String,
+  amountIn: Schema.String,
+  amountOut: Schema.String,
+  amountInUsd: Schema.optionalKey(Schema.Unknown),
+  amountOutUsd: Schema.optionalKey(Schema.Unknown),
+  gas: Schema.optionalKey(Schema.Unknown),
+  gasUsd: Schema.optionalKey(Schema.Unknown),
+  l1FeeUsd: Schema.optionalKey(Schema.Unknown),
+  route: Schema.optionalKey(Schema.Unknown),
+})
+type Summary = typeof Summary.Type
+schema Built { data: string; routerAddress: string; transactionValue: string }
+
+effect function kyber(network: EvmNetwork, path: string, settings: KyberSettings, body?: unknown) {
+  const label = path.split("?")[0] ?? path
+  const slug = definitions[network].kyberChain
+  if (slug === undefined) throw new KyberUnavailable({ path: label, detail: `${network} has no KyberSwap chain` })
+  const url = `${kyberswap.api}/${slug}/api/v1/${path}`
+  const headers = { "x-client-id": settings.clientId, "content-type": "application/json", accept: "application/json" }
+  const request = body === undefined ? HttpClientRequest.get(url, { headers }) : HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(url, { headers }), body)
+  const response = HttpClient.execute(request) catch effect (error) => { throw new KyberUnavailable({ path: label, detail: errorText(String(error)) }) }
+  const bytes = boundedBytes(response, responseLimitBytes, "KyberSwap") catch effect () => { throw new KyberUnavailable({ path: label, detail: "KyberSwap response too large or unreadable" }) }
+  const envelope = Schema.decodeUnknownEffect(Schema.fromJsonString(Envelope))(new TextDecoder().decode(bytes)) catch effect () => {
+    throw new KyberUnavailable({ path: label, detail: `KyberSwap returned HTTP ${response.status}` })
+  }
+  if (response.status < 200 || response.status > 299 || envelope.code !== 0 || envelope.data === undefined) {
+    const message = errorText(`KyberSwap ${label}: ${String(envelope.message ?? response.status).slice(0, 200)}`)
+    if (response.status >= 400 && response.status < 500) throw new KyberRefused({ path: label, status: response.status, message })
+    throw new KyberUnavailable({ path: label, detail: message })
+  }
+  return envelope.data
+}
+
+interface Route { readonly raw: unknown; readonly summary: Summary; readonly amountOut: bigint }
+
+effect function route(network: EvmNetwork, token: Address, amount: bigint, target: Address, settings: KyberSettings) {
+  const query = new URLSearchParams({ tokenIn: token.toLowerCase(), tokenOut: target.toLowerCase(), amountIn: amount.toString(), gasInclude: "true" })
+  const data = try kyber(network, `routes?${query.toString()}`, settings)
+  const malformed = () => new KyberUnavailable({ path: "routes", detail: "KyberSwap route is malformed" })
+  const routed = Schema.decodeUnknownEffect(Routed)(data) catch effect () => { throw malformed() }
+  const summary = Schema.decodeUnknownEffect(Summary)(routed.routeSummary) catch effect () => { throw malformed() }
+  const amountOut = decimal(summary.amountOut)
+  if (routed.routerAddress.toLowerCase() !== kyberswap.router || summary.tokenIn.toLowerCase() !== token.toLowerCase()
+    || summary.tokenOut.toLowerCase() !== target.toLowerCase() || summary.amountIn !== amount.toString() || amountOut === undefined)
+    throw new RouteMismatch({ issue: "KyberSwap route does not match the request" })
+  return { raw: routed.routeSummary, summary, amountOut } satisfies Route
+}
+
+export interface KyberQuote {
+  readonly amountIn: bigint
+  readonly amountOut: bigint
+  readonly minAmountOut: bigint
+  readonly priceImpactBps: number
+  readonly gasCostMicro: bigint
+  readonly summary: string
+}
+
+export type Quoted = { readonly kind: "Quoted"; readonly quote: KyberQuote } | { readonly kind: "NoRoute"; readonly detail: string }
+
+export effect function quote(network: EvmNetwork, token: Address, amount: bigint, target: Address, slippageBps: number, settings: KyberSettings) {
+  if (!Number.isSafeInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) throw new RouteMismatch({ issue: "slippage is outside 0..10000 basis points" })
+  const found = route(network, token, amount, target, settings) catch effect (error) => {
+    if (error._tag === "KyberRefused") return error.message
+    throw error
+  }
+  if (typeof found === "string") return { kind: "NoRoute", detail: found } satisfies Quoted
+  if (found.amountOut === 0n) return { kind: "NoRoute", detail: "KyberSwap quoted zero output" } satisfies Quoted
+  const { summary } = found
+  const gasUsd = usdMicro(summary.gasUsd)
+  const l1FeeUsd = summary.l1FeeUsd === undefined && network === "Ethereum" ? 0n : usdMicro(summary.l1FeeUsd)
+  if (gasUsd === undefined || l1FeeUsd === undefined) throw new KyberUnavailable({ path: "routes", detail: "KyberSwap gas cost is unavailable" })
+  const observedAt = try isoNow()
+  const recorded = {
+    aggregator: "kyberswap",
+    chain: definitions[network].kyberChain ?? null,
+    router: kyberswap.router,
+    amountInUsd: summary.amountInUsd ?? null,
+    amountOutUsd: summary.amountOutUsd ?? null,
+    gas: summary.gas ?? null,
+    gasUsd: summary.gasUsd ?? null,
+    l1FeeUsd: summary.l1FeeUsd ?? null,
+    hops: hopsOf(summary.route),
+    observedAt,
+  }
+  return {
+    kind: "Quoted",
+    quote: {
+      amountIn: amount,
+      amountOut: found.amountOut,
+      minAmountOut: minimumOutput(found.amountOut, wholeBig(slippageBps) ?? 0n),
+      priceImpactBps: impactBps(summary.amountInUsd, summary.amountOutUsd),
+      gasCostMicro: gasUsd + l1FeeUsd,
+      summary: try orDie(Effect.try(() => JSON.stringify(recorded))),
+    },
+  } satisfies Quoted
+}
+
+export function referenceStable(network: EvmNetwork, settings: KyberSettings): Address | undefined {
+  const target = definitions[network].target
+  if (target.kind === "usdc") return target.address as Address
+  const stable = definitions[network].stable
+  return settings.buyback && stable !== undefined ? stable as Address : undefined
+}
+
+export effect function nativeValue(network: EvmNetwork, wei: bigint, settings: KyberSettings) {
+  if (wei <= 0n) return 0n
+  const reference = referenceStable(network, settings)
+  if (reference === undefined) return undefined
+  const priced = try quote(network, kyberswap.native as Address, wei, reference, 0, settings)
+  return priced.kind === "Quoted" ? priced.quote.amountOut : undefined
+}
+
+export interface SwapRequest {
+  readonly network: EvmNetwork
+  readonly wallet: Address
+  readonly token: Address
+  readonly target: Address
+  readonly amountIn: bigint
+  readonly minimumOutput: bigint
+  readonly slippageBps: number
+  readonly settings: KyberSettings
+}
+
+export interface BuiltSwap { readonly data: Hex; readonly value: bigint; readonly description: SwapDescription; readonly deadline: number }
+
+const hexData = /^0x(?:[0-9a-fA-F]{2})+$/u
+
+export function swapMatches(description: SwapDescription | undefined, request: SwapRequest) {
+  return description !== undefined && description.srcToken === request.token.toLowerCase() && description.dstToken === request.target.toLowerCase()
+    && description.dstReceiver === request.wallet.toLowerCase() && description.amount === request.amountIn
+    && description.feeReceivers === 0 && description.feeAmounts === 0
+}
+
+export effect function builtSwap(request: SwapRequest) {
+  const { network, wallet, settings } = request
+  const fresh = try route(network, request.token, request.amountIn, request.target, settings)
+  const deadline = (try nowSeconds()) + deadlineSeconds
+  const data = try kyber(network, "route/build", settings, {
+    routeSummary: fresh.raw,
+    sender: wallet,
+    recipient: wallet,
+    slippageTolerance: buildSlippage(request.slippageBps),
+    deadline,
+    source: settings.clientId,
+  })
+  const built = Schema.decodeUnknownEffect(Built)(data) catch effect () => { throw new KyberUnavailable({ path: "route/build", detail: "KyberSwap build is malformed" }) }
+  if (built.routerAddress.toLowerCase() !== kyberswap.router) throw new RouteMismatch({ issue: "KyberSwap build names an unexpected router" })
+  const value = request.token.toLowerCase() === kyberswap.native ? request.amountIn : 0n
+  if (built.transactionValue !== value.toString()) throw new RouteMismatch({ issue: "KyberSwap build carries a different native value" })
+  if (!hexData.test(built.data)) throw new RouteMismatch({ issue: "KyberSwap calldata is not hex" })
+  const calldata = built.data as Hex
+  const description = decodedSwap(calldata)
+  if (description === undefined || !swapMatches(description, request)) throw new RouteMismatch({ issue: "KyberSwap calldata does not match the order" })
+  if (description.minReturnAmount < request.minimumOutput) throw new RouteMismatch({ issue: "price moved below the recorded minimum" })
+  return { data: calldata, value, description, deadline } satisfies BuiltSwap
+}

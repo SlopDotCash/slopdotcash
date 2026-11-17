@@ -1,0 +1,14 @@
+// spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"
+import { isoNow } from "@repo/platform/clock"
+import { sql } from "@repo/platform/d1"
+import { Notices } from "@repo/ports/operations"
+
+export const receiptNotices = Layer.succeed(Notices, {
+  statements: (batch) => effect {
+    const at = try isoNow()
+    return batch.notices.map((notice) => sql`INSERT INTO notifications (event_key, recipient_github_id, kind, subject, detail, action_path, source_at, created_at)
+      SELECT ${notice.eventKey}, ${notice.recipientGithubId}, 'security_report_received', ${notice.subject}, ${notice.detail ?? null}, ${notice.actionPath}, ${notice.sourceAt}, ${at}
+      WHERE (${batch.onlyIf ?? sql`1`}) ON CONFLICT (event_key, recipient_github_id) DO NOTHING`)
+  },
+  fanout: () => succeed([]),
+} satisfies Notices.Shape)

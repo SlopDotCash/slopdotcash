@@ -1,0 +1,435 @@
+import { assert, layer } from "@effect/vitest"
+import type { EmailMessage } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, DatabaseFailure, type Statement, d1, decoded, sql } from "@repo/platform/d1"
+import { rolesFrom } from "@repo/platform/roles"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { mailCapture } from "@repo/platform/testing/mail"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { EmailConsent, ProjectAudience, Registry } from "@repo/ports/backend"
+import { type Notice, Notices } from "@repo/ports/operations"
+import { ContributorAudience } from "@repo/ports/points"
+import { SecurityNoticeAccess } from "@repo/ports/security"
+import type { Release } from "../src/notifications/rows.vibe"
+import { noticePorts } from "../src/notifications/statements.vibe"
+import { mailAdmins } from "../src/notify/admin.vibe"
+import { claimOne } from "../src/notify/claim.vibe"
+import { NotifySettings, notifySettings, releaseFor } from "../src/notify/config.vibe"
+import { DisputeAudience, EmailEnrollment, SlopbotAudience, VettingBans } from "../src/notify/ports.vibe"
+import { reconcile, reconcileRequest } from "../src/notify/reconcile.vibe"
+import { type OutgoingMail, deliver, dispatch, mailVia } from "../src/notify/send.vibe"
+import { sendVerification } from "../src/notify/verification.vibe"
+
+const start = Date.UTC(2030, 0, 1)
+const clock = settableClock(start)
+const first = "9200000001"
+const second = "9200000002"
+const member = "9200000003"
+const owner = "9200000004"
+const caseId = "sc_delivery_journey"
+const projectId = "delivery-journey"
+const memberVersion = "3".repeat(64)
+const ownerVersion = "4".repeat(64)
+const unsubscribeKey = "ab".repeat(32)
+const inboxUrl = "https://slop.test/inbox"
+const from = "notifications@slop.cash"
+const seededAt = "2029-12-01T00:00:00.000Z"
+
+const secondDestination = { email: "second@slop.test", verifiedAt: seededAt, evidenceReference: "operator check second", backupGithubId: first }
+
+const pilot = JSON.stringify({
+  inboxUrl,
+  recipients: {
+    [first]: { email: "first@slop.test", verifiedAt: seededAt, evidenceReference: "operator check first", backupGithubId: second },
+    [second]: secondDestination,
+  },
+})
+
+type Behaviour = "accept" | "quota" | "lose"
+
+const capture = mailCapture()
+const plans = new Map<string, Behaviour[]>()
+
+function quotaRejection() {
+  return Object.assign(new Error("daily sending limit reached"), { code: "E_DAILY_LIMIT_EXCEEDED" })
+}
+
+function providerSend(message: EmailMessage): Promise<void> {
+  const mail = message as OutgoingMail
+  const behaviour = plans.get(mail.to)?.shift() ?? "accept"
+  if (behaviour === "quota") return Promise.reject(quotaRejection())
+  const refusal = capture.binding(mail)
+  if (refusal !== undefined) return Promise.reject(new Error(refusal))
+  return behaviour === "lose" ? Promise.reject(new Error("Network connection lost.")) : Promise.resolve()
+}
+
+const caseAccess = new Map<string, number>([[first, 0], [second, 1]])
+const askedCase: string[] = []
+const owners = new Set<string>([owner])
+const askedAudience: string[] = []
+
+const Database = Layer.unwrap(effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: "delivery-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return d1(try promise(() => database(mf, "SLOP_DB")))
+})
+
+const faults = { failingBatch: 0 }
+
+const FaultyDatabase = Layer.provide(Layer.effect(D1, effect {
+  const db = try D1
+  return {
+    all: (statement) => db.all(statement),
+    run: (statement) => db.run(statement),
+    batch: (statements) => effect {
+      if (faults.failingBatch === 1) {
+        faults.failingBatch = 0
+        throw new DatabaseFailure({ operation: "batch", message: "D1 unavailable" })
+      }
+      if (faults.failingBatch > 1) faults.failingBatch -= 1
+      return try db.batch(statements)
+    },
+  }
+}), Database)
+
+schema ConsentedRow { readonly address: string; readonly version: string }
+schema DestinationRow { readonly address: string; readonly version: string; readonly verifiedAt: string }
+schema VerificationRow { readonly address: string; readonly state: "queued" | "sending" | "sent" | "unknown" }
+
+const deliveryStates = { queued: "Queued", sending: "Sending", sent: "Sent", unknown: "DeliveryUnknown" } as const
+const storedDelivery = { Queued: "queued", Sending: "sending", Sent: "sent", DeliveryUnknown: "unknown" } as const
+
+const BackendPorts = Layer.mergeAll(
+  Layer.effect(EmailConsent, effect {
+    const db = try D1
+    return {
+      destination: (consent) => effect {
+        const consented = consent.category === "SecurityMail" ? sql`p.security_enabled = 1` : sql`p.enabled = 1`
+        const found = try db.all(sql`SELECT d.email AS address, d.destination_version AS version FROM notification_email_destinations d
+          JOIN notification_email_preferences p ON p.github_id = d.github_id AND p.destination_version = d.destination_version
+          WHERE d.github_id = ${consent.githubId} AND ${consented}`)
+        return (try decoded(ConsentedRow, found, "consented destination"))[0]
+      },
+    }
+  }),
+  Layer.effect(EmailEnrollment, effect {
+    const db = try D1
+    return {
+      registered: (githubId) => effect {
+        const found = try db.all(sql`SELECT email AS address, destination_version AS version, verified_at AS verifiedAt FROM notification_email_destinations WHERE github_id = ${githubId}`)
+        return (try decoded(DestinationRow, found, "registered destination"))[0]
+      },
+      unsubscribeIssued: (issued) => effect {
+        return sql`INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) VALUES (${issued.tokenHash}, ${issued.version}, ${issued.issuedAt}) ON CONFLICT (token_hash) DO NOTHING`
+      },
+      pendingVerification: (read) => effect {
+        const found = try db.all(sql`SELECT email AS address, state FROM notification_email_verifications
+          WHERE id = ${read.verificationId} AND github_id = ${read.githubId} AND token_hash = ${read.tokenHash}
+            AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at > ${try isoNow()}`)
+        const row = (try decoded(VerificationRow, found, "pending verification"))[0]
+        return row === undefined ? undefined : { address: row.address, delivery: deliveryStates[row.state] }
+      },
+      markVerification: (mark) => effect {
+        const before = mark.nextState === "Sending" ? "queued" : "sending"
+        const changed = try db.run(sql`UPDATE notification_email_verifications SET state = ${storedDelivery[mark.nextState]} WHERE id = ${mark.verificationId} AND github_id = ${mark.githubId} AND state = ${before}`)
+        return changed === 1
+      },
+    }
+  }),
+)
+
+const nobody = sql`SELECT NULL WHERE 0`
+
+const AudiencePorts = Layer.mergeAll(
+  Layer.succeed(SecurityNoticeAccess, {
+    forCase: (read) => effect {
+      askedCase.push(`${read.caseId}:${read.githubId}`)
+      const hours = caseAccess.get(read.githubId)
+      return { allowed: hours !== undefined, acknowledgeHours: hours ?? 0 }
+    },
+  }),
+  Layer.succeed(ProjectAudience, {
+    listedBy: () => effect { return nobody },
+    owners: (project) => effect {
+      askedAudience.push("owners")
+      const [current] = [...owners]
+      return current === undefined ? nobody : sql`SELECT ${current} WHERE ${project} IS NOT NULL`
+    },
+  }),
+  Layer.succeed(Registry, {
+    project: () => effect { askedAudience.push("project"); return undefined },
+    byRepository: () => effect { return undefined },
+    byPath: () => effect { return undefined },
+    active: () => effect { return [] },
+    fence: () => effect { return sql`SELECT 1` },
+  }),
+  Layer.succeed(ContributorAudience, { affected: () => effect { askedAudience.push("affected"); return nobody } }),
+  Layer.succeed(SlopbotAudience, {
+    escalatedAppeal: () => effect { askedAudience.push("appeal"); return undefined },
+    scamPenalty: () => effect { askedAudience.push("scam"); return undefined },
+  }),
+  Layer.succeed(DisputeAudience, { dispute: () => effect { askedAudience.push("dispute"); return undefined } }),
+  Layer.succeed(VettingBans, { serviceBan: () => effect { askedAudience.push("ban"); return false } }),
+)
+
+const Settings = Layer.provide(notifySettings({
+  NOTIFY_FROM_ADDRESS: from,
+  NOTIFY_INBOX_URL: inboxUrl,
+  NOTIFY_GENERAL_EMAIL_ENABLED: "true",
+  NOTIFY_UNSUBSCRIBE_KEY: unsubscribeKey,
+  SECURITY_MAIL_PILOT: pilot,
+  ADMIN_EMAILS: "ops@slop.test, lead@slop.test",
+}), webCrypto)
+
+const World = Layer.mergeAll(
+  Layer.provideMerge(BackendPorts, FaultyDatabase),
+  AudiencePorts,
+  noticePorts,
+  Settings,
+  webCrypto,
+  clock.layer,
+  mailVia({ send: providerSend }, (mail) => mail),
+  rolesFrom({ ADMIN_GITHUB_IDS: "9200000099", PROJECT_MODERATOR_GITHUB_IDS: "" }),
+)
+
+function caseNotice(eventKey: string, recipientGithubId: string): Notice {
+  return { eventKey, recipientGithubId, kind: "SecurityCase", subject: caseId, actionPath: `/security?case=${caseId}`, sourceAt: seededAt }
+}
+
+effect function save(notices: ReadonlyArray<Notice>) {
+  try (try D1).batch(try (try Notices).statements({ notices }))
+}
+
+schema OutboxState { readonly id: string; readonly state: string; readonly attempts: number; readonly destination_digest: string | null }
+
+effect function outbox(eventKey: string, recipient: string) {
+  const found = try (try D1).all(sql`SELECT id, state, attempts, destination_digest FROM security_notification_outbox WHERE event_key = ${eventKey} AND recipient_github_id = ${recipient}
+    UNION ALL SELECT id, state, attempts, destination_digest FROM activity_notification_outbox WHERE event_key = ${eventKey} AND recipient_github_id = ${recipient}`)
+  const [row] = try decoded(OutboxState, found, "journey outbox")
+  if (row === undefined) return try die(new Error(`no outbox row for ${eventKey}`))
+  return row
+}
+
+effect function securityPilot() {
+  const settings = try NotifySettings
+  if (settings.security.kind !== "on") return try die(new Error("the journey's security pilot is not configured"))
+  return { pilot: settings.security, release: releaseFor(settings) }
+}
+
+effect function activityPilot() {
+  const settings = try NotifySettings
+  if (settings.activity.kind !== "on") return try die(new Error("the journey's activity mail is not configured"))
+  return { pilot: settings.activity, release: releaseFor(settings) }
+}
+
+effect function dispatchSecurity() {
+  const { pilot, release } = try securityPilot()
+  try dispatch("security", pilot, from, release)
+}
+
+effect function reconciled(input: unknown, release: Release) {
+  const request = try reconcileRequest(input)
+  return request === undefined ? "refused" : try reconcile("security", request, release)
+}
+
+effect function escalationKeys(recipient: string) {
+  return (try (try D1).all(sql`SELECT event_key FROM notifications WHERE recipient_github_id = ${recipient} AND event_key LIKE 'security-escalation:%' ORDER BY rowid`)).map((row) => String(row.event_key))
+}
+
+function bodyOf(raw: string | undefined): string {
+  return (raw ?? "").replace(/=\r\n/gu, "").replace(/=([0-9A-F]{2})/gu, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+}
+
+function mailsFor(deliveryId: string) {
+  return capture.messages().filter((mail) => (mail.headers["message-id"] ?? "").includes(`slop-notice-${deliveryId}-`))
+}
+
+function sentTo(deliveryId: string) {
+  return mailsFor(deliveryId).map((mail) => [mail.to, mail.headers["message-id"], mail.headers.subject])
+}
+
+function seed(): ReadonlyArray<Statement> {
+  const manifest = JSON.stringify({ id: projectId, status: "paused" })
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (${projectId}, 1, ${manifest}, ${"a".repeat(64)}, 'Listed', ${seededAt})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (${projectId}, 'paused', 1, ${manifest}, ${"a".repeat(64)}, ${seededAt}, ${seededAt})`,
+    sql`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state,
+        receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, revision, created_at, updated_at)
+      VALUES (${caseId}, ${projectId}, 'example/delivery', 'GHSA-dddd-eeee-ffff', '7', 'reporter', 'claimed',
+        'received', 'not-started', 'not-applicable', 'not-applicable', 'embargoed', 'private', 'none', 1, ${seededAt}, ${seededAt})`,
+    ...[[member, "member@slop.test", memberVersion], [owner, "owner@slop.test", ownerVersion]].flatMap(([githubId = "", email = "", version = ""]) => [
+      sql`INSERT INTO notification_email_destinations (github_id, email, destination_version, verified_at) VALUES (${githubId}, ${email}, ${version}, ${seededAt})`,
+      sql`INSERT INTO notification_email_preferences (github_id, enabled, security_enabled, destination_version, updated_at) VALUES (${githubId}, 1, 1, ${version}, ${seededAt})`,
+    ]),
+  ]
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A claim has one owner, a lost response stays uncertain and escalates once, and nothing is resent (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access")', () => effect {
+    try (try D1).batch(seed())
+    try save([caseNotice("security-case:lost-1", first)])
+    const lost = try outbox("security-case:lost-1", first)
+    const { pilot, release } = try securityPilot()
+    plans.set("first@slop.test", ["lose"])
+    const raced = try.all [claimOne("security", { id: lost.id, recipient_github_id: first }, release), claimOne("security", { id: lost.id, recipient_github_id: first }, release)]
+    const owned = raced.filter((claimed) => claimed !== undefined)
+    for (const claimed of owned) try deliver(claimed, pilot, from, release)
+    const afterLoss = try outbox("security-case:lost-1", first)
+    try dispatchSecurity()
+    try dispatchSecurity()
+    const [copyKey = ""] = try escalationKeys(second)
+    const copy = try outbox(copyKey, second)
+    const [lostMail] = mailsFor(lost.id)
+    try same({
+      owners: owned.map((claimed) => claimed.attempt),
+      afterLoss: [afterLoss.state, afterLoss.attempts],
+      lostMails: sentTo(lost.id),
+      privateText: [bodyOf(lostMail?.raw).includes(caseId), bodyOf(lostMail?.raw).includes(projectId), bodyOf(lostMail?.raw).includes("Acknowledge the notice in Slop.")],
+      escalated: [copyKey, copy.state, sentTo(copy.id).map(([to]) => to)],
+      final: (try outbox("security-case:lost-1", first)).state,
+    }, {
+      owners: [1],
+      afterLoss: ["ambiguous", 1],
+      lostMails: [["first@slop.test", `<slop-notice-${lost.id}-1@slop.cash>`, "Slop private inbox notice"]],
+      privateText: [false, false, true],
+      escalated: [`security-escalation:${lost.id}`, "provider-accepted", ["second@slop.test"]],
+      final: "ambiguous",
+    })
+  })
+
+  it.effect('A quota rejection retries, independent evidence settles the exact attempt, forged evidence is refused, and an overdue notice escalates (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access")', () => effect {
+    const { release } = try securityPilot()
+    try save([caseNotice("security-case:quota-1", second)])
+    plans.set("second@slop.test", ["quota"])
+    try dispatchSecurity()
+    const retrying = try outbox("security-case:quota-1", second)
+    clock.advance(61_000)
+    try dispatchSecurity()
+    const accepted = try outbox("security-case:quota-1", second)
+    const evidence = { attempt: 2, deliveryId: accepted.id, destinationDigest: accepted.destination_digest ?? "", evidenceReference: "provider log 2030-01-01 entry 7", outcome: "delivered" }
+    const forged = try reconciled({ ...evidence, state: "delivered" }, release)
+    const malformed = try reconciled({ ...evidence, deliveryId: accepted.id.toUpperCase() }, release)
+    const wrongDigest = try reconciled({ ...evidence, destinationDigest: "0".repeat(64) }, release)
+    const wrongAttempt = try reconciled({ ...evidence, attempt: 1 }, release)
+    const settled = try reconciled(evidence, release)
+    const replayed = try reconciled(evidence, release)
+    clock.advance(3_600_000)
+    try dispatchSecurity()
+    const secondDigest = try sha256Hex(JSON.stringify(secondDestination))
+    try same({
+      retrying: [retrying.state, retrying.attempts, retrying.destination_digest === secondDigest],
+      accepted: [accepted.state, accepted.attempts, sentTo(accepted.id).length],
+      reconciled: [forged, malformed, wrongDigest, wrongAttempt, settled, replayed],
+      delivered: (try outbox("security-case:quota-1", second)).state,
+      overdue: try escalationKeys(first),
+    }, {
+      retrying: ["retrying", 1, true],
+      accepted: ["provider-accepted", 2, 1],
+      reconciled: ["refused", "refused", false, false, true, false],
+      delivered: "delivered",
+      overdue: [`security-escalation:${accepted.id}`],
+    })
+  })
+
+  it.effect('The fifth failed attempt exhausts and escalates; a revoked role, a failed ownership read and a stale claim send nothing (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"; spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access")', () => effect {
+    const { pilot, release } = try securityPilot()
+    try save([caseNotice("security-case:exhaust-1", second)])
+    plans.set("second@slop.test", ["quota", "quota", "quota", "quota", "quota"])
+    const attempts: Array<[string, number]> = []
+    for (const wait of [61_000, 121_000, 241_000, 481_000, 0]) {
+      try dispatchSecurity()
+      const row = try outbox("security-case:exhaust-1", second)
+      attempts.push([row.state, row.attempts])
+      clock.advance(wait)
+    }
+    const exhausted = try outbox("security-case:exhaust-1", second)
+
+    try save([caseNotice("security-case:revoked-1", first)])
+    const revoked = try outbox("security-case:revoked-1", first)
+    const claimed = try claimOne("security", { id: revoked.id, recipient_github_id: first }, release)
+    caseAccess.delete(first)
+    if (claimed !== undefined) try deliver(claimed, pilot, from, release)
+    caseAccess.set(first, 0)
+    const afterRevocation = try outbox("security-case:revoked-1", first)
+
+    try save([caseNotice("security-case:stale-1", first)])
+    const stale = try outbox("security-case:stale-1", first)
+    try claimOne("security", { id: stale.id, recipient_github_id: first }, release)
+    clock.advance(300_001)
+    try dispatchSecurity()
+    const expired = try outbox("security-case:stale-1", first)
+
+    try save([caseNotice("security-case:unread-owner-1", first)])
+    const unread = try outbox("security-case:unread-owner-1", first)
+    const prepared = try claimOne("security", { id: unread.id, recipient_github_id: first }, release)
+    faults.failingBatch = 3
+    if (prepared !== undefined) try deliver(prepared, pilot, from, release)
+    const afterFailedRead = try outbox("security-case:unread-owner-1", first)
+    try same({
+      attempts,
+      exhausted: [exhausted.state, exhausted.attempts, sentTo(exhausted.id).length],
+      revoked: [afterRevocation.state, afterRevocation.attempts, sentTo(revoked.id).length, askedCase.includes(`${caseId}:${first}`)],
+      stale: [expired.state, expired.attempts, sentTo(stale.id).length],
+      failedOwnershipRead: [afterFailedRead.state, afterFailedRead.attempts, sentTo(unread.id).length, faults.failingBatch],
+      backups: [(try escalationKeys(first)).slice(1), (try escalationKeys(second)).slice(1)],
+    }, {
+      attempts: [["retrying", 1], ["retrying", 2], ["retrying", 3], ["retrying", 4], ["exhausted", 5]],
+      exhausted: ["exhausted", 5, 0],
+      revoked: ["suppressed", 1, 0, true],
+      stale: ["ambiguous", 1, 0],
+      failedOwnershipRead: ["retrying", 1, 0, 0],
+      backups: [[`security-escalation:${exhausted.id}`], [`security-escalation:${stale.id}`]],
+    })
+  })
+
+  it.effect('Activity mail carries the one-click unsubscribe headers, a former owner gets nothing, and the transport sends verification and admin mail (spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/slopbot/spendAlerts.md, "One claim per run, in order, and an ambiguous send is never resent")', () => effect {
+    const db = try D1
+    const { pilot, release } = try activityPilot()
+    try save([
+      { eventKey: "wallet-claim:delivery-1", recipientGithubId: member, kind: "WalletChanged", subject: "base", actionPath: "/account#wallets", sourceAt: seededAt },
+      { eventKey: "project-ready:delivery-1", recipientGithubId: owner, kind: "ProjectReady", subject: projectId, actionPath: `/projects/${projectId}`, sourceAt: seededAt },
+    ])
+    owners.clear()
+    try dispatch("activity", pilot, from, release)
+    const wallet = try outbox("wallet-claim:delivery-1", member)
+    const ready = try outbox("project-ready:delivery-1", owner)
+    const [walletMail] = mailsFor(wallet.id)
+    const token = /token=([a-f0-9]{64}\.[a-f0-9]{64})>/u.exec(walletMail?.headers["list-unsubscribe"] ?? "")?.[1] ?? ""
+    const issued = try db.all(sql`SELECT destination_version FROM notification_email_unsubscribe_tokens WHERE token_hash = ${try sha256Hex(token)}`)
+
+    const verificationToken = "c".repeat(64)
+    const verificationId = "d".repeat(64)
+    const now = try isoNow()
+    try db.run(sql`INSERT INTO notification_email_verifications (id, github_id, request_key, email, address_key, token_hash, activity_enabled, security_enabled, state, created_at, expires_at)
+      VALUES (${verificationId}, ${member}, 'request-1', 'member-new@slop.test', 'member-new@slop.test', ${try sha256Hex(verificationToken)}, 1, 1, 'queued', ${now}, ${new Date(Date.parse(now) + 1_800_000).toISOString()})`)
+    const verified = try sendVerification({ githubId: member, id: verificationId, token: verificationToken }, pilot, from)
+    const replay = try sendVerification({ githubId: member, id: verificationId, token: verificationToken }, pilot, from)
+    const wrongToken = try sendVerification({ githubId: member, id: verificationId, token: "e".repeat(64) }, pilot, from)
+    const [verificationState] = try db.all(sql`SELECT state FROM notification_email_verifications WHERE id = ${verificationId}`)
+    const verificationMails = mailsFor(verificationId)
+
+    const admins = try mailAdmins({ kind: "spend", notice: { month: "2030-01", thresholdMicroUsd: 500_000_000, recordedMicroUsd: 512_340_000, estimatedCalls: 3 } })
+    const adminMails = capture.messages().filter((mail) => mail.headers.subject?.startsWith("Slopbot API cost") === true)
+    try same({
+      wallet: [wallet.state, wallet.destination_digest === memberVersion, walletMail?.to, walletMail?.headers["list-unsubscribe-post"], token.startsWith(`${memberVersion}.`), issued],
+      walletText: bodyOf(walletMail?.raw).includes(`Stop email notifications: ${inboxUrl}#unsubscribe-email=${token}`),
+      formerOwner: [ready.state, sentTo(ready.id).length, askedAudience],
+      verification: [verified, replay, wrongToken, verificationState, verificationMails.map((mail) => [mail.to, mail.headers.subject]), bodyOf(verificationMails[0]?.raw).includes(`${inboxUrl}#verify-email=${verificationToken}`)],
+      admins: [admins, adminMails.map((mail) => mail.to)],
+    }, {
+      wallet: ["provider-accepted", true, "member@slop.test", "List-Unsubscribe=One-Click", true, [{ destination_version: memberVersion }]],
+      walletText: true,
+      formerOwner: ["suppressed", 0, ["owners"]],
+      verification: [true, true, false, { state: "sent" }, [["member-new@slop.test", "Verify your Slop email"]], true],
+      admins: [{ kind: "sent", sent: 2, recipients: 2 }, ["ops@slop.test", "lead@slop.test"]],
+    })
+  })
+})

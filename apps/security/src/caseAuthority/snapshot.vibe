@@ -1,0 +1,94 @@
+// spec/security/cases.md, "Authority snapshots advance and triager membership is audited at the next revision"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { rows, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { Authority as RepositoryAuthority, Registry, Restrictions } from "@repo/ports/backend"
+import type { Authority } from "../../gen/security__cases.ts"
+
+export interface ProgramApprovers {
+  readonly technical: ReadonlyArray<string>
+  readonly financial: ReadonlyArray<string>
+  readonly dispute: ReadonlyArray<string>
+  readonly sponsor: ReadonlyArray<string>
+}
+
+export interface CaseScope {
+  readonly caseId: string
+  readonly projectId: string
+  readonly reporterGithubId: string
+  readonly viewerGithubId: string
+  readonly program: ProgramApprovers | undefined
+}
+
+export interface CaseAuthority {
+  readonly authority: Authority
+  readonly triagers: ReadonlyArray<number>
+}
+
+export error AuthorityUnavailable { projectId: string }
+
+schema Member { github_id: string }
+
+function githubNumber(id: string) {
+  const value = /^[1-9][0-9]{0,15}$/u.test(id) ? Number(id) : Number.NaN
+  return Number.isSafeInteger(value) ? [value] : []
+}
+
+function numbers(ids: ReadonlyArray<string>) {
+  return [...new Set(ids.flatMap(githubNumber))].sort((left, right) => left - right)
+}
+
+export effect function activeTriagers(caseId: string) {
+  const found = try rows(Member, sql`SELECT github_id FROM security_case_members WHERE case_id=${caseId} AND role='triager' AND revoked_at IS NULL ORDER BY added_at, github_id`)
+  return numbers(found.map((member) => member.github_id))
+}
+
+effect function repositoryAuthority(scope: CaseScope) {
+  const project = try (try Registry).project(scope.projectId)
+  const first = project?.repositories[0]
+  if (project === undefined || first === undefined) return "denied" as const
+  const read = try (try RepositoryAuthority).repository({ actorGithubId: scope.viewerGithubId, repositoryId: first.id })
+  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return "unavailable" as const
+  const granted = read.installation === "Installed" && (scope.viewerGithubId === project.stewardGithubId || read.permission === "PermissionVerified")
+  return granted ? "granted" as const : "denied" as const
+}
+
+export effect function caseAuthority(scope: CaseScope, epoch: number) {
+  const viewer = scope.viewerGithubId
+  const triagers = try activeTriagers(scope.caseId)
+  const roles = try Roles
+  const moderators = numbers(try roles.snapshot("moderator"))
+  const viewerNumber = githubNumber(viewer)
+  const holdsRole = viewerNumber.some((id) => triagers.includes(id) || moderators.includes(id))
+  let technical: ReadonlyArray<string> = []
+  if (viewer !== scope.reporterGithubId) {
+    if (scope.program !== undefined) technical = scope.program.technical.filter((id) => id === viewer)
+    else {
+      const read = try repositoryAuthority(scope)
+      if (read === "unavailable" && !holdsRole) throw new AuthorityUnavailable({ projectId: scope.projectId })
+      if (read === "granted") technical = [viewer]
+    }
+  }
+  const restrictions = try Restrictions
+  const banned: string[] = []
+  for (const account of new Set([viewer, scope.reporterGithubId])) {
+    if ((try restrictions.account(account)).banned) banned.push(account)
+  }
+  const closure = try restrictions.project(scope.projectId)
+  const program = scope.program
+  return {
+    authority: {
+      epoch,
+      technical: numbers(technical),
+      financial: numbers(program === undefined ? [] : program.financial.filter((id) => id === viewer)),
+      moderators,
+      banned: numbers(banned),
+      relatedParties: numbers(program === undefined ? [] : [...program.technical, ...program.financial, ...program.dispute, ...program.sponsor]),
+      programRestricted: closure.restricted,
+    },
+    triagers,
+  } satisfies CaseAuthority
+}
+
+export function sameRoles(left: Authority, right: Authority) {
+  return JSON.stringify({ ...left, epoch: 0 }) === JSON.stringify({ ...right, epoch: 0 })
+}

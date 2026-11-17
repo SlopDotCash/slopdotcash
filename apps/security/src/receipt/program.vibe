@@ -1,0 +1,63 @@
+// spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
+import type { Statement } from "@repo/platform/d1"
+import type { Json, ReadFailure } from "@repo/ports/backend"
+import type { Amount } from "../../gen/settlement__money.ts"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { unpaidTerms } from "../../gen/security__terms.effect.vibe"
+import type { ProgramApprovers } from "../caseAuthority/snapshot.vibe"
+
+export type FrozenTerms = { readonly [key: string]: Json }
+
+export interface ReportingProgram {
+  readonly repository: string
+  readonly approvers: ProgramApprovers | undefined
+  readonly status: string | undefined
+  readonly closesAt: string | undefined
+}
+
+export interface ProgramAtReceipt {
+  readonly revision: number
+  readonly publishedAt: string
+  readonly terms: FrozenTerms | undefined
+}
+
+export service ReportingPrograms {
+  current(projectId: string): (ReportingProgram | undefined)!ReadFailure
+  atReceipt(read: { readonly projectId: string; readonly receivedAt: string }): (ProgramAtReceipt | undefined)!ReadFailure
+  unbanned(githubId: string): Statement!!
+}
+
+function limbs(base: string): Amount {
+  if (!/^[0-9]+$/u.test(base)) return []
+  const digits = base.replace(/^0+(?=.)/u, "")
+  const parts: number[] = []
+  for (let end = digits.length; end > 0; end -= 3) parts.push(Number(digits.slice(Math.max(0, end - 3), end)))
+  return parts
+}
+
+function text(terms: FrozenTerms, key: string) {
+  const value = terms[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function assetOf(terms: FrozenTerms) {
+  const asset = terms.asset
+  if (asset !== undefined && asset !== null) return JSON.stringify(asset)
+  return text(terms, "currency") ?? ""
+}
+
+export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number, receivedAtMs: number): ReceiptTerms {
+  const terms = program.terms
+  if (terms === undefined) return unpaidTerms(program.revision, receivedAtMs)
+  return {
+    revision: program.revision,
+    publishedAt: publishedAtMs,
+    receivedAt: receivedAtMs,
+    paidTerms: true,
+    fundingPolicy: text(terms, "fundingPolicy") === "after-approval" ? "AfterApproval" : "Prefunded",
+    eligibility: text(terms, "eligibility") === "in-scope-security" ? "InScopeSecurity" : "CriticalLossOfFunds",
+    offeredGross: limbs(text(terms, "grossMinor") ?? ""),
+    split: terms.split === undefined ? "StandardSplit" : "FullAward",
+    asset: assetOf(terms),
+  }
+}

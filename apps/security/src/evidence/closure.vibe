@@ -1,0 +1,178 @@
+// spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
+import { first, sql } from "@repo/platform/d1"
+import type { Refused } from "@repo/platform/http"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { type AssemblyFile, type AssemblyRecord, assemblyAssessment, assemblyRecord, assertFilesystemReferences, base64Content, bindProvenanceSource, decodedJson, parseAssemblyManifest, parseProvenanceReport } from "./assembly.ts"
+import { refused, rows } from "./refused.vibe"
+import { type ObjectRow, type Run, bytes, objectsOf, run, verify } from "./store.vibe"
+
+const hex = /^[a-f0-9]{64}$/u
+
+type Role = (name: string, digest?: unknown) => AssemblyFile!Refused
+
+schema PersistedAssessment { assessmentId: string; projectId: string; revision: number; manifestSha256: string; commitSha: string; templateSha256: string }
+
+effect function readRecord(inventory: ReadonlyMap<string, ObjectRow>, current: Run, digest: unknown) {
+  const row = typeof digest === "string" ? inventory.get(digest) : undefined
+  if (row === undefined) throw refused(rows.assemblyIncomplete)
+  const found = try bytes(row, current)
+  return try Effect.try({ try: () => assemblyRecord(decodedJson(found)), catch: () => refused(rows.assemblyIncomplete) })
+}
+
+effect function required(inventory: ReadonlyMap<string, ObjectRow>, digest: unknown, size?: unknown) {
+  const row = typeof digest === "string" ? inventory.get(digest) : undefined
+  if (row === undefined || (size !== undefined && size !== row.size_bytes)) throw refused(rows.assemblyIncomplete)
+  return row
+}
+
+function same(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+effect function filesystem(inventory: ReadonlyMap<string, ObjectRow>, current: Run, role: Role, guest: AssemblyRecord) {
+  if (guest.filesystemEncoding !== "json-utf8") throw refused(rows.filesystemTransport)
+  try role("raw-filesystem-capture", guest.filesystemSha256)
+  const capture = try readRecord(inventory, current, guest.filesystemSha256)
+  if (capture.schema !== "slop-filesystem-capture-v1" || capture.state !== "incomplete" || capture.executionAuthorized !== false || capture.root !== "/tmp/slop-quarantine") throw refused(rows.filesystemInvalid)
+  const objects = try Effect.try({ try: () => assemblyRecord(capture.objects), catch: () => refused(rows.assemblyIncomplete) })
+  if (Object.keys(objects).length > 256) throw refused(rows.filesystemCount)
+  const descriptors: { sha256: string; bytes: number }[] = []
+  let total = 0
+  for (const [sha, encoded] of Object.entries(objects)) {
+    if (!hex.test(sha) || typeof encoded !== "string" || encoded.length > 1024 * 1024) throw refused(rows.filesystemReference)
+    const content = base64Content(encoded)
+    if (content.kind === "invalid") throw refused(rows.filesystemEncoding)
+    if (content.kind === "noncanonical") throw refused(rows.filesystemNoncanonical)
+    total += content.bytes.length
+    if (total > 672 * 1024 || (try sha256Hex(content.bytes)) !== sha) throw refused(rows.filesystemBytes)
+    try required(inventory, sha, content.bytes.length)
+    try role(`captured-filesystem-object:${sha}`, sha)
+    descriptors.push({ sha256: sha, bytes: content.bytes.length })
+  }
+  try Effect.try({ try: () => assertFilesystemReferences(capture, new Map(descriptors.map((item) => [item.sha256, item.bytes]))), catch: () => refused(rows.filesystemEntries) })
+  const summary = try readRecord(inventory, current, (try role("untrusted-filesystem-inventory")).sha256)
+  if (!same(summary, { ...capture, objects: descriptors })) throw refused(rows.filesystemSummary)
+}
+
+export effect function assemblyClosure(assessment: string, runId: string) {
+  const current = try run(assessment, runId)
+  if (current.row.assembly_sha256 === null) throw refused(rows.assemblyMissing)
+  const objects = try objectsOf(assessment, runId)
+  const inventory = new Map(objects.map((row) => [row.sha256, row]))
+  const read = (digest: unknown) => readRecord(inventory, current, digest)
+  const manifestRecord = try read(current.row.assembly_sha256)
+  const parsed = try Effect.try({ try: () => parseAssemblyManifest(manifestRecord), catch: () => refused(rows.assemblyMismatch) })
+  const bound = (value: unknown) => effect {
+    const binding = Effect.try(() => assemblyAssessment(value)) catch () => undefined
+    return binding !== undefined && same(binding, parsed.assessment)
+  }
+  const persisted = try first(PersistedAssessment, sql`SELECT id AS assessmentId,project_id AS projectId,revision,manifest_sha256 AS manifestSha256,commit_sha AS commitSha,template_sha256 AS templateSha256 FROM vetting_assessments WHERE id=${assessment}`)
+  if (!(try bound(persisted)) || parsed.assessment.assessmentId !== assessment) throw refused(rows.assemblyMismatch)
+  const roles = new Map(parsed.files.map((file) => [file.role, file]))
+  for (const file of parsed.files) try required(inventory, file.sha256, file.bytes)
+  const role = (name: string, digest?: unknown) => effect {
+    const file = roles.get(name)
+    if (file === undefined || (digest !== undefined && file.sha256 !== digest)) throw refused(rows.roleIncomplete)
+    return file
+  }
+  try role("queue", parsed.queuedInputsSha256)
+  try role("runtime-overlay", parsed.runtimeOverlaySha256)
+  const queue = try read(parsed.queuedInputsSha256)
+  if (queue.schema !== "slop-queued-inputs-v1" || queue.state !== "quarantined" || !(try bound(queue.assessment)) || typeof queue.manifestText !== "string" || (try sha256Hex(utf8(queue.manifestText))) !== parsed.assessment.manifestSha256) throw refused(rows.queueMismatch)
+  try role("source-inventory", queue.sourceInventorySha256)
+  const source = try read(queue.sourceInventorySha256)
+  if (source.schema !== "slop-source-inventory-v1" || source.state !== "quarantined" || source.commitSha !== parsed.assessment.commitSha || !Array.isArray(source.records) || !Array.isArray(queue.inputs)) throw refused(rows.sourceMismatch)
+  for (const item of [...source.records, ...queue.inputs]) {
+    const entry = try Effect.try({ try: () => assemblyRecord(item), catch: () => refused(rows.assemblyIncomplete) })
+    if (!(entry.type === "commit" && entry.sha256 === null)) try required(inventory, entry.sha256, entry.bytes)
+  }
+  if (roles.has("source-release-comparison") || roles.has("provenance-source-archive") || roles.has("provenance-release-archive")) {
+    provenance(inventory, current, role, source, String(queue.sourceInventorySha256)) catch effect () => { throw refused(rows.provenanceMismatch) }
+  }
+  const vm = try read((try role("offline-vm")).sha256)
+  if (vm.schema !== "slop-offline-vm-evidence-v1" || vm.state !== "incomplete" || typeof vm.serialSha256 !== "string" || !hex.test(vm.serialSha256) || vm.overlaySha256 !== parsed.runtimeOverlaySha256) throw refused(rows.vmMismatch)
+  try role(roles.has("raw-vm-serial") ? "raw-vm-serial" : "untrusted-vm-serial", vm.serialSha256)
+  if (typeof vm.diskMapSha256 === "string") try role("block-allocation-map", vm.diskMapSha256)
+  else if (vm.diskMapSha256 !== null) throw refused(rows.diskMapInvalid)
+  const guestFile = roles.get("guest-receipt")
+  if (guestFile !== undefined) {
+    const guest = try read(guestFile.sha256)
+    const profileFile = try role("approved-fixture-profile")
+    const profile = try read(profileFile.sha256)
+    if (
+      guest.schema !== "slop-guest-syscall-evidence-v1" || guest.state !== "incomplete" || guest.fixtureOnly !== true ||
+      guest.providerCallsAuthorized !== false || guest.publicationAuthorized !== false ||
+      guest.sourceInventorySha256 !== queue.sourceInventorySha256 || guest.vmEvidenceSha256 !== (try role("offline-vm")).sha256 ||
+      guest.serialSha256 !== vm.serialSha256 || guest.profileSha256 !== profileFile.sha256 || guest.seedSha256 !== vm.seedSha256 ||
+      !Array.isArray(guest.sourceSha256) || profile.schema !== "slop-harmless-guest-profile-v1" || profile.fixtureOnly !== true ||
+      profile.sourceInventorySha256 !== queue.sourceInventorySha256
+    ) throw refused(rows.guestMismatch)
+    for (const digest of guest.sourceSha256) try required(inventory, digest)
+    for (const [name, digest] of [["untrusted-trace", guest.traceSha256], ["untrusted-output", guest.outputSha256]] as const) {
+      try required(inventory, digest)
+      try role(name, digest)
+    }
+    if (guest.filesystemSha256 !== undefined) try filesystem(inventory, current, role, guest)
+    if (guest.kernelArtifactGate !== undefined || profile.kernelPolicySha256 !== undefined) {
+      const gate = try Effect.try({ try: () => assemblyRecord(guest.kernelArtifactGate), catch: () => refused(rows.assemblyIncomplete) })
+      if (gate.policySha256 !== profile.kernelPolicySha256) throw refused(rows.kernelProfile)
+      try required(inventory, gate.postCollectorOutputSha256)
+      try role("untrusted-post-collector-probe", gate.postCollectorOutputSha256)
+    }
+  }
+  if (roles.has("syscall-review") || roles.has("syscall-index")) {
+    const summary = try read((try role("syscall-review")).sha256)
+    const indexFile = try role("syscall-index", summary.indexSha256)
+    try required(inventory, summary.indexSha256, summary.indexBytes)
+    const index = try read(indexFile.sha256)
+    const raw = try role("untrusted-trace")
+    if (
+      summary.schema !== "slop-syscall-review-v1" || index.schema !== "slop-syscall-index-v1" ||
+      summary.rawSha256 !== raw.sha256 || index.rawSha256 !== raw.sha256 || summary.rawBytes !== raw.bytes || index.rawBytes !== raw.bytes ||
+      summary.state !== "incomplete" || index.state !== "incomplete" ||
+      summary.providerCallsAuthorized !== false || index.providerCallsAuthorized !== false ||
+      summary.publicationAuthorized !== false || index.publicationAuthorized !== false
+    ) throw refused(rows.observations)
+  }
+  const dependency = roles.get("dependency-inventory")
+  if (dependency !== undefined) {
+    const record = try read(dependency.sha256)
+    if (record.schema !== "slop-dependency-inventory-v1" || record.state !== "quarantined" || record.executionAuthorized !== false || typeof record.profileSha256 !== "string" || !hex.test(record.profileSha256) || record.sourceInventorySha256 !== queue.sourceInventorySha256 || !Array.isArray(record.records)) throw refused(rows.dependencyMismatch)
+    try role("dependency-profile", record.profileSha256)
+    for (const value of record.records) {
+      const entry = try Effect.try({ try: () => assemblyRecord(value), catch: () => refused(rows.assemblyIncomplete) })
+      try required(inventory, entry.sha256, entry.bytes)
+      try required(inventory, entry.inspectionSha256)
+    }
+  }
+  for (const file of parsed.files.filter((candidate) => candidate.role.startsWith("artifact:") || candidate.role.startsWith("dependency-artifact:"))) {
+    const record = try read(file.sha256)
+    if (!Array.isArray(record.records)) throw refused(rows.lineageMissing)
+    for (const value of record.records) {
+      const entry = try Effect.try({ try: () => assemblyRecord(value), catch: () => refused(rows.assemblyIncomplete) })
+      try required(inventory, entry.sha256, entry.bytes)
+      if (entry.parentSha256) try required(inventory, entry.parentSha256)
+    }
+  }
+  const review = try read(parsed.reviewInputSha256)
+  if (!Array.isArray(review.items) || !Array.isArray(review.visibilityGaps) || !same([...review.visibilityGaps].sort(), [...parsed.visibilityGaps].sort())) throw refused(rows.reviewGaps)
+  for (const value of review.items) {
+    const item = try Effect.try({ try: () => assemblyRecord(value), catch: () => refused(rows.assemblyIncomplete) })
+    if (typeof item.text !== "string") throw refused(rows.reviewBytes)
+    const text = utf8(item.text)
+    if ((try sha256Hex(text)) !== item.sha256) throw refused(rows.reviewDigest)
+    try required(inventory, item.sha256, text.length)
+  }
+  for (const row of objects) try verify(row, current)
+  return { state: parsed.state }
+}
+
+effect function provenance(inventory: ReadonlyMap<string, ObjectRow>, current: Run, role: Role, source: AssemblyRecord, inventorySha256: string) {
+  const comparison = try readRecord(inventory, current, (try role("source-release-comparison")).sha256)
+  const parsed = try Effect.try(() => parseProvenanceReport(comparison))
+  try Effect.try(() => bindProvenanceSource(parsed, source, inventorySha256))
+  for (const descriptor of parsed.inputs) {
+    try required(inventory, descriptor.sha256, descriptor.bytes)
+    try role(descriptor.role === "source-inventory" ? descriptor.role : `provenance-${descriptor.role}`, descriptor.sha256)
+  }
+}

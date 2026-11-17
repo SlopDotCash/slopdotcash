@@ -1,0 +1,187 @@
+// spec/slopbot/review.md, "Each provider step first rechecks the live registry"; spec/slopbot/review.md, "Each call is recorded free, and only a Surplus spending denial blocks the route"; spec/slopbot/review.md, "Every call is free, attributed and accounted"
+import { type ModelCall, type ModelReply, Provider as Gateways, type ProviderFailure, type Usage, providers } from "@repo/platform/providers"
+import type { Denial } from "../../gen/slopbot__budgetBlocks.effect.vibe"
+import { type CallOutcome, type Provider, expectedModel } from "../../gen/slopbot__review.effect.vibe"
+
+export type Gateway = "orbio" | "surplus"
+
+export interface Step {
+  readonly gateway: Gateway
+  readonly model: string
+  readonly priceKey: string
+}
+
+export const budgetExhausted = "provider budget exhausted"
+
+export const fixedFailures = [
+  "provider did not report the requested model",
+  "schema-invalid verdict",
+  budgetExhausted,
+  "provider deadline truncated the response",
+  "refusal",
+  "max_tokens",
+  "provider call failed",
+] as const
+
+export type CallFailure = (typeof fixedFailures)[number] | `provider returned HTTP ${number}`
+
+export interface CallRecord {
+  readonly routeStep: number
+  readonly gateway: Gateway
+  readonly requestedModel: string
+  readonly servedModel: string | null
+  readonly priceKey: string
+  readonly outcome: "ok" | "failed"
+  readonly failure: CallFailure | null
+  readonly usage: Usage
+  readonly providerCostMicroUsd: number | null
+  readonly providerRequestId: string | null
+}
+
+export interface Prompt {
+  readonly system: string
+  readonly policy: string
+  readonly item: string
+}
+
+export interface Output<T> {
+  readonly schema: Readonly<Record<string, unknown>>
+  readonly validate: (value: unknown) => T | undefined
+}
+
+export type Effort = "medium" | "high"
+
+export type RouteOutcome<T, E> =
+  | { readonly kind: "answered"; readonly verdict: T; readonly calls: ReadonlyArray<CallRecord>; readonly servedBy: CallRecord }
+  | { readonly kind: "budgetBlocked"; readonly denial: Denial; readonly calls: ReadonlyArray<CallRecord> }
+  | { readonly kind: "registryChanged"; readonly calls: ReadonlyArray<CallRecord> }
+  | { readonly kind: "recheckFailed"; readonly failure: E; readonly calls: ReadonlyArray<CallRecord> }
+  | { readonly kind: "exhausted"; readonly calls: ReadonlyArray<CallRecord> }
+
+export interface ProviderKeys {
+  readonly ORBIO_API_KEY?: string
+  readonly SURPLUS_API_KEY?: string
+}
+
+const reviewProviders: ReadonlyArray<Provider> = ["OrbioSonnet", "SurplusSonnet", "SurplusTerra"]
+
+function stepOf(provider: Provider): Step {
+  const gateway: Gateway = provider === "OrbioSonnet" ? "orbio" : "surplus"
+  const model = expectedModel(provider)
+  return { gateway, model, priceKey: `${gateway}/${model}` }
+}
+
+export const triageRoute: ReadonlyArray<Step> = reviewProviders.map(stepOf)
+
+const noUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+export function routeProviders(keys: ProviderKeys) {
+  return providers({
+    ...(keys.ORBIO_API_KEY === undefined ? {} : { orbio: { apiKey: Redacted.make(keys.ORBIO_API_KEY) } }),
+    ...(keys.SURPLUS_API_KEY === undefined ? {} : { surplus: { apiKey: Redacted.make(keys.SURPLUS_API_KEY) } }),
+    timeoutMs: 120_000,
+    maxReplyBytes: 1024 * 1024,
+  })
+}
+
+export function providerOf(call: CallRecord): Provider | undefined {
+  return reviewProviders.find((provider) => {
+    const step = stepOf(provider)
+    return step.gateway === call.gateway && step.model === call.requestedModel
+  })
+}
+
+export function outcomeOf(call: CallRecord): CallOutcome {
+  if (call.outcome === "ok") return "CallOk"
+  return call.failure === budgetExhausted ? "CallBudgetDenied" : "CallFailed"
+}
+
+function wireOf(gateway: Gateway) {
+  return gateway === "orbio" ? "orbio" : "surplus-anthropic"
+}
+
+function modelCall(step: Step, prompt: Prompt, effort: Effort, schema: Readonly<Record<string, unknown>>, schemaText: string): ModelCall {
+  return {
+    route: wireOf(step.gateway),
+    model: step.model,
+    system: [{ text: `${prompt.system}\n\nReturn one raw JSON object, without Markdown fences, matching this exact JSON Schema:\n${schemaText}`, cached: true }],
+    messages: [{ role: "user", content: [{ text: prompt.policy, cached: true }, { text: prompt.item }] }],
+    maxTokens: 16000,
+    effort,
+    responseFormat: schema,
+  }
+}
+
+function failureOf(step: Step, failure: ProviderFailure): CallFailure {
+  const served = failure.receipt.model
+  if (failure.category === "SpendDenied") return budgetExhausted
+  if (served !== null && served !== step.model) return "provider did not report the requested model"
+  if (failure.category === "Incomplete" && failure.reason === "truncated") return "provider deadline truncated the response"
+  if (failure.category === "Refused") return "refusal"
+  if (failure.category === "Incomplete" && failure.reason === "stop-max_tokens") return "max_tokens"
+  if (failure.category === "Malformed" && served !== null) return "schema-invalid verdict"
+  if ((failure.category === "Unavailable" || failure.category === "RateLimited") && failure.status !== undefined) return `provider returned HTTP ${failure.status}`
+  return "provider call failed"
+}
+
+function failedCall(base: CallRecord, step: Step, failure: ProviderFailure): CallRecord {
+  return {
+    ...base,
+    servedModel: failure.receipt.model,
+    failure: failureOf(step, failure),
+    usage: failure.receipt.usage ?? noUsage,
+    providerCostMicroUsd: failure.receipt.costMicroUsd,
+    providerRequestId: failure.receipt.requestId,
+  }
+}
+
+function repliedCall(base: CallRecord, reply: ModelReply): CallRecord {
+  return { ...base, servedModel: reply.model, usage: reply.usage, providerCostMicroUsd: reply.costMicroUsd, providerRequestId: reply.requestId }
+}
+
+effect function verdictOf<T>(reply: ModelReply, output: Output<T>) {
+  const value = Effect.try(() => JSON.parse(reply.text) as unknown) catch () => undefined
+  return value === undefined ? undefined : output.validate(value)
+}
+
+export effect function runStructuredRoute<T, E, R>(route: ReadonlyArray<Step>, prompt: Prompt, effort: Effort, output: Output<T>, mayCall: () => boolean!E!R) {
+  const gateways = try Gateways
+  const schemaText = try orDie(Effect.try(() => JSON.stringify(output.schema)))
+  const calls: CallRecord[] = []
+  for (const [index, step] of route.entries()) {
+    const allowed = mayCall() catch (failure) => ({ failure })
+    if (typeof allowed !== "boolean") return { kind: "recheckFailed", failure: allowed.failure, calls } satisfies RouteOutcome<T, E>
+    if (!allowed) return { kind: "registryChanged", calls } satisfies RouteOutcome<T, E>
+    if (!gateways.configured.has(wireOf(step.gateway))) continue
+    const base: CallRecord = { routeStep: index + 1, gateway: step.gateway, requestedModel: step.model, servedModel: null, priceKey: step.priceKey, outcome: "failed", failure: null, usage: noUsage, providerCostMicroUsd: null, providerRequestId: null }
+    const answer = Effect.map(gateways.complete(modelCall(step, prompt, effort, output.schema, schemaText)), (reply) => ({ reply })) catch (failure) => ({ failure })
+    if ("failure" in answer) {
+      const { failure } = answer
+      calls.push(failedCall(base, step, failure))
+      const now = try Clock.currentTimeMillis
+      if (failure.category === "SpendDenied" && step.gateway === "surplus" && failure.resetAt !== undefined && failure.resetAt > now) {
+        return { kind: "budgetBlocked", denial: { source: "SurplusSpendingDenial", resetAt: failure.resetAt }, calls } satisfies RouteOutcome<T, E>
+      }
+      continue
+    }
+    const { reply } = answer
+    const replied = repliedCall(base, reply)
+    if (reply.model !== step.model) {
+      calls.push({ ...replied, failure: "provider did not report the requested model" })
+      continue
+    }
+    const verdict = try verdictOf(reply, output)
+    if (verdict === undefined) {
+      calls.push({ ...replied, failure: "schema-invalid verdict" })
+      continue
+    }
+    const servedBy: CallRecord = { ...replied, outcome: "ok" }
+    calls.push(servedBy)
+    return { kind: "answered", verdict, calls, servedBy } satisfies RouteOutcome<T, E>
+  }
+  return { kind: "exhausted", calls } satisfies RouteOutcome<T, E>
+}
+
+export effect function runRoute<T, E, R>(prompt: Prompt, effort: Effort, output: Output<T>, mayCall: () => boolean!E!R) {
+  return try runStructuredRoute(triageRoute, prompt, effort, output, mayCall)
+}

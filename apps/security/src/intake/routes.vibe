@@ -1,0 +1,232 @@
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A restricted project's new reports wait for an owner decision"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { randomId, randomToken, sha256Hex } from "@repo/platform/crypto"
+import { ConstraintViolation, D1 } from "@repo/platform/d1"
+import { type Actor, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { Registry, Restrictions } from "@repo/ports/backend"
+import type { Intake } from "../../gen/security__intake.ts"
+import { Rejected, reportBytesAccepted } from "../../gen/security__intake.effect.vibe"
+import { canReplace, revisionPermitted } from "../../gen/security__screening.effect.vibe"
+import { AuthorityUnavailable, caseAuthority } from "../caseAuthority/snapshot.vibe"
+import { intakeReadiness, reviseReport, submitReport } from "../client/intake.vibe"
+import { postSecuritySubmissions as createRows, postSecuritySubmissionsByIdReport as reviseRows } from "../client/refusals.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms, receiptTermsOf } from "../receipt/program.vibe"
+import { slopReceipt } from "../receipt/statements.vibe"
+import { RateLimited, admit, admitted, committed, objectKey, opened, putReport, upload } from "./attempt.vibe"
+import { IntakeSettings, cachedReadiness, projectId as projectIdPattern } from "./availability.vibe"
+import { type ParsedReport, type ReportRefusal, normalisedBytes, parseReport } from "./report.vibe"
+import { revisionEvidence, revisionStatements } from "./revision.vibe"
+import { ReceiptMissing, type SubmissionRow, caseStanding, decorated, firstVersionDigest, reportVersions, screeningOf, storedIntake, submission, submissionByKey } from "./rows.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message: string
+}
+
+function refused(row: Row) {
+  return refuse(row.status, row.error, row.message)
+}
+
+const idempotencyKey = /^[A-Za-z0-9_-]{16,80}$/u
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+
+function answer(body: unknown, status = 200) {
+  return json(body, status, privateHeaders)
+}
+
+const reportRefusals: Readonly<Record<ReportRefusal, Row>> = {
+  invalid: createRows.invalidReport,
+  unexpected: createRows.invalidReportReportHasUnexpectedFields,
+  summary: createRows.invalidReportInvalidSummary,
+  summaryLength: createRows.invalidReportSummaryMustBe8,
+  description: createRows.invalidReportInvalidDescription,
+  descriptionLength: createRows.invalidReportDescriptionMustBe20,
+  severityAndVector: createRows.invalidReportGiveASeverityOr,
+  severity: createRows.invalidReportInvalidSeverity,
+  vector: createRows.invalidReportInvalidCvssVectorString,
+  cwe: createRows.invalidReportInvalidCweIds,
+  vulnerabilities: createRows.invalidReportInvalidVulnerabilities,
+}
+
+effect function report(value: unknown) {
+  const parsed: ParsedReport = parseReport(value)
+  if (parsed.kind === "refused") throw refused(reportRefusals[parsed.refusal])
+  return parsed.report
+}
+
+function exactKeys(body: Readonly<Record<string, unknown>>, required: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) {
+  const allowed = new Set([...required, ...optional])
+  return required.every((key) => Object.hasOwn(body, key)) && Object.keys(body).every((key) => allowed.has(key))
+}
+
+effect function requestObject(limitKib: number, malformed: Row) {
+  if (!(try sameOriginWrite())) throw refused(createRows.originForbidden)
+  const value = jsonBody(limitKib) catch effect () => { throw refused(malformed) }
+  return value as Readonly<Record<string, unknown>>
+}
+
+function beginRefusal(state: Intake): Row {
+  if (state.availability === "RestrictedAwaitingOwnerDecision") return createRows.projectNotFound
+  if (state.availability !== "Enabled") return createRows.intakeUnavailable
+  if (state.banned) return createRows.participationBannedThisAccountCannotSubmit
+  return createRows.intakeRateLimited
+}
+
+effect function replayed(prior: SubmissionRow, projectId: string, digest: string) {
+  if (prior.project_id !== projectId || (try firstVersionDigest(prior.id)) !== digest) throw refused(createRows.idempotencyConflictThatRequestKeyWas)
+  return answer({ replayed: true, submission: try shown(prior) })
+}
+
+effect function shown(row: SubmissionRow) {
+  return decorated(row) catch effect (error) => match (error) {
+    when ReceiptMissing: throw refused(createRows.notFoundReportNotFound);
+    default: throw error;
+  }
+}
+
+effect function reportingRepository(id: string) {
+  const project = try (try Registry).project(id)
+  const program = try (try ReportingPrograms).current(id)
+  if (project === undefined || program === undefined || (project.listingTier === "Retired" && project.retirement !== "RestrictionRetired")) throw refused(createRows.projectNotFound)
+  const selected = program.repository.toLowerCase()
+  const index = project.repositories.findIndex((repository) => [repository.fullName, ...repository.aliases].some((name) => name.toLowerCase() === selected))
+  if (index < 0) return try die(new Error("Reporting repository is not registered"))
+  return { project, program, repository: index + 1 }
+}
+
+effect function create(actor: Actor) {
+  const body = try requestObject(submitReport.limitKib, createRows.invalidRequestRequestBodyMustBe)
+  const settings = try IntakeSettings
+  if (!Object.hasOwn(body, "report")) {
+    if (body.origin === "slop") throw refused(createRows.reportRequired)
+    return json({ error: "not_found" }, 404, privateHeaders)
+  }
+  if (!settings.stored) throw refused(createRows.intakeUnavailable)
+  if (!exactKeys(body, ["projectId", "idempotencyKey", "origin", "report"], ["expectedReporterGithubId"])) throw refused(createRows.invalidRequestRequestBodyHasUnexpected)
+  if (body.expectedReporterGithubId !== undefined && body.expectedReporterGithubId !== actor.githubId) throw refused(createRows.reporterChanged)
+  if (body.origin !== "slop") throw refused(createRows.invalidRequestASlopReportMust)
+  const projectId = body.projectId
+  if (typeof projectId !== "string" || !projectIdPattern.test(projectId)) throw refused(createRows.invalidRequestInvalidProjectId)
+  const key = body.idempotencyKey
+  if (typeof key !== "string" || !idempotencyKey.test(key)) throw refused(createRows.invalidRequestInvalidIdempotencyKey)
+  const bytes = normalisedBytes(try report(body.report))
+  const digest = try sha256Hex(bytes)
+  const prior = try submissionByKey(actor.githubId, key)
+  if (prior !== undefined) return try replayed(prior, projectId, digest)
+  const { project, program, repository } = try reportingRepository(projectId)
+  const standing = try (try Restrictions).account(actor.githubId)
+  const attempt = try opened({
+    reporterGithubId: actor.githubId,
+    idempotencyKey: key,
+    bytes,
+    repository,
+    projectRevision: project.revision,
+    availability: project.retirement === "RestrictionRetired" ? "RestrictedAwaitingOwnerDecision" : "Enabled",
+    banned: standing.banned,
+  })
+  const started = admitted(attempt, try Clock.currentTimeMillis) catch effect (error) => match (error) {
+    when Rejected: throw refused(beginRefusal(error.state));
+    when RateLimited: throw refused(createRows.intakeRateLimited);
+    default: throw error;
+  }
+  if (!reportBytesAccepted(bytes.length)) throw refused(createRows.reportTooLarge)
+  const stored = try upload(started)
+  if (stored.kind === "lost") throw refused(createRows.reportUnavailable)
+  const receivedAtMs = try Clock.currentTimeMillis
+  const receivedAt = try isoNow()
+  const terms = try (try ReportingPrograms).atReceipt({ projectId, receivedAt })
+  if (terms === undefined) throw refused(createRows.intakeUnavailable)
+  const caseId = `sc_${(try randomId()).replaceAll("-", "")}`
+  const programs = try ReportingPrograms
+  const statements = try slopReceipt({
+    caseId,
+    submissionId: attempt.submissionId,
+    projectId,
+    repository: program.repository,
+    reporter: { githubId: actor.githubId, login: actor.login },
+    idempotencyKey: key,
+    marker: try randomToken(16),
+    receivedAt,
+    policyRevision: terms.revision,
+    terms: terms.terms,
+    report: { key: attempt.objectKey, digest, bytes: bytes.length },
+    ownerGithubId: program.approvers?.technical[0] ?? null,
+    unbanned: try programs.unbanned(actor.githubId),
+  })
+  const receiptTerms = receiptTermsOf(terms, millisOf(terms.publishedAt), receivedAtMs)
+  const outcome = committed(stored.attempt, receivedAtMs, receiptTerms, statements) catch effect (error) => {
+    if (error instanceof ConstraintViolation) return "raced" as const
+    if (error instanceof Rejected) throw refused(createRows.intakeUnavailable)
+    throw error
+  }
+  if (outcome === "raced") {
+    const existing = try submissionByKey(actor.githubId, key)
+    if (existing === undefined) throw refused(createRows.intakeUnavailable)
+    return try replayed(existing, projectId, digest)
+  }
+  const saved = try submission(attempt.submissionId)
+  if (saved === undefined) {
+    if ((try (try Restrictions).account(actor.githubId)).banned) throw refused(createRows.participationBannedThisAccountCannotSubmit)
+    throw refused(createRows.intakeUnavailable)
+  }
+  return answer({ submission: try shown(saved) }, 201)
+}
+
+effect function holdsRole(row: SubmissionRow, caseId: string, viewerGithubId: string) {
+  const record = try caseStanding(caseId)
+  if (record === undefined) return false
+  const program = try (try ReportingPrograms).current(record.project_id)
+  const scope = { caseId, projectId: record.project_id, reporterGithubId: row.reporter_github_id, viewerGithubId, program: program?.approvers }
+  const roles = caseAuthority(scope, 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw refused(reviseRows.githubUnavailable);
+    default: throw error;
+  }
+  const viewer = githubNumber(viewerGithubId)
+  const disputed = record.appeal_state !== "none" || record.related_party_review !== "not-applicable"
+  return roles.authority.technical.includes(viewer) || roles.triagers.includes(viewer) || (disputed && roles.authority.moderators.includes(viewer))
+}
+
+effect function revise(actor: Actor, id: string) {
+  const notFound = reviseRows.notFoundReportNotFound
+  const stored = try storedIntake(id)
+  const row = stored === undefined ? undefined : try submission(id)
+  if (stored === undefined || row === undefined) throw refused(notFound)
+  const reporter = row.reporter_github_id === actor.githubId
+  if (!reporter && !(try holdsRole(row, stored.case_id, actor.githubId))) throw refused(notFound)
+  const body = try requestObject(reviseReport.limitKib, reviseRows.invalidRequestProvideAValidPrivate)
+  if (body.expectedRevision !== stored.revision) throw refused(reviseRows.staleRevisionTheReportChangedReload)
+  if (!exactKeys(body, ["expectedRevision", "report"])) throw refused(reviseRows.invalidRequestRequestBodyHasUnexpected)
+  const record = try caseStanding(stored.case_id)
+  if (record === undefined) throw refused(notFound)
+  const digests = (try reportVersions(id)).map((version) => version.content_sha256)
+  const screening = screeningOf(stored, githubNumber(row.reporter_github_id), digests)
+  const prepared = revisionEvidence(row, record, actor.githubId, { object: true, admitted: true })
+  if (!revisionPermitted(screening, { ...prepared, allowedCaseState: true })) throw refused(reviseRows.reportNotEditable)
+  if (!prepared.allowedCaseState) throw refused(reviseRows.reportNotEditableTheReportAlreadyHas)
+  const bytes = normalisedBytes(try report(body.report))
+  const digest = try sha256Hex(bytes)
+  if (digest === screening.digest) throw refused(reviseRows.reportUnchanged)
+  const nowMs = try Clock.currentTimeMillis
+  admit(actor.githubId, `iw_${(try randomId()).replaceAll("-", "")}`, nowMs) catch effect (error) => match (error) {
+    when RateLimited: throw refused(reviseRows.intakeRateLimited);
+    default: throw error;
+  }
+  if (!reportBytesAccepted(bytes.length)) throw refused(reviseRows.reportTooLarge)
+  const version = stored.report_version + 1
+  const key = objectKey(id, version, digest)
+  const confirmed = try putReport(key, bytes, digest)
+  if (!canReplace(screening, stored.revision, digest, revisionEvidence(row, record, actor.githubId, { object: confirmed === digest, admitted: true }))) throw refused(reviseRows.reportUnavailable)
+  const eventKey = try sha256Hex(JSON.stringify({ submissionId: id, reportVersion: version, digest }))
+  const at = try isoNow()
+  const [claimed] = try (try D1).batch(revisionStatements({ stored, record, actorGithubId: actor.githubId, version, key, digest, bytes: bytes.length, eventKey, at }))
+  if (claimed?.changes !== 1) throw refused(reviseRows.staleRevisionTheReportChangedReload)
+  return answer({ submission: try shown(row) })
+}
+
+export const intakeRoutes = Layer.mergeAll(
+  handleRaw(submitReport, (input) => create(input.actor)),
+  handleRaw(reviseReport, (input) => revise(input.actor, input.params.id ?? "")),
+  handleRaw(intakeReadiness, (input) => cachedReadiness(input.params.id ?? "")),
+)

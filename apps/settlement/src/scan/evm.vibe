@@ -1,0 +1,107 @@
+// spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head"; spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies"; spec/settlement/evmScan.md, "A reviewed deployment record fixes the chain, page size and origin"
+import { EvmRpc, evmRpc, scanPage } from "@repo/platform/chain/evm"
+import { type LogResult, type PageIndex, canHoldBlock } from "../../gen/settlement__evmScan.effect.vibe"
+import { evmAddress } from "../chain/evm/abi.ts"
+import { EVENT_TOPICS, decodeEscrowLogs } from "../chain/evm/events.ts"
+import type { RegisteredDeployment } from "../vault/deployments.vibe"
+import { PaymentRpc } from "../vault/rpc.vibe"
+import { type EvmScanSession, openEvmScan, storedBlock } from "./evmStore.vibe"
+import { type IndexOutcome, PaymentIndexer, type ScanEvent, ScanRefused } from "./index.vibe"
+
+export type EvmScanDeployment = Extract<RegisteredDeployment, { family: "evm" }>
+
+export type EvmScanOutcome = { readonly kind: "CaughtUp" } | { readonly kind: "Advanced"; readonly through: number }
+
+const PAGE = 1
+
+module blocks {
+  /** @throws {never} */
+  export function blockOf(value: number): bigint { return BigInt(value) }
+}
+import { blockOf } from blocks
+const TOPICS = [[EVENT_TOPICS.AwardCommitted, EVENT_TOPICS.Paid]]
+
+effect function pageResults(deployment: EvmScanDeployment, vault: ReturnType<typeof evmAddress> & string, logs: Parameters<typeof decodeEscrowLogs>[1]) {
+  const results: LogResult[] = []
+  for (const decoded of decodeEscrowLogs(vault, logs)) {
+    const block = Number(decoded.at.block)
+    if (decoded.kind !== "event" || (decoded.event.name !== "AwardCommitted" && decoded.event.name !== "Paid")) {
+      results.push({ block, kind: "Unknown", outcome: "Refused" })
+      break
+    }
+    const outcome: IndexOutcome = try (try PaymentIndexer).index({
+      projectId: deployment.projectId,
+      network: deployment.network,
+      transactionId: decoded.at.transaction,
+      eventIndex: decoded.at.index,
+      kind: decoded.event.name === "AwardCommitted" ? "reserved" : "paid",
+      obligationId: decoded.event.id,
+    }, deployment)
+    results.push({ block, kind: "Recognized", outcome })
+    if (outcome !== "Indexed") break
+  }
+  return results
+}
+
+effect function scanned(deployment: EvmScanDeployment, session: EvmScanSession) {
+  const vault = evmAddress(deployment.vault)
+  if (vault === undefined) throw new ScanRefused({ message: "Reviewed deployment identity is incomplete" })
+  const rpc = try EvmRpc
+  const rpcChain = Number(try rpc.chainId())
+  const expected = Number(deployment.chainId)
+  if (rpcChain !== expected) throw new ScanRefused({ message: "Payment scanner chain mismatch" })
+  const receipt = try rpc.finalizedReceipt(deployment.deploymentTransaction as `0x${string}`)
+  if (receipt === undefined || receipt.status !== "success") throw new ScanRefused({ message: "Deployment origin unavailable" })
+  const origin = Number(receipt.blockNumber)
+  const scope = { projectId: deployment.projectId, network: deployment.network }
+  const legacyCursor = (try storedBlock(scope)) ?? origin - 1
+  const pageBlocks = Number(deployment.scanPageBlocks)
+  session.send({ type: "configure", chainId: expected, pageBlocks, origin, legacyCursor }) catch effect () => {
+    throw new ScanRefused({ message: "Stored scan cursor precedes the reviewed deployment" })
+  }
+  for (const block of try (try PaymentIndexer).heldBlocks(deployment)) {
+    const state = try session.current()
+    if (canHoldBlock(state, block)) try session.send({ type: "holdBlock", block })
+  }
+  const head = Number((try rpc.head("finalized")).number)
+  const before = try session.current()
+  if (head <= before.head) return { kind: "CaughtUp" } satisfies EvmScanOutcome
+  try session.send({ type: "observeHead", rpcChain, height: head })
+  const started = try session.send({ type: "startPage", pageId: PAGE, rpcChain })
+  const planned = started.pages.find((page) => page.id === PAGE)
+  if (planned === undefined) return { kind: "CaughtUp" } satisfies EvmScanOutcome
+  const page = scanPage({ address: vault, topics: TOPICS, cursor: blockOf(started.cursor), pageBlocks: deployment.scanPageBlocks, finalizedHead: blockOf(head) }) catch effect () => {
+    try session.send({ type: "failPage", pageId: PAGE })
+    throw new ScanRefused({ message: "Invalid finalized log page" })
+  }
+  if (page === "caughtUp" || Number(page.from) !== planned.start || Number(page.to) !== planned.end) {
+    try session.send({ type: "failPage", pageId: PAGE })
+    throw new ScanRefused({ message: "Invalid finalized log page" })
+  }
+  const logs = try pageResults(deployment, vault, page.logs)
+  for (const held of logs.filter((log) => log.outcome === "Held")) {
+    if (canHoldBlock(try session.current(), held.block)) try session.send({ type: "holdBlock", block: held.block })
+  }
+  const index: PageIndex = { pageId: PAGE, start: planned.start, end: planned.end, logs }
+  const verified = session.send({ type: "verifyPage", index }) catch () => undefined
+  if (verified === undefined) {
+    if ((try session.current()).pages.some((candidate) => candidate.id === PAGE)) try session.send({ type: "failPage", pageId: PAGE })
+    throw new ScanRefused({ message: logs.some((log) => log.kind === "Unknown") ? "Unexpected scanner event" : "A finalized event did not index" })
+  }
+  const completed = try session.send({ type: "completePage", pageId: PAGE })
+  return { kind: "Advanced", through: completed.cursor } satisfies EvmScanOutcome
+}
+
+export effect function scanEvmPayments(deployment: EvmScanDeployment) {
+  const urls = (try PaymentRpc).urls[deployment.network]
+  if (urls === undefined) throw new ScanRefused({ message: "Private RPC configuration unavailable" })
+  const session = try openEvmScan({ projectId: deployment.projectId, network: deployment.network })
+  const run = effect {
+    provide evmRpc({ urls, chainId: deployment.chainId }) {
+      return try scanned(deployment, session)
+    }
+  }
+  return run catch effect (error) => {
+    throw error._tag === "WrongChain" ? new ScanRefused({ message: "Payment scanner chain mismatch" }) : error
+  }
+}

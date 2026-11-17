@@ -1,0 +1,54 @@
+// spec/settlement/payoutExclusions.md, "A project's exclusion list starts empty and is revised only for later months"; spec/settlement/payoutExclusions.md, "Who is excluded in the open month or earlier never changes"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
+import { nowSeconds } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { type Aggregate, type Rows, load } from "@repo/platform/stored"
+import { type Event, type Exclusion, type ExclusionRegistry, NotAState, apply, decodeState, initial } from "../../gen/settlement__payoutExclusions.effect.vibe"
+import { periodContaining } from "../kernels/calendar.ts"
+import { ManifestInvalid, exclusionsOf, manifestOf } from "./store.vibe"
+
+schema RevisionRow { readonly revision: number; readonly manifest: string }
+
+function reads(projectId: string): ReadonlyArray<Statement> {
+  return [sql`SELECT revision, manifest FROM project_revisions WHERE project_id = ${projectId} ORDER BY revision`]
+}
+
+function version(projectId: string): Statement {
+  return sql`SELECT count(*) || ':' || coalesce(max(revision), 0) AS version FROM project_revisions WHERE project_id = ${projectId}`
+}
+
+effect function openPeriodAt(now: number) {
+  return try orDie(Effect.try(() => periodContaining(now)))
+}
+
+effect function decodeRegistry(projectId: string, now: number, [revisions]: ReadonlyArray<Rows>) {
+  const rows = try decoded(RevisionRow, revisions ?? [], "project revisions")
+  const history: Exclusion[][] = []
+  for (const row of rows) history.push(exclusionsOf(try manifestOf(projectId, row.manifest)))
+  if (history.length === 0) history.push([])
+  return try decodeState({
+    ...initial,
+    project: projectId,
+    now,
+    openPeriod: try openPeriodAt(now),
+    revision: history.length,
+    entries: history.at(-1) ?? [],
+    history,
+  })
+}
+
+function aggregate(projectId: string, now: number): Aggregate<ExclusionRegistry, NotAState | RowMismatch | ManifestInvalid, never> {
+  return {
+    name: `payout exclusions of ${projectId}`,
+    version: version(projectId),
+    reads: reads(projectId),
+    decode: (found) => decodeRegistry(projectId, now, found),
+  }
+}
+
+export effect function exclusionRegistry(projectId: string) {
+  return (try load(aggregate(projectId, try nowSeconds()))).state
+}
+
+export effect function admitExclusions(projectId: string, event: Event, by: string) {
+  return try apply(try exclusionRegistry(projectId), event, by)
+}

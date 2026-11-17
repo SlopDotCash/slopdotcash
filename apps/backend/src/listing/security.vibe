@@ -1,0 +1,25 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"
+import type { Json, ReadFailure } from "@repo/ports/backend"
+import type { Restriction } from "@repo/ports/security"
+import type { AppealState } from "../client/projects.vibe"
+
+export interface RestrictionFacts {
+  readonly projectId: string
+  readonly restriction: Exclude<Restriction, "Clear">
+  readonly appeal: AppealState
+  readonly since: string
+  readonly repositoryGithubId: string
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export type VettingState = "unscanned" | "unverified" | "queued" | "quarantined" | "stale" | "cleared" | "banned"
+
+export interface VettingClearance {
+  readonly state: VettingState
+  readonly [field: string]: Json
+}
+
+export service PublicSecurity {
+  restrictions(): ReadonlyArray<RestrictionFacts>!ReadFailure
+  vetting(project: { readonly projectId: string; readonly revision: number }): VettingClearance!ReadFailure
+}

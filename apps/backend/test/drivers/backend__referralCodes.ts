@@ -5,10 +5,10 @@ import { database, migrate, startWorker } from "@repo/platform/testing";
 import type { Driver, Options } from "../../gen/backend__referralCodes.conformance.ts";
 import type { CodeRecord, Event, LinkRegistry } from "../../gen/backend__referralCodes.ts";
 import { names, receive, send } from "../../src/referrals/store.vibe";
-import { migrations } from "../migrations.ts";
+import { migrationsDir } from "@repo/platform/testing/paths";
 
 const mf = startWorker({ d1: { SLOP_DB: "referral-conformance" } });
-const failed = (await migrate(mf, "SLOP_DB", migrations)).find((applied) => applied.error !== undefined);
+const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined);
 if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(await database(mf, "SLOP_DB")), webCrypto));
 

@@ -1,0 +1,139 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"
+import type { D1Database, R2Bucket } from "@repo/platform/bindings"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { ActorChanged, Caller, Unauthenticated, handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { getSecuritySubmissionsById } from "../../../src/client/refusals.vibe"
+import { EvidenceBucket, evidenceBucket, verifiedPart } from "../../../src/evidence/objects.vibe"
+import { type BackupCopy, type RetirementReceipt, finish, freeze, pendingTargets, retireTarget } from "../../../src/evidence/retirement.vibe"
+import { evidenceRoutes } from "../../../src/evidence/routes.vibe"
+import { readReport, reportBucket } from "../../../src/privacy/reads.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly VETTING_EVIDENCE: R2Bucket
+  readonly PRIVATE_TRACES: R2Bucket
+  readonly EVIDENCE_BACKUPS: R2Bucket
+  readonly VETTING_RESULT_PUBLIC_KEYS: string
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+  readonly MAINTAINER_GITHUB_IDS: string
+}
+
+const sessionToken = /^[A-Za-z0-9_-]{40,128}$/u
+const githubId = /^[1-9][0-9]{0,19}$/u
+
+const caller = Layer.effect(Caller, effect {
+  const db = try D1
+  const crypto = try Experimental.Crypto.Crypto
+  return {
+    current: () => effect {
+      const request = try HttpServerRequest.HttpServerRequest
+      const token = request.cookies["__Host-slop_points"] ?? ""
+      if (!sessionToken.test(token)) throw new Unauthenticated()
+      const hash = try provideService(sha256Hex(token), Experimental.Crypto.Crypto, crypto)
+      const now = try isoNow()
+      const [member] = try db.all(sql`SELECT m.actor_id, m.github_id, m.login FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${now} AND m.closed_at IS NULL`)
+      if (member === undefined || typeof member.github_id !== "string" || typeof member.login !== "string" || typeof member.actor_id !== "string") throw new Unauthenticated()
+      const expected = request.headers["x-slop-expected-github-id"]
+      if (expected !== undefined && !githubId.test(expected)) throw refuse(400, "invalid_expected_actor", "Expected GitHub actor is invalid")
+      if (expected !== undefined && expected !== member.github_id) throw new ActorChanged({ expected })
+      return { githubId: member.github_id, login: member.login, actorId: member.actor_id }
+    },
+  } satisfies Caller.Shape
+})
+
+const fixtureProject: ProjectView = {
+  projectId: "evidence-fixture",
+  revision: 1,
+  manifestSha256: "a".repeat(64),
+  rowStatus: "Active",
+  manifestStatus: "Active",
+  listingTier: "Community",
+  retirement: "NotRetired",
+  stewardGithubId: "900",
+  repositories: [{ id: "R_evidence", nodeId: "R_evidence", fullName: "slop-test/evidence", integrationBranch: "main", aliases: [] }],
+  closureConsent: false,
+}
+
+function ports(env: Env) {
+  const maintainers = new Set(env.MAINTAINER_GITHUB_IDS.split(",").map((id) => id.trim()).filter((id) => id !== ""))
+  return Layer.mergeAll(
+    Layer.succeed(Registry, {
+      project: (projectId) => succeed(projectId === fixtureProject.projectId ? fixtureProject : undefined),
+      byRepository: (repositoryId) => succeed(repositoryId === "R_evidence" ? fixtureProject : undefined),
+      byPath: () => succeed(undefined),
+      active: () => succeed([fixtureProject]),
+      fence: () => succeed(sql`1`),
+    } satisfies Registry.Shape),
+    Layer.succeed(Authority, {
+      repository: (read) => succeed({ ...read, permission: maintainers.has(read.actorGithubId) ? "PermissionVerified" as const : "PermissionDenied" as const, installation: "Installed" as const }),
+    } satisfies Authority.Shape),
+    Layer.succeed(Restrictions, {
+      account: () => succeed({ banned: false }),
+      project: () => succeed({ restricted: false }),
+    } satisfies Restrictions.Shape),
+  )
+}
+
+service Backups { readonly binding: R2Bucket }
+
+const fixtureProgram = { technical: ["701"], financial: ["702"], dispute: [], sponsor: [] }
+
+schema Retirement { outcome: "backed" | "changed" | "missing"; backupDay: string; backupRoot: string }
+schema ReportText { submissionId: string; version: number; text: string }
+schema Retired { frozen: string; retired: ReadonlyArray<string>; finished: string }
+
+const reportRoute = route({ method: "GET", path: "/api/v1/test/security-cases/:id/report", access: "session", limitKib: 1, request: undefined, answer: ReportText, rejected: "not_found", cache: "private" })
+const retireRoute = route({ method: "POST", path: "/api/v1/test/evidence-generations/:id/retire", access: "public", limitKib: 1, request: Retirement, answer: Retired, rejected: "rejected", cache: "no-store" })
+
+const notFound = getSecuritySubmissionsById.notFoundReportNotFound
+
+const testRoutes = Layer.mergeAll(
+  handleRaw(reportRoute, (input) => effect {
+    const program = input.query.get("program") === "fixture" ? fixtureProgram : undefined
+    const read = readReport({ caseId: input.params.id ?? "", viewerGithubId: input.actor.githubId, program }) catch effect (error) => match (error) {
+      when { _tag: "ReportUnreadable" }: throw refuse(notFound.status, notFound.error, notFound.message);
+      when { _tag: "ReadAborted" }: throw refuse(notFound.status, notFound.error, notFound.message);
+      default: throw error;
+    }
+    return json({ submissionId: read.submissionId, version: read.version, text: new TextDecoder().decode(read.bytes) }, 200, { "cache-control": "private, no-store" })
+  }),
+  handleRaw(retireRoute, (input) => effect {
+    const generation = input.params.id ?? ""
+    const body = try Schema.decodeUnknownEffect(Retirement)(try (try HttpServerRequest.HttpServerRequest).json)
+    const backups = (try Backups).binding
+    const verifyBackup = (copy: BackupCopy) => Effect.asVoid(provideService(verifiedPart(copy.key, copy.sha256, copy.sizeBytes), EvidenceBucket, { binding: backups }))
+    const frozen = try freeze(generation)
+    const retired: string[] = []
+    for (const target of try pendingTargets(generation)) {
+      const slot = { targetKey: target.target_key, partIndex: target.part_index, sha256: target.sha256, sizeBytes: target.size_bytes, backupDay: body.backupDay }
+      const receipt: RetirementReceipt = body.outcome === "missing"
+        ? { ...slot, outcome: "missing" }
+        : { ...slot, outcome: body.outcome, backup: { key: `${body.backupRoot}/objects/${target.target_key}`, sha256: target.sha256, sizeBytes: target.size_bytes } }
+      try retireTarget(target, receipt, verifyBackup)
+      retired.push(target.target_key)
+    }
+    return json({ frozen, retired, finished: try finish(generation) })
+  }),
+)
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.SLOP_DB),
+    webCrypto,
+    evidenceBucket(env.VETTING_EVIDENCE),
+    reportBucket(env.PRIVATE_TRACES),
+    Layer.succeed(Backups, { binding: env.EVIDENCE_BACKUPS }),
+    rolesFrom(env),
+    Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
+    Layer.provide(caller, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+    ports(env),
+  ),
+  routes: Layer.mergeAll(evidenceRoutes, testRoutes),
+})

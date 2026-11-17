@@ -1,0 +1,50 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import { ConfigInvalid, localDevelopmentOrigin, secret, tierOf } from "@repo/platform/config"
+import { fromBase64url } from "@repo/platform/crypto"
+import { deploymentOrigins } from "../client/identity.vibe"
+
+export interface IdentityVars {
+  readonly SLOP_ENVIRONMENT?: string
+  readonly IDENTITY_PUBLIC_ORIGIN?: string
+  readonly IDENTITY_ALLOW_LOOPBACK?: string
+  readonly GITHUB_APP_CLIENT_ID: string
+  readonly GITHUB_APP_CLIENT_SECRET: string
+  readonly IDENTITY_STATE_KEY: string
+  readonly IDENTITY_ASSERTION_KEY: string
+}
+
+export service IdentitySettings {
+  readonly publicOrigin: string
+  readonly site: string
+  readonly browserOrigins: ReadonlySet<string>
+  readonly loopback: boolean
+  readonly clientId: Redacted.Redacted<string>
+  readonly clientSecret: Redacted.Redacted<string>
+  readonly stateKey: Redacted.Redacted<string>
+  readonly assertionKey: Redacted.Redacted<string>
+}
+
+effect function identityKey(name: string, text: string | undefined) {
+  const value = try secret(name, text)
+  if (fromBase64url(Redacted.value(value))?.length !== 32) throw new ConfigInvalid({ name, issue: "not 32 bytes of unpadded base64url" })
+  return value
+}
+
+export function identitySettings(vars: IdentityVars) {
+  return Layer.effect(IdentitySettings, effect {
+    const canonical = deploymentOrigins[try tierOf(vars.SLOP_ENVIRONMENT)]
+    const configured = vars.IDENTITY_PUBLIC_ORIGIN ?? canonical.identity
+    const loopback = configured !== canonical.identity && vars.IDENTITY_ALLOW_LOOPBACK === "1" && localDevelopmentOrigin(configured)
+    if (configured !== canonical.identity && !loopback) throw new ConfigInvalid({ name: "IDENTITY_PUBLIC_ORIGIN", issue: "neither the tier's identity origin nor an enabled loopback origin" })
+    return {
+      publicOrigin: configured,
+      site: loopback ? `${configured}/login` : canonical.site,
+      browserOrigins: new Set(loopback ? [configured] : canonical.browserOrigins),
+      loopback,
+      clientId: try secret("GITHUB_APP_CLIENT_ID", vars.GITHUB_APP_CLIENT_ID),
+      clientSecret: try secret("GITHUB_APP_CLIENT_SECRET", vars.GITHUB_APP_CLIENT_SECRET),
+      stateKey: try identityKey("IDENTITY_STATE_KEY", vars.IDENTITY_STATE_KEY),
+      assertionKey: try identityKey("IDENTITY_ASSERTION_KEY", vars.IDENTITY_ASSERTION_KEY),
+    }
+  })
+}

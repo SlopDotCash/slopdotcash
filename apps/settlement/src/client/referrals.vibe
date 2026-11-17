@@ -1,0 +1,83 @@
+// spec/settlement/referralFiles.md, "The index lists every filed period once in epoch order with its digest, root, total, leaf count and URL"; spec/settlement/referralFiles.md, "A period file answers its exact stored bytes and the SHA-256 recorded when it was filed"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema AccrualIndexEntry {
+  readonly period: string
+  readonly epoch: number
+  readonly mode: "dry_run" | "live"
+  readonly bodySha256: string
+  readonly merkleRoot: string | null
+  readonly treeTotalBase: string
+  readonly leafCount: number
+  readonly createdAt: string
+  readonly url: string
+}
+
+export schema AccrualIndex {
+  readonly schema: "slop-referral-accrual-index-v1"
+  readonly files: ReadonlyArray<AccrualIndexEntry>
+}
+
+const uint256Bound = "115792089237316195423570985008687907853269984665640564039457584007913129639936"
+
+export const EvmAddress = Schema.String.check(Schema.isPattern(/^0x[0-9a-f]{40}$/u))
+
+export const Digest32 = Schema.String.check(Schema.isPattern(/^0x[0-9a-f]{64}$/u))
+
+export const BaseUnits = Schema.String.check(Schema.makeFilter((text: string) => /^(0|[1-9][0-9]{0,77})$/u.test(text) && (text.length < uint256Bound.length || text < uint256Bound)))
+
+export const Instant = Schema.String.check(Schema.makeFilter((text: string) => Number.isFinite(Date.parse(text))))
+
+const programNetworks = { "robinhood-mainnet": 4663, "robinhood-testnet": 46630 } as const
+
+export const ReferralProgram = Schema.Struct({
+  network: Schema.Literals(["robinhood-mainnet", "robinhood-testnet"]),
+  chainId: Schema.Number,
+  distributor: EvmAddress,
+  token: EvmAddress,
+  decimals: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 36 })),
+  codeHash: Digest32,
+}).check(Schema.makeFilter((program) => programNetworks[program.network] === program.chainId))
+export type ReferralProgram = typeof ReferralProgram.Type
+
+export const ReferralClaim = Schema.Struct({
+  period: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}$/u)),
+  epoch: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  root: Digest32,
+  cumulativeBase: BaseUnits,
+  proof: Schema.Array(Digest32).check(Schema.isMaxLength(256)),
+})
+export type ReferralClaim = typeof ReferralClaim.Type
+
+export const ReferralAccount = Schema.Struct({
+  enabled: Schema.Literal(true),
+  status: Schema.Literals(["ready", "stale", "unknown"]),
+  program: Schema.NullOr(ReferralProgram),
+  observedAt: Schema.NullOr(Instant),
+  finalizedAt: Schema.NullOr(Instant),
+  wallet: Schema.NullOr(EvmAddress),
+  accruedBase: BaseUnits,
+  claimedBase: Schema.NullOr(BaseUnits),
+  claimableBase: Schema.NullOr(BaseUnits),
+  pendingBase: Schema.NullOr(BaseUnits),
+  paused: Schema.Boolean,
+  ended: Schema.Boolean,
+  latestVoided: Schema.Boolean,
+  pendingUntil: Schema.NullOr(Instant),
+  claim: Schema.NullOr(ReferralClaim),
+})
+export type ReferralAccount = typeof ReferralAccount.Type
+
+export schema ProgramHidden {
+  readonly enabled: false
+}
+
+export schema ReferralAnswer = ProgramHidden | ReferralAccount
+
+export const referralAccruals = route({ method: "GET", path: "/api/v1/referrals/accruals", access: "public", limitKib: 1, request: undefined, answer: AccrualIndex, rejected: "rejected", cache: { browserSeconds: 300 } })
+
+export const referralAccrualFile = route({ method: "GET", path: "/api/v1/referrals/accruals/:period", access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: "rejected", cache: { browserSeconds: 300 } })
+
+export const referralAccount = route({ method: "GET", path: "/api/v1/referrals/me", access: "session", limitKib: 1, request: undefined, answer: ReferralAnswer, rejected: "rejected", cache: "private" })
+
+export const referralApi: ReadonlyArray<AnyRoute> = [referralAccruals, referralAccrualFile, referralAccount]

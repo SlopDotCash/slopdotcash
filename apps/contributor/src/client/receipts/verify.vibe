@@ -1,0 +1,26 @@
+// spec/contributor/evidence.md, "A signed receipt binds the exact disclosure and either no trace or the stored trace"; spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { type ReceiptRegistry, parseRunReceipt, signingPayload } from "./receipt.ts"
+
+export error ReceiptRefused { reason: string }
+
+effect function bytes(text: string, reason: string) {
+  const decoded = Experimental.Encoding.decodeBase64Lenient(text)
+  if (Result.isFailure(decoded)) throw new ReceiptRefused({ reason })
+  return decoded.success
+}
+
+export effect function verifyRunReceipt(value: unknown, registry: ReceiptRegistry) {
+  const parsed = parseRunReceipt(value, registry)
+  if (parsed.kind === "invalid") throw new ReceiptRefused({ reason: parsed.reason })
+  const receipt = parsed.value
+  const publicKey = try bytes(receipt.devicePublicKey, "run receipt device public key is invalid")
+  if ((try sha256Hex(publicKey)) !== receipt.deviceKeyId) throw new ReceiptRefused({ reason: "run receipt device key id does not match public key" })
+  const crypto = try Experimental.Crypto.Crypto
+  const valid = crypto.verify("Ed25519", publicKey, try bytes(receipt.deviceSignature, "run receipt device signature is invalid"), utf8(signingPayload(receipt))) catch effect (error) => {
+    if (error.reason._tag === "BadArgument") throw new ReceiptRefused({ reason: "run receipt device public key is invalid" })
+    return try die(error)
+  }
+  if (!valid) throw new ReceiptRefused({ reason: "run receipt device signature is invalid" })
+  return receipt
+}

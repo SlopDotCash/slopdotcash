@@ -1,0 +1,312 @@
+import { assert, layer } from "@effect/vitest"
+import { Request as WebRequest, Response as WebResponse } from "miniflare"
+import { CallerLive } from "@repo/backend/caller"
+import type { D1Database, D1PreparedStatement, ExecutionContext, Fetcher, SqlValue } from "@repo/platform/bindings"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { area, pages } from "@repo/platform/worker"
+import { referralApi } from "../src/client/referrals.vibe"
+import { referralRoutes } from "../src/referrals/routes.vibe"
+
+interface Env {
+  readonly SLOP_DB: D1Database
+  readonly ASSETS: Fetcher
+}
+
+interface Ask {
+  readonly method?: string
+  readonly cookie?: string
+}
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string | null>>
+  readonly text: string
+}
+
+service Sites {
+  readonly files: Env
+  readonly claims: Env
+  readonly failing: Env
+}
+
+const referrer = "900000100"
+const otherReferrer = "900000200"
+const wallet = `0x${"1".repeat(40)}`
+const unit = 10n ** 18n
+const hundred = (100n * unit).toString()
+const hundredTwenty = (120n * unit).toString()
+const hundredFifty = (150n * unit).toString()
+const twenty = (20n * unit).toString()
+const firstRoot = `0x${"a".repeat(64)}`
+const secondRoot = `0x${"b".repeat(64)}`
+const unfiledRoot = `0x${"c".repeat(64)}`
+const correctedRoot = `0x${"7".repeat(64)}`
+const firstProof = [`0x${"d".repeat(64)}`]
+const secondProof = [`0x${"e".repeat(64)}`]
+const emptyBody = "{\"referrers\":[]}"
+const assetAnswer = "static asset"
+const program = { network: "robinhood-testnet", chainId: 46630, distributor: `0x${"3".repeat(40)}`, token: `0x${"2".repeat(40)}`, decimals: 18, codeHash: `0x${"f".repeat(64)}` }
+const context: ExecutionContext = { waitUntil: () => undefined }
+const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse(assetAnswer, { status: 404 }) as unknown as globalThis.Response) }
+const unavailable = () => Promise.reject(new Error("D1_ERROR: the database is unavailable"))
+const failingStatement: D1PreparedStatement = { bind: () => failingStatement, all: unavailable, run: unavailable }
+const failingDatabase: D1Database = { prepare: () => failingStatement, batch: unavailable, exec: unavailable }
+const unknownSession = `__Host-slop_points=${"referral-session-unknown-".padEnd(48, "x")}`
+
+const site = pages({
+  areas: [area({ name: "referrals", api: referralApi, routes: referralRoutes, provides: Layer.empty })],
+  services: (env: Env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto)),
+  assets: "ASSETS",
+})
+
+const Started = Layer.effect(Sites, effect {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { FILES_DB: "referral-files", CLAIMS_DB: "referral-claims" } })), (started) => promise(() => started.dispose()))
+  const filesApplied = try promise(() => migrate(mf, "FILES_DB", migrationsDir))
+  const claimsApplied = try promise(() => migrate(mf, "CLAIMS_DB", migrationsDir))
+  const failed = [...filesApplied, ...claimsApplied].filter((applied) => applied.error !== undefined)
+  if (failed.length > 0) return try die(new Error(`migration ${failed[0]?.file} failed: ${failed[0]?.error}`))
+  return {
+    files: { SLOP_DB: try promise(() => database(mf, "FILES_DB")), ASSETS: assets },
+    claims: { SLOP_DB: try promise(() => database(mf, "CLAIMS_DB")), ASSETS: assets },
+    failing: { SLOP_DB: failingDatabase, ASSETS: assets },
+  }
+})
+
+effect function ask(env: Env, path: string, options: Ask = {}) {
+  const headers: Record<string, string> = options.cookie === undefined ? {} : { cookie: options.cookie }
+  const request = try orDie(Effect.try(() => new WebRequest(`https://slop.test${path}`, { method: options.method ?? "GET", headers })))
+  const response = try promise(() => site.fetch(request as unknown as globalThis.Request, env, context))
+  const text = try promise(() => response.text())
+  return {
+    status: response.status,
+    headers: { "cache-control": response.headers.get("cache-control"), "content-type": response.headers.get("content-type"), "x-slop-sha256": response.headers.get("x-slop-sha256") },
+    text,
+  } satisfies Answer
+}
+
+effect function parsed(answer: Answer) {
+  return [answer.status, try orDie(Effect.try(() => JSON.parse(answer.text) as unknown))] as const
+}
+
+effect function seed(env: Env, text: string, ...params: ReadonlyArray<SqlValue>) {
+  try promise(() => env.SLOP_DB.prepare(text).bind(...params).run())
+}
+
+effect function signIn(env: Env, githubId: string) {
+  const token = `referral-session-${githubId}-`.padEnd(48, "x")
+  try seed(env, "INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `actor-${githubId}`, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try seed(env, "INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), `actor-${githubId}`, "2099-01-01T00:00:00.000Z")
+  return `__Host-slop_points=${token}`
+}
+
+effect function file(env: Env, row: { readonly period: string; readonly epoch: number; readonly mode: "dry_run" | "live"; readonly body: string; readonly root: string | null; readonly total: string; readonly leaves: number }) {
+  const digest = try sha256Hex(row.body)
+  const createdAt = try isoAt(try Clock.currentTimeMillis)
+  try seed(env, "INSERT INTO referral_accrual_files (period, epoch, run_id, mode, body, body_sha256, merkle_root, tree_total_base, leaf_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    row.period, row.epoch, `rrun_fixture000${row.epoch}`, row.mode, row.body, digest, row.root, row.total, row.leaves, createdAt)
+  return { digest, createdAt }
+}
+
+effect function cache(env: Env, body: string | null, observedAt: string | null, errorAt: string | null) {
+  try seed(env, "INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, observed_at = excluded.observed_at, error_at = excluded.error_at", body, observedAt, errorAt)
+}
+
+function referrerBody(period: string, cumulative: string, root: string, proof: ReadonlyArray<string>) {
+  return `{"schema":"slop-referral-accrual-file-v1","period":"${period}","referrers":[{"githubId":"${referrer}","githubLogin":"referrer","cumulativeBase":"${cumulative}","wallet":"${wallet}","leaf":{"hash":"${root}","proof":${JSON.stringify(proof)}}},{"githubId":"${otherReferrer}","githubLogin":"walletless","cumulativeBase":"0","wallet":null}]}`
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+const publicJson = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "x-slop-sha256": null }
+const privateJson = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "x-slop-sha256": null }
+const internalError = { error: "internal_error", message: "Internal error" }
+const methodNotAllowed = "{\"error\":\"method_not_allowed\"}"
+
+layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Index and file bytes equal the stored rows and digests (spec/settlement/referralFiles.md, "Story: Serve every filed month exactly as it was filed"; spec/settlement/referralFiles.md, "The index lists every filed period once in epoch order with its digest, root, total, leaf count and URL"; spec/settlement/referralFiles.md, "A period file answers its exact stored bytes and the SHA-256 recorded when it was filed"; spec/settlement/referralFiles.md, "A malformed or unfiled period is not found and only GET and HEAD are answered"; spec/settlement/referralFiles.md, "Every answer is publicly cacheable for five minutes and a read failure is an explicit error, never an empty index")', () => effect {
+    const { files } = try Sites
+    const before = try ask(files, "/api/v1/referrals/accruals")
+    const unusual = "{ \"referrers\" : [ {\"githubId\":\"900000100\", \"githubLogin\":\"référent\",\"cumulativeBase\":\"100\",\"wallet\":\"0x1111111111111111111111111111111111111111\"} ] ,\n  \"note\": \"kept byte for byte\" }"
+    const dryRun = try file(files, { period: "2026-11", epoch: 0, mode: "dry_run", body: emptyBody, root: null, total: "0", leaves: 0 })
+    const posting = try file(files, { period: "2026-12", epoch: 1, mode: "live", body: unusual, root: firstRoot, total: "100", leaves: 1 })
+    const index = try ask(files, "/api/v1/referrals/accruals")
+    const slash = try ask(files, "/api/v1/referrals/accruals/")
+    const indexHead = try ask(files, "/api/v1/referrals/accruals", { method: "HEAD" })
+    const body = try ask(files, "/api/v1/referrals/accruals/2026-12")
+    const suffixed = try ask(files, "/api/v1/referrals/accruals/2026-12.json")
+    const head = try ask(files, "/api/v1/referrals/accruals/2026-12", { method: "HEAD" })
+    const asset = try ask(files, "/api/v1/unrelated")
+    const refused = [
+      try ask(files, "/api/v1/referrals/accruals/2026-13"),
+      try ask(files, "/api/v1/referrals/accruals/2027-01"),
+      try ask(files, "/api/v1/referrals/accruals/2026-12/extra"),
+      try ask(files, "/api/v1/referrals/accruals", { method: "POST" }),
+      try ask(files, "/api/v1/referrals/accruals", { method: "OPTIONS" }),
+      try ask(files, "/api/v1/referrals/accruals/2026-12", { method: "OPTIONS" }),
+      try ask(files, "/api/v1/referrals/accruals/2026-12", { method: "DELETE" }),
+      try ask(files, "/api/v1/referrals/accruals/2026-12", { method: "PATCH" }),
+    ]
+    const fileHeaders = { ...publicJson, "x-slop-sha256": posting.digest }
+    try same({
+      before: [try parsed(before), before.headers],
+      index: [try parsed(index), index.headers],
+      slash: try parsed(slash),
+      indexHead: [indexHead.status, indexHead.text, indexHead.headers],
+      body: [body.status, body.text, body.headers],
+      suffixed: [suffixed.status, suffixed.text, suffixed.headers],
+      head: [head.status, head.text, head.headers],
+      asset: [asset.status, asset.text],
+      refused: refused.map((answer) => [answer.status, answer.text, answer.headers]),
+    }, {
+      before: [[200, { schema: "slop-referral-accrual-index-v1", files: [] }], publicJson],
+      index: [[200, {
+        schema: "slop-referral-accrual-index-v1",
+        files: [
+          { period: "2026-11", epoch: 0, mode: "dry_run", bodySha256: dryRun.digest, merkleRoot: null, treeTotalBase: "0", leafCount: 0, createdAt: dryRun.createdAt, url: "/api/v1/referrals/accruals/2026-11" },
+          { period: "2026-12", epoch: 1, mode: "live", bodySha256: posting.digest, merkleRoot: firstRoot, treeTotalBase: "100", leafCount: 1, createdAt: posting.createdAt, url: "/api/v1/referrals/accruals/2026-12" },
+        ],
+      }], publicJson],
+      slash: try parsed(index),
+      indexHead: [200, "", publicJson],
+      body: [200, unusual, fileHeaders],
+      suffixed: [200, unusual, fileHeaders],
+      head: [200, "", fileHeaders],
+      asset: [404, assetAnswer],
+      refused: [
+        [404, "{\"error\":\"not_found\"}", publicJson],
+        [404, "{\"error\":\"not_found\"}", publicJson],
+        [404, "{\"error\":\"not_found\"}", publicJson],
+        [405, methodNotAllowed, publicJson],
+        [405, methodNotAllowed, publicJson],
+        [405, methodNotAllowed, publicJson],
+        [405, methodNotAllowed, publicJson],
+        [405, methodNotAllowed, publicJson],
+      ],
+    })
+  })
+
+  it.effect('A database failure answers the explicit error, never an empty index (spec/settlement/referralFiles.md, "Every answer is publicly cacheable for five minutes and a read failure is an explicit error, never an empty index"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale")', () => effect {
+    const { failing } = try Sites
+    const index = try ask(failing, "/api/v1/referrals/accruals")
+    const period = try ask(failing, "/api/v1/referrals/accruals/2026-12")
+    const indexHead = try ask(failing, "/api/v1/referrals/accruals", { method: "HEAD" })
+    const account = try ask(failing, "/api/v1/referrals/me", { cookie: unknownSession })
+    const wrongMethod = try ask(failing, "/api/v1/referrals/accruals", { method: "PUT" })
+    const privateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "x-slop-sha256": null }
+    try same({
+      read: [try parsed(index), try parsed(period), indexHead.status, try parsed(account)],
+      headers: [index, period, indexHead, account].map((answer) => answer.headers),
+      wrongMethod: [wrongMethod.status, wrongMethod.text],
+    }, {
+      read: [[500, internalError], [500, internalError], 500, [500, internalError]],
+      headers: [privateNoStore, privateNoStore, privateNoStore, privateJson],
+      wrongMethod: [405, methodNotAllowed],
+    })
+  })
+
+  it.effect('The claims read answers only the signed-in account\'s cached view (spec/settlement/referralPublication.md, "The claims read answers only the signed-in account\'s cached view of the active root and says when it is stale"; spec/settlement/referralPublication.md, "A claim uses the active root\'s pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "History, native holds and cumulative claims remain bounded")', () => effect {
+    const { claims } = try Sites
+    const nowMillis = try Clock.currentTimeMillis
+    const now = try isoAt(nowMillis)
+    const seconds = Math.floor(nowMillis / 1000)
+    const member = try signIn(claims, referrer)
+    const otherMember = try signIn(claims, otherReferrer)
+    const firstEpoch = { epoch: 0, period: "2026-12", root: firstRoot, totalBase: hundred, claimableAt: seconds - 100, voided: false }
+    const secondEpoch = { epoch: 1, period: "2027-01", root: secondRoot, totalBase: hundredFifty, claimableAt: seconds - 10, voided: false }
+    const snapshot = { program, deploymentBlock: "1", block: { number: "100", hash: `0x${"9".repeat(64)}`, timestamp: seconds }, observedAt: now, paused: false, pauseAt: null, latestPaused: false, ended: false, epochs: [firstEpoch], claimed: { [wallet]: twenty } }
+    const read = (cookie: string) => effect { return try parsed(try ask(claims, "/api/v1/referrals/me", { cookie })) }
+    const signedOut = try ask(claims, "/api/v1/referrals/me")
+    const wrongMethods = [
+      try ask(claims, "/api/v1/referrals/me", { method: "DELETE", cookie: member }),
+      try ask(claims, "/api/v1/referrals/me", { method: "HEAD", cookie: member }),
+      try ask(claims, "/api/v1/referrals/me", { method: "OPTIONS", cookie: member }),
+    ]
+    const noFiling = try read(member)
+    try file(claims, { period: "2026-11", epoch: 0, mode: "dry_run", body: emptyBody, root: null, total: "0", leaves: 0 })
+    try cache(claims, JSON.stringify(snapshot), now, null)
+    const dryRunOnly = try read(member)
+    try seed(claims, "DELETE FROM referral_claim_cache")
+    try file(claims, { period: "2026-12", epoch: 1, mode: "live", body: referrerBody("2026-12", hundred, firstRoot, firstProof), root: firstRoot, total: hundred, leaves: 1 })
+    try file(claims, { period: "2027-01", epoch: 2, mode: "live", body: referrerBody("2027-01", hundredFifty, secondRoot, secondProof), root: secondRoot, total: hundredFifty, leaves: 1 })
+    try seed(claims, "INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at) VALUES (?, ?, '2026-12', ?)", referrer, wallet, now)
+    const noCache = try read(member)
+    try cache(claims, JSON.stringify(snapshot), now, null)
+    const ready = try ask(claims, "/api/v1/referrals/me", { cookie: member })
+    const other = try read(otherMember)
+    const awaiting = { ...secondEpoch, claimableAt: seconds + 3600 }
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, awaiting] }), now, null)
+    const pendingWindow = try read(member)
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, secondEpoch], paused: true, pauseAt: seconds - 50 }), now, null)
+    const paused = try read(member)
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, { ...secondEpoch, voided: true }] }), now, null)
+    const voided = try read(member)
+    try cache(claims, JSON.stringify(snapshot), now, now)
+    const refreshFailed = try read(member)
+    const oldObservation = try isoAt(nowMillis - 49 * 3600 * 1000)
+    try cache(claims, JSON.stringify({ ...snapshot, observedAt: oldObservation }), oldObservation, null)
+    const expired = try read(member)
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [{ ...firstEpoch, root: unfiledRoot }] }), now, null)
+    const unfiled = try read(member)
+    try cache(claims, JSON.stringify({ ...snapshot, program: { ...program, chainId: 4663 } }), now, null)
+    const unverifiedProgram = try read(member)
+    try cache(claims, null, null, now)
+    const unknown = try read(member)
+    try file(claims, { period: "2027-02", epoch: 3, mode: "live", body: referrerBody("2027-02", hundredTwenty, correctedRoot, secondProof), root: correctedRoot, total: hundredTwenty, leaves: 1 })
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, secondEpoch] }), now, null)
+    const totalsDiffer = try read(member)
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, secondEpoch], paused: true, pauseAt: seconds }), now, null)
+    const pausedBelowLeaf = try read(member)
+    const finalizedAt = try isoAt(seconds * 1000)
+    const claim = { period: "2026-12", epoch: 0, root: firstRoot, cumulativeBase: hundred, proof: firstProof }
+    const account = {
+      enabled: true, status: "ready", program, observedAt: now, finalizedAt, wallet, accruedBase: hundredFifty,
+      claimedBase: twenty, claimableBase: (80n * unit).toString(), pendingBase: (50n * unit).toString(),
+      paused: false, ended: false, latestVoided: false, pendingUntil: null, claim,
+    }
+    const kept = { ...account, status: "stale", claimableBase: null, pendingBase: null, claim: null }
+    const unknownAccount = { ...account, status: "unknown", program: null, observedAt: null, finalizedAt: null, claimedBase: null, claimableBase: null, pendingBase: null, claim: null }
+    try same({
+      signedOut: [signedOut.status, signedOut.text, signedOut.headers],
+      wrongMethods: wrongMethods.map((answer) => [answer.status, answer.text, answer.headers]),
+      noFiling,
+      dryRunOnly,
+      noCache,
+      ready: [try parsed(ready), ready.headers],
+      other,
+      pendingWindow,
+      paused,
+      voided,
+      refreshFailed,
+      expired,
+      unfiled,
+      unverifiedProgram,
+      unknown,
+      totalsDiffer,
+      pausedBelowLeaf,
+    }, {
+      signedOut: [401, "{\"error\":\"sign_in_required\"}", privateJson],
+      wrongMethods: [[405, methodNotAllowed, privateJson], [405, "", privateJson], [405, methodNotAllowed, privateJson]],
+      noFiling: [200, { enabled: false }],
+      dryRunOnly: [200, { enabled: false }],
+      noCache: [200, unknownAccount],
+      ready: [[200, account], privateJson],
+      other: [200, { ...account, wallet: null, accruedBase: "0", claimedBase: "0", claimableBase: "0", pendingBase: "0", claim: null }],
+      pendingWindow: [200, { ...account, pendingUntil: try isoAt((seconds + 3600) * 1000) }],
+      paused: [200, { ...account, paused: true, claimableBase: "0", pendingBase: (130n * unit).toString(), claim: null }],
+      voided: [200, { ...account, latestVoided: true }],
+      refreshFailed: [200, kept],
+      expired: [200, { ...kept, observedAt: oldObservation }],
+      unfiled: [500, internalError],
+      unverifiedProgram: [500, internalError],
+      unknown: [200, unknownAccount],
+      totalsDiffer: [500, internalError],
+      pausedBelowLeaf: [200, { ...account, accruedBase: hundredTwenty, paused: true, claimableBase: "0", pendingBase: (100n * unit).toString(), claim: null }],
+    })
+  })
+})

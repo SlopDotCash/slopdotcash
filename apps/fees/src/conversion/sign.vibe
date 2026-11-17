@@ -1,0 +1,65 @@
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+import { type RowState, type SignedSend, nonceFloor, pendingIntent, solanaSequence } from "../../gen/fees__conversion.effect.vibe"
+import { unitsOf } from "../journal/codec.vibe"
+import { ChainUnavailable, ConversionChain, type QuoteFound, type Reservable, SendRefused, type Signed, chainFailure, detailOf, quoteNumber, rawTxLimit, safeNumber } from "./chain.vibe"
+import { type Session, renewed, step } from "./session.vibe"
+
+const recorded: Readonly<Record<"Quoted" | "Submitted" | "Unknown" | "Failed", RowState>> = { Quoted: "Quoted", Submitted: "Submitted", Unknown: "Unknown", Failed: "Failed" }
+
+effect function failed(session: Session, detail: string) {
+  try step(session, { type: "failPreparation", runId: session.runId }, { detail })
+  return recorded.Failed
+}
+
+function sendOf(signed: Signed, reserved: Reservable, tx: number, approved: number, minimumOutput: number): SignedSend {
+  return {
+    kind: signed.kind,
+    tx,
+    nonce: reserved.nonce,
+    gasLimit: signed.gasLimit,
+    fees: signed.fees,
+    inspection: signed.inspection,
+    outputToFeeWallet: signed.outputToFeeWallet,
+    minimumOutput,
+    deadline: signed.deadline,
+    blockhashSlot: signed.blockhashSlot,
+    router: signed.router,
+    approvedAmount: approved,
+  }
+}
+
+export effect function signIntent(session: Session, token: string, quote: QuoteFound) {
+  const chain = try ConversionChain
+  const state = session.state
+  const intent = { token, quote, nonceFloor: state.network === "Solana" ? solanaSequence(state) : nonceFloor(state) }
+  const reserved = chain.reserve(intent) catch effect (error) => { return error }
+  if (reserved instanceof ChainUnavailable || reserved instanceof SendRefused) return try failed(session, detailOf(reserved))
+  if (!(try renewed(session, true))) return recorded.Quoted
+  const maximum = safeNumber(try unitsOf(reserved.maximumWei, state.network, "the reservation maximum"))
+  if (maximum === undefined) return try failed(session, "native gas: the reservation maximum exceeds the journal's exact range")
+  const held = try step(session, { type: "reserveGas", runId: session.runId, nonce: reserved.nonce, maximum }, { intentHash: reserved.intentHash, blockhashSlot: reserved.blockhashSlot, accountProof: reserved.accountProof })
+  if (held === undefined) return try failed(session, "native gas: the reservation is outside the network's native budget")
+  const signed = chain.sign(intent, reserved) catch effect (error) => { return error }
+  if (signed instanceof ChainUnavailable || signed instanceof SendRefused) return try failed(session, detailOf(signed))
+  if (signed.rawTx.length > rawTxLimit) return try failed(session, "signed transaction exceeds the storage limit")
+  const approved = safeNumber(signed.approvedAmount)
+  if (approved === undefined) return try failed(session, "sign: the approved amount exceeds the journal's exact range")
+  const minimumOutput = quoteNumber(signed.minimumOutput)
+  if (minimumOutput === undefined) return try failed(session, "sign: the signed minimum output is negative")
+  if (!(try renewed(session, true))) return recorded.Quoted
+  const id = pendingIntent(session.state, session.runId).id
+  const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), approved, minimumOutput) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
+    if (error._tag === "JournalRefused") return error.issue
+    throw error
+  }
+  if (typeof journaled === "string") return try failed(session, `sign: ${journaled}`)
+  if (journaled === undefined) return try failed(session, "sign: the signed send is not the reserved, inspected intent")
+  if (!(try renewed(session, true))) return recorded.Submitted
+  const outcome = chain.broadcast(signed.rawTx) catch effect (error) => { return error }
+  const failure = chainFailure(outcome)
+  if (failure !== undefined) {
+    try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: detailOf(failure) })
+    return recorded.Unknown
+  }
+  return recorded.Submitted
+}

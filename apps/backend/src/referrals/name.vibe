@@ -1,27 +1,55 @@
 // spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"
+import { loopbackOrigin } from "@repo/platform/config"
+import { GitHub, github } from "@repo/platform/github"
 import type { GitHubEvidence, NameEvidence } from "../../gen/backend__referralCodes.ts"
 
-const syntax = /^[A-Za-z0-9][A-Za-z0-9_-]{1,30}[A-Za-z0-9]$/u
-const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u
+export const referralCode = /^[A-Za-z0-9][A-Za-z0-9_-]{1,30}[A-Za-z0-9]$/u
+const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
 const reservedNames = new Set(["api", "eliza", "elizalabs", "elizaos", "help", "new", "null", "referral", "referrals", "security", "shaw", "shawwalters", "slop", "slopbot", "slopcash", "slopdesk", "slopdotcash", "team", "umia", "umiafinance", "undefined"])
 const reservedParts = ["admin", "moderator", "official", "staff", "support"]
+const lookupBytes = 512 * 1024
 
 export function nameEvidence(text: string): NameEvidence {
-  const syntaxValid = syntax.test(text)
+  const syntaxValid = referralCode.test(text)
   const key = syntaxValid ? text.toLowerCase() : ""
   const bare = key.replaceAll(/[-_]/gu, "")
   return { text, key, syntaxValid, reserved: reservedNames.has(bare) || reservedParts.some((part) => bare.includes(part)) }
 }
 
-schema GitHubUser { id: number }
+export interface GitHubLookup {
+  readonly evidence: GitHubEvidence
+  readonly limited: boolean
+}
+
+function looked(evidence: GitHubEvidence, limited = false): GitHubLookup {
+  return { evidence, limited }
+}
+
+const GitHubUser = Schema.Struct({ id: Schema.optionalKey(Schema.Unknown) })
+
+effect function ownerOf(login: string) {
+  const user = try (try GitHub).json(`/users/${login}`, GitHubUser, { limitBytes: lookupBytes })
+  return String(user.id)
+}
 
 export effect function githubEvidence(text: string, actor: string, decided: boolean) {
-  if (decided || !githubLogin.test(text)) return "NotAGitHubLogin" satisfies GitHubEvidence
-  const response = HttpClient.get(`https://api.github.com/users/${text}`, { headers: { accept: "application/vnd.github+json", "user-agent": "slop-backend" } }) catch () => undefined
-  if (response === undefined || (response.status !== 200 && response.status !== 404)) return "LookupUnavailable" satisfies GitHubEvidence
-  if (response.status === 404) return "LoginAbsent" satisfies GitHubEvidence
-  const body = response.json catch () => undefined
-  const user = Schema.decodeUnknownEffect(GitHubUser)(body) catch () => undefined
-  if (user === undefined) return "LookupUnavailable" satisfies GitHubEvidence
-  return (String(user.id) === actor ? "LoginBelongsToActor" : "LoginElsewhere") satisfies GitHubEvidence
+  if (decided || !githubLogin.test(text)) return looked("NotAGitHubLogin")
+  const owner = ownerOf(text) catch effect (failure) => {
+    return failure._tag === "NotFound" ? looked("LoginAbsent") : looked("LookupUnavailable", failure._tag === "RateLimited")
+  }
+  if (typeof owner !== "string") return owner
+  return looked(owner === actor ? "LoginBelongsToActor" : "LoginElsewhere")
+}
+
+export interface GitHubReadConfig {
+  readonly token: string | undefined
+  readonly apiOrigin: string | undefined
+}
+
+export function githubReads(config: GitHubReadConfig) {
+  return github({
+    userAgent: "slop.cash-project-setup",
+    ...config.token === undefined || config.token === "" ? {} : { token: Redacted.make(config.token) },
+    ...config.apiOrigin !== undefined && loopbackOrigin(config.apiOrigin) ? { authority: config.apiOrigin } : {},
+  })
 }

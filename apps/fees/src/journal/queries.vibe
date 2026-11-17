@@ -1,0 +1,59 @@
+// spec/fees/conversion.md, "Rows and reservations are append-only and settled records never change"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import { type Statement, rows, sql } from "@repo/platform/d1"
+import { decimalTotal } from "./codec.vibe"
+import type { NetworkName } from "./writes.vibe"
+
+schema RecentRow {
+  id: string; kind: string; network: string; mode: string; token: string; target_token: string; amount_in: string
+  route: string | null; quote_amount_out: string | null; min_amount_out: string | null; quote_value_micro: number | null
+  price_impact_bps: number | null; tx_id: string | null; landed_tx_id: string | null; amount_out: string | null
+  state: string; reason: string | null; created_at: string; updated_at: string; submitted_at: string | null; finalized_at: string | null
+}
+
+export effect function recentRows(limit: number) {
+  return try rows(RecentRow, sql`SELECT id, kind, network, mode, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, price_impact_bps, tx_id, landed_tx_id, amount_out, state, reason, created_at, updated_at, submitted_at, finalized_at FROM fee_conversions ORDER BY created_at DESC, rowid DESC LIMIT ${limit}`)
+}
+
+schema SettledRow { network: string; token: string; target_token: string; kind: string; amount_in: string; amount_out: string }
+
+export interface FinalizedTotal { readonly network: string; readonly token: string; readonly targetToken: string; readonly sold: string; readonly output: string }
+
+export effect function finalizedTotals() {
+  const settled = try rows(SettledRow, sql`SELECT network, token, target_token, kind, amount_in, amount_out FROM fee_conversions WHERE mode = 'live' AND kind = 'conversion' AND state = 'finalized' ORDER BY rowid`)
+  const keys = [...new Set(settled.map((row) => `${row.network}\u0000${row.token}`))]
+  const totals: Array<FinalizedTotal> = []
+  for (const key of keys) {
+    const group = settled.filter((row) => `${row.network}\u0000${row.token}` === key)
+    const [first] = group
+    if (first === undefined) continue
+    const sold = try decimalTotal(group.map((row) => row.amount_in), `finalized fee totals of ${key}`)
+    const output = try decimalTotal(group.map((row) => row.amount_out), `finalized fee totals of ${key}`)
+    totals.push({ network: first.network, token: first.token, targetToken: first.target_token, sold, output })
+  }
+  return totals
+}
+
+schema IncomeRow { amount_out: string }
+
+export interface IncomeQuery { readonly network: NetworkName; readonly token: string; readonly wallet: string; readonly since: string }
+
+function same(network: NetworkName, column: Statement, value: string): Statement {
+  return network === "solana" ? sql`${column} = ${value}` : sql`lower(${column}) = lower(${value})`
+}
+
+export effect function finalizedIncome(query: IncomeQuery) {
+  const { network, token, wallet, since } = query
+  const found = try rows(IncomeRow, sql`SELECT amount_out FROM fee_conversions WHERE network = ${network} AND ${same(network, sql`fee_wallet`, wallet)} AND mode = 'live' AND state = 'finalized' AND finalized_at >= ${since} AND ((kind = 'conversion' AND ${same(network, sql`target_token`, token)}) OR (kind = 'claim' AND ${same(network, sql`token`, token)})) ORDER BY rowid`)
+  return try decimalTotal(found.map((row) => row.amount_out), `finalized fee income of ${network}`)
+}
+
+schema AttemptRow { conversion_id: string; tx_id: string; raw_tx: string; nonce: number | null; attempt: number }
+
+export interface JournaledAttempt { readonly conversionId: string; readonly txId: string; readonly rawTx: string; readonly nonce: number | null; readonly attempt: number }
+
+export effect function journaledAttempts(network: NetworkName) {
+  const found = try rows(AttemptRow, sql`SELECT c.id AS conversion_id, c.tx_id, c.raw_tx, c.evm_nonce AS nonce, 0 AS attempt FROM fee_conversions c WHERE c.network = ${network} AND c.mode = 'live' AND c.state IN ('submitted', 'unknown') AND c.tx_id IS NOT NULL AND c.raw_tx IS NOT NULL
+    UNION ALL SELECT r.conversion_id, r.tx_id, r.raw_tx, r.evm_nonce AS nonce, r.attempt FROM fee_send_replacements r JOIN fee_conversions c ON c.id = r.conversion_id WHERE c.network = ${network} AND c.mode = 'live' AND c.state IN ('submitted', 'unknown')
+    ORDER BY conversion_id, attempt`)
+  return found.map((row) => ({ conversionId: row.conversion_id, txId: row.tx_id, rawTx: row.raw_tx, nonce: row.nonce, attempt: row.attempt }) satisfies JournaledAttempt)
+}

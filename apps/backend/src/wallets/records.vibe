@@ -1,0 +1,176 @@
+// spec/backend/wallets.md, "Registration appends an immutable successor or returns the current registry row"; spec/backend/wallets.md, "The trace API's bearer claim registers through the same partition line, and current-claim reads change nothing"; spec/backend/wallets.md, "An operator claim is digest-idempotent, keeps the claim line and authorizes nothing"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
+import type { PossessionView, WalletClaimView } from "../client/wallets.vibe"
+import { signableSolanaAddress } from "./signatures.vibe"
+
+type ChainName = "solana" | "base" | "robinhood" | "ethereum"
+
+const chainNames: Readonly<Record<WalletChain, ChainName>> = { Solana: "solana", Base: "base", Robinhood: "robinhood", Ethereum: "ethereum" }
+const chainsByName: Readonly<Record<string, WalletChain>> = { solana: "Solana", base: "Base", robinhood: "Robinhood", ethereum: "Ethereum" }
+
+export function chainName(chain: WalletChain): ChainName {
+  return chainNames[chain]
+}
+
+export function chainOf(value: unknown): WalletChain | undefined {
+  return typeof value === "string" && Object.hasOwn(chainsByName, value) ? chainsByName[value] : undefined
+}
+
+export const walletClaimRepository = "SlopDotCash/slopdotcash"
+
+const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+const sha256Pattern = /^[a-f0-9]{64}$/u
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u
+const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u
+
+export function validIdentifier(value: unknown): value is string {
+  return typeof value === "string" && identifierPattern.test(value)
+}
+
+export function validSha256(value: unknown): value is string {
+  return typeof value === "string" && sha256Pattern.test(value)
+}
+
+export function validLogin(value: unknown): value is string {
+  return typeof value === "string" && loginPattern.test(value)
+}
+
+export function validActorId(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/u.test(value)
+}
+
+export effect function validIsoTimestamp(value: unknown) {
+  if (typeof value !== "string" || !isoPattern.test(value)) return false
+  const millis = millisOf(value)
+  if (!Number.isFinite(millis)) return false
+  const canonical = value.endsWith(".000Z") ? value : value.endsWith("Z") && !value.includes(".") ? `${value.slice(0, -1)}.000Z` : value
+  return (try isoAt(millis)) === canonical
+}
+
+interface RegistryClaim {
+  readonly githubActorId: string
+  readonly githubLogin: string
+  readonly address: string
+  readonly chain: WalletChain
+  readonly observedAt: string
+  readonly supersedesClaimId: string | null
+}
+
+export effect function registryDigests(input: RegistryClaim) {
+  const chainField = input.chain === "Solana" ? {} : { chain: chainName(input.chain) }
+  const sourceBodySha256 = try sha256Hex(JSON.stringify({
+    schemaVersion: 1,
+    githubActorId: input.githubActorId,
+    address: input.address,
+    ...chainField,
+    supersedesClaimId: input.supersedesClaimId,
+  }))
+  const recordDigest = try sha256Hex(JSON.stringify({
+    schemaVersion: 1,
+    githubActorId: input.githubActorId,
+    githubLogin: input.githubLogin,
+    address: input.address,
+    ...chainField,
+    source: "d1_registry",
+    issueRepository: null,
+    issueNumber: null,
+    sourceBodySha256,
+    observedAt: input.observedAt,
+    supersedesClaimId: input.supersedesClaimId,
+  }))
+  return { sourceBodySha256, recordDigest }
+}
+
+interface OperatorRecord {
+  readonly githubActorId: string
+  readonly githubLogin: string
+  readonly address: string
+  readonly source: "github_issue" | "d1_registry"
+  readonly issueRepository: string | null
+  readonly issueNumber: number | null
+  readonly sourceBodySha256: string
+  readonly observedAt: string
+  readonly supersedesClaimId: string | null
+}
+
+export effect function operatorDigest(input: OperatorRecord) {
+  return try sha256Hex(JSON.stringify({
+    schemaVersion: 1,
+    githubActorId: input.githubActorId,
+    githubLogin: input.githubLogin,
+    address: input.address,
+    source: input.source,
+    issueRepository: input.issueRepository,
+    issueNumber: input.issueNumber,
+    sourceBodySha256: input.sourceBodySha256,
+    observedAt: input.observedAt,
+    supersedesClaimId: input.supersedesClaimId,
+  }))
+}
+
+interface PaymentMessage {
+  readonly actorId: string
+  readonly chain: string
+  readonly address: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly nonce: string
+  readonly expiresAt: string
+}
+
+export function paymentWalletMessage(input: PaymentMessage): string {
+  return `Authorize Slop automatic contributor payouts\nAudience: slop.cash\nGitHub actor: ${input.actorId}\nChain: ${input.chain}\nWallet: ${input.address}\nClaim: ${input.claimId}\nDigest: ${input.claimDigest}\nNonce: ${input.nonce}\nExpires: ${input.expiresAt}`
+}
+
+export interface StoredClaim {
+  readonly id: string
+  readonly github_user_id: string
+  readonly github_login: string
+  readonly wallet_address: string
+  readonly chain: string
+  readonly source: string
+  readonly issue_repository: string | null
+  readonly issue_number: number | null
+  readonly source_body_sha256: string
+  readonly observed_at: string
+  readonly record_sha256: string
+  readonly supersedes_claim_id: string | null
+}
+
+export function walletClaimView(claim: StoredClaim): WalletClaimView {
+  return {
+    schemaVersion: 1,
+    claimId: claim.id,
+    githubActorId: claim.github_user_id,
+    githubLogin: claim.github_login,
+    address: claim.wallet_address,
+    chain: claim.chain,
+    source: claim.source,
+    issueRepository: claim.issue_repository,
+    issueNumber: claim.issue_number,
+    sourceBodySha256: claim.source_body_sha256,
+    observedAt: claim.observed_at,
+    recordDigest: claim.record_sha256,
+    supersedesClaimId: claim.supersedes_claim_id,
+  }
+}
+
+interface StoredAttestation {
+  readonly challenge_id: string
+  readonly signature: string
+  readonly message_sha256: string
+  readonly attested_at: string
+}
+
+export function possessionView(address: string, attestation: StoredAttestation | undefined): PossessionView {
+  return {
+    schemaVersion: 1,
+    state: attestation !== undefined ? "proven" : signableSolanaAddress(address) ? "unproven" : "not-provable-by-signature",
+    attestedAt: attestation?.attested_at ?? null,
+    challengeId: attestation?.challenge_id ?? null,
+    messageDigest: attestation?.message_sha256 ?? null,
+    signature: attestation?.signature ?? null,
+  }
+}

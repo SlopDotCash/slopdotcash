@@ -1,0 +1,34 @@
+// spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
+import type { LockManagerLike } from "vibelang-runtime/experimental/Locks"
+import { lockManager } from "./navigatorLocks.ts"
+
+export error LocksUnavailable
+export error LockRefused { name: string; message: string }
+
+export service Locks {
+  exclusive<A, E, R>(name: string, work: A!E!R): A!(E | LocksUnavailable | LockRefused)!R
+  claim(name: string): boolean!(LocksUnavailable | LockRefused)
+}
+
+export effect function locksOver(manager: LockManagerLike | undefined) {
+  if (manager === undefined) {
+    return {
+      exclusive: effect () => { throw new LocksUnavailable() },
+      claim: effect () => { throw new LocksUnavailable() },
+    } satisfies Locks.Shape
+  }
+  const web = Experimental.Locks.make(manager)
+  const page = try Scope.Scope
+  return {
+    exclusive: (name, work) => scoped(effect {
+      web.hold(name) catch effect (error) => { throw new LockRefused({ name, message: error.message }) }
+      return try work
+    }),
+    claim: effect (name) => {
+      const held = provideService(web.tryHold(name), Scope.Scope, page) catch effect (error) => { throw new LockRefused({ name, message: error.message }) }
+      return Option.isSome(held)
+    },
+  } satisfies Locks.Shape
+}
+
+export const locks = Layer.effect(Locks, effect { return try locksOver(lockManager()) })

@@ -1,0 +1,392 @@
+// spec/points/census.md, "A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget"; spec/points/quotaRecovery.md, "Quota waits use the strictest safe observation from the drained pass"
+import { boundedBytes } from "@repo/platform/browser"
+import { millisOf } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { githubApi, rateLimitHints } from "@repo/platform/github"
+import { type Budget, budgetDecision, maxGenerationCost, rateLimitReserve } from "../../gen/points__census.effect.vibe"
+
+export const graphqlPageSize = 100
+export const minimumGraphqlPageSize = 1
+export const detailBatchSize = 25
+export const reviewDetailBatchSize = 100
+export const maxGraphqlRequestAttempts = 5
+export const graphqlRequestTimeoutMs = 60_000
+export const maxGraphqlResponseBytes = 64 * 1024 * 1024
+export const minimumStartingRateLimit = 900
+export const graphqlUserAgent = "eliza-computer-leaderboard"
+
+const gatewayFailures: ReadonlyArray<number> = [502, 503, 504]
+const secondaryLimit = /secondary rate limit|abuse detection/iu
+const comparisonTimeout = "Server Error: Sorry, this diff is taking too long to generate."
+const decimalHeader = /^\d+$/u
+
+export type JsonRecord = Readonly<Record<string, unknown>>
+export type Variables = Readonly<Record<string, unknown>>
+
+export interface UnavailableSource {
+  readonly nodeId: string
+  readonly reason: "NOT_FOUND"
+}
+
+export interface RateLimitSnapshot {
+  readonly cost: number
+  readonly consumedDuringRun: number
+  readonly limit: number
+  readonly remaining: number
+  readonly resetAt: string
+}
+
+export interface ExecuteOptions {
+  readonly commitStatistics?: boolean
+}
+
+export interface GraphqlOptions {
+  readonly token: Redacted.Redacted<string>
+  readonly authority?: string
+  readonly requestTimeoutMs?: number
+  readonly retryBaseDelayMs?: number
+  readonly sleep?: (millis: number) => void!!
+}
+
+export error GraphqlFailed { message: string }
+export error GraphqlUpstream { message: string; status: number }
+export error GraphqlBoundary { message: string }
+export error BudgetExceeded { message: string }
+export error SourceNodeUnavailable { message: string; sources: ReadonlyArray<UnavailableSource> }
+export error CommitStatisticsUnavailable { message: string; ids: ReadonlyArray<string>; indices: ReadonlyArray<number>; data: JsonRecord }
+
+export type GraphqlFailure = GraphqlFailed | GraphqlUpstream | GraphqlBoundary | BudgetExceeded | SourceNodeUnavailable | CommitStatisticsUnavailable
+
+export service Graphql {
+  execute(document: string, variables?: Variables, options?: ExecuteOptions): JsonRecord!GraphqlFailure
+  compareCommitPage(owner: string, name: string, base: string, head: string, page: number): JsonRecord!GraphqlFailure
+  ensureBudget(requiredCost: number): void!(GraphqlFailed | BudgetExceeded)
+  requestCount(): number!!
+  rateLimit(): RateLimitSnapshot!GraphqlFailed
+}
+
+type Exchange =
+  | { readonly kind: "answered"; readonly status: number; readonly headers: Readonly<Record<string, string>>; readonly body: string }
+  | { readonly kind: "transient"; readonly timedOut: boolean }
+
+function record(value: unknown): JsonRecord | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined
+}
+
+export function sanitizeGraphqlError(value: unknown): string {
+  if (typeof value === "string") return value.slice(0, 500)
+  const message = record(value)?.message
+  return typeof message === "string" ? message.slice(0, 500) : "Unknown GraphQL error"
+}
+
+export function narrowedPageSize(variables: Variables): Variables | undefined {
+  const current = variables.pageSize
+  if (typeof current !== "number" || !Number.isInteger(current) || current <= minimumGraphqlPageSize) return undefined
+  return { ...variables, pageSize: Math.max(minimumGraphqlPageSize, Math.floor(current / 2)) }
+}
+
+function describePageSize(variables: Variables) {
+  return typeof variables.pageSize === "number" ? `; page size ${variables.pageSize}` : ""
+}
+
+function jsonContentType(value: string | undefined) {
+  const mediaType = value?.split(";", 1)[0]?.trim().toLowerCase()
+  return mediaType === "application/json" || mediaType?.endsWith("+json") === true
+}
+
+effect function parsedText(body: string) {
+  return Effect.try(() => JSON.parse(body) as unknown) catch () => undefined
+}
+
+effect function comparisonBuildTimedOut(status: number, body: string) {
+  if (status !== 422) return false
+  return record(try parsedText(body))?.message === comparisonTimeout
+}
+
+effect function secondaryRateLimitDelayMs(status: number, headers: Readonly<Record<string, string>>, body: string) {
+  if (status !== 403 && status !== 429) return undefined
+  const message = record(try parsedText(body))?.message
+  if (typeof message !== "string" || !secondaryLimit.test(message)) return undefined
+  const after = headers["retry-after"]
+  if (after !== undefined && decimalHeader.test(after) && Number.isSafeInteger(Number(after))) return Number(after) * 1_000
+  return 60_000
+}
+
+function requestedIds(variables: Variables): ReadonlyArray<string> | undefined {
+  const ids = variables.ids
+  return Array.isArray(ids) && ids.length > 0 && ids.every((id: unknown) => typeof id === "string") ? ids as ReadonlyArray<string> : undefined
+}
+
+function nodePathIndex(error: JsonRecord, length: number, depth: number): number | undefined {
+  const path = error.path
+  if (!Array.isArray(path) || path.length !== depth || path[0] !== "nodes") return undefined
+  const index: unknown = path[1]
+  return typeof index === "number" && Number.isInteger(index) && index >= 0 && index < length ? index : undefined
+}
+
+function nodesMatch(nodes: ReadonlyArray<unknown>, ids: ReadonlyArray<string>, missing: ReadonlySet<number>) {
+  return nodes.every((node, index) => node === null ? missing.has(index) : record(node)?.id === ids[index])
+}
+
+export function unavailableRequestedSources(envelope: JsonRecord, variables: Variables): ReadonlyArray<UnavailableSource> {
+  const ids = requestedIds(variables)
+  const data = record(envelope.data)
+  if (ids === undefined || data === undefined) return []
+  const nodes = data.nodes
+  const errors = envelope.errors
+  if (!Array.isArray(nodes) || nodes.length !== ids.length || !Array.isArray(errors) || errors.length === 0) return []
+  const indices: number[] = []
+  for (const value of errors) {
+    const error = record(value)
+    const index = error === undefined ? undefined : nodePathIndex(error, ids.length, 2)
+    if (error === undefined || error.type !== "NOT_FOUND" || index === undefined || nodes[index] !== null) return []
+    indices.push(index)
+  }
+  if (!nodesMatch(nodes, ids, new Set(indices))) return []
+  return [...new Set(indices.map((index) => ids[index] ?? ""))].sort().map((nodeId) => ({ nodeId, reason: "NOT_FOUND" }) satisfies UnavailableSource)
+}
+
+export function commitStatisticsFailure(envelope: JsonRecord, variables: Variables): CommitStatisticsUnavailable | undefined {
+  const ids = requestedIds(variables)
+  const data = record(envelope.data)
+  if (ids === undefined || new Set(ids).size !== ids.length || data === undefined || parsedRateLimit(data.rateLimit) === undefined) return undefined
+  const nodes = data.nodes
+  const errors = envelope.errors
+  if (!Array.isArray(nodes) || nodes.length !== ids.length || !Array.isArray(errors) || errors.length === 0) return undefined
+  const indices = new Set<number>()
+  for (const value of errors) {
+    const error = record(value)
+    const index = error === undefined ? undefined : nodePathIndex(error, ids.length, 3)
+    const field: unknown = Array.isArray(error?.path) ? error.path[2] : undefined
+    if (error === undefined || error.type !== "SERVICE_UNAVAILABLE" || index === undefined || (field !== "additions" && field !== "deletions") || nodes[index] !== null) return undefined
+    indices.add(index)
+  }
+  if (!nodesMatch(nodes, ids, indices)) return undefined
+  return new CommitStatisticsUnavailable({ message: "GitHub commit statistics are temporarily unavailable", ids, indices: [...indices], data })
+}
+
+export schema RateLimitWindow { readonly cost: number; readonly limit: number; readonly remaining: number; readonly resetAt: string }
+
+const rateLimitWindow = Schema.decodeUnknownOption(RateLimitWindow)
+
+export function parsedRateLimit(value: unknown): Omit<RateLimitSnapshot, "consumedDuringRun"> | undefined {
+  return Option.getOrUndefined(rateLimitWindow(value))
+}
+
+export function estimateBatchedConnectionCost(count: number, connectionsPerNode: number) {
+  let total = 0
+  for (let start = 0; start < count; start += detailBatchSize) total += Math.max(1, Math.round((Math.min(detailBatchSize, count - start) * connectionsPerNode) / 100))
+  return total
+}
+
+export effect function estimateFirstPageDetailCost(pullRequestCount: number, issueCount: number) {
+  if (!Number.isInteger(pullRequestCount) || pullRequestCount < 0 || !Number.isInteger(issueCount) || issueCount < 0) throw new GraphqlFailed({ message: "Detail-cost counts must be non-negative integers" })
+  return estimateBatchedConnectionCost(pullRequestCount, 6) + estimateBatchedConnectionCost(issueCount, 4)
+}
+
+export effect function estimateReviewFirstPageDetailCost(pullRequestCount: number) {
+  if (!Number.isInteger(pullRequestCount) || pullRequestCount < 0) throw new GraphqlFailed({ message: "Review-detail count must be a non-negative integer" })
+  return estimateBatchedConnectionCost(pullRequestCount, 2)
+}
+
+export effect function ensureEstimatedBudget(estimate: number, reservedCost = 0) {
+  const client = try Graphql
+  const rateLimit = try client.rateLimit()
+  const available = Math.min(maxGenerationCost - rateLimit.consumedDuringRun, rateLimit.remaining - rateLimitReserve)
+  if (estimate + reservedCost > available) try client.ensureBudget(estimate + reservedCost)
+}
+
+export effect function ensureStartingBudget() {
+  const rateLimit = try (try Graphql).rateLimit()
+  const requiredRemaining = Math.min(minimumStartingRateLimit, rateLimit.limit - rateLimitReserve)
+  if (rateLimit.remaining < requiredRemaining) throw new BudgetExceeded({ message: `GitHub GraphQL has only ${rateLimit.remaining} points remaining; at least ${requiredRemaining} are required to start a complete snapshot` })
+}
+
+export effect function executeNodeBatch(document: string, ids: ReadonlyArray<string>, variables: Variables = {}, options: ExecuteOptions = {}): JsonRecord!GraphqlFailure!Graphql {
+  const client = try Graphql
+  return client.execute(document, { ...variables, ids }, options) catch effect (error) => {
+    if (error._tag !== "GraphqlUpstream" || ids.length < 2) throw error
+    const middle = Math.ceil(ids.length / 2)
+    const head = try executeNodeBatch(document, ids.slice(0, middle), variables, options)
+    const tail = try executeNodeBatch(document, ids.slice(middle), variables, options)
+    if (!Array.isArray(head.nodes) || !Array.isArray(tail.nodes)) throw new GraphqlFailed({ message: "data.nodes must be an array" })
+    return { ...tail, nodes: [...head.nodes, ...tail.nodes] }
+  }
+}
+
+export function graphqlClient(options: GraphqlOptions) {
+  return Layer.effect(Graphql, effect {
+    const timeoutMs = options.requestTimeoutMs ?? graphqlRequestTimeoutMs
+    const baseDelayMs = options.retryBaseDelayMs ?? 250
+    for (const [name, value] of [["requestTimeoutMs", timeoutMs], ["retryBaseDelayMs", baseDelayMs]] as const) {
+      if (!Number.isFinite(value) || value < 0) throw new ConfigInvalid({ name, issue: `${name} must be a non-negative finite number` })
+    }
+    if (Redacted.value(options.token).trim() === "") throw new ConfigInvalid({ name: "GITHUB_TOKEN", issue: "GitHub token cannot be empty" })
+    const token = Redacted.make(Redacted.value(options.token).trim())
+    const authority = (options.authority ?? githubApi).replace(/\/+$/u, "")
+    const sleeping = options.sleep ?? ((millis: number) => sleep(Duration.millis(millis)))
+    const client = try HttpClient.HttpClient
+    let requests = 0
+    let rateLimit: RateLimitSnapshot | undefined = undefined
+    let consumedCost = 0
+    let windowConsumedCost = 0
+    let startingRemaining: number | undefined = undefined
+    let waitedResetAt: number | undefined = undefined
+
+    function effectiveMaxGenerationCost() {
+      return rateLimit === undefined ? maxGenerationCost : Math.min(maxGenerationCost, Math.max(0, rateLimit.limit - rateLimitReserve))
+    }
+
+    effect function backoff(attempt: number) {
+      try sleeping(baseDelayMs * 2 ** (attempt - 1))
+    }
+
+    effect function ensureBudget(requiredCost: number) {
+      if (!Number.isInteger(requiredCost) || requiredCost < 0) throw new GraphqlFailed({ message: "requiredCost must be a non-negative integer" })
+      const current = rateLimit
+      if (current === undefined) return
+      const resetAt = millisOf(current.resetAt)
+      const budget: Budget = {
+        windowSpent: windowConsumedCost,
+        windowDrain: startingRemaining === undefined ? 0 : startingRemaining - current.remaining,
+        remaining: current.remaining,
+        waitedForReset: waitedResetAt !== undefined && waitedResetAt === resetAt,
+      }
+      const summary = `${windowConsumedCost}/${effectiveMaxGenerationCost()} points consumed in the current window, ${current.remaining} remaining; reserve ${rateLimitReserve}`
+      const decision = budgetDecision(budget, requiredCost)
+      if (decision === "SpendNow") return
+      if (decision === "StopCollection") {
+        throw new BudgetExceeded({ message: budget.waitedForReset ? `GitHub GraphQL safety budget exceeded after waiting for the reset at ${current.resetAt} (${summary})` : `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${maxGenerationCost}` })
+      }
+      if (!Number.isFinite(resetAt)) throw new GraphqlFailed({ message: "GitHub GraphQL returned an invalid rate-limit resetAt" })
+      const now = try Clock.currentTimeMillis
+      waitedResetAt = resetAt
+      try sleeping(Math.max(0, resetAt - now + 1_000))
+      windowConsumedCost = 0
+      startingRemaining = undefined
+      rateLimit = { ...current, cost: 0, consumedDuringRun: consumedCost, remaining: current.limit }
+    }
+
+    function outgoing(document: string, variables: Variables, restPath: string | undefined) {
+      const headers = { accept: "application/vnd.github+json", authorization: `Bearer ${Redacted.value(token)}`, "content-type": "application/json", "user-agent": graphqlUserAgent, "x-github-api-version": "2022-11-28" }
+      if (restPath !== undefined) return HttpClientRequest.get(`${authority}${restPath}`, { headers })
+      return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${authority}/graphql`, { headers }), { query: document, variables })
+    }
+
+    effect function exchanged(request: HttpClientRequest.HttpClientRequest, label: string) {
+      const read = effect {
+        const response = try client.execute(request)
+        const bytes = boundedBytes(response, maxGraphqlResponseBytes, label) catch effect (error) => {
+          if (error._tag === "BodyTooLarge") throw new GraphqlBoundary({ message: `${label} response exceeds ${maxGraphqlResponseBytes} bytes` })
+          if (error.reason.includes("content length")) throw new GraphqlBoundary({ message: `${label} returned an invalid Content-Length` })
+          return undefined
+        }
+        if (bytes === undefined) return { kind: "transient", timedOut: false } satisfies Exchange
+        const body = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => {
+          throw new GraphqlBoundary({ message: `${label} response is not valid UTF-8` })
+        }
+        return { kind: "answered", status: response.status, headers: Object.fromEntries(Object.entries(response.headers)), body } satisfies Exchange
+      }
+      const redirectsRefused = provideService(read, FetchHttpClient.RequestInit, { redirect: "error" })
+      return timeout(redirectsRefused, Duration.millis(timeoutMs)) catch effect (error) => match (error._tag) {
+        when "TimeoutError": { kind: "transient", timedOut: true } satisfies Exchange;
+        when "HttpClientError": { kind: "transient", timedOut: false } satisfies Exchange;
+        default: throw error;
+      }
+    }
+
+    effect function attempts(document: string, variables: Variables, restPath: string | undefined) {
+      const label = restPath === undefined ? "GitHub GraphQL" : "GitHub comparison"
+      let active = variables
+      for (let attempt = 1; attempt <= maxGraphqlRequestAttempts; attempt += 1) {
+        if (restPath === undefined) try ensureBudget(1)
+        requests += 1
+        const exchange = try exchanged(outgoing(document, active, restPath), label)
+        if (exchange.kind === "transient") {
+          if (attempt === maxGraphqlRequestAttempts) throw new GraphqlFailed({ message: exchange.timedOut ? `${label} request timed out after ${timeoutMs}ms (${attempt}/${maxGraphqlRequestAttempts})` : `${label} network request failed (${attempt}/${maxGraphqlRequestAttempts})` })
+          try backoff(attempt)
+          continue
+        }
+        const { status, headers, body } = exchange
+        const quota = restPath === undefined || (status !== 403 && status !== 429) ? 0 : rateLimitHints(headers, try Clock.currentTimeMillis).primaryDelay
+        if (quota > 0 && attempt < maxGraphqlRequestAttempts) {
+          try sleeping(quota)
+          continue
+        }
+        const retryableStatus = gatewayFailures.includes(status) || (restPath !== undefined && (try comparisonBuildTimedOut(status, body)))
+        if (retryableStatus && attempt < maxGraphqlRequestAttempts) {
+          active = narrowedPageSize(active) ?? active
+          try backoff(attempt)
+          continue
+        }
+        const secondary = try secondaryRateLimitDelayMs(status, headers, body)
+        if (secondary !== undefined && attempt < maxGraphqlRequestAttempts) {
+          try sleeping(secondary)
+          continue
+        }
+        const payload = try parsedText(body)
+        if (payload !== undefined) return { status, payload, variables: active }
+        const contentType = headers["content-type"]
+        const malformedJson = status >= 200 && status < 300 && jsonContentType(contentType)
+        if (malformedJson && attempt < maxGraphqlRequestAttempts) {
+          try backoff(attempt)
+          continue
+        }
+        const message = malformedJson
+          ? `${label} HTTP ${status} returned malformed JSON (${attempt}/${maxGraphqlRequestAttempts}; ${contentType ?? "unknown content type"}; ${body.length} body bytes)`
+          : `${label} HTTP ${status} returned a non-JSON response (${attempt}/${maxGraphqlRequestAttempts}; ${contentType ?? "unknown content type"}${describePageSize(active)})`
+        if (malformedJson || gatewayFailures.includes(status)) throw new GraphqlUpstream({ message, status })
+        throw new GraphqlFailed({ message })
+      }
+      throw new GraphqlFailed({ message: "GitHub GraphQL request did not produce a response" })
+    }
+
+    effect function executeRequest(document: string, variables: Variables, options: ExecuteOptions, restPath: string | undefined) {
+      const label = restPath === undefined ? "GitHub GraphQL" : "GitHub comparison"
+      const { status, payload, variables: active } = try attempts(document, variables, restPath)
+      const envelope = record(payload)
+      if (envelope === undefined) throw new GraphqlFailed({ message: "GitHub GraphQL response must be an object" })
+      if (status < 200 || status >= 300) throw new GraphqlFailed({ message: `${label} HTTP ${status}: ${sanitizeGraphqlError(envelope.message)}` })
+      const unavailable = restPath === undefined ? unavailableRequestedSources(envelope, active) : []
+      const statistics = restPath === undefined && options.commitStatistics === true ? commitStatisticsFailure(envelope, active) : undefined
+      const errors = envelope.errors
+      if (Array.isArray(errors) && errors.length > 0 && unavailable.length === 0 && statistics === undefined) {
+        throw new GraphqlFailed({ message: `${label} rejected the leaderboard query: ${errors.map(sanitizeGraphqlError).join("; ")}` })
+      }
+      if (restPath !== undefined) return envelope
+      const data = record(envelope.data)
+      if (data === undefined) throw new GraphqlFailed({ message: "GitHub GraphQL response.data must be an object" })
+      const reported = parsedRateLimit(data.rateLimit)
+      if (reported === undefined) throw new GraphqlFailed({ message: "data.rateLimit must report cost, limit, remaining and resetAt" })
+      const resetAt = millisOf(reported.resetAt)
+      const previousResetAt = rateLimit === undefined ? Number.NaN : millisOf(rateLimit.resetAt)
+      if (Number.isFinite(resetAt) && Number.isFinite(previousResetAt) && resetAt !== previousResetAt) {
+        windowConsumedCost = 0
+        startingRemaining = undefined
+        waitedResetAt = undefined
+      }
+      startingRemaining = startingRemaining ?? reported.remaining + reported.cost
+      consumedCost += reported.cost
+      windowConsumedCost += reported.cost
+      rateLimit = { ...reported, consumedDuringRun: consumedCost }
+      const effective = effectiveMaxGenerationCost()
+      if (windowConsumedCost > effective) throw new BudgetExceeded({ message: `${label} safety budget exceeded (${windowConsumedCost}/${effective} points consumed in the current window, ${reported.remaining} remaining; reserve ${rateLimitReserve})` })
+      if (unavailable.length > 0) throw new SourceNodeUnavailable({ message: "GitHub could not resolve an enumerated source node; a fresh complete census is required", sources: unavailable })
+      if (statistics !== undefined) throw statistics
+      return data
+    }
+
+    return {
+      execute: (document, variables = {}, options = {}) => executeRequest(document, variables, options, undefined),
+      compareCommitPage: (owner, name, base, head, page) => executeRequest("", {}, {}, `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${base}...${head}?per_page=${graphqlPageSize}&page=${page}`),
+      ensureBudget,
+      requestCount: () => effect {
+        return requests
+      },
+      rateLimit: () => effect {
+        if (rateLimit === undefined) throw new GraphqlFailed({ message: "GitHub rate-limit metadata was not loaded" })
+        return rateLimit
+      },
+    } satisfies Graphql.Shape
+  })
+}

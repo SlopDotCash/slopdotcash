@@ -1,0 +1,80 @@
+// spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window"
+import type { Methodology } from "./schema.vibe"
+
+export const leaderboardMethodology: Methodology = {
+  "summary": "Accepted work is grouped into logical work units. Each unit's value is divided among its implementation authors by their accepted additions plus deletions, rounded in whole Points. Maintainers ratify value on GitHub. From October 2026 an unratified merge starts at 30 Points, and a formal review earns 10 Points only when the merged code answered its request for changes, once per pull request.",
+  "scoringRules": [
+    {
+      "id": "merged-pull-request",
+      "points": "micro 10; small 30; medium 90; large 240; XL 450; exceptional 750",
+      "cap": "uncapped; related or split pull requests share one workUnitId",
+      "qualification": "Pull request merged during the rolling window. Unratified work merged before 2026-10-01 receives provisional micro credit and later work provisional small credit; other tiers require an immutable exact-head maintainer slop-score record. Divide the unchanged total by primary authors' accepted additions plus deletions on every base branch, rounding in whole Points. Each commit scores only in its earliest accepted source; opening or merging the PR alone earns no share."
+    },
+    {
+      "id": "resolved-issue",
+      "points": "included in the ratified outcome tier",
+      "cap": "no separate award",
+      "qualification": "Resolution value is evidence for the work-unit tier, not a second score."
+    },
+    {
+      "id": "material-test-change",
+      "points": "included in the ratified outcome tier",
+      "cap": "no separate award",
+      "qualification": "Test depth informs complexity and value but is not farmable additive credit."
+    },
+    {
+      "id": "evidence",
+      "points": "included in the ratified outcome tier",
+      "cap": "no separate award",
+      "qualification": "For the author's newest 5 deep-inspected merged pull requests per project and UTC month, contributor-authored proof is bound to the merged head via a single evidence-head marker, appears in a stable evidence row in the canonical PR body, uses an immutable GitHub attachment URL, and passes bounded remote byte and structure verification. Author post-merge body edits still void the package; a non-author post-merge body edit keeps the package only while the evidence-head still matches the merged OID. Mutable release assets, comment copies, inline text, N/A rows, unreachable artifacts, and third-party claims do not qualify."
+    },
+    {
+      "id": "substantive-review",
+      "points": "triage 10; standard 30; deep reproduction 90; specialist 240; ratification 10",
+      "cap": "from 2026-10-01, one ordinary review award per merged pull request; no self-review and no duplicate reviewer credit on one artifact",
+      "qualification": "Every merged pull request with a formal review is selected through a separate bounded review census, independent of the pull-request author's detail cap. A pre-merge APPROVED or CHANGES_REQUESTED review of human-authored work has substantive text or inline discussion. Before 2026-10-01 such a review scores standard credit. From 2026-10-01 only the latest CHANGES_REQUESTED review on a commit other than the merged head scores, at triage credit; approvals and ignored requests do not. Higher review tiers require maintainer ratification. Excluded formal reviews publish a machine-readable reason."
+    },
+    {
+      "id": "evaluated-contribution",
+      "points": "maintainer decision in 10-point increments",
+      "cap": "uncapped; cannot duplicate an ordinary source or work unit",
+      "qualification": "A public, strictly validated award manifest was reviewed and merged into elizaOS/slopdotcash for useful implementation, tests, review, diagnosis, or evidence that is not already rewarded as a merged outcome."
+    }
+  ],
+  "evidenceWeights": {
+    "screenshot": 1,
+    "video": 2,
+    "logs": 1,
+    "trajectory": 1,
+    "domain-artifact": 1
+  },
+  "materialTestThreshold": {
+    "minimumAdditions": 10,
+    "minimumTotalChurn": 20,
+    "cap": "4 points for each of the newest 5 qualifying merged pull requests per contributor"
+  },
+  "exclusions": [
+    "GitHub Bot actors and bot-pattern logins",
+    "reviews of bot-authored or unattributed pull requests",
+    "self-reviews",
+    "reviews submitted after merge",
+    "pull-request comments created or edited after merge; bodies created after merge; author post-merge body edits; and non-author post-merge body edits that no longer pin the merged head via a single evidence-head marker",
+    "duplicate immutable GitHub node IDs",
+    "repeated reviews by the same reviewer on the same pull request",
+    "from 2026-10-01, approvals, requests for changes the merge ignored, and every review after the one review award on a pull request",
+    "arbitrary external media links, bare checksums, and unstructured evidence claims",
+    "unreachable, empty, malformed, wrong-kind, or conflicting evidence artifacts",
+    "closed issues that only carry GitHub's COMPLETED state reason",
+    "issue reports whose author did not also author the linked merged fix",
+    "score-bearing evidence supplied only by a third party",
+    "unreviewed evaluator output or evaluator output that duplicates an already-scored source"
+  ],
+  "nonScoringActivity": [
+    "raw comments",
+    "commit count within the 35-day verification window",
+    "lines added or deleted",
+    "model disclosure"
+  ],
+  "provenancePolicy": "Leaderboard model identifiers come only from text sources causally attached to a scored contribution by the same actor. Exact provider/model declarations, human-only declarations, and contribution-attribution markers remain self-reported provenance; complete, partial, missing, and invalid states add no points.",
+  "collectionPolicy": "The same complete collection pipeline runs for every repository in the published project registry; records merge by immutable GitHub node ID and every artifact keeps its repository attribution. A scalar-only, budget-preflighted census selects every merged pull request with formal reviews for complete review hydration; missing or inconsistent census/detail data aborts the snapshot instead of publishing partial review credit. Score v2 applies to work from 2026-08-01 UTC. Every accepted merge receives at least provisional micro credit, and provisional small credit when merged from 2026-10-01. Any other tier requires an unedited maintainer-authored slop-score record bound to the PR node ID and exact head SHA; corrections append a successor. Proposal review records disclose exact provider, model, client, run, trace, effort, complexity, impact, review load, split risk, and confidence. XL and exceptional decisions require a second maintainer. Project reward views exclude work before the published reward start."
+}

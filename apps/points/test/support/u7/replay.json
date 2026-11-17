@@ -1,0 +1,1017 @@
+{
+  "facts": {
+    "windowFrom": "2026-10-28T00:00:00.000Z",
+    "windowTo": "2026-12-02T00:00:00.000Z",
+    "merged": [
+      {
+        "id": "PR_october",
+        "number": 7,
+        "repository": "SlopDotCash/asi",
+        "project": "asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/7",
+        "title": "fix: accepted change",
+        "author": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "headRefOid": "7777777777777777777777777777777777777777",
+        "commits": [
+          {
+            "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "parentCount": 1,
+            "author": {
+              "id": "MDQ6VXNlcjQy",
+              "login": "author",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+              "url": "https://github.com/author",
+              "kind": "User"
+            },
+            "retained": null,
+            "additions": 4,
+            "deletions": 1
+          }
+        ],
+        "reviews": [
+          {
+            "id": "PRR_o1",
+            "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-701",
+            "author": {
+              "id": "MDQ6VXNlcjNDQ",
+              "login": "reviewer-one",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+              "url": "https://github.com/reviewer-one",
+              "kind": "User"
+            },
+            "state": "APPROVED",
+            "submittedAt": "2026-10-05T10:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "1111111111111111111111111111111111111111",
+            "traceUpload": false
+          },
+          {
+            "id": "PRR_o2",
+            "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-702",
+            "author": {
+              "id": "MDQ6VXNlcjNDU",
+              "login": "reviewer-two",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+              "url": "https://github.com/reviewer-two",
+              "kind": "User"
+            },
+            "state": "CHANGES_REQUESTED",
+            "submittedAt": "2026-10-20T10:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "cccccccccccccccccccccccccccccccccccccccc",
+            "traceUpload": false
+          },
+          {
+            "id": "PRR_o3",
+            "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-703",
+            "author": {
+              "id": "MDQ6VXNlcjNDY",
+              "login": "reviewer-three",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/46?v=4",
+              "url": "https://github.com/reviewer-three",
+              "kind": "User"
+            },
+            "state": "APPROVED",
+            "submittedAt": "2026-10-29T08:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "7777777777777777777777777777777777777777",
+            "traceUpload": false
+          }
+        ],
+        "mergedAt": "2026-10-29T12:00:00.000Z",
+        "assessment": null,
+        "ratification": null,
+        "reviewValues": [],
+        "externalPrize": false,
+        "traceUpload": false,
+        "automatedReviews": []
+      },
+      {
+        "id": "PR_november",
+        "number": 8,
+        "repository": "SlopDotCash/asi",
+        "project": "asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/8",
+        "title": "fix: accepted change",
+        "author": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "headRefOid": "8888888888888888888888888888888888888888",
+        "commits": [
+          {
+            "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "parentCount": 1,
+            "author": {
+              "id": "MDQ6VXNlcjQy",
+              "login": "author",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+              "url": "https://github.com/author",
+              "kind": "User"
+            },
+            "retained": null,
+            "additions": 20,
+            "deletions": 4
+          },
+          {
+            "oid": "dddddddddddddddddddddddddddddddddddddddd",
+            "parentCount": 1,
+            "author": {
+              "id": "MDQ6VXNlcjQz",
+              "login": "project-owner",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+              "url": "https://github.com/project-owner",
+              "kind": "User"
+            },
+            "retained": null,
+            "additions": 6,
+            "deletions": 0
+          }
+        ],
+        "reviews": [
+          {
+            "id": "PRR_n1",
+            "url": "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-801",
+            "author": {
+              "id": "MDQ6VXNlcjNDQ",
+              "login": "reviewer-one",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+              "url": "https://github.com/reviewer-one",
+              "kind": "User"
+            },
+            "state": "APPROVED",
+            "submittedAt": "2026-11-04T12:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "8888888888888888888888888888888888888888",
+            "traceUpload": false
+          },
+          {
+            "id": "PRR_n2",
+            "url": "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-802",
+            "author": {
+              "id": "MDQ6VXNlcjQz",
+              "login": "project-owner",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+              "url": "https://github.com/project-owner",
+              "kind": "User"
+            },
+            "state": "COMMENTED",
+            "submittedAt": "2026-11-04T13:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "8888888888888888888888888888888888888888",
+            "traceUpload": false
+          }
+        ],
+        "mergedAt": "2026-11-05T00:00:00.000Z",
+        "assessment": {
+          "tier": "medium",
+          "source": "PaidApiReceipt",
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "rubric": "slop-value-v1",
+          "model": "fixture-model",
+          "head": "8888888888888888888888888888888888888888",
+          "recordedAt": "2026-11-13T01:00:00.000Z",
+          "rationale": "Assessed medium change."
+        },
+        "ratification": null,
+        "reviewValues": [
+          {
+            "reviewId": "PRR_n1",
+            "tier": "standard",
+            "finding": "Confirms the retry bound.",
+            "outcome": "Useful validation."
+          },
+          {
+            "reviewId": "PRR_n2",
+            "tier": "deep",
+            "finding": "Traces the failure path.",
+            "outcome": "Found a gap."
+          }
+        ],
+        "externalPrize": false,
+        "traceUpload": false,
+        "automatedReviews": []
+      },
+      {
+        "id": "PR_owner",
+        "number": 9,
+        "repository": "SlopDotCash/asi",
+        "project": "asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/9",
+        "title": "fix: accepted change",
+        "author": {
+          "id": "MDQ6VXNlcjQz",
+          "login": "project-owner",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+          "url": "https://github.com/project-owner",
+          "kind": "User"
+        },
+        "headRefOid": "9999999999999999999999999999999999999999",
+        "commits": [
+          {
+            "oid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "parentCount": 1,
+            "author": {
+              "id": "MDQ6VXNlcjQz",
+              "login": "project-owner",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+              "url": "https://github.com/project-owner",
+              "kind": "User"
+            },
+            "retained": null,
+            "additions": 3,
+            "deletions": 3
+          }
+        ],
+        "reviews": [],
+        "mergedAt": "2026-11-12T00:00:00.000Z",
+        "assessment": null,
+        "ratification": null,
+        "reviewValues": [],
+        "externalPrize": false,
+        "traceUpload": false,
+        "automatedReviews": []
+      }
+    ],
+    "closedUnmerged": [
+      {
+        "id": "PR_local",
+        "number": 5,
+        "repository": "SlopDotCash/asi",
+        "project": "asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/5",
+        "title": "Followers",
+        "author": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "headRefOid": "5555555555555555555555555555555555555555",
+        "commits": [],
+        "reviews": [
+          {
+            "id": "PRR_c1",
+            "url": "https://github.com/SlopDotCash/asi/pull/5#pullrequestreview-501",
+            "author": {
+              "id": "MDQ6VXNlcjNDU",
+              "login": "reviewer-two",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+              "url": "https://github.com/reviewer-two",
+              "kind": "User"
+            },
+            "state": "APPROVED",
+            "submittedAt": "2026-11-09T12:00:00.000Z",
+            "body": "The change bounds every retry and reports the last failure clearly.",
+            "inlineCommentCount": 0,
+            "commitId": "5555555555555555555555555555555555555555",
+            "traceUpload": false
+          }
+        ],
+        "closedAt": "2026-11-10T00:00:00.000Z",
+        "assessment": {
+          "tier": "small",
+          "source": "PaidApiReceipt",
+          "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "rubric": "slop-value-v1",
+          "model": "fixture-model",
+          "head": "5555555555555555555555555555555555555555",
+          "recordedAt": "2026-11-13T01:00:00.000Z",
+          "rationale": "Assessed small change."
+        },
+        "reviewValues": [
+          {
+            "reviewId": "PRR_c1",
+            "tier": "deep",
+            "finding": "Explains why the change is unsafe.",
+            "outcome": "Closed the PR."
+          }
+        ],
+        "externalPrize": false
+      }
+    ],
+    "contexts": [],
+    "joint": [],
+    "attributionHolds": [],
+    "heldUnits": [],
+    "openReviewedAt": [],
+    "penalties": [],
+    "projects": [
+      [
+        "SlopDotCash/asi",
+        "asi"
+      ]
+    ],
+    "bans": [],
+    "activity": [
+      [
+        "MDQ6VXNlcjQy",
+        {
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 0,
+            "commits": 0,
+            "additions": 8,
+            "deletions": 2
+          },
+          "models": []
+        }
+      ],
+      [
+        "MDQ6VXNlcjNDU",
+        {
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 2,
+            "commits": 0,
+            "additions": 0,
+            "deletions": 0
+          },
+          "models": []
+        }
+      ],
+      [
+        "MDQ6VXNlcjNDQ",
+        {
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 2,
+            "commits": 0,
+            "additions": 0,
+            "deletions": 0
+          },
+          "models": []
+        }
+      ],
+      [
+        "MDQ6VXNlcjQz",
+        {
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 1,
+            "commits": 0,
+            "additions": 4,
+            "deletions": 1
+          },
+          "models": []
+        }
+      ]
+    ]
+  },
+  "expected": {
+    "ledger": [
+      {
+        "id": "PR_november:merged",
+        "actor": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "category": "merged-pull-request",
+        "points": 2.4,
+        "scoreThirds": 7.2,
+        "evidenceBonusBasisPoints": 0,
+        "workUnitId": "wu_slopdotcash_asi_pr_8",
+        "scoreDecisionSourceId": "value:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "scoreDecisionAt": "2026-11-13T01:00:00.000Z",
+        "occurredAt": "2026-11-05T00:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PR_november",
+          "kind": "pull-request",
+          "number": 8,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/8"
+        },
+        "reason": "Provisional value assessment (medium): Assessed medium change. Shared among 2 implementation authors in proportion to verified changed lines."
+      },
+      {
+        "id": "PR_local:value-review:PRR_c1",
+        "actor": {
+          "id": "MDQ6VXNlcjNDU",
+          "login": "reviewer-two",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+          "url": "https://github.com/reviewer-two",
+          "kind": "User"
+        },
+        "category": "substantive-review",
+        "points": 1,
+        "scoreThirds": 3,
+        "workUnitId": "wu_value_review_prr_c1",
+        "scoreDecisionSourceId": "value:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "scoreDecisionAt": "2026-11-13T01:00:00.000Z",
+        "occurredAt": "2026-11-09T12:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PRR_c1",
+          "kind": "review",
+          "number": 5,
+          "title": "Followers",
+          "url": "https://github.com/SlopDotCash/asi/pull/5#pullrequestreview-501"
+        },
+        "reason": "Provisional deep review value; reviewer 1 of 1 credited, 3 of 3 review-credit thirds: Explains why the change is unsafe. Closed the PR."
+      },
+      {
+        "id": "PR_october:merged",
+        "actor": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "category": "merged-pull-request",
+        "points": 1,
+        "scoreThirds": 3,
+        "evidenceBonusBasisPoints": 0,
+        "workUnitId": "wu_slopdotcash_asi_pr_7",
+        "occurredAt": "2026-10-29T12:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PR_october",
+          "kind": "pull-request",
+          "number": 7,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/7"
+        },
+        "reason": "Accepted outcome has provisional small credit pending immutable maintainer ratification."
+      },
+      {
+        "id": "PR_november:value-review:PRR_n1",
+        "actor": {
+          "id": "MDQ6VXNlcjNDQ",
+          "login": "reviewer-one",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+          "url": "https://github.com/reviewer-one",
+          "kind": "User"
+        },
+        "category": "substantive-review",
+        "points": 1,
+        "scoreThirds": 3,
+        "workUnitId": "wu_value_review_prr_n1",
+        "scoreDecisionSourceId": "value:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "scoreDecisionAt": "2026-11-13T01:00:00.000Z",
+        "occurredAt": "2026-11-04T12:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PRR_n1",
+          "kind": "review",
+          "number": 8,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-801"
+        },
+        "reason": "Provisional standard review value; reviewer 1 of 1 credited, 3 of 3 review-credit thirds: Confirms the retry bound. Useful validation."
+      },
+      {
+        "id": "PR_november:merged:MDQ6VXNlcjQz",
+        "actor": {
+          "id": "MDQ6VXNlcjQz",
+          "login": "project-owner",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+          "url": "https://github.com/project-owner",
+          "kind": "User"
+        },
+        "category": "merged-pull-request",
+        "points": 0.6,
+        "scoreThirds": 1.8,
+        "evidenceBonusBasisPoints": 0,
+        "workUnitId": "wu_slopdotcash_asi_pr_8",
+        "scoreDecisionSourceId": "value:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "scoreDecisionAt": "2026-11-13T01:00:00.000Z",
+        "occurredAt": "2026-11-05T00:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PR_november",
+          "kind": "pull-request",
+          "number": 8,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/8"
+        },
+        "reason": "Provisional value assessment (medium): Assessed medium change. Shared among 2 implementation authors in proportion to verified changed lines."
+      },
+      {
+        "id": "PR_october:reviewer:MDQ6VXNlcjNDU",
+        "actor": {
+          "id": "MDQ6VXNlcjNDU",
+          "login": "reviewer-two",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+          "url": "https://github.com/reviewer-two",
+          "kind": "User"
+        },
+        "category": "substantive-review",
+        "points": 0.3333333333333333,
+        "scoreThirds": 1,
+        "occurredAt": "2026-10-20T10:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PRR_o2",
+          "kind": "review",
+          "number": 7,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-702"
+        },
+        "reason": "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+        "workUnitId": "wu_asi_prr_o2"
+      },
+      {
+        "id": "PR_owner:merged",
+        "actor": {
+          "id": "MDQ6VXNlcjQz",
+          "login": "project-owner",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+          "url": "https://github.com/project-owner",
+          "kind": "User"
+        },
+        "category": "merged-pull-request",
+        "points": 0.3333333333333333,
+        "scoreThirds": 1,
+        "evidenceBonusBasisPoints": 0,
+        "workUnitId": "wu_slopdotcash_asi_pr_9",
+        "occurredAt": "2026-11-12T00:00:00.000Z",
+        "repository": "SlopDotCash/asi",
+        "source": {
+          "id": "PR_owner",
+          "kind": "pull-request",
+          "number": 9,
+          "title": "fix: accepted change",
+          "url": "https://github.com/SlopDotCash/asi/pull/9"
+        },
+        "reason": "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed."
+      }
+    ],
+    "leaders": [
+      {
+        "rank": 1,
+        "actor": {
+          "id": "MDQ6VXNlcjQy",
+          "login": "author",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+          "url": "https://github.com/author",
+          "kind": "User"
+        },
+        "score": 3,
+        "scoreThirds": 10.2,
+        "points": {
+          "mergedPullRequests": 3.4,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "pointThirds": {
+          "mergedPullRequests": 10.2,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "acceptedOutcomes": {
+          "mergedPullRequests": 2,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidenceCategories": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "rawActivity": {
+          "comments": 0,
+          "reviews": 0,
+          "commits": 0,
+          "additions": 8,
+          "deletions": 2
+        },
+        "reportedModels": []
+      },
+      {
+        "rank": 2,
+        "actor": {
+          "id": "MDQ6VXNlcjNDU",
+          "login": "reviewer-two",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+          "url": "https://github.com/reviewer-two",
+          "kind": "User"
+        },
+        "score": 1,
+        "scoreThirds": 4,
+        "points": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 1.3333333333333333,
+          "evaluatedContributions": 0
+        },
+        "pointThirds": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 4,
+          "evaluatedContributions": 0
+        },
+        "acceptedOutcomes": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidenceCategories": 0,
+          "substantiveReviews": 2,
+          "evaluatedContributions": 0
+        },
+        "rawActivity": {
+          "comments": 0,
+          "reviews": 2,
+          "commits": 0,
+          "additions": 0,
+          "deletions": 0
+        },
+        "reportedModels": []
+      },
+      {
+        "rank": 3,
+        "actor": {
+          "id": "MDQ6VXNlcjNDQ",
+          "login": "reviewer-one",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+          "url": "https://github.com/reviewer-one",
+          "kind": "User"
+        },
+        "score": 1,
+        "scoreThirds": 3,
+        "points": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 1,
+          "evaluatedContributions": 0
+        },
+        "pointThirds": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 3,
+          "evaluatedContributions": 0
+        },
+        "acceptedOutcomes": {
+          "mergedPullRequests": 0,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidenceCategories": 0,
+          "substantiveReviews": 1,
+          "evaluatedContributions": 0
+        },
+        "rawActivity": {
+          "comments": 0,
+          "reviews": 2,
+          "commits": 0,
+          "additions": 0,
+          "deletions": 0
+        },
+        "reportedModels": []
+      },
+      {
+        "rank": 4,
+        "actor": {
+          "id": "MDQ6VXNlcjQz",
+          "login": "project-owner",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+          "url": "https://github.com/project-owner",
+          "kind": "User"
+        },
+        "score": 0,
+        "scoreThirds": 2.8,
+        "points": {
+          "mergedPullRequests": 0.9333333333333332,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "pointThirds": {
+          "mergedPullRequests": 2.8,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidence": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "acceptedOutcomes": {
+          "mergedPullRequests": 2,
+          "resolvedIssues": 0,
+          "materialTestChanges": 0,
+          "evidenceCategories": 0,
+          "substantiveReviews": 0,
+          "evaluatedContributions": 0
+        },
+        "rawActivity": {
+          "comments": 0,
+          "reviews": 1,
+          "commits": 0,
+          "additions": 4,
+          "deletions": 1
+        },
+        "reportedModels": []
+      }
+    ],
+    "reviewExclusions": [
+      {
+        "id": "PR_november:review-exclusion:PRR_n2",
+        "reviewId": "PRR_n2",
+        "pullRequestId": "PR_november",
+        "pullRequestNumber": 8,
+        "repository": "SlopDotCash/asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-802",
+        "reason": "self-review",
+        "reviewer": {
+          "id": "MDQ6VXNlcjQz",
+          "login": "project-owner",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+          "url": "https://github.com/project-owner",
+          "kind": "User"
+        }
+      },
+      {
+        "id": "PR_october:review-exclusion:PRR_o1",
+        "reviewId": "PRR_o1",
+        "pullRequestId": "PR_october",
+        "pullRequestNumber": 7,
+        "repository": "SlopDotCash/asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-701",
+        "reason": "unchanged-outcome",
+        "reviewer": {
+          "id": "MDQ6VXNlcjNDQ",
+          "login": "reviewer-one",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+          "url": "https://github.com/reviewer-one",
+          "kind": "User"
+        }
+      },
+      {
+        "id": "PR_october:review-exclusion:PRR_o3",
+        "reviewId": "PRR_o3",
+        "pullRequestId": "PR_october",
+        "pullRequestNumber": 7,
+        "repository": "SlopDotCash/asi",
+        "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-703",
+        "reason": "unchanged-outcome",
+        "reviewer": {
+          "id": "MDQ6VXNlcjNDY",
+          "login": "reviewer-three",
+          "avatarUrl": "https://avatars.githubusercontent.com/u/46?v=4",
+          "url": "https://github.com/reviewer-three",
+          "kind": "User"
+        }
+      }
+    ],
+    "paymentReviewBasis": {
+      "policy": "scr-05-payments-production-v1",
+      "effectiveAt": "2026-10-09T23:21:35.388Z",
+      "leaders": [
+        {
+          "rank": 1,
+          "actor": {
+            "id": "MDQ6VXNlcjQy",
+            "login": "author",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/42?v=4",
+            "url": "https://github.com/author",
+            "kind": "User"
+          },
+          "score": 3,
+          "scoreThirds": 10.2,
+          "points": {
+            "mergedPullRequests": 3.4,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "pointThirds": {
+            "mergedPullRequests": 10.2,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "acceptedOutcomes": {
+            "mergedPullRequests": 2,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidenceCategories": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 0,
+            "commits": 0,
+            "additions": 8,
+            "deletions": 2
+          },
+          "reportedModels": []
+        },
+        {
+          "rank": 2,
+          "actor": {
+            "id": "MDQ6VXNlcjNDQ",
+            "login": "reviewer-one",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+            "url": "https://github.com/reviewer-one",
+            "kind": "User"
+          },
+          "score": 2,
+          "scoreThirds": 6,
+          "points": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 2,
+            "evaluatedContributions": 0
+          },
+          "pointThirds": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 6,
+            "evaluatedContributions": 0
+          },
+          "acceptedOutcomes": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidenceCategories": 0,
+            "substantiveReviews": 2,
+            "evaluatedContributions": 0
+          },
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 2,
+            "commits": 0,
+            "additions": 0,
+            "deletions": 0
+          },
+          "reportedModels": []
+        },
+        {
+          "rank": 3,
+          "actor": {
+            "id": "MDQ6VXNlcjNDU",
+            "login": "reviewer-two",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/45?v=4",
+            "url": "https://github.com/reviewer-two",
+            "kind": "User"
+          },
+          "score": 1,
+          "scoreThirds": 4,
+          "points": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 1.3333333333333333,
+            "evaluatedContributions": 0
+          },
+          "pointThirds": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 4,
+            "evaluatedContributions": 0
+          },
+          "acceptedOutcomes": {
+            "mergedPullRequests": 0,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidenceCategories": 0,
+            "substantiveReviews": 2,
+            "evaluatedContributions": 0
+          },
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 2,
+            "commits": 0,
+            "additions": 0,
+            "deletions": 0
+          },
+          "reportedModels": []
+        },
+        {
+          "rank": 4,
+          "actor": {
+            "id": "MDQ6VXNlcjQz",
+            "login": "project-owner",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/43?v=4",
+            "url": "https://github.com/project-owner",
+            "kind": "User"
+          },
+          "score": 0,
+          "scoreThirds": 2.8,
+          "points": {
+            "mergedPullRequests": 0.9333333333333332,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "pointThirds": {
+            "mergedPullRequests": 2.8,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidence": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "acceptedOutcomes": {
+            "mergedPullRequests": 2,
+            "resolvedIssues": 0,
+            "materialTestChanges": 0,
+            "evidenceCategories": 0,
+            "substantiveReviews": 0,
+            "evaluatedContributions": 0
+          },
+          "rawActivity": {
+            "comments": 0,
+            "reviews": 1,
+            "commits": 0,
+            "additions": 4,
+            "deletions": 1
+          },
+          "reportedModels": []
+        }
+      ],
+      "ledger": [
+        {
+          "id": "PR_october:reviewer:MDQ6VXNlcjNDQ",
+          "actor": {
+            "id": "MDQ6VXNlcjNDQ",
+            "login": "reviewer-one",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/44?v=4",
+            "url": "https://github.com/reviewer-one",
+            "kind": "User"
+          },
+          "category": "substantive-review",
+          "points": 1,
+          "occurredAt": "2026-10-05T10:00:00.000Z",
+          "repository": "SlopDotCash/asi",
+          "source": {
+            "id": "PRR_o1",
+            "kind": "review",
+            "number": 7,
+            "title": "fix: accepted change",
+            "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-701"
+          },
+          "reason": "First qualifying substantive, non-self review submitted before merge.",
+          "scoreThirds": 3,
+          "workUnitId": "wu_asi_prr_o1"
+        }
+      ],
+      "removedEventIds": [],
+      "reviewExclusions": [
+        {
+          "id": "PR_november:review-exclusion:PRR_n2",
+          "reviewId": "PRR_n2",
+          "pullRequestId": "PR_november",
+          "pullRequestNumber": 8,
+          "repository": "SlopDotCash/asi",
+          "url": "https://github.com/SlopDotCash/asi/pull/8#pullrequestreview-802",
+          "reason": "self-review"
+        },
+        {
+          "id": "PR_october:review-exclusion:PRR_o3",
+          "reviewId": "PRR_o3",
+          "pullRequestId": "PR_october",
+          "pullRequestNumber": 7,
+          "repository": "SlopDotCash/asi",
+          "url": "https://github.com/SlopDotCash/asi/pull/7#pullrequestreview-703",
+          "reason": "unchanged-outcome"
+        }
+      ]
+    }
+  }
+}

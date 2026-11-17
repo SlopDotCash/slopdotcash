@@ -1,0 +1,33 @@
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
+import { Refused } from "@repo/platform/http"
+import type { Refusal } from "@repo/platform/route"
+import { getNotifications, getNotificationsAppealsByKey, getNotificationsScamReviewsByPath, postNotificationsRead, postSecurityCasesByIdAcknowledge } from "../client/refusals.vibe"
+
+interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+function parity(row: Row): Refusal {
+  return { status: row.status, code: row.error, message: row.message ?? "" }
+}
+
+export const inboxRefusals = {
+  notSignedIn: parity(getNotifications.notSignedIn),
+  invalidExpectedActor: parity(getNotifications.invalidExpectedActorPrivateNoStore),
+  actorChanged: parity(getNotifications.actorChangedPrivateNoStore),
+  invalidCursor: parity(getNotifications.invalidCursor),
+  methodNotAllowed: parity(getNotifications.otherMethods.methodNotAllowed),
+  originForbidden: parity(postNotificationsRead.originForbiddenPrivateNoStore),
+  invalidRequest: parity(postNotificationsRead.invalidRequestPrivateNoStore),
+  invalidAppealKey: parity(getNotificationsAppealsByKey.invalidRequestPrivateNoStore),
+  notAuthorized: parity(getNotificationsScamReviewsByPath.notAuthorized),
+  notFound: parity(getNotificationsScamReviewsByPath.notFoundS404),
+  caseNotFound: parity(postSecurityCasesByIdAcknowledge.notFound),
+  eventKeyRequired: parity(postSecurityCasesByIdAcknowledge.invalidRequestAnInboxEventKey),
+} satisfies Readonly<Record<string, Refusal>>
+
+export function refused(refusal: Refusal) {
+  return new Refused(refusal)
+}

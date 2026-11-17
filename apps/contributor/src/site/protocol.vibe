@@ -1,0 +1,48 @@
+// spec/contributor/publication.md, "Protocol documents are generated from their one maintained source and historical protocol links stay immutable"
+import { historicalProtocolCommit, protocolPublishable } from "../../gen/contributor__publication.effect.vibe"
+import { IDENTITY_RECORD, identityRecordText, validateIdentityRecord } from "../client/identity/record.schema.ts"
+import { type SiteFile, refused, sourceText, textFile } from "./sources.vibe"
+
+export const privacyContractPath = "apps/contributor/docs/private-trace-v1.md"
+export const requirementsPath = "docs/slop-product-requirements.md"
+
+const privacyHeading = "## Private trace privacy contract"
+const pointsHeading = "## 7. Points, discovery, and clear pages"
+const prdLink = "https://github.com/SlopDotCash/slopdotcash/blob/development/docs/slop-product-requirements.md#7-points-discovery-and-clear-pages"
+
+function documentSection(source: string, heading: string): string | undefined {
+  const start = source.indexOf(`${heading}\n`)
+  if (start < 0) return undefined
+  const depth = /^#+/u.exec(heading)?.[0].length ?? 0
+  const content = source.slice(start + heading.length + 1)
+  let offset = 0
+  for (const line of content.split("\n")) {
+    const marks = /^(#+) /u.exec(line)?.[1].length
+    if (marks !== undefined && marks <= depth) return content.slice(0, offset).trim()
+    offset += line.length + 1
+  }
+  return content.trim()
+}
+
+function raised(section: string): string {
+  return section.replace(/^### /gmu, "## ")
+}
+
+function pointsDocument(name: string, section: string): string {
+  return `# Slop Points\n\nCurrent rules are published from [the canonical PRD, section 7](${prdLink}).\n\n${raised(section)}\n\n## Historical protocol record\n\n[The former ${name} document](https://github.com/SlopDotCash/slopdotcash/blob/${historicalProtocolCommit}/protocol/${name}) is retained at an immutable source revision for historical rules and record formats. Current policy and historical preservation follow the PRD above.\n`
+}
+
+export effect function protocolFiles(root: string) {
+  const privacy = documentSection(try sourceText(root, privacyContractPath), privacyHeading)
+  const points = documentSection(try sourceText(root, requirementsPath), pointsHeading)
+  const identity = validateIdentityRecord(IDENTITY_RECORD)
+  if (privacy === undefined) throw refused(`required document section is missing: ${privacyHeading}`)
+  if (points === undefined) throw refused(`required document section is missing: ${pointsHeading}`)
+  if (!protocolPublishable(true, identity.kind === "valid")) throw refused("the protocol identity record is invalid")
+  return [
+    textFile("protocol/private-trace-v1.md", `# Private trace privacy contract v1\n\n${raised(privacy)}\n`),
+    textFile("protocol/points-v1.md", pointsDocument("points-v1.md", points)),
+    textFile("protocol/scoring-v2.md", pointsDocument("scoring-v2.md", points)),
+    textFile("protocol/identity-v1.json", identityRecordText()),
+  ] satisfies ReadonlyArray<SiteFile>
+}

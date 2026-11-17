@@ -1,0 +1,84 @@
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
+import { first, sql } from "@repo/platform/d1"
+import { type Actor, Refused } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { postAdminProjectsByIdEnforcement } from "../../client/refusals.vibe"
+
+export interface Row {
+  readonly status: number
+  readonly error: string
+  readonly message?: string
+}
+
+export function refused(row: Row, message?: string) {
+  return new Refused({ status: row.status, code: row.error, message: message ?? row.message ?? "" })
+}
+
+export const projectIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+
+export effect function requireAdmin(actor: Actor, forbidden: Row) {
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) throw refused(forbidden)
+}
+
+export effect function moderation(actor: Actor) {
+  const roles = try Roles
+  if ((try roles.snapshot("moderator")).length === 0) return "unconfigured" as const
+  return (try roles.has(actor.githubId, "moderator")) ? "moderator" as const : "not-moderator" as const
+}
+
+export effect function requireModerator(actor: Actor) {
+  const rows = postAdminProjectsByIdEnforcement
+  try requireAdmin(actor, rows.forbidden)
+  const state = try moderation(actor)
+  if (state === "unconfigured") throw refused(rows.moderationUnavailable)
+  if (state === "not-moderator") throw refused(rows.forbiddenTheProjectModeratorRole)
+}
+
+export effect function positiveInteger(value: unknown, invalid: Row) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) throw refused(invalid)
+  return value
+}
+
+export effect function boundedText(value: unknown, invalid: Row, outOfRange: Row, max: number) {
+  if (typeof value !== "string") throw refused(invalid)
+  const trimmed = value.trim()
+  if (trimmed.length < 1 || trimmed.length > max) throw refused(outOfRange)
+  return trimmed
+}
+
+export schema ProjectRow {
+  id: string
+  status: string
+  revision: number
+  manifest: string
+  manifest_sha256: string
+  created_at: string
+  updated_at: string
+  source_application_id: string | null
+  referrer_github_id: string | null
+  referrer_github_login: string | null
+}
+
+export const projectColumns = sql`id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login`
+
+export effect function projectRow(projectId: string) {
+  return try first(ProjectRow, sql`SELECT ${projectColumns} FROM projects WHERE id = ${projectId}`)
+}
+
+export effect function manifestJson(row: ProjectRow) {
+  return try orDie(Effect.try(() => JSON.parse(row.manifest) as unknown))
+}
+
+export effect function adminProjectView(row: ProjectRow) {
+  return {
+    id: row.id,
+    status: row.status,
+    revision: row.revision,
+    manifestSha256: row.manifest_sha256,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    sourceApplicationId: row.source_application_id,
+    referrer: row.referrer_github_id === null || row.referrer_github_login === null ? null : { githubId: row.referrer_github_id, githubLogin: row.referrer_github_login },
+    manifest: try manifestJson(row),
+  }
+}

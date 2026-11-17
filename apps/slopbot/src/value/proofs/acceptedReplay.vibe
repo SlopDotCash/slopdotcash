@@ -1,0 +1,139 @@
+// spec/slopbot/valueEvidence.md, "An accepted-patch replay counts only when every submitted file replays onto the accepted parent to the exact accepted bytes"
+import { utf8Text } from "@repo/platform/git/bytes"
+import { type ReplayFile, type ReplayProof, replayComplete, replayFileHolds } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import { verifiedBlob } from "./blob.vibe"
+import { type FileChange, hasCompleteValuePatch, valueAdditionCount, valuePatch } from "./changes.vibe"
+import { isObjectId, isRegularFileMode } from "./gitObject.ts"
+import { type Hunk, hasSubmittedPostimages, parseHunks, replay, sameHunks } from "./patchReplay.ts"
+import type { Reads } from "./reads.vibe"
+import { type PathOutcome, verifiedPaths } from "./tree.vibe"
+
+export schema ReplayedFile {
+  readonly path: string
+  readonly mode: string
+  readonly submittedBlobSha: string
+  readonly parentBlobSha: string | null
+  readonly acceptedBlobSha: string
+}
+
+export schema AcceptedPatchReplay {
+  readonly schemaVersion: 1
+  readonly headSha: string
+  readonly mergeSha: string
+  readonly parentSha: string
+  readonly files: ReadonlyArray<ReplayedFile>
+}
+
+export interface AcceptedCommit {
+  readonly sha: string
+  readonly parents: ReadonlyArray<{ readonly sha: string }>
+  readonly files: ReadonlyArray<FileChange>
+}
+
+function hunksOf(file: FileChange): ReadonlyArray<Hunk> | undefined {
+  const patch = valuePatch(file)
+  if (!hasCompleteValuePatch(file) || patch === undefined) return undefined
+  const parsed = parseHunks(patch, file.status === "added")
+  return parsed.ok ? parsed.hunks : undefined
+}
+
+function replayText(bytes: Uint8Array) {
+  const decoded = utf8Text(bytes)
+  return decoded === undefined || decoded.includes("\0") ? undefined : decoded
+}
+
+function sameShape(submitted: FileChange, accepted: FileChange) {
+  return submitted.filename === accepted.filename && (submitted.status === "added" || submitted.status === "modified") &&
+    submitted.status === accepted.status && submitted.previous_filename === undefined && accepted.previous_filename === undefined &&
+    submitted.fullComparison === undefined && accepted.fullComparison === undefined &&
+    valueAdditionCount(submitted) === valueAdditionCount(accepted) && submitted.deletions === accepted.deletions
+}
+
+function presentEntry(outcome: PathOutcome | undefined) {
+  return outcome?.kind === "present" ? outcome.entry : undefined
+}
+
+function byPath(a: FileChange, b: FileChange) {
+  return a.filename.localeCompare(b.filename)
+}
+
+effect function replayOne(repository: string, headSha: string, submitted: FileChange, accepted: FileChange, mergeSha: string, parentSha: string, reads: Reads) {
+  const shaped = sameShape(submitted, accepted)
+  const original = shaped ? hunksOf(submitted) : undefined
+  const target = shaped ? hunksOf(accepted) : undefined
+  const sameHunkList = original !== undefined && target !== undefined && sameHunks([...original], [...target])
+  if (!shaped || !sameHunkList || original === undefined || target === undefined) return undefined
+  const path = submitted.filename
+  const head = try verifiedPaths(repository, headSha, [path], reads)
+  const parent = try verifiedPaths(repository, parentSha, [path], reads)
+  const final = try verifiedPaths(repository, mergeSha, [path], reads)
+  const parentOutcome = parent?.get(path)
+  const before = presentEntry(parentOutcome)
+  const after = presentEntry(final?.get(path))
+  const source = presentEntry(head?.get(path))
+  const added = submitted.status === "added"
+  const treesVerified = parentOutcome !== undefined && source !== undefined && after !== undefined
+  const modesAgree = treesVerified && isRegularFileMode(source.mode) && source.mode === after.mode &&
+    (added ? parentOutcome.kind === "absent" && source.sha === after.sha : before !== undefined && before.mode === after.mode)
+  if (!treesVerified || !modesAgree || source === undefined || after === undefined) return undefined
+  const read = verifiedBlob(repository)
+  const acceptedBlob = try read(path, mergeSha)
+  const expected = acceptedBlob !== undefined && acceptedBlob.sha === after.sha ? replayText(acceptedBlob.bytes) : undefined
+  if (expected === undefined) return undefined
+  let sourceVerified = true
+  let replayEqualsAccepted = (original[0]?.after ?? "") === expected
+  if (!added) {
+    const submittedBlob = try read(path, headSha)
+    const submittedText = submittedBlob !== undefined && submittedBlob.sha === source.sha ? replayText(submittedBlob.bytes) : undefined
+    const base = submittedText !== undefined && hasSubmittedPostimages(submittedText, [...original]) ? try read(path, parentSha) : undefined
+    const baseText = base !== undefined && base.sha === before?.sha ? replayText(base.bytes) : undefined
+    sourceVerified = baseText !== undefined
+    const replayed = baseText === undefined ? undefined : replay(baseText, [...original], [...target])
+    replayEqualsAccepted = replayed !== undefined && replayed.ok && replayed.text === expected
+  }
+  const outcome: ReplayFile = {
+    sameShape: shaped,
+    sameHunks: sameHunkList,
+    treesVerified,
+    modesAgree,
+    acceptedVerified: true,
+    sourceVerified,
+    replayEqualsAccepted,
+  }
+  return replayFileHolds(outcome)
+    ? { outcome, file: { path, mode: after.mode, submittedBlobSha: source.sha, parentBlobSha: before?.sha ?? null, acceptedBlobSha: after.sha } satisfies ReplayedFile }
+    : undefined
+}
+
+export effect function acceptedPatchReplay(repository: string, headSha: string, files: ReadonlyArray<FileChange>, merge: AcceptedCommit) {
+  const parentSha = merge.parents[0]?.sha ?? ""
+  const submittedPaths = new Set(files.map((file) => file.filename))
+  const acceptedPaths = new Set(merge.files.map((file) => file.filename))
+  const distinctPaths = submittedPaths.size === files.length && acceptedPaths.size === merge.files.length
+  if (
+    files.length === 0 || files.length !== merge.files.length || !distinctPaths || merge.parents.length !== 1 ||
+    ![headSha, merge.sha, parentSha].every(isObjectId) || files.some((file) => !acceptedPaths.has(file.filename))
+  ) return undefined
+  const accepted = new Map(merge.files.map((file) => [file.filename, file]))
+  const submitted = [...files].sort(byPath)
+  const reads: Reads = new Map()
+  const outcomes: ReplayFile[] = []
+  const replayed: ReplayedFile[] = []
+  for (const file of submitted) {
+    const match = accepted.get(file.filename)
+    const one = match === undefined ? undefined : try replayOne(repository, headSha, file, match, merge.sha, parentSha, reads)
+    if (one === undefined) return undefined
+    outcomes.push(one.outcome)
+    replayed.push(one.file)
+  }
+  const proof: ReplayProof = {
+    singleParent: merge.parents.length === 1,
+    submittedPaths: submittedPaths.size,
+    acceptedPaths: acceptedPaths.size,
+    distinctPaths,
+    replayed: outcomes,
+  }
+  return replayComplete(proof)
+    ? { schemaVersion: 1, headSha, mergeSha: merge.sha, parentSha, files: replayed } satisfies AcceptedPatchReplay
+    : undefined
+}

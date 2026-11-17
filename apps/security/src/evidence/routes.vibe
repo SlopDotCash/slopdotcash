@@ -1,0 +1,437 @@
+// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
+import { D1, first, sql } from "@repo/platform/d1"
+import { isoAt, isoNow } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { Caller, admission, handleRaw, json, jsonBody, refuse, sameOriginWrite } from "@repo/platform/http"
+import { allowed, downloadRefusal } from "../../gen/security__privacy.effect.vibe"
+import { closeEvidenceCase, downloadEvidence, downloadOtherMethods, evidenceOverview, evidencePolicy, finalizeEvidence, grantEvidenceDownload, grantEvidenceRead, readEvidenceBody, registerEvidence, retentionBoundary, uploadEvidence, uploadEvidenceChunk } from "../client/evidence.vibe"
+import { scannerRead } from "../privacy/reads.vibe"
+import { decodedJson } from "./assembly.ts"
+import { assemblyClosure } from "./closure.vibe"
+import { type EvidenceChunk, chunkLayout, isDigest, partBytes } from "./layout.ts"
+import { EvidenceBucket, partKey, readPart, storePart } from "./objects.vibe"
+import { pulled } from "./pulled.ts"
+import { type Row, refused, rows } from "./refused.vibe"
+import { type DeclaredObject, type ObjectRow, type Run, audit, bytes, closeCase, completed, layout, object, objectsOf, readable, register, registeredManifest, run, storedDigests, uploadAdmitted, verify } from "./store.vibe"
+
+const identity = /^[a-zA-Z0-9_-]{1,100}$/u
+const chunkIndex = /^(?:0|[1-9][0-9]{0,8})$/u
+const kinds = new Set(["trace", "stdout", "stderr", "network", "artifact", "lineage", "manifest", "disk-diff"])
+const contentTypes = ["text/plain", "application/x-ndjson", "application/json", "application/octet-stream"]
+const grantCookie = "__Secure-vetting-read-grant="
+const privateHeaders = { "cache-control": "private, no-store", "x-robots-tag": "noindex" }
+
+function answer(body: unknown, status = 200) {
+  return json(body, status, privateHeaders)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function sameKeys(value: Record<string, unknown>, keys: ReadonlyArray<string>) {
+  return Object.keys(value).sort().join() === [...keys].sort().join()
+}
+
+effect function exact(value: Record<string, unknown>, keys: ReadonlyArray<string>) {
+  if (!sameKeys(value, keys)) throw refused(rows.unexpectedFields)
+}
+
+effect function text(value: unknown, max = 500) {
+  if (typeof value !== "string" || value.trim() === "" || value.length > max) throw refused(rows.invalidText)
+  return value
+}
+
+effect function runIdentity(params: Readonly<Record<string, string>>) {
+  const assessment = params.assessment ?? ""
+  const runId = params.run ?? ""
+  if (!identity.test(assessment) || !identity.test(runId)) throw refused(rows.routeNotFound)
+  return { assessment, runId }
+}
+
+effect function objectIdentity(params: Readonly<Record<string, string>>) {
+  const { assessment, runId } = try runIdentity(params)
+  const sha = params.sha ?? ""
+  if (!isDigest(sha)) throw refused(rows.routeNotFound)
+  return { assessment, runId, sha }
+}
+
+effect function signedBytes() {
+  const request = try HttpServerRequest.HttpServerRequest
+  return new Uint8Array(try orDie(request.arrayBuffer))
+}
+
+effect function operator() {
+  const actor = try (try Caller).current()
+  if (!evidencePolicy.operatorGithubIds.includes(actor.githubId)) throw refused(rows.operatorRequired)
+  return actor
+}
+
+effect function sameOperator(githubId: string, changed: Row) {
+  if ((try operator()).githubId !== githubId) throw refused(changed)
+}
+
+effect function reasonOf(max: number) {
+  const body = try jsonBody(64)
+  if (!isRecord(body)) throw refuse(admission.invalidJson.status, admission.invalidJson.code, admission.invalidJson.message)
+  try exact(body, ["reason"])
+  return try text(body.reason, max)
+}
+
+effect function rejectHead() {
+  if ((try HttpServerRequest.HttpServerRequest).method === "HEAD") throw refused(rows.otherMethodOrigin)
+}
+
+effect function declared(value: unknown, seen: Set<string>) {
+  if (!isRecord(value)) throw refused(rows.objectInvalid)
+  try exact(value, ["sha256", "sizeBytes", "kind", "label", "contentType", ...(Object.hasOwn(value, "chunks") ? ["chunks"] : [])])
+  const sha = try text(value.sha256, 64)
+  const kind = try text(value.kind, 20)
+  const label = try text(value.label, 200)
+  const contentType = try text(value.contentType, 80)
+  const size = value.sizeBytes
+  if (!isDigest(sha) || seen.has(sha) || !kinds.has(kind) || !contentTypes.includes(contentType) || typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) throw refused(rows.objectDuplicate)
+  let chunks: ReadonlyArray<EvidenceChunk> | undefined = undefined
+  if (size > partBytes || Object.hasOwn(value, "chunks")) {
+    chunks = chunkLayout(value.chunks, size)
+    if (chunks === undefined) throw refused(rows.layoutRequired)
+  }
+  seen.add(sha)
+  return { sha256: sha, sizeBytes: size, kind, label, contentType, ...(chunks === undefined ? {} : { chunks }) } satisfies DeclaredObject
+}
+
+effect function replay(assessment: string, runId: string, registered: string, digest: string) {
+  if (registered !== digest) throw refused(rows.conflict)
+  return answer({ manifestSha256: digest, replayed: true, stored: try storedDigests(assessment, runId) })
+}
+
+schema Existing { id: string }
+
+const registerRoute = handleRaw(registerEvidence, (input) => effect {
+  const { assessment, runId } = try runIdentity(input.params)
+  const body = try signedBytes()
+  const parsed = try Effect.try({ try: () => decodedJson(body), catch: () => refused(rows.manifestUtf8) })
+  if (!isRecord(parsed)) throw refused(rows.manifestObject)
+  const assembled = Object.hasOwn(parsed, "assemblySha256")
+  try exact(parsed, ["traceSha256", "objects", ...(assembled ? ["assemblySha256"] : [])])
+  if (assembled && !isDigest(parsed.assemblySha256)) throw refused(rows.assemblyDigest)
+  const assemblySha256 = assembled && isDigest(parsed.assemblySha256) ? parsed.assemblySha256 : undefined
+  const traceSha256 = parsed.traceSha256
+  const listed = parsed.objects
+  if (!isDigest(traceSha256) || !Array.isArray(listed) || listed.length === 0 || listed.length > evidencePolicy.maxObjects) throw refused(rows.manifestInvalid)
+  if ((try first(Existing, sql`SELECT id FROM vetting_assessments WHERE id=${assessment}`)) === undefined) throw refused(rows.assessmentMissing)
+  const seen = new Set<string>()
+  const objects: DeclaredObject[] = []
+  for (const value of listed) objects.push(try declared(value, seen))
+  objects.sort((left, right) => left.sha256.localeCompare(right.sha256))
+  if (!objects.some((candidate) => candidate.kind === "trace" && candidate.sha256 === traceSha256)) throw refused(rows.traceRequired)
+  if (assemblySha256 !== undefined && !objects.some((candidate) => candidate.sha256 === assemblySha256 && candidate.kind === "manifest")) throw refused(rows.assemblyRequired)
+  const manifest = JSON.stringify({ traceSha256, ...(assemblySha256 === undefined ? {} : { assemblySha256 }), objects })
+  const digest = try sha256Hex(manifest)
+  const previous = try registeredManifest(assessment, runId)
+  if (previous !== undefined) return try replay(assessment, runId, previous, digest)
+  const now = try Clock.currentTimeMillis
+  const outcome = register({
+    assessment,
+    runId,
+    traceSha256,
+    assemblySha256,
+    manifest,
+    manifestSha256: digest,
+    policy: JSON.stringify(evidencePolicy),
+    objects,
+    actor: `service:${input.actor.keyId}`,
+    at: try isoAt(now),
+    expiresAt: try isoAt(now + evidencePolicy.postClosureRetentionSeconds * 1000),
+  }) catch effect (error) => {
+    const winner = try registeredManifest(assessment, runId)
+    if (winner === undefined) throw error
+    return winner
+  }
+  if (typeof outcome === "string") return try replay(assessment, runId, outcome, digest)
+  return answer({ manifestSha256: digest, stored: try storedDigests(assessment, runId) }, 201)
+})
+
+const uploadRoute = handleRaw(uploadEvidence, (input) => effect {
+  const { assessment, runId, sha } = try objectIdentity(input.params)
+  const body = try signedBytes()
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  if (current.expiresAt !== undefined && Date.parse(current.expiresAt) <= (try Clock.currentTimeMillis)) throw refused(rows.uploadExpired)
+  if (body.length !== row.size_bytes || (try sha256Hex(body)) !== sha) throw refused(rows.uploadDigest)
+  try uploadAdmitted(row)
+  try storePart(row, body, undefined, row.content_type)
+  try bytes(row, current)
+  try readable(try run(assessment, runId))
+  try audit(`service:${input.actor.keyId}`, "upload", assessment, runId, sha)
+  return answer({ sha256: sha, sizeBytes: body.length })
+})
+
+const uploadChunkRoute = handleRaw(uploadEvidenceChunk, (input) => effect {
+  const { assessment, runId, sha } = try objectIdentity(input.params)
+  const index = input.params.index ?? ""
+  if (!chunkIndex.test(index)) throw refused(rows.routeNotFound)
+  const body = try signedBytes()
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  try readable(current)
+  const chunk = (try layout(row))?.[Number(index)]
+  if (chunk === undefined) throw refused(rows.chunkMissing)
+  if (body.length !== chunk.sizeBytes || (try sha256Hex(body)) !== chunk.sha256) throw refused(rows.chunkDigest)
+  try uploadAdmitted(row)
+  try storePart(row, body, chunk, "application/octet-stream")
+  try readable(try run(assessment, runId))
+  try audit(`service:${input.actor.keyId}`, "upload-chunk", assessment, runId, sha, `Chunk ${index}`)
+  return answer({ sha256: chunk.sha256, index: Number(index), sizeBytes: body.length })
+})
+
+const finalizeRoute = handleRaw(finalizeEvidence, (input) => effect {
+  const { assessment, runId, sha } = try objectIdentity(input.params)
+  const body = try signedBytes()
+  if (new TextDecoder().decode(body) !== "{}") throw refused(rows.finalizeEmpty)
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  if ((try layout(row)) === null) throw refused(rows.finalizeUnchunked)
+  try verify(row, current, false)
+  try readable(try run(assessment, runId))
+  const at = try isoNow()
+  const [recorded] = try (try D1).batch([
+    sql`INSERT OR IGNORE INTO vetting_evidence_completions(assessment_id,run_id,sha256,completed_at) VALUES(${assessment},${runId},${sha},${at})`,
+    sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,created_at) SELECT ${try randomId()},${`service:${input.actor.keyId}`},'finalize',${assessment},${runId},${sha},${at} WHERE changes()=1`,
+  ])
+  return answer({ sha256: sha, sizeBytes: row.size_bytes, replayed: recorded?.changes !== 1 })
+})
+
+effect function objectState(row: ObjectRow, current: Run, now: number) {
+  const parts = try layout(row)
+  if (current.expiresAt !== undefined && Date.parse(current.expiresAt) <= now) return "expired"
+  if (parts !== null) return (try completed(row)) ? "stored-unverified" : "pending"
+  const key = try partKey(row)
+  if (key === undefined) return "missing"
+  const { binding } = try EvidenceBucket
+  const head = try tryPromise({ try: () => binding.head(key), catch: () => refuse(admission.internal.status, admission.internal.code, admission.internal.message) })
+  if (head === null) return "missing"
+  return head.size !== row.size_bytes || head.customMetadata?.sha256 !== row.sha256 ? "corrupt" : "stored-unverified"
+}
+
+const overviewRoute = handleRaw(evidenceOverview, (input) => effect {
+  try rejectHead()
+  const actor = try operator()
+  const assessment = input.query.get("assessmentId")
+  const runId = input.query.get("runId")
+  const runs: Run[] = []
+  if (assessment !== null || runId !== null) {
+    if (!identity.test(assessment ?? "") || !identity.test(runId ?? "")) throw refused(rows.enterIdentity)
+    runs.push(try run(assessment ?? "", runId ?? ""))
+  }
+  const now = try Clock.currentTimeMillis
+  const listed: unknown[] = []
+  for (const current of runs) {
+    const objects: unknown[] = []
+    for (const row of try objectsOf(current.row.assessment_id, current.row.run_id, "kind")) {
+      objects.push({ sha256: row.sha256, sizeBytes: row.size_bytes, kind: row.kind, label: row.label, contentType: row.content_type, streamed: row.size_bytes > partBytes, state: try objectState(row, current, now) })
+    }
+    const closure = assemblyClosure(current.row.assessment_id, current.row.run_id) catch () => undefined
+    listed.push({
+      assembly: closure === undefined
+        ? { retained: false, state: "unavailable", scanReady: false, reason: "Captured evidence is missing, invalid, mismatched or expired." }
+        : { retained: true, state: closure.state, scanReady: false, reason: "Runtime image and toolchain pins are not retained here." },
+      assessmentId: current.row.assessment_id,
+      runId: current.row.run_id,
+      traceSha256: current.row.trace_sha256,
+      manifestSha256: current.row.manifest_sha256,
+      createdAt: current.row.created_at,
+      expiresAt: current.expiresAt ?? null,
+      permanentAdmissionEvidence: current.row.permanent_admission === 1,
+      policy: try orDie(Effect.try(() => JSON.parse(current.row.policy) as unknown)),
+      objects,
+    })
+  }
+  try audit(actor.githubId, "list", "*", null, null, "Inspect registered vetting evidence")
+  try sameOperator(actor.githubId, rows.operatorChanged)
+  return answer({ runs: listed, policy: evidencePolicy, retentionBoundary })
+})
+
+const closeRoute = handleRaw(closeEvidenceCase, (input) => effect {
+  const assessment = input.params.assessment ?? ""
+  if (!identity.test(assessment)) throw refused(rows.routeNotFound)
+  const actor = try operator()
+  if (actor.githubId !== evidencePolicy.policyAuthorityGithubId) throw refused(rows.policyOwnerOnly)
+  const reason = try reasonOf(1000)
+  return answer(try closeCase(assessment, actor.githubId, reason))
+})
+
+effect function grantFor(params: Readonly<Record<string, string>>, download: boolean) {
+  const { assessment, runId, sha } = try objectIdentity(params)
+  const actor = try operator()
+  const reason = try reasonOf(500)
+  if (reason.trim().length < 8) throw refused(rows.explainAccess)
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  if (!download && row.size_bytes > partBytes) throw refused(rows.oversizeGrant)
+  try verify(row, current)
+  const token = `${try randomId()}${try randomId()}`
+  const hash = try sha256Hex(token)
+  const now = try Clock.currentTimeMillis
+  const duration = evidencePolicy.readGrantDurationSeconds
+  try (try D1).batch([
+    sql`INSERT INTO vetting_evidence_grants(token_hash,assessment_id,run_id,sha256,operator_github_id,reason,expires_at) VALUES(${hash},${assessment},${runId},${sha},${actor.githubId},${reason},${try isoAt(now + duration * 1000)})`,
+    sql`INSERT INTO vetting_evidence_audit(id,actor,action,assessment_id,run_id,sha256,reason,created_at) VALUES(${try randomId()},${actor.githubId},'grant',${assessment},${runId},${sha},${reason},${try isoAt(now)})`,
+  ])
+  if (!download) return answer({ grant: token, expiresInSeconds: duration }, 201)
+  const path = `/api/v1/operator/vetting-evidence/${assessment}/${runId}/${sha}/download`
+  return HttpServerResponse.setHeader(answer({ expiresInSeconds: duration }, 201), "set-cookie", `${grantCookie}${token}; Path=${path}; Max-Age=${duration}; Secure; HttpOnly; SameSite=Strict`)
+}
+
+const grantRoute = handleRaw(grantEvidenceRead, (input) => grantFor(input.params, false))
+const downloadGrantRoute = handleRaw(grantEvidenceDownload, (input) => grantFor(input.params, true))
+
+schema Consumed { reason: string; expires_at: string }
+
+effect function consume(assessment: string, runId: string, sha: string, token: string) {
+  const actor = try operator()
+  if (token.length > 100) throw refused(rows.grantMalformed)
+  const hash = try sha256Hex(token)
+  const at = try isoNow()
+  const grant = try first(Consumed, sql`UPDATE vetting_evidence_grants SET consumed_at=${at} WHERE token_hash=${hash} AND assessment_id=${assessment} AND run_id=${runId} AND sha256=${sha} AND operator_github_id=${actor.githubId} AND consumed_at IS NULL AND expires_at>${at} RETURNING reason, expires_at`)
+  if (grant === undefined) throw refused(rows.grantUnusable)
+  try audit(actor.githubId, "read-attempt", assessment, runId, sha, grant.reason)
+  const access = try scannerRead({ operatorGithubId: actor.githubId, expiresAt: grant.expires_at, durationSeconds: evidencePolicy.readGrantDurationSeconds })
+  return { actor, reason: grant.reason, access }
+}
+
+const bodyRoute = handleRaw(readEvidenceBody, (input) => effect {
+  try rejectHead()
+  const { assessment, runId, sha } = try objectIdentity(input.params)
+  const request = try HttpServerRequest.HttpServerRequest
+  const { actor, reason, access } = try consume(assessment, runId, sha, request.headers["x-vetting-read-grant"] ?? "")
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  const data = try bytes(row, current)
+  access.machine.send({ type: "startStream" }, access.operator) catch effect () => { throw refused(rows.grantUnusable) }
+  try audit(actor.githubId, "read", assessment, runId, sha, reason)
+  const latest = try run(assessment, runId)
+  try sameOperator(actor.githubId, rows.operatorChanged)
+  try readable(latest)
+  access.current() catch effect () => { throw refused(rows.grantUnusable) }
+  access.machine.send({ type: "finishStream" }, access.operator) catch effect () => { throw refused(rows.grantUnusable) }
+  return HttpServerResponse.uint8Array(data, {
+    headers: {
+      ...privateHeaders,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "content-disposition": `attachment; filename="${sha}.bin"`,
+      "content-security-policy": "default-src 'none'; sandbox",
+    },
+    contentType: row.content_type,
+  })
+})
+
+const downloadRoute = handleRaw(downloadEvidence, (input) => effect {
+  const { assessment, runId, sha } = try objectIdentity(input.params)
+  const request = try HttpServerRequest.HttpServerRequest
+  const cookies = (request.headers.cookie ?? "").split(";").map((part) => part.trim()).filter((part) => part.startsWith(grantCookie))
+  const shape = downloadRefusal({
+    method: request.method === "GET" ? "DownloadGet" : request.method === "HEAD" ? "DownloadHead" : "DownloadOther",
+    sameOrigin: request.headers["sec-fetch-site"] === "same-origin",
+    ranged: request.headers.range !== undefined,
+    grantCookies: cookies.length,
+  })
+  if (shape === "MethodNotAllowed") throw refused(rows.downloadMethod)
+  if (shape === "OriginForbidden") throw refused(rows.downloadShape)
+  if (shape === "GrantInvalid") throw refused(rows.downloadCookies)
+  const token = (cookies[0] ?? "").slice(grantCookie.length)
+  const { actor, reason, access } = try consume(assessment, runId, sha, token)
+  const current = try run(assessment, runId)
+  const row = try object(assessment, runId, sha)
+  try readable(current)
+  const parts = try layout(row)
+  if (parts !== null && !(try completed(row))) throw refused(rows.downloadPending)
+  try audit(actor.githubId, "download-authorized", assessment, runId, sha, reason)
+  const ended = try Ref.make(false)
+  const started = try Ref.make(false)
+  const record = (action: string) => audit(actor.githubId, action, assessment, runId, sha, reason)
+  const authorized = effect {
+    try sameOperator(actor.githubId, rows.downloadOperatorChanged)
+    const state = try access.current()
+    if (!allowed(state)) {
+      access.machine.send({ type: "abortStream" }, access.operator) catch () => state
+      throw refused(rows.grantUnusable)
+    }
+  }
+  const deliver = (part: EvidenceChunk | undefined) => effect {
+    try authorized
+    try readable(try run(assessment, runId))
+    const piece = part === undefined ? try bytes(row, current) : try readPart(row, part)
+    if (!(try Ref.get(started))) {
+      access.machine.send({ type: "startStream" }, access.operator) catch effect () => { throw refused(rows.grantUnusable) }
+      try record("download-started")
+      try Ref.set(started, true)
+    }
+    try authorized
+    try readable(try run(assessment, runId))
+    return piece
+  }
+  const settle = (action: string) => effect {
+    if (try Ref.get(ended)) return
+    try Ref.set(ended, true)
+    record(action) catch () => undefined
+  }
+  const finish = effect {
+    try Ref.set(ended, true)
+    access.machine.send({ type: "finishStream" }, access.operator) catch effect () => { throw refused(rows.grantUnusable) }
+    try record("download-finished")
+  }
+  const sequence = parts ?? [undefined]
+  const position = try Ref.make(0)
+  const next = effect {
+    const index = try Ref.get(position)
+    if (index >= sequence.length) {
+      try finish
+      return undefined
+    }
+    const piece = try deliver(sequence[index])
+    try Ref.set(position, index + 1)
+    return piece
+  }
+  const services = try Effect.context<D1 | EvidenceBucket | Caller | HttpServerRequest.HttpServerRequest | Experimental.Crypto.Crypto>()
+  const pull = effect {
+    return next catch effect (error) => {
+      try settle("download-failed")
+      throw error
+    }
+  }
+  const execute = Effect.runPromiseWith(services)
+  const body = pulled({ next: () => execute(pull), cancel: () => execute(settle("download-cancelled")) })
+  return HttpServerResponse.raw(body, {
+    headers: {
+      ...privateHeaders,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "content-disposition": `attachment; filename="${sha}.bin"`,
+      "content-security-policy": "default-src 'none'; sandbox",
+      "accept-ranges": "none",
+    },
+    contentType: "application/octet-stream",
+    contentLength: row.size_bytes,
+  })
+})
+
+const otherMethodRoutes = downloadOtherMethods.map((descriptor) => handleRaw(descriptor, () => effect {
+  if (!(try sameOriginWrite())) throw refused(rows.otherMethodOrigin)
+  throw refused(rows.downloadMethod)
+}))
+
+export const evidenceRoutes = Layer.mergeAll(
+  registerRoute,
+  uploadRoute,
+  uploadChunkRoute,
+  finalizeRoute,
+  overviewRoute,
+  closeRoute,
+  grantRoute,
+  downloadGrantRoute,
+  bodyRoute,
+  downloadRoute,
+  ...otherMethodRoutes,
+)

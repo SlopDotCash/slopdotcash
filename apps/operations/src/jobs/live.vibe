@@ -1,0 +1,38 @@
+// spec/operations/paymentJobs.md, "Off and invalid or unauthorized configurations start no work"
+import { isoAt } from "@repo/platform/clock"
+import { ConfigInvalid } from "@repo/platform/config"
+import { D1, sql } from "@repo/platform/d1"
+import { type JobKey, JobAdmission } from "@repo/ports/operations"
+
+function owned(job: JobKey, lease: string) {
+  return sql`kind = ${job.kind} AND job_key = ${job.key} AND network = ${job.network ?? ""} AND lease_id = ${lease}`
+}
+
+export function jobAdmission(options: { readonly leaseMs: number }) {
+  return Layer.effect(JobAdmission, effect {
+    if (!Number.isSafeInteger(options.leaseMs) || options.leaseMs <= 0) throw new ConfigInvalid({ name: "leaseMs", issue: "not a positive whole number of milliseconds" })
+    const db = try D1
+    const window = effect {
+      const now = try Clock.currentTimeMillis
+      return { now: try isoAt(now), until: try isoAt(now + options.leaseMs) }
+    }
+    return {
+      admit: (job, lease) => effect {
+        const { now, until } = try window
+        const changes = try db.run(sql`INSERT INTO job_admissions (kind, job_key, network, lease_id, expires_at)
+          VALUES (${job.kind}, ${job.key}, ${job.network ?? ""}, ${lease}, ${until})
+          ON CONFLICT (kind, job_key, network) DO UPDATE SET lease_id = excluded.lease_id, expires_at = excluded.expires_at
+          WHERE job_admissions.expires_at < ${now}`)
+        return changes === 1 ? "Admitted" : "Busy"
+      },
+      renew: (job, lease) => effect {
+        const { now, until } = try window
+        return (try db.run(sql`UPDATE job_admissions SET expires_at = ${until} WHERE ${owned(job, lease)} AND expires_at >= ${now}`)) === 1
+      },
+      finish: (job, lease) => effect {
+        const { now } = try window
+        try db.run(sql`DELETE FROM job_admissions WHERE ${owned(job, lease)} AND expires_at >= ${now}`)
+      },
+    } satisfies JobAdmission.Shape
+  })
+}

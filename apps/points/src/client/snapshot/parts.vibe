@@ -1,0 +1,117 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+import { sha256Hex, utf8 } from "@repo/platform/crypto"
+import { type Part, type PartsManifest, type ReadPart, accepted } from "../../../gen/points__ingestion.effect.vibe"
+
+export const maxSnapshotBytes = 64 * 1024 * 1024
+export const maxPartBytes = 8 * 1024 * 1024
+export const maxFileBytes = 25 * 1024 * 1024
+export const maxIndexBytes = 64 * 1024
+export const partsFormat = "slop-leaderboard-parts-v1"
+export const partsDirectory = "/data/leaderboard/"
+
+export error SnapshotTooLarge { limitBytes: number }
+export error PartsInvalid { message: string }
+
+export interface EncodedPart {
+  readonly path: string
+  readonly bytes: Uint8Array
+}
+
+export interface EncodedSnapshot {
+  readonly root: Uint8Array
+  readonly parts: ReadonlyArray<EncodedPart>
+}
+
+schema PartRecord { readonly path: string; readonly bytes: number; readonly sha256: string }
+schema PartsIndex { readonly format: string; readonly bytes: number; readonly sha256: string; readonly parts: ReadonlyArray<PartRecord> }
+
+const digestPattern = /^[a-f0-9]{64}$/u
+
+export function partPath(sha256: string): string {
+  return `${partsDirectory}${sha256}.part`
+}
+
+function hasExactKeys(value: unknown, keys: ReadonlyArray<string>): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+}
+
+function parsedJson(bytes: Uint8Array): { readonly value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown }
+  } catch {
+    return undefined
+  }
+}
+
+export effect function encodeParts(bytes: Uint8Array) {
+  if (bytes.length > maxSnapshotBytes) throw new SnapshotTooLarge({ limitBytes: maxSnapshotBytes })
+  if (bytes.length <= maxFileBytes) return { root: bytes, parts: [] } satisfies EncodedSnapshot
+  const parts: EncodedPart[] = []
+  const records: PartRecord[] = []
+  for (let offset = 0; offset < bytes.length; offset += maxPartBytes) {
+    const part = bytes.slice(offset, offset + maxPartBytes)
+    const sha256 = try sha256Hex(part)
+    parts.push({ path: partPath(sha256), bytes: part })
+    records.push({ path: partPath(sha256), bytes: part.length, sha256 })
+  }
+  const index = { format: partsFormat, bytes: bytes.length, sha256: try sha256Hex(bytes), parts: records }
+  return { root: utf8(`${JSON.stringify(index)}\n`), parts } satisfies EncodedSnapshot
+}
+
+function manifestRefusal(index: PartsIndex, raw: unknown): string | undefined {
+  if (!hasExactKeys(raw, ["format", "bytes", "sha256", "parts"])) return "Invalid leaderboard parts manifest"
+  if (!Number.isSafeInteger(index.bytes) || index.bytes <= maxFileBytes || index.bytes > maxSnapshotBytes) return "Invalid leaderboard parts manifest"
+  if (!digestPattern.test(index.sha256) || index.parts.length !== Math.ceil(index.bytes / maxPartBytes)) return "Invalid leaderboard parts manifest"
+  const rawParts = (raw as { readonly parts: ReadonlyArray<unknown> }).parts
+  let total = 0
+  for (let i = 0; i < index.parts.length; i++) {
+    const part = index.parts[i]
+    if (part === undefined || !hasExactKeys(rawParts[i], ["path", "bytes", "sha256"])) return "Invalid leaderboard part"
+    if (!digestPattern.test(part.sha256) || part.path !== partPath(part.sha256)) return "Invalid leaderboard part"
+    if (part.bytes !== Math.min(maxPartBytes, index.bytes - total)) return "Invalid leaderboard part"
+    total += part.bytes
+  }
+  return total === index.bytes ? undefined : "Incomplete leaderboard parts"
+}
+
+function modelOf(index: PartsIndex, digests: Map<string, number>): PartsManifest {
+  const id = (sha256: string) => {
+    const known = digests.get(sha256)
+    if (known !== undefined) return known
+    digests.set(sha256, digests.size + 1)
+    return digests.size
+  }
+  return { total: index.bytes, digest: id(index.sha256), parts: index.parts.map((part): Part => ({ digest: id(part.sha256), bytes: part.bytes })) }
+}
+
+export effect function readParts<E, R>(root: Uint8Array, readPart: (path: string) => Uint8Array!E!R) {
+  if (root.length > maxSnapshotBytes) throw new SnapshotTooLarge({ limitBytes: maxSnapshotBytes })
+  const parsed = parsedJson(root)
+  if (parsed === undefined) throw new PartsInvalid({ message: "Leaderboard is not UTF-8 JSON" })
+  const format = (parsed.value as { readonly format?: unknown } | null)?.format
+  if (format !== partsFormat) return root
+  if (root.length > maxIndexBytes) throw new PartsInvalid({ message: "Invalid leaderboard parts manifest" })
+  const index = Schema.decodeUnknownEffect(PartsIndex)(parsed.value) catch effect () => {
+    throw new PartsInvalid({ message: "Invalid leaderboard parts manifest" })
+  }
+  const refusal = manifestRefusal(index, parsed.value)
+  if (refusal !== undefined) throw new PartsInvalid({ message: refusal })
+  const digests = new Map<string, number>()
+  const manifest = modelOf(index, digests)
+  const bytes = new Uint8Array(index.bytes)
+  const read: ReadPart[] = []
+  let offset = 0
+  for (const part of index.parts) {
+    const data = try readPart(part.path)
+    const sha256 = try sha256Hex(data)
+    if (data.length !== part.bytes || sha256 !== part.sha256) throw new PartsInvalid({ message: "Leaderboard part size or digest mismatch" })
+    const digest = digests.get(sha256) ?? 0
+    read.push({ digest, bytes: data.length, content: digest })
+    bytes.set(data, offset)
+    offset += data.length
+  }
+  const whole = try sha256Hex(bytes)
+  if (!accepted(manifest, maxPartBytes, read, digests.get(whole) ?? 0)) throw new PartsInvalid({ message: "Leaderboard snapshot digest mismatch" })
+  return bytes
+}

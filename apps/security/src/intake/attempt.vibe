@@ -1,0 +1,171 @@
+// spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "Only verified exact object bytes permit an atomic case and Inbox receipt"; spec/security/intake.md, "A restricted project's new reports wait for an owner decision"
+import { millisOf } from "@repo/platform/clock"
+import { D1, type Statement, rows, sql } from "@repo/platform/d1"
+import { sha256Hex } from "@repo/platform/crypto"
+import { StorageFailure } from "@repo/platform/r2"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { type Intake, type IntakeAvailability, Rejected, apply, canVerifyObject, decodeState, initial } from "../../gen/security__intake.effect.vibe"
+import { ReportBucket, githubNumber } from "../privacy/reads.vibe"
+
+export const admissionWindowMs = 3_600_000
+
+export error RateLimited { reporterGithubId: string }
+
+export interface Identity {
+  readonly key: number
+  readonly digest: number
+  readonly reporter: number
+  readonly repository: number
+  readonly projectRevision: number
+}
+
+export interface Attempt {
+  readonly state: Intake
+  readonly identity: Identity
+  readonly submissionId: string
+  readonly reporterGithubId: string
+  readonly digest: string
+  readonly bytes: Uint8Array
+  readonly objectKey: string
+}
+
+export interface Opening {
+  readonly reporterGithubId: string
+  readonly idempotencyKey: string
+  readonly bytes: Uint8Array
+  readonly repository: number
+  readonly projectRevision: number
+  readonly availability: IntakeAvailability
+  readonly banned: boolean
+}
+
+schema Admitted { id: string; admitted_at: number }
+schema Received { received_at: string }
+
+export function modelNumber(hex: string) {
+  return Number.parseInt(hex.slice(0, 12), 16) + 1
+}
+
+export effect function attemptId(reporterGithubId: string, idempotencyKey: string, digest: string) {
+  return `ss_${(try sha256Hex(`${reporterGithubId}\n${idempotencyKey}\n${digest}`)).slice(0, 32)}`
+}
+
+export function objectKey(submissionId: string, version: number, digest: string) {
+  return `security-reports/${submissionId}/${version}-${digest}.json`
+}
+
+export effect function admissions(reporterGithubId: string, nowMs: number) {
+  const cutoff = nowMs - admissionWindowMs
+  const admitted = try rows(Admitted, sql`SELECT id, admitted_at FROM security_intake_rate_admissions WHERE actor_github_id=${reporterGithubId} AND admitted_at>${cutoff} ORDER BY admitted_at, id`)
+  const received = try rows(Received, sql`SELECT i.received_at FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE s.reporter_github_id=${reporterGithubId} AND i.received_at>${new Date(cutoff).toISOString()} AND NOT EXISTS(SELECT 1 FROM security_intake_rate_admissions a WHERE a.id=i.submission_id) ORDER BY i.received_at`)
+  return { ids: admitted.map((row) => row.id), times: [...admitted.map((row) => row.admitted_at), ...received.map((row) => millisOf(row.received_at))] }
+}
+
+export effect function availabilityObserved(attempt: Attempt, availability: IntakeAvailability) {
+  return next(attempt, try apply(attempt.state, { type: "observeAvailability", availability }))
+}
+
+export effect function banObserved(attempt: Attempt, banned: boolean) {
+  return next(attempt, try apply(attempt.state, { type: "observeBan", banned }))
+}
+
+effect function observed(state: Intake, availability: IntakeAvailability, banned: boolean) {
+  const available = availability === state.availability ? state : try apply(state, { type: "observeAvailability", availability })
+  return banned === available.banned ? available : try apply(available, { type: "observeBan", banned })
+}
+
+export effect function opened(opening: Opening) {
+  const digest = try sha256Hex(opening.bytes)
+  const submissionId = try attemptId(opening.reporterGithubId, opening.idempotencyKey, digest)
+  const window = try admissions(opening.reporterGithubId, try Clock.currentTimeMillis)
+  const pending = window.ids.includes(submissionId)
+  const identity: Identity = {
+    key: modelNumber(try sha256Hex(opening.idempotencyKey)),
+    digest: modelNumber(digest),
+    reporter: githubNumber(opening.reporterGithubId),
+    repository: opening.repository,
+    projectRevision: opening.projectRevision,
+  }
+  const start = try decodeState(pending ? { ...initial, ...identity, phase: "UploadUncertain", admissions: window.times } : { ...initial, admissions: window.times })
+  return {
+    state: try observed(start, opening.availability, opening.banned),
+    identity,
+    submissionId,
+    reporterGithubId: opening.reporterGithubId,
+    digest,
+    bytes: opening.bytes,
+    objectKey: objectKey(submissionId, 1, digest),
+  } satisfies Attempt
+}
+
+function next(attempt: Attempt, state: Intake): Attempt {
+  return { ...attempt, state }
+}
+
+export effect function admit(reporterGithubId: string, id: string, nowMs: number) {
+  const cutoff = nowMs - admissionWindowMs
+  const [, inserted] = try (try D1).batch([
+    sql`DELETE FROM security_intake_rate_admissions WHERE actor_github_id=${reporterGithubId} AND admitted_at<=${cutoff}`,
+    sql`INSERT INTO security_intake_rate_admissions(id,actor_github_id,admitted_at) SELECT ${id},${reporterGithubId},${nowMs} WHERE (SELECT COUNT(*) FROM security_intake_rate_admissions WHERE actor_github_id=${reporterGithubId}) + (SELECT COUNT(*) FROM security_submission_intake i JOIN security_submissions s ON s.id=i.submission_id WHERE s.reporter_github_id=${reporterGithubId} AND i.received_at>${new Date(cutoff).toISOString()} AND NOT EXISTS(SELECT 1 FROM security_intake_rate_admissions a WHERE a.id=i.submission_id)) < 10`,
+  ])
+  if (inserted?.changes !== 1) throw new RateLimited({ reporterGithubId })
+}
+
+export effect function begin(attempt: Attempt, nowMs: number) {
+  const started = try apply(attempt.state, { type: "begin", ...attempt.identity, nowMs })
+  try admit(attempt.reporterGithubId, attempt.submissionId, nowMs)
+  return next(attempt, started)
+}
+
+export effect function interrupted(attempt: Attempt) {
+  return next(attempt, try apply(attempt.state, { type: "interruptUpload" }))
+}
+
+export effect function retried(attempt: Attempt, key: number) {
+  return next(attempt, try apply(attempt.state, { type: "retryUpload", key }))
+}
+
+export effect function admitted(attempt: Attempt, nowMs: number) {
+  return attempt.state.phase === "UploadUncertain" ? try retried(attempt, attempt.identity.key) : try begin(attempt, nowMs)
+}
+
+export type Upload = { readonly kind: "verified"; readonly attempt: Attempt } | { readonly kind: "lost"; readonly attempt: Attempt }
+
+effect function lost(attempt: Attempt) {
+  return { kind: "lost", attempt: try interrupted(attempt) } satisfies Upload
+}
+
+export effect function storedDigest(key: string, size: number) {
+  const { binding } = try ReportBucket
+  const head = try tryPromise({ try: () => binding.head(key), catch: (cause) => new StorageFailure({ operation: "head", key, message: String(cause) }) })
+  if (head === null || head.size !== size) return undefined
+  return head.customMetadata?.sha256
+}
+
+export effect function putReport(key: string, bytes: Uint8Array, digest: string) {
+  const { binding } = try ReportBucket
+  const sent = tryPromise({ try: () => binding.put(key, bytes, { sha256: digest, httpMetadata: { contentType: "application/json" }, customMetadata: { sha256: digest }, onlyIf: { etagDoesNotMatch: "*" } }), catch: (cause) => new StorageFailure({ operation: "put", key, message: String(cause) }) }) catch () => undefined
+  if (sent === undefined) return undefined
+  return storedDigest(key, bytes.length) catch () => undefined
+}
+
+export effect function upload(attempt: Attempt) {
+  if (!canVerifyObject(attempt.state, attempt.identity.digest)) throw new Rejected({ event: { type: "verifyObject", digest: attempt.identity.digest }, state: attempt.state })
+  const confirmed = try putReport(attempt.objectKey, attempt.bytes, attempt.digest)
+  if (confirmed === undefined) return try lost(attempt)
+  return { kind: "verified", attempt: try verified(attempt, confirmed) } satisfies Upload
+}
+
+export effect function verified(attempt: Attempt, observedDigest: string) {
+  return next(attempt, try apply(attempt.state, { type: "verifyObject", digest: modelNumber(observedDigest) }))
+}
+
+export effect function committed(attempt: Attempt, receivedAtMs: number, terms: ReceiptTerms, statements: ReadonlyArray<Statement>) {
+  const received = try apply(attempt.state, { type: "commitReceipt", receivedAt: receivedAtMs, terms })
+  try (try D1).batch(statements)
+  return next(attempt, received)
+}
+
+export effect function reconciled(attempt: Attempt, key: number, digest: number) {
+  return next(attempt, try apply(attempt.state, { type: "reconcileReceipt", key, digest }))
+}

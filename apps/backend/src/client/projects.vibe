@@ -1,0 +1,60 @@
+// spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema RestrictionState = "quarantined" | "banned"
+export schema AppealState = "none" | "requested" | "granted" | "denied"
+
+export schema PublicRestriction {
+  readonly projectId: string
+  readonly sourceProjectId: string
+  readonly state: RestrictionState
+  readonly appeal: AppealState
+  readonly since: string
+}
+
+export schema RevisionReceipt {
+  readonly schemaVersion: "1"
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly manifestText: string
+}
+
+const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
+
+export const ProjectList = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  projects: Schema.Array(JsonObject),
+  restrictions: Schema.Array(PublicRestriction),
+})
+
+export const RevisionList = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  revisions: Schema.Array(Schema.Struct({
+    projectId: Schema.String,
+    revision: Schema.Number,
+    manifest: JsonObject,
+    manifestSha256: Schema.String,
+    reason: Schema.String,
+    createdAt: Schema.String,
+  })),
+})
+
+export const ProjectDetail = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  project: JsonObject,
+  revision: Schema.Number,
+  manifestSha256: Schema.String,
+  updatedAt: Schema.String,
+  skillsPublished: Schema.Boolean,
+  vetting: JsonObject,
+})
+
+const listCache = { browserSeconds: 0, edgeSeconds: 30 } as const
+
+export const publicProjects = route({ method: "GET", path: "/api/v1/projects", access: "public", limitKib: 1, request: undefined, answer: ProjectList, rejected: "not_found", cache: listCache, cors: ["*"] })
+export const publicRevisions = route({ method: "GET", path: "/api/v1/project-revisions", access: "public", limitKib: 1, request: undefined, answer: RevisionList, rejected: "not_found", cache: listCache, cors: ["*"] })
+export const publicProject = route({ method: "GET", path: "/api/v1/projects/:id", access: "public", limitKib: 1, request: undefined, answer: ProjectDetail, rejected: "not_found", cache: "no-store", cors: ["*"] })
+export const revisionReceipt = route({ method: "GET", path: "/api/v1/project-revisions/:id/:revision", access: "public", limitKib: 1, request: undefined, answer: RevisionReceipt, rejected: "not_found", cache: { browserSeconds: 31536000, immutable: true } })
+
+export const api: ReadonlyArray<AnyRoute> = [publicProjects, publicRevisions, publicProject, revisionReceipt]

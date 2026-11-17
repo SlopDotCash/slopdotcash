@@ -1,0 +1,62 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { type Revision, type RevisionBody, revisionText } from "../src/kernels/records/canonical.ts"
+import { journalFile, pointRevisionId } from "../src/kernels/records/ids.vibe"
+import { instantOf } from "../src/kernels/records/instants.ts"
+import { historyText } from "./support/u1/history.ts"
+
+effect function outcome(text: string) {
+  return Effect.as(journalFile(text), "accepted") catch (error) => error._tag === "RevisionMismatch" ? `${error._tag} ${error.id} ${error.check}` : error._tag
+}
+
+effect function rewritten(revision: Revision, change: Partial<RevisionBody>) {
+  const body = { ...revision, ...change }
+  const id = try pointRevisionId(body)
+  return { id, text: revisionText({ ...body, id }) }
+}
+
+layer(webCrypto, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Historical journal replay recomputes every revision id and award key and re-encodes the published bytes, and refuses a duplicated, relinked or moved revision (spec/points/journal.md, "Revisions bind a key, a recorded rule and a reconciling decision"; spec/points/journal.md, "History is append-only, chained and never moves an occurrence time"; spec/points/periods.md, "An instant is a UTC month and day, and a period is the month of occurrence")', () => effect {
+    const text = try promise(() => historyText())
+    const journal = try journalFile(text)
+    const first = journal.revisions[0]
+    const firstText = revisionText(first)
+    const relinked = try rewritten(first, { previous: first.sourceDigest })
+    const moved = try rewritten(first, { previous: first.id, award: { ...first.award, occurredAt: "2024-01-01T00:00:00.000Z" } })
+    const ordered = journal.revisions.filter((revision) => {
+      const occurred = instantOf(revision.award.occurredAt)
+      const recorded = instantOf(revision.recordedAt)
+      return occurred !== null && recorded !== null && occurred <= recorded
+    })
+    const refused = [
+      try outcome(text.replace("\"amount\":10", "\"amount\":20")),
+      try outcome(text.replace("{\"schemaVersion\":\"1\"", "{\"schemaVersion\": \"1\"")),
+      try outcome(text.replace("\"provisional\":true}", "\"provisional\":true,\"extra\":1}")),
+      try outcome(text.replace(firstText, `${firstText},${firstText}`)),
+      try outcome(text.replace(firstText, relinked.text)),
+      try outcome(text.replace(firstText, `${firstText},${moved.text}`)),
+    ]
+    try Effect.try(() => assert.deepStrictEqual({
+      revisions: journal.revisions.length,
+      keys: new Set(journal.revisions.map((revision) => revision.award.key)).size,
+      ids: new Set(journal.revisions.map((revision) => revision.id)).size,
+      coverage: journal.coverage.length,
+      ordered: ordered.length,
+      refused,
+    }, {
+      revisions: 16278,
+      keys: 16278,
+      ids: 16278,
+      coverage: 4,
+      ordered: 16278,
+      refused: [
+        `RevisionMismatch ${first.id} id`,
+        "JournalBytesDiffer",
+        "SchemaError",
+        `RevisionMismatch ${first.id} duplicate`,
+        `RevisionMismatch ${relinked.id} previous`,
+        `RevisionMismatch ${moved.id} moved`,
+      ],
+    }))
+  })
+})

@@ -1,0 +1,52 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/ownerTransactions.md, "Only the exact finalized submitted transaction completes the request"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema FundingAction {
+  readonly step: string
+  readonly operation: string
+  readonly network: string
+  readonly vault: string
+  readonly wallet: string
+  readonly amount?: string
+  readonly gross?: string
+  readonly blockhash?: string
+  readonly transactionId?: string
+}
+
+export schema FundingPlan {
+  readonly operation: "deposit" | "withdraw"
+  readonly wallet: string
+  readonly gross: string
+  readonly blockhash: string
+  readonly lastValidBlockHeight: number
+  readonly transaction: string
+  readonly networkFeeLamports: string
+  readonly tokenProgram: string
+  readonly fee: string
+  readonly net: string
+  readonly decimals: number
+  readonly freeBalance: string | null
+}
+
+export schema FundingReviewed {
+  readonly plan: FundingPlan
+}
+
+export schema FundingChecked {
+  readonly status: "pending" | "failed" | "finalized"
+}
+
+export schema FundingAnswer = FundingReviewed | FundingChecked
+
+export const paymentsSolanaFunding = route({
+  method: "POST",
+  path: "/api/v1/payments/projects/:id/solana-funding",
+  access: "public",
+  limitKib: 4,
+  request: FundingAction,
+  answer: FundingAnswer,
+  rejected: "funding_action_rejected",
+  cache: "private",
+})
+
+export const ownerApi: ReadonlyArray<AnyRoute> = [paymentsSolanaFunding]

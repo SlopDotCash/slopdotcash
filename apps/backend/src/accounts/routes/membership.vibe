@@ -1,0 +1,245 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
+import { isoNow } from "@repo/platform/clock"
+import { base64url, randomBytes, sha256Hex } from "@repo/platform/crypto"
+import { bytesBody, handleRaw, json } from "@repo/platform/http"
+import { first, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { Rejected } from "../../../gen/backend__accounts.effect.vibe"
+import { LookedUpMember, People, pointsClose, pointsJoin, pointsMe, pointsMember, pointsPeople, pointsRevokeSession, pointsSignOut, pointsVisibility, projectSession } from "../../client/accounts.vibe"
+import { getPointsMember, getPointsPeople, postPointsAccountClose, postPointsJoin, postPointsSessionsRevoke, postPointsSignout, postPointsVisibility } from "../../client/refusals.vibe"
+import { presentedToken, sessionCookieHeader, sessionMember, sessionSeconds } from "../../session.vibe"
+import { type Intent, send } from "../store/store.vibe"
+import { AccountSettings, exchangedVia, okStatus, pointsAnswer, pointsJson, postJson } from "./admission.vibe"
+import { bare } from "./refusals.vibe"
+
+export const participationPointsEnd = "2026-10-24T00:00:00.000Z"
+
+export schema MemberView {
+  actor_id: string
+  github_id: string
+  login: string
+  joined_at: string
+  public: number
+  welcome: number
+  social_points: number
+  referral_code: string | null
+}
+
+schema ItemsRow { items: string }
+schema LookupRow { member: string | null }
+schema ClosedRow { closed_at: string | null }
+
+export error IdentityUnavailable
+export error MembershipUnconfirmed { step: string }
+
+export interface Asserted {
+  readonly githubId: string
+  readonly login: string
+  readonly nodeId: string
+}
+
+export type Presented =
+  | { readonly kind: "absent" }
+  | { readonly kind: "expired" }
+  | { readonly kind: "live"; readonly member: MemberView; readonly hash: string }
+
+const numericId = /^\d+$/u
+const githubLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const nodeIdShape = /^[A-Za-z0-9_=-]{4,256}$/u
+const assertionShape = /^slop_assert_v1_[A-Za-z0-9_-]{40,128}$/u
+const cursorShape = /^[A-Za-z0-9_=-]{4,256}$/u
+const revocationShape = /^[a-f0-9]{24}$/u
+const pageSize = 25
+const pointsAudience = "slop-points-web"
+const consumeUrl = "https://identity.internal/v1/assertions/consume"
+const identityAnswerBytes = 16 * 1024
+
+const memberColumns = sql`m.actor_id, m.github_id, m.login, m.joined_at, m.public, m.welcome, COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id = m.actor_id AND a.awarded_at < ${participationPointsEnd}), 0) AS social_points, (SELECT code FROM referral_codes c WHERE c.github_id = m.github_id AND c.retired_at IS NULL) AS referral_code`
+
+export const clearedSession = sessionCookieHeader("", 0)
+
+export function publicMember(member: MemberView) {
+  return {
+    actor: { id: member.actor_id, login: member.login },
+    joinedAt: member.joined_at,
+    public: member.public === 1,
+    welcome: member.joined_at < participationPointsEnd ? member.welcome : 0,
+    socialPoints: member.social_points,
+    referralCode: member.referral_code,
+  }
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function asciiFolded(text: string) {
+  return text.replace(/[A-Z]/gu, (letter) => letter.toLowerCase())
+}
+
+export effect function boundedObject(limitBytes: number) {
+  const bytes = bytesBody(limitBytes, ["application/json"]) catch () => undefined
+  if (bytes === undefined || bytes.length === 0) return undefined
+  const value: unknown = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+  return isRecord(value) ? value : undefined
+}
+
+export function keysOf(value: Readonly<Record<string, unknown>>) {
+  return Object.keys(value).join()
+}
+
+export effect function presentedSession() {
+  const token = presentedToken((try HttpServerRequest.HttpServerRequest).cookies)
+  if (token === undefined) return { kind: "absent" } satisfies Presented
+  const hash = try sha256Hex(token)
+  const member = try first(MemberView, sql`SELECT ${memberColumns} FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${try isoNow()}`)
+  return (member === undefined ? { kind: "expired" } : { kind: "live", member, hash }) satisfies Presented
+}
+
+function sessionRefusal(presented: Presented) {
+  return presented.kind === "absent" ? bare(postPointsSignout.notSignedInS401) : bare(postPointsSignout.sessionExpiredNoStore, {}, { "set-cookie": clearedSession })
+}
+
+effect function memberByActor(actor: string) {
+  return try first(MemberView, sql`SELECT ${memberColumns} FROM points_members m WHERE m.actor_id = ${actor}`)
+}
+
+effect function consumeAssertion(assertion: string) {
+  const { identity } = try AccountSettings
+  const outcome = try exchangedVia(identity, postJson(consumeUrl, { audience: pointsAudience }, { authorization: `Bearer ${assertion}` }), identityAnswerBytes)
+  if (outcome.kind === "unreachable") throw new IdentityUnavailable()
+  if (outcome.status === 401) return "expired" as const
+  if (!okStatus(outcome.status) || outcome.kind !== "answered") throw new IdentityUnavailable()
+  const value = outcome.value
+  if (!isRecord(value)) return "invalid" as const
+  const { audience, githubActorId, githubLogin: login, githubNodeId } = value
+  if (audience !== pointsAudience || typeof githubActorId !== "string" || !numericId.test(githubActorId) || typeof login !== "string" || !githubLogin.test(login)) return "invalid" as const
+  if (typeof githubNodeId !== "string" || !nodeIdShape.test(githubNodeId)) return "invalid" as const
+  return { githubId: githubActorId, login, nodeId: githubNodeId } satisfies Asserted
+}
+
+effect function join() {
+  const invalid = bare(postPointsJoin.invalidRequestV2)
+  const value = try boundedObject(4096)
+  if (value === undefined) return invalid
+  const keys = Object.keys(value).sort().join()
+  const reopen = keys === "assertion,public,reopen" && value.reopen === true
+  if ((keys !== "assertion,public" && !reopen) || typeof value.assertion !== "string" || !assertionShape.test(value.assertion) || typeof value.public !== "boolean") return invalid
+  const identity = try consumeAssertion(value.assertion)
+  if (identity === "expired") return bare(postPointsJoin.identityExpired)
+  if (identity === "invalid") return bare(postPointsJoin.invalidIdentity)
+  const token = base64url(try randomBytes(32))
+  const intent: Intent = { kind: "signIn", assertion: identity, reopen, sessionHash: try sha256Hex(token) }
+  const settled = try send(intent, { kind: "session", hash: "" })
+  const prior = settled.before.members.find((row) => row.github_id === identity.githubId)
+  if (settled.event.type === "refuseClosedSignIn") return bare(postPointsJoin.accountClosed, { closedAt: prior?.closed_at ?? null })
+  const member = try memberByActor(prior?.actor_id ?? identity.nodeId)
+  if (member === undefined) throw new MembershipUnconfirmed({ step: "joined member readback" })
+  return pointsJson(publicMember(member), sessionCookieHeader(token, sessionSeconds))
+}
+
+effect function me() {
+  const presented = try presentedSession()
+  if (presented.kind === "absent") return pointsJson(null)
+  if (presented.kind === "expired") return pointsJson(null, clearedSession)
+  return pointsJson(publicMember(presented.member))
+}
+
+effect function signOut() {
+  const presented = try presentedSession()
+  if (presented.kind !== "live") return sessionRefusal(presented)
+  const signed = send({ kind: "signOut" }, { kind: "session", hash: presented.hash }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (signed === undefined) return sessionRefusal({ kind: "expired" })
+  return pointsJson({ signedOut: true }, clearedSession)
+}
+
+effect function revokeSession() {
+  const presented = try presentedSession()
+  if (presented.kind !== "live") return sessionRefusal(presented)
+  const value = try boundedObject(1024)
+  if (value === undefined) return bare(postPointsSessionsRevoke.invalidRequestV2)
+  const prefix = value.id
+  if (typeof prefix !== "string" || !revocationShape.test(prefix)) return bare(postPointsSessionsRevoke.invalidSession)
+  const revoked = send({ kind: "revokeSession", prefix }, { kind: "session", hash: presented.hash }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (revoked === undefined) return sessionRefusal({ kind: "expired" })
+  return pointsJson({ revoked: true }, prefix === presented.hash.slice(0, 24) ? clearedSession : undefined)
+}
+
+effect function publishMembership() {
+  const presented = try presentedSession()
+  if (presented.kind !== "live") return sessionRefusal(presented)
+  const value = try boundedObject(256)
+  if (value === undefined || keysOf(value) !== "public" || typeof value.public !== "boolean") return bare(postPointsVisibility.invalidRequestV2)
+  if (!value.public) return bare(postPointsVisibility.publicVisibilityRequiredNoStore)
+  const published = send({ kind: "publishMembership", requestPublic: true }, { kind: "session", hash: presented.hash }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (published === undefined) return sessionRefusal({ kind: "expired" })
+  return pointsJson(publicMember({ ...presented.member, public: 1 }))
+}
+
+effect function closedAt(actor: string) {
+  return (try first(ClosedRow, sql`SELECT closed_at FROM points_members WHERE actor_id = ${actor}`))?.closed_at ?? null
+}
+
+effect function closeAccount() {
+  const presented = try presentedSession()
+  if (presented.kind !== "live") return sessionRefusal(presented)
+  const value = try boundedObject(256)
+  if (value === undefined) return bare(postPointsAccountClose.invalidRequestV2)
+  const confirmation = value.login
+  if (keysOf(value) !== "login" || typeof confirmation !== "string" || asciiFolded(confirmation) !== asciiFolded(presented.member.login)) return bare(postPointsAccountClose.confirmationMismatch)
+  const closing = send({ kind: "close", confirmation }, { kind: "session", hash: presented.hash }) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  const at = try closedAt(presented.member.actor_id)
+  if (at === null) throw new MembershipUnconfirmed({ step: closing === undefined ? "closure refused" : "closure readback" })
+  return pointsJson({ closed: true, closedAt: at }, clearedSession)
+}
+
+effect function people(query: URLSearchParams) {
+  const after = query.get("after") ?? ""
+  if (after !== "" && !cursorShape.test(after)) return bare(getPointsPeople.invalidCursor)
+  const row = try first(ItemsRow, sql`SELECT json_group_array(json(item)) AS items FROM (SELECT json_object('actor', json_object('id', m.actor_id, 'login', m.login), 'welcome', CASE WHEN m.joined_at < ${participationPointsEnd} THEN m.welcome ELSE 0 END, 'socialPoints', COALESCE(a.points, 0), 'x', CASE WHEN l.public = 1 THEN json_object('id', l.x_id, 'username', l.username, 'verifiedAt', l.verified_at) ELSE NULL END) AS item FROM points_members m LEFT JOIN points_x_awards a ON a.actor_id = m.actor_id AND a.awarded_at < ${participationPointsEnd} LEFT JOIN points_x_links l ON l.actor_id = m.actor_id WHERE m.public = 1 AND m.actor_id > ${after} ORDER BY m.actor_id LIMIT 26)`)
+  const parsed: unknown = try orDie(Effect.try(() => JSON.parse(row?.items ?? "[]") as unknown))
+  const items = (try orDie(Schema.decodeUnknownEffect(People)({ people: parsed, next: null }))).people
+  return pointsJson({ people: items.slice(0, pageSize), next: items.length > pageSize ? items[pageSize - 1]?.actor.id ?? null : null })
+}
+
+effect function lookUpMember(query: URLSearchParams) {
+  const login = query.get("login") ?? ""
+  if (!githubLogin.test(login)) return bare(getPointsMember.invalidLogin)
+  const row = try first(LookupRow, sql`SELECT CASE WHEN COUNT(*) = 1 AND m.public = 1 THEN json_object('actor', json_object('id', m.actor_id, 'login', m.login), 'joinedAt', m.joined_at, 'public', json('true'), 'welcome', CASE WHEN m.joined_at < ${participationPointsEnd} THEN m.welcome ELSE 0 END, 'socialPoints', COALESCE((SELECT points FROM points_x_awards a WHERE a.actor_id = m.actor_id AND a.awarded_at < ${participationPointsEnd}), 0)) ELSE NULL END AS member FROM points_members m WHERE lower(m.login) = lower(${login})`)
+  const text = row?.member ?? null
+  if (text === null) return pointsJson(null)
+  const parsed: unknown = try orDie(Effect.try(() => JSON.parse(text) as unknown))
+  return pointsJson(try orDie(Schema.decodeUnknownEffect(LookedUpMember)(parsed)))
+}
+
+effect function currentProjectSession() {
+  const member = try sessionMember()
+  const contract = { "x-slop-project-api-contract": "project-registry-v1" }
+  if (member === undefined) return json({ session: null }, 200, contract)
+  const admin = try (try Roles).has(member.github_id, "administrator")
+  return json({ session: { githubId: member.github_id, githubLogin: member.login, admin } }, 200, contract)
+}
+
+export const MembershipRoutes = Layer.mergeAll(
+  handleRaw(pointsPeople, (input) => pointsAnswer(people(input.query))),
+  handleRaw(pointsMember, (input) => pointsAnswer(lookUpMember(input.query))),
+  handleRaw(pointsJoin, () => pointsAnswer(join())),
+  handleRaw(pointsMe, () => pointsAnswer(me())),
+  handleRaw(pointsSignOut, () => pointsAnswer(signOut())),
+  handleRaw(pointsRevokeSession, () => pointsAnswer(revokeSession())),
+  handleRaw(pointsVisibility, () => pointsAnswer(publishMembership())),
+  handleRaw(pointsClose, () => pointsAnswer(closeAccount())),
+  handleRaw(projectSession, () => currentProjectSession()),
+)

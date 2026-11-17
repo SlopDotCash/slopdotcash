@@ -1,0 +1,41 @@
+// spec/backend/email.md, "Delivery of the verification mail has its own state"
+import { sha256Hex } from "@repo/platform/crypto"
+import { EmailAddress } from "../notifications/contracts.schema.vibe"
+import type { Configured } from "./config.vibe"
+import { inboxNoticeMime, verificationText } from "./letters.vibe"
+import { EmailEnrollment } from "./ports.vibe"
+import { Mail } from "./send.vibe"
+
+const GithubId = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,19}$/u))
+const EmailToken = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u))
+
+const VerificationRequest = Schema.Struct({ githubId: GithubId, id: EmailToken, token: EmailToken })
+
+effect function verificationLink(inboxUrl: string, token: string) {
+  const url = try orDie(Effect.try(() => new URL(inboxUrl)))
+  url.hash = `verify-email=${token}`
+  return url.toString()
+}
+
+export effect function sendVerification(input: unknown, pilot: Configured, from: string) {
+  const request = Schema.decodeUnknownEffect(VerificationRequest)(input, { onExcessProperty: "error" }) catch () => undefined
+  if (request === undefined) return false
+  const enrollment = try EmailEnrollment
+  const verification = { githubId: request.githubId, verificationId: request.id }
+  const pending = try enrollment.pendingVerification({ ...verification, tokenHash: try sha256Hex(request.token) })
+  if (pending === undefined || !Schema.is(EmailAddress)(pending.address)) return false
+  if (pending.delivery !== "Queued") return true
+  if (!(try enrollment.markVerification({ ...verification, nextState: "Sending" }))) return true
+  const raw = try inboxNoticeMime({
+    from,
+    to: pending.address,
+    subject: "Verify your Slop email",
+    at: try Clock.currentTimeMillis,
+    deliveryId: request.id,
+    attempt: 1,
+    text: verificationText(try verificationLink(pilot.inboxUrl, request.token)),
+  })
+  const sent = Effect.as((try Mail).send({ from, to: pending.address, raw }), true) catch () => false
+  try enrollment.markVerification({ ...verification, nextState: sent ? "Sent" : "DeliveryUnknown" })
+  return true
+}

@@ -3,7 +3,7 @@ import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
 import { type Applied, type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
 import { Response } from "miniflare"
-import { migrations } from "./migrations.ts"
+import { migrationsDir } from "@repo/platform/testing/paths"
 
 const origin = "https://slop.test"
 const member = "t".repeat(48)
@@ -38,7 +38,7 @@ const Started = Layer.effect(Backend, effect {
       return id === undefined ? new Response("{}", { status: 404 }) : Response.json({ login, id: id === 0 ? 1 : id })
     },
   })), (started) => promise(() => started.dispose()))
-  const applied = try promise(() => migrate(mf, "SLOP_DB", migrations))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
   const db = try promise(() => database(mf, "SLOP_DB"))
   return {
     db,
@@ -111,7 +111,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "18
         [422, "invalid_code"],
         [422, "reserved_code"],
         [409, "code_is_github_account"],
-        [503, "github_unavailable"],
+        [502, "github_unavailable"],
         [200, "Fresh-name"],
         [200, "my_name"],
         [409, "code_taken"],

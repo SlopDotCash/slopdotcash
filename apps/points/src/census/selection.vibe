@@ -1,0 +1,26 @@
+// spec/points/census.md, "Every retained item has a deterministic, fail-closed selection decision with all its reasons"; spec/points/census.md, "A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days"
+import { type Item, decide } from "../../gen/points__census.effect.vibe"
+import type { WorkItemSelection } from "../client/snapshot/schema.vibe"
+import { CensusBroken } from "./collect.vibe"
+
+module verified {
+  import type { Reason } from "../../gen/points__census.ts"
+  import { unstated as firstUnstated, wireReasons as wired } from "./wire.ts"
+  /** @throws {never} */
+  export function unstated(reasons: Reason[]): number { return firstUnstated(reasons) }
+  /** @throws {never} */
+  export function wireReasons(reasons: Reason[]): number[] { return wired(reasons) }
+}
+import { unstated, wireReasons } from verified
+
+const publishedOrder: ReadonlyArray<string> = ["unknown-author", "bot-authored", "security-sensitive", "untriaged", "claimed", "blocked", "draft", "active-review-request", "already-approved", "changes-requested"]
+
+export effect function queueSelection(item: Item) {
+  if (!item.open) return undefined
+  const selection = decide(item)
+  const missing = unstated(selection.reasons)
+  if (missing >= 0) throw new CensusBroken({ message: `Census item ${item.id} has the reason ${String(selection.reasons[missing])}, which the published work queue cannot state` })
+  const wire = wireReasons(selection.reasons)
+  const reasons = publishedOrder.filter((_, index) => wire.includes(index))
+  return { status: selection.status === "Candidate" ? "candidate" : "excluded", reasons } satisfies WorkItemSelection
+}

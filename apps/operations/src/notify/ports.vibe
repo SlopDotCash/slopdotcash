@@ -1,0 +1,68 @@
+// spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/email.md, "Delivery of the verification mail has its own state"
+import type { Statement } from "@repo/platform/d1"
+import type { ReadFailure } from "@repo/ports/backend"
+
+export schema RegisteredDestination {
+  readonly address: string
+  readonly version: string
+  readonly verifiedAt: string
+}
+
+export schema PendingVerification {
+  readonly address: string
+  readonly delivery: "Queued" | "Sending" | "Sent" | "DeliveryUnknown"
+}
+
+export interface IssuedUnsubscribe {
+  readonly tokenHash: string
+  readonly version: string
+  readonly issuedAt: string
+}
+
+export interface VerificationRead {
+  readonly githubId: string
+  readonly verificationId: string
+  readonly tokenHash: string
+}
+
+export interface VerificationMark {
+  readonly githubId: string
+  readonly verificationId: string
+  readonly nextState: "Sending" | "Sent" | "DeliveryUnknown"
+}
+
+export service EmailEnrollment {
+  registered(githubId: string): (RegisteredDestination | undefined)!ReadFailure
+  unsubscribeIssued(issued: IssuedUnsubscribe): Statement!!
+  pendingVerification(read: VerificationRead): (PendingVerification | undefined)!ReadFailure
+  markVerification(mark: VerificationMark): boolean!ReadFailure
+}
+
+export schema EscalatedAppeal {
+  readonly appellantGithubId: string
+  readonly resolved: boolean
+}
+
+export schema ScamPenalty {
+  readonly authorGithubId: string
+  readonly reversed: boolean
+}
+
+export service SlopbotAudience {
+  escalatedAppeal(appealKey: string): (EscalatedAppeal | undefined)!ReadFailure
+  scamPenalty(itemNodeId: string): (ScamPenalty | undefined)!ReadFailure
+}
+
+export schema PointsDispute {
+  readonly appellantGithubId: string
+  readonly escalated: boolean
+  readonly resolved: boolean
+}
+
+export service DisputeAudience {
+  dispute(appealKey: string): (PointsDispute | undefined)!ReadFailure
+}
+
+export service VettingBans {
+  serviceBan(enforcement: { readonly enforcementId: string; readonly projectId: string }): boolean!ReadFailure
+}

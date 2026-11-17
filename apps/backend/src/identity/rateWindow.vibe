@@ -1,0 +1,43 @@
+// spec/backend/identity.md, "A flow starts pending, carries its audience and mode, and expires after five minutes"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"
+import { first, sql } from "@repo/platform/d1"
+import { sha256Hex } from "@repo/platform/crypto"
+
+schema CounterRow { readonly request_count: number; readonly expires_at: number }
+
+export interface Counted {
+  readonly count: number
+  readonly expiresAt: number
+}
+
+export error CounterInvalid
+
+export const windowSeconds = 60
+
+export function principalOf(headers: Readonly<Record<string, string | undefined>>) {
+  const address = headers["cf-connecting-ip"]
+  return address !== undefined && address.length <= 64 ? address : "unattributed"
+}
+
+export effect function windowKey(secret: Redacted.Redacted<string>, scope: string, principal: string) {
+  return try sha256Hex(`slop-identity-rate:v1:${Redacted.value(secret)}:${scope}:${principal}`)
+}
+
+export effect function currentWindow(key: string) {
+  const row = try first(CounterRow, sql`SELECT request_count, expires_at FROM identity_rate_limits WHERE key_hash = ${key}`)
+  return row === undefined ? undefined : { count: row.request_count, expiresAt: row.expires_at } satisfies Counted
+}
+
+export effect function countRequest(key: string, nowSeconds: number, seconds = windowSeconds) {
+  const row = try first(CounterRow, sql`INSERT INTO identity_rate_limits (key_hash, request_count, window_started_at, expires_at) VALUES (${key}, 1, ${nowSeconds}, ${nowSeconds + seconds})
+    ON CONFLICT(key_hash) DO UPDATE SET
+      request_count = CASE WHEN identity_rate_limits.expires_at <= excluded.window_started_at THEN 1 ELSE identity_rate_limits.request_count + 1 END,
+      window_started_at = CASE WHEN identity_rate_limits.expires_at <= excluded.window_started_at THEN excluded.window_started_at ELSE identity_rate_limits.window_started_at END,
+      expires_at = CASE WHEN identity_rate_limits.expires_at <= excluded.window_started_at THEN excluded.expires_at ELSE identity_rate_limits.expires_at END
+    RETURNING request_count, expires_at`)
+  if (row === undefined || !Number.isSafeInteger(row.request_count) || row.request_count < 1 || !Number.isSafeInteger(row.expires_at) || row.expires_at <= nowSeconds) throw new CounterInvalid()
+  return { count: row.request_count, expiresAt: row.expires_at } satisfies Counted
+}
+
+export function retryAfterSeconds(counted: Counted, nowSeconds: number) {
+  return Math.max(1, counted.expiresAt - nowSeconds)
+}

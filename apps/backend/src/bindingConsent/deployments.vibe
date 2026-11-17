@@ -1,0 +1,226 @@
+// spec/backend/bindingConsent.md, "EVM consent names one registered deployment, the authorized claim and an expected version"; spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+import type { Fetcher } from "@repo/platform/bindings"
+import { EvmRpc, checksum, evmRpc } from "@repo/platform/chain/evm"
+import { D1, rows, sql } from "@repo/platform/d1"
+import type { Deployment } from "../../gen/backend__bindingConsent.effect.vibe"
+import type { WalletChain } from "../../gen/backend__wallets.effect.vibe"
+import { chainOf } from "../wallets/records.vibe"
+
+type Family = "evm" | "solana"
+
+interface NetworkIdentity {
+  readonly chain: string
+  readonly family: Family
+  readonly chainId: number
+}
+
+const networks: Readonly<Record<string, NetworkIdentity>> = {
+  "base-sepolia": { chain: "base", family: "evm", chainId: 84532 },
+  "base-mainnet": { chain: "base", family: "evm", chainId: 8453 },
+  "solana-devnet": { chain: "solana", family: "solana", chainId: 0 },
+  "solana-testnet": { chain: "solana", family: "solana", chainId: 0 },
+  "solana-mainnet": { chain: "solana", family: "solana", chainId: 0 },
+  "robinhood-testnet": { chain: "robinhood", family: "evm", chainId: 46630 },
+  "robinhood-mainnet": { chain: "robinhood", family: "evm", chainId: 4663 },
+  "ethereum-sepolia": { chain: "ethereum", family: "evm", chainId: 11155111 },
+  ethereum: { chain: "ethereum", family: "evm", chainId: 1 },
+}
+
+export interface PaymentDeployment {
+  readonly network: string
+  readonly chain: WalletChain
+  readonly family: Family
+  readonly chainId: number
+  readonly vault: string
+  readonly programId: string | null
+  readonly projectPda: string | null
+  readonly networkDomain: string | null
+}
+
+export error DeploymentsUnavailable { reason: string }
+
+export service PaymentDeployments {
+  served(): ReadonlyArray<PaymentDeployment>!DeploymentsUnavailable
+}
+
+export interface VersionTarget {
+  readonly network: string
+  readonly vault: string
+  readonly chainId: number
+}
+
+export error BindingVersionUnreadable { reason: string }
+
+export service BindingVersions {
+  read(target: VersionTarget, actor: string): (number | undefined)!BindingVersionUnreadable
+}
+
+export service SolanaAttesters {
+  readonly ordinary: Fetcher | undefined
+  readonly privateScope: Fetcher | undefined
+}
+
+schema ProjectManifestRow { id: string; manifest: string }
+schema DeploymentEntry { network: string; vault: string; programId?: string | null; projectPda?: string | null; networkDomain?: string | null }
+const Policy = Schema.Struct({ deployments: Schema.Array(Schema.Unknown) })
+const EscrowManifest = Schema.Struct({
+  id: Schema.String,
+  escrow: Schema.optionalKey(Policy),
+  securityBounty: Schema.optionalKey(Schema.Struct({ settlement: Schema.optionalKey(Policy) })),
+})
+const NetworkNames = Schema.Array(Schema.String)
+const RpcUrls = Schema.Record(Schema.String, Schema.Unknown)
+
+export function deploymentModel(deployment: PaymentDeployment): Deployment {
+  return {
+    network: deployment.network,
+    vault: deployment.vault,
+    chain: deployment.chain,
+    chainId: deployment.chainId,
+    family: deployment.family === "evm" ? "Evm" : "Svm",
+    registered: true,
+    solanaContext: deployment.programId !== null && deployment.projectPda !== null && deployment.networkDomain !== null,
+  }
+}
+
+effect function parsed(text: string) {
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return value
+}
+
+effect function servedNetworks(configured: string | undefined) {
+  const names = Schema.decodeUnknownEffect(NetworkNames)(try parsed(configured ?? "")) catch () => undefined
+  if (names === undefined || names.length === 0 || new Set(names).size !== names.length || !names.every((name) => Object.hasOwn(networks, name))) {
+    throw new DeploymentsUnavailable({ reason: "PAYMENT_NETWORKS must be a JSON array of unique registry networks" })
+  }
+  return new Set(names)
+}
+
+effect function entriesOf(policy: typeof Policy.Type | undefined) {
+  const found: DeploymentEntry[] = []
+  for (const entry of policy?.deployments ?? []) {
+    const decodedEntry = Schema.decodeUnknownEffect(DeploymentEntry)(entry) catch () => undefined
+    if (decodedEntry === undefined) return undefined
+    found.push(decodedEntry)
+  }
+  return found
+}
+
+function recordOf(entry: DeploymentEntry): PaymentDeployment | undefined {
+  const identity = Object.hasOwn(networks, entry.network) ? networks[entry.network] : undefined
+  const chain = chainOf(identity?.chain)
+  if (identity === undefined || chain === undefined) return undefined
+  const solana = identity.family === "solana"
+  return {
+    network: entry.network,
+    chain,
+    family: identity.family,
+    chainId: identity.chainId,
+    vault: solana ? entry.vault : entry.vault.toLowerCase(),
+    programId: entry.programId ?? null,
+    projectPda: entry.projectPda ?? null,
+    networkDomain: entry.networkDomain ?? null,
+  }
+}
+
+effect function registryDeployments(selected: ReadonlySet<string>) {
+  const projects = rows(ProjectManifestRow, sql`SELECT id, manifest FROM projects ORDER BY id`) catch effect () => {
+    throw new DeploymentsUnavailable({ reason: "the project registry could not be read" })
+  }
+  const vaults = new Set<string>()
+  const served: PaymentDeployment[] = []
+  for (const project of projects) {
+    const manifest = Schema.decodeUnknownEffect(EscrowManifest)(try parsed(project.manifest)) catch () => undefined
+    if (manifest === undefined || manifest.id !== project.id) continue
+    for (const policy of [manifest.escrow, manifest.securityBounty?.settlement]) {
+      const entries = try entriesOf(policy)
+      for (const entry of entries ?? []) {
+        const key = `${entry.network}:${entry.programId ? entry.vault : entry.vault.toLowerCase()}`
+        if (vaults.has(key)) throw new DeploymentsUnavailable({ reason: "a payment vault cannot be shared between registry programs" })
+        vaults.add(key)
+        const record = recordOf(entry)
+        if (record !== undefined && selected.has(record.network)) served.push(record)
+      }
+    }
+  }
+  return served
+}
+
+export function paymentDeployments(configured: string | undefined) {
+  return Layer.effect(PaymentDeployments, effect {
+    const db = try D1
+    return {
+      served: () => effect {
+        provide D1 = db {
+          return try registryDeployments(try servedNetworks(configured))
+        }
+      },
+    } satisfies PaymentDeployments.Shape
+  })
+}
+
+const bindingVersionSelector = "0xa45d1232"
+const u64 = (1n << 64n) - 1n
+const largestSafe = 9_007_199_254_740_991n
+
+effect function rpcUrl(configured: string | undefined, network: string) {
+  const urls = Schema.decodeUnknownEffect(RpcUrls)(try parsed(configured ?? "{}")) catch () => undefined
+  const url = urls?.[network]
+  if (typeof url !== "string") return undefined
+  const protocol = Effect.try(() => new URL(url).protocol) catch () => undefined
+  return protocol === "https:" ? url : undefined
+}
+
+effect function actorWord(actor: string) {
+  if (!/^[1-9][0-9]*$/u.test(actor)) return undefined
+  const value = try orDie(Effect.try(() => BigInt(actor)))
+  return value > u64 ? undefined : value.toString(16).padStart(64, "0")
+}
+
+function unreadable(reason: string) {
+  return new BindingVersionUnreadable({ reason })
+}
+
+effect function chainVersion(url: string, deployment: VersionTarget, word: string) {
+  const vault = checksum(deployment.vault)
+  if (vault === undefined) throw unreadable("the binding vault is not an address")
+  provide evmRpc({ urls: Redacted.make([url]), chainId: try orDie(Effect.try(() => BigInt(deployment.chainId))) }) {
+    const answer = try (try EvmRpc).call({ to: vault, data: `${bindingVersionSelector}${word}`, block: "finalized" })
+    if (!/^0x[0-9a-fA-F]{320}$/u.test(answer)) throw unreadable("the vault answered no binding version")
+    const version = try orDie(Effect.try(() => BigInt(`0x${answer.slice(66, 130)}`)))
+    return version <= largestSafe ? Number(version) : undefined
+  }
+}
+
+export function bindingVersions(configured: string | undefined) {
+  return Layer.effect(BindingVersions, effect {
+    const client = try HttpClient.HttpClient
+    return {
+      read: (deployment, actor) => effect {
+        const url = try rpcUrl(configured, deployment.network)
+        const word = try actorWord(actor)
+        if (url === undefined) throw unreadable(`no https RPC is configured for ${deployment.network}`)
+        if (word === undefined) throw unreadable("the binding actor is not a uint64")
+        return provideService(chainVersion(url, deployment, word), HttpClient.HttpClient, client) catch effect (error) => match (error) {
+          when BindingVersionUnreadable: throw error;
+          default: throw unreadable("the payment RPC gave no usable answer");
+        }
+      },
+    } satisfies BindingVersions.Shape
+  })
+}
+
+export interface BindingEnv {
+  readonly PAYMENT_NETWORKS?: string
+  readonly PAYMENT_RPC_URLS?: string
+  readonly SOLANA_IDENTITY_ATTESTER?: Fetcher
+  readonly SECURITY_SOLANA_IDENTITY_ATTESTER?: Fetcher
+}
+
+export function bindingServices(env: BindingEnv) {
+  return Layer.mergeAll(
+    paymentDeployments(env.PAYMENT_NETWORKS),
+    bindingVersions(env.PAYMENT_RPC_URLS),
+    Layer.succeed(SolanaAttesters, { ordinary: env.SOLANA_IDENTITY_ATTESTER, privateScope: env.SECURITY_SOLANA_IDENTITY_ATTESTER }),
+  )
+}

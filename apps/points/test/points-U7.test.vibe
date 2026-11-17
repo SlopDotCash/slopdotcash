@@ -1,0 +1,460 @@
+import { assert, it } from "@effect/vitest"
+import { type Actor, type Assessment, type AutomatedReview, type ClosedPull, type Commit, FactsRefused, type JointDecision, type JointUnit, type LeaderEntry, type MergedPull, type Ratification, type Review, type ReviewValue, type ScoringFacts } from "../src/score/facts.vibe"
+import { compareStandings } from "../src/score/ranks.vibe"
+import { leadersOf, scoreSnapshot } from "../src/score/snapshot.vibe"
+import { type Published, plain, published } from "./support/u7/published.ts"
+import { oldBuilderReplay } from "./support/u7/replay.ts"
+
+const repository = "SlopDotCash/slop"
+
+function actor(login: string, kind = "User"): Actor {
+  return { id: `U_${login}`, login, avatarUrl: `https://avatars.githubusercontent.com/${login}`, url: `https://github.com/${login}`, kind }
+}
+
+function commit(oid: string, by: Actor, additions: number, deletions: number, parentCount = 1): Commit {
+  return { oid, parentCount, author: by, retained: null, additions, deletions }
+}
+
+function assessment(tier: Assessment["tier"], head: string, digest: string, rationale: string): Assessment {
+  return { tier, source: "PaidApiReceipt", digest: digest.repeat(64), rubric: "slop-value-v1", model: "slopbot-model", head, recordedAt: "2026-11-12T00:00:00.000Z", rationale }
+}
+
+function pull(number: number, mergedAt: string, author: Actor, commits: ReadonlyArray<Commit>, extra: Partial<MergedPull> = {}): MergedPull {
+  return {
+    id: `PR_${number}`,
+    number,
+    repository,
+    project: "slop",
+    url: `https://github.com/${repository}/pull/${number}`,
+    title: `Change ${number}`,
+    mergedAt,
+    author,
+    headRefOid: `head-${number}`,
+    commits,
+    reviews: [],
+    assessment: null,
+    ratification: null,
+    reviewValues: [],
+    externalPrize: false,
+    traceUpload: false,
+    automatedReviews: [],
+    ...extra,
+  }
+}
+
+function closed(number: number, closedAt: string, author: Actor, commits: ReadonlyArray<Commit>, extra: Partial<ClosedPull> = {}): ClosedPull {
+  return {
+    id: `PR_${number}`,
+    number,
+    repository,
+    project: "slop",
+    url: `https://github.com/${repository}/pull/${number}`,
+    title: `Change ${number}`,
+    closedAt,
+    author,
+    headRefOid: `head-${number}`,
+    commits,
+    reviews: [],
+    assessment: null,
+    reviewValues: [],
+    externalPrize: false,
+    ...extra,
+  }
+}
+
+function review(id: string, by: Actor, state: Review["state"], submittedAt: string, body: string, commitId: string | null = null): Review {
+  return { id, url: `https://github.com/${repository}/pull/0#${id}`, author: by, state, submittedAt, body, inlineCommentCount: 0, commitId, traceUpload: false }
+}
+
+function valued(reviewId: string, tier: ReviewValue["tier"]): ReviewValue {
+  return { reviewId, tier, finding: `Finding of ${reviewId}.`, outcome: "Answered before merge." }
+}
+
+function unit(workUnitId: string, tier: JointUnit["tier"], sources: ReadonlyArray<MergedPull | ClosedPull>, commits: ReadonlyArray<string>, rationale: string): JointUnit {
+  const ids = sources.map((source) => source.id)
+  return { workUnitId, tier, rationale, sources: ids, carriers: ids, commits, retainedOriginal: null, reviewValues: [] }
+}
+
+function decision(digest: string, members: ReadonlyArray<MergedPull | ClosedPull>, units: ReadonlyArray<JointUnit>, extra: Partial<JointDecision> = {}): JointDecision {
+  return {
+    digest: digest.repeat(64),
+    source: "PaidApiReceipt",
+    rubric: "slop-value-v1",
+    model: "slopbot-model",
+    recordedAt: "2026-11-12T00:00:00.000Z",
+    hashesVerified: true,
+    members: members.map((member) => ({ pullId: member.id, head: member.headRefOid, acceptedAt: "mergedAt" in member ? member.mergedAt : null, indirect: false })),
+    units,
+    ...extra,
+  }
+}
+
+function ratification(by: Actor, head: string, extra: Partial<Ratification> = {}): Ratification {
+  return {
+    tier: "medium",
+    maintainer: by,
+    authority: { maintainer: by, project: "slop", permission: "WritePermission" },
+    coRatifiers: [],
+    securityRisk: false,
+    proposals: [],
+    head,
+    record: `IC_${head}`,
+    sourceId: `IC_${head}`,
+    url: `https://github.com/${repository}/pull/0#IC_${head}`,
+    at: "2026-11-12T01:00:00.000Z",
+    reason: "Ratified by a maintainer.",
+    workUnitId: `wu_slop_${head.replace("-", "_")}`,
+    ...extra,
+  }
+}
+
+function facts(merged: ReadonlyArray<MergedPull>, extra: Partial<ScoringFacts> = {}): ScoringFacts {
+  return {
+    windowFrom: "2026-10-12T00:00:00.000Z",
+    windowTo: "2026-11-16T00:00:00.000Z",
+    merged,
+    closedUnmerged: [],
+    contexts: [],
+    joint: [],
+    attributionHolds: new Set(),
+    heldUnits: [],
+    openReviewedAt: [],
+    penalties: [],
+    projects: new Map([[repository, "slop"]]),
+    bans: new Map(),
+    activity: new Map(),
+    ...extra,
+  }
+}
+
+effect function refusal(input: ScoringFacts) {
+  const error = try Effect.flip(scoreSnapshot(input))
+  return error instanceof FactsRefused ? error.reason : "not a facts refusal"
+}
+
+effect function credited(input: ScoringFacts) {
+  const scoring = try scoreSnapshot(input)
+  return scoring.ledger.map((event) => [event.id, event.scoreThirds])
+}
+
+function replayed(name: string, cycle: Published) {
+  const activity = new Map(cycle.leaders.map((leader) => [leader.actor.id, { rawActivity: leader.rawActivity, models: leader.reportedModels }]))
+  const leaders = leadersOf(cycle.ledger, new Map(), activity)
+  const unranked = (leader: LeaderEntry) => JSON.stringify({ ...leader, rank: 0 })
+  const historical = new Map(cycle.leaders.map((leader) => [leader.actor.id, unranked(leader)]))
+  return {
+    cycle: name,
+    leaders: leaders.length,
+    mismatched: leaders.filter((leader) => historical.get(leader.actor.id) !== unranked(leader)).map((leader) => leader.actor.login),
+    ordered: leaders.every((leader, index) => index === 0 || compareStandings(leaders[index - 1] ?? leader, leader) < 0),
+    equalScoresShareRank: leaders.every((leader, index) => {
+      const previous = leaders[index - 1]
+      return previous === undefined || (previous.scoreThirds === leader.scoreThirds) === (previous.rank === leader.rank)
+    }),
+    publishedBeforeTieHandling: cycle.leaders.every((leader, index) => leader.rank === index + 1),
+  }
+}
+
+it.effect('Scoring replay: the old builder\'s input gives its ledger, leaders, review exclusions and payment basis byte for byte, and published ledgers give their published leaders (spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month\'s accepted-work credits minus active debits, never below zero, whatever the order")', () => effect {
+  const replay = try promise(() => oldBuilderReplay())
+  const scoring = try scoreSnapshot(replay.facts)
+  const bytes = (value: object) => JSON.stringify(plain(value))
+  try Effect.try(() => assert.deepStrictEqual(
+    [bytes(scoring.ledger), bytes(scoring.leaders), bytes(scoring.reviewExclusions), bytes(scoring.paymentReviewBasis ?? {})],
+    [bytes(replay.expected.ledger), bytes(replay.expected.leaders), bytes(replay.expected.reviewExclusions), bytes(replay.expected.paymentReviewBasis ?? {})],
+  ))
+  const july = try promise(() => published("eliza", "2026-07"))
+  const september = try promise(() => published("eliza", "2026-09"))
+  try Effect.try(() => assert.deepStrictEqual([replayed("eliza/2026-07", july), replayed("eliza/2026-09", september)], [
+    { cycle: "eliza/2026-07", leaders: 25, mismatched: [], ordered: true, equalScoresShareRank: true, publishedBeforeTieHandling: true },
+    { cycle: "eliza/2026-09", leaders: 54, mismatched: [], ordered: true, equalScoresShareRank: true, publishedBeforeTieHandling: true },
+  ]))
+})
+
+const alice = actor("alice")
+const bob = actor("bob")
+const carol = actor("carol")
+const dave = actor("dave")
+const erin = actor("erin")
+const mia = actor("mia")
+const frank = actor("frank")
+const gina = actor("gina")
+const hank = actor("hank")
+const ivy = actor("ivy")
+const jill = actor("jill")
+const kim = actor("kim")
+const rev1 = actor("rev1")
+const rev2 = actor("rev2")
+const substantive = "The retry loop now bounds every attempt and reports the last failure."
+
+it.effect('Merge deduplication: two PRs grouped into one work unit, and the same merge seen twice, are credited once and every unit keeps at least 10 Points (spec/points/workUnits.md, "A new group supersedes every current group it touches, whole"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"; spec/points/scoringPolicy.md, "A November assessment needs a paid API receipt; a historical one needs a subscription declaration")', () => effect {
+  const first = pull(101, "2026-11-03T10:00:00Z", alice, [commit("a1", alice, 30, 10)])
+  const stacked = pull(102, "2026-11-05T10:00:00Z", bob, [commit("a1", alice, 30, 10), commit("b1", bob, 15, 5)])
+  const unassessed = pull(103, "2026-11-07T10:00:00Z", carol, [commit("c1", carol, 5, 0)])
+  const zeroSize = pull(104, "2026-11-08T10:00:00Z", dave, [commit("d1", dave, 3, 1)], { assessment: assessment("none", "head-104", "a", "No observable value.") })
+  const promotion = pull(105, "2026-11-09T10:00:00Z", erin, [commit("c1", carol, 5, 0)])
+  const stackedUnit = unit("wu_slop_joint_stacked", "medium", [first, stacked], ["a1", "b1"], "Stacked change.")
+  const scoring = try scoreSnapshot(facts([first, stacked, first, unassessed, zeroSize, promotion], { joint: [decision("b", [first, stacked], [stackedUnit])] }))
+  const units = new Map<string, number>()
+  for (const event of scoring.ledger) units.set(event.workUnitId ?? event.id, (units.get(event.workUnitId ?? event.id) ?? 0) + (event.scoreThirds ?? 0) * 10)
+  try Effect.try(() => assert.deepStrictEqual(plain({
+    credited: scoring.ledger.map((event) => [event.id, event.scoreThirds]),
+    joint: scoring.ledger[0],
+    unitPoints: [...units],
+    held: scoring.held,
+    leaders: scoring.leaders.map((leader) => [leader.rank, leader.actor.login, leader.scoreThirds]),
+  }), {
+    credited: [["PR_102:joint:wu_slop_joint_stacked:merged:U_alice", 6], ["PR_102:joint:wu_slop_joint_stacked:merged:U_bob", 3], ["PR_103:merged", 1], ["PR_104:merged", 1]],
+    joint: {
+      id: "PR_102:joint:wu_slop_joint_stacked:merged:U_alice",
+      actor: plain(alice),
+      category: "merged-pull-request",
+      points: 2,
+      scoreThirds: 6,
+      workUnitId: "wu_slop_joint_stacked",
+      scoreDecisionSourceId: `value:${"b".repeat(64)}`,
+      scoreDecisionAt: "2026-11-12T00:00:00.000Z",
+      occurredAt: "2026-11-05T10:00:00Z",
+      repository,
+      source: { id: "PR_102", kind: "pull-request", number: 102, title: "Change 102", url: `https://github.com/${repository}/pull/102` },
+      reason: "Provisional joint value assessment (medium): Stacked change. Shared among 2 scoped implementation actors in proportion to verified changed lines.",
+    },
+    unitPoints: [["wu_slop_joint_stacked", 90], ["wu_slopdotcash_slop_pr_103", 10], ["wu_slopdotcash_slop_pr_104", 10]],
+    held: [],
+    leaders: [[1, "alice", 6], [2, "bob", 3], [3, "carol", 1], [3, "dave", 1]],
+  }))
+
+  const ratified = pull(301, "2026-11-03T10:00:00Z", alice, [commit("x1", alice, 10, 0)], { ratification: ratification(mia, "head-301") })
+  const carrier = pull(302, "2026-11-04T10:00:00Z", bob, [commit("y1", bob, 10, 0), commit("y2", bob, 10, 0)])
+  const completion = pull(303, "2026-11-06T10:00:00Z", carol, [commit("z1", carol, 20, 0)])
+  const minimal = pull(304, "2026-11-07T10:00:00Z", dave, [commit("w1", dave, 4, 0)])
+  const jointUnits = try credited(facts([ratified, carrier, completion, minimal], {
+    joint: [decision("d", [ratified, carrier, completion, minimal], [
+      unit("wu_slop_u1", "medium", [ratified, carrier], ["x1", "y1"], "Ratified carrier work."),
+      unit("wu_slop_u2", "small", [carrier, completion], ["y2", "z1"], "Shared follow-up."),
+      unit("wu_slop_u3", "none", [minimal], ["w1"], "No observable value."),
+    ])],
+  }))
+  try Effect.try(() => assert.deepStrictEqual(plain(jointUnits), [
+    ["PR_301:merged", 9],
+    ["PR_303:joint:wu_slop_u2:merged:U_carol", 2],
+    ["PR_301:ratifier:IC_head-301", 1],
+    ["PR_303:joint:wu_slop_u2:merged:U_bob", 1],
+    ["PR_304:joint:wu_slop_u3:merged:U_dave", 1],
+  ]))
+
+  const integrated = closed(401, "2026-11-08T10:00:00Z", frank, [commit("v1", frank, 10, 0)])
+  const context = pull(402, "2026-11-02T10:00:00Z", gina, [commit("u1", gina, 10, 0)])
+  const landed = pull(403, "2026-11-10T10:00:00Z", hank, [commit("t1", hank, 10, 0)])
+  const indirect = decision("c", [integrated, context, landed], [
+    unit("wu_slop_v1", "small", [integrated], ["v1"], "Integrated change."),
+    unit("wu_slop_v2", "small", [context], ["u1"], "Earlier change."),
+    unit("wu_slop_v3", "micro", [landed], ["t1"], "Landed change."),
+  ])
+  const integratedScoring = try scoreSnapshot(facts([landed], {
+    windowFrom: "2026-11-05T00:00:00.000Z",
+    closedUnmerged: [integrated],
+    contexts: [context],
+    joint: [{ ...indirect, members: indirect.members.map((member) => member.pullId === integrated.id ? { ...member, acceptedAt: "2026-11-09T10:00:00Z", indirect: true } : member) }],
+  }))
+  try Effect.try(() => assert.deepStrictEqual(plain(integratedScoring.ledger), plain([
+    {
+      id: "PR_401:joint:wu_slop_v1:merged:U_frank",
+      actor: frank,
+      category: "merged-pull-request",
+      points: 1,
+      scoreThirds: 3,
+      workUnitId: "wu_slop_v1",
+      scoreDecisionSourceId: `value:${"c".repeat(64)}`,
+      scoreDecisionAt: "2026-11-12T00:00:00.000Z",
+      acceptanceKind: "indirect-integration",
+      occurredAt: "2026-11-09T10:00:00Z",
+      repository,
+      source: { id: "PR_401", kind: "pull-request", number: 401, title: "Change 401", url: `https://github.com/${repository}/pull/401` },
+      reason: "Provisional joint value assessment (small) of work accepted through indirect integration: Integrated change.",
+    },
+    {
+      id: "PR_403:joint:wu_slop_v3:merged:U_hank",
+      actor: hank,
+      category: "merged-pull-request",
+      points: 1 / 3,
+      scoreThirds: 1,
+      workUnitId: "wu_slop_v3",
+      scoreDecisionSourceId: `value:${"c".repeat(64)}`,
+      scoreDecisionAt: "2026-11-12T00:00:00.000Z",
+      occurredAt: "2026-11-10T10:00:00Z",
+      repository,
+      source: { id: "PR_403", kind: "pull-request", number: 403, title: "Change 403", url: `https://github.com/${repository}/pull/403` },
+      reason: "Provisional joint value assessment (micro): Landed change.",
+    },
+  ])))
+
+  const attributionHeld = pull(501, "2026-11-03T10:00:00Z", ivy, [commit("q1", ivy, 10, 0)], { reviews: [review("PRR_i1", rev2, "APPROVED", "2026-11-02T10:00:00Z", substantive)] })
+  const unavailable = pull(502, "2026-11-04T10:00:00Z", jill, [commit("r1", jill, 10, 0)], {
+    assessment: assessment("small", "head-502", "e", "Small change."),
+    reviewValues: [valued("PRR_j1", "standard")],
+    reviews: [review("PRR_j1", rev1, "APPROVED", "2026-11-03T10:00:00Z", substantive)],
+  })
+  const heldScoring = try scoreSnapshot(facts([attributionHeld, unavailable], { attributionHolds: new Set([attributionHeld.id]), heldUnits: [{ sources: [unavailable.id] }] }))
+  try Effect.try(() => assert.deepStrictEqual(plain({ credited: heldScoring.ledger.map((event) => [event.id, event.scoreThirds]), held: heldScoring.held, excluded: heldScoring.reviewExclusions }), {
+    credited: [["PR_502:merged", 3]],
+    held: [{ sourceId: "PR_501", reason: "attribution-hold" }],
+    excluded: [],
+  }))
+
+  const owner = pull(601, "2026-11-03T10:00:00Z", kim, [commit("k1", kim, 5, 0)])
+  const overlapping = pull(602, "2026-11-05T10:00:00Z", jill, [commit("k1", kim, 5, 0), commit("k2", jill, 5, 0)], { assessment: assessment("medium", "head-602", "f", "Overlapping change.") })
+  const stale = pull(603, "2026-11-06T10:00:00Z", jill, [commit("s1", jill, 5, 0)], { assessment: assessment("small", "stale-head", "f", "Stale change.") })
+  const late = pull(604, "2026-11-20T10:00:00Z", jill, [commit("l1", jill, 5, 0)])
+  const declared = decision("b", [first, stacked], [stackedUnit], { source: "SubscriptionDeclared" })
+  const moved = decision("b", [first, stacked], [stackedUnit])
+  const refusals = [
+    try refusal(facts([owner, overlapping])),
+    try refusal(facts([stale])),
+    try refusal(facts([first, stacked], { joint: [declared] })),
+    try refusal(facts([first, stacked], { joint: [{ ...moved, members: moved.members.map((member) => ({ ...member, head: "stale-head" })) }] })),
+    try refusal(facts([late])),
+  ]
+  try Effect.try(() => assert.deepStrictEqual(refusals, [
+    "Overlapping accepted commits require joint value assessment",
+    "Current value decision does not match the collected accepted outcome",
+    "Joint scoring requires current human decision and review sources for every member",
+    "Joint scoring requires current human decision and review sources for every member",
+    "Detailed pull request PR_604 falls outside the verification window",
+  ]))
+})
+
+const leo = actor("leo")
+const nia = actor("nia")
+const quin = actor("quin")
+
+it.effect('Related-party ratification: a maintainer who shares the outcome, or a security-sensitive proposal, needs an independent co-ratifier, and only the verified authority can ratify (spec/points/scoringPolicy.md, "A valid ratification takes precedence and a later assessment cannot replace it"; spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum")', () => effect {
+  const automated: AutomatedReview = { id: "IC_auto1", kind: "comment", url: `https://github.com/${repository}/pull/701#IC_auto1`, author: quin, createdAt: "2026-11-07T10:00:00Z", reviewLoad: "deep", workUnitId: "wu_slop_auto", traceUpload: true }
+  const shared = (rat: Ratification) => pull(701, "2026-11-08T10:00:00Z", leo, [commit("m1", leo, 10, 0), commit("m2", nia, 10, 0)], { ratification: rat, automatedReviews: [automated] })
+  const refusals = [
+    try refusal(facts([shared(ratification(leo, "head-701"))])),
+    try refusal(facts([shared(ratification(nia, "head-701"))])),
+    try refusal(facts([shared(ratification(mia, "head-701", { securityRisk: true }))])),
+    try refusal(facts([shared(ratification(leo, "head-701", { coRatifiers: [leo] }))])),
+    try refusal(facts([shared(ratification(leo, "head-701", { coRatifiers: [nia] }))])),
+  ]
+  try Effect.try(() => assert.deepStrictEqual(refusals, [
+    "self slop-score requires a second maintainer co-ratifier",
+    "self slop-score requires a second maintainer co-ratifier",
+    "security-sensitive slop-score requires a co-ratifier",
+    "slop-score co-ratifier must be a second maintainer",
+    "slop-score co-ratifier must not share the scored outcome",
+  ]))
+  const approved = try scoreSnapshot(facts([shared(ratification(leo, "head-701", { coRatifiers: [mia], proposals: ["IC_auto1"] }))]))
+  try Effect.try(() => assert.deepStrictEqual(plain({
+    credited: approved.ledger.map((event) => [event.id, event.scoreThirds, event.evidenceBonusBasisPoints, event.workUnitId]),
+    reason: approved.ledger.find((event) => event.id === "PR_701:merged")?.reason,
+  }), {
+    credited: [
+      ["PR_701:automated-review:IC_auto1", 9, 1_500, "wu_slop_auto_review_u_quin"],
+      ["PR_701:merged", 4.5, 0, "wu_slop_head_701"],
+      ["PR_701:merged:U_nia", 4.5, 0, "wu_slop_head_701"],
+    ],
+    reason: "Maintainer-ratified medium accepted outcome: Ratified by a maintainer. Shared among 2 implementation authors in proportion to verified changed lines.",
+  }))
+  const elsewhere = try scoreSnapshot(facts([shared(ratification(leo, "head-701", { coRatifiers: [mia], authority: { maintainer: leo, project: "other", permission: "WritePermission" } }))]))
+  try Effect.try(() => assert.deepStrictEqual(plain(elsewhere.ledger.map((event) => [event.id, event.scoreThirds, event.reason])), [
+    ["PR_701:merged", 0.5, "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed. Shared among 2 implementation authors in proportion to verified changed lines."],
+    ["PR_701:merged:U_nia", 0.5, "Accepted outcome awaits a current Slopbot value assessment; it keeps the one-third minimum until assessed. Shared among 2 implementation authors in proportion to verified changed lines."],
+  ]))
+})
+
+const vic = actor("vic")
+const lee = actor("lee")
+const oscar = actor("oscar")
+const [rev3, rev4, rev5] = [actor("rev3"), actor("rev4"), actor("rev5")]
+const [revA, revB, revC, revD, revE, revF] = [actor("reva"), actor("revb"), actor("revc"), actor("revd"), actor("reve"), actor("revf")]
+const robot = actor("dependabot", "Bot")
+
+it.effect('Review bands: on each side of the 1 November 2026 policy switch only eligible reviews receive a band, and the band follows the published scoring policy (spec/points/reviews.md, "Review records preserve first qualification and highest band"; spec/points/reviews.md, "Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews"; spec/points/reviews.md, "Pool shares use ten-Point largest remainder and the original review order"; spec/points/reviews.md, "A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment"; spec/points/scoringPolicy.md, "The acceptance instant selects the policy")', () => effect {
+  const valuePolicy = pull(201, "2026-11-10T12:00:00Z", vic, [commit("v1", vic, 10, 2)], {
+    assessment: assessment("large", "head-201", "e", "Large change."),
+    reviewValues: [valued("PRR_r1", "standard"), valued("PRR_r2", "deep"), valued("PRR_r5", "triage"), valued("PRR_r6", "none"), valued("PRR_r7", "standard"), valued("PRR_r8", "deep")],
+    reviews: [
+      review("PRR_r1", rev1, "APPROVED", "2026-11-08T09:00:00Z", "ok"),
+      review("PRR_r2", rev2, "COMMENTED", "2026-11-09T09:00:00Z", "A comment the assessment credits."),
+      review("PRR_r5", rev1, "APPROVED", "2026-11-09T12:00:00Z", substantive),
+      review("PRR_r3", robot, "APPROVED", "2026-11-09T13:00:00Z", substantive),
+      review("PRR_r6", rev4, "APPROVED", "2026-11-09T15:00:00Z", substantive),
+      review("PRR_r7", vic, "COMMENTED", "2026-11-09T16:00:00Z", substantive),
+      review("PRR_r4", rev3, "APPROVED", "2026-11-10T13:00:00Z", substantive),
+      review("PRR_r8", rev5, "APPROVED", "2026-10-30T09:00:00Z", substantive),
+    ],
+  })
+  const historical = pull(202, "2026-10-20T12:00:00Z", lee, [commit("l0", lee, 4, 0)], {
+    reviews: [
+      review("PRR_l1", revA, "APPROVED", "2026-09-28T10:00:00Z", substantive, "c-old"),
+      review("PRR_l2", revB, "COMMENTED", "2026-10-02T10:00:00Z", substantive, "c-old"),
+      review("PRR_l3", revC, "APPROVED", "2026-10-03T10:00:00Z", "LGTM", "c-old"),
+      review("PRR_l4", revD, "CHANGES_REQUESTED", "2026-10-15T10:00:00Z", substantive, "c-old"),
+      review("PRR_l5", revE, "CHANGES_REQUESTED", "2026-10-16T10:00:00Z", substantive, "c-mid"),
+      review("PRR_l6", revF, "APPROVED", "2026-10-18T10:00:00Z", substantive, "head-202"),
+      review("PRR_l7", revA, "APPROVED", "2026-10-19T10:00:00Z", substantive, "head-202"),
+    ],
+  })
+  const unmerged = closed(801, "2026-11-12T00:00:00Z", oscar, [commit("o1", oscar, 3, 0)], {
+    assessment: assessment("small", "head-801", "a", "Closed change."),
+    reviewValues: [valued("PRR_c1", "deep")],
+    reviews: [review("PRR_c1", rev2, "APPROVED", "2026-11-11T10:00:00Z", substantive)],
+  })
+  const scoring = try scoreSnapshot(facts([historical, valuePolicy], { closedUnmerged: [unmerged] }))
+  try Effect.try(() => assert.deepStrictEqual(plain({
+    credited: scoring.ledger.map((event) => [event.id, event.scoreThirds, event.points]),
+    valueReview: scoring.ledger.find((event) => event.id === "PR_201:value-review:PRR_r1") ?? {},
+    history: scoring.ledger.find((event) => event.id === "PR_202:reviewer:U_reva")?.reviewHistory ?? [],
+    excluded: scoring.reviewExclusions.map((exclusion) => [exclusion.reviewId, exclusion.reason]),
+  }), {
+    credited: [
+      ["PR_201:merged", 24, 8],
+      ["PR_201:value-review:PRR_r2", 9, 3],
+      ["PR_201:value-review:PRR_r1", 3, 1],
+      ["PR_202:merged", 3, 1],
+      ["PR_202:reviewer:U_reva", 3, 1],
+      ["PR_801:value-review:PRR_c1", 3, 1],
+      ["PR_202:reviewer:U_reve", 1, 1 / 3],
+    ],
+    valueReview: {
+      id: "PR_201:value-review:PRR_r1",
+      actor: plain(rev1),
+      category: "substantive-review",
+      points: 1,
+      scoreThirds: 3,
+      workUnitId: "wu_value_review_prr_r1",
+      scoreDecisionSourceId: `value:${"e".repeat(64)}`,
+      scoreDecisionAt: "2026-11-12T00:00:00.000Z",
+      occurredAt: "2026-11-08T09:00:00Z",
+      repository,
+      source: { id: "PRR_r1", kind: "review", number: 201, title: "Change 201", url: `https://github.com/${repository}/pull/0#PRR_r1` },
+      reason: "Provisional standard review value; reviewer 1 of 2 credited, 3 of 12 review-credit thirds: Finding of PRR_r1. Answered before merge.",
+    },
+    history: [
+      { sourceId: "PRR_l1", state: "APPROVED", commitId: "c-old", submittedAt: "2026-09-28T10:00:00Z", url: `https://github.com/${repository}/pull/0#PRR_l1` },
+      { sourceId: "PRR_l7", state: "APPROVED", commitId: "head-202", submittedAt: "2026-10-19T10:00:00Z", url: `https://github.com/${repository}/pull/0#PRR_l7` },
+    ],
+    excluded: [
+      ["PRR_r3", "bot-reviewer"],
+      ["PRR_r4", "post-merge"],
+      ["PRR_r5", "already-awarded-reviewer"],
+      ["PRR_r6", "review-credit-zero-share"],
+      ["PRR_r7", "self-review"],
+      ["PRR_r8", "review-credit-before-policy"],
+      ["PRR_l2", "non-decision"],
+      ["PRR_l3", "insufficient-substance"],
+      ["PRR_l4", "pull-request-review-awarded"],
+      ["PRR_l6", "unchanged-outcome"],
+      ["PRR_l7", "already-awarded-reviewer"],
+    ],
+  }))
+  const staleDecision = closed(802, "2026-11-12T00:00:00Z", oscar, [commit("o2", oscar, 3, 0)], {
+    assessment: assessment("small", "stale-head", "a", "Closed change."),
+    reviewValues: [valued("PRR_c2", "deep")],
+    reviews: [review("PRR_c2", rev2, "APPROVED", "2026-11-11T10:00:00Z", substantive)],
+  })
+  const staleRefusal = try refusal(facts([], { closedUnmerged: [staleDecision] }))
+  try Effect.try(() => assert.strictEqual(staleRefusal, "Value review decision does not match the current head"))
+})

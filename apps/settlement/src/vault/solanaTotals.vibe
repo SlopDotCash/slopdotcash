@@ -1,0 +1,76 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint's network"
+import { SYSTEM_PROGRAM, SolanaRpc, address, publicKey } from "@repo/platform/chain/solana"
+import { decodeProject, decodeVault } from "../chain/solana/accounts.ts"
+import { vaultAddress } from "../chain/solana/pda.ts"
+import { readMint, readRefusalMessage, readTokenAccount } from "../kernels/token2022.ts"
+import { type ChainTotals, DeploymentMismatch } from "./evmTotals.vibe"
+import type { SolanaDeployment } from "./policy.vibe"
+
+const NATIVE_DECIMALS = 9
+
+module slots {
+  /** @throws {never} */
+  export function slotNumber(slot: number): bigint { return BigInt(slot) }
+}
+import { slotNumber } from slots
+
+effect function refuse(message: string): never!DeploymentMismatch {
+  throw new DeploymentMismatch({ message })
+}
+
+export effect function readSolanaTotals(deployment: SolanaDeployment) {
+  const program = address(deployment.programId)
+  const project = address(deployment.projectPda)
+  if (program === undefined || project === undefined) return try refuse("Solana project deployment missing")
+  const rpc = try SolanaRpc
+  const first = decodeProject(try rpc.account(project, "finalized"), program)
+  if (first.kind === "malformed") return try refuse(first.issue === "missing" ? "Project account missing" : "Malformed escrow project")
+  const mint = first.value.mint
+  const native = mint === SYSTEM_PROGRAM
+  const vault = vaultAddress(program, project)
+  const read = try rpc.accounts(native ? [project, vault] : [project, mint, vault], "finalized")
+  const [projectAccount, mintAccount, vaultAccount] = native ? [read.value[0], undefined, read.value[1]] : read.value
+  if (projectAccount === undefined || vaultAccount === undefined || (!native && mintAccount === undefined)) return try refuse("Project, mint or vault account missing")
+  const decoded = decodeProject(projectAccount, program)
+  if (decoded.kind === "malformed") return try refuse("Malformed escrow project")
+  if (decoded.value.mint !== mint) return try refuse("Project mint changed")
+  const mintBytes = publicKey(mint)
+  const minted = native || mintAccount === undefined || mintBytes === undefined ? undefined : readMint({ program: mintAccount.owner, bytes: mintAccount.data, mint: mintBytes })
+  if (minted !== undefined && minted.kind === "Refused") return try refuse(readRefusalMessage(minted.refusal))
+  if (!native && minted === undefined) return try refuse("Project, mint or vault account missing")
+  const decimals = minted === undefined ? NATIVE_DECIMALS : minted.decimals
+  const time = try rpc.blockTime(read.slot)
+  if (time === undefined) return try refuse("Missing finalized block time")
+  const { reserved, deposited, paid, payoutFees, withdrawnGross, withdrawalFees, accruedFees } = decoded.value
+  const free = deposited - paid - payoutFees - withdrawnGross - reserved
+  if (free < 0n) return try refuse("Project counters exceed deposits")
+  const held = free + reserved + accruedFees
+  const holding = decodeVault(vaultAccount, { program, project, mint })
+  if (native) {
+    const rent = try rpc.rentExemption(0, "finalized")
+    if (holding.kind === "malformed" || holding.value.kind !== "Native" || holding.value.lamports - rent < held)
+      return try refuse("Native vault balance is below rent, free, reserved and accrued fees")
+  } else {
+    if (holding.kind === "malformed" || holding.value.kind !== "Token" || minted === undefined) return try refuse("Vault balance is below free, reserved and accrued fees")
+    const admitted = readTokenAccount({ mint: minted, program: holding.value.tokenProgram, bytes: holding.value.data })
+    if (admitted.kind === "Refused") return try refuse(readRefusalMessage(admitted.refusal))
+    if (holding.value.token.amount < held) return try refuse("Vault balance is below free, reserved and accrued fees")
+  }
+  return {
+    readVault: deployment.projectPda,
+    asset: mint,
+    decimals,
+    block: slotNumber(read.slot),
+    blockTime: time,
+    deposited,
+    paid,
+    payoutFees,
+    grossWithdrawn: withdrawnGross,
+    withdrawalFees,
+    free,
+    reservedPrincipal: undefined,
+    reservedFees: undefined,
+    accruedFees,
+    reserved,
+  } satisfies ChainTotals
+}

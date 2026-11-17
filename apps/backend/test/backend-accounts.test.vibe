@@ -1,0 +1,413 @@
+import { assert, layer } from "@effect/vitest"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Answer, Area, type Session, areaLayer } from "@repo/platform/testing/area"
+import { internet } from "@repo/platform/testing/internet"
+import { challengeOf } from "../src/identity/pkce.vibe"
+
+module fakes {
+  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+  import type { Handler } from "@repo/platform/testing"
+
+  export interface XUser { id: string; username: string }
+  export interface XWorld { user: XUser; readonly calls: Array<string>; readonly verifiers: Array<string> }
+  export interface Sent { readonly githubId: string; readonly id: string; readonly token: string }
+  export interface NotifyWorld { readonly sent: Array<Sent>; readonly paths: Array<string> }
+
+  /** @throws {never} */
+  export function seededGithub(): GitHubFake {
+    const fake = githubFake()
+    fake.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })
+    fake.world.addUser({ id: 8, login: "hubot", nodeId: "U_hubot" })
+    fake.world.addUser({ id: 9, login: "mona", nodeId: "U_mona" })
+    fake.world.addUser({ id: 10, login: "nora", nodeId: "U_nora" })
+    return fake
+  }
+
+  /** @throws {never} */
+  export function rename(fake: GitHubFake, from: string, to: string): void {
+    fake.world.renameUser(from, to)
+  }
+
+  function answer(status: number, body?: unknown) {
+    return new WebResponse(body === undefined ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  }
+
+  /** @throws {never} */
+  export function xFake(world: XWorld): Handler {
+    return async (request: WebRequest) => {
+      const url = new URL(request.url)
+      world.calls.push(`${request.method} ${url.pathname}`)
+      if (url.pathname === "/2/oauth2/token") {
+        const form = new URLSearchParams(await request.text())
+        world.verifiers.push(form.get("code_verifier") ?? "")
+        return form.get("code") === "refused-code" ? answer(400, { error: "invalid_grant" }) : answer(200, { access_token: "x-access-token", token_type: "bearer" })
+      }
+      if (url.pathname === "/2/users/me") return request.headers.get("authorization") === "Bearer x-access-token" ? answer(200, { data: world.user }) : answer(401, {})
+      if (url.pathname === "/2/oauth2/revoke") return answer(200, { revoked: true })
+      return answer(404, {})
+    }
+  }
+
+  /** @throws {never} */
+  export function notifyFake(world: NotifyWorld): Handler {
+    return async (request: WebRequest) => {
+      const url = new URL(request.url)
+      world.paths.push(url.pathname)
+      const body = await request.json() as Record<string, string>
+      if (url.pathname === "/v1/email/capabilities") return answer(200, { enrollmentAvailable: true })
+      if (url.pathname === "/v1/activity-notifications/eligibility") return answer(200, { available: false })
+      if (url.pathname === "/v1/email/verification") {
+        world.sent.push({ githubId: body.githubId ?? "", id: body.id ?? "", token: body.token ?? "" })
+        return answer(204)
+      }
+      return answer(404, {})
+    }
+  }
+}
+import { type NotifyWorld, type XWorld, notifyFake, rename, seededGithub, xFake } from fakes
+
+const root = new URL("..", import.meta.url).pathname
+const github = seededGithub()
+const xWorld: XWorld = { user: { id: "123456789012345678901234567890", username: "hubot_x" }, calls: [], verifiers: [] }
+const notifyWorld: NotifyWorld = { sent: [], paths: [] }
+const net = internet({ github: github.handler, hosts: { "api.x.com": xFake(xWorld) } })
+
+const Backend = areaLayer({
+  root,
+  entry: "worker",
+  d1: { SLOP_DB: "slop-private" },
+  vars: {
+    ADMIN_GITHUB_IDS: "7",
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    SLOP_ENVIRONMENT: "local",
+    TRACE_AUTH_SECRET: "trace-auth-secret-for-the-accounts-journey-0001",
+    X_CLIENT_ID: "x-client",
+    X_CLIENT_SECRET: "x-client-secret",
+  },
+  services: { SLOP_NOTIFY: notifyFake(notifyWorld) },
+  internet: net,
+  workers: {
+    SLOP_IDENTITY: {
+      name: "identity",
+      root,
+      entry: "identity",
+      d1: { IDENTITY_DB: "slop-private" },
+      ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+      vars: {
+        SLOP_ENVIRONMENT: "local",
+        GITHUB_APP_CLIENT_ID: github.app.clientId,
+        GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+        IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+      },
+    },
+  },
+})
+
+type Body = Readonly<Record<string, unknown>>
+
+function fields(answer: Answer): Body {
+  return typeof answer.body === "object" && answer.body !== null ? answer.body as Body : {}
+}
+
+function shown(answer: Answer) {
+  return [answer.status, fields(answer).error ?? answer.body] as const
+}
+
+function tokenOf(session: Session) {
+  return session.cookie.slice("__Host-slop_points=".length)
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function post(address: string, path: string, json: unknown, as?: Session) {
+  return try (try Area).request(path, { json, headers: { "cf-connecting-ip": address }, ...as === undefined ? {} : { as } })
+}
+
+effect function get(path: string, as?: Session, headers: Readonly<Record<string, string>> = {}) {
+  return try (try Area).request(path, { headers, ...as === undefined ? {} : { as } })
+}
+
+effect function seededAssertion(githubId: string, login: string, nodeId: string, suffix: string) {
+  const token = `slop_assert_v1_${suffix.padEnd(43, "A")}`
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  try (try Area).sql("INSERT INTO identity_assertions (token_hash, github_actor_id, github_login, github_node_id, audience, created_at, expires_at, consumed_at) VALUES (?, ?, ?, ?, 'slop-points-web', ?, ?, NULL)", try sha256Hex(token), githubId, login, nodeId, try isoAt(now * 1000), try isoAt((now + 90) * 1000))
+  return token
+}
+
+effect function seededMembers(count: number) {
+  const area = try Area
+  for (let index = 0; index < count; index += 1) {
+    const id = String(index).padStart(2, "0")
+    try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", `people-${id}`, String(9000 + index), `person-${id}`, "2026-11-01T00:00:00.000Z")
+  }
+}
+
+function personIds(answer: Answer) {
+  const people = fields(answer).people
+  return Array.isArray(people) ? people.map((person: { readonly actor: { readonly id: string } }) => person.actor.id) : []
+}
+
+function flowOf(answer: Answer) {
+  const url = new URL(String(fields(answer).authorizationUrl ?? "https://x.com/"))
+  const state = url.searchParams.get("state") ?? ""
+  const capability = new RegExp(`__Host-slop_x_flow_${state}=([^;]+)`, "u").exec(answer.headers["set-cookie"] ?? "")?.[1] ?? ""
+  return { state, capability, challenge: url.searchParams.get("code_challenge") ?? "", url }
+}
+
+effect function callback(state: string, capability: string, query: string) {
+  const answer = try get(`/api/v1/points/x/callback?state=${state}&${query}`, undefined, { cookie: `__Host-slop_x_flow_${state}=${capability}` })
+  return [answer.status, answer.headers.location ?? "", (answer.headers["set-cookie"] ?? "").includes("Max-Age=0")] as const
+}
+
+const at = { account: "203.0.113.21", x: "203.0.113.22", email: "203.0.113.23", burst: "203.0.113.77" }
+
+layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Sign in, rename, sign out, revoke, browse the directory, close and reopen an account (spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can")', () => effect {
+    const area = try Area
+    const octo = try area.signIn("7", "octo")
+    const me = fields(try get("/api/v1/points/me", octo))
+    const forged = shown(try post(at.account, "/api/v1/points/join", { assertion: `slop_assert_v1_${"F".repeat(43)}`, public: true, admin: true }))
+    const unknown = shown(try post(at.account, "/api/v1/points/join", { assertion: `slop_assert_v1_${"U".repeat(43)}`, public: true }))
+    const sessions = {
+      signedIn: [try get("/api/v1/project-session", octo)].map((answer) => [answer.status, answer.body]),
+      signedOut: [try get("/api/v1/project-session")].map((answer) => [answer.status, answer.body]),
+    }
+    try orDie(Effect.try(() => rename(github, "octo", "octo-renamed")))
+    const renamed = try area.signIn("7", "octo-renamed")
+    const renamedMe = fields(try get("/api/v1/points/me", renamed))
+    const hidden = shown(try post(at.account, "/api/v1/points/visibility", { public: false }, renamed))
+    const shownAgain = fields(try post(at.account, "/api/v1/points/visibility", { public: true }, renamed))
+    const lookup = fields(try get("/api/v1/points/member?login=OCTO-RENAMED"))
+    const badLogin = shown(try get("/api/v1/points/member?login=-bad"))
+    const badSession = shown(try post(at.account, "/api/v1/points/sessions/revoke", { id: "not-a-session" }, octo))
+    const revoked = shown(try post(at.account, "/api/v1/points/sessions/revoke", { id: (try sha256Hex(tokenOf(renamed))).slice(0, 24) }, octo))
+    const revokedMe = shown(try get("/api/v1/points/me", renamed))
+    const signedOut = try post(at.account, "/api/v1/points/signout", {}, octo)
+    const signedOutMe = shown(try get("/api/v1/points/me", octo))
+    const afterSignOut = shown(try post(at.account, "/api/v1/points/visibility", { public: true }, octo))
+    try seededMembers(26)
+    const firstPage = try get("/api/v1/points/people")
+    const next = String(fields(firstPage).next)
+    const secondPage = try get(`/api/v1/points/people?after=${next}`)
+    const badCursor = shown(try get("/api/v1/points/people?after=!!"))
+    const closing = try area.signIn("7", "octo-renamed")
+    const mismatch = shown(try post(at.account, "/api/v1/points/account/close", { login: "someone-else" }, closing))
+    const closed = try post(at.account, "/api/v1/points/account/close", { login: "OCTO-RENAMED" }, closing)
+    const closedAt = fields(closed).closedAt
+    const closedMe = shown(try get("/api/v1/points/me", closing))
+    const closedLookup = shown(try get("/api/v1/points/member?login=octo-renamed"))
+    const rejoin = fields(try post(at.account, "/api/v1/points/join", { assertion: try seededAssertion("7", "octo-renamed", "U_octo", "closed"), public: true }))
+    const reopened = try post(at.account, "/api/v1/points/join", { assertion: try seededAssertion("7", "octo-renamed", "U_octo", "reopen"), public: true, reopen: true })
+    const reopenedBody = fields(reopened)
+    const rows = try area.sql("SELECT actor_id, github_id, login, public, closed_at FROM points_members WHERE github_id = ?", "7")
+    try same({
+      me: [me.actor, me.public, me.welcome, me.socialPoints, me.referralCode],
+      forged,
+      unknown,
+      sessions,
+      renamedMe: [renamedMe.actor, renamedMe.joinedAt === me.joinedAt],
+      hidden,
+      shownAgain: shownAgain.public,
+      lookup: lookup.actor,
+      badLogin,
+      badSession,
+      revoked,
+      revokedMe,
+      signedOut: [signedOut.status, signedOut.body, (signedOut.headers["set-cookie"] ?? "").includes("Max-Age=0")],
+      signedOutMe,
+      afterSignOut,
+      firstPage: [personIds(firstPage).length, personIds(firstPage)[0], next],
+      secondPage: [personIds(secondPage), fields(secondPage).next],
+      badCursor,
+      mismatch,
+      closed: [closed.status, fields(closed).closed, typeof closedAt, (closed.headers["set-cookie"] ?? "").includes("Max-Age=0")],
+      closedMe,
+      closedLookup,
+      rejoin: [rejoin.error, rejoin.closedAt === closedAt],
+      reopened: [reopened.status, reopenedBody.actor, reopenedBody.public, (reopened.headers["set-cookie"] ?? "").includes("__Host-slop_points=")],
+      rows: rows.map((row) => [row.actor_id, row.login, row.public, row.closed_at]),
+      unexpected: [net.unexpected, area.outboundErrors],
+    }, {
+      me: [{ id: "U_octo", login: "octo" }, true, 0, 0, null],
+      forged: [400, "invalid_request"],
+      unknown: [401, "identity_expired"],
+      sessions: {
+        signedIn: [[200, { session: { githubId: "7", githubLogin: "octo", admin: true } }]],
+        signedOut: [[200, { session: null }]],
+      },
+      renamedMe: [{ id: "U_octo", login: "octo-renamed" }, true],
+      hidden: [409, "public_visibility_required"],
+      shownAgain: true,
+      lookup: { id: "U_octo", login: "octo-renamed" },
+      badLogin: [400, "invalid_login"],
+      badSession: [400, "invalid_session"],
+      revoked: [200, { revoked: true }],
+      revokedMe: [200, null],
+      signedOut: [200, { signedOut: true }, true],
+      signedOutMe: [200, null],
+      afterSignOut: [401, "session_expired"],
+      firstPage: [25, "U_octo", "people-23"],
+      secondPage: [["people-24", "people-25"], null],
+      badCursor: [400, "invalid_cursor"],
+      mismatch: [400, "confirmation_mismatch"],
+      closed: [200, true, "string", true],
+      closedMe: [200, null],
+      closedLookup: [200, null],
+      rejoin: ["account_closed", true],
+      reopened: [200, { id: "U_octo", login: "octo-renamed" }, true, true],
+      rows: [["U_octo", "octo-renamed", 1, null]],
+      unexpected: [[], []],
+    })
+  })
+
+  it.effect('Connect an X profile, refuse a reserved X ID and disconnect (spec/backend/xConnection.md, "A start replaces the member\'s earlier flows and binds the originating session"; spec/backend/xConnection.md, "The callback claims one live pending flow whose originating session is still live"; spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives")', () => effect {
+    const area = try Area
+    const hubot = try area.signIn("8", "hubot")
+    const mona = try area.signIn("9", "mona")
+    const signedOut = shown(try get("/api/v1/points/x/me"))
+    const before = fields(try get("/api/v1/points/x/me", hubot))
+    const started = try post(at.x, "/api/v1/points/x/start", { public: true }, hubot)
+    const flow = flowOf(started)
+    const connected = try callback(flow.state, flow.capability, "code=good-code")
+    const replayed = try callback(flow.state, flow.capability, "code=good-code")
+    const linked = fields(try get("/api/v1/points/x/me", hubot))
+    const profile = fields(try get("/api/v1/points/x/profile?actor=U_hubot"))
+    const challenge = try challengeOf(xWorld.verifiers[0] ?? "")
+    const foreignFlow = flowOf(try post(at.x, "/api/v1/points/x/start", { public: true }, mona))
+    const foreign = try callback(foreignFlow.state, foreignFlow.capability, "code=good-code")
+    const monaLink = fields(try get("/api/v1/points/x/me", mona))
+    const cancelFlow = flowOf(try post(at.x, "/api/v1/points/x/start", { public: true }, mona))
+    const cancelled = try callback(cancelFlow.state, cancelFlow.capability, "error=access_denied")
+    const wrongCookie = try callback(cancelFlow.state, "W".repeat(43), "code=good-code")
+    const hide = shown(try post(at.x, "/api/v1/points/x/visibility", { public: false }, hubot))
+    const notConnected = shown(try post(at.x, "/api/v1/points/x/visibility", { public: true }, mona))
+    const disconnected = shown(try post(at.x, "/api/v1/points/x/disconnect", {}, hubot))
+    const after = fields(try get("/api/v1/points/x/me", hubot))
+    const claims = try area.sql("SELECT x_id, actor_id FROM points_x_claims WHERE actor_id IN (?, ?)", "U_hubot", "U_mona")
+    const flows = try area.sql("SELECT actor_id FROM points_x_flows WHERE actor_id IN (?, ?)", "U_hubot", "U_mona")
+    try same({
+      signedOut,
+      before,
+      started: [started.status, flow.url.origin + flow.url.pathname, flow.url.searchParams.get("redirect_uri"), flow.url.searchParams.get("scope"), flow.state.length, flow.capability.length],
+      connected,
+      replayed,
+      linked: [(linked.account as Body | null)?.id, (linked.account as Body | null)?.username, (linked.account as Body | null)?.public],
+      profile: [profile.id, profile.username],
+      challenge: challenge === flow.challenge,
+      foreign,
+      monaLink: monaLink.account,
+      cancelled,
+      wrongCookie: wrongCookie[1],
+      hide,
+      notConnected,
+      disconnected,
+      after: after.account,
+      claims: claims.map((row) => [row.x_id, row.actor_id]),
+      flows: flows.length,
+      calls: xWorld.calls,
+    }, {
+      signedOut: [401, "not_signed_in"],
+      before: { configured: true, account: null },
+      started: [200, "https://x.com/i/oauth2/authorize", "https://slop.test/api/v1/points/x/callback", "tweet.read users.read", 43, 43],
+      connected: [303, "/points?x=connected", true],
+      replayed: [303, "/points?x=failed", true],
+      linked: ["123456789012345678901234567890", "hubot_x", 1],
+      profile: ["123456789012345678901234567890", "hubot_x"],
+      challenge: true,
+      foreign: [303, "/points?x=failed", true],
+      monaLink: null,
+      cancelled: [303, "/points?x=cancelled", true],
+      wrongCookie: "/points?x=failed",
+      hide: [409, "public_visibility_required"],
+      notConnected: [404, "not_connected"],
+      disconnected: [200, { disconnected: true }],
+      after: null,
+      claims: [["123456789012345678901234567890", "U_hubot"]],
+      flows: 0,
+      calls: ["POST /2/oauth2/token", "GET /2/users/me", "POST /2/oauth2/revoke", "POST /2/oauth2/token", "GET /2/users/me", "POST /2/oauth2/revoke"],
+    })
+  })
+
+  it.effect('Verify an address, choose consent, unsubscribe and meet the request limit (spec/backend/email.md, "A verification request records the requested consent and is idempotent per request key"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused")', () => effect {
+    const area = try Area
+    const nora = try area.signIn("10", "nora")
+    const request = { email: " nora@example.test ", enabled: true, idempotencyKey: "nora-request-0001", securityEnabled: true }
+    const signedOut = shown(try get("/api/v1/notifications/email"))
+    const otherActor = shown(try get("/api/v1/notifications/email", nora, { "x-slop-expected-github-id": "11" }))
+    const initial = fields(try get("/api/v1/notifications/email", nora))
+    const requested = try post(at.email, "/api/v1/notifications/email/verification", request, nora)
+    const pending = fields(requested).pending as Body | null
+    const replayed = (try post(at.email, "/api/v1/notifications/email/verification", request, nora)).status
+    const conflicting = shown(try post(at.email, "/api/v1/notifications/email/verification", { ...request, enabled: false }, nora))
+    const limited = try post(at.email, "/api/v1/notifications/email/verification", { ...request, idempotencyKey: "nora-request-0002" }, nora)
+    const forged = shown(try post(at.email, "/api/v1/notifications/email/verification", { ...request, githubId: "7" }, nora))
+    const sent = notifyWorld.sent[0]
+    const wrongToken = shown(try post(at.email, "/api/v1/notifications/email/verify", { token: "0".repeat(64) }, nora))
+    const verified = fields(try post(at.email, "/api/v1/notifications/email/verify", { token: sent?.token ?? "" }, nora))
+    const reused = shown(try post(at.email, "/api/v1/notifications/email/verify", { token: sent?.token ?? "" }, nora))
+    const version = String(verified.destinationVersion)
+    const optedOut = shown(try post(at.email, "/api/v1/notifications/email", { enabled: false, securityEnabled: false }, nora))
+    const unversioned = shown(try post(at.email, "/api/v1/notifications/email", { enabled: true }, nora))
+    const optedIn = shown(try post(at.email, "/api/v1/notifications/email", { enabled: true, securityEnabled: true, destinationVersion: version }, nora))
+    const token = `${version}.${"a".repeat(64)}`
+    try area.sql("INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) VALUES (?, ?, ?)", try sha256Hex(token), version, "2026-11-16T00:00:00.000Z")
+    const oneClick = (body: string, value: string) => area.request(`/api/v1/notifications/email/unsubscribe?token=${value}`, { method: "POST", body, origin: null, headers: { "content-type": "application/x-www-form-urlencoded" } })
+    const wrongBody = shown(try oneClick("unsubscribe", token))
+    const unknownToken = shown(try oneClick("List-Unsubscribe=One-Click", `${version}.${"b".repeat(64)}`))
+    const unsubscribed = shown(try oneClick("List-Unsubscribe=One-Click", token))
+    const after = fields(try get("/api/v1/notifications/email", nora))
+    const burst: Array<number> = []
+    for (let index = 0; index < 21; index += 1) burst.push((try post(at.burst, "/api/v1/points/visibility", { public: true }, nora)).status)
+    const throttled = try post(at.burst, "/api/v1/points/visibility", { public: true }, nora)
+    try same({
+      signedOut,
+      otherActor,
+      initial,
+      requested: [requested.status, pending?.email, pending?.state],
+      replayed,
+      conflicting,
+      limited: [limited.status, fields(limited).error, Number(fields(limited).retryAfter) > 0],
+      forged,
+      sent: [notifyWorld.sent.length, sent?.githubId, /^[a-f0-9]{64}$/u.test(sent?.token ?? "")],
+      wrongToken,
+      verified: [verified.availability, verified.email, verified.enabled, verified.securityEnabled, verified.pending, /^[a-f0-9]{64}$/u.test(version)],
+      reused,
+      optedOut,
+      unversioned,
+      optedIn,
+      wrongBody,
+      unknownToken,
+      unsubscribed,
+      after: [after.enabled, after.securityEnabled, after.availability],
+      burst: [burst.slice(0, 20).every((status) => status === 200), burst[20]],
+      throttled: [throttled.status, fields(throttled).error, Number(throttled.headers["retry-after"]) > 0],
+    }, {
+      signedOut: [401, "not_signed_in"],
+      otherActor: [403, "actor_changed"],
+      initial: { enabled: false, securityEnabled: false, enrollmentAvailable: true, pending: null, availability: "unverified" },
+      requested: [202, "nora@example.test", "queued"],
+      replayed: 202,
+      conflicting: [409, "idempotency_conflict"],
+      limited: [429, "verification_rate_limited", true],
+      forged: [400, "invalid_request"],
+      sent: [1, "10", true],
+      wrongToken: [409, "verification_invalid"],
+      verified: ["verified", "nora@example.test", true, true, null, true],
+      reused: [409, "verification_invalid"],
+      optedOut: [200, { enabled: false, securityEnabled: false }],
+      unversioned: [409, "verification_changed"],
+      optedIn: [200, { enabled: true, securityEnabled: true }],
+      wrongBody: [400, "invalid_request"],
+      unknownToken: [409, "unsubscribe_invalid"],
+      unsubscribed: [200, { enabled: false, securityEnabled: false }],
+      after: [false, false, "verified"],
+      burst: [true, 429],
+      throttled: [429, "rate_limited", true],
+    })
+  })
+})

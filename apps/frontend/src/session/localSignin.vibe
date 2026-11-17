@@ -1,0 +1,51 @@
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import { millisOf } from "@repo/platform/clock"
+import { SessionStore, storageKeys } from "../platform/storage.vibe"
+import { currentAddress } from "./address.ts"
+
+export interface SavedFlow {
+  readonly flow: unknown
+  readonly reopen: boolean
+  readonly search: string
+}
+
+const key = storageKeys.localSignIn.key
+
+export function recordOf(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+export effect function parsedJson(text: string | undefined) {
+  if (text === undefined) return undefined
+  return Effect.try((): unknown => JSON.parse(text)) catch () => undefined
+}
+
+export effect function clearLocalFlow() {
+  (try SessionStore).values.remove(key) catch () => undefined
+}
+
+function returnSearch(): string {
+  const address = currentAddress()
+  const parameters = new URLSearchParams(address.search)
+  if (parameters.has("next") || address.pathname.replace(/\/+$/u, "") === "/login") return address.search
+  parameters.set("next", `${address.pathname}${address.search}${address.hash}`)
+  return `?${parameters.toString()}`
+}
+
+export effect function saveLocalFlow(flow: unknown, reopen: boolean) {
+  const text = Effect.try(() => JSON.stringify({ flow, reopen, search: returnSearch() })) catch () => undefined
+  if (text === undefined) return
+  (try SessionStore).values.set(key, text) catch () => undefined
+}
+
+export effect function readLocalFlow() {
+  const text = (try SessionStore).values.get(key) catch () => undefined
+  const saved = recordOf(try parsedJson(text))
+  const expires = typeof recordOf(saved?.flow)?.expiresAt === "string" ? millisOf(String(recordOf(saved?.flow)?.expiresAt)) : Number.NaN
+  const search = saved?.search
+  if (saved === undefined || typeof search !== "string" || !(expires > (try Clock.currentTimeMillis)) || !(search === "" || search.startsWith("?"))) {
+    try clearLocalFlow()
+    return undefined
+  }
+  return { flow: saved.flow, reopen: saved.reopen === true, search } satisfies SavedFlow
+}

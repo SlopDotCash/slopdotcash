@@ -1,0 +1,157 @@
+// spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"
+
+export schema PaymentWallet {
+  readonly id: string
+  readonly address: string
+  readonly digest: string
+}
+
+export schema PaymentAsset {
+  readonly address: string
+  readonly decimals: number
+  readonly symbol: string
+}
+
+export schema PaymentTransfer {
+  readonly recipient: string
+  readonly amountBase: string
+}
+
+export schema PaymentTransaction {
+  readonly chainId: string
+  readonly from: string
+  readonly nonce?: string
+  readonly to: string
+  readonly value: string
+  readonly data: string
+}
+
+export schema SolanaPlan {
+  readonly transaction: string
+}
+
+export schema DirectIntent {
+  readonly protocolVersion?: number
+  readonly preparedAt: string
+  readonly afterBlock: string
+  readonly afterBlocks?: ReadonlyArray<string>
+  readonly rail: "direct"
+  readonly network: string
+  readonly chain: string
+  readonly asset: PaymentAsset
+  readonly payer: PaymentWallet
+  readonly recipient: PaymentWallet
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly transfers: ReadonlyArray<PaymentTransfer>
+  readonly transactions?: ReadonlyArray<PaymentTransaction>
+  readonly solana?: SolanaPlan
+  readonly payerGithubId?: string
+}
+
+export schema RemainingTransfer {
+  readonly recipient: string
+  readonly amountBase: string
+  readonly role: "researcher" | "fee"
+}
+
+export schema OwnerRequest {
+  readonly protocolVersion?: number
+  readonly preparedAt: string
+  readonly afterBlock: string
+  readonly afterBlocks?: ReadonlyArray<string>
+  readonly rail: "direct"
+  readonly network: string
+  readonly chain: string
+  readonly asset: PaymentAsset
+  readonly payer: PaymentWallet
+  readonly recipient: PaymentWallet
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly transfers: ReadonlyArray<RemainingTransfer>
+  readonly transactions?: ReadonlyArray<PaymentTransaction>
+  readonly solana?: SolanaPlan
+  readonly payerGithubId?: string
+}
+
+export schema DirectSettlementView {
+  readonly rail: "direct"
+  readonly state: "paid" | "awaiting-external-payment"
+  readonly network: string
+  readonly generation: number
+  readonly asset: string
+  readonly grossBase: string
+  readonly feeBase: string
+  readonly netBase: string
+  readonly transactionIds: ReadonlyArray<string>
+  readonly confirmedTransactionIds: ReadonlyArray<string>
+  readonly remainingTransfers: ReadonlyArray<RemainingTransfer>
+  readonly transactionId: string | null
+  readonly submittedTransactionId: null
+  readonly walletReviewRequired: boolean
+  readonly privacyNotice: string
+  readonly ownerRequest: OwnerRequest | null
+}
+
+export schema ConsentPaymentBody {
+  readonly network: string
+  readonly confirmation: boolean
+}
+
+export schema PreparePaymentBody {
+  readonly network: string
+  readonly confirmation: boolean
+}
+
+export schema VerifyPaymentBody {
+  readonly transactionIds: ReadonlyArray<string>
+  readonly confirmation: boolean
+}
+
+export schema ConsentDetail {
+  readonly network: string
+  readonly publicChainVisibilityAccepted: true
+}
+
+export schema PrepareDetail {
+  readonly network: string
+  readonly rail: "direct"
+  readonly refreshed?: true
+}
+
+export schema VerifyDetail {
+  readonly verified: true
+  readonly rail: "direct"
+}
+
+export type DirectRefusal =
+  | "confirmationRequiredAcceptPublicChainVisibility"
+  | "confirmationRequiredConfirmTheExact75"
+  | "invalidRequestConfirmOneOrTwo"
+  | "invalidRequestUseThePaymentS"
+  | "forbiddenOnlyTheReporterMay"
+  | "railUnavailable"
+  | "railUnavailableTheProgramHasNo"
+  | "railUnavailableTheBountyVaultPays"
+  | "railUnavailableDirectPaymentIsUnavailable"
+  | "railUnavailableReceiptVerificationIsUnavailable"
+  | "paymentWalletRequiredConfirmAPayoutWallet"
+  | "paymentWalletConflict"
+  | "paymentWalletConflictPayerReporterAndPlatform"
+  | "paymentConsentRequired"
+  | "paymentProofUnavailable"
+  | "paymentNonceUnavailable"
+  | "paymentNotPending"
+  | "paymentWalletChanged"
+  | "paymentNetworkChanged"
+  | "paymentAlreadyVerified"
+  | "paymentNotPreparedPrepareTheExactPayment"
+  | "paymentAlreadyVerifiedThisPaymentIsAlready"
+  | "paymentUnverified"
+  | "paymentReplay"
+  | "paymentReplayThisTransferIsAlready"
+  | "paymentLegAlreadyVerified"
+  | "paymentPreparationChanged"
+  | "staleRevision"

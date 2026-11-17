@@ -1,0 +1,44 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+import { encodeParts } from "../client/snapshot/parts.vibe"
+import { FileFailure, atomicWrite, attempt, readSnapshotFile } from "./files.vibe"
+
+export interface Packed {
+  readonly logicalBytes: number
+  readonly rootBytes: number
+  readonly parts: number
+}
+
+const partName = /^[a-f0-9]{64}\.part$/u
+
+export const defaultSnapshotPath = "public/data/leaderboard.json"
+
+effect function existingEntries(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const names = fs.readDirectory(directory) catch effect (error) => {
+    if (error.reason._tag === "NotFound") return [] as ReadonlyArray<string>
+    throw new FileFailure({ path: directory, message: "Leaderboard parts directory is unreadable" })
+  }
+  return names
+}
+
+export effect function packTransport(path: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const logical = try readSnapshotFile(path)
+  const encoded = try encodeParts(logical)
+  for (const part of encoded.parts) {
+    const target = files.join(files.dirname(path), part.path.slice("/data/".length))
+    try attempt(fs.makeDirectory(files.dirname(target), { recursive: true }), target, "Leaderboard parts directory could not be created")
+    try atomicWrite(target, part.bytes)
+  }
+  try atomicWrite(path, encoded.root)
+  const directory = files.join(files.dirname(path), "leaderboard")
+  const retained = new Set(encoded.parts.map((part) => part.path.split("/").at(-1) ?? ""))
+  for (const name of try existingEntries(directory)) {
+    const entry = files.join(directory, name)
+    const info = try attempt(fs.stat(entry), entry, "Leaderboard part is unreadable")
+    if (info.type !== "File" || !partName.test(name)) throw new FileFailure({ path: entry, message: "Unexpected file in generated leaderboard parts" })
+    if (!retained.has(name)) try attempt(fs.remove(entry), entry, "Obsolete leaderboard part could not be removed")
+  }
+  return { logicalBytes: logical.length, rootBytes: encoded.root.length, parts: encoded.parts.length } satisfies Packed
+}

@@ -1,0 +1,69 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { type Recovered, unrecovered, verifiedBlob } from "../proofs/blob.vibe"
+import { isObjectId, isSafePath } from "../proofs/gitObject.ts"
+import { strictUtf8 } from "./branchPolicy.vibe"
+import { type ContextFile, type Evidence, EvidenceRefused } from "./types.vibe"
+
+export interface PinnedSelection { readonly path: string; readonly ref: string }
+export type ContextSelection = string | PinnedSelection
+
+const contextLimit = 16
+
+function isPinned(entry: unknown): entry is PinnedSelection {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return false
+  const shape = entry as Readonly<Record<string, unknown>>
+  return Object.keys(shape).sort().join(",") === "path,ref" && typeof shape["path"] === "string" &&
+    typeof shape["ref"] === "string" && /^[a-f0-9]{40}$/u.test(shape["ref"])
+}
+
+export function validContextSelections(value: unknown): value is ReadonlyArray<ContextSelection> {
+  if (!Array.isArray(value) || value.length > contextLimit) return false
+  const entries: ReadonlyArray<unknown> = value
+  if (!entries.every((entry) => typeof entry === "string" || isPinned(entry))) return false
+  const keys = entries.map((entry) => typeof entry === "string" ? entry : isPinned(entry) ? JSON.stringify([entry.ref, entry.path]) : "")
+  return new Set(keys).size === entries.length
+}
+
+export function contextSelections(evidence: Evidence): ReadonlyArray<ContextSelection> {
+  return (evidence.contextFiles ?? []).map(({ path, ref }) => ref === evidence.pull.head.sha ? path : { path, ref })
+}
+
+function byKey(a: PinnedSelection, b: PinnedSelection) {
+  const left = `${a.ref}/${a.path}`
+  const right = `${b.ref}/${b.path}`
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+effect function blobUrl(repository: string, ref: string, path: string) {
+  const encoded: string | undefined = Effect.try(() => path.split("/").map(encodeURIComponent).join("/")) catch () => undefined
+  if (encoded === undefined) throw new EvidenceRefused({ reason: "Invalid immutable context selection" })
+  return `https://github.com/${repository}/blob/${ref}/${encoded}`
+}
+
+export effect function collectContext(evidence: Evidence, paths: ReadonlyArray<ContextSelection>, recovered: Recovered = unrecovered) {
+  if (!paths.every((selection) => validContextSelections([selection]))) throw new EvidenceRefused({ reason: "Invalid immutable context selection" })
+  const head = evidence.pull.head.sha
+  const allowedRefs = new Set([head, evidence.pull.base.sha, ...evidence.reviews.map((review) => review.commit_id)])
+  const selected = [
+    ...new Map(paths.map((entry) => {
+      const selection: PinnedSelection = typeof entry === "string" ? { path: entry, ref: head } : entry
+      return [`${selection.ref}/${selection.path}`, selection] as const
+    })).values(),
+  ].sort(byKey)
+  if (selected.length > contextLimit || selected.some(({ path, ref }) => !allowedRefs.has(ref) || !isSafePath(path)) || !isObjectId(head))
+    throw new EvidenceRefused({ reason: "Invalid immutable context selection" })
+  if (selected.length === 0) return evidence
+  const read = verifiedBlob(evidence.repository, recovered)
+  const contextFiles: ContextFile[] = []
+  for (const { path, ref } of selected) {
+    const file = try read(path, ref)
+    const decoded = file === undefined ? undefined : try strictUtf8(file.bytes)
+    if (file === undefined || decoded === undefined) throw new EvidenceRefused({ reason: `Complete context file unavailable: ${path}` })
+    contextFiles.push({ path, ref, blobSha: file.sha, text: recovered.intern(decoded), url: try blobUrl(evidence.repository, ref, path) })
+  }
+  return {
+    ...evidence,
+    contextFiles,
+    evidenceUrls: [...new Set([...evidence.evidenceUrls, ...contextFiles.map((file) => file.url)])],
+  } satisfies Evidence
+}

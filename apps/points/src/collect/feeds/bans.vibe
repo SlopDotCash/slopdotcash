@@ -1,0 +1,57 @@
+// spec/backend/access.md, "A ban blocks new awards while funded awards stay payable"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub } from "@repo/platform/github"
+import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
+import { AccountBan, AccountBanFeed, accountBanFeedUrl, accountBansVersion, maximumBans } from "./wire.vibe"
+
+module verified {
+  import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
+  /** @throws {never} */
+  export function githubUserIdFromNodeId(node: string): bigint { return decoded(node) }
+}
+import { githubUserIdFromNodeId } from verified
+
+const banFeed = "account bans"
+const recordRefused = "The account ban feed has an invalid record"
+const githubId = /^[1-9][0-9]{0,19}$/u
+
+schema GitHubAccount {
+  readonly id: number
+  readonly node_id: string
+}
+
+effect function refuse(reason: string) {
+  throw new FeedRefused({ feed: banFeed, reason })
+}
+
+export effect function participationBans(retainedActorNodeIds: Iterable<string> = [], timeoutMs = feedTimeoutMs) {
+  const body = try feedJson({ feed: banFeed, url: accountBanFeedUrl, unavailable: "The account ban feed is unavailable", oversized: "The account ban feed exceeds its bound", notFoundIsOutage: true, timeoutMs })
+  const feed = try decodedFeed(AccountBanFeed, body, banFeed, "The account ban feed has an invalid shape")
+  if (feed.schemaVersion !== accountBansVersion || feed.bans.length > maximumBans) try refuse("The account ban feed has an invalid shape")
+  const retained = new Map<string, Set<string>>()
+  for (const nodeId of retainedActorNodeIds) {
+    const userId = githubUserIdFromNodeId(nodeId)
+    if (userId === 0n) try refuse("Retained ban identity is not a canonical GitHub user ID")
+    const id = String(userId)
+    retained.set(id, new Set([...(retained.get(id) ?? []), nodeId]))
+  }
+  const github = try GitHub
+  const bans = new Map<string, string>()
+  const seen = new Set<string>()
+  for (const raw of feed.bans) {
+    const ban = try decodedFeed(AccountBan, raw, banFeed, recordRefused)
+    const millis = millisOf(ban.bannedAt)
+    if (!githubId.test(ban.githubId) || seen.has(ban.githubId) || !Number.isFinite(millis)) try refuse(recordRefused)
+    seen.add(ban.githubId)
+    const bannedAt = try isoAt(millis)
+    for (const nodeId of retained.get(ban.githubId) ?? []) bans.set(nodeId, bannedAt)
+    const account = github.json(`/user/${ban.githubId}`, GitHubAccount) catch effect (error) => {
+      if (error._tag === "NotFound") return undefined
+      throw error
+    }
+    if (account === undefined) continue
+    if (String(account.id) !== ban.githubId) try refuse("GitHub returned a different account for a ban")
+    bans.set(account.node_id, bannedAt)
+  }
+  return bans
+}

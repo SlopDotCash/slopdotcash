@@ -1,0 +1,276 @@
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A notice's destination version and consents are the recipient's current email enrollment"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+import { millisOf } from "@repo/platform/clock"
+import { RowMismatch, decoded } from "@repo/platform/d1"
+import type { Rows } from "@repo/platform/stored"
+import type { Enrollment } from "../../gen/backend__email.ts"
+import { type DeliveryState, type Inbox, type Notice, type NotifyConfig, type Template, decodeState, enrolledPreference } from "../../gen/operations__notifications.effect.vibe"
+
+module verified {
+  import { isStoredKind as storable, kindOfStored as kindOf, storedKind as stored } from "./kinds.ts"
+  import type { Kind } from "../../gen/operations__notifications.ts"
+  /** @throws {never} */
+  export function isStoredKind(text: string): boolean { return storable(text) }
+  /** @throws {never} */
+  export function kindOfStored(text: string): Kind { return kindOf(text) }
+  /** @throws {never} */
+  export function storedKind(kind: Kind): string { return stored(kind) }
+}
+import { isStoredKind, kindOfStored, storedKind } from verified
+
+export { storedKind }
+
+export type Channel = "security" | "activity"
+
+export schema NoticeRow {
+  readonly event_key: string
+  readonly recipient_github_id: string
+  readonly kind: string
+  readonly subject: string
+  readonly created_at: string
+  readonly read_at: string | null
+  readonly channel: "security" | "activity" | null
+  readonly outbox_id: string | null
+  readonly case_id: string | null
+  readonly template_version: string | null
+  readonly state: string | null
+  readonly attempts: number | null
+  readonly next_attempt_at: string | null
+  readonly claimed_at: string | null
+  readonly destination_digest: string | null
+  readonly destination_version: string | null
+  readonly acknowledged_at: string | null
+  readonly escalation_of: string | null
+  readonly essential: number
+}
+
+export schema EventRow {
+  readonly channel: "security" | "activity"
+  readonly delivery_id: string
+  readonly state: string
+  readonly evidence_reference: string | null
+  readonly destination_digest: string | null
+}
+
+export schema ConsentRow {
+  readonly github_id: string
+  readonly enabled: number | null
+  readonly security_enabled: number | null
+  readonly preference_version: string | null
+  readonly revision: number | null
+  readonly destination_version: string | null
+  readonly verified_at: string | null
+}
+
+export schema Pilot {
+  readonly digest: string
+  readonly effectiveAt: string
+}
+
+export schema ReleaseRoute {
+  readonly recipientGithubId: string
+  readonly backupGithubId?: string
+  readonly pilot?: Pilot
+}
+
+export schema Release {
+  readonly routes: ReadonlyArray<ReleaseRoute>
+  readonly generalEmail: boolean
+}
+
+export interface Delivery {
+  readonly channel: Channel
+  readonly id: string
+  readonly caseId: string | null
+}
+
+export interface StoredNotice {
+  readonly eventKey: string
+  readonly recipientGithubId: string
+  readonly subject: string
+  readonly delivery: Delivery | undefined
+}
+
+export interface Projection {
+  readonly inbox: Inbox
+  readonly recipients: ReadonlyArray<string>
+  readonly keys: ReadonlyArray<string>
+  readonly stored: ReadonlyArray<StoredNotice>
+  readonly versions: ReadonlyArray<string>
+  readonly pilots: ReadonlyArray<string | undefined>
+  readonly references: ReadonlyArray<string>
+}
+
+const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "NotQueued">>> = {
+  queued: "Queued",
+  retrying: "Retrying",
+  sending: "Sending",
+  "provider-accepted": "ProviderAccepted",
+  delivered: "Delivered",
+  bounced: "Bounced",
+  suppressed: "Suppressed",
+  exhausted: "Exhausted",
+  ambiguous: "Ambiguous",
+}
+
+export const storedStates = {
+  Queued: "queued",
+  Retrying: "retrying",
+  Sending: "sending",
+  ProviderAccepted: "provider-accepted",
+  Delivered: "delivered",
+  Bounced: "bounced",
+  Suppressed: "suppressed",
+  Exhausted: "exhausted",
+  Ambiguous: "ambiguous",
+} as const satisfies Record<Exclude<DeliveryState, "NotQueued">, string>
+
+const templates: Readonly<Record<string, Template>> = {
+  "security-inbox-v1": "CaseTemplate",
+  "security-receipt-v1": "ReceiptTemplate",
+  "activity-inbox-v1": "ActivityTemplate",
+}
+
+function interned(list: string[], text: string): number {
+  if (text === "") return 0
+  const found = list.indexOf(text)
+  if (found >= 0) return found + 1
+  list.push(text)
+  return list.length
+}
+
+function moment(iso: string | null): number {
+  return iso === null ? 0 : millisOf(iso)
+}
+
+export function digestNumber(digest: string | null, versions: string[], pilots: ReadonlyArray<string | undefined>): number {
+  if (digest === null || digest === "") return 0
+  const pilot = pilots.indexOf(digest)
+  return pilot >= 0 ? 1000 + pilot + 1 : interned(versions, digest)
+}
+
+export function recipientNumber(recipients: string[], githubId: string): number {
+  return interned(recipients, githubId)
+}
+
+function enrollment(place: number, row: ConsentRow, versions: string[]): Enrollment {
+  return {
+    actor: place,
+    verifications: [],
+    destination: { address: "", version: row.destination_version === null ? 0 : interned(versions, row.destination_version), verifiedAt: moment(row.verified_at) },
+    preference: {
+      stored: row.revision !== null,
+      activity: row.enabled === 1,
+      security: row.security_enabled === 1,
+      version: row.preference_version === null ? 0 : interned(versions, row.preference_version),
+      revision: row.revision ?? 0,
+    },
+    unsubscribeTokens: [],
+    pilotVersion: 0,
+  }
+}
+
+export function configured(release: Release, recipients: string[], pilots: ReadonlyArray<string | undefined>): NotifyConfig {
+  return {
+    routes: release.routes.map((route) => ({
+      recipient: interned(recipients, route.recipientGithubId),
+      backup: route.backupGithubId === undefined ? 0 : interned(recipients, route.backupGithubId),
+      pilotDigest: route.pilot === undefined ? 0 : pilots.indexOf(route.pilot.digest) + 1,
+      pilotEffectiveAt: route.pilot === undefined ? 0 : millisOf(route.pilot.effectiveAt),
+    })),
+    generalEmail: release.generalEmail,
+  }
+}
+
+effect function kindOf(row: NoticeRow) {
+  if (!isStoredKind(row.kind)) throw new RowMismatch({ text: "notifications", issue: `unknown notice kind ${row.kind}` })
+  return kindOfStored(row.kind)
+}
+
+effect function stateOf(row: NoticeRow) {
+  if (row.state === null) return "NotQueued" satisfies DeliveryState
+  const state = deliveryStates[row.state]
+  if (state === undefined) throw new RowMismatch({ text: "notification outbox", issue: `unknown delivery state ${row.state}` })
+  return state
+}
+
+function deliveryOf(row: NoticeRow): Delivery | undefined {
+  return row.channel === null || row.outbox_id === null ? undefined : { channel: row.channel, id: row.outbox_id, caseId: row.case_id }
+}
+
+export interface Loaded {
+  readonly notices: ReadonlyArray<NoticeRow>
+  readonly events: ReadonlyArray<EventRow>
+  readonly consents: ReadonlyArray<ConsentRow>
+}
+
+export effect function loaded([notices, events, consents]: ReadonlyArray<Rows>) {
+  return {
+    notices: try decoded(NoticeRow, notices ?? [], "notices"),
+    events: try decoded(EventRow, events ?? [], "notice delivery events"),
+    consents: try decoded(ConsentRow, consents ?? [], "notice email consent"),
+  } satisfies Loaded
+}
+
+export effect function projected(rows: Loaded, release: Release, now: number) {
+  const recipients = rows.consents.map((row) => row.github_id)
+  const versions: string[] = []
+  const prefs = rows.consents.map((row, index) => enrolledPreference(index + 1, enrollment(index + 1, row, versions)))
+  const pilots = release.routes.map((route) => route.pilot?.digest)
+  const config = configured(release, recipients, pilots)
+  const references: string[] = []
+  for (const event of rows.events) {
+    if (event.evidence_reference !== null) interned(references, event.evidence_reference)
+  }
+  const eventsOf = (delivery: Delivery | undefined) => delivery === undefined ? [] : rows.events.filter((event) => event.channel === delivery.channel && event.delivery_id === delivery.id)
+  const positionOf = (outboxId: string | null) => outboxId === null ? 0 : rows.notices.findIndex((row) => row.channel === "security" && row.outbox_id === outboxId) + 1
+  const keys: string[] = []
+  const notices: Notice[] = []
+  for (const [index, row] of rows.notices.entries()) {
+    const delivery = deliveryOf(row)
+    const events = eventsOf(delivery)
+    const escalationOf = positionOf(row.escalation_of)
+    const createdAt = millisOf(row.created_at)
+    const state = try stateOf(row)
+    notices.push({
+      id: index + 1,
+      key: escalationOf > 0 ? 1000 + escalationOf : interned(keys, row.event_key),
+      kind: try kindOf(row),
+      recipient: interned(recipients, row.recipient_github_id),
+      createdAt,
+      readAt: moment(row.read_at),
+      acknowledgedAt: moment(row.acknowledged_at),
+      channel: row.channel === "security" ? "SecurityOutbox" : row.channel === "activity" ? "ActivityOutbox" : "NoEmail",
+      template: templates[row.template_version ?? "activity-inbox-v1"] ?? "ActivityTemplate",
+      essential: row.essential === 1,
+      state,
+      attempts: row.attempts ?? 0,
+      nextAt: row.next_attempt_at === null ? createdAt : millisOf(row.next_attempt_at),
+      claimedAt: moment(row.claimed_at),
+      prepared: state === "Sending" && row.destination_digest !== null,
+      boundVersion: row.destination_version === null ? 0 : interned(versions, row.destination_version),
+      digest: digestNumber(row.destination_digest, versions, pilots),
+      everBound: row.destination_digest !== null || events.some((event) => event.destination_digest !== null),
+      providerSuppressed: state === "Suppressed" && events.some((event) => event.state === "suppressed" && event.evidence_reference !== null),
+      escalationOf,
+      escalated: row.channel === "security" && rows.notices.some((other) => other.escalation_of !== null && other.escalation_of === row.outbox_id),
+    })
+  }
+  const inbox = try decodeState({
+    clock: now,
+    notices,
+    prefs,
+    evidence: references.map((_, index) => index + 1),
+    nextVersion: versions.length + 1,
+    config,
+    configs: 0,
+  } satisfies Inbox)
+  return {
+    inbox,
+    recipients,
+    keys,
+    stored: rows.notices.map((row) => ({ eventKey: row.event_key, recipientGithubId: row.recipient_github_id, subject: row.subject, delivery: deliveryOf(row) })),
+    versions,
+    pilots,
+    references,
+  } satisfies Projection
+}

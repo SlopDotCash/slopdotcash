@@ -1,0 +1,76 @@
+// spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+import { isoAt } from "@repo/platform/clock"
+import { RowMismatch, rows, sql } from "@repo/platform/d1"
+import { Rejected, claimMs, noNotice } from "../../gen/operations__notifications.effect.vibe"
+import type { Channel, Projection, Release } from "../notifications/rows.vibe"
+import { type Scope, deliveryScope, noticeIdOf, observe, send } from "../notifications/store.vibe"
+
+const claimBatch = 25
+
+export schema OutboxRow {
+  readonly id: string
+  readonly recipient_github_id: string
+}
+
+export interface Located {
+  readonly channel: Channel
+  readonly outboxId: string
+  readonly recipient: string
+  readonly scope: Scope
+  readonly id: number
+  readonly projection: Projection
+}
+
+export interface Claimed extends Located {
+  readonly attempt: number
+}
+
+function recipientsOf(recipient: string, release: Release): ReadonlyArray<string> {
+  const backup = release.routes.find((route) => route.recipientGithubId === recipient)?.backupGithubId
+  return backup === undefined ? [recipient] : [recipient, backup]
+}
+
+export effect function located(channel: Channel, row: OutboxRow, release: Release) {
+  const scope = deliveryScope(channel, row.id, recipientsOf(row.recipient_github_id, release))
+  const projection = try observe(scope, release)
+  const id = noticeIdOf(projection, channel, row.id)
+  if (id === 0) throw new RowMismatch({ text: `${channel} notification outbox`, issue: `delivery ${row.id} has no notice` })
+  return { channel, outboxId: row.id, recipient: row.recipient_github_id, scope, id, projection } satisfies Located
+}
+
+effect function staleClaims(channel: Channel) {
+  const cutoff = try isoAt((try Clock.currentTimeMillis) - claimMs)
+  return try rows(OutboxRow, channel === "security"
+    ? sql`SELECT id, recipient_github_id FROM security_notification_outbox WHERE state = 'sending' AND claimed_at < ${cutoff} ORDER BY id`
+    : sql`SELECT id, recipient_github_id FROM activity_notification_outbox WHERE state = 'sending' AND claimed_at < ${cutoff} ORDER BY id`)
+}
+
+export effect function dueRows(channel: Channel, at: string) {
+  return try rows(OutboxRow, channel === "security"
+    ? sql`SELECT id, recipient_github_id FROM security_notification_outbox WHERE state IN ('queued', 'retrying') AND next_attempt_at <= ${at} ORDER BY created_at, id LIMIT ${claimBatch}`
+    : sql`SELECT id, recipient_github_id FROM activity_notification_outbox WHERE state IN ('queued', 'retrying') AND next_attempt_at <= ${at} ORDER BY created_at, id LIMIT ${claimBatch}`)
+}
+
+export effect function expireStale(channel: Channel, release: Release) {
+  let expired = 0
+  for (const row of try staleClaims(channel)) {
+    const found = try located(channel, row, release)
+    const changed = send(found.scope, { type: "expireClaim", id: found.id }, "", release) catch effect (error) => match (error) {
+      when Rejected: undefined;
+      default: throw error;
+    }
+    if (changed !== undefined) expired += 1
+  }
+  return expired
+}
+
+export effect function claimOne(channel: Channel, row: OutboxRow, release: Release) {
+  const found = try located(channel, row, release)
+  const projection = send(found.scope, { type: "claim", id: found.id }, "", release) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    default: throw error;
+  }
+  if (projection === undefined) return undefined
+  const attempt = (projection.inbox.notices[found.id - 1] ?? noNotice).attempts
+  return { ...found, projection, attempt } satisfies Claimed
+}

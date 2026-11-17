@@ -1,0 +1,46 @@
+// spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
+import type { ReadFailure } from "@repo/ports/backend"
+
+export schema EvidenceRow {
+  readonly id: string
+  readonly label: string
+}
+
+export schema VerificationPurpose = "ReviewCheck" | "LedgerDigest"
+
+export schema ArtifactKind = "opaque-upload" | "release-upload" | "legacy-image"
+
+export schema ArtifactStatus = "ok" | "artifact-untrusted-redirect" | "artifact-redirect-error" | "artifact-http-error" | "artifact-timeout" | "artifact-fetch-error" | "artifact-invalid" | "artifact-empty" | "artifact-html" | "artifact-kind-mismatch" | "artifact-limit-exceeded" | "artifact-conflict"
+
+export schema ArtifactFinding {
+  readonly id: string
+  readonly label: string
+  readonly url: string
+  readonly artifactKind?: ArtifactKind
+  readonly status: ArtifactStatus
+  readonly detail?: string
+  readonly httpStatus?: number
+  readonly contentSha256?: string
+  readonly transient: boolean
+}
+
+export schema ArtifactVerdict {
+  readonly ok: boolean
+  readonly findings: ReadonlyArray<ArtifactFinding>
+}
+
+export schema ArtifactPlan {
+  readonly referenceCount: number
+  readonly uniqueArtifactCount: number
+}
+
+export interface ArtifactRequest {
+  readonly body: string
+  readonly rows: ReadonlyArray<EvidenceRow>
+  readonly purpose: VerificationPurpose
+}
+
+export service EvidenceArtifacts {
+  plan(request: ArtifactRequest): ArtifactPlan!ReadFailure
+  verify(request: ArtifactRequest): ArtifactVerdict!ReadFailure
+}

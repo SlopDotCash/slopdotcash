@@ -1,0 +1,149 @@
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+import { type Row, type SendReceipt, canAbandonIntent, isOpen, latestAttempt, replacementWaitMs, wallet } from "../../gen/fees__conversion.effect.vibe"
+import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
+import { type Journal, networkNames, unitsOf } from "../journal/codec.vibe"
+import { type JournaledAttempt, journaledAttempts } from "../journal/queries.vibe"
+import { journal } from "../journal/store.vibe"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber } from "./chain.vibe"
+import { type Session, renewed, step } from "./session.vibe"
+
+export error ReceiptUnrepresentable { row: number; field: string }
+
+export interface Reconciled { readonly reconciled: number; readonly blocked: ReadonlySet<number> }
+
+function expiredAwaitingReceipt(session: Session, row: Row) {
+  return row.state === "Failed" && row.reason === "ExpiredUnlanded" && session.state.gas.some((entry) => entry.row === row.id && entry.state === "Signed" && !entry.settled)
+}
+
+function replaceable(session: Session, row: Row) {
+  return row.live && (row.state === "Submitted" || row.state === "Unknown") && row.attempts.length > 0 && session.state.clock - latestAttempt(row).at >= replacementWaitMs
+}
+
+function withBytes(send: OpenSend) {
+  return send.attempts.length > 0 && send.attempts.every((attempt) => attempt.rawTx !== undefined)
+}
+
+effect function exact(value: bigint, row: number, field: string) {
+  const number = safeNumber(value)
+  if (number === undefined) throw new ReceiptUnrepresentable({ row, field })
+  return number
+}
+
+effect function receiptOf(session: Session, row: Row, landed: Landed) {
+  return {
+    tx: session.names.number("tx", landed.txId),
+    succeeded: landed.succeeded,
+    output: try exact(landed.output, row.id, "output"),
+    actualNative: try exact(try unitsOf(landed.actualWei, session.state.network, `fee send ${row.id} native fee`), row.id, "actualNative"),
+    finalized: true,
+    allowance: try exact(landed.allowance, row.id, "allowance"),
+    feesClaimed: try exact(landed.feesClaimed, row.id, "feesClaimed"),
+    vaultDebit: try exact(landed.vaultDebit, row.id, "vaultDebit"),
+    walletCredit: try exact(landed.walletCredit, row.id, "walletCredit"),
+    roleFree: landed.roleFree,
+  } satisfies SendReceipt
+}
+
+function landedFacts(landed: Landed) {
+  return { actualWei: landed.actualWei, blockHash: landed.blockHash, targetBalanceAfter: landed.targetBalanceAfter }
+}
+
+effect function waiting(session: Session, row: Row, send: OpenSend, reason: string) {
+  try Effect.logInfo("fee_send_waiting", { network: session.state.network, kind: row.kind, token: send.token, txId: send.attempts[0]?.txId, attempts: send.attempts.length - 1, reason })
+}
+
+effect function replaced(session: Session, id: number, send: OpenSend) {
+  const row = session.state.rows[id - 1]
+  if (row === undefined || !replacementSigns(session.state.runtime, session.state.network) || !replaceable(session, row) || !withBytes(send)) return
+  if (!(try renewed(session, true))) return
+  const chain = try ConversionChain
+  const signed = chain.replacement(send, session.state.clock) catch effect (error) => { return error }
+  if (signed instanceof ChainUnavailable || signed instanceof SendRefused) return try waiting(session, row, send, detailOf(signed))
+  if (signed.kind === "wait") return try waiting(session, row, send, signed.reason)
+  if (signed.rawTx.length > rawTxLimit) return try waiting(session, row, send, "the replacement exceeds the storage limit")
+  const event = { type: "replace", runId: session.runId, id, tx: session.names.number("tx", signed.txId), networkFee: signed.networkFee } as const
+  const journaled = try step(session, event, { txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, maxFeePerGas: signed.maxFeePerGas, maxPriorityFeePerGas: signed.maxPriorityFeePerGas })
+  if (journaled === undefined) return try waiting(session, row, send, "the replacement is outside the bounded fee step")
+  if (!(try renewed(session, true))) return
+  const outcome = chain.broadcast(signed.rawTx) catch effect (error) => { return error }
+  const failure = chainFailure(outcome)
+  if (failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: `replacement broadcast: ${detailOf(failure)}` })
+  try Effect.logInfo("fee_send_replaced", { network: session.state.network, kind: row.kind, token: send.token, txId: send.attempts[0]?.txId, replacementTxId: signed.txId, attempt: row.attempts.length, maxFeePerGas: signed.maxFeePerGas, maxPriorityFeePerGas: signed.maxPriorityFeePerGas })
+}
+
+effect function rebroadcast(session: Session, id: number, send: OpenSend) {
+  const latest = send.attempts[send.attempts.length - 1]
+  if (latest?.rawTx === undefined || !(try renewed(session, true))) return
+  const outcome = (try ConversionChain).broadcast(latest.rawTx) catch effect (error) => { return error }
+  const failure = chainFailure(outcome)
+  const state = session.state.rows[id - 1]?.state
+  if (state === "Unknown") try step(session, { type: "rebroadcast", runId: session.runId, id, accepted: failure === undefined }, failure === undefined ? {} : { detail: detailOf(failure) })
+  if (state === "Submitted" && failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: `rebroadcast: ${detailOf(failure)}` })
+  if (failure instanceof FeeCapTooLow) try replaced(session, id, send)
+}
+
+type Settling = "settled" | "open" | "held"
+
+function settling(accepted: boolean): Settling {
+  return accepted ? "settled" : "open"
+}
+
+function openSend(row: Row, token: string, txs: ReadonlyArray<string>, bytes: ReadonlyMap<string, string>): OpenSend {
+  return { kind: row.kind, token, nonce: row.nonce, deadline: row.deadline, attempts: txs.map((txId, attempt) => ({ txId, rawTx: bytes.get(txId), attempt })) }
+}
+
+effect function settled(session: Session, book: Journal, bytes: ReadonlyMap<string, string>, row: Row) {
+  if (row.wallet !== wallet(session.state)) return "open" satisfies Settling
+  if (row.state === "Quoted") {
+    if (!canAbandonIntent(session.state, session.runId, row.id)) return "open" satisfies Settling
+    return settling((try step(session, { type: "abandonIntent", runId: session.runId, id: row.id })) !== undefined)
+  }
+  const record = book.sends[row.id - 1]
+  if (record === undefined || record.txs.length === 0) return "open" satisfies Settling
+  const send = openSend(row, record.token, record.txs, bytes)
+  const status = try (try ConversionChain).status(send)
+  if (expiredAwaitingReceipt(session, row)) {
+    if (status.kind !== "landed" || status.succeeded) return "held"
+    return (try step(session, { type: "settleExpired", runId: session.runId, id: row.id, receipt: try receiptOf(session, row, status) }, landedFacts(status))) === undefined ? "held" : "settled"
+  }
+  const legacyApproval = row.kind === "Approval" && !withBytes(send)
+  switch (status.kind) {
+    case "landed": {
+      const finalized = (try step(session, { type: "finalizeSend", runId: session.runId, id: row.id, receipt: try receiptOf(session, row, status) }, landedFacts(status))) !== undefined
+      return settling(finalized || legacyApproval)
+    }
+    case "expired":
+      return settling((try step(session, { type: "expireEvm", runId: session.runId, id: row.id, deadline: { finalizedTime: status.finalizedTime, included: false } })) !== undefined)
+    case "pending":
+      if (!status.mined) try replaced(session, row.id, send)
+      return "open" satisfies Settling
+    case "unseen":
+      try rebroadcast(session, row.id, send)
+      return "open" satisfies Settling
+    default: {
+      const _exhaustive: never = status
+      return _exhaustive
+    }
+  }
+}
+
+function journaledBytes(attempts: ReadonlyArray<JournaledAttempt>): ReadonlyMap<string, string> {
+  return new Map(attempts.map((attempt) => [attempt.txId, attempt.rawTx]))
+}
+
+export effect function reconcile(session: Session) {
+  const book = try journal(session.instance, session.names)
+  const bytes = journaledBytes(try journaledAttempts(networkNames[session.state.network]))
+  const blocked = new Set<number>()
+  let reconciled = 0
+  for (const row of session.state.rows.filter((row) => isOpen(row) || expiredAwaitingReceipt(session, row))) {
+    const current = session.state.rows[row.id - 1] ?? row
+    const done = settled(session, book, bytes, current) catch effect (error) => {
+      try Effect.logWarning("fee_conversion_reconcile_error", { network: session.state.network, row: row.id, error: error._tag })
+      return "open" satisfies Settling
+    }
+    if (done === "settled") reconciled += 1
+    if (done === "open") blocked.add(row.token)
+  }
+  return { reconciled, blocked } satisfies Reconciled
+}

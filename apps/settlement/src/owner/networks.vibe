@@ -1,0 +1,44 @@
+// spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
+import { REVIEWED_FACTORIES } from "../chain/evm/factories.ts"
+import type { NetworkKey } from "../kernels/networks.ts"
+import { servedNetworks } from "../vault/deployments.vibe"
+
+export service PaymentNetworks {
+  readonly served: ReadonlyArray<NetworkKey>
+  urls(network: NetworkKey): (Redacted.Redacted<ReadonlyArray<string>> | undefined)!!
+}
+
+export interface PaymentNetworkVars {
+  readonly PAYMENT_NETWORKS?: string
+  readonly PAYMENT_RPC_URLS?: string
+}
+
+type Fields = Readonly<Record<string, unknown>>
+
+effect function parsed(text: string | undefined) {
+  return Effect.try(() => JSON.parse(text ?? "") as unknown) catch () => undefined
+}
+
+function httpsUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^https:\/\/[^\s/]+(?:\/\S*)?$/u.test(value)) return undefined
+  return value
+}
+
+export effect function paymentNetworksFrom(vars: PaymentNetworkVars) {
+  const names = vars.PAYMENT_NETWORKS === undefined || vars.PAYMENT_NETWORKS === "[]" ? [] : try servedNetworks(vars.PAYMENT_NETWORKS)
+  const map = try parsed(vars.PAYMENT_RPC_URLS ?? "{}")
+  const endpoints: Fields = typeof map === "object" && map !== null && !Array.isArray(map) ? map as Fields : {}
+  const url = (network: NetworkKey) => httpsUrl(endpoints[network])
+  const served = [...new Set([...names, ...REVIEWED_FACTORIES.map((factory) => factory.network).filter((network) => url(network) !== undefined)])]
+  return {
+    served,
+    urls: (network: NetworkKey) => effect {
+      const found = url(network)
+      return found === undefined ? undefined : Redacted.make([found] as ReadonlyArray<string>)
+    },
+  } satisfies PaymentNetworks.Shape
+}
+
+export function paymentNetworks(vars: PaymentNetworkVars) {
+  return Layer.effect(PaymentNetworks, paymentNetworksFrom(vars))
+}

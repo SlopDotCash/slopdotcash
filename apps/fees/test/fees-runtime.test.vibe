@@ -1,0 +1,306 @@
+import { assert, layer } from "@effect/vitest"
+import { ExperimentalNodeFileSystem } from "vibelang-runtime/experimental/platform-node"
+import type { Network, Runtime } from "../gen/fees__runtime.ts"
+import { buybackSigns, conversionSigns, networkSigns, replacementSigns, runs } from "../gen/fees__runtime.effect.vibe"
+import { type Derived, type Release, isolateRuntime, preflight, presentSecrets, summary, unpublished } from "../src/runtime/config.vibe"
+import { type FeeVars, databaseBinding, expectedSecrets, keySecrets, networkOrder, varNames } from "../src/runtime/networks.vibe"
+import type { ReadinessSettings } from "../src/runtime/readiness.vibe"
+import { decodeReviewed, reviewedFacts } from "../src/runtime/reviewed.vibe"
+
+schema Crons { crons: ReadonlyArray<string> }
+schema D1Entry { binding: string; database_name: string; database_id: string }
+schema WranglerFile { name: string; main: string; no_bundle: boolean; triggers: Crons; d1_databases: ReadonlyArray<D1Entry>; vars: Record<string, string>; expectedSecrets: ReadonlyArray<string> }
+
+const feeWallet = "0x8f77c37d8650776bfe73c9b12b15209ee15d9b86"
+const solanaWallet = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY"
+const otherWallet = "0x1111111111111111111111111111111111111111"
+const [keyBase, keyEthereum, keyRobinhood, keySolana] = keySecrets
+const liveBuyback: FeeVars = { BUYBACK_MODE: "live", BUYBACK_START_AT: "2026-11-10T00:00:00.000Z" }
+const noApproval: ReadinessSettings = { entries: [], replacementActive: false }
+
+effect function reviewed(environment: "production" | "staging") {
+  const fs = try FileSystem.FileSystem
+  const text = try fs.readFileString(new URL(`../wrangler/feeConverter.${environment}.jsonc`, import.meta.url).pathname)
+  return try Schema.decodeUnknownEffect(WranglerFile)(try orDie(Effect.try(() => JSON.parse(text))))
+}
+
+effect function released(vars: FeeVars, secrets: ReadonlyArray<string>, release: Partial<Release> = {}) {
+  return preflight({ vars, secretInventory: secrets, releaseVariable: true, source: 1, previous: unpublished, ownerApproval: noApproval, ...release }) catch () => undefined
+}
+
+effect function derived(vars: FeeVars, secrets: ReadonlyArray<string>) {
+  return isolateRuntime(vars, secrets) catch () => undefined
+}
+
+function perNetwork(runtime: Runtime | undefined, signs: (r: Runtime, network: Network) => boolean) {
+  return Object.fromEntries(networkOrder.map((network) => [network, runtime !== undefined && signs(runtime, network)]))
+}
+
+function granted(result: Derived | undefined) {
+  return result?.readiness.map((outcome) => outcome.granted)
+}
+
+function unknownVars(vars: Readonly<Record<string, string>>) {
+  const known: ReadonlyArray<string> = varNames
+  return Object.keys(vars).filter((name) => !known.includes(name))
+}
+
+layer(ExperimentalNodeFileSystem.layer)((it) => {
+  it.effect('The release stops before upload on an incomplete configuration and continues when every enabled live network has its key (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Story: Publish the fee Worker only from a reviewed release and its preflight")', () => effect {
+    const production = (try reviewed("production")).vars
+    const release = (mode: string, networks: string, buyback: FeeVars = {}): FeeVars => ({ ...production, FEE_CONVERTER_MODE: mode, FEE_CONVERTER_NETWORKS: networks, BUYBACK_MODE: "off", BUYBACK_START_AT: "", ...buyback })
+    const refused = [
+      try released(release("live", "base"), [keyBase, "UNREVIEWED_SECRET"]),
+      try released(release("dry_run", "base,polygon"), []),
+      try released(release("live", "base,ethereum"), [keyBase]),
+      try released(release("live", "base,ethereum", liveBuyback), [keyBase, keyEthereum]),
+      try released(release("live", "base,robinhood", liveBuyback), [keyBase]),
+      try released(release("live", "base,robinhood", { BUYBACK_MODE: "live" }), [keyBase, keyRobinhood]),
+      try released(release("live", "base,robinhood", { ...liveBuyback, BUYBACK_SHARE_BPS: "" }), [keyBase, keyRobinhood]),
+      try released(release("dry_run", "base", { BUYBACK_MODE: "dry_run", BUYBACK_START_AT: "2026-11-10T00:00:00.000Z", FEE_CONVERTER_MODE: "off" }), []),
+    ].map((result) => result === undefined)
+    const continued = try released(release("live", "base,ethereum"), [keyBase, keyEthereum])
+    const buyback = try released(release("live", "base,robinhood", liveBuyback), [keyBase, keyRobinhood])
+    try Effect.try(() => assert.deepStrictEqual({
+      refused,
+      continued: continued === undefined ? undefined : summary(continued),
+      buyback: buyback === undefined ? undefined : summary(buyback),
+      buybackMode: buyback?.held.runtime.buybackMode,
+    }, {
+      refused: [true, true, true, true, true, true, true, true],
+      continued: "fee-converter mode live; networks base,ethereum",
+      buyback: "fee-converter mode live; networks base,robinhood",
+      buybackMode: "Live",
+    }))
+  })
+
+  it.effect('The reviewed production file publishes the Worker paused, and its earlier live configuration releases only with every key, the release variable enabled and an advancing source (spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Simulation samples cover complete, incomplete and staging configurations")', () => effect {
+    const file = try reviewed("production")
+    const keys = [keyBase, keyEthereum, keyRobinhood, keySolana]
+    const paused = try released(file.vars, [])
+    const pausedWithKeys = try released(file.vars, keys)
+    const earlier: FeeVars = { ...file.vars, FEE_CONVERTER_MODE: "live", BUYBACK_MODE: "live" }
+    const live = try released(earlier, keys)
+    const withoutRobinhoodKey = try released(earlier, keys.filter((name) => name !== keyRobinhood))
+    const withoutSolanaKey = try released(earlier, keys.filter((name) => name !== keySolana))
+    const variableDisabled = try released(file.vars, [], { releaseVariable: false })
+    const sameSource = paused === undefined ? undefined : try released(file.vars, [], { previous: paused.held, source: 1 })
+    const earlierSource = paused === undefined ? undefined : try released(file.vars, [], { previous: paused.held, source: 0 })
+    const advanced = paused === undefined ? undefined : try released(file.vars, [], { previous: paused.held, source: 2 })
+    const disabledAfterPublication = paused === undefined ? undefined : try released(file.vars, [], { previous: paused.held, source: 2, releaseVariable: false })
+    try Effect.try(() => assert.deepStrictEqual({
+      name: file.name,
+      main: file.main,
+      bundled: file.no_bundle,
+      crons: file.triggers.crons,
+      databases: file.d1_databases.map((entry) => [entry.binding, entry.database_name]),
+      secrets: file.expectedSecrets,
+      unknownVars: unknownVars(file.vars),
+      paused: paused === undefined ? undefined : { line: summary(paused), runs: runs(paused.held.runtime), converter: paused.config.converter, buyback: paused.config.buyback, ready: paused.held.runtime.ready, replacement: paused.held.runtime.replacementActive },
+      pausedWithKeysRuns: pausedWithKeys === undefined ? undefined : runs(pausedWithKeys.held.runtime),
+      live: live === undefined ? undefined : { line: summary(live), converter: live.config.converter, buyback: live.config.buyback, budgets: live.config.budgets.map((budget) => [budget.network, budget.limits.perTransaction, budget.limits.perDay, budget.limits.additionalFeeReserve]) },
+      withoutRobinhoodKey,
+      withoutSolanaKey,
+      variableDisabled,
+      sameSource,
+      earlierSource,
+      advanced: advanced === undefined ? undefined : { source: advanced.held.runtime.source, publications: advanced.held.runtime.publications },
+      disabledAfterPublication,
+      pausedStillPublished: paused?.held.runtime.published,
+    }, {
+      name: "slop-fee-converter",
+      main: "../dist/feeConverter.js",
+      bundled: true,
+      crons: ["* * * * *"],
+      databases: [[databaseBinding, "slop-private"]],
+      secrets: [...expectedSecrets("Production")],
+      unknownVars: [],
+      paused: { line: "fee-converter mode off; networks base,ethereum,robinhood,solana", runs: false, converter: undefined, buyback: undefined, ready: { base: false, ethereum: false, robinhood: false, solana: false }, replacement: false },
+      pausedWithKeysRuns: false,
+      live: {
+        line: "fee-converter mode live; networks base,ethereum,robinhood,solana",
+        converter: { minValueMicro: 5_000_000n, gasMultiple: 10n, maxSlippageBps: 100, maxPriceImpactBps: 200, runCapMicro: 1_000_000_000n, dailyCapMicro: 5_000_000_000n, solanaFeeMicro: 2_000n },
+        buyback: {
+          startAt: 1_794_441_600_000,
+          maxBridgeNativeFee: [{ network: "Base", maximum: 1_000_000_000_000_000n }, { network: "Ethereum", maximum: 1_000_000_000_000_000n }, { network: "Solana", maximum: 50_000_000n }],
+          solanaBridgeNative: { perTransaction: 50_000_000n, perDay: 100_000_000n, additionalFeeReserve: 0n },
+          shareBps: 5_000n,
+          burnBps: 5_000n,
+          minBridgeMicro: 500_000_000n,
+          maxBridgeCostBps: 150n,
+          minBuyMicro: 25_000_000n,
+          minBurnMicro: 5_000_000n,
+          maxSlippageBps: 100,
+          maxPriceImpactBps: 300,
+          runCapMicro: 1_000_000_000n,
+          dailyCapMicro: 5_000_000_000n,
+          unfilledAlertSeconds: 3_600n,
+        },
+        budgets: [
+          ["Base", 100_000_000_000_000n, 1_000_000_000_000_000n, 50_000_000_000_000n],
+          ["Ethereum", 1_000_000_000_000_000n, 10_000_000_000_000_000n, 0n],
+          ["Robinhood", 200_000_000_000_000n, 2_000_000_000_000_000n, 0n],
+          ["Solana", 5_000_000n, 20_000_000n, 0n],
+        ],
+      },
+      withoutRobinhoodKey: undefined,
+      withoutSolanaKey: undefined,
+      variableDisabled: undefined,
+      sameSource: undefined,
+      earlierSource: undefined,
+      advanced: { source: 2, publications: 2 },
+      disabledAfterPublication: undefined,
+      pausedStillPublished: true,
+    }))
+  })
+
+  it.effect('The staging Worker runs a dry run with no key and refuses a key or a live mode (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet")', () => effect {
+    const staging = try reviewed("staging")
+    const production = try reviewed("production")
+    const dryRun = try released(staging.vars, [], { releaseVariable: false })
+    const runtime = dryRun?.held.runtime
+    const inventoryWithKey = try released(staging.vars, [keyBase], { releaseVariable: false })
+    const workerWithKey = try derived(staging.vars, [keyBase])
+    const live = try released({ ...staging.vars, FEE_CONVERTER_MODE: "live" }, [], { releaseVariable: false })
+    const buyback = try released({ ...staging.vars, BUYBACK_MODE: "dry_run", BUYBACK_START_AT: "2026-11-12T00:00:00.000Z", BUYBACK_SOLANA_BRIDGE_NATIVE: "" }, [], { releaseVariable: false })
+    try Effect.try(() => assert.deepStrictEqual({
+      name: staging.name,
+      databases: staging.d1_databases.map((entry) => [entry.binding, entry.database_name]),
+      sharesProduction: staging.d1_databases.some((entry) => production.d1_databases.some((other) => other.database_name === entry.database_name || other.database_id === entry.database_id)),
+      secrets: staging.expectedSecrets,
+      unknownVars: unknownVars(staging.vars),
+      line: dryRun === undefined ? undefined : summary(dryRun),
+      runtime: runtime === undefined ? undefined : { environment: runtime.environment, variable: runtime.variableEnabled, converter: runtime.converterMode, buyback: runtime.buybackMode, keys: runtime.keys },
+      networkSigns: perNetwork(runtime, networkSigns),
+      inventoryWithKey,
+      workerWithKey,
+      live,
+      buyback,
+    }, {
+      name: "slop-fee-converter-staging",
+      databases: [[databaseBinding, "slop-staging"]],
+      sharesProduction: false,
+      secrets: [...expectedSecrets("Staging")],
+      unknownVars: [],
+      line: "fee-converter mode dry_run; networks base,ethereum,robinhood,solana",
+      runtime: { environment: "Staging", variable: false, converter: "DryRun", buyback: "Off", keys: [] },
+      networkSigns: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
+      inventoryWithKey: undefined,
+      workerWithKey: undefined,
+      live: undefined,
+      buyback: undefined,
+    }))
+  })
+
+  it.effect('A dry run loads no key, and signing needs live mode and readiness listed for the exact published fee wallet and approved by the owner (spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address")', () => effect {
+    const production = (try reviewed("production")).vars
+    const keyMaterial = "key-material-that-must-not-be-read"
+    const secrets = presentSecrets({ FEE_WALLET_KEY_BASE: keyMaterial, FEE_WALLET_KEY_ETHEREUM: keyMaterial, FEE_WALLET_KEY_ROBINHOOD: keyMaterial, FEE_WALLET_KEY_SOLANA: keyMaterial, JUPITER_API_KEY: " " })
+    const ready = `base:${feeWallet},robinhood:${feeWallet},solana:${solanaWallet},ethereum:${otherWallet}`
+    const dryRun = try derived({ ...production, FEE_CONVERTER_MODE: "dry_run", FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true" }, secrets)
+    const dryRunText = try Effect.try(() => JSON.stringify(dryRun, (_, value: unknown) => typeof value === "bigint" ? value.toString() : value))
+    const live = try derived({ ...production, FEE_CONVERTER_MODE: "live", BUYBACK_MODE: "live", FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true" }, secrets)
+    const moved = try derived({ ...production, FEE_CONVERTER_MODE: "live", BUYBACK_MODE: "live", FEE_READY: ready, FEE_REPLACEMENT_ACTIVE: "true", FEE_WALLET_BASE: otherWallet, FEE_WALLET_ETHEREUM: otherWallet, FEE_WALLET_ROBINHOOD: otherWallet }, secrets)
+    const dropped = try derived({ ...production, FEE_CONVERTER_MODE: "live", FEE_CONVERTER_NETWORKS: "base,robinhood,solana", FEE_READY: `ethereum:${feeWallet},base:${feeWallet}`, FEE_REPLACEMENT_ACTIVE: "false" }, [keyBase, keyRobinhood, keySolana])
+    const splitWallet = try derived({ ...production, FEE_WALLET_ETHEREUM: otherWallet }, [])
+    const unknownNetwork = try derived({ ...production, FEE_READY: `polygon:${feeWallet}` }, [])
+    const wrongFamily = try derived({ ...production, FEE_READY: `solana:${feeWallet}` }, [])
+    const noReplacementSetting = try derived({ ...production, FEE_REPLACEMENT_ACTIVE: "" }, [])
+    const approval: ReadinessSettings = { entries: [{ network: "Base", wallet: feeWallet }], replacementActive: true }
+    const approvedVars: FeeVars = { ...production, FEE_CONVERTER_MODE: "live", FEE_CONVERTER_NETWORKS: "base", FEE_READY: `base:${feeWallet}`, FEE_REPLACEMENT_ACTIVE: "true" }
+    const approvedRelease = try released(approvedVars, [keyBase], { ownerApproval: approval })
+    const unapprovedPair = try released({ ...approvedVars, FEE_READY: `base:${feeWallet},ethereum:${feeWallet}` }, [keyBase], { ownerApproval: approval })
+    const unapprovedReplacement = try released({ ...approvedVars, FEE_REPLACEMENT_ACTIVE: "false" }, [keyBase], { ownerApproval: approval })
+    const withoutApproval = try released(approvedVars, [keyBase])
+    const unlisted = approvedRelease === undefined ? undefined : try released({ ...approvedVars, FEE_READY: "", FEE_REPLACEMENT_ACTIVE: "false" }, [keyBase], { previous: approvedRelease.held, source: 2 })
+    try Effect.try(() => assert.deepStrictEqual({
+      secrets,
+      dryRunRuns: dryRun === undefined ? undefined : runs(dryRun.held.runtime),
+      dryRunConverts: perNetwork(dryRun?.held.runtime, conversionSigns),
+      dryRunBuys: perNetwork(dryRun?.held.runtime, buybackSigns),
+      dryRunHoldsNoKey: !dryRunText.includes(keyMaterial),
+      liveReadiness: granted(live),
+      liveConverts: perNetwork(live?.held.runtime, conversionSigns),
+      liveBuys: perNetwork(live?.held.runtime, buybackSigns),
+      liveReplaces: perNetwork(live?.held.runtime, replacementSigns),
+      movedReadiness: granted(moved),
+      movedSigns: perNetwork(moved?.held.runtime, networkSigns),
+      droppedReadiness: granted(dropped),
+      droppedSigns: perNetwork(dropped?.held.runtime, networkSigns),
+      splitWallet,
+      unknownNetwork,
+      wrongFamily,
+      noReplacementSetting,
+      approvedReadiness: granted(approvedRelease),
+      approvedConverts: perNetwork(approvedRelease?.held.runtime, conversionSigns),
+      unapprovedPair,
+      unapprovedReplacement,
+      withoutApproval,
+      unlistedReadiness: unlisted?.readiness.map((outcome) => [outcome.event.type, outcome.granted]),
+      unlistedSigns: perNetwork(unlisted?.held.runtime, networkSigns),
+    }, {
+      secrets: [keyBase, keyEthereum, keyRobinhood, keySolana],
+      dryRunRuns: true,
+      dryRunConverts: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
+      dryRunBuys: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
+      dryRunHoldsNoKey: true,
+      liveReadiness: [true, true, true, false, true],
+      liveConverts: { Base: true, Ethereum: false, Robinhood: false, Solana: true },
+      liveBuys: { Base: true, Ethereum: false, Robinhood: true, Solana: true },
+      liveReplaces: { Base: true, Ethereum: false, Robinhood: true, Solana: false },
+      movedReadiness: [false, false, true, true, true],
+      movedSigns: { Base: false, Ethereum: true, Robinhood: false, Solana: true },
+      droppedReadiness: [false, true],
+      droppedSigns: { Base: true, Ethereum: false, Robinhood: false, Solana: false },
+      splitWallet: undefined,
+      unknownNetwork: undefined,
+      wrongFamily: undefined,
+      noReplacementSetting: undefined,
+      approvedReadiness: [true, true],
+      approvedConverts: { Base: true, Ethereum: false, Robinhood: false, Solana: false },
+      unapprovedPair: undefined,
+      unapprovedReplacement: undefined,
+      withoutApproval: undefined,
+      unlistedReadiness: [["withdrawReadiness", true], ["setReplacement", true]],
+      unlistedSigns: { Base: false, Ethereum: false, Robinhood: false, Solana: false },
+    }))
+  })
+
+  it.effect('The reviewed vaults and candidate tokens come only from the release snapshot and the allowlist (spec/fees/conversion.md, "The Worker configuration and the reviewed vaults are published components")', () => effect {
+    const production = (try reviewed("production")).vars
+    const token = "0x2222222222222222222222222222222222222222"
+    const listed = "0x3333333333333333333333333333333333333333"
+    const config = try derived({ ...production, FEE_CONVERTER_MODE: "dry_run", FEE_CONVERTER_ALLOWLIST: JSON.stringify({ base: [listed] }) }, [])
+    const base = config?.config.networks.find((entry) => entry.network === "Base")
+    const deployment = { network: "base-mainnet", vault: "0x4444444444444444444444444444444444444444", asset: token }
+    const snapshot = try decodeReviewed({
+      base: {
+        tokens: ["0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "0x0000000000000000000000000000000000000000"],
+        vaults: [
+          { vault: deployment.vault, projectId: "alpha", payoutPolicy: "ordinary", asset: token, deployment },
+          { vault: deployment.vault, projectId: "alpha", payoutPolicy: "ordinary", asset: token, deployment },
+          { vault: deployment.vault, projectId: "alpha", payoutPolicy: "security-bounty", asset: token, deployment },
+        ],
+      },
+    })
+    const facts = base === undefined ? undefined : try reviewedFacts(snapshot, base)
+    const malformed = base === undefined ? undefined : (reviewedFacts({ base: { tokens: ["0xNotAnAddress"], vaults: [] } }, base) catch () => "refused")
+    const shapeless = decodeReviewed({ base: { tokens: "everything" } }) catch () => "refused"
+    try Effect.try(() => assert.deepStrictEqual({
+      tokens: facts?.tokens,
+      vaults: facts?.vaults.map((vault) => [vault.vault, vault.payoutPolicy, vault.token]),
+      malformed,
+      shapeless,
+    }, {
+      tokens: [
+        { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", asset: "TargetStable" },
+        { address: "0x0000000000000000000000000000000000000000", asset: "NativeAsset" },
+        { address: token, asset: "ProjectToken" },
+        { address: listed, asset: "ProjectToken" },
+      ],
+      vaults: [[deployment.vault, "ordinary", token], [deployment.vault, "security-bounty", token]],
+      malformed: "refused",
+      shapeless: "refused",
+    }))
+  })
+})

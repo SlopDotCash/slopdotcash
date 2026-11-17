@@ -1,0 +1,343 @@
+// spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"; spec/backend/projectComposition.md, "Activation needs current clearance and no restriction, and owner writes need a clear project"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type ConstraintViolation, type Statement, sql } from "@repo/platform/d1"
+import { Roles } from "@repo/platform/roles"
+import { type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { Notices } from "@repo/ports/operations"
+import { type Event, type Registry, apply, decodeEvent, decodeState } from "../../../gen/backend__projectComposition.effect.vibe"
+import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
+import { type ProjectFacts, assetKeyIn, assetOf, byOf, idOf, mismatchOf, monthOf, projectState, repositoryIdsOf, repositoryKeysOf, statusText, tierText } from "./codec.vibe"
+import { EnforcementRows, type EnforcementScope, type RegistryMirror } from "./enforcementRows.vibe"
+import { accountStanding } from "./facts.vibe"
+import { type ApplicationRow, type Manifest, type ProjectRows, manifestOf, projectReads, projectRows, projectVersion } from "./rows.vibe"
+
+export interface Actor {
+  readonly githubId: string
+  readonly login: string
+}
+
+export interface Recorded {
+  readonly manifestText: string
+  readonly reason: string
+  readonly actor: Actor | undefined
+}
+
+export interface Action {
+  readonly projectId: string
+  readonly event: Event
+  readonly by: number
+  readonly revision?: Recorded
+  readonly referrer?: Actor
+  readonly alongside?: ReadonlyArray<Statement>
+}
+
+export interface Prospect {
+  readonly repository: number
+  readonly manifest: Manifest
+}
+
+export interface Loaded {
+  readonly rows: ProjectRows
+  readonly state: Registry
+  readonly event: Event | undefined
+}
+
+export interface Committed {
+  readonly before: Registry
+  readonly after: Registry
+  readonly rows: ProjectRows
+  readonly stamped: Stamped | undefined
+}
+
+export error RevisionMissing { projectId: string; event: string }
+export error RevisionMismatch { projectId: string; field: string }
+export error ApplicationMissing { projectId: string; event: string }
+export error FundingUnrecorded { projectId: string }
+
+const repositoryConflict = /UNIQUE constraint failed: project_repositories\./u
+
+export function isRepositoryConflict(error: ConstraintViolation): boolean {
+  return repositoryConflict.test(error.message)
+}
+
+function creationApplication(rows: ProjectRows): ApplicationRow | undefined {
+  return rows.applications.filter((row) => row.expected_revision === null).at(-1)
+}
+
+function updateApplication(rows: ProjectRows): ApplicationRow | undefined {
+  return rows.applications.filter((row) => row.expected_revision !== null).at(-1)
+}
+
+export function mirrorOf(rows: ProjectRows): RegistryMirror {
+  const manifest = rows.current
+  return {
+    revision: rows.project?.revision ?? 0,
+    manifestSha256: rows.project?.manifest_sha256 ?? "",
+    repositoryGithubIds: manifest === undefined ? [] : repositoryIdsOf(manifest).map(String),
+    repositoryKeys: manifest === undefined ? [] : repositoryKeysOf(manifest),
+  }
+}
+
+effect function submittedOf(projectId: string, recorded: Recorded | undefined, event: string) {
+  if (recorded === undefined) throw new RevisionMissing({ projectId, event })
+  return manifestOf(recorded.manifestText, `revision of ${projectId}`) catch effect () => { throw new RevisionMismatch({ projectId, field: "manifest" }) }
+}
+
+effect function prospectOf(rows: ProjectRows, action: Action | undefined) {
+  const event = action?.event
+  if (event?.type === "create") return { repository: event.creation.facts.repository, manifest: try submittedOf(rows.projectId, action?.revision, "create") } satisfies Prospect
+  const application = creationApplication(rows)
+  if (application === undefined) return undefined
+  const manifest = try manifestOf(application.manifest, `application ${application.id}`)
+  return { repository: idOf(manifest.authority.repositoryId), manifest } satisfies Prospect
+}
+
+effect function administrators() {
+  return (try (try Roles).snapshot("administrator")).map(idOf)
+}
+
+effect function registryRead(projectId: string, repository: number, keys: ReadonlyArray<string>) {
+  const repositoryId = String(repository)
+  return registryReadOf(repositoryId, try repositoryClaim({ projectId, repositoryId, keys }))
+}
+
+effect function trusted(rows: ProjectRows, state: Registry, action: Action, prospect: Prospect | undefined) {
+  const { projectId, by } = action
+  const event = action.event
+  const steward = state.project.steward
+  if (event.type === "create" || event.type === "publishApplication") {
+    if (prospect === undefined) return event
+    return {
+      ...event,
+      creation: { ...event.creation, assetReading: { ...event.creation.assetReading, asset: assetKeyIn([], assetOf(prospect.manifest).identity) } },
+      account: try accountStanding({ actor: by, steward: event.creation.facts.owner }),
+      registry: try registryRead(projectId, prospect.repository, repositoryKeysOf(prospect.manifest)),
+    } satisfies Event
+  }
+  if (event.type === "publishOwnerRevision" || event.type === "publishUpdate") {
+    const manifest = try submittedOf(projectId, action.revision, event.type)
+    const asset = assetKeyIn(rows.revisions.map((entry) => entry.manifest), assetOf(manifest).identity)
+    return { ...event, change: { ...event.change, asset, assetReading: { ...event.change.assetReading, asset } }, account: try accountStanding({ actor: by, steward }) } satisfies Event
+  }
+  if (event.type === "appendRepository") {
+    const manifest = try submittedOf(projectId, action.revision, event.type)
+    const held = new Set(rows.current === undefined ? [] : repositoryKeysOf(rows.current))
+    const claimed = repositoryKeysOf(manifest).filter((key) => !held.has(key))
+    return { ...event, account: try accountStanding({ actor: by, steward }), registry: try registryRead(projectId, event.appendEvidence.facts.repository, claimed) } satisfies Event
+  }
+  if (event.type === "editConsent" || event.type === "activate") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
+  return event
+}
+
+effect function loaded(projectId: string, rows: ReadonlyArray<Rows>, action: Action | undefined) {
+  const backend = try projectRows(projectId, rows.slice(0, 3))
+  const facts = { administrators: try administrators(), month: monthOf(try isoNow()) }
+  const project = projectState(backend, facts)
+  const prospect = backend.project === undefined ? try prospectOf(backend, action) : undefined
+  const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
+  const security = try (try EnforcementRows).decode(projectId, rows.slice(3), mirrorOf(backend))
+  const state = try decodeState({ project: prospective, security })
+  return { rows: backend, state, event: action === undefined ? undefined : try trusted(backend, state, action, prospect) } satisfies Loaded
+}
+
+const claimsGeneration = sql`(SELECT COALESCE(MAX(rowid), 0) FROM project_repositories)`
+
+function claimsRegistry(event: Event | undefined): boolean {
+  return event?.type === "create" || event?.type === "publishApplication" || event?.type === "appendRepository"
+}
+
+function aggregate(projectId: string, scope: EnforcementScope, generation: Statement, action: Action | undefined) {
+  const claims = claimsRegistry(action?.event) ? claimsGeneration : sql`''`
+  return {
+    name: `project ${projectId}`,
+    version: sql`SELECT ${projectVersion(projectId)} || '#' || coalesce(${scope.version}, '') || '#' || ${generation} || '#' || ${claims} AS version`,
+    reads: [...projectReads(projectId), ...scope.reads],
+    decode: (rows: ReadonlyArray<Rows>) => loaded(projectId, rows, action),
+  }
+}
+
+export interface Stamped {
+  readonly text: string
+  readonly sha256: string
+  readonly manifest: Manifest
+}
+
+export interface Written {
+  readonly writes: ReadonlyArray<Statement>
+  readonly stamped: Stamped | undefined
+}
+
+function factsOf(after: Registry): ProjectFacts {
+  const project = after.project
+  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, asset: project.asset, assetReading: project.assetReading, branch: project.branch, license: project.license }
+}
+
+function checked(manifest: Manifest, projectId: string, after: Registry, rows: ProjectRows) {
+  const previous = rows.current
+  const manifests = rows.revisions.map((entry) => entry.manifest)
+  return mismatchOf(manifest, projectId, factsOf(after), {
+    assetKey: assetKeyIn(manifests, assetOf(manifest).identity),
+    previous,
+    previousAsset: previous === undefined ? 0 : assetKeyIn(manifests, assetOf(previous).identity),
+  })
+}
+
+effect function stamp(projectId: string, recorded: Recorded | undefined, event: string, after: Registry, rows: ProjectRows) {
+  if (recorded === undefined) throw new RevisionMissing({ projectId, event })
+  const parsed = try Effect.try({ try: () => JSON.parse(recorded.manifestText) as unknown, catch: () => new RevisionMismatch({ projectId, field: "manifest" }) })
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new RevisionMismatch({ projectId, field: "manifest" })
+  const text = try Effect.try({ try: () => JSON.stringify({ ...parsed, status: statusText(after.project.status), listingTier: tierText(after.project.tier) }), catch: () => new RevisionMismatch({ projectId, field: "manifest" }) })
+  const manifest = try manifestOf(text, `revision of ${projectId}`)
+  const field = checked(manifest, projectId, after, rows)
+  if (field !== undefined) throw new RevisionMismatch({ projectId, field })
+  return { text, sha256: try sha256Hex(text), manifest } satisfies Stamped
+}
+
+function keyWrites(projectId: string, manifest: Manifest) {
+  return repositoryKeysOf(manifest).map((key) => sql`INSERT INTO project_repositories (repository_key, project_id) SELECT ${key}, ${projectId} WHERE NOT EXISTS (SELECT 1 FROM project_repositories WHERE repository_key = ${key} AND project_id = ${projectId})`)
+}
+
+effect function created(current: Loaded, after: Registry, action: Action, at: string) {
+  const { projectId } = action
+  const stamped = try stamp(projectId, action.revision, "create", after, current.rows)
+  const actor = action.revision?.actor
+  const reason = (action.revision?.reason ?? "").slice(0, 1000)
+  return {
+    stamped,
+    writes: [
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${projectId}, 1, ${stamped.text}, ${stamped.sha256}, ${reason}, ${actor?.githubId ?? null}, ${actor?.login ?? null}, ${at})`,
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) VALUES (${projectId}, ${statusText(after.project.status)}, 1, ${stamped.text}, ${stamped.sha256}, ${at}, ${at}, NULL, ${action.referrer?.githubId ?? null}, ${action.referrer?.login ?? null})`,
+      ...repositoryKeysOf(stamped.manifest).map((key) => sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${key}, ${projectId})`),
+    ],
+  } satisfies Written
+}
+
+effect function canonicalText(projectId: string, text: string) {
+  return try Effect.try({ try: () => JSON.stringify(JSON.parse(text) as unknown), catch: () => new RevisionMismatch({ projectId, field: "manifest" }) })
+}
+
+effect function published(current: Loaded, after: Registry, action: Action, at: string) {
+  const { projectId } = action
+  const application = creationApplication(current.rows)
+  if (application === undefined || application.status !== "pending") throw new ApplicationMissing({ projectId, event: "publishApplication" })
+  const text = try canonicalText(projectId, application.manifest)
+  const manifest = try manifestOf(text, `application ${application.id}`)
+  const field = checked(manifest, projectId, after, current.rows)
+  if (field !== undefined) throw new RevisionMismatch({ projectId, field })
+  const decision = action.revision?.reason
+  const reason = `Published application ${application.id}${decision === undefined ? "" : `: ${decision}`}`.slice(0, 1000)
+  const pending = sql`EXISTS (SELECT 1 FROM project_applications WHERE id = ${application.id} AND status = 'pending')`
+  return {
+    stamped: { text, sha256: application.manifest_sha256, manifest },
+    writes: [
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) SELECT ${projectId}, 1, ${text}, ${application.manifest_sha256}, ${reason}, ${application.applicant_github_id}, ${application.applicant_github_login}, ${at} WHERE ${pending}`,
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) SELECT ${projectId}, 'paused', 1, ${text}, ${application.manifest_sha256}, ${at}, ${at}, ${application.id}, ${application.referrer_github_id}, ${application.referrer_github_login} WHERE ${pending}`,
+      ...repositoryKeysOf(manifest).map((key) => sql`INSERT INTO project_repositories (repository_key, project_id) SELECT ${key}, ${projectId} WHERE ${pending}`),
+      sql`UPDATE project_applications SET status = 'approved', decided_at = ${at}, decided_by_github_id = ${application.applicant_github_id}, decided_by_github_login = ${application.applicant_github_login}, decision_reason = ${decision?.slice(0, 1000) ?? null} WHERE id = ${application.id} AND status = 'pending'`,
+    ],
+  } satisfies Written
+}
+
+function cancelled(application: ApplicationRow | undefined, at: string): Written {
+  if (application === undefined || application.status !== "pending") return { writes: [], stamped: undefined }
+  return { stamped: undefined, writes: [sql`UPDATE project_applications SET status = 'rejected', applicant_cancelled_at = ${at}, decided_at = ${at}, decided_by_github_id = ${application.applicant_github_id}, decided_by_github_login = ${application.applicant_github_login}, decision_reason = 'Cancelled by applicant' WHERE id = ${application.id} AND status = 'pending' AND applicant_github_id = ${application.applicant_github_id}`] }
+}
+
+const enforcementKinds: ReadonlyArray<string> = ["RestrictionRetirement", "CommunityRestored"]
+
+function audience(projectId: string, revision: number): Statement {
+  return sql`SELECT a.applicant_github_id AS recipient FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ${projectId}
+    UNION SELECT first.actor_github_id FROM projects p JOIN project_revisions first ON first.project_id = p.id AND first.revision = 1 WHERE p.id = ${projectId} AND p.source_application_id IS NULL AND first.actor_github_id IS NOT NULL
+    UNION SELECT json_extract(manifest, '$.steward.github.actorId') FROM project_revisions WHERE project_id = ${projectId} AND revision = ${revision} AND json_type(manifest, '$.steward.github.actorId') = 'text'`
+}
+
+effect function revisionNotice(current: Loaded, projectId: string, revision: number, stamped: Stamped, reason: string, actor: Actor | undefined, at: string) {
+  const ready = stamped.manifest.status === "active" && current.rows.current?.status !== "active"
+  return try (try Notices).fanout({
+    eventKey: `project-revision:${projectId}:${revision}`,
+    recipients: audience(projectId, revision),
+    excludedGithubId: actor?.githubId,
+    kind: ready ? "ProjectReady" : "ProjectRevision",
+    subject: projectId,
+    detail: ready ? undefined : reason,
+    actionPath: `/projects/${projectId}`,
+    sourceAt: at,
+    onlyIf: sql`EXISTS (SELECT 1 FROM project_revisions WHERE project_id = ${projectId} AND revision = ${revision} AND manifest_sha256 = ${stamped.sha256} AND created_at = ${at})`,
+  })
+}
+
+effect function appended(current: Loaded, after: Registry, action: Action, at: string) {
+  const { projectId } = action
+  const stamped = try stamp(projectId, action.revision, action.event.type, after, current.rows)
+  const reason = (action.revision?.reason ?? "").slice(0, 1000)
+  const actor = action.revision?.actor
+  const expected = current.state.project.revision
+  const next = after.project.revision
+  const last = after.project.history.at(-1)
+  if (last === undefined || last.number !== next) throw new RevisionMismatch({ projectId, field: "history" })
+  if (byOf(last.kind, actor?.githubId ?? null) !== last.by) throw new RevisionMismatch({ projectId, field: "actor" })
+  const pendingUpdate = updateApplication(current.rows)
+  const notices = enforcementKinds.includes(last.kind) ? [] : try revisionNotice(current, projectId, next, stamped, reason, actor, at)
+  return {
+    stamped,
+    writes: [
+      sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) SELECT ${projectId}, ${next}, ${stamped.text}, ${stamped.sha256}, ${reason}, ${actor?.githubId ?? null}, ${actor?.login ?? null}, ${at} WHERE EXISTS (SELECT 1 FROM projects WHERE id = ${projectId} AND revision = ${expected})`,
+      sql`INSERT INTO project_revision_kinds (project_id, revision, kind) SELECT ${projectId}, ${next}, ${last.kind} WHERE EXISTS (SELECT 1 FROM project_revisions WHERE project_id = ${projectId} AND revision = ${next} AND manifest_sha256 = ${stamped.sha256} AND created_at = ${at})`,
+      sql`UPDATE projects SET status = ${statusText(after.project.status)}, revision = ${next}, manifest = ${stamped.text}, manifest_sha256 = ${stamped.sha256}, updated_at = ${at} WHERE id = ${projectId} AND revision = ${expected}`,
+      ...action.event.type === "publishUpdate" && pendingUpdate !== undefined
+        ? [sql`UPDATE project_applications SET status = 'approved', decided_at = ${at}, decided_by_github_id = ${pendingUpdate.applicant_github_id}, decided_by_github_login = ${pendingUpdate.applicant_github_login}, decision_reason = ${reason} WHERE id = ${pendingUpdate.id} AND status = 'pending' AND expected_revision = ${expected}`]
+        : [],
+      ...keyWrites(projectId, stamped.manifest),
+      ...notices,
+    ],
+  } satisfies Written
+}
+
+effect function backendWrites(current: Loaded, after: Registry, action: Action, at: string) {
+  const before = current.state.project
+  const event = action.event
+  if (event.type === "create") return try created(current, after, action, at)
+  if (event.type === "publishApplication") return try published(current, after, action, at)
+  if (event.type === "cancelApplication") return before.application === "ApplicationCancelled" ? { writes: [], stamped: undefined } satisfies Written : cancelled(creationApplication(current.rows), at)
+  if (event.type === "cancelUpdate") return before.update === "UpdateCancelled" ? { writes: [], stamped: undefined } satisfies Written : cancelled(updateApplication(current.rows), at)
+  if (after.project.revision === before.revision + 1) return try appended(current, after, action, at)
+  return { writes: [], stamped: undefined } satisfies Written
+}
+
+effect function decide(current: Loaded, action: Action) {
+  const event = current.event ?? action.event
+  const after = try apply(current.state, event, action.by)
+  const at = try isoNow()
+  const backend = try backendWrites(current, after, { ...action, event }, at)
+  const registryAfter: RegistryMirror = backend.stamped === undefined
+    ? mirrorOf(current.rows)
+    : { revision: after.project.revision, manifestSha256: backend.stamped.sha256, repositoryGithubIds: repositoryIdsOf(backend.stamped.manifest).map(String), repositoryKeys: repositoryKeysOf(backend.stamped.manifest) }
+  const security = try (try EnforcementRows).writes({
+    projectId: action.projectId,
+    event,
+    by: action.by,
+    before: current.state.security,
+    after: after.security,
+    registryBefore: mirrorOf(current.rows),
+    registryAfter,
+    at,
+  })
+  return { value: { before: current.state, after, rows: current.rows, stamped: backend.stamped }, writes: [...backend.writes, ...security, ...(action.alongside ?? [])] } satisfies Decision<Committed>
+}
+
+export effect function loadProject(projectId: string) {
+  const enforcement = try EnforcementRows
+  return (try load(aggregate(projectId, try enforcement.scope(projectId), try enforcement.generation(), undefined))).state
+}
+
+export effect function send(action: Action) {
+  if (action.event.type === "recordFunding") throw new FundingUnrecorded({ projectId: action.projectId })
+  const enforcement = try EnforcementRows
+  return try update(aggregate(action.projectId, try enforcement.scope(action.projectId), try enforcement.generation(), action), (current) => decide(current, action))
+}
+
+export effect function receive(action: Omit<Action, "event"> & { readonly input: unknown }) {
+  const { input, ...rest } = action
+  return try send({ ...rest, event: try decodeEvent(input) })
+}

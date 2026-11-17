@@ -1,0 +1,142 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { utf8, webCrypto } from "@repo/platform/crypto"
+import { encodeParts, maxFileBytes, maxPartBytes } from "../src/client/snapshot/parts.vibe"
+import { readSnapshotFile } from "../src/snapshot/files.vibe"
+import { restoreSnapshot } from "../src/snapshot/restore.vibe"
+import { packTransport } from "../src/snapshot/write.vibe"
+import { type Publication, largeJson, pagesOrigin, sameBytes } from "./support/u8/pages.ts"
+
+const published = "https://slop.cash/data/leaderboard.json"
+const quick = { retryDelayMs: 0, attemptTimeoutMs: 5_000 }
+const legacy = utf8('{ "retained": "unchanged é" }\n')
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function workspace() {
+  const fs = try FileSystem.FileSystem
+  return try fs.makeTempDirectoryScoped({ prefix: "slop-points-u8-" })
+}
+
+effect function publication(bytes: Uint8Array) {
+  const encoded = try encodeParts(bytes)
+  return { root: encoded.root, parts: encoded.parts } satisfies Publication
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Pack then reassemble keeps the exact bytes and prunes only obsolete parts (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try workspace()
+    const path = files.join(directory, "data", "leaderboard.json")
+    try fs.makeDirectory(files.dirname(path), { recursive: true })
+    const original = utf8(`${JSON.stringify({ records: ["é😃".repeat(4_400_000)], sourceCount: 1 })}\n`)
+    try fs.writeFile(path, original)
+    const packed = try packTransport(path)
+    const root = try fs.readFile(path)
+    const restored = try readSnapshotFile(path)
+    const partNames = (try fs.readDirectory(files.join(directory, "data", "leaderboard"))).sort()
+    const partSizes = []
+    for (const name of partNames) partSizes.push(Number((try fs.stat(files.join(directory, "data", "leaderboard", name))).size))
+    try packTransport(path)
+    const repacked = try fs.readFile(path)
+    const stale = files.join(directory, "data", "leaderboard", `${"f".repeat(64)}.part`)
+    try fs.writeFile(stale, utf8("old publication"))
+    try packTransport(path)
+    const staleKept = try fs.exists(stale)
+    const unknown = files.join(directory, "data", "leaderboard", "keep.txt")
+    try fs.writeFile(unknown, utf8("do not delete"))
+    const refused = try Effect.flip(packTransport(path))
+    const kept = new TextDecoder().decode(try fs.readFile(unknown))
+    try fs.remove(unknown)
+    const small = utf8('{ "legacy": true }\n')
+    try fs.writeFile(path, small)
+    const legacyPacked = try packTransport(path)
+    const legacyRestored = try readSnapshotFile(path)
+    const leftover = try fs.readDirectory(files.join(directory, "data", "leaderboard"))
+    try same({
+      packed,
+      rootSmall: root.length < maxFileBytes,
+      exact: sameBytes(restored, original),
+      partsBounded: partSizes.every((size) => size <= maxPartBytes),
+      partNames: partNames.length,
+      stable: sameBytes(repacked, root),
+      staleKept,
+      refused: [refused._tag, refused._tag === "FileFailure" ? refused.message : ""],
+      kept,
+      legacyPacked,
+      legacyExact: sameBytes(legacyRestored, small),
+      leftover,
+    }, {
+      packed: { logicalBytes: original.length, rootBytes: root.length, parts: 4 },
+      rootSmall: true,
+      exact: true,
+      partsBounded: true,
+      partNames: 4,
+      stable: true,
+      staleKept: false,
+      refused: ["FileFailure", "Unexpected file in generated leaderboard parts"],
+      kept: "do not delete",
+      legacyPacked: { logicalBytes: small.length, rootBytes: small.length, parts: 0 },
+      legacyExact: true,
+      leftover: [],
+    })
+  }))
+
+  it.effect('A deployment between part reads restarts once from the changed index, and a failed read keeps the prior snapshot (spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try workspace()
+    const output = files.join(directory, "restored", "leaderboard.json")
+    const first = try publication(largeJson("x", "é"))
+    const nextBytes = largeJson("y", "é")
+    const next = try publication(nextBytes)
+    const firstPart = first.parts[0]?.path ?? ""
+    const deploying = pagesOrigin(first, { replaceAfter: { path: firstPart, next } })
+    const restoredBytes = try provideService(restoreSnapshot(published, output, quick), FetchHttpClient.Fetch, deploying.fetch)
+    const restored = try fs.readFile(output)
+
+    const legacyOrigin = pagesOrigin({ root: legacy, parts: [] })
+    try provideService(restoreSnapshot(published, output, quick), FetchHttpClient.Fetch, legacyOrigin.fetch)
+    const legacyRestored = try fs.readFile(output)
+
+    const corrupt = pagesOrigin(first, { answer: { path: firstPart, status: 200, body: "corrupt" } })
+    const corruptFailure = try Effect.flip(provideService(restoreSnapshot(published, output, quick), FetchHttpClient.Fetch, corrupt.fetch))
+    const afterCorrupt = try fs.readFile(output)
+
+    const vanished = pagesOrigin(first, { answer: { path: firstPart, status: 404, body: null } })
+    const vanishedFailure = try Effect.flip(provideService(restoreSnapshot(published, output, quick), FetchHttpClient.Fetch, vanished.fetch))
+    const afterVanished = try fs.readFile(output)
+
+    const offOrigin = pagesOrigin(first)
+    const refused = try Effect.flip(provideService(restoreSnapshot("http://slop.cash/data/leaderboard.json", output, quick), FetchHttpClient.Fetch, offOrigin.fetch))
+
+    try same({
+      restoredBytes,
+      restored: sameBytes(restored, nextBytes),
+      roots: [deploying.roots.length, new Set(deploying.roots).size],
+      missingParts: deploying.missingParts(),
+      origins: [...new Set(deploying.origins)],
+      legacy: sameBytes(legacyRestored, legacy),
+      corrupt: [corruptFailure._tag, corrupt.paths.filter((path) => path === firstPart).length, corrupt.roots.length],
+      keptAfterCorrupt: sameBytes(afterCorrupt, legacy),
+      vanished: [vanishedFailure._tag, vanished.paths.filter((path) => path === firstPart).length, vanished.roots.length],
+      keptAfterVanished: sameBytes(afterVanished, legacy),
+      refused: [refused._tag, offOrigin.paths.length],
+    }, {
+      restoredBytes: nextBytes.length,
+      restored: true,
+      roots: [2, 2],
+      missingParts: 3,
+      origins: ["https://slop.cash"],
+      legacy: true,
+      corrupt: ["PartsInvalid", 1, 1],
+      keptAfterCorrupt: true,
+      vanished: ["PublishedReadFailed", 3, 2],
+      keptAfterVanished: true,
+      refused: ["RestoreRefused", 0],
+    })
+  }))
+})

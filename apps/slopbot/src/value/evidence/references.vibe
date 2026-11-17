@@ -1,0 +1,190 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { GitHub } from "@repo/platform/github"
+import { githubLinkDestinations, withoutClosedCodeFences, withoutClosedCodeSpans } from "./hints.vibe"
+import { EvidenceRefused, type Limitation, type RelatedPullRequest, type UnavailableReference } from "./types.vibe"
+
+export const valueReferenceQuery =
+  "query SlopValuePublicReference($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}} rateLimit{cost limit remaining resetAt}}"
+const repositoryQuery =
+  "query SlopValueReferenceRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner}}"
+const missingItem: ReadonlyArray<ReadonlyArray<string>> = [["repository", "issueOrPullRequest"]]
+const repositoryNodeId = /^(?:R_[A-Za-z0-9_-]+|[A-Za-z0-9+/]+=*)$/u
+const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const referencePattern = /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu
+
+schema SourceRepository { readonly nameWithOwner: string; readonly isPrivate: boolean }
+export schema TimelineSource {
+  readonly __typename: string
+  readonly id?: string
+  readonly number?: number
+  readonly url?: string
+  readonly repository?: SourceRepository
+}
+export schema TimelineNode { readonly source: TimelineSource }
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema TimelineItems { readonly nodes: ReadonlyArray<TimelineNode>; readonly pageInfo: PageInfo }
+schema TimelinePull { readonly id: string; readonly timelineItems: TimelineItems }
+schema TimelineRepository { readonly pullRequest: TimelinePull | null }
+schema TimelineAnswer { readonly repository: TimelineRepository | null }
+
+schema ReferencedItem { readonly __typename: string; readonly id?: string; readonly number?: number; readonly url?: string }
+schema ReferencedRepository { readonly id?: string; readonly isPrivate: boolean; readonly nameWithOwner: string; readonly issueOrPullRequest: ReferencedItem | null }
+schema RateLimit { readonly cost: number; readonly limit: number; readonly remaining: number; readonly resetAt: string }
+schema ReferenceAnswer { readonly repository: ReferencedRepository | null; readonly rateLimit?: RateLimit }
+schema RenamedRepository { readonly id: string; readonly isPrivate: boolean; readonly nameWithOwner: string }
+schema RenamedAnswer { readonly repository: RenamedRepository | null }
+
+export interface ReferenceDiscussion {
+  readonly commentBodies: ReadonlyArray<string>
+  readonly inlineBodies: ReadonlyArray<string>
+  readonly timeline?: ReadonlyArray<TimelineNode>
+}
+
+export interface RelatedReferences {
+  readonly references: ReadonlyArray<RelatedPullRequest>
+  readonly unavailablePublicReferences: ReadonlyArray<UnavailableReference>
+  readonly limitations: ReadonlyArray<Limitation>
+}
+
+interface Target { readonly repository: string; readonly number: number }
+
+export function referenceTimelineRequest(repository: string, number: number, cursor: string | null) {
+  const [owner, name] = repository.split("/")
+  return {
+    query: "query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id timelineItems(first:100,after:$cursor,itemTypes:[CROSS_REFERENCED_EVENT]){nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{id number url repository{nameWithOwner isPrivate}}}}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}",
+    variables: { owner, name, number, cursor },
+  }
+}
+
+function validRateLimit(rate: RateLimit | undefined) {
+  return rate !== undefined && Number.isSafeInteger(rate.cost) && rate.cost >= 0 && Number.isSafeInteger(rate.limit) && rate.limit > 0 &&
+    Number.isSafeInteger(rate.remaining) && rate.remaining >= 0 && rate.remaining <= rate.limit && Number.isFinite(Date.parse(rate.resetAt))
+}
+
+function confirmedAnswer(answer: ReferenceAnswer, owner: string, name: string) {
+  const repository = answer.repository
+  if (repository === null || repository.issueOrPullRequest !== null) return true
+  return validRateLimit(answer.rateLimit) && repository.isPrivate === false && repository.id !== undefined &&
+    repositoryNodeId.test(repository.id) && repository.nameWithOwner.toLowerCase() === `${owner}/${name}`.toLowerCase()
+}
+
+effect function reference(owner: string, name: string, number: number) {
+  const github = try GitHub
+  const answer: ReferenceAnswer | undefined = github.graphql(valueReferenceQuery, { owner, name, number }, ReferenceAnswer, { absent: missingItem }) catch () => undefined
+  return answer !== undefined && confirmedAnswer(answer, owner, name) ? answer : undefined
+}
+
+effect function renamedIdentity(owner: string, name: string) {
+  const github = try GitHub
+  const answer: RenamedAnswer | undefined = github.graphql(repositoryQuery, { owner, name }, RenamedAnswer) catch () => undefined
+  return answer?.repository ?? undefined
+}
+
+function sameTarget(entry: RelatedPullRequest, target: Target) {
+  return entry.repository.toLowerCase() === target.repository.toLowerCase() && entry.number === target.number
+}
+
+function outgoingTargets(repository: string, number: number, sourceTexts: ReadonlyArray<string>) {
+  const candidates = new Map<string, Target>()
+  for (const text of sourceTexts) {
+    const referencesText = githubLinkDestinations(withoutClosedCodeSpans(withoutClosedCodeFences(text)))
+    for (const found of referencesText.matchAll(referencePattern)) {
+      const targetRepository = found[1] ?? found[3] ?? repository
+      const targetNumber = Number(found[2] ?? found[4])
+      if (!Number.isSafeInteger(targetNumber) || targetNumber <= 0) continue
+      if (targetRepository.toLowerCase() === repository.toLowerCase() && targetNumber === number) continue
+      candidates.set(`${targetRepository.toLowerCase()}#${targetNumber}`, { repository: targetRepository, number: targetNumber })
+    }
+  }
+  return [...candidates.values()]
+}
+
+export effect function relatedPullRequests(repository: string, number: number, pullId: string, sourceTexts: ReadonlyArray<string>, completeTimeline?: ReadonlyArray<TimelineNode>) {
+  const github = try GitHub
+  const references = new Map<string, RelatedPullRequest>()
+  const limitations: Limitation[] = []
+  const unavailablePublicReferences: UnavailableReference[] = []
+  effect function addIncoming(nodes: ReadonlyArray<TimelineNode>) {
+    for (const { source } of nodes) {
+      if (source.__typename !== "PullRequest") continue
+      const origin = source.repository
+      if (origin?.isPrivate !== false) {
+        limitations.push("Related private PR evidence is withheld")
+        continue
+      }
+      if (
+        source.id === undefined || source.id === "" || source.number === undefined || !Number.isSafeInteger(source.number) ||
+        source.number <= 0 || source.url !== `https://github.com/${origin.nameWithOwner}/pull/${source.number}`
+      ) throw new EvidenceRefused({ reason: "Invalid related PR identity" })
+      references.set(source.id, { id: source.id, number: source.number, url: source.url, repository: origin.nameWithOwner })
+    }
+  }
+  if (completeTimeline !== undefined) try addIncoming(completeTimeline)
+  else {
+    const cursors = new Set<string>()
+    let cursor: string | null = null
+    for (;;) {
+      const request = referenceTimelineRequest(repository, number, cursor)
+      const answer = try github.graphql(request.query, request.variables, TimelineAnswer)
+      const pull = answer.repository?.pullRequest
+      if (pull === undefined || pull === null || pull.id !== pullId) {
+        limitations.push("Related PR evidence is unavailable")
+        break
+      }
+      try addIncoming(pull.timelineItems.nodes)
+      const page = pull.timelineItems.pageInfo
+      if (!page.hasNextPage) break
+      if (page.endCursor === null || page.endCursor === "" || cursors.has(page.endCursor)) throw new EvidenceRefused({ reason: "Related PR pagination did not advance" })
+      cursors.add(page.endCursor)
+      cursor = page.endCursor
+    }
+  }
+  for (const target of outgoingTargets(repository, number, sourceTexts)) {
+    if ([...references.values()].some((entry) => sameTarget(entry, target))) continue
+    const [targetOwner = "", targetName = ""] = target.repository.split("/")
+    let resolvedRepository = target.repository
+    let result = try reference(targetOwner, targetName, target.number)
+    if (result === undefined) {
+      const identity = try renamedIdentity(targetOwner, targetName)
+      if (
+        identity !== undefined && identity.isPrivate === false && repositoryNodeId.test(identity.id) &&
+        repositoryName.test(identity.nameWithOwner) && identity.nameWithOwner.toLowerCase() !== target.repository.toLowerCase()
+      ) {
+        const [owner = "", name = ""] = identity.nameWithOwner.split("/")
+        const current = try reference(owner, name, target.number)
+        if (
+          current?.repository?.id === identity.id && current.repository.isPrivate === false &&
+          current.repository.nameWithOwner.toLowerCase() === identity.nameWithOwner.toLowerCase()
+        ) {
+          result = current
+          resolvedRepository = identity.nameWithOwner
+        }
+      }
+    }
+    const found = result?.repository ?? undefined
+    if (found === undefined || found.isPrivate !== false) {
+      limitations.push("Outgoing reference is unavailable or private")
+      continue
+    }
+    const referenced = found.issueOrPullRequest
+    if (referenced === null && found.id !== undefined && found.id.length > 0 && found.nameWithOwner.toLowerCase() === resolvedRepository.toLowerCase()) {
+      unavailablePublicReferences.push({ repository: found.nameWithOwner, repositoryNodeId: found.id, number: target.number })
+      continue
+    }
+    if (referenced === null) {
+      limitations.push(`Outgoing reference is unavailable: ${target.repository}#${target.number}`)
+      continue
+    }
+    if (referenced.__typename !== "PullRequest") continue
+    if (
+      referenced.id === undefined || referenced.id === "" || referenced.number !== target.number ||
+      referenced.url !== `https://github.com/${found.nameWithOwner}/pull/${target.number}`
+    ) throw new EvidenceRefused({ reason: "Invalid outgoing PR identity" })
+    references.set(referenced.id, { id: referenced.id, number: target.number, url: referenced.url, repository: found.nameWithOwner })
+  }
+  return {
+    references: [...references.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    unavailablePublicReferences,
+    limitations: [...new Set(limitations)],
+  } satisfies RelatedReferences
+}

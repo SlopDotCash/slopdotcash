@@ -1,0 +1,406 @@
+// spec/points/scoringPolicy.md, "A scored source records its provenance and keeps the 10-Point minimum"
+import { sha256Hex } from "@repo/platform/crypto"
+import { chunkCrc } from "./crc.ts"
+import { type EvidenceRow, type TrustedArtifact, artifactCanBeEvidenceFile, evidenceFileExtensions, extractEvidenceRows, hasTrajectorySemantics, imageExtensions, ocrEvidence, surfaceOcrEvidenceRow, trustedArtifacts, videoExtensions } from "./policy.vibe"
+
+import { type Media, imageKind, videoKind } from "./media.ts"
+
+module layout {
+  import { type Media, mediaOf as parsed } from "./media.ts"
+  /** @throws {never} */
+  export function mediaOf(bytes: Uint8Array, complete: boolean): Media { return parsed(bytes, complete) }
+}
+import { mediaOf } from layout
+
+export const artifactReadLimitBytes = 64 * 1024
+export const documentReadLimitBytes = 2 * 1024 * 1024
+export const minimumImageBytes = 1024
+export const minimumVideoBytes = 16 * 1024
+export const maximumArtifactRedirects = 4
+export const maximumContentDigestBytes = 32 * 1024 * 1024
+export const maximumArtifactsPerRow = 8
+export const maximumArtifactsTotal = 32
+
+const defaultConcurrency = 4
+const defaultTimeoutMs = 10_000
+const trustedDownloadHosts: ReadonlySet<string> = new Set([
+  "github.com",
+  "github-production-user-asset-6210df.s3.amazonaws.com",
+  "objects.githubusercontent.com",
+  "private-user-images.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "user-images.githubusercontent.com",
+])
+const unreliableContentTypes: ReadonlySet<string> = new Set(["", "application/octet-stream", "binary/octet-stream"])
+const nonRealDocument = /^\s*(?:(?:this\s+)?(?:artifact|evidence)\s+(?:is\s+|[:=-]\s*))(?:a\s+)?(?:placeholder|fabricated|invented|dummy|fake|synthetic|mock|fixture)\b/im
+const logWords = /\b(?:entries|events|level|logs?|method|requests?|responses?|status|timestamp|url)\b/i
+const logLines = /(?:^\$\s+\S+|^\((?:pass|fail)\)|\bTest Files\b|\bTests\s+\d+\s+(?:passed|failed)\b|\b(?:GET|POST|PUT|PATCH|DELETE)\s+\/|\b(?:INFO|WARN|ERROR|DEBUG|TRACE)\b|HTTP\/[12](?:\.\d)?\s+\d{3}|\bstatus(?:Code)?["'=:\s]+\d{3}\b)/im
+
+export type ExpectedKind = "image" | "video" | "document"
+
+export type ArtifactStatus =
+  | "ok"
+  | "artifact-untrusted-redirect"
+  | "artifact-redirect-error"
+  | "artifact-http-error"
+  | "artifact-invalid"
+  | "artifact-empty"
+  | "artifact-html"
+  | "artifact-kind-mismatch"
+  | "artifact-timeout"
+  | "artifact-fetch-error"
+  | "artifact-limit-exceeded"
+  | "artifact-conflict"
+
+export interface ArtifactResult {
+  readonly status: ArtifactStatus
+  readonly detail?: string
+  readonly httpStatus?: number
+  readonly contentSha256?: string | null
+}
+
+export interface ArtifactFinding extends ArtifactResult {
+  readonly id: string
+  readonly label: string
+  readonly url: string
+  readonly artifactKind?: string
+}
+
+export interface ArtifactOptions {
+  readonly repositories: ReadonlyArray<string>
+  readonly allowedArtifactKinds?: ReadonlyArray<string>
+  readonly concurrency?: number
+  readonly timeoutMs?: number
+  readonly contentDigestLimitBytes?: number
+  readonly transientRetries?: number
+  readonly transientRetryDelayMs?: number
+  readonly token?: Redacted.Redacted<string>
+}
+
+export interface ArtifactVerification {
+  readonly ok: boolean
+  readonly findings: ReadonlyArray<ArtifactFinding>
+}
+
+interface Reference extends TrustedArtifact {
+  readonly id: string
+  readonly label: string
+  readonly expectedKind: ExpectedKind | undefined
+}
+
+interface Prefix {
+  readonly bytes: Uint8Array
+  readonly complete: boolean
+  readonly lengthError: string | undefined
+  readonly totalBytes: number | undefined
+}
+
+type Fetched = { readonly kind: "answered"; readonly response: HttpClientResponse.HttpClientResponse } | { readonly kind: "refused"; readonly result: ArtifactResult }
+
+function expectedArtifactKind(rowId: string, artifact: TrustedArtifact, rowText: string): ExpectedKind | undefined {
+  if (rowId === "before-screenshots" || rowId === "after-screenshots") return "image"
+  if (rowId === "walkthrough-video") return "video"
+  if (rowId === surfaceOcrEvidenceRow.id || rowId === "backend-logs" || rowId === "frontend-logs" || rowId === "llm-trajectory") return "document"
+  if (rowId === "domain-artifacts" && ocrEvidence.test(rowText) && artifactCanBeEvidenceFile(artifact)) return "document"
+  if (imageExtensions.has(artifact.extension)) return "image"
+  if (videoExtensions.has(artifact.extension)) return "video"
+  if (evidenceFileExtensions.has(artifact.extension)) return "document"
+  if (artifact.presentation === "image") return "image"
+  if (artifact.presentation === "video") return "video"
+  return undefined
+}
+
+function storedCrc(bytes: Uint8Array, at: number) {
+  return (((bytes[at] ?? 0) * 256 + (bytes[at + 1] ?? 0)) * 256 + (bytes[at + 2] ?? 0)) * 256 + (bytes[at + 3] ?? 0)
+}
+
+function recognized(bytes: Uint8Array, complete: boolean): "image" | "video" | undefined {
+  const media: Media = mediaOf(bytes, complete)
+  if (!media.checks.every((span) => chunkCrc(bytes, span.start, span.end) === storedCrc(bytes, span.crcAt))) return undefined
+  if (media.kind === imageKind) return "image"
+  if (media.kind === videoKind) return "video"
+  return undefined
+}
+
+function meaningfulJson(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0
+  return value !== null && typeof value === "object" && Object.keys(value).length > 0
+}
+
+function parsedJson(text: string): { readonly value: unknown } | undefined {
+  try {
+    return { value: JSON.parse(text) as unknown }
+  } catch {
+    return undefined
+  }
+}
+
+function jsonLines(text: string, complete: boolean): ReadonlyArray<unknown> | undefined {
+  const lines = text.split(/\r?\n/).slice(0, complete ? undefined : -1).map((line) => line.trim()).filter(Boolean)
+  if (lines.length === 0) return undefined
+  const records: unknown[] = []
+  for (const line of lines) {
+    const parsed = parsedJson(line)
+    if (parsed === undefined || !meaningfulJson(parsed.value)) return undefined
+    records.push(parsed.value)
+  }
+  return records
+}
+
+function decodedText(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^﻿/, "").trim()
+  } catch {
+    return undefined
+  }
+}
+
+function documentProblem(bytes: Uint8Array, complete: boolean, reference: Reference, contentType: string): string | undefined {
+  if (!complete) return `document exceeds the ${documentReadLimitBytes}-byte verification limit`
+  if (bytes.length < 64) return "document is too small to be substantive evidence"
+  const text = decodedText(bytes)
+  if (text === undefined) return "document is not valid UTF-8 text"
+  if (text.length < 64 || nonRealDocument.test(text)) return "document is too small or identifies itself as non-real evidence"
+  const semanticTokens = text.match(/[a-z0-9][a-z0-9._:/-]*/gi) ?? []
+  if (semanticTokens.join("").length < 40 || new Set(semanticTokens.map((token) => token.toLowerCase())).size < 3) return "document is structurally trivial and lacks substantive records"
+  let structured: unknown = undefined
+  let lines: ReadonlyArray<unknown> | undefined = undefined
+  if (reference.extension === ".json" || contentType === "application/json" || contentType.endsWith("+json")) {
+    const parsed = parsedJson(text)
+    if (parsed === undefined) return "JSON evidence is malformed"
+    if (!meaningfulJson(parsed.value)) return "JSON evidence has no records"
+    structured = parsed.value
+  }
+  if (reference.extension === ".jsonl" || contentType === "application/jsonl" || contentType === "application/x-ndjson") {
+    lines = jsonLines(text, complete)
+    if (lines === undefined) return "JSONL evidence has no valid complete records"
+  }
+  if (structured === undefined && lines === undefined && /^[{[]/.test(text)) {
+    const sniffed = parsedJson(text)
+    if (sniffed === undefined) lines = jsonLines(text, complete)
+    else if (meaningfulJson(sniffed.value)) structured = sniffed.value
+  }
+  if (reference.id === "backend-logs" || reference.id === "frontend-logs") {
+    const lineCount = text.split(/\r?\n/).filter((line) => line.trim() !== "").length
+    const records = (Array.isArray(structured) && structured.length >= 2)
+      || (structured !== null && typeof structured === "object" && !Array.isArray(structured) && Object.keys(structured).length >= 2)
+      || (lines?.length ?? 0) >= 2
+    const structuredText = JSON.stringify(structured ?? lines ?? null) ?? ""
+    if ((!records || !logWords.test(structuredText)) && (lineCount < 3 || !logLines.test(text))) return "log evidence needs at least three recognizable log lines or structured records"
+  }
+  if (reference.id === "llm-trajectory") {
+    const trajectory = structured ?? lines
+    if (trajectory === undefined || (JSON.stringify(trajectory) ?? "").length < 120 || !hasTrajectorySemantics(trajectory)) return "trajectory evidence lacks substantive model/input/output records"
+  }
+  return undefined
+}
+
+function htmlResponse(contentType: string, bytes: Uint8Array): boolean {
+  if (contentType === "text/html" || contentType === "application/xhtml+xml") return true
+  const prefix = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^﻿/, "").trimStart().toLowerCase()
+  return prefix.startsWith("<!doctype html") || prefix.startsWith("<html") || prefix.startsWith("<head")
+}
+
+function byteCount(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/.test(value)) return undefined
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : undefined
+}
+
+function contentRange(text: string): { readonly end: number; readonly total: number } | undefined {
+  const match = text.trim().match(/^bytes ([0-9]+)-([0-9]+)\/([0-9]+)$/i)
+  if (match === null) return undefined
+  const [start, end, total] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  return [start, end, total].every(Number.isSafeInteger) && start === 0 && end >= start && total > end ? { end, total } : undefined
+}
+
+effect function prefixOf(response: HttpClientResponse.HttpClientResponse, limit: number) {
+  const chunks: Uint8Array[] = []
+  let length = 0
+  let reachedLimit = false
+  for try (const chunk of response.stream) {
+    const kept = chunk.subarray(0, limit - length)
+    chunks.push(kept)
+    length += kept.byteLength
+    if (length >= limit) {
+      reachedLimit = true
+      break
+    }
+  }
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return framed(response, bytes, !reachedLimit)
+}
+
+function framed(response: HttpClientResponse.HttpClientResponse, bytes: Uint8Array, streamEnded: boolean): Prefix {
+  const rawLength = response.headers["content-length"]
+  const declared = byteCount(rawLength)
+  if (rawLength !== undefined && declared === undefined) return { bytes, complete: false, lengthError: "Content-Length is not a valid non-negative byte count", totalBytes: undefined }
+  const rawRange = response.headers["content-range"]
+  const range = rawRange === undefined ? undefined : contentRange(rawRange)
+  if (rawRange !== undefined && range === undefined) return { bytes, complete: false, lengthError: "Content-Range is malformed or does not begin at byte 0", totalBytes: undefined }
+  if (response.status === 206 && range === undefined) return { bytes, complete: false, lengthError: "HTTP 206 response omitted a valid Content-Range header", totalBytes: undefined }
+  const expected = range === undefined ? declared : range.end + 1
+  const totalBytes = range?.total ?? declared
+  if (expected !== undefined && ((streamEnded && expected !== bytes.length) || expected < bytes.length)) return { bytes, complete: false, lengthError: "declared response length does not match the received bytes", totalBytes }
+  const complete = range === undefined ? streamEnded || (declared !== undefined && declared === bytes.length) : range.end + 1 === range.total
+  return { bytes, complete, lengthError: undefined, totalBytes }
+}
+
+function trustedDownloadUrl(raw: string, base?: string): URL | undefined {
+  const url = URL.parse(raw, base)
+  if (url === null || url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "" || !trustedDownloadHosts.has(url.hostname.toLowerCase())) return undefined
+  return url
+}
+
+effect function fetchedArtifact(reference: Reference, token: Redacted.Redacted<string> | undefined, readLimit: number) {
+  const client = try HttpClient.HttpClient
+  let current = trustedDownloadUrl(reference.url)
+  if (current === undefined) return { kind: "refused", result: { status: "artifact-untrusted-redirect", detail: "initial artifact host is not trusted" } } satisfies Fetched
+  for (let redirects = 0; redirects <= maximumArtifactRedirects; redirects += 1) {
+    const headers: Record<string, string> = { accept: "*/*", range: `bytes=0-${readLimit - 1}` }
+    if (token !== undefined && Redacted.value(token) !== "" && current.hostname.toLowerCase() === "github.com") headers.authorization = `Bearer ${Redacted.value(token)}`
+    const request = HttpClientRequest.get(current.href, { headers })
+    provide FetchHttpClient.RequestInit = { redirect: "manual" } {
+      const response = try client.execute(request)
+      if (response.status < 300 || response.status >= 400) return { kind: "answered", response } satisfies Fetched
+      const location = response.headers.location
+      if (location === undefined) return { kind: "refused", result: { status: "artifact-redirect-error", detail: `HTTP ${response.status} omitted the Location header` } } satisfies Fetched
+      const next = trustedDownloadUrl(location, current.href)
+      if (next === undefined) return { kind: "refused", result: { status: "artifact-untrusted-redirect", detail: "redirect target is not an approved GitHub artifact host" } } satisfies Fetched
+      if (redirects === maximumArtifactRedirects) return { kind: "refused", result: { status: "artifact-redirect-error", detail: `redirect limit of ${maximumArtifactRedirects} exceeded` } } satisfies Fetched
+      current = next
+    }
+  }
+  return { kind: "refused", result: { status: "artifact-redirect-error", detail: `redirect limit of ${maximumArtifactRedirects} exceeded` } } satisfies Fetched
+}
+
+effect function verdict(reference: Reference, token: Redacted.Redacted<string> | undefined, digestLimit: number | undefined) {
+  const readLimit = digestLimit ?? (reference.expectedKind === "document" ? documentReadLimitBytes : artifactReadLimitBytes)
+  const fetched = try fetchedArtifact(reference, token, readLimit)
+  if (fetched.kind === "refused") return fetched.result
+  const response = fetched.response
+  if (response.status < 200 || response.status >= 300) return { status: "artifact-http-error", httpStatus: response.status, detail: `HTTP ${response.status}` } satisfies ArtifactResult
+  const { bytes, complete, lengthError, totalBytes } = try prefixOf(response, readLimit)
+  if (lengthError !== undefined) return { status: "artifact-invalid", detail: lengthError } satisfies ArtifactResult
+  if (bytes.length === 0) return { status: "artifact-empty", detail: "response body is empty" } satisfies ArtifactResult
+  if (digestLimit !== undefined && !complete) return { status: "artifact-invalid", detail: `artifact exceeds the ${digestLimit}-byte content verification limit` } satisfies ArtifactResult
+  const contentType = (response.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? ""
+  if (htmlResponse(contentType, bytes)) return { status: "artifact-html", detail: "response is HTML, not an uploaded artifact" } satisfies ArtifactResult
+  const actualKind = recognized(bytes, complete)
+  const expected = reference.expectedKind
+  const needsMedia = expected === "image" || expected === "video"
+  if (expected !== undefined && ((needsMedia && actualKind !== expected) || (actualKind !== undefined && expected !== actualKind))) return { status: "artifact-kind-mismatch", detail: `expected ${expected}, received ${actualKind ?? "unrecognized bytes"}` } satisfies ArtifactResult
+  if ((contentType.startsWith("image/") || contentType.startsWith("video/")) && actualKind === undefined) return { status: "artifact-kind-mismatch", detail: "media response is truncated or structurally invalid" } satisfies ArtifactResult
+  const size = totalBytes ?? (complete ? bytes.length : undefined)
+  if (actualKind === "image" && size !== undefined && size < minimumImageBytes) return { status: "artifact-invalid", detail: `image evidence is smaller than ${minimumImageBytes} bytes` } satisfies ArtifactResult
+  if (actualKind === "video" && size !== undefined && size < minimumVideoBytes) return { status: "artifact-invalid", detail: `video evidence is smaller than ${minimumVideoBytes} bytes` } satisfies ArtifactResult
+  if (expected === "document" || (actualKind === undefined && expected === undefined)) {
+    const problem = documentProblem(bytes, complete, reference, contentType)
+    if (problem !== undefined) return { status: "artifact-invalid", detail: problem } satisfies ArtifactResult
+  }
+  if (expected === undefined && actualKind === undefined && unreliableContentTypes.has(contentType) && (bytes.length < 64 || new Set(bytes).size < 4)) return { status: "artifact-invalid", detail: "opaque artifact is too small or structurally trivial" } satisfies ArtifactResult
+  return { status: "ok", contentSha256: complete ? try sha256Hex(bytes) : null } satisfies ArtifactResult
+}
+
+effect function verifiedOnce(reference: Reference, token: Redacted.Redacted<string> | undefined, timeoutMs: number, digestLimit: number | undefined) {
+  const result: ArtifactResult = timeout(verdict(reference, token, digestLimit), Duration.millis(timeoutMs)) catch (error) => error._tag === "TimeoutError"
+    ? { status: "artifact-timeout", detail: `request exceeded ${timeoutMs}ms` }
+    : { status: "artifact-fetch-error", detail: "artifact request failed" }
+  return result
+}
+
+export function isTransientArtifactFailure(result: Pick<ArtifactResult, "status" | "httpStatus">): boolean {
+  if (result.status === "artifact-timeout" || result.status === "artifact-fetch-error") return true
+  if (result.status !== "artifact-http-error") return false
+  const code = result.httpStatus ?? 0
+  return code === 408 || code === 429 || (code >= 500 && code <= 599)
+}
+
+function bounded(value: number | undefined, fallback: number, low: number, high: number) {
+  return Math.max(low, Math.min(high, Math.trunc(value ?? fallback)))
+}
+
+function rowArtifacts(rows: ReadonlyMap<string, string>, row: EvidenceRow, repositories: ReadonlyArray<string>, allowed: ReadonlySet<string> | undefined) {
+  const rowText = rows.get(row.id)
+  if (rowText === undefined) return undefined
+  return { rowText, artifacts: trustedArtifacts(rowText, repositories).filter((artifact) => allowed === undefined || allowed.has(artifact.kind)) }
+}
+
+export function planReferencedArtifacts(body: string, requiredRows: ReadonlyArray<EvidenceRow>, options: Pick<ArtifactOptions, "repositories" | "allowedArtifactKinds">) {
+  const rows = extractEvidenceRows(body)
+  const allowed = options.allowedArtifactKinds === undefined ? undefined : new Set(options.allowedArtifactKinds)
+  const identities = new Set<string>()
+  let referenceCount = 0
+  for (const row of requiredRows) {
+    const found = rowArtifacts(rows, row, options.repositories, allowed)
+    if (found === undefined) continue
+    referenceCount += found.artifacts.length
+    for (const artifact of found.artifacts) identities.add(artifact.identity)
+  }
+  return { referenceCount, uniqueArtifactCount: identities.size }
+}
+
+function limitFindings(references: ReadonlyArray<Reference>, perRow: ReadonlyArray<ArtifactFinding>, uniqueCount: number, requiredRows: ReadonlyArray<EvidenceRow>): ReadonlyArray<ArtifactFinding> {
+  const findings = [...perRow]
+  const byIdentity = new Map<string, Reference[]>()
+  for (const reference of references) byIdentity.set(reference.identity, [...(byIdentity.get(reference.identity) ?? []), reference])
+  for (const uses of byIdentity.values()) {
+    const rowIds = new Set(uses.map(({ id }) => id))
+    if (rowIds.size < 2) continue
+    const kinds = new Set(uses.map(({ expectedKind }) => expectedKind ?? "unspecified"))
+    for (const use of uses) findings.push({ id: use.id, label: use.label, url: use.url, status: "artifact-conflict", detail: `artifact is reused by ${[...rowIds].join(", ")} with expected kinds ${[...kinds].join(", ")}` })
+  }
+  if (uniqueCount > maximumArtifactsTotal) {
+    const first = references[0]
+    findings.push({
+      id: first?.id ?? requiredRows[0]?.id ?? "evidence",
+      label: first?.label ?? requiredRows[0]?.label ?? "Referenced evidence artifacts",
+      url: "(artifact count)",
+      status: "artifact-limit-exceeded",
+      detail: `PR references ${uniqueCount} unique artifacts; maximum is ${maximumArtifactsTotal}`,
+    })
+  }
+  return findings
+}
+
+export effect function verifyReferencedArtifacts(body: string, requiredRows: ReadonlyArray<EvidenceRow>, options: ArtifactOptions) {
+  const concurrency = bounded(options.concurrency, defaultConcurrency, 1, 16)
+  const timeoutMs = bounded(options.timeoutMs, defaultTimeoutMs, 1, 60_000)
+  const digestLimit = options.contentDigestLimitBytes === undefined ? undefined : bounded(options.contentDigestLimitBytes, maximumContentDigestBytes, artifactReadLimitBytes, maximumContentDigestBytes)
+  const retries = bounded(options.transientRetries, 0, 0, 5)
+  const retryDelayMs = bounded(options.transientRetryDelayMs, 1_000, 0, 10_000)
+  const allowed = options.allowedArtifactKinds === undefined ? undefined : new Set(options.allowedArtifactKinds)
+  const rows = extractEvidenceRows(body)
+  const references: Reference[] = []
+  const unique = new Map<string, Reference>()
+  const perRow: ArtifactFinding[] = []
+  for (const row of requiredRows) {
+    const found = rowArtifacts(rows, row, options.repositories, allowed)
+    if (found === undefined) continue
+    if (found.artifacts.length > maximumArtifactsPerRow) perRow.push({ id: row.id, label: row.label, url: "(artifact count)", status: "artifact-limit-exceeded", detail: `row references ${found.artifacts.length} artifacts; maximum is ${maximumArtifactsPerRow}` })
+    for (const artifact of found.artifacts) {
+      const reference: Reference = { ...artifact, id: row.id, label: row.label, expectedKind: expectedArtifactKind(row.id, artifact, found.rowText) }
+      references.push(reference)
+      if (!unique.has(artifact.identity)) unique.set(artifact.identity, reference)
+    }
+  }
+  const refused = limitFindings(references, perRow, unique.size, requiredRows)
+  if (refused.length > 0) return { ok: false, findings: refused } satisfies ArtifactVerification
+  const artifacts = [...unique.values()]
+  const results = try Effect.forEach(artifacts, (reference) => effect {
+    let result = try verifiedOnce(reference, options.token, timeoutMs, digestLimit)
+    for (let retry = 1; retry <= retries && isTransientArtifactFailure(result); retry += 1) {
+      if (retryDelayMs > 0) try sleep(Duration.millis(retryDelayMs * retry))
+      result = try verifiedOnce(reference, options.token, timeoutMs, digestLimit)
+    }
+    return result
+  }, { concurrency })
+  const byIdentity = new Map(artifacts.map((artifact, index) => [artifact.identity, results[index]]))
+  const findings = references.map((reference) => ({ id: reference.id, label: reference.label, url: reference.url, artifactKind: reference.kind, ...(byIdentity.get(reference.identity) ?? { status: "artifact-fetch-error" }) }) satisfies ArtifactFinding)
+  return { ok: findings.every((finding) => finding.status === "ok"), findings } satisfies ArtifactVerification
+}

@@ -1,0 +1,212 @@
+// spec/backend/identity.md, "At most one poll receives the flow's identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"
+import { type IdentityAudience, type PublicMember, oauthPoll, oauthStart, pointsJoin } from "@repo/backend/client"
+import { type Outcome, exchanged, outgoing } from "@repo/platform/browser"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type CallFailure, call, deadlineMs } from "../platform/api.vibe"
+import { Deployment } from "../platform/config.vibe"
+import { BrowserSession } from "./browserSession.vibe"
+import { clearLocalFlow, readLocalFlow, recordOf, saveLocalFlow } from "./localSignin.vibe"
+import { replaceAddress, currentAddress } from "./address.ts"
+import { Session } from "./session.vibe"
+
+module verified {
+  import { identityPollDelay as delay } from "./identityPoll.ts"
+  /** @throws {never} */
+  export function identityPollDelay(intervalSeconds: number, remaining: number): number { return delay(intervalSeconds, remaining) }
+}
+import { identityPollDelay } from verified
+
+export const identityLimitBytes = 16_384
+export const membershipLimitBytes = 24 * 1024 * 1024
+
+const clockSkewMs = 2 * 60_000
+const flowLifetimeMs = 5 * 60_000
+const flowIdPattern = /^flow_[A-Za-z0-9_-]{20,64}$/u
+const capabilityPattern = /^[A-Za-z0-9_-]{40,128}$/u
+const assertionPattern = /^slop_assert_v1_[A-Za-z0-9_-]{40,128}$/u
+const memberLoginPattern = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+
+const identityInit: globalThis.RequestInit = { credentials: "omit", redirect: "error", cache: "no-store", referrerPolicy: "no-referrer" }
+
+const messages = {
+  invalid: "Sign-in failed. Start again.",
+  expired: "GitHub sign-in expired. Sign in again.",
+  unreachable: "Could not reach Slop. Try again.",
+  closed: "You closed this account. Reopen it to sign in.",
+  localUnavailable: "Slop's local sign-in service is unavailable. Try again later.",
+  invalidMember: "Invalid points membership",
+} as const
+
+export error SignInFailed { message: string }
+export error AccountClosed { message: string }
+
+export interface IdentityAuthorization {
+  readonly flowId: string
+  readonly pollCapability: string
+  readonly authorizationUrl: string
+  readonly expiresAt: string
+  readonly pollAfterSeconds: number
+}
+
+export interface AssertionRequest<R = never> {
+  readonly audience: IdentityAudience
+  readonly resume?: unknown
+  readonly authorize: (url: string) => void!!R
+  readonly save?: (authorization: IdentityAuthorization | null) => void!!R
+}
+
+export interface SignInRequest {
+  readonly reopen: boolean
+  readonly sameTab: boolean
+  readonly resume?: unknown
+  readonly authorize: (url: string) => void!!
+}
+
+interface Flow extends IdentityAuthorization {
+  readonly expires: number
+}
+
+interface Answered {
+  readonly status: number
+  readonly body: Readonly<Record<string, unknown>>
+}
+
+export function identityFailure(status: number, code?: unknown): string {
+  if (status === 410 && code === "callback_failed") return "Sign-in failed. Please start again."
+  if (status === 410) return "Sign-in expired. Please start again."
+  if (status === 429) return "Too many sign-in attempts. Wait one minute, then try again."
+  return "Sign-in is temporarily unavailable. Try again in a few minutes."
+}
+
+function invalid() {
+  return new SignInFailed({ message: messages.invalid })
+}
+
+effect function instant(value: unknown) {
+  const millis = typeof value === "string" ? millisOf(value) : Number.NaN
+  if (!Number.isFinite(millis) || (try isoAt(millis)) !== value) throw invalid()
+  return millis
+}
+
+function refusal(outcome: Exclude<Outcome, { readonly kind: "unreachable" }>, local: boolean): SignInFailed {
+  const body = outcome.kind === "answered" ? recordOf(outcome.value) : undefined
+  if (local && outcome.status === 503) return new SignInFailed({ message: typeof body?.message === "string" ? body.message : messages.localUnavailable })
+  return new SignInFailed({ message: identityFailure(outcome.status, outcome.status === 410 ? body?.error : undefined) })
+}
+
+effect function post(url: string, body: unknown, local: boolean) {
+  const sent = provideService(exchanged(outgoing("POST", url, body, {}), identityLimitBytes), FetchHttpClient.RequestInit, identityInit)
+  const outcome = try Effect.timeoutOrElse(sent, { duration: deadlineMs, orElse: () => Effect.fail(new SignInFailed({ message: messages.unreachable })) })
+  if (outcome.kind === "unreachable") throw new SignInFailed({ message: messages.unreachable })
+  if (outcome.status < 200 || outcome.status > 299) throw refusal(outcome, local)
+  const answer = outcome.kind === "answered" ? recordOf(outcome.value) : undefined
+  if (answer === undefined) throw invalid()
+  return { status: outcome.status, body: answer } satisfies Answered
+}
+
+effect function authorizationOf(text: unknown, origin: string, flowId: string) {
+  if (typeof text !== "string") throw invalid()
+  const url = try Effect.try({ try: () => new URL(text), catch: invalid })
+  const valid = url.origin === origin && url.pathname === "/v1/oauth/authorize" && url.username === "" && url.password === "" && url.hash === ""
+    && url.searchParams.size === 2 && url.searchParams.get("flow_id") === flowId && capabilityPattern.test(url.searchParams.get("state") ?? "")
+  if (!valid) throw invalid()
+  return url.href
+}
+
+effect function flowOf(value: unknown, origin: string) {
+  const started = recordOf(value)
+  if (started === undefined) throw invalid()
+  const expires = try instant(started.expiresAt)
+  const now = try Clock.currentTimeMillis
+  const flowId = started.flowId
+  const pollCapability = started.pollCapability
+  if (expires <= now || expires > now + flowLifetimeMs + clockSkewMs) throw invalid()
+  if (typeof flowId !== "string" || !flowIdPattern.test(flowId) || typeof pollCapability !== "string" || !capabilityPattern.test(pollCapability)) throw invalid()
+  const authorizationUrl = try authorizationOf(started.authorizationUrl, origin, flowId)
+  const pollAfterSeconds = Number(started.pollAfterSeconds)
+  if (!Number.isSafeInteger(pollAfterSeconds) || pollAfterSeconds < 1 || pollAfterSeconds > 10) throw invalid()
+  return { flowId, pollCapability, authorizationUrl, expiresAt: String(started.expiresAt), pollAfterSeconds, expires } satisfies Flow
+}
+
+effect function identityOrigin() {
+  const deployment = try Deployment
+  return { origin: deployment.localBackendOrigin ?? deployment.origins.identity, local: deployment.localBackendOrigin !== undefined }
+}
+
+effect function assertionOf(polled: Answered) {
+  const body = polled.body
+  if (polled.status !== 200 || body.status !== "complete" || body.assertionType !== "SlopIdentity" || typeof body.assertion !== "string" || !assertionPattern.test(body.assertion)) throw invalid()
+  if ((try instant(body.expiresAt)) <= (try Clock.currentTimeMillis)) throw invalid()
+  return body.assertion
+}
+
+export effect function requestIdentityAssertion<R>(request: AssertionRequest<R>) {
+  const { origin, local } = try identityOrigin()
+  const started = request.resume === undefined ? (try post(`${origin}${oauthStart.path}`, { audience: request.audience }, local)).body : request.resume
+  const flow = try flowOf(started, origin)
+  const { expires, ...authorization } = flow
+  if (request.save !== undefined) try request.save(authorization)
+  if (request.resume === undefined) try request.authorize(flow.authorizationUrl)
+  let interval = flow.pollAfterSeconds
+  let assertion = ""
+  while ((try Clock.currentTimeMillis) < expires) {
+    try sleep(identityPollDelay(interval, expires - (try Clock.currentTimeMillis)))
+    if ((try Clock.currentTimeMillis) >= expires) break
+    const polled = try post(`${origin}${oauthPoll.path}`, { flowId: flow.flowId, pollCapability: flow.pollCapability, audience: request.audience }, local)
+    if (polled.status === 202 && polled.body.status === "pending") {
+      interval = Number(polled.body.retryAfterSeconds)
+      if (!Number.isSafeInteger(interval) || interval < flow.pollAfterSeconds || interval > 10) throw invalid()
+      continue
+    }
+    assertion = try assertionOf(polled)
+    break
+  }
+  if (assertion === "") throw new SignInFailed({ message: messages.expired })
+  if (request.save !== undefined) try request.save(null)
+  return assertion
+}
+
+function joinFailure(failure: CallFailure): SignInFailed | AccountClosed {
+  switch (failure._tag) {
+    case "Refused": return failure.error === "account_closed" ? new AccountClosed({ message: messages.closed }) : new SignInFailed({ message: `Points request returned ${failure.status}` })
+    case "ActorChanged": return new SignInFailed({ message: "Points request returned 403" })
+    case "NetworkError": return new SignInFailed({ message: messages.unreachable })
+    case "InvalidResponse": return new SignInFailed({ message: failure.message })
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+function wellFormedMember(member: PublicMember): boolean {
+  return memberLoginPattern.test(member.actor.login) && [0, 5].includes(member.welcome) && [0, 10].includes(member.socialPoints) && Number.isFinite(millisOf(member.joinedAt))
+}
+
+effect function joined(request: SignInRequest, local: boolean) {
+  const save = local ? (authorization: IdentityAuthorization | null) => authorization === null ? clearLocalFlow() : request.sameTab ? saveLocalFlow(authorization, request.reopen) : Effect.void : undefined
+  const assertion = try requestIdentityAssertion({ audience: "slop-points-web", authorize: request.authorize, ...request.resume === undefined ? {} : { resume: request.resume }, ...save === undefined ? {} : { save } })
+  const body = request.reopen ? { assertion, public: true, reopen: true } : { assertion, public: true }
+  const member = call(pointsJoin, { body }, { limitBytes: membershipLimitBytes }) catch effect (failure) => { throw joinFailure(failure) }
+  if (!wellFormedMember(member)) throw new SignInFailed({ message: messages.invalidMember })
+  return member
+}
+
+export effect function signIn(request: SignInRequest) {
+  const { local } = try identityOrigin()
+  const member = joined(request, local) catch effect (failure) => {
+    if (local) try clearLocalFlow()
+    throw failure
+  }
+  try (try BrowserSession).observe("changed")
+  return member
+}
+
+export effect function resumeLocalSignIn(authorize: (url: string) => void!!) {
+  const { local } = try identityOrigin()
+  if (!local || (try (try Session).view()).status !== "signedOut") return undefined
+  const saved = try readLocalFlow()
+  if (saved === undefined) return undefined
+  replaceAddress(`${currentAddress().pathname}${saved.search}`, false)
+  return try signIn({ reopen: saved.reopen, sameTab: true, resume: saved.flow, authorize })
+}

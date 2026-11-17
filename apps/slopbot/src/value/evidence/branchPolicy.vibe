@@ -1,0 +1,34 @@
+// spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { base64Bytes, withoutWhitespace } from "../proofs/encoding.ts"
+import { isObjectId } from "../proofs/gitObject.ts"
+import { contentsLimitBytes, count, fields, fetched, text } from "../proofs/reads.vibe"
+import { declaredIntegrationBranch, declaresHistoricalBranch, policyPath } from "./policy.ts"
+import { type BranchPolicy, EvidenceRefused } from "./types.vibe"
+
+const policyByteLimit = 65536
+
+export function matchesHistoricalIntegrationBranch(policy: BranchPolicy | undefined, base: { readonly sha: string; readonly ref: string }) {
+  return policy !== undefined && isObjectId(base.sha) && declaresHistoricalBranch(policy, base.sha, base.ref)
+}
+
+export effect function strictUtf8(bytes: Uint8Array) {
+  const decoded: string | undefined = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
+  return decoded
+}
+
+export effect function collectBranchPolicy(repository: string, baseSha: string) {
+  if (!isObjectId(baseSha)) throw new EvidenceRefused({ reason: "Invalid policy revision" })
+  const file = fields(try fetched(`/repos/${repository}/contents/${policyPath}?ref=${baseSha}`, contentsLimitBytes))
+  const content = text(file, "content")
+  const size = count(file, "size")
+  if (
+    text(file, "type") !== "file" || text(file, "path") !== policyPath || text(file, "encoding") !== "base64" ||
+    size === undefined || !Number.isSafeInteger(size) || size < 1 || size > policyByteLimit || content === undefined
+  ) throw new EvidenceRefused({ reason: "Complete historical branch policy is unavailable" })
+  const bytes = base64Bytes(withoutWhitespace(content))
+  if (bytes === undefined || bytes.length !== size) throw new EvidenceRefused({ reason: "Historical branch policy size mismatch" })
+  const decoded = try strictUtf8(bytes)
+  if (decoded === undefined) throw new EvidenceRefused({ reason: "Complete historical branch policy is unavailable" })
+  if (declaredIntegrationBranch(decoded) === null) throw new EvidenceRefused({ reason: "Historical integration branch is absent or ambiguous" })
+  return { baseSha, path: policyPath, text: decoded } satisfies BranchPolicy
+}

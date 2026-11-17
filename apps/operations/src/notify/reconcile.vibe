@@ -1,0 +1,52 @@
+// spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"
+import { ConstraintViolation, first, sql } from "@repo/platform/d1"
+import { type Finding, Rejected } from "../../gen/operations__notifications.effect.vibe"
+import type { Channel, Release } from "../notifications/rows.vibe"
+import { send } from "../notifications/store.vibe"
+import { OutboxRow, located } from "./claim.vibe"
+
+const Attempt = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }))
+const DeliveryId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u))
+const DestinationDigest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u))
+const EvidenceReference = Schema.String.check(Schema.makeFilter((text: string) => text.trim().length >= 1 && text.length <= 500, { expected: "an evidence reference of 1 to 500 characters" }))
+const Outcome = Schema.Literals(["delivered", "bounced", "suppressed", "not-accepted"])
+
+export const ReconcileRequest = Schema.Struct({
+  attempt: Attempt,
+  deliveryId: DeliveryId,
+  destinationDigest: DestinationDigest,
+  evidenceReference: EvidenceReference,
+  outcome: Outcome,
+})
+
+export interface Reconciliation extends Readonly<typeof ReconcileRequest.Type> {}
+
+const findings: Readonly<Record<Reconciliation["outcome"], Finding>> = {
+  delivered: "DeliveredOutcome",
+  bounced: "BouncedOutcome",
+  suppressed: "SuppressedOutcome",
+  "not-accepted": "NotAccepted",
+}
+
+export effect function reconcileRequest(input: unknown) {
+  return Schema.decodeUnknownEffect(ReconcileRequest)(input, { onExcessProperty: "error" }) catch () => undefined
+}
+
+effect function deliveryRow(channel: Channel, deliveryId: string) {
+  return try first(OutboxRow, channel === "security"
+    ? sql`SELECT id, recipient_github_id FROM security_notification_outbox WHERE id = ${deliveryId}`
+    : sql`SELECT id, recipient_github_id FROM activity_notification_outbox WHERE id = ${deliveryId}`)
+}
+
+export effect function reconcile(channel: Channel, request: Reconciliation, release: Release) {
+  const row = try deliveryRow(channel, request.deliveryId)
+  if (row === undefined) return false
+  const found = try located(channel, row, release)
+  const evidence = { reference: request.evidenceReference, attempt: request.attempt, digest: request.destinationDigest, finding: findings[request.outcome] }
+  const settled = send(found.scope, { type: "reconcile", id: found.id, evidence }, "", release) catch effect (error) => match (error) {
+    when Rejected: undefined;
+    when ConstraintViolation: undefined;
+    default: throw error;
+  }
+  return settled !== undefined
+}

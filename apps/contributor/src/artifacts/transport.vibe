@@ -1,0 +1,212 @@
+// spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
+import { sha256Hex } from "@repo/platform/crypto"
+import { manualRedirects } from "@repo/platform/github"
+import { type Artifact, type Event, Machine, initial, carriesCredential, machineOver } from "../../gen/contributor__artifactTransport.effect.vibe"
+import { readLimit, transientHttpStatus } from "./limits.ts"
+import { type Expectation, type Received, incompleteDocumentDetail, judgeBody } from "./media.ts"
+import { carriesGitHubCredential, trustedDownloadUrl } from "./policy.ts"
+
+export type FailureStatus = "artifact-untrusted-redirect" | "artifact-redirect-error" | "artifact-http-error" | "artifact-timeout" | "artifact-fetch-error" | "artifact-invalid" | "artifact-empty" | "artifact-html" | "artifact-kind-mismatch"
+
+export interface Note {
+  readonly status: FailureStatus
+  readonly detail: string
+  readonly httpStatus?: number
+}
+
+export interface Target {
+  readonly url: string
+  readonly expectation: Expectation
+  readonly credential: Redacted.Redacted<string> | undefined
+  readonly timeoutMs: number
+}
+
+export type Answer =
+  | { readonly kind: "unreachable"; readonly timedOut: boolean }
+  | { readonly kind: "answered"; readonly url: string; readonly location: string | undefined; readonly received: Received }
+
+interface Step {
+  readonly event: Event
+  readonly note: Note | undefined
+  readonly refusal?: Note
+  readonly next?: string
+  readonly bytes?: Uint8Array
+}
+
+export interface Run {
+  readonly machine: Machine.Shape
+  readonly target: Target
+  readonly location: Ref.Ref<string>
+  readonly note: Ref.Ref<Note | undefined>
+  readonly digest: Ref.Ref<string | undefined>
+}
+
+export type Fetched =
+  | { readonly status: "ok"; readonly contentSha256?: string; readonly transient: false }
+  | (Note & { readonly transient: boolean })
+
+const retryDelay = Duration.millis(1_000)
+const maxRedirects = 4
+
+export effect function begin(target: Target) {
+  return {
+    machine: try machineOver(initial, () => Effect.void),
+    target,
+    location: try Ref.make(target.url),
+    note: try Ref.make<Note | undefined>(undefined),
+    digest: try Ref.make<string | undefined>(undefined),
+  } satisfies Run
+}
+
+function limitOf(target: Target) {
+  const expectation = target.expectation
+  return readLimit(expectation.expectedKind === "document", expectation.fullContentLimit !== undefined)
+}
+
+export effect function open(run: Run) {
+  const state = try run.machine.send({ type: "request" })
+  const url = try Ref.get(run.location)
+  const headers: Record<string, string> = { accept: "*/*", range: `bytes=0-${limitOf(run.target) - 1}` }
+  const credential = run.target.credential
+  if (credential !== undefined && carriesCredential(state.origin) && carriesGitHubCredential(url)) headers.authorization = `Bearer ${Redacted.value(credential)}`
+  return HttpClientRequest.get(url, { headers })
+}
+
+effect function prefix(response: HttpClientResponse.HttpClientResponse, limit: number) {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  let ended = true
+  for try (const chunk of response.stream) {
+    const kept = chunk.subarray(0, limit - size)
+    chunks.push(kept)
+    size += kept.byteLength
+    if (size >= limit) {
+      ended = false
+      break
+    }
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { bytes, ended }
+}
+
+effect function answered(response: HttpClientResponse.HttpClientResponse, limit: number) {
+  const status = response.status
+  const headers = response.headers
+  const read = status >= 200 && status <= 299 ? try prefix(response, limit) : { bytes: new Uint8Array(0), ended: true }
+  return {
+    kind: "answered",
+    url: response.url,
+    location: headers.location,
+    received: { status, contentType: headers["content-type"], contentLength: headers["content-length"], contentRange: headers["content-range"], bytes: read.bytes, ended: read.ended },
+  } satisfies Answer
+}
+
+effect function exchange(request: HttpClientRequest.HttpClientRequest, limit: number, remainingMs: number) {
+  if (remainingMs <= 0) return { kind: "unreachable", timedOut: true } satisfies Answer
+  const client = manualRedirects(try HttpClient.HttpClient)
+  const reached = timeoutOption(effect {
+    const response = try client.execute(request)
+    return try answered(response, limit)
+  }, Duration.millis(remainingMs)) catch () => undefined
+  if (reached === undefined) return { kind: "unreachable", timedOut: false } satisfies Answer
+  return Option.getOrElse(reached, () => ({ kind: "unreachable", timedOut: true }) satisfies Answer)
+}
+
+function untrusted(detail: string): Step {
+  return { event: { type: "redirect", trusted: false }, note: { status: "artifact-untrusted-redirect", detail } }
+}
+
+function bodyStep(received: Received, expectation: Expectation): Step {
+  const verdict = judgeBody(received, expectation)
+  const event: Event = { type: "accept", valid: verdict.valid, complete: verdict.complete, document: verdict.document }
+  if (!verdict.valid) return { event, note: undefined, refusal: { status: verdict.status, detail: verdict.detail } }
+  return { event, note: undefined, refusal: { status: "artifact-invalid", detail: incompleteDocumentDetail }, bytes: received.bytes }
+}
+
+function classify(answer: Answer, current: string, expectation: Expectation, timeoutMs: number): Step {
+  if (answer.kind === "unreachable") {
+    return {
+      event: { type: "transientFailure" },
+      note: answer.timedOut ? { status: "artifact-timeout", detail: `request exceeded ${timeoutMs}ms` } : { status: "artifact-fetch-error", detail: "artifact request failed" },
+    }
+  }
+  if (answer.url !== "" && trustedDownloadUrl(answer.url) === null) return untrusted("response resolved to an untrusted host")
+  const status = answer.received.status
+  if (status >= 300 && status <= 399) {
+    if (answer.location === undefined) return { event: { type: "terminalFailure" }, note: { status: "artifact-redirect-error", detail: `HTTP ${status} omitted the Location header` } }
+    const next = trustedDownloadUrl(answer.location, current)
+    if (next === null) return untrusted("redirect target is not an approved GitHub artifact host")
+    return { event: { type: "redirect", trusted: true }, note: { status: "artifact-redirect-error", detail: `redirect limit of ${maxRedirects} exceeded` }, next: next.href }
+  }
+  if (status < 200 || status > 299) {
+    return { event: transientHttpStatus(status) ? { type: "transientFailure" } : { type: "terminalFailure" }, note: { status: "artifact-http-error", detail: `HTTP ${status}`, httpStatus: status } }
+  }
+  return bodyStep(answer.received, expectation)
+}
+
+effect function deliver(run: Run, step: Step) {
+  const state = try run.machine.send(step.event)
+  try Ref.set(run.note, step.note)
+  if (step.next !== undefined && state.phase === "ArtifactReady") try Ref.set(run.location, step.next)
+  if (step.bytes !== undefined && state.fullDigest) try Ref.set(run.digest, try sha256Hex(step.bytes))
+  return state
+}
+
+export effect function settle(run: Run, answer: Answer) {
+  return try deliver(run, classify(answer, try Ref.get(run.location), run.target.expectation, run.target.timeoutMs))
+}
+
+export effect function again(run: Run) {
+  const state = try run.machine.send({ type: "retry" })
+  try Ref.set(run.location, run.target.url)
+  return state
+}
+
+effect function concluded(run: Run, answer: Answer) {
+  const step = classify(answer, try Ref.get(run.location), run.target.expectation, run.target.timeoutMs)
+  const refusal = step.refusal
+  return deliver(run, step) catch effect (error) => {
+    if (refusal === undefined) throw error
+    return try deliver(run, { event: { type: "terminalFailure" }, note: refusal })
+  }
+}
+
+effect function attempt(run: Run) {
+  const deadline = (try Clock.currentTimeMillis) + run.target.timeoutMs
+  let state: Artifact = try run.machine.get()
+  while (state.phase === "ArtifactReady") {
+    const request = try open(run)
+    const answer = try exchange(request, limitOf(run.target), deadline - (try Clock.currentTimeMillis))
+    state = try concluded(run, answer)
+  }
+  return state
+}
+
+function transientNote(note: Note) {
+  return note.status === "artifact-timeout" || note.status === "artifact-fetch-error" || (note.status === "artifact-http-error" && transientHttpStatus(note.httpStatus ?? 0))
+}
+
+effect function fetchedOf(run: Run, state: Artifact) {
+  if (state.phase === "ArtifactDone") {
+    const contentSha256 = try Ref.get(run.digest)
+    return (contentSha256 === undefined ? { status: "ok", transient: false } : { status: "ok", contentSha256, transient: false }) satisfies Fetched
+  }
+  const note = (try Ref.get(run.note)) ?? { status: "artifact-fetch-error", detail: "artifact request failed" }
+  return { ...note, transient: transientNote(note) } satisfies Fetched
+}
+
+export effect function fetchArtifact(target: Target) {
+  const run = try begin(target)
+  let state = try attempt(run)
+  while (state.phase === "ArtifactRetry") {
+    try sleep(retryDelay)
+    try again(run)
+    state = try attempt(run)
+  }
+  return try fetchedOf(run, state)
+}

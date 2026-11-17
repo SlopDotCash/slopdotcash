@@ -1,0 +1,399 @@
+// spec/points/scoringPolicy.md, "The acceptance instant selects the policy"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import type { AssessmentSource, Permission } from "../../gen/points__scoringPolicy.ts"
+import { instantOf } from "../kernels/records/instants.ts"
+import type { Category as PenaltyCategory } from "../../gen/slopbot__categories.ts"
+import type { ReviewState } from "../kernels/scoring/reviewBody.ts"
+import type { ReviewTier, ScoreTier, ValueTier } from "../kernels/scoring/tiers.ts"
+
+export interface Actor {
+  readonly id: string
+  readonly login: string
+  readonly avatarUrl: string
+  readonly url: string
+  readonly kind: string
+}
+
+export interface Retained {
+  readonly actor: Actor
+  readonly originalPullRequestUrl: string
+}
+
+export interface Commit {
+  readonly oid: string
+  readonly parentCount: number
+  readonly author: Actor | null
+  readonly retained: Retained | null
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface Review {
+  readonly id: string
+  readonly url: string
+  readonly author: Actor | null
+  readonly state: ReviewState
+  readonly submittedAt: string | null
+  readonly body: string
+  readonly inlineCommentCount: number
+  readonly commitId: string | null
+  readonly traceUpload: boolean
+}
+
+export interface Assessment {
+  readonly tier: ValueTier
+  readonly source: AssessmentSource
+  readonly digest: string
+  readonly rubric: string
+  readonly model: string
+  readonly head: string
+  readonly recordedAt: string
+  readonly rationale: string
+}
+
+export interface Authority {
+  readonly maintainer: Actor
+  readonly project: string
+  readonly permission: Permission
+}
+
+export interface Ratification {
+  readonly tier: ScoreTier
+  readonly maintainer: Actor
+  readonly authority: Authority
+  readonly coRatifiers: ReadonlyArray<Actor>
+  readonly securityRisk: boolean
+  readonly proposals: ReadonlyArray<string>
+  readonly head: string
+  readonly record: string
+  readonly sourceId: string
+  readonly url: string
+  readonly at: string
+  readonly reason: string
+  readonly workUnitId: string
+}
+
+export type ReviewLoad = "triage" | "standard" | "deep" | "specialist"
+
+export interface AutomatedReview {
+  readonly id: string
+  readonly kind: "review" | "comment"
+  readonly url: string
+  readonly author: Actor
+  readonly createdAt: string
+  readonly reviewLoad: ReviewLoad
+  readonly workUnitId: string
+  readonly traceUpload: boolean
+}
+
+export interface ReviewValue {
+  readonly reviewId: string
+  readonly tier: ReviewTier
+  readonly finding: string
+  readonly outcome: string
+}
+
+export interface MergedPull {
+  readonly id: string
+  readonly number: number
+  readonly repository: string
+  readonly project: string
+  readonly url: string
+  readonly title: string
+  readonly mergedAt: string
+  readonly author: Actor | null
+  readonly headRefOid: string
+  readonly commits: ReadonlyArray<Commit> | null
+  readonly reviews: ReadonlyArray<Review>
+  readonly assessment: Assessment | null
+  readonly ratification: Ratification | null
+  readonly reviewValues: ReadonlyArray<ReviewValue>
+  readonly externalPrize: boolean
+  readonly traceUpload: boolean
+  readonly automatedReviews: ReadonlyArray<AutomatedReview>
+}
+
+export interface ClosedPull {
+  readonly id: string
+  readonly number: number
+  readonly repository: string
+  readonly project: string
+  readonly url: string
+  readonly title: string
+  readonly closedAt: string
+  readonly author: Actor | null
+  readonly headRefOid: string
+  readonly commits: ReadonlyArray<Commit> | null
+  readonly reviews: ReadonlyArray<Review>
+  readonly assessment: Assessment | null
+  readonly reviewValues: ReadonlyArray<ReviewValue>
+  readonly externalPrize: boolean
+}
+
+export interface JointMember {
+  readonly pullId: string
+  readonly head: string
+  readonly acceptedAt: string | null
+  readonly indirect: boolean
+}
+
+export interface JointUnit {
+  readonly workUnitId: string
+  readonly tier: ValueTier | null
+  readonly rationale: string
+  readonly sources: ReadonlyArray<string>
+  readonly carriers: ReadonlyArray<string>
+  readonly commits: ReadonlyArray<string>
+  readonly retainedOriginal: string | null
+  readonly reviewValues: ReadonlyArray<ReviewValue>
+}
+
+export interface JointDecision {
+  readonly digest: string
+  readonly source: AssessmentSource
+  readonly rubric: string
+  readonly model: string
+  readonly recordedAt: string
+  readonly hashesVerified: boolean
+  readonly members: ReadonlyArray<JointMember>
+  readonly units: ReadonlyArray<JointUnit>
+}
+
+export interface HeldUnit {
+  readonly sources: ReadonlyArray<string>
+}
+
+export interface Penalty {
+  readonly id: string
+  readonly actor: Actor
+  readonly repository: string
+  readonly occurredAt: string
+  readonly category: PenaltyCategory
+  readonly tableVersion: number
+  readonly debitThirds: number
+}
+
+export interface RawActivity {
+  readonly comments: number
+  readonly reviews: number
+  readonly commits: number
+  readonly additions: number
+  readonly deletions: number
+}
+
+export interface Activity {
+  readonly rawActivity: RawActivity
+  readonly models: ReadonlyArray<string>
+}
+
+export interface ScoringFacts {
+  readonly windowFrom: string
+  readonly windowTo: string
+  readonly merged: ReadonlyArray<MergedPull>
+  readonly closedUnmerged: ReadonlyArray<ClosedPull>
+  readonly contexts: ReadonlyArray<MergedPull>
+  readonly joint: ReadonlyArray<JointDecision>
+  readonly attributionHolds: ReadonlySet<string>
+  readonly heldUnits: ReadonlyArray<HeldUnit>
+  readonly openReviewedAt: ReadonlyArray<string>
+  readonly penalties: ReadonlyArray<Penalty>
+  readonly projects: ReadonlyMap<string, string>
+  readonly bans: ReadonlyMap<string, string>
+  readonly activity: ReadonlyMap<string, Activity>
+}
+
+export type EventCategory = "merged-pull-request" | "resolved-issue" | "material-test-change" | "evidence" | "substantive-review" | "evaluated-contribution"
+
+export interface EventSource {
+  readonly id: string
+  readonly kind: "pull-request" | "review" | "comment"
+  readonly number: number
+  readonly title: string
+  readonly url: string
+}
+
+export interface ReviewDecision {
+  readonly sourceId: string
+  readonly state: "APPROVED" | "CHANGES_REQUESTED"
+  readonly commitId: string
+  readonly submittedAt: string
+  readonly url: string
+}
+
+export interface ScoreEvent {
+  readonly id: string
+  readonly actor: Actor
+  readonly category: EventCategory
+  readonly points: number
+  readonly scoreThirds?: number
+  readonly evidenceBonusBasisPoints?: number
+  readonly workUnitId?: string
+  readonly scoreDecisionSourceId?: string
+  readonly scoreDecisionAt?: string
+  readonly acceptanceKind?: "indirect-integration"
+  readonly occurredAt: string
+  readonly repository: string
+  readonly source: EventSource
+  readonly reason: string
+  readonly reviewHistory?: ReadonlyArray<ReviewDecision>
+}
+
+export type ReviewExclusionReason =
+  | "missing-reviewer"
+  | "bot-reviewer"
+  | "missing-pull-request-author"
+  | "bot-pull-request-author"
+  | "self-review"
+  | "missing-submission-time"
+  | "unmerged-pull-request"
+  | "post-merge"
+  | "non-decision"
+  | "insufficient-substance"
+  | "already-awarded-reviewer"
+  | "external-prize-policy"
+  | "reviewer-cycle-cap"
+  | "unchanged-outcome"
+  | "pull-request-review-awarded"
+  | "review-credit-reviewer-limit"
+  | "review-credit-zero-share"
+  | "review-credit-outside-window"
+  | "review-credit-before-policy"
+  | "review-credit-account-banned"
+
+export interface ReviewExclusion {
+  readonly id: string
+  readonly reviewId: string
+  readonly pullRequestId: string
+  readonly pullRequestNumber: number
+  readonly repository: string
+  readonly url: string
+  readonly reason: ReviewExclusionReason
+  readonly reviewer?: Actor
+}
+
+export type HoldReason = "attribution-hold" | "synchronization-only" | "incomplete-lines" | "attribution-conflict" | "unbalanced-allocation" | "unverified-group"
+
+export interface HeldSource {
+  readonly sourceId: string
+  readonly reason: HoldReason
+}
+
+export interface CategoryCounts {
+  readonly mergedPullRequests: number
+  readonly resolvedIssues: number
+  readonly materialTestChanges: number
+  readonly evidence: number
+  readonly substantiveReviews: number
+  readonly evaluatedContributions: number
+}
+
+export interface AcceptedOutcomes {
+  readonly mergedPullRequests: number
+  readonly resolvedIssues: number
+  readonly materialTestChanges: number
+  readonly evidenceCategories: number
+  readonly substantiveReviews: number
+  readonly evaluatedContributions: number
+}
+
+export interface LeaderEntry {
+  readonly rank: number
+  readonly actor: Actor
+  readonly score: number
+  readonly scoreThirds: number
+  readonly penaltyThirds?: number
+  readonly points: CategoryCounts
+  readonly pointThirds: CategoryCounts
+  readonly acceptedOutcomes: AcceptedOutcomes
+  readonly rawActivity: RawActivity
+  readonly reportedModels: ReadonlyArray<string>
+}
+
+export interface Scoring {
+  readonly leaders: ReadonlyArray<LeaderEntry>
+  readonly ledger: ReadonlyArray<ScoreEvent>
+  readonly reviewExclusions: ReadonlyArray<ReviewExclusion>
+  readonly held: ReadonlyArray<HeldSource>
+  readonly penaltyThirds: ReadonlyMap<string, number>
+}
+
+export interface PaymentReviewBasis {
+  readonly policy: string
+  readonly effectiveAt: string
+  readonly leaders: ReadonlyArray<LeaderEntry>
+  readonly ledger: ReadonlyArray<ScoreEvent>
+  readonly removedEventIds: ReadonlyArray<string>
+  readonly reviewExclusions: ReadonlyArray<Omit<ReviewExclusion, "reviewer">>
+}
+
+export interface PaymentReviewBasisOmitted {
+  readonly policy: string
+  readonly effectiveAt: string
+  readonly reason: string
+}
+
+export interface ScoredSnapshot extends Scoring {
+  readonly paymentReviewBasis?: PaymentReviewBasis
+  readonly paymentReviewBasisOmitted?: PaymentReviewBasisOmitted
+}
+
+export error FactsRefused { reason: string; sourceId: string }
+
+export interface ActorIndex {
+  readonly of: (actor: Actor | null) => number
+  readonly actor: (number: number) => Actor | undefined
+}
+
+export function actorIndex(actors: Iterable<Actor>): ActorIndex {
+  const byId = new Map<string, Actor>()
+  for (const actor of actors) if (!byId.has(actor.id)) byId.set(actor.id, actor)
+  const ordered = [...byId.keys()].sort(compareCodeUnits)
+  const numbers = new Map(ordered.map((id, index) => [id, index + 1]))
+  return {
+    of: (actor) => actor === null ? 0 : numbers.get(actor.id) ?? 0,
+    actor: (number) => byId.get(ordered[number - 1] ?? ""),
+  }
+}
+
+export function actorsOf(pulls: ReadonlyArray<MergedPull | ClosedPull>): ReadonlyArray<Actor> {
+  const actors: Actor[] = []
+  for (const pull of pulls) {
+    if (pull.author !== null) actors.push(pull.author)
+    if ("ratification" in pull && pull.ratification !== null) actors.push(pull.ratification.maintainer, pull.ratification.authority.maintainer, ...pull.ratification.coRatifiers)
+    if ("automatedReviews" in pull) for (const review of pull.automatedReviews) actors.push(review.author)
+    for (const commit of pull.commits ?? []) {
+      if (commit.author !== null) actors.push(commit.author)
+      if (commit.retained !== null) actors.push(commit.retained.actor)
+    }
+    for (const review of pull.reviews) if (review.author !== null) actors.push(review.author)
+  }
+  return actors
+}
+
+export effect function millisAt(iso: string, sourceId: string) {
+  const millis = millisOf(iso)
+  if (!Number.isFinite(millis)) throw new FactsRefused({ reason: "invalid timestamp", sourceId })
+  return millis
+}
+
+export effect function instantAtIso(iso: string, sourceId: string) {
+  const instant = instantOf(try isoAt(try millisAt(iso, sourceId)))
+  if (instant === null) throw new FactsRefused({ reason: "timestamp outside the instant range", sourceId })
+  return instant
+}
+
+export function compareCodeUnits(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+export function workUnitSlug(text: string) {
+  return text.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_")
+}
+
+export function isBot(actor: Actor | null) {
+  return actor?.kind === "Bot"
+}
+
+export function sameActor(left: Actor | null, right: Actor | null) {
+  return left !== null && right !== null && (left.id === right.id || left.login.toLowerCase() === right.login.toLowerCase())
+}

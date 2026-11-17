@@ -1,0 +1,144 @@
+// spec/operations/notifications.md, "Preparation rechecks authority, consent and destination before any provider call"; spec/operations/notifications.md, "A failed or overdue case notice escalates once to a backup with current access"
+import { sha256Hex } from "@repo/platform/crypto"
+import { AdminRecipients, EmailAddress, SenderAddress } from "../notifications/contracts.schema.vibe"
+import type { Release } from "../notifications/rows.vibe"
+
+export interface NotifyVars {
+  readonly NOTIFY_FROM_ADDRESS: string
+  readonly NOTIFY_INBOX_URL?: string
+  readonly NOTIFY_GENERAL_EMAIL_ENABLED?: string
+  readonly NOTIFY_UNSUBSCRIBE_KEY?: string
+  readonly SECURITY_MAIL_PILOT?: string
+  readonly ACTIVITY_MAIL_PILOT?: string
+  readonly ADMIN_EMAILS?: string
+}
+
+export interface PilotDestination {
+  readonly email: string
+  readonly verifiedAt: string
+  readonly digest: string
+  readonly backupGithubId: string | undefined
+}
+
+export interface Configured {
+  readonly kind: "on"
+  readonly inboxUrl: string
+  readonly recipients: ReadonlyMap<string, PilotDestination>
+  readonly generalEmail: boolean
+  readonly unsubscribeKey: Redacted.Redacted<Uint8Array> | undefined
+}
+
+export type Pilot = { readonly kind: "off" } | { readonly kind: "misconfigured" } | Configured
+
+export service NotifySettings {
+  readonly from: string
+  readonly security: Pilot
+  readonly activity: Pilot
+  readonly adminEmails: ReadonlyArray<string> | undefined
+}
+
+const githubId = /^[1-9]\d{0,19}$/u
+const exactMillis = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u
+const unsubscribeKey = /^[a-f0-9]{64}$/u
+
+const ExactInstant = Schema.String.check(Schema.makeFilter((text: string) => exactMillis.test(text) && Number.isFinite(Date.parse(text)) && new Date(text).toISOString() === text, { expected: "an instant with milliseconds" }))
+const NonBlank = Schema.String.check(Schema.makeFilter((text: string) => text.trim().length > 0, { expected: "a non-blank reference" }))
+
+const SecurityDestination = Schema.Struct({ email: EmailAddress, verifiedAt: ExactInstant, evidenceReference: NonBlank, backupGithubId: Schema.String.check(Schema.isPattern(githubId)) })
+const ActivityDestination = Schema.Struct({ email: EmailAddress, verifiedAt: ExactInstant, evidenceReference: NonBlank })
+const PilotFile = Schema.Struct({ inboxUrl: Schema.String, recipients: Schema.Record(Schema.String, Schema.Unknown) })
+
+effect function inboxUrlValid(text: string) {
+  const url = Effect.try(() => new URL(text)) catch () => undefined
+  return url !== undefined && url.protocol === "https:" && url.pathname === "/inbox" && url.search === "" && url.hash === "" && url.username === "" && url.password === ""
+}
+
+effect function destinationOf(id: string, raw: unknown, backup: boolean) {
+  if (!githubId.test(id)) return undefined
+  const strict = { onExcessProperty: "error" } as const
+  if (backup) {
+    const found = Schema.decodeUnknownEffect(SecurityDestination)(raw, strict) catch () => undefined
+    if (found === undefined || found.backupGithubId === id) return undefined
+    return { email: found.email, verifiedAt: found.verifiedAt, digest: try sha256Hex(JSON.stringify(raw)), backupGithubId: found.backupGithubId } satisfies PilotDestination
+  }
+  const found = Schema.decodeUnknownEffect(ActivityDestination)(raw, strict) catch () => undefined
+  if (found === undefined) return undefined
+  return { email: found.email, verifiedAt: found.verifiedAt, digest: try sha256Hex(JSON.stringify(raw)), backupGithubId: undefined } satisfies PilotDestination
+}
+
+effect function pilotRecipients(text: string, backup: boolean) {
+  const raw: unknown = Effect.try(() => JSON.parse(text)) catch () => undefined
+  const file = Schema.decodeUnknownEffect(PilotFile)(raw, { onExcessProperty: "error" }) catch () => undefined
+  if (file === undefined || !(try inboxUrlValid(file.inboxUrl))) return undefined
+  const recipients = new Map<string, PilotDestination>()
+  for (const [id, value] of Object.entries(file.recipients)) {
+    const destination = try destinationOf(id, value, backup)
+    if (destination === undefined) return undefined
+    recipients.set(id, destination)
+  }
+  return { inboxUrl: file.inboxUrl, recipients }
+}
+
+function keyBytes(text: string): Uint8Array {
+  return Uint8Array.from(text.match(/../gu) ?? [], (pair) => Number.parseInt(pair, 16))
+}
+
+effect function pilotOf(vars: NotifyVars, raw: string | undefined, backup: boolean) {
+  const generalEmail = vars.NOTIFY_GENERAL_EMAIL_ENABLED === "true"
+  if ((raw === undefined || raw === "") && !generalEmail) return { kind: "off" } satisfies Pilot
+  const key = vars.NOTIFY_UNSUBSCRIBE_KEY
+  const keyValid = key !== undefined && unsubscribeKey.test(key)
+  if (generalEmail && (!keyValid || !Schema.is(SenderAddress)(vars.NOTIFY_FROM_ADDRESS))) return { kind: "misconfigured" } satisfies Pilot
+  const parsed = try pilotRecipients(raw === undefined || raw === "" ? JSON.stringify({ inboxUrl: vars.NOTIFY_INBOX_URL, recipients: {} }) : raw, backup)
+  if (parsed === undefined || parsed.inboxUrl !== vars.NOTIFY_INBOX_URL) return { kind: "misconfigured" } satisfies Pilot
+  return {
+    kind: "on",
+    inboxUrl: parsed.inboxUrl,
+    recipients: parsed.recipients,
+    generalEmail,
+    unsubscribeKey: generalEmail && keyValid ? Redacted.make(keyBytes(key)) : undefined,
+  } satisfies Pilot
+}
+
+function adminRecipients(text: string | undefined): ReadonlyArray<string> | undefined {
+  if (text === undefined) return undefined
+  const recipients = text.split(",").map((entry) => entry.trim())
+  return Schema.is(AdminRecipients)(recipients) ? recipients : undefined
+}
+
+effect function settingsOf(vars: NotifyVars) {
+  return {
+    from: vars.NOTIFY_FROM_ADDRESS,
+    security: try pilotOf(vars, vars.SECURITY_MAIL_PILOT, true),
+    activity: try pilotOf(vars, vars.ACTIVITY_MAIL_PILOT, false),
+    adminEmails: adminRecipients(vars.ADMIN_EMAILS),
+  } satisfies NotifySettings.Shape
+}
+
+export function notifySettings(vars: NotifyVars) {
+  return Layer.effect(NotifySettings, settingsOf(vars))
+}
+
+export function senderValid(from: string): boolean {
+  return Schema.is(SenderAddress)(from)
+}
+
+function releaseOf(pilot: Configured): Release {
+  return {
+    routes: [...pilot.recipients].map(([recipientGithubId, destination]) => ({
+      recipientGithubId,
+      ...destination.backupGithubId === undefined ? {} : { backupGithubId: destination.backupGithubId },
+      pilot: { digest: destination.digest, effectiveAt: destination.verifiedAt },
+    })),
+    generalEmail: pilot.generalEmail,
+  }
+}
+
+export function releaseFor(settings: NotifySettings.Shape): Release {
+  if (settings.security.kind === "on") return releaseOf(settings.security)
+  return { routes: [], generalEmail: settings.activity.kind === "on" && settings.activity.generalEmail }
+}
+
+export function enrollmentOpen(pilot: Pilot): pilot is Configured & { readonly unsubscribeKey: Redacted.Redacted<Uint8Array> } {
+  return pilot.kind === "on" && pilot.generalEmail && pilot.unsubscribeKey !== undefined
+}

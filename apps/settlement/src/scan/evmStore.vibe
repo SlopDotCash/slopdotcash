@@ -1,0 +1,50 @@
+// spec/settlement/evmScan.md, "Completion advances the cursor monotonically, even when runs finish out of order"; spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type D1Error, RowMismatch, first, sql } from "@repo/platform/d1"
+import { type Event, type EvmScan, Rejected, apply, decodeEvent, initial, pageFor } from "../../gen/settlement__evmScan.effect.vibe"
+import type { ScanScope } from "./index.vibe"
+
+schema CursorRow { readonly position: string }
+
+const BLOCK = /^(0|[1-9][0-9]{0,15})$/u
+
+export effect function storedBlock(scope: ScanScope) {
+  const row = try first(CursorRow, sql`SELECT position FROM payment_chain_cursors WHERE project_id = ${scope.projectId} AND network = ${scope.network}`)
+  if (row === undefined) return undefined
+  if (!BLOCK.test(row.position) || !Number.isSafeInteger(Number(row.position))) throw new RowMismatch({ text: "payment_chain_cursors.position", issue: "not a block number" })
+  return Number(row.position)
+}
+
+effect function advance(scope: ScanScope, position: number) {
+  const now = try isoNow()
+  try (try D1).run(sql`INSERT INTO payment_chain_cursors (project_id, network, position, synced_at) VALUES (${scope.projectId}, ${scope.network}, ${String(position)}, ${now})
+    ON CONFLICT (project_id, network) DO UPDATE SET position = excluded.position, synced_at = excluded.synced_at
+    WHERE length(excluded.position) > length(payment_chain_cursors.position) OR (length(excluded.position) = length(payment_chain_cursors.position) AND excluded.position >= payment_chain_cursors.position)`)
+}
+
+export interface EvmScanSession {
+  current(): EvmScan!(RowMismatch | D1Error)!D1
+  send(event: Event): EvmScan!(Rejected | RowMismatch | D1Error)!D1
+}
+
+export effect function openEvmScan(scope: ScanScope) {
+  let held: EvmScan = initial
+  effect function current() {
+    const stored = held.configured ? try storedBlock(scope) : undefined
+    return stored === undefined || stored < held.cursor ? held : { ...held, cursor: stored }
+  }
+  effect function send(event: Event) {
+    const next = try apply(held, event)
+    if (event.type === "completePage") {
+      const page = pageFor(held, event.pageId)
+      if (page.end > held.cursor) try advance(scope, page.end)
+    }
+    held = next
+    return next
+  }
+  return { current, send } satisfies EvmScanSession
+}
+
+export effect function receiveEvmScan(session: EvmScanSession, input: unknown) {
+  return try session.send(try decodeEvent(input))
+}

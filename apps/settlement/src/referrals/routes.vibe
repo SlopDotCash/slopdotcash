@@ -1,0 +1,317 @@
+// spec/settlement/referralFiles.md, "Story: Serve every filed month exactly as it was filed"; spec/settlement/referralPublication.md, "A claim uses the active root's pinned wallet and cumulative amount"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"
+import { first, rows, RowMismatch, sql } from "@repo/platform/d1"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { Caller, answered } from "@repo/platform/http"
+import { type FileAnswer, type FileMode, type Method, type StoredFile, answerFiles } from "../../gen/settlement__referralFiles.effect.vibe"
+import { claimCacheStale } from "../../gen/settlement__referralPublication.effect.vibe"
+import { type AccrualIndexEntry, Digest32, Instant, ReferralAccount, ReferralProgram, referralAccount, referralAccruals } from "../client/referrals.vibe"
+import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
+import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { activeEpochIndex, ageSeconds, claimsView, pendingWindowShown } from "./claimsView.ts"
+import { accountRefusals, accrualRefusals, parityAnswer, privateAccountHeaders, publicFileHeaders } from "./refusals.vibe"
+
+schema FileRow {
+  readonly period: string
+  readonly epoch: number
+  readonly mode: "dry_run" | "live"
+  readonly body_sha256: string
+  readonly merkle_root: string | null
+  readonly tree_total_base: string
+  readonly leaf_count: number
+  readonly created_at: string
+  readonly body: string
+}
+
+schema BodyRow {
+  readonly body: string
+}
+
+schema PinRow {
+  readonly wallet: string
+}
+
+schema CacheRow {
+  readonly body: string | null
+  readonly observed_at: string | null
+  readonly error_at: string | null
+}
+
+schema FileLeaf {
+  readonly hash: string
+  readonly proof: ReadonlyArray<string>
+}
+
+schema FileReferrer {
+  readonly githubId: string
+  readonly githubLogin: string
+  readonly cumulativeBase: string
+  readonly wallet: string | null
+  readonly leaf?: FileLeaf
+}
+
+schema FiledReferrers {
+  readonly referrers: ReadonlyArray<FileReferrer>
+}
+
+const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8_640_000_000_000 }))
+
+const ClaimEpoch = Schema.Struct({
+  epoch: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  period: Schema.String,
+  root: Digest32,
+  totalBase: Schema.String,
+  claimableAt: Seconds,
+  voided: Schema.Boolean,
+})
+type ClaimEpoch = typeof ClaimEpoch.Type
+
+const ClaimSnapshot = Schema.Struct({
+  program: ReferralProgram,
+  deploymentBlock: Schema.String,
+  block: Schema.Struct({ number: Schema.String, hash: Schema.String, timestamp: Seconds }),
+  observedAt: Instant,
+  paused: Schema.Boolean,
+  pauseAt: Schema.NullOr(Seconds),
+  latestPaused: Schema.Boolean,
+  ended: Schema.Boolean,
+  epochs: Schema.Array(ClaimEpoch),
+  claimed: Schema.Record(Schema.String, Schema.String),
+})
+type ClaimSnapshot = typeof ClaimSnapshot.Type
+
+error ClaimsFailed { reason: string }
+
+interface Filed {
+  readonly row: FileRow
+  readonly stored: StoredFile
+}
+
+interface Target {
+  readonly wantsIndex: boolean
+  readonly period: Period | undefined
+}
+
+interface ChainView {
+  readonly snapshot: ClaimSnapshot
+  readonly current: ClaimEpoch | undefined
+  readonly rootFiled: boolean
+  readonly leaf: FileReferrer | undefined
+  readonly claimed: bigint
+  readonly stale: boolean
+}
+
+const indexSchema = "slop-referral-accrual-index-v1"
+const maxUint256 = (1n << 256n) - 1n
+const fileModes: Record<FileRow["mode"], FileMode> = { dry_run: "DryRunFile", live: "PostingFile" }
+const accrualTree = `${referralAccruals.path}/*` as const
+const hidden = { enabled: false } as const
+
+const decodeFiled = Schema.decodeUnknownEffect(Schema.fromJsonString(FiledReferrers))
+const decodeSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaimSnapshot))
+const verifiedAccount = Schema.decodeUnknownEffect(ReferralAccount)
+
+function methodOf(method: string): Method {
+  if (method === "GET") return "GetMethod"
+  return method === "HEAD" ? "HeadMethod" : "OtherMethod"
+}
+
+function targetOf(pathname: string): Target {
+  const rest = pathname.slice(referralAccruals.path.length)
+  if (rest === "" || rest === "/") return { wantsIndex: true, period: undefined }
+  return { wantsIndex: false, period: parsePeriod(rest.slice(1).replace(/\.json$/u, "")) }
+}
+
+effect function storedFile(row: FileRow) {
+  const period = parsePeriod(row.period)
+  const total = parseBaseUnits(row.tree_total_base, maxUint256)
+  if (period === undefined || total === undefined) throw new RowMismatch({ text: "referral_accrual_files", issue: `period ${row.period} is not a filed month with a base-unit total` })
+  return {
+    row,
+    stored: {
+      period,
+      epoch: row.epoch,
+      mode: fileModes[row.mode],
+      body: row.body,
+      bodySha256: row.body_sha256,
+      merkleRoot: row.merkle_root ?? "",
+      treeTotal: try orDie(Effect.try(() => toAmount(total))),
+      leafCount: row.leaf_count,
+      createdAt: Math.floor(millisOf(row.created_at) / 1000),
+    },
+  } satisfies Filed
+}
+
+effect function filesFor(target: Target) {
+  const columns = sql`period, epoch, mode, body_sha256, merkle_root, tree_total_base, leaf_count, created_at`
+  const found = target.wantsIndex
+    ? try rows(FileRow, sql`SELECT ${columns}, '' AS body FROM referral_accrual_files ORDER BY epoch`)
+    : target.period === undefined ? [] : try rows(FileRow, sql`SELECT ${columns}, body FROM referral_accrual_files WHERE period = ${formatPeriod(target.period)}`)
+  const files: Filed[] = []
+  for (const row of found) files.push(try storedFile(row))
+  return files
+}
+
+function indexEntryOf(row: FileRow): AccrualIndexEntry {
+  return {
+    period: row.period,
+    epoch: row.epoch,
+    mode: row.mode,
+    bodySha256: row.body_sha256,
+    merkleRoot: row.merkle_root,
+    treeTotalBase: row.tree_total_base,
+    leafCount: row.leaf_count,
+    createdAt: row.created_at,
+    url: `${referralAccruals.path}/${row.period}`,
+  }
+}
+
+function filesAnswer(answer: FileAnswer, target: Target, files: ReadonlyArray<Filed>, head: boolean) {
+  switch (answer.error) {
+    case "MethodNotAllowed": return parityAnswer(accrualRefusals.methodNotAllowed)
+    case "ReadFailed": return parityAnswer(accrualRefusals.readFailed)
+    case "NotFound": return parityAnswer(accrualRefusals.notFound)
+    case "NoError": {
+      if (target.wantsIndex) {
+        const byPeriod = new Map(files.map((file) => [file.stored.period, file.row]))
+        const listed = answer.entries.flatMap((entry) => byPeriod.get(entry.period) ?? [])
+        if (head) return HttpServerResponse.empty({ status: answer.status, headers: publicFileHeaders })
+        return HttpServerResponse.jsonUnsafe({ schema: indexSchema, files: listed.map(indexEntryOf) }, { status: answer.status, headers: publicFileHeaders })
+      }
+      const headers = { ...publicFileHeaders, "x-slop-sha256": answer.digest }
+      if (head) return HttpServerResponse.empty({ status: answer.status, headers })
+      return HttpServerResponse.text(answer.body, { status: answer.status, headers })
+    }
+    default: {
+      const _exhaustive: never = answer.error
+      return _exhaustive
+    }
+  }
+}
+
+effect function accrualAnswer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const method = methodOf(request.method)
+  const target = targetOf(new URL(request.originalUrl).pathname)
+  const files = method === "OtherMethod" ? [] : filesFor(target) catch effect (error) => {
+    try Effect.logError("referral accruals API failure", error._tag)
+    return undefined
+  }
+  const answer = answerFiles((files ?? []).map((file) => file.stored), { method, wantsIndex: target.wantsIndex, period: target.period ?? 0, wellFormed: target.wantsIndex || target.period !== undefined }, files !== undefined)
+  return filesAnswer(answer, target, files ?? [], method === "HeadMethod")
+}
+
+effect function baseUnits(text: string) {
+  const value = parseBaseUnits(text, maxUint256)
+  if (value === undefined) throw new ClaimsFailed({ reason: "Referral amount is not an exact base-unit integer" })
+  return value
+}
+
+effect function filedReferrers(body: string) {
+  return (try decodeFiled(body)).referrers
+}
+
+effect function wholeMillis(millis: number) {
+  return try orDie(Effect.try(() => BigInt(millis)))
+}
+
+effect function chainView(githubId: string, wallet: string | null, snapshot: ClaimSnapshot, refreshFailed: boolean) {
+  const index = activeEpochIndex([...snapshot.epochs], snapshot.block.timestamp, snapshot.paused && snapshot.pauseAt !== null, snapshot.pauseAt ?? 0)
+  const current = index < 0 ? undefined : snapshot.epochs[index]
+  const file = current === undefined ? undefined : try first(BodyRow, sql`SELECT body FROM referral_accrual_files WHERE period = ${current.period} AND merkle_root = ${current.root} AND tree_total_base = ${current.totalBase}`)
+  const record = file === undefined || wallet === null ? undefined : (try filedReferrers(file.body)).find((referrer) => referrer.githubId === githubId && referrer.wallet === wallet)
+  const now = try wholeMillis(try Clock.currentTimeMillis)
+  const observedAge = Number(ageSeconds(now, try wholeMillis(millisOf(snapshot.observedAt))))
+  const finalizedAge = Number(ageSeconds(now, try wholeMillis(snapshot.block.timestamp * 1000)))
+  return {
+    snapshot,
+    current,
+    rootFiled: current === undefined || file !== undefined,
+    leaf: record?.leaf === undefined ? undefined : record,
+    claimed: wallet === null ? 0n : try baseUnits(snapshot.claimed[wallet] ?? "0"),
+    stale: claimCacheStale(refreshFailed, observedAge, finalizedAge),
+  } satisfies ChainView
+}
+
+effect function knownAccount(unknown: ReferralAccount, chain: ChainView, status: "stale" | "ready", claimable: bigint, pending: bigint) {
+  const { snapshot, current } = chain
+  const paused = snapshot.paused || snapshot.latestPaused
+  const latest = snapshot.epochs.at(-1)
+  const ready = status === "ready"
+  const claim = ready && claimable > 0n && current !== undefined && chain.leaf?.leaf !== undefined
+    ? { period: current.period, epoch: current.epoch, root: current.root, cumulativeBase: chain.leaf.cumulativeBase, proof: chain.leaf.leaf.proof }
+    : null
+  return {
+    ...unknown,
+    status,
+    program: snapshot.program,
+    finalizedAt: try isoAt(snapshot.block.timestamp * 1000),
+    claimedBase: chain.claimed.toString(),
+    claimableBase: ready ? claimable.toString() : null,
+    pendingBase: ready ? pending.toString() : null,
+    paused,
+    ended: snapshot.ended,
+    latestVoided: latest?.voided ?? false,
+    pendingUntil: latest !== undefined && pendingWindowShown(latest.voided, latest.epoch === current?.epoch, paused) ? try isoAt(latest.claimableAt * 1000) : null,
+    claim,
+  } satisfies ReferralAccount
+}
+
+effect function accountView(githubId: string) {
+  const posting = try first(BodyRow, sql`SELECT body FROM referral_accrual_files WHERE mode = 'live' ORDER BY epoch DESC LIMIT 1`)
+  if (posting === undefined) return hidden
+  const cache = try first(CacheRow, sql`SELECT body, observed_at, error_at FROM referral_claim_cache WHERE id = 'program'`)
+  const referrer = (try filedReferrers(posting.body)).find((entry) => entry.githubId === githubId)
+  const pin = try first(PinRow, sql`SELECT wallet FROM referral_claim_wallets WHERE referrer_github_id = ${githubId}`)
+  const wallet = pin?.wallet ?? null
+  const accruedBase = referrer?.cumulativeBase ?? "0"
+  const unknown: ReferralAccount = {
+    enabled: true, status: "unknown", program: null, observedAt: cache?.observed_at ?? null, finalizedAt: null, wallet, accruedBase,
+    claimedBase: null, claimableBase: null, pendingBase: null, paused: false, ended: false, latestVoided: false, pendingUntil: null, claim: null,
+  }
+  const body = cache?.body ?? null
+  const chain = body === null ? undefined : try chainView(githubId, wallet, try decodeSnapshot(body), (cache?.error_at ?? "") !== "")
+  const leaf = chain?.leaf === undefined ? 0n : try baseUnits(chain.leaf.cumulativeBase)
+  const view = claimsView({
+    posted: true,
+    cacheKnown: chain !== undefined,
+    rootFiled: chain?.rootFiled ?? false,
+    accrued: try baseUnits(accruedBase),
+    claimed: chain?.claimed ?? 0n,
+    leaf,
+    distributorPaused: chain?.snapshot.paused ?? false,
+    stale: chain?.stale ?? false,
+  })
+  if (view.status === "Hidden") return hidden
+  if (view.status === "Failed") throw new ClaimsFailed({ reason: chain?.rootFiled === false ? "Cached referral root has no filed record" : "Referral claim totals differ" })
+  if (view.status === "Unknown" || chain === undefined) return try verifiedAccount(unknown)
+  return try verifiedAccount(try knownAccount(unknown, chain, view.status === "Ready" ? "ready" : "stale", view.claimable, view.pending))
+}
+
+effect function signedInView() {
+  const actor = try (try Caller).current()
+  return try accountView(actor.githubId)
+}
+
+effect function accountAnswer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (request.method !== "GET") return parityAnswer(accountRefusals.methodNotAllowed)
+  const view = signedInView() catch effect (error) => {
+    switch (error._tag) {
+      case "Unauthenticated": return undefined
+      case "ActorChanged":
+      case "Refused": throw error
+      default: {
+        try Effect.logError("referral claims API failure", error._tag)
+        return null
+      }
+    }
+  }
+  if (view === undefined) return parityAnswer(accountRefusals.signInRequired)
+  if (view === null) return parityAnswer(accountRefusals.readFailed)
+  return HttpServerResponse.jsonUnsafe(view, { status: 200, headers: privateAccountHeaders })
+}
+
+export const referralRoutes = Layer.mergeAll(
+  HttpRouter.add("*", accrualTree, answered(accrualAnswer())),
+  HttpRouter.add("*", referralAccount.path, answered(accountAnswer())),
+)

@@ -1,0 +1,72 @@
+// spec/contributor/publication.md, "The template index binds templateSha256 to the template, renderer and accepted-revision digests"; spec/contributor/publication.md, "Only bytes equal to the build commit's tracked tree are labelled committed"
+import { type SourceFile, type TemplateGroup as GroupBuild, type TemplateIndexBuild, digests, groupPublishable, guideRendererStatus, indexPublishable, indexStatus } from "../../gen/contributor__publication.effect.vibe"
+import { type Role, templatePaths } from "../render/fields.ts"
+import { comparePaths } from "../render/render.ts"
+import { acceptedRevisions, decodeTemplateIndex, guideRendererPaths, rendererSourcePaths, sha256Hex, sourceRepository, templateSha256 } from "../render/templateIndex.ts"
+import { type SiteFile, committedDigests, jsonText, refused, regularFiles, sourceBytes, statusText, textFile, trackedPaths } from "./sources.vibe"
+
+interface PublishedGroup {
+  readonly build: GroupBuild
+  readonly copies: ReadonlyArray<SiteFile>
+}
+
+effect function publishedGroup(root: string, commit: string, role: Role) {
+  const sourcePath = templatePaths[role]
+  const prefix = `${sourcePath}/`
+  const listing = try regularFiles(root, sourcePath)
+  const committed = try committedDigests(root, commit, [sourcePath])
+  const files: SourceFile[] = []
+  const copies: SiteFile[] = []
+  for (const path of listing.paths) {
+    const bytes = try sourceBytes(root, `${prefix}${path}`)
+    files.push({ path, working: sha256Hex(bytes), committed: committed.get(`${prefix}${path}`) ?? "" })
+    copies.push({ path: `skill-templates/${prefix}${path}`, bytes })
+  }
+  const build: GroupBuild = {
+    sourcePath,
+    files,
+    trackedPaths: [...(try trackedPaths(root, sourcePath))],
+    committedPaths: [...committed.keys()].map((path) => path.slice(prefix.length)).sort(comparePaths),
+    regularFiles: listing.irregular === undefined,
+  }
+  if (!groupPublishable(build)) throw refused(`skill template ${sourcePath} must be a bounded, tracked, exact file tree`)
+  return { build, copies } satisfies PublishedGroup
+}
+
+effect function rendererSources(root: string, commit: string) {
+  const committed = try committedDigests(root, commit, rendererSourcePaths)
+  const sources: SourceFile[] = []
+  for (const path of rendererSourcePaths) sources.push({ path, working: sha256Hex(try sourceBytes(root, path)), committed: committed.get(path) ?? "" })
+  return sources
+}
+
+export effect function templateFiles(root: string, commit: string) {
+  const contributor = try publishedGroup(root, commit, "contributor")
+  const reviewer = try publishedGroup(root, commit, "reviewer")
+  const build: TemplateIndexBuild = {
+    commit,
+    contributor: contributor.build,
+    reviewer: reviewer.build,
+    rendererSources: try rendererSources(root, commit),
+    acceptedRevisions: [...acceptedRevisions],
+  }
+  if (!indexPublishable(build)) throw refused("the template index does not bind the frozen renderer sources and template paths")
+  const groups = {
+    contributor: { sourcePath: build.contributor.sourcePath, files: digests(build.contributor.files) },
+    reviewer: { sourcePath: build.reviewer.sourcePath, files: digests(build.reviewer.files) },
+  }
+  const sources = digests(build.rendererSources)
+  const index = jsonText({
+    schemaVersion: "1",
+    repository: sourceRepository,
+    commit,
+    templateSha256: templateSha256({ ...groups, rendererSources: sources, acceptedRevisions }),
+    revisionStatus: statusText(indexStatus(build)),
+    contributor: groups.contributor,
+    reviewer: groups.reviewer,
+    renderer: { paths: guideRendererPaths, sources, revisionStatus: statusText(guideRendererStatus(build)) },
+    acceptedRevisions,
+  })
+  if (decodeTemplateIndex(index).kind !== "decoded") throw refused("the template index does not decode as the server reads it")
+  return [...contributor.copies, ...reviewer.copies, textFile("skill-templates/index.json", index)] satisfies ReadonlyArray<SiteFile>
+}

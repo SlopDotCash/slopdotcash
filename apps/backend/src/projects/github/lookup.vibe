@@ -1,0 +1,315 @@
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"
+import { sha256Hex } from "@repo/platform/crypto"
+import { GitHub, type GitHubFailure, github } from "@repo/platform/github"
+import { Refused } from "@repo/platform/http"
+import * as Hex from "effect/encoding/Hex"
+import { getProjectGithubOwnedRepositories as ownedRows, postProjects, putProjectsById } from "../../client/refusals.vibe"
+import { validIntegrationBranch } from "../owner/definition.ts"
+
+export const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
+const repositoryPathPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const nodeIdPattern = /^[A-Za-z0-9_=-]{1,100}$/u
+const shaPattern = /^[0-9a-f]{40}$/u
+const spdxPattern = /^[A-Za-z0-9-.+]{1,80}$/u
+const maxBranchPages = 20
+const maxOwnedPages = 20
+
+export service ReadToken {
+  readonly configured: boolean
+}
+
+export function publicGitHub(token: string | undefined) {
+  const configured = token !== undefined && token.trim().length > 0
+  return Layer.merge(Layer.succeed(ReadToken, { configured }), github({ userAgent: "slop.cash-project-setup", ...(configured ? { token: Redacted.make(token) } : {}) }))
+}
+
+export interface Actor {
+  readonly githubId: string
+  readonly githubLogin: string
+}
+
+export interface OwnedRepository {
+  readonly repository: string
+  readonly description: string | null
+}
+
+export type License =
+  | { readonly state: "unknown"; readonly reason: string }
+  | { readonly state: "verified"; readonly spdx: string; readonly commitSha: string; readonly fileSha256: string }
+
+export interface RepositoryLookup {
+  readonly repository: string
+  readonly description: string | null
+  readonly numericId: string
+  readonly nodeId: string
+  readonly defaultBranch: string
+  readonly branches: ReadonlyArray<string>
+  readonly branchCommits: Readonly<Record<string, string>>
+  readonly fork: boolean
+  readonly archived: boolean
+  readonly owner: { readonly login: string; readonly actorId: string; readonly nodeId: string; readonly kind: "individual" | "organization" }
+  readonly license: License
+}
+
+type Row = { readonly status: number; readonly error: string; readonly message: string }
+
+function refusal(row: Row) {
+  return new Refused({ status: row.status, code: row.error, message: row.message })
+}
+
+function unavailable(message: string) {
+  return refusal({ ...putProjectsById.githubUnavailableGitHubReturnedAnUnexpected, message })
+}
+
+export function failed(failure: GitHubFailure): Refused {
+  if (failure._tag === "RateLimited") return refusal(putProjectsById.githubRateLimited)
+  if (failure._tag === "GitHubMalformed") return refusal(putProjectsById.githubUnavailableGitHubReturnedAnUnexpected)
+  if (failure._tag === "GitHubUnavailable" && failure.status === undefined) return refusal(putProjectsById.githubUnavailableGitHubReturnedAnUnexpected)
+  return unavailable(`GitHub returned ${failure._tag === "NotFound" ? 404 : failure._tag === "GitHubRefused" ? failure.status : failure.status ?? 502}.`)
+}
+
+export function validRepositoryPath(value: string): boolean {
+  return value.length <= 201 && repositoryPathPattern.test(value)
+}
+
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined
+}
+
+function positiveId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+}
+
+function descriptionOf(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const text = value.replace(/\s+/gu, " ").trim()
+  return text.length > 0 && text.length <= 600 ? text : null
+}
+
+effect function restJson(path: string) {
+  const found = (try GitHub).json(path, Schema.Unknown, { limitBytes: 512 * 1024 }) catch effect (failure) => {
+    if (failure._tag === "NotFound") return undefined
+    throw failed(failure)
+  }
+  if (found === undefined) return undefined
+  const value = record(found)
+  if (value === undefined) throw refusal(putProjectsById.githubUnavailableGitHubReturnedAnUnexpected)
+  return value
+}
+
+export effect function lookupActor(login: string, githubId?: string) {
+  if (!githubLogin.test(login)) return undefined
+  const user = try restJson(githubId === undefined ? `/users/${login}` : `/user/${encodeURIComponent(githubId)}`)
+  if (user === undefined) return undefined
+  if (typeof user.type === "string" && user.type !== "User") throw refusal({ ...postProjects.personalAccountRequired, message: `@${login} is a GitHub ${user.type} account. Enter a person's GitHub account.` })
+  const sameAccount = githubId === undefined ? typeof user.login === "string" && user.login.toLowerCase() === login.toLowerCase() : String(user.id) === githubId
+  if (user.type !== "User" || !positiveId(user.id) || typeof user.login !== "string" || !githubLogin.test(user.login) || !sameAccount) throw refusal(postProjects.githubUnavailableGitHubReturnedIncompleteAccount)
+  return { githubId: String(user.id), githubLogin: user.login } satisfies Actor
+}
+
+export effect function ownedRepositories(login: string) {
+  if (!githubLogin.test(login)) throw refusal(ownedRows.invalidRequest)
+  const entries = (try GitHub).pages(`/users/${login}/repos?type=owner&sort=pushed`, Schema.Unknown, { perPage: 100, maxPages: maxOwnedPages, limitBytes: 2 * 1024 * 1024 }) catch effect (failure) => {
+    if (failure._tag === "GitHubMalformed") throw refusal(ownedRows.githubUnavailableGitHubReturnedTooMany)
+    throw failed(failure)
+  }
+  const owned = new Map<string, OwnedRepository>()
+  for (const entry of entries) {
+    const repository = record(entry)
+    const name = repository?.full_name
+    if (repository === undefined || repository.private !== false || repository.archived !== false || typeof name !== "string" || !validRepositoryPath(name) || owned.has(name)) continue
+    owned.set(name, { repository: name, description: descriptionOf(repository.description) })
+  }
+  return [...owned.values()]
+}
+
+const branchesQuery = `
+  query ProjectRepositoryBranches($id: ID!, $cursor: String) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        refs(refPrefix: "refs/heads/", first: 100, after: $cursor,
+             orderBy: {field: ALPHABETICAL, direction: ASC}) {
+          nodes { name prefix target { __typename oid } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }`
+
+const headQuery = `
+  query ProjectRepositoryHead($id: ID!, $qualifiedName: String!) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        ref(qualifiedName: $qualifiedName) {
+          name prefix target { __typename oid }
+        }
+      }
+    }
+  }`
+
+const licenseQuery = `
+  query ProjectRepositoryLicense($id: ID!, $expression: String!) {
+    node(id: $id) {
+      __typename
+      ... on Repository {
+        id fullDatabaseId isPrivate
+        object(expression: $expression) { __typename oid }
+      }
+    }
+  }`
+
+interface Identity {
+  readonly numericId: number
+  readonly nodeId: string
+}
+
+effect function repositoryNode(identity: Identity, query: string, variables: Readonly<Record<string, string | null>>) {
+  const answer = (try GitHub).graphql(query, { ...variables, id: identity.nodeId }, Schema.Unknown, { limitBytes: 2 * 1024 * 1024 }) catch effect (failure) => {
+    if (failure._tag === "GitHubMalformed") throw refusal(putProjectsById.githubUnavailableGitHubReturnedIncompleteRepository)
+    throw failed(failure)
+  }
+  const node = record(record(answer)?.node)
+  if (node === undefined || node.__typename !== "Repository" || node.id !== identity.nodeId || (node.fullDatabaseId !== String(identity.numericId) && node.fullDatabaseId !== identity.numericId) || node.isPrivate !== false) throw refusal(putProjectsById.githubUnavailableGitHubReturnedIncompleteRepository)
+  return node
+}
+
+effect function repositoryBranches(identity: Identity) {
+  const branches = new Set<string>()
+  const branchCommits = new Map<string, string>()
+  const cursors = new Set<string>()
+  let cursor: string | null = null
+  for (let page = 1; page <= maxBranchPages; page++) {
+    const refs = record((try repositoryNode(identity, branchesQuery, { cursor })).refs)
+    const values = refs?.nodes
+    const pageInfo = record(refs?.pageInfo)
+    if (!Array.isArray(values) || values.length > 100 || pageInfo === undefined || typeof pageInfo.hasNextPage !== "boolean" || (pageInfo.endCursor !== null && typeof pageInfo.endCursor !== "string")) throw refusal(putProjectsById.githubUnavailableGitHubReturnedAnInvalidBranchList)
+    for (const value of values) {
+      const branch = record(value)
+      if (branch === undefined || !validIntegrationBranch(branch.name) || branch.prefix !== "refs/heads/") throw refusal(putProjectsById.githubUnavailableGitHubReturnedAnInvalidBranchName)
+      const target = record(branch.target)
+      const sha = target?.oid
+      if (target?.__typename !== "Commit" || typeof sha !== "string" || !shaPattern.test(sha)) throw refusal(putProjectsById.githubUnavailableGitHubReturnedAnInvalidBranchCommit)
+      branches.add(branch.name)
+      branchCommits.set(branch.name, sha)
+    }
+    if (pageInfo.hasNextPage !== true) return { branches: [...branches], branchCommits: Object.fromEntries(branchCommits) }
+    const next = pageInfo.endCursor
+    if (typeof next !== "string" || next.length === 0 || cursors.has(next)) throw refusal(putProjectsById.githubUnavailableGitHubReturnedAnInvalidBranchPageCursor)
+    cursor = next
+    cursors.add(next)
+  }
+  throw refusal(putProjectsById.githubUnavailableGitHubReturnedTooManyBranchPages)
+}
+
+effect function gitBlobOid(bytes: Uint8Array) {
+  const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`)
+  const object = new Uint8Array(header.byteLength + bytes.byteLength)
+  object.set(header)
+  object.set(bytes, header.byteLength)
+  return Hex.encode(try orDie((try Experimental.Crypto.Crypto).digest("SHA-1", object)))
+}
+
+function base64Bytes(text: string): Uint8Array | undefined {
+  const clean = text.replace(/\s/gu, "")
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(clean) || clean.length % 4 !== 0) return undefined
+  return Uint8Array.from(atob(clean), (character) => character.charCodeAt(0))
+}
+
+function unknownLicense(reason: string): License {
+  return { state: "unknown", reason }
+}
+
+effect function licenseAt(identity: Identity, path: string, defaultBranch: string) {
+  const branch = record((try repositoryNode(identity, headQuery, { qualifiedName: `refs/heads/${defaultBranch}` })).ref)
+  const target = record(branch?.target)
+  const commitSha = target?.oid
+  if (branch?.name !== defaultBranch || branch.prefix !== "refs/heads/" || target?.__typename !== "Commit" || typeof commitSha !== "string" || !shaPattern.test(commitSha)) return unknownLicense("The default branch could not be read.")
+  const blob = record((try repositoryNode(identity, licenseQuery, { expression: `${commitSha}:LICENSE` })).object)
+  if (blob?.__typename !== "Blob" || typeof blob.oid !== "string" || !shaPattern.test(blob.oid)) return unknownLicense("GitHub found no root LICENSE blob at the captured commit.")
+  const license = try restJson(`/repos/${path}/license?ref=${commitSha}`)
+  if (license === undefined) return unknownLicense("GitHub found no license file.")
+  if (license.path !== "LICENSE") return unknownLicense(`The license file is ${String(license.path)}. A manifest records only a root LICENSE file.`)
+  if (license.type !== "file" || license.sha !== blob.oid) return unknownLicense("The license response does not match the captured repository commit.")
+  const spdx = record(license.license)?.spdx_id
+  if (typeof spdx !== "string" || spdx === "NOASSERTION" || !spdxPattern.test(spdx)) return unknownLicense("GitHub could not identify the license.")
+  const bytes = license.encoding === "base64" && typeof license.content === "string" ? base64Bytes(license.content) : undefined
+  if (bytes === undefined) return unknownLicense("GitHub did not return the license bytes.")
+  if ((try gitBlobOid(bytes)) !== blob.oid) return unknownLicense("The license bytes do not match the captured repository commit.")
+  return { state: "verified", spdx, commitSha, fileSha256: try sha256Hex(bytes) } satisfies License
+}
+
+export effect function lookupRepository(path: string) {
+  if (!validRepositoryPath(path)) throw refusal(putProjectsById.invalidRequestEnterTheRepositoryAs)
+  if (!(try ReadToken).configured) throw refusal(putProjectsById.githubUnavailableThePublicGitHubLookup)
+  const repository = try restJson(`/repos/${path}`)
+  if (repository === undefined || repository.private === true) throw refusal(putProjectsById.notFoundGitHubHasNoPublic)
+  const owner = record(repository.owner)
+  const fullName = repository.full_name
+  const nodeId = repository.node_id
+  const defaultBranch = repository.default_branch
+  if (
+    repository.private !== false ||
+    !positiveId(repository.id) ||
+    typeof nodeId !== "string" ||
+    !nodeIdPattern.test(nodeId) ||
+    typeof fullName !== "string" ||
+    !validRepositoryPath(fullName) ||
+    !validIntegrationBranch(defaultBranch) ||
+    owner === undefined ||
+    !positiveId(owner.id) ||
+    typeof owner.login !== "string" ||
+    typeof owner.node_id !== "string" ||
+    (owner.type !== "User" && owner.type !== "Organization")
+  )
+    throw refusal(putProjectsById.githubUnavailableGitHubReturnedIncompleteRepository)
+  const identity = { numericId: repository.id, nodeId }
+  const { branches, branchCommits } = try repositoryBranches(identity)
+  if (!branches.includes(defaultBranch)) throw refusal(putProjectsById.githubUnavailableGitHubDidNotReturn)
+  const license = licenseAt(identity, fullName, defaultBranch) catch effect (failure) => { return unknownLicense(`License facts could not be read. ${failure.message}`.trim()) }
+  return {
+    repository: fullName,
+    description: descriptionOf(repository.description),
+    numericId: String(repository.id),
+    nodeId,
+    defaultBranch,
+    branches,
+    branchCommits,
+    fork: repository.fork !== false,
+    archived: repository.archived !== false,
+    owner: { login: owner.login, actorId: String(owner.id), nodeId: owner.node_id, kind: owner.type === "User" ? "individual" : "organization" },
+    license,
+  } satisfies RepositoryLookup
+}
+
+export interface PublicFacts {
+  readonly id: string
+  readonly fullName: string
+  readonly public: boolean
+  readonly archived: boolean
+  readonly fork: boolean
+  readonly defaultBranch: string | undefined
+}
+
+export effect function factsById(repositoryId: string) {
+  const repository = try restJson(`/repositories/${encodeURIComponent(repositoryId)}`)
+  if (repository === undefined || String(repository.id) !== repositoryId || typeof repository.full_name !== "string") return undefined
+  return {
+    id: repositoryId,
+    fullName: repository.full_name,
+    public: repository.private === false,
+    archived: repository.archived !== false,
+    fork: repository.fork !== false,
+    defaultBranch: validIntegrationBranch(repository.default_branch) ? repository.default_branch : undefined,
+  } satisfies PublicFacts
+}
+
+export effect function factsByPath(path: string) {
+  if (!validRepositoryPath(path)) return undefined
+  const repository = try restJson(`/repos/${path}`)
+  if (repository === undefined || !positiveId(repository.id) || typeof repository.full_name !== "string") return undefined
+  return { id: String(repository.id), fullName: repository.full_name, public: repository.private === false, archived: repository.archived !== false, fork: repository.fork !== false, defaultBranch: validIntegrationBranch(repository.default_branch) ? repository.default_branch : undefined } satisfies PublicFacts
+}

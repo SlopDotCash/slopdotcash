@@ -1,0 +1,169 @@
+// spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { Network as WalletNetwork } from "@repo/ports/backend"
+import type { Binding, Network, Scope, Target } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { toAmount } from "../kernels/amounts.ts"
+import type { Chain } from "../kernels/networks.ts"
+import type { EvmDeployment } from "../vault/policy.vibe"
+import type { AuthorizedWallet } from "./wallets.vibe"
+
+export type Kind = "reserved" | "paid"
+
+interface DeploymentCommon {
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+  readonly owner: string
+  readonly feeRecipient: string
+  readonly scope: Scope
+  readonly rpc: Redacted.Redacted<ReadonlyArray<string>>
+}
+
+export interface EvmPaymentDeployment extends DeploymentCommon {
+  readonly family: "evm"
+  readonly chain: "base" | "ethereum" | "robinhood"
+  readonly chainId: bigint
+  readonly review: EvmDeployment
+}
+
+export interface SolanaPaymentDeployment extends DeploymentCommon {
+  readonly family: "solana"
+  readonly chain: "solana"
+  readonly program: string
+  readonly project: string
+  readonly mint: string
+  readonly genesis: string
+}
+
+export type PaymentDeployment = EvmPaymentDeployment | SolanaPaymentDeployment
+
+export interface EventReference {
+  readonly kind: Kind
+  readonly transactionId: string
+  readonly eventIndex: number
+  readonly obligationId: string
+}
+
+export interface FinalizedPaymentEvent extends EventReference {
+  readonly blockId: string
+  readonly blockNumber: bigint
+  readonly projectId: string
+  readonly network: string
+  readonly chain: Chain
+  readonly vault: string
+  readonly githubUserId: string
+  readonly gross: bigint
+  readonly net: bigint
+  readonly fee: bigint
+  readonly sourceDigest: string
+  readonly destination: string | undefined
+  readonly bindingVersion: string | undefined
+  readonly feeRecipient: string
+}
+
+export interface VaultAsset {
+  readonly address: string
+  readonly decimals: number
+}
+
+export error EvidenceRefused { reason: string }
+
+export function refused(reason: string) {
+  return new EvidenceRefused({ reason })
+}
+
+const networks = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" } as const satisfies Record<Chain, Network & WalletNetwork>
+
+export function failureTag(error: unknown) {
+  return typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string" ? error._tag : "failure"
+}
+
+export function networkOf(chain: Chain): Network & WalletNetwork {
+  return networks[chain]
+}
+
+export function sameAddress(chain: Chain, left: string, right: string) {
+  return chain === "solana" ? left === right : left.toLowerCase() === right.toLowerCase()
+}
+
+export function canonicalAddress(chain: Chain, address: string) {
+  return chain === "solana" ? address : address.toLowerCase()
+}
+
+export function bindingOf(chain: Chain, wallet: AuthorizedWallet): Binding {
+  return { claim: wallet.claimId, digest: wallet.digest, address: canonicalAddress(chain, wallet.address) }
+}
+
+export effect function limbs(value: bigint) {
+  return try orDie(Effect.try(() => toAmount(value)))
+}
+
+export effect function termsDigest(gross: bigint, fee: bigint, feeRecipient: string) {
+  return try sha256Hex(JSON.stringify(["slop-payment-terms:v1", gross.toString(), (gross - fee).toString(), fee.toString(), feeRecipient]))
+}
+
+export interface ObligationTerms {
+  readonly scope: Scope
+  readonly chain: Chain
+  readonly projectId: string
+  readonly vault: string
+  readonly obligationId: string
+  readonly githubUserId: string
+  readonly asset: VaultAsset
+  readonly sourceDigest: string
+  readonly termsDigest: string
+}
+
+export function targetOf(terms: ObligationTerms): Target {
+  return {
+    scope: terms.scope,
+    network: networkOf(terms.chain),
+    project: terms.projectId,
+    vault: canonicalAddress(terms.chain, terms.vault),
+    obligation: terms.obligationId,
+    actor: terms.githubUserId,
+    asset: terms.asset.address,
+    decimals: terms.asset.decimals,
+    sourceDigest: terms.sourceDigest,
+    termsDigest: terms.termsDigest,
+  }
+}
+
+export function storedEvidence(event: FinalizedPaymentEvent, asset: VaultAsset) {
+  return JSON.stringify({
+    kind: event.kind,
+    transactionId: event.transactionId,
+    eventIndex: event.eventIndex,
+    blockId: event.blockId,
+    obligationId: event.obligationId,
+    githubUserId: event.githubUserId,
+    grossMicro: event.gross.toString(),
+    netMicro: event.net.toString(),
+    feeMicro: event.fee.toString(),
+    ...(event.destination === undefined ? {} : { destination: event.destination }),
+    ...(event.bindingVersion === undefined ? {} : { bindingVersion: event.bindingVersion }),
+    sourceDigest: event.sourceDigest,
+    projectId: event.projectId,
+    network: event.network,
+    chain: event.chain,
+    vault: event.vault,
+    blockNumber: event.blockNumber.toString(),
+    feeRecipient: event.feeRecipient,
+    assetAddress: asset.address,
+    assetDecimals: asset.decimals,
+  })
+}
+
+const facts = ["kind", "transactionId", "eventIndex", "blockId", "obligationId", "projectId", "network", "chain", "vault", "githubUserId", "grossMicro", "netMicro", "feeMicro", "sourceDigest", "destination"] as const
+
+function fact(record: Readonly<Record<string, unknown>>, name: (typeof facts)[number]) {
+  return JSON.stringify([name === "destination" ? record[name] ?? null : record[name]])
+}
+
+export function sameEvidence(stored: Readonly<Record<string, unknown>>, incoming: Readonly<Record<string, unknown>>) {
+  return facts.every((name) => fact(stored, name) === fact(incoming, name))
+}
+
+export function sameStoredAsset(stored: Readonly<Record<string, unknown>>, asset: VaultAsset) {
+  return stored.assetAddress === undefined || (stored.assetAddress === asset.address && stored.assetDecimals === asset.decimals)
+}

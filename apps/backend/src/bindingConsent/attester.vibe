@@ -1,0 +1,41 @@
+// spec/backend/bindingConsent.md, "A Solana binding is one half-signed transaction per generation that only the wallet slot completes"
+import type { Fetcher } from "@repo/platform/bindings"
+import { exchanged, outgoing } from "@repo/platform/browser"
+import { outboundVia } from "@repo/platform/http"
+
+export interface AttesterPayment {
+  readonly obligationId: string
+  readonly network: string
+  readonly vault: string
+  readonly githubUserId: string
+  readonly claimId: string
+  readonly claimDigest: string
+  readonly destination: string
+  readonly idempotencyKey: string
+}
+
+export type AttesterStep = "pay" | "complete-bind"
+
+export error AttesterRefused { status: number }
+
+export error AttesterUnavailable { reason: string }
+
+schema AttesterAnswer { transactionId: string; transaction?: string }
+
+const attesterOrigin = "https://identity-attester.internal"
+const answerLimitBytes = 64 * 1024
+
+function pathOf(step: AttesterStep, privateScope: boolean) {
+  return `${attesterOrigin}/v1/${privateScope ? "security/" : ""}${step}`
+}
+
+export effect function attest(fetcher: Fetcher, request: { readonly step: AttesterStep; readonly privateScope: boolean; readonly payment: AttesterPayment; readonly transaction?: string }) {
+  const body = request.transaction === undefined ? request.payment : { ...request.payment, transaction: request.transaction }
+  provide outboundVia(fetcher) {
+    const answered = try exchanged(outgoing("POST", pathOf(request.step, request.privateScope), body, { "idempotency-key": request.payment.idempotencyKey }), answerLimitBytes)
+    if (answered.kind === "unreachable") throw new AttesterUnavailable({ reason: "the identity attester could not be reached" })
+    if (answered.status < 200 || answered.status > 299) throw new AttesterRefused({ status: answered.status })
+    if (answered.kind !== "answered") throw new AttesterUnavailable({ reason: "the identity attester answered unreadable bytes" })
+    return Schema.decodeUnknownEffect(AttesterAnswer)(answered.value) catch effect () => { throw new AttesterUnavailable({ reason: "the identity attester answered an invalid binding" }) }
+  }
+}

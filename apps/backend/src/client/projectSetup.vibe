@@ -1,0 +1,117 @@
+// spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "A current maintainer removes a project and a lost reply can be retried"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema GithubActor { readonly githubId: string; readonly githubLogin: string }
+
+export schema ProjectRecord {
+  readonly id: string
+  readonly status: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly sourceApplicationId: string | null
+  readonly referrer: GithubActor | null
+  readonly manifest: Schema.Unknown
+}
+
+export schema SetupCheckState { readonly state: string; readonly message: string }
+
+export schema ScanCheckState { readonly state: string; readonly message: string; readonly exempt?: boolean; readonly exemptionKind?: "existing-project" | "owner-approved-admission" }
+
+export schema SetupChecks { readonly authority: SetupCheckState; readonly installation: SetupCheckState; readonly scan: ScanCheckState }
+
+export schema NextAction { readonly kind: string; readonly message: string; readonly href: string | null }
+
+export schema SetupStatus {
+  readonly projectId: string
+  readonly name: string
+  readonly slug: string
+  readonly revision: number
+  readonly status: string
+  readonly state: "restricted" | "retry" | "action_required" | "waiting" | "ready"
+  readonly nextAction: NextAction
+  readonly checks: SetupChecks
+  readonly funding: Schema.Unknown
+  readonly activatedRevision: number | null
+  readonly checkedAt: string
+}
+
+export schema PublicApplication {
+  readonly id: string
+  readonly projectId: string
+  readonly repository: string | null
+  readonly manifest: Schema.Unknown
+  readonly manifestSha256: string
+  readonly acceptanceCriteria: string
+  readonly applicant: GithubActor
+  readonly submittedAt: string
+  readonly status: string
+  readonly adminNotification: string
+  readonly adminNotificationAt: string | null
+  readonly decidedAt: string | null
+  readonly decidedBy: GithubActor | null
+  readonly decisionReason: string | null
+  readonly githubCheck: Schema.Unknown
+  readonly expectedRevision?: number
+  readonly changeReason?: string
+  readonly referrer: GithubActor | null
+}
+
+export schema SetupApplication {
+  readonly id: string
+  readonly projectId: string
+  readonly repository: string | null
+  readonly manifest: Schema.Unknown
+  readonly manifestSha256: string
+  readonly acceptanceCriteria: string
+  readonly applicant: GithubActor
+  readonly submittedAt: string
+  readonly status: string
+  readonly adminNotification: string
+  readonly adminNotificationAt: string | null
+  readonly decidedAt: string | null
+  readonly decidedBy: GithubActor | null
+  readonly decisionReason: string | null
+  readonly githubCheck: Schema.Unknown
+  readonly expectedRevision?: number
+  readonly changeReason?: string
+  readonly referrer: GithubActor | null
+  readonly publishable: boolean
+}
+
+export schema OwnedProject { readonly id: string; readonly slug: string; readonly name: string; readonly status: string; readonly listingTier: string; readonly revision: number }
+
+export schema RevisionChanges { readonly presentation: ReadonlyArray<string>; readonly executable: ReadonlyArray<string>; readonly financial: ReadonlyArray<string> }
+
+export schema CreateRequest { readonly manifest: Schema.Unknown; readonly referrer?: string | null; readonly monthlyAmount?: string }
+export schema ReviseRequest { readonly manifest: Schema.Unknown; readonly expectedRevision: Schema.Unknown; readonly reason?: Schema.Unknown; readonly monthlyAmount?: string }
+export schema RemoveRequest { readonly expectedRevision: Schema.Unknown }
+export schema CheckRequest { readonly requestScan?: Schema.Unknown }
+export schema EmptyRequest {}
+
+export schema Created { readonly project: ProjectRecord; readonly setup: SetupStatus }
+export schema Revised { readonly project: ProjectRecord; readonly changes: RevisionChanges; readonly setup: SetupStatus }
+export schema Removed { readonly project: ProjectRecord }
+export schema SetupList { readonly projects: ReadonlyArray<OwnedProject>; readonly applications: ReadonlyArray<SetupApplication> }
+export schema SetupViewer { readonly viewer: { readonly githubId: string }; readonly canManageBounty: boolean }
+export schema Checked { readonly setup: SetupStatus }
+export schema MyApplications { readonly applications: ReadonlyArray<PublicApplication> }
+export schema Cancelled { readonly application: PublicApplication }
+export schema OwnedRepository { readonly repository: string; readonly description: string | null }
+export schema OwnedRepositories { readonly repositories: ReadonlyArray<OwnedRepository> }
+export schema RepositoryFacts { readonly repository: Schema.Unknown }
+
+export const createProject = route({ method: "POST", path: "/api/v1/projects", access: "sessionWrite", limitKib: 128, request: CreateRequest, answer: Created, rejected: "registry_conflict", cache: "no-store", status: 201 })
+export const reviseProject = route({ method: "PUT", path: "/api/v1/projects/:id", access: "sessionWrite", limitKib: 128, request: ReviseRequest, answer: Revised, rejected: "stale_revision", cache: "no-store" })
+export const removeProject = route({ method: "POST", path: "/api/v1/projects/:id/remove", access: "sessionWrite", limitKib: 1, request: RemoveRequest, answer: Removed, rejected: "stale_revision", cache: "no-store" })
+export const listSetup = route({ method: "GET", path: "/api/v1/project-setup", access: "session", limitKib: 0, request: undefined, answer: SetupList, rejected: "rejected", cache: "no-store" })
+export const setupViewer = route({ method: "GET", path: "/api/v1/project-setup/:id", access: "session", limitKib: 0, request: undefined, answer: SetupViewer, rejected: "rejected", cache: "no-store" })
+export const checkSetup = route({ method: "POST", path: "/api/v1/project-setup/:id/check", access: "sessionWrite", limitKib: 1, request: CheckRequest, answer: Checked, rejected: "rejected", cache: "no-store" })
+export const myApplications = route({ method: "GET", path: "/api/v1/project-applications/mine", access: "session", limitKib: 0, request: undefined, answer: MyApplications, rejected: "rejected", cache: "no-store" })
+export const publishApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/publish", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Schema.Union([Created, Revised]), rejected: "registry_conflict", cache: "no-store", status: 201 })
+export const cancelApplication = route({ method: "POST", path: "/api/v1/project-applications/:id/cancel", access: "sessionWrite", limitKib: 1, request: EmptyRequest, answer: Cancelled, rejected: "application_decided", cache: "no-store" })
+export const ownedRepositories = route({ method: "GET", path: "/api/v1/project-github/owned-repositories", access: "session", limitKib: 0, request: undefined, answer: OwnedRepositories, rejected: "rejected", cache: { scope: "private", browserSeconds: 300 } })
+export const repositoryFacts = route({ method: "GET", path: "/api/v1/project-github/repositories/:owner/:name", access: "session", limitKib: 0, request: undefined, answer: RepositoryFacts, rejected: "rejected", cache: { scope: "private", browserSeconds: 300 } })
+
+export const api: ReadonlyArray<AnyRoute> = [createProject, reviseProject, removeProject, listSetup, setupViewer, checkSetup, myApplications, publishApplication, cancelApplication, ownedRepositories, repositoryFacts]

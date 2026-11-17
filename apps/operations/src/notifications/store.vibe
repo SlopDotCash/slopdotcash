@@ -1,0 +1,357 @@
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Consent binds one verified destination version and opt-out suppresses waiting mail"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+import { isoAt } from "@repo/platform/clock"
+import { RowMismatch, type Statement, list, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
+import { Notice } from "@repo/ports/operations"
+import { type Event, type Inbox, NotAState, type Notice as Held, apply, canRead, noNotice } from "../../gen/operations__notifications.effect.vibe"
+import { type Channel, type Delivery, type Projection, Release, configured, digestNumber, loaded, projected, recipientNumber, storedStates } from "./rows.vibe"
+import { saveNotice } from "./statements.vibe"
+
+export interface Scope {
+  readonly name: string
+  readonly recipients: ReadonlyArray<string>
+  readonly where: Statement
+}
+
+function within(ids: ReadonlyArray<string>): Statement {
+  const [first, ...rest] = ids
+  return first === undefined ? sql`(NULL)` : list([first, ...rest])
+}
+
+export function recipientScope(recipients: ReadonlyArray<string>): Scope {
+  return { name: `notices of ${recipients.join(",")}`, recipients, where: sql`n.recipient_github_id IN ${within(recipients)}` }
+}
+
+export function deliveryScope(channel: Channel, outboxId: string, recipients: ReadonlyArray<string>): Scope {
+  const where = channel === "security"
+    ? sql`(n.event_key, n.recipient_github_id) IN (SELECT event_key, recipient_github_id FROM security_notification_outbox WHERE id = ${outboxId} OR escalation_of = ${outboxId} OR id = (SELECT escalation_of FROM security_notification_outbox WHERE id = ${outboxId}))`
+    : sql`(n.event_key, n.recipient_github_id) IN (SELECT event_key, recipient_github_id FROM activity_notification_outbox WHERE id = ${outboxId})`
+  return { name: `${channel} delivery ${outboxId}`, recipients, where }
+}
+
+function involved(scope: Scope, release: Release): ReadonlyArray<string> {
+  const routed = release.routes.flatMap((route) => route.backupGithubId === undefined ? [route.recipientGithubId] : [route.recipientGithubId, route.backupGithubId])
+  return [...new Set([...scope.recipients, ...routed])]
+}
+
+function declared(ids: ReadonlyArray<string>): Statement {
+  return ids.reduce((rows, id, place) => sql`${rows} UNION ALL SELECT ${id}, ${place}`, sql`SELECT NULL AS github_id, NULL AS place WHERE 0`)
+}
+
+function noticeRows(where: Statement): Statement {
+  return sql`SELECT n.event_key, n.recipient_github_id, n.kind, n.subject, n.created_at, n.read_at,
+      CASE WHEN s.id IS NOT NULL THEN 'security' WHEN a.id IS NOT NULL THEN 'activity' END AS channel,
+      coalesce(s.id, a.id) AS outbox_id, s.case_id, s.template_version,
+      coalesce(s.state, a.state) AS state, coalesce(s.attempts, a.attempts) AS attempts,
+      coalesce(s.next_attempt_at, a.next_attempt_at) AS next_attempt_at, coalesce(s.claimed_at, a.claimed_at) AS claimed_at,
+      coalesce(s.destination_digest, a.destination_digest) AS destination_digest,
+      coalesce(s.destination_version, a.destination_version) AS destination_version,
+      s.acknowledged_at, s.escalation_of, coalesce(a.essential, 0) AS essential
+    FROM notifications n
+    LEFT JOIN security_notification_outbox s ON s.event_key = n.event_key AND s.recipient_github_id = n.recipient_github_id
+    LEFT JOIN activity_notification_outbox a ON a.event_key = n.event_key AND a.recipient_github_id = n.recipient_github_id
+    WHERE ${where} ORDER BY n.rowid`
+}
+
+function eventRows(where: Statement): Statement {
+  return sql`SELECT 'security' AS channel, e.delivery_id, e.state, e.evidence_reference, e.destination_digest, e.at, e.id
+      FROM security_notification_delivery_events e
+      JOIN security_notification_outbox o ON o.id = e.delivery_id
+      JOIN notifications n ON n.event_key = o.event_key AND n.recipient_github_id = o.recipient_github_id
+     WHERE ${where}
+    UNION ALL
+    SELECT 'activity', e.delivery_id, e.state, e.evidence_reference, e.destination_digest, e.at, e.id
+      FROM activity_notification_delivery_events e
+      JOIN activity_notification_outbox o ON o.id = e.delivery_id
+      JOIN notifications n ON n.event_key = o.event_key AND n.recipient_github_id = o.recipient_github_id
+     WHERE ${where}
+    ORDER BY 6, 1, 7`
+}
+
+function consentRows(where: Statement, ids: ReadonlyArray<string>): Statement {
+  return sql`WITH declared(github_id, place) AS (${declared(ids)}),
+      involved(github_id, place) AS (
+        SELECT github_id, min(place) FROM (
+          SELECT github_id, place FROM declared
+          UNION ALL SELECT n.recipient_github_id, 1000000000000 + n.rowid FROM notifications n WHERE ${where}
+        ) GROUP BY github_id)
+    SELECT i.github_id, p.enabled, p.security_enabled, p.destination_version AS preference_version, p.revision,
+      d.destination_version, d.verified_at
+    FROM involved i
+    LEFT JOIN notification_email_preferences p ON p.github_id = i.github_id
+    LEFT JOIN notification_email_destinations d ON d.github_id = i.github_id
+    ORDER BY i.place`
+}
+
+export function aggregate(scope: Scope, release: Release): Aggregate<Projection, RowMismatch | NotAState, never> {
+  const notices = noticeRows(scope.where)
+  const events = eventRows(scope.where)
+  const consents = consentRows(scope.where, involved(scope, release))
+  return {
+    name: scope.name,
+    version: sql`SELECT json_array(
+        (SELECT json_group_array(json_array(event_key, recipient_github_id, read_at, outbox_id, state, attempts, next_attempt_at, claimed_at, destination_digest, destination_version, acknowledged_at, escalation_of)) FROM (${notices})),
+        (SELECT json_group_array(json_array(channel, delivery_id, state, evidence_reference, destination_digest)) FROM (${events})),
+        (SELECT json_group_array(json_array(github_id, enabled, security_enabled, preference_version, revision, destination_version, verified_at)) FROM (${consents}))
+      ) AS version`,
+    reads: [notices, events, consents],
+    decode: (rows) => effect {
+      return try projected(try loaded(rows), release, try Clock.currentTimeMillis)
+    },
+  }
+}
+
+const SafeInt = Schema.Int.check(Schema.isBetween({ minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER }))
+
+const Access = Schema.Union([
+  Schema.Struct({ tag: Schema.Literal("Allowed"), acknowledgeHours: SafeInt }),
+  Schema.Struct({ tag: Schema.Literal("Denied") }),
+  Schema.Struct({ tag: Schema.Literal("Unavailable") }),
+])
+
+export const Change = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("publishConfig"), release: Release }),
+  Schema.Struct({ type: Schema.Literal("save"), notice: Notice }),
+  Schema.Struct({ type: Schema.Literal("advanceClock"), elapsed: SafeInt }),
+  Schema.Struct({ type: Schema.Literal("claim"), id: SafeInt }),
+  Schema.Struct({ type: Schema.Literal("expireClaim"), id: SafeInt }),
+  Schema.Struct({ type: Schema.Literal("failPreparation"), id: SafeInt, attempt: SafeInt }),
+  Schema.Struct({ type: Schema.Literal("send"), id: SafeInt, attempt: SafeInt, result: Schema.Literals(["Accepted", "QuotaRejected", "Thrown"]) }),
+  Schema.Struct({ type: Schema.Literal("prepare"), id: SafeInt, attempt: SafeInt, access: Access }),
+  Schema.Struct({
+    type: Schema.Literal("reconcile"),
+    id: SafeInt,
+    evidence: Schema.Struct({ reference: Schema.String, attempt: SafeInt, digest: Schema.String, finding: Schema.Literals(["DeliveredOutcome", "BouncedOutcome", "SuppressedOutcome", "NotAccepted"]) }),
+  }),
+  Schema.Struct({ type: Schema.Literal("read"), id: SafeInt }),
+  Schema.Struct({ type: Schema.Literal("acknowledge"), id: SafeInt, access: Access }),
+  Schema.Struct({ type: Schema.Literal("escalate"), id: SafeInt, primaryAccess: Access, backupAccess: Access }),
+])
+
+export type Change = typeof Change.Type
+
+interface Translated {
+  readonly event: Event
+  readonly by: number
+  readonly recipients: ReadonlyArray<string>
+  readonly keys: ReadonlyArray<string>
+  readonly versions: ReadonlyArray<string>
+  readonly references: ReadonlyArray<string>
+}
+
+function translated(projection: Projection, change: Change, by: string): Translated {
+  const recipients = [...projection.recipients]
+  const keys = [...projection.keys]
+  const versions = [...projection.versions]
+  const references = [...projection.references]
+  const event = eventOf(change, projection, { recipients, keys, versions, references })
+  return { event, by: recipientNumber(recipients, by), recipients, keys, versions, references }
+}
+
+interface Interned {
+  readonly recipients: string[]
+  readonly keys: string[]
+  readonly versions: string[]
+  readonly references: string[]
+}
+
+function eventOf(change: Change, projection: Projection, interned: Interned): Event {
+  switch (change.type) {
+    case "publishConfig":
+      return { type: "publishConfig", config: configured(change.release, interned.recipients, change.release.routes.map((route) => route.pilot?.digest)) }
+    case "save":
+      return { type: "save", key: keyNumber(interned.keys, change.notice.eventKey), kind: change.notice.kind, recipient: recipientNumber(interned.recipients, change.notice.recipientGithubId) }
+    case "advanceClock":
+      return { type: "advanceClock", elapsed: change.elapsed }
+    case "claim":
+      return { type: "claim", id: change.id }
+    case "expireClaim":
+      return { type: "expireClaim", id: change.id }
+    case "failPreparation":
+      return { type: "failPreparation", id: change.id, attempt: change.attempt }
+    case "send":
+      return { type: "send", id: change.id, attempt: change.attempt, result: change.result }
+    case "prepare":
+      return { type: "prepare", id: change.id, attempt: change.attempt, access: change.access }
+    case "reconcile":
+      return {
+        type: "reconcile",
+        id: change.id,
+        providerEvidence: {
+          reference: referenceNumber(interned.references, change.evidence.reference),
+          attempt: change.evidence.attempt,
+          digest: digestNumber(change.evidence.digest, interned.versions, projection.pilots),
+          finding: change.evidence.finding,
+        },
+      }
+    case "read":
+      return { type: "read", id: change.id }
+    case "acknowledge":
+      return { type: "acknowledge", id: change.id, access: change.access }
+    case "escalate":
+      return { type: "escalate", id: change.id, primaryAccess: change.primaryAccess, backupAccess: change.backupAccess }
+  }
+}
+
+function keyNumber(keys: string[], eventKey: string): number {
+  const found = keys.indexOf(eventKey)
+  if (found >= 0) return found + 1
+  keys.push(eventKey)
+  return keys.length
+}
+
+function referenceNumber(references: string[], reference: string): number {
+  return reference === "" ? 0 : keyNumber(references, reference)
+}
+
+function textOf(list: ReadonlyArray<string | undefined>, number: number): string {
+  return list[number - 1] ?? ""
+}
+
+export function digestText(projection: Pick<Projection, "versions" | "pilots">, digest: number): string {
+  return digest > 1000 ? textOf(projection.pilots, digest - 1000) : textOf(projection.versions, digest)
+}
+
+function outboxUpdate(delivery: Delivery, set: Statement): Statement {
+  return delivery.channel === "security"
+    ? sql`UPDATE security_notification_outbox SET ${set} WHERE id = ${delivery.id}`
+    : sql`UPDATE activity_notification_outbox SET ${set} WHERE id = ${delivery.id}`
+}
+
+interface Recorded {
+  readonly state: string
+  readonly reference: string | null
+  readonly attempt: number
+  readonly digest: string | null
+  readonly at: string
+}
+
+function deliveryEvent(delivery: Delivery, recorded: Recorded): Statement {
+  const values = sql`(${delivery.id}, ${recorded.state}, ${recorded.reference}, ${recorded.attempt}, ${recorded.digest}, ${recorded.at})`
+  return delivery.channel === "security"
+    ? sql`INSERT INTO security_notification_delivery_events (delivery_id, state, evidence_reference, attempt, destination_digest, at) VALUES ${values}`
+    : sql`INSERT INTO activity_notification_delivery_events (delivery_id, state, evidence_reference, attempt, destination_digest, at) VALUES ${values}`
+}
+
+effect function deliveryOf(projection: Projection, id: number) {
+  const delivery = projection.stored[id - 1]?.delivery
+  if (delivery === undefined) throw new RowMismatch({ text: "notification outbox", issue: `notice ${id} has no delivery row` })
+  return delivery
+}
+
+function heldAt(inbox: Inbox, id: number): Held {
+  return inbox.notices[id - 1] ?? noNotice
+}
+
+effect function transition(projection: Projection, after: Inbox, id: number, at: string, evidence: string | null) {
+  const delivery = try deliveryOf(projection, id)
+  const notice = heldAt(after, id)
+  const state = notice.state === "NotQueued" ? "queued" : storedStates[notice.state]
+  const digest = notice.digest === 0 ? null : digestText(projection, notice.digest)
+  const recorded = { state: notice.prepared ? "prepared" : state, reference: evidence, attempt: notice.attempts, digest, at }
+  return [
+    outboxUpdate(delivery, sql`state = ${state}, updated_at = ${at}, next_attempt_at = ${try isoAt(notice.nextAt)}, destination_digest = ${digest}, provider_reference = coalesce(${evidence}, provider_reference)`),
+    deliveryEvent(delivery, recorded),
+  ]
+}
+
+effect function writesFor(projection: Projection, change: Change, after: Inbox) {
+  const before = projection.inbox
+  const at = try isoAt(before.clock)
+  switch (change.type) {
+    case "publishConfig":
+    case "advanceClock":
+      return []
+    case "save":
+      return after.notices.length > before.notices.length ? [saveNotice(change.notice, at)] : []
+    case "claim":
+      return [try claimed(projection, after, change.id, at)]
+    case "expireClaim":
+      return [outboxUpdate(try deliveryOf(projection, change.id), sql`state = 'ambiguous', updated_at = ${at}`)]
+    case "failPreparation":
+    case "send":
+    case "prepare":
+      return try transition(projection, after, change.id, at, null)
+    case "reconcile":
+      return try transition(projection, after, change.id, at, change.evidence.reference)
+    case "read":
+      return [try readAt(projection, after, change.id)]
+    case "acknowledge":
+      return [outboxUpdate(try deliveryOf(projection, change.id), sql`acknowledged_at = ${try isoAt(heldAt(after, change.id).acknowledgedAt)}, updated_at = ${at}`)]
+    case "escalate":
+      return try escalated(projection, after, change.id, at)
+  }
+}
+
+effect function claimed(projection: Projection, after: Inbox, id: number, at: string) {
+  const notice = heldAt(after, id)
+  return outboxUpdate(try deliveryOf(projection, id), sql`state = 'sending', attempts = ${notice.attempts}, claimed_at = ${try isoAt(notice.claimedAt)}, updated_at = ${at}, destination_digest = NULL`)
+}
+
+effect function readAt(projection: Projection, after: Inbox, id: number) {
+  const stored = projection.stored[id - 1]
+  if (stored === undefined) throw new RowMismatch({ text: "notifications", issue: `notice ${id} is not loaded` })
+  return sql`UPDATE notifications SET read_at = ${try isoAt(heldAt(after, id).readAt)} WHERE event_key = ${stored.eventKey} AND recipient_github_id = ${stored.recipientGithubId} AND read_at IS NULL`
+}
+
+effect function escalated(projection: Projection, after: Inbox, id: number, at: string) {
+  const primary = try deliveryOf(projection, id)
+  const copy = heldAt(after, after.notices.length)
+  const backup = textOf(projection.recipients, copy.recipient)
+  const caseId = primary.caseId ?? ""
+  const eventKey = `security-escalation:${primary.id}`
+  return [
+    saveNotice({ eventKey, recipientGithubId: backup, kind: "SecurityCase", subject: caseId, actionPath: `/security?case=${caseId}`, sourceAt: at }, at),
+    sql`UPDATE security_notification_outbox SET escalation_of = ${primary.id} WHERE event_key = ${eventKey} AND recipient_github_id = ${backup} AND escalation_of IS NULL`,
+  ]
+}
+
+effect function decide(projection: Projection, change: Change, by: string) {
+  const translation = translated(projection, change, by)
+  const after = try apply(projection.inbox, translation.event, translation.by)
+  return {
+    value: { ...projection, inbox: after, recipients: translation.recipients, keys: translation.keys, versions: translation.versions, references: translation.references },
+    writes: try writesFor(projection, change, after),
+  } satisfies Decision<Projection>
+}
+
+export interface ReadMany {
+  readonly recipientGithubId: string
+  readonly eventKeys: ReadonlyArray<string>
+}
+
+export interface Marked {
+  readonly projection: Projection
+  readonly marked: number
+}
+
+effect function readDecision(projection: Projection, request: ReadMany) {
+  const reader = recipientNumber([...projection.recipients], request.recipientGithubId)
+  const wanted = new Set(request.eventKeys)
+  let inbox = projection.inbox
+  let marked = 0
+  for (const [index, stored] of projection.stored.entries()) {
+    if (!wanted.has(stored.eventKey) || stored.recipientGithubId !== request.recipientGithubId || !canRead(inbox, index + 1, reader)) continue
+    inbox = try apply(inbox, { type: "read", id: index + 1 }, reader)
+    marked += 1
+  }
+  const writes = marked === 0 ? [] : [sql`UPDATE notifications SET read_at = ${try isoAt(projection.inbox.clock)}
+    WHERE recipient_github_id = ${request.recipientGithubId} AND read_at IS NULL AND event_key IN (SELECT value FROM json_each(${JSON.stringify(request.eventKeys)}))`]
+  return { value: { projection: { ...projection, inbox }, marked } satisfies Marked, writes } satisfies Decision<Marked>
+}
+
+export effect function observe(scope: Scope, release: Release) {
+  return (try load(aggregate(scope, release))).state
+}
+
+export effect function send(scope: Scope, change: Change, by: string, release: Release) {
+  return try update(aggregate(scope, release), (projection) => decide(projection, change, by))
+}
+
+export effect function readMany(request: ReadMany, release: Release) {
+  return try update(aggregate(recipientScope([request.recipientGithubId]), release), (projection) => readDecision(projection, request))
+}
+
+export function noticeIdOf(projection: Projection, channel: Channel, outboxId: string): number {
+  return projection.stored.findIndex((notice) => notice.delivery?.channel === channel && notice.delivery.id === outboxId) + 1
+}

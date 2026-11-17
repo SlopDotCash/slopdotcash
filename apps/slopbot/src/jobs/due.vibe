@@ -1,0 +1,45 @@
+// spec/slopbot/jobQueue.md, "A due maintainer hold or appeal is sent when due and again after a day without resolution"
+import { isoAt } from "@repo/platform/clock"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { requeueAfter } from "../../gen/slopbot__jobQueue.effect.vibe"
+import { parseJob, send } from "./job.vibe"
+
+export schema DueTable = "slopbot_maintainer_holds" | "slopbot_appeals"
+
+schema DueRow { key: string; job_json: string }
+
+export const dueLimit = 100
+
+function dueRows(table: DueTable, now: string, before: string) {
+  return table === "slopbot_maintainer_holds"
+    ? sql`SELECT review_key AS key, job_json FROM slopbot_maintainer_holds WHERE resolved_at IS NULL AND due_at <= ${now} AND (queued_at IS NULL OR queued_at <= ${before}) ORDER BY due_at, review_key LIMIT ${dueLimit}`
+    : sql`SELECT appeal_key AS key, job_json FROM slopbot_appeals WHERE resolved_at IS NULL AND escalated_at IS NULL AND due_at <= ${now} AND (queued_at IS NULL OR queued_at <= ${before}) ORDER BY due_at, appeal_key LIMIT ${dueLimit}`
+}
+
+function dispatched(table: DueTable, key: string, at: string) {
+  return table === "slopbot_maintainer_holds"
+    ? sql`UPDATE slopbot_maintainer_holds SET queued_at = ${at} WHERE review_key = ${key} AND resolved_at IS NULL`
+    : sql`UPDATE slopbot_appeals SET queued_at = ${at} WHERE appeal_key = ${key} AND resolved_at IS NULL`
+}
+
+export effect function dueJobs(table: DueTable) {
+  const millis = try Clock.currentTimeMillis
+  const now = try isoAt(millis)
+  const found = try rows(DueRow, dueRows(table, now, try isoAt(millis - requeueAfter * 1000)))
+  const jobs = []
+  for (const row of found) jobs.push({ key: row.key, job: try parseJob(row.job_json) })
+  return { at: now, jobs }
+}
+
+export effect function markDispatched(table: DueTable, key: string, at: string) {
+  return try (try D1).run(dispatched(table, key, at))
+}
+
+export effect function dispatchDue(table: DueTable) {
+  const { at, jobs } = try dueJobs(table)
+  for (const { key, job } of jobs) {
+    try send(job)
+    try markDispatched(table, key, at)
+  }
+  return jobs.length
+}

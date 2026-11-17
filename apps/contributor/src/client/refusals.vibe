@@ -1,0 +1,158 @@
+// spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"
+
+const jsonNoStoreSlopTraceApiContract = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-slop-trace-api-contract": "private-trace-v1-opaque-hmac-v1" } as const
+const textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity = { "access-control-allow-origin": "*", "cache-control": "no-store", "content-security-policy": "default-src 'none'; frame-ancestors 'none'", "content-type": "text/plain; charset=utf-8", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000; includeSubDomains", "x-content-type-options": "nosniff" } as const
+
+const withNotFoundAndHttpsRequiredV4 = {
+  notFound: { status: 404, error: "not_found", headers: jsonNoStoreSlopTraceApiContract },
+  httpsRequired: { status: 400, error: "https_required", headers: jsonNoStoreSlopTraceApiContract },
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withParticipationBanned = {
+  participationBanned: { status: 403, error: "participation_banned", message: "This account cannot start new Slop contributions. Funded awards and appeals remain available.", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundAndHttpsRequiredV2 = {
+  ...withNotFoundAndHttpsRequiredV4,
+  forbidden: { status: 403, error: "forbidden", message: "Same-origin operator session is required", headers: jsonNoStoreSlopTraceApiContract },
+  originNotAllowedSameOriginAccessIs: { status: 403, error: "origin_not_allowed", message: "Same-origin access is required", headers: jsonNoStoreSlopTraceApiContract },
+  unauthorizedAuthenticationFailed: { status: 401, error: "unauthorized", message: "Authentication failed", headers: jsonNoStoreSlopTraceApiContract },
+  forbiddenOperatorAccessIsRequired: { status: 403, error: "forbidden", message: "Operator access is required", headers: jsonNoStoreSlopTraceApiContract },
+  forbiddenWriteAccessIsNot: { status: 403, error: "forbidden", message: "Write access is not permitted", headers: jsonNoStoreSlopTraceApiContract },
+  ...withParticipationBanned,
+  invalidIdempotencyKey: { status: 400, error: "invalid_idempotency_key", message: "A valid Idempotency-Key is required", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withInvalidContentLength = {
+  invalidContentLength: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundAndHttpsRequired = {
+  ...withNotFoundAndHttpsRequiredV2,
+  ...withInvalidContentLength,
+  payloadTooLargeRequestBodyExceeds65536: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestRequestBodyMustBe: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestRequestBodyMustBeAJSONObject: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonNoStoreSlopTraceApiContract },
+  idempotencyConflictIdempotencyKeyWasReused: { status: 409, error: "idempotency_conflict", message: "Idempotency key was reused", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withNotFoundRunNotFound = {
+  notFoundRunNotFound: { status: 404, error: "not_found", message: "Run not found", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withInvalidRequestInvalidRunId = {
+  invalidRequestInvalidRunId: { status: 400, error: "invalid_request", message: "Invalid run id", headers: jsonNoStoreSlopTraceApiContract },
+  ...withNotFoundRunNotFound,
+} as const
+
+const withNotFound = {
+  ...withNotFoundAndHttpsRequired,
+  ...withInvalidRequestInvalidRunId,
+} as const
+
+const withThisProjectIsIts = {
+  thisProjectIsIts: { status: 410, textFrom: "`This project is ${restriction.state}. Its skills, guides and archives are not available.\\n`", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  projectNotFound: { status: 404, text: "Project not found.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  thisProjectHasNot: { status: 404, text: "This project has not published its skills yet. Its maintainers must complete the contribution fields first.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  slopCannotConfirmThis: { status: 503, text: "Slop cannot confirm this repository's retained admission evidence. Try again.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  thisRepositoryHasNo: { status: 404, text: "This repository has no usable admission clearance. Slop serves no skill while admission or a required security investigation is unscanned, queued, quarantined, stale or banned.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  artifactNotFound: { status: 404, text: "Artifact not found.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+  projectArtifactsAreUnavailable: { status: 503, text: "Project artifacts are unavailable. Try again.\n", headers: textNoStoreAccessControlAllowOriginContentSecurityPolicyStrictTransportSecurity },
+} as const
+
+const withNotFoundAndHttpsRequiredV3 = {
+  ...withNotFoundAndHttpsRequiredV4,
+  privateIntakeUnavailable: { status: 503, error: "private_intake_unavailable", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withUnsupportedMediaType = {
+  unsupportedMediaType: { status: 415, error: "unsupported_media_type", message: "Trace must be UTF-8 text or NDJSON", headers: jsonNoStoreSlopTraceApiContract },
+  runFinalized: { status: 409, error: "run_finalized", message: "A finalized run cannot be changed", headers: jsonNoStoreSlopTraceApiContract },
+  traceConflict: { status: 409, error: "trace_conflict", message: "The run already has a different trace", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+const withOriginNotAllowed = {
+  originNotAllowed: { status: 403, error: "origin_not_allowed", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const getPrivateRequestIntake = {
+  ...withNotFoundAndHttpsRequiredV3,
+} as const
+
+export const putTraceUploadsByCapability = {
+  ...withNotFoundAndHttpsRequiredV3,
+  notFoundUploadCapabilityNotFound: { status: 404, error: "not_found", message: "Upload capability not found", headers: jsonNoStoreSlopTraceApiContract },
+  uploadCapabilityInvalid: { status: 410, error: "upload_capability_invalid", message: "Upload capability is used or expired", headers: jsonNoStoreSlopTraceApiContract },
+  ...withParticipationBanned,
+  ...withUnsupportedMediaType,
+  intentMismatch: { status: 422, error: "intent_mismatch", message: "Trace content type does not match upload intent", headers: jsonNoStoreSlopTraceApiContract },
+  ...withInvalidContentLength,
+  payloadTooLarge: { status: 413, error: "payload_too_large", message: "Request body exceeds 8388608 bytes", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequest: { status: 400, error: "invalid_request", message: "Trace body must not be empty", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestTraceBodyMustBe: { status: 400, error: "invalid_request", message: "Trace body must be valid UTF-8", headers: jsonNoStoreSlopTraceApiContract },
+  intentMismatchTraceSizeDoesNot: { status: 422, error: "intent_mismatch", message: "Trace size does not match upload intent", headers: jsonNoStoreSlopTraceApiContract },
+  invalidDigest: { status: 400, error: "invalid_digest", message: "Digest must be sha-256=<lowercase hex>", headers: jsonNoStoreSlopTraceApiContract },
+  digestMismatch: { status: 422, error: "digest_mismatch", message: "Trace digest does not match its bytes", headers: jsonNoStoreSlopTraceApiContract },
+  objectIntegrityConflict: { status: 409, error: "object_integrity_conflict", message: "Trace object metadata conflicts", headers: jsonNoStoreSlopTraceApiContract },
+  ...withNotFoundRunNotFound,
+  traceConflictTheRunCannotReserve: { status: 409, error: "trace_conflict", message: "The run cannot reserve this trace for upload", headers: jsonNoStoreSlopTraceApiContract },
+  idempotencyConflict: { status: 409, error: "idempotency_conflict", message: "Idempotency key or trace was reused", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const postAuthSession = {
+  ...withNotFoundAndHttpsRequiredV4,
+  ...withOriginNotAllowed,
+  unauthorized: { status: 401, error: "unauthorized", message: "Identity authentication failed", headers: jsonNoStoreSlopTraceApiContract },
+  otherMethods: {
+    ...withOriginNotAllowed,
+    headersNotAllowed: { status: 403, error: "headers_not_allowed", headers: jsonNoStoreSlopTraceApiContract },
+  },
+} as const
+
+export const postRuns = {
+  ...withNotFoundAndHttpsRequired,
+  invalidRequestInvalidClientRunId: { status: 400, error: "invalid_request", message: "Invalid clientRunId", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidProjectId: { status: 400, error: "invalid_request", message: "Invalid projectId", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidRepository: { status: 400, error: "invalid_request", message: "Invalid repository", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidProjectPolicyRevision: { status: 400, error: "invalid_request", message: "Invalid projectPolicyRevision", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidProvider: { status: 400, error: "invalid_request", message: "Invalid provider", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidModel: { status: 400, error: "invalid_request", message: "Invalid model", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidClient: { status: 400, error: "invalid_request", message: "Invalid client", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidClientVersion: { status: 400, error: "invalid_request", message: "Invalid clientVersion", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const postRunsByIdTraceIntents = {
+  ...withNotFound,
+  ...withUnsupportedMediaType,
+  invalidRequestInvalidSha256: { status: 400, error: "invalid_request", message: "Invalid sha256", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestSizeBytesMustBe1: { status: 400, error: "invalid_request", message: "sizeBytes must be 1-8388608", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidContentType: { status: 400, error: "invalid_request", message: "Invalid contentType", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const postRunsByIdFinalize = {
+  ...withNotFoundAndHttpsRequiredV2,
+  ...withInvalidRequestInvalidRunId,
+  traceRequired: { status: 409, error: "trace_required", message: "Every run must upload a trace before finalizing", headers: jsonNoStoreSlopTraceApiContract },
+  finalizeConflict: { status: 409, error: "finalize_conflict", message: "Run could not be finalized", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const postRunsByIdEvents = {
+  ...withNotFound,
+  runFinalizedRunIsFinalized: { status: 409, error: "run_finalized", message: "Run is finalized", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidEventKind: { status: 400, error: "invalid_request", message: "Invalid event kind", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidOccurredAt: { status: 400, error: "invalid_request", message: "Invalid occurredAt", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestEventTimeIsToo: { status: 400, error: "invalid_request", message: "Event time is too far in the future", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidEventSource: { status: 400, error: "invalid_request", message: "Invalid event source", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidGithubObjectId: { status: 400, error: "invalid_request", message: "Invalid githubObjectId", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidGithubUrl: { status: 400, error: "invalid_request", message: "Invalid githubUrl", headers: jsonNoStoreSlopTraceApiContract },
+  invalidRequestInvalidHeadSha: { status: 400, error: "invalid_request", message: "Invalid headSha", headers: jsonNoStoreSlopTraceApiContract },
+} as const
+
+export const getWellKnownSlopProjectsJson = {
+  ...withThisProjectIsIts,
+} as const
+
+export const getProjectsByIdByArtifact = {
+  ...withThisProjectIsIts,
+} as const

@@ -1,0 +1,344 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import { utf8, webCrypto } from "@repo/platform/crypto"
+import type { Handler } from "@repo/platform/testing"
+import { settableClock } from "@repo/platform/testing/clock"
+import { asFetch, held } from "@repo/platform/testing/quotes"
+import { type RepositoryRegistry, encodeParts, leaderboardMethodology, paymentReviewBasisOmittedReason, paymentReviewPolicy, paymentReviewPolicyAt, ruleVersion, schemaVersion, scoreWindowDays, verificationWindowDays } from "@repo/points/client"
+import { readEntry } from "../../gen/frontend__snapshotCache.effect.vibe"
+import { fetchBounded } from "../../src/platform/bounded.vibe"
+import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { readCompletePages } from "../../src/reads/paged.vibe"
+import { Unreadable, resource } from "../../src/reads/resource.vibe"
+import { leaderboard } from "../../src/reads/snapshot.vibe"
+import { stale } from "../../src/reads/snapshotCache.vibe"
+
+const origin = "https://slop.test"
+const generatedAt = "2026-11-01T00:00:00.000Z"
+const generatedMs = 1_793_491_200_000
+const windowFrom = "2026-09-27T00:00:00.000Z"
+const registry: RepositoryRegistry = { registered: [], targets: [], projects: [] }
+
+const published = {
+  schemaVersion,
+  repository: null,
+  repositories: [],
+  ruleVersion,
+  generatedAt,
+  sourceUpdatedAt: generatedAt,
+  stale: false,
+  window: { days: scoreWindowDays, from: windowFrom, to: generatedAt },
+  methodology: leaderboardMethodology,
+  source: {
+    provider: "github-graphql",
+    fetchedAt: generatedAt,
+    cutoffAt: generatedAt,
+    repositoryId: null,
+    repositories: [],
+    requestCount: 1,
+    searchSliceCount: 0,
+    rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-01T01:00:00.000Z" },
+    counts: { mergedPullRequests: 0, detailedMergedPullRequests: 0, closedIssues: 0, detailedClosedIssues: 0, resolvedIssues: 0, openIssues: 0, openPullRequests: 0 },
+    verificationWindow: { days: verificationWindowDays, from: windowFrom, to: generatedAt },
+    evidenceVerification: { status: "complete", sourceCount: 0, artifactCount: 0, maxSources: 200, maxArtifacts: 600 },
+  },
+  leaders: [],
+  ledger: [],
+  reviewExclusions: [],
+  penalties: [],
+  opportunities: [],
+  attributions: [],
+  invalidAttributionMarkers: [],
+  attributionCoverage: { status: "missing", eligibleSourceCount: 0, validSourceCount: 0, missingSourceCount: 0, invalidSourceCount: 0, humanOnlySourceCount: 0 },
+  workQueue: { issues: [], pullRequests: [] },
+  paymentReviewBasisOmitted: { policy: paymentReviewPolicy, effectiveAt: paymentReviewPolicyAt, reason: paymentReviewBasisOmittedReason },
+}
+
+const repositoryId = "SlopDotCash/slopdotcash"
+const repositoryUrl = "https://github.com/SlopDotCash/slopdotcash"
+const repositoryNode = "R_kgDOslop"
+const project = { id: repositoryId, owner: "SlopDotCash", name: "slopdotcash", displayName: "Slop", githubUrl: repositoryUrl, description: "Accepted work, scored and paid", integrationBranch: "main", projectId: "slop" }
+const scoredRegistry: RepositoryRegistry = {
+  registered: [{ ...project, nodeId: repositoryNode, aliases: [] }],
+  targets: [{ ...project, nodeId: repositoryNode, aliases: [] }],
+  projects: [{ id: "slop", skillSourcePath: "skills/slop" }],
+}
+const assessedDigest = "a".repeat(64)
+
+function actor(login: string) {
+  return { id: `U_${login}`, login, avatarUrl: `https://avatars.githubusercontent.com/u/${login}`, url: `https://github.com/${login}`, kind: "User" }
+}
+
+function pull(number: number) {
+  return { id: `PR_${number}`, kind: "pull-request", number, title: `Pull request ${number}`, url: `${repositoryUrl}/pull/${number}` }
+}
+
+function credit(id: string, who: ReturnType<typeof actor>, category: string, scoreThirds: number, occurredAt: string, source: ReturnType<typeof pull>) {
+  return { id, actor: who, category, points: scoreThirds / 3, scoreThirds, workUnitId: `wu_${id.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")}`, occurredAt, repository: repositoryId, source, reason: "Accepted work" }
+}
+
+function leader(rank: number, who: ReturnType<typeof actor>, merged: number, material: number, reviewed: number, outcomes: readonly [number, number, number]) {
+  const pointThirds = { mergedPullRequests: merged, resolvedIssues: 0, materialTestChanges: material, evidence: 0, substantiveReviews: reviewed, evaluatedContributions: 0 }
+  const scoreThirds = merged + material + reviewed
+  return {
+    rank,
+    actor: who,
+    score: Math.floor(scoreThirds / 3),
+    scoreThirds,
+    points: { mergedPullRequests: merged / 3, resolvedIssues: 0, materialTestChanges: material / 3, evidence: 0, substantiveReviews: reviewed / 3, evaluatedContributions: 0 },
+    pointThirds,
+    acceptedOutcomes: { mergedPullRequests: outcomes[0], resolvedIssues: 0, materialTestChanges: outcomes[1], evidenceCategories: 0, substantiveReviews: outcomes[2], evaluatedContributions: 0 },
+    rawActivity: { comments: 0, reviews: 0, commits: 0, additions: 0, deletions: 0 },
+    reportedModels: [],
+  }
+}
+
+const alice = actor("alice")
+const bob = actor("bob")
+const reviews = ["automated-review", "reviewer", "ratifier"].map((role, index) => credit(`PR_1:${role}:PRR_${index + 1}`, bob, "substantive-review", 9, `2026-10-0${index + 5}T00:00:00.000Z`, {
+  id: `PRR_${index + 1}`, kind: "review", number: 1, title: "Review of pull request 1", url: `${repositoryUrl}/pull/1#pullrequestreview-${index + 11}`,
+}))
+const leaders = [leader(1, alice, 36, 12, 0, [2, 1, 0]), leader(2, bob, 0, 0, 27, [0, 0, 3])]
+const { paymentReviewBasisOmitted: _omitted, ...unmarked } = published
+
+const scored = {
+  ...unmarked,
+  repository: repositoryId,
+  repositories: [{ ...project, role: "primary" }],
+  source: {
+    ...published.source,
+    repositoryId: repositoryNode,
+    repositories: [{ id: repositoryId, repositoryId: repositoryNode }],
+    searchSliceCount: 1,
+    counts: { ...published.source.counts, mergedPullRequests: 1, detailedMergedPullRequests: 1, closedUnmergedPullRequests: 1 },
+  },
+  leaders,
+  ledger: [
+    credit("PR_1:merged:alice", alice, "merged-pull-request", 30, "2026-10-20T00:00:00.000Z", pull(1)),
+    { ...credit("PR_2:joint:alice", alice, "merged-pull-request", 6, "2026-10-21T00:00:00.000Z", pull(2)), acceptanceKind: "indirect-integration", scoreDecisionSourceId: `value:${assessedDigest}`, scoreDecisionAt: "2026-10-21T00:00:00.000Z" },
+    credit("PR_1:material-test-change:alice", alice, "material-test-change", 12, "2026-10-20T00:00:00.000Z", pull(1)),
+    ...reviews,
+  ],
+  valueAssessmentCoverage: [
+    { pullRequestId: "PR_1", repository: repositoryId, pullRequestNumber: 1, status: "legacy-policy", recordDigest: null },
+    { pullRequestId: "PR_2", repository: repositoryId, pullRequestNumber: 2, status: "assessed", recordDigest: assessedDigest },
+  ],
+  paymentReviewBasis: {
+    policy: paymentReviewPolicy,
+    effectiveAt: paymentReviewPolicyAt,
+    leaders: leaders.slice(0, 1),
+    ledger: [],
+    removedEventIds: reviews.map((review) => review.id),
+    removedAttributionIds: [],
+    attributionOrder: [],
+    reviewExclusions: [],
+    attributions: [],
+    invalidAttributionMarkers: [],
+    attributionCoverage: published.attributionCoverage,
+    opportunities: [],
+  },
+}
+
+const overstated = { ...scored, source: { ...scored.source, counts: { ...scored.source.counts, detailedMergedPullRequests: 0 } } }
+
+interface Site {
+  root: Uint8Array
+  parts: Map<string, Uint8Array>
+  failRoot: number
+  corrupt: boolean
+  hold: boolean
+  history: "complete" | "loop" | "mixed"
+}
+
+const site: Site = { root: new Uint8Array(), parts: new Map(), failRoot: 0, corrupt: false, hold: false, history: "complete" }
+const requests: string[] = []
+const holds: string[] = []
+
+function page(rows: ReadonlyArray<string>, through: number, next: number | null) {
+  return new Response(JSON.stringify({ rows: rows.map((id) => ({ id })), through, total: 3, next }), { headers: { "content-type": "application/json" } })
+}
+
+function history(query: string) {
+  if (query === "") return page(["a", "b"], 9, 4)
+  if (site.history === "loop") return page(["c"], 9, 4)
+  if (site.history === "mixed") return page(["c"], 10, null)
+  return page(["c"], 9, null)
+}
+
+const serve: Handler = async (request) => {
+  const url = new URL(request.url)
+  if (url.pathname === "/data/leaderboard.json") {
+    requests.push(`root retry=${url.searchParams.get("retry") ?? ""}`)
+    if (site.failRoot > 0) {
+      site.failRoot -= 1
+      return new Response("unavailable", { status: 500 })
+    }
+    return new Response(site.root, { headers: { "content-type": "application/json" } })
+  }
+  if (url.pathname === "/api/v1/history") {
+    requests.push(`history ${url.search}`)
+    return history(url.search)
+  }
+  const part = site.parts.get(url.pathname)
+  if (part === undefined) return new Response("not found", { status: 404 })
+  requests.push("part")
+  if (site.hold) {
+    await held(request.signal, 30_000)
+    holds.push(request.signal.aborted ? "aborted" : "finished")
+  }
+  return new Response(site.corrupt ? utf8("changed") : part)
+}
+
+const clock = settableClock(generatedMs)
+
+const deployment = Layer.succeed(Deployment, {
+  tier: "production",
+  origins: originsOf("production"),
+  pageOrigin: origin,
+  localBackendOrigin: undefined,
+  loginHref: (next: string) => Effect.succeed(`/login?next=${next}`),
+})
+
+const Browser = Layer.mergeAll(FetchHttpClient.layer, webCrypto, deployment, clock.layer)
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function eventually<A>(probe: A!!, done: (value: A) => boolean) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const value = try probe
+    if (done(value)) return value
+    try sleep("50 millis")
+  }
+  return try probe
+}
+
+function taken() {
+  return requests.splice(0, requests.length)
+}
+
+function onFake<A, E, R>(program: A!E!R) {
+  return Effect.provideService(program, FetchHttpClient.Fetch, asFetch(serve))
+}
+
+schema Row { readonly id: string }
+schema Page { readonly rows: ReadonlyArray<Row>; readonly through: number; readonly total: number; readonly next: number | null }
+
+effect function historyPage(query: string) {
+  const body = try fetchBounded(`${origin}/api/v1/history${query}`, 1_048_576, "history")
+  return Schema.decodeUnknownEffect(Page)(body) catch effect () => { throw new Unreadable({ message: "history page shape" }) }
+}
+
+const refusals = { history: "History changed while reading", duplicate: "History repeats a row", count: "History count does not match", incomplete: "History is incomplete" }
+
+layer(Browser, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A visitor reads the multi-part leaderboard once, reuses it for a minute, retries a failed read once and cancels an abandoned read (spec/frontend/snapshotCache.md, "Story: Reuse a recent snapshot and retry a failed read once"; spec/frontend/snapshotCache.md, "A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted"; spec/frontend/snapshotCache.md, "Deferred disposal cancels transport only after the last matching consumer leaves"; spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/frontend/rankedSnapshot.md, "Open counts are exact and processed counts are maximum distinct source counts"; spec/frontend/rankedSnapshot.md, "Explicit payment differences and an omission marker are exclusive"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately")', () => onFake(effect {
+    const encoded = try encodeParts(utf8(`${JSON.stringify(published)}${" ".repeat(26 * 1024 * 1024)}`))
+    site.root = encoded.root
+    site.parts = new Map(encoded.parts.map((part) => [part.path, part.bytes]))
+    const { cache, ranked } = try leaderboard()
+    const first = cache.consumer()
+    const second = cache.consumer()
+
+    const both = try.all [cache.read(first, registry, false), cache.read(second, registry, false)]
+    const shared = taken()
+    clock.advance(59_999)
+    const reused = try cache.read(second, registry, false)
+    const withinMinute = taken()
+    clock.advance(1)
+    site.failRoot = 1
+    const retried = try cache.read(first, registry, false)
+    const afterMinute = taken()
+
+    site.failRoot = 2
+    const failed = cache.read(first, registry, true) catch (error) => `${error._tag}: ${"message" in error ? error.message : ""}`
+    const twiceFailed = taken()
+    site.corrupt = true
+    const corrupted = cache.read(first, registry, true) catch (error) => `${error._tag}: ${"message" in error ? error.message : ""}`
+    site.corrupt = false
+    taken()
+    const kept = try cache.shown(first)
+
+    clock.set(generatedMs + 28_800_000)
+    const atEightHours = try stale(generatedMs)
+    clock.set(generatedMs + 28_800_001)
+    const pastEightHours = try stale(generatedMs)
+
+    site.hold = true
+    const third = cache.consumer()
+    const abandoned = try Effect.forkChild(cache.read(third, registry, true))
+    try eventually(sync(() => requests.includes("part")), (seen) => seen)
+    try Fiber.interrupt(abandoned)
+    const cancelled = try eventually(sync(() => [...holds]), (seen) => seen.length > 0)
+    const transport = try cache.machine.get()
+    site.hold = false
+    taken()
+    const omittedResult = (try ranked.get()).result
+
+    site.root = utf8(JSON.stringify(scored))
+    site.parts = new Map()
+    const fourth = cache.consumer()
+    const scoredRead = try cache.read(fourth, scoredRegistry, false)
+    const scoredRequests = taken()
+    const scoredChecks = try ranked.get()
+    site.root = utf8(JSON.stringify(overstated))
+    const refused = cache.read(fourth, scoredRegistry, true) catch (error) => `${error._tag}: ${"message" in error ? error.message : ""}`
+    taken()
+    const afterRefusal = try ranked.get()
+    const shownAfterRefusal = try cache.shown(fourth)
+
+    try same({
+      shared: [shared, both[0].sha256 === both[1].sha256, both[0].payable, both[0].snapshot.generatedAt],
+      reused: [withinMinute, reused.sha256 === both[0].sha256],
+      retried: [afterMinute, retried.sha256 === both[0].sha256],
+      failed: [failed, twiceFailed],
+      corrupted,
+      kept: kept?.sha256 === both[0].sha256,
+      stale: [atEightHours, pastEightHours],
+      cancelled: [cancelled, readEntry(transport, transport.newest).aborted],
+      ranked: omittedResult,
+      scored: [scoredRequests, scoredRead.payable, scoredChecks.result, scoredChecks.score.ledger.map((row) => `${row.kind} ${row.source} ${row.parentPr}`), scoredChecks.score.basis.removedEvents.length],
+      refused: [refused, afterRefusal.result, afterRefusal.scoreDigest === scoredRead.sha256, shownAfterRefusal?.sha256 === scoredRead.sha256],
+    }, {
+      shared: [["root retry=0", "part", "part", "part", "part"], true, true, generatedAt],
+      reused: [[], true],
+      retried: [["root retry=0", "root retry=1", "part", "part", "part", "part"], true],
+      failed: ["Refused: snapshot returned 500", ["root retry=0", "root retry=1"]],
+      corrupted: "Unreadable: Leaderboard part size or digest mismatch",
+      kept: true,
+      stale: [false, true],
+      cancelled: [["aborted"], true],
+      ranked: "ScoreAndPayment",
+      scored: [["root retry=0"], true, "ScoreAndPayment", ["DirectMerge PR_1 PR_1", "IndirectMerge PR_2 PR_2", "MaterialChange PR_1 PR_1", "Review PRR_1 PR_1", "Review PRR_2 PR_1", "Review PRR_3 PR_1"], 3],
+      refused: ["Unreadable: snapshot ledger exceeds the collection coverage published in source.counts", "ScoreAndPayment", true, true],
+    })
+  }))
+
+  it.effect('A paged history is read whole and a cursor loop or a mixed snapshot is refused, keeping the last good rows (spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/requests.md, "Changing a resource clears its data and invalidates in-flight results"; spec/frontend/requests.md, "Empty and denied never display retained rows as current data")', () => onFake(effect {
+    taken()
+    const read = try resource((_key: string) => readCompletePages(historyPage, (row) => row.id, refusals), (rows) => rows.length)
+    const ids = () => read.value()?.map((row) => row.id)
+    const reason = () => {
+      const failure = read.failure()
+      return failure === undefined ? undefined : `${failure._tag}: ${failure.message}`
+    }
+
+    site.history = "complete"
+    try read.select("history")
+    const complete = [(try read.load()).status, ids(), reason(), taken()]
+    site.history = "loop"
+    const loop = [(try read.load()).status, ids(), reason(), taken()]
+    site.history = "mixed"
+    try read.select("history:mixed")
+    const cleared = ids()
+    const mixed = [(try read.load()).status, ids(), reason(), taken()]
+
+    try same({ complete, loop, cleared, mixed }, {
+      complete: ["Current", ["a", "b", "c"], undefined, ["history ", "history ?after=4&through=9"]],
+      loop: ["Stale", ["a", "b", "c"], "Unreadable: History changed while reading", ["history ", "history ?after=4&through=9"]],
+      cleared: undefined,
+      mixed: ["Invalid", undefined, "Unreadable: History changed while reading", ["history ", "history ?after=4&through=9"]],
+    })
+  }))
+})

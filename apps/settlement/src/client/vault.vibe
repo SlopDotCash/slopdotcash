@@ -1,0 +1,66 @@
+// spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/evmScan.md, "Completion advances the cursor monotonically, even when runs finish out of order"
+import { route } from "@repo/platform/route"
+
+export schema PaymentChain = "base" | "solana" | "robinhood" | "ethereum"
+
+export schema VaultSnapshot {
+  readonly projectId: string
+  readonly network: string
+  readonly chain: PaymentChain
+  readonly vault: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly totalDeposited: string
+  readonly totalPaid: string
+  readonly totalPayoutFees: string
+  readonly totalGrossWithdrawn: string
+  readonly totalWithdrawalFees: string
+  readonly freeBalance: string | null
+  readonly reservedPrincipal: string | null
+  readonly reservedFees: string | null
+  readonly accruedFees: string | null
+  readonly reserved: string | null
+  readonly blockNumber: string
+  readonly blockTime: string
+  readonly observedAt: string
+}
+
+export schema ProjectVault {
+  readonly projectId: string
+  readonly snapshots: ReadonlyArray<VaultSnapshot>
+  readonly staleAfterMs: number
+  readonly servedAt: string
+}
+
+export schema AssetTotals {
+  readonly network: string
+  readonly assetAddress: string
+  readonly assetDecimals: number
+  readonly totalNetPaidBase: string
+  readonly payoutFeesPaidBase: string
+  readonly reservedNetBase: string
+  readonly reservedFeeBase: string
+}
+
+export schema PaymentCoverage {
+  readonly kind: "finalized-payment-events"
+  readonly completeThrough: string | null
+}
+
+export schema ProjectTotals {
+  readonly projectId: string
+  readonly network: string | null
+  readonly assets: ReadonlyArray<AssetTotals>
+  readonly coverage: PaymentCoverage
+  readonly syncedAt: string | null
+}
+
+export const staleAfterMs = 1_800_000
+
+export const vaultEdgeSeconds = 60
+
+export const projectTotals = route({ method: "GET", path: "/api/v1/payments/projects/:id/totals", access: "public", limitKib: 1, request: undefined, answer: ProjectTotals, rejected: "rejected", cache: "private" })
+
+export const projectVault = route({ method: "GET", path: "/api/v1/payments/projects/:id/vault", access: "public", limitKib: 1, request: undefined, answer: ProjectVault, rejected: "rejected", cache: { browserSeconds: vaultEdgeSeconds, edgeSeconds: vaultEdgeSeconds } })
+
+export const vaultApi = [projectTotals, projectVault]

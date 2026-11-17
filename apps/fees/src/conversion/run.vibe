@@ -1,0 +1,116 @@
+// spec/fees/conversion.md, "A run needs the published Worker, a fresh run identity and a free or expired lease"; spec/fees/conversion.md, "Each evaluation records one outcome from the pinned order of checks"
+import { randomId } from "@repo/platform/crypto"
+import { type RowState, type Trigger } from "../../gen/fees__conversion.effect.vibe"
+import { type Mode, runs } from "../../gen/fees__runtime.effect.vibe"
+import { type Instance, ledger } from "../journal/codec.vibe"
+import { journal } from "../journal/store.vibe"
+import type { EnabledNetwork } from "../runtime/config.vibe"
+import type { TokenFact } from "../runtime/reviewed.vibe"
+import { type Income, observed } from "../receipts/discover.vibe"
+import type { QuoteFound } from "./chain.vibe"
+import { evaluateToken } from "./evaluate.vibe"
+import { reconcile } from "./reconcile.vibe"
+import { type Session, released, renewed, step } from "./session.vibe"
+import { signIntent } from "./sign.vibe"
+
+export error RunIdentityTaken { network: string; expected: number; named: number }
+
+export type RunStatus = "off" | "locked" | "ran" | "notConverted"
+
+export interface NetworkRun {
+  readonly network: EnabledNetwork
+  readonly base: Instance
+  readonly trigger: Trigger
+  readonly tokens: ReadonlyArray<TokenFact>
+  readonly income: Income
+}
+
+export type Claims = (session: Session, mode: Mode) => number!unknown
+
+export interface RunResult {
+  readonly network: string
+  readonly status: RunStatus
+  readonly reconciled: number
+  readonly records: Readonly<Record<RowState, number>>
+  readonly claimed: number
+  readonly leaseLost: boolean
+}
+
+function emptyRecords(): Record<RowState, number> {
+  return { Quoted: 0, DustPending: 0, Skipped: 0, NoRoute: 0, Submitted: 0, Unknown: 0, Finalized: 0, Failed: 0 }
+}
+
+function claimMode(session: Session, network: EnabledNetwork): Mode {
+  const runtime = session.state.runtime
+  if (network.definition.target.kind === "usdc") return runtime.converterMode
+  return network.definition.stable === undefined ? "Off" : runtime.buybackMode
+}
+
+effect function claimed(session: Session, claims: Claims | undefined, input: NetworkRun) {
+  const mode = claimMode(session, input.network)
+  if (claims === undefined || input.trigger !== "Recovery" || mode === "Off") return 0
+  return claims(session, mode) catch effect (error) => {
+    try Effect.logWarning("fee_claims_failed", { network: session.state.network, error: String((error as { readonly _tag?: string })._tag ?? "unknown") })
+    return 0
+  }
+}
+
+effect function signed(session: Session, address: string, quote: QuoteFound) {
+  const outcome: RowState = signIntent(session, address, quote) catch effect (error) => {
+    try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: address, error: error._tag })
+    const failed: RowState = "Failed"
+    return failed
+  }
+  return outcome
+}
+
+effect function tokens(session: Session, input: NetworkRun, records: Record<RowState, number>, blocked: ReadonlySet<number>) {
+  const target = input.network.definition.target
+  if (target.kind !== "usdc") return
+  for (const [index, token] of session.instance.tokens.entries()) {
+    const number = index + 1
+    if (blocked.has(number)) continue
+    if (!(try renewed(session, false))) return
+    const evaluated = evaluateToken(session, number, token.address, target.address) catch effect (error) => {
+      try Effect.logWarning("fee_conversion_error", { network: session.state.network, token: token.address, error: error._tag })
+      return undefined
+    }
+    if (evaluated === undefined) continue
+    const row = session.state.rows[session.state.rows.length - 1]
+    const signing = evaluated.state === "Quoted" && evaluated.quote !== undefined && row !== undefined && row.live && row.state === "Quoted" && row.runId === session.runId
+    const recorded: RowState = !signing || evaluated.quote === undefined ? evaluated.state : try signed(session, token.address, evaluated.quote)
+    records[recorded] += 1
+  }
+}
+
+effect function leased(session: Session, input: NetworkRun, claims: Claims | undefined) {
+  const records = emptyRecords()
+  const settled = try reconcile(session)
+  const converts = input.network.definition.target.kind === "usdc"
+  if (!converts) try Effect.logInfo("fee_conversion_not_converted", { network: input.network.network, reason: "received assets retained without conversion" })
+  const moved = try claimed(session, claims, input)
+  if (converts) try tokens(session, input, records, settled.blocked)
+  return {
+    network: input.network.definition.name,
+    status: converts ? "ran" : "notConverted",
+    reconciled: settled.reconciled,
+    records,
+    claimed: moved,
+    leaseLost: !session.leased,
+  } satisfies RunResult
+}
+
+export effect function runNetwork(input: NetworkRun, claims?: Claims) {
+  const idle = { network: input.network.definition.name, reconciled: 0, records: emptyRecords(), claimed: 0, leaseLost: false }
+  if (!runs(input.base.held.runtime)) return { ...idle, status: "off" } satisfies RunResult
+  const names = ledger()
+  const seen = try observed(input.network, input.base.held, input.tokens, input.income)
+  const instance = { ...input.base, tokens: seen.tokens, receipts: seen.receipts } satisfies Instance
+  const loaded = try journal(instance, names)
+  const runId = names.number("run", try randomId())
+  if (runId !== loaded.state.nextRun) throw new RunIdentityTaken({ network: input.network.definition.name, expected: loaded.state.nextRun, named: runId })
+  const session: Session = { instance, state: loaded.state, names, runId, renewedAt: try Clock.currentTimeMillis, leased: false }
+  if ((try step(session, { type: "acquireLease", runId, trigger: input.trigger })) === undefined) return { ...idle, status: "locked" } satisfies RunResult
+  session.leased = true
+  return try Effect.ensuring(leased(session, input, claims), released(session))
+}

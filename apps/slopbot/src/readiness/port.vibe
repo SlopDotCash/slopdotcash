@@ -1,0 +1,25 @@
+// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"; spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+import { isoAt } from "@repo/platform/clock"
+import { D1 } from "@repo/platform/d1"
+import { type ReportingObservation, ReportingReadiness } from "@repo/ports/slopbot"
+import { observationOf } from "../../gen/slopbot__reportingReadiness.effect.vibe"
+import { storedObservation } from "./store.vibe"
+import { currentTarget } from "./targets.vibe"
+
+const unregistered: ReportingObservation = { readiness: "ReadinessUnobserved", identityMatches: false, refreshFailed: false }
+
+effect function current(projectId: string) {
+  const target = try currentTarget(projectId)
+  if (target === undefined) return unregistered
+  const row = try storedObservation(target)
+  const { readiness, identityMatches, refreshFailed } = observationOf(row, target.expected)
+  const observation: ReportingObservation = { readiness, identityMatches, refreshFailed }
+  return row.verifiedAt > 0 ? { ...observation, verifiedAt: try isoAt(row.verifiedAt) } : observation
+}
+
+export const ReportingReadinessLive = Layer.effect(ReportingReadiness, effect {
+  const db = try D1
+  return {
+    current: (projectId) => provideService(current(projectId), D1, db),
+  } satisfies ReportingReadiness.Shape
+})

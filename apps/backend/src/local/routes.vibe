@@ -1,0 +1,9 @@
+// spec/backend/local.md, "A handoff binds one actor, exact loopback origin and environment"; spec/backend/identity.md, "At most one poll receives the flow's identity"
+import { handleRaw } from "@repo/platform/http"
+import { localPoll, localStart } from "../client/identity.vibe"
+import { pollFlow, startFlow } from "../identity/flows.vibe"
+
+export const LocalRoutes = Layer.mergeAll(
+  handleRaw(localStart, () => startFlow(true)),
+  handleRaw(localPoll, () => pollFlow(true)),
+)

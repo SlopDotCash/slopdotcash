@@ -1,0 +1,103 @@
+// spec/security/intake.md, "A report body holds between 1 and 262,144 bytes and any other size creates nothing"
+export type Severity = "critical" | "high" | "medium" | "low"
+
+export interface VulnerablePackage {
+  readonly ecosystem: string
+  readonly name?: string
+}
+
+export interface Vulnerability {
+  readonly package: VulnerablePackage
+  readonly vulnerableVersionRange?: string
+  readonly patchedVersions?: string
+}
+
+export interface ReportInput {
+  readonly summary: string
+  readonly description: string
+  readonly severity?: Severity
+  readonly cvssVectorString?: string
+  readonly cweIds?: ReadonlyArray<string>
+  readonly vulnerabilities?: ReadonlyArray<Vulnerability>
+}
+
+export type ReportRefusal = "invalid" | "unexpected" | "summary" | "summaryLength" | "description" | "descriptionLength" | "severityAndVector" | "severity" | "vector" | "cwe" | "vulnerabilities"
+
+export type ParsedReport = { readonly kind: "report"; readonly report: ReportInput } | { readonly kind: "refused"; readonly refusal: ReportRefusal }
+
+const severities: ReadonlyArray<string> = ["critical", "high", "medium", "low"]
+const cvss = /^CVSS:(?:3\.[01]|4\.0)\/[A-Z]{1,3}:[A-Z](?:\/[A-Z]{1,3}:[A-Z])*$/u
+const cwe = /^CWE-[1-9]\d{0,4}$/u
+const ecosystems: ReadonlyArray<string> = ["rubygems", "npm", "pip", "maven", "nuget", "composer", "go", "rust", "erlang", "actions", "pub", "other", "swift"]
+const fields: ReadonlySet<string> = new Set(["summary", "description", "severity", "cvssVectorString", "cweIds", "vulnerabilities"])
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function bounded(value: unknown, min: number, max: number) {
+  if (typeof value !== "string") return { kind: "type" as const }
+  const trimmed = value.trim()
+  return trimmed.length < min || trimmed.length > max ? { kind: "length" as const } : { kind: "text" as const, text: trimmed }
+}
+
+function optionalText(item: Readonly<Record<string, unknown>>, key: string) {
+  const value = item[key]
+  if (value === undefined) return { kind: "absent" as const }
+  return typeof value === "string" && value.length <= 256 ? { kind: "text" as const, text: value } : { kind: "invalid" as const }
+}
+
+function vulnerability(entry: unknown): Vulnerability | undefined {
+  if (!isRecord(entry)) return undefined
+  const found = entry.package
+  if (!isRecord(found) || typeof found.ecosystem !== "string" || !ecosystems.includes(found.ecosystem)) return undefined
+  const name = found.name
+  if (name !== undefined && (typeof name !== "string" || name.length < 1 || name.length > 214)) return undefined
+  const range = optionalText(entry, "vulnerableVersionRange")
+  const patched = optionalText(entry, "patchedVersions")
+  if (range.kind === "invalid" || patched.kind === "invalid") return undefined
+  return {
+    package: { ecosystem: found.ecosystem, ...(typeof name === "string" ? { name } : {}) },
+    ...(range.kind === "text" ? { vulnerableVersionRange: range.text } : {}),
+    ...(patched.kind === "text" ? { patchedVersions: patched.text } : {}),
+  }
+}
+
+function refused(refusal: ReportRefusal): ParsedReport {
+  return { kind: "refused", refusal }
+}
+
+export function parseReport(value: unknown): ParsedReport {
+  if (!isRecord(value)) return refused("invalid")
+  if (Object.keys(value).some((key) => !fields.has(key))) return refused("unexpected")
+  const summary = bounded(value.summary, 8, 1024)
+  if (summary.kind !== "text") return refused(summary.kind === "type" ? "summary" : "summaryLength")
+  const description = bounded(value.description, 20, 65000)
+  if (description.kind !== "text") return refused(description.kind === "type" ? "description" : "descriptionLength")
+  if (value.severity !== undefined && value.cvssVectorString !== undefined) return refused("severityAndVector")
+  const severity = value.severity
+  if (severity !== undefined && (typeof severity !== "string" || !severities.includes(severity))) return refused("severity")
+  const vector = value.cvssVectorString
+  if (vector !== undefined && (typeof vector !== "string" || vector.length > 200 || !cvss.test(vector))) return refused("vector")
+  const cweIds = value.cweIds
+  if (cweIds !== undefined && (!Array.isArray(cweIds) || cweIds.length > 10 || cweIds.some((id) => typeof id !== "string" || !cwe.test(id)))) return refused("cwe")
+  const listed = value.vulnerabilities
+  if (listed !== undefined && (!Array.isArray(listed) || listed.length > 20)) return refused("vulnerabilities")
+  const vulnerabilities = Array.isArray(listed) ? listed.map(vulnerability) : undefined
+  if (vulnerabilities !== undefined && vulnerabilities.some((entry) => entry === undefined)) return refused("vulnerabilities")
+  return {
+    kind: "report",
+    report: {
+      summary: summary.text,
+      description: description.text,
+      ...(typeof severity === "string" ? { severity: severity as Severity } : {}),
+      ...(typeof vector === "string" ? { cvssVectorString: vector } : {}),
+      ...(Array.isArray(cweIds) ? { cweIds: [...new Set(cweIds as ReadonlyArray<string>)] } : {}),
+      ...(vulnerabilities !== undefined ? { vulnerabilities: vulnerabilities.filter((entry): entry is Vulnerability => entry !== undefined) } : {}),
+    },
+  }
+}
+
+export function normalisedBytes(report: ReportInput) {
+  return new TextEncoder().encode(JSON.stringify(report))
+}

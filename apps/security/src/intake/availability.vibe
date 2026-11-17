@@ -1,0 +1,81 @@
+// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"
+import { EdgeCache, cacheKey } from "@repo/platform/cache"
+import { millisOf } from "@repo/platform/clock"
+import { json, refuse } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import { Registry } from "@repo/ports/backend"
+import { type ReportingObservation as ObservedReporting, ReportingReadiness } from "@repo/ports/slopbot"
+import type { ReportingObservation } from "../../gen/security__intake.ts"
+import { handoffAvailability, handoffLinkShown, reportingObservationSeconds } from "../../gen/security__intake.effect.vibe"
+import { intakeReadiness, readinessSeconds } from "../client/intake.vibe"
+import { getSecurityProgramsByIdIntake as readinessRows } from "../client/refusals.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+
+export service IntakeSettings {
+  readonly stored: boolean
+  readonly automatic: boolean
+}
+
+export function intakeSettings(settings: { readonly mode: string | undefined; readonly automatic: boolean }) {
+  return Layer.succeed(IntakeSettings, { stored: settings.mode === "on", automatic: settings.mode === "on" && settings.automatic })
+}
+
+export const projectId = /^[a-z0-9](?:[a-z0-9-]{0,41}[a-z0-9])?$/u
+
+function programNotFound() {
+  const row = readinessRows.programNotFound
+  return refuse(row.status, row.error, row.message)
+}
+
+function modelObservation(observed: ObservedReporting): ReportingObservation {
+  const verifiedAt = observed.verifiedAt === undefined ? Number.NaN : millisOf(observed.verifiedAt)
+  if (!Number.isFinite(verifiedAt)) return { readiness: "ReadinessUnobserved", identityMatches: observed.identityMatches, refreshFailed: observed.refreshFailed, verifiedAtSecond: 0 }
+  return { readiness: observed.readiness, identityMatches: observed.identityMatches, refreshFailed: observed.refreshFailed, verifiedAtSecond: Math.floor(verifiedAt / 1000) }
+}
+
+export function handoffUrl(repository: string) {
+  return `https://github.com/${repository}/security/advisories/new`
+}
+
+export effect function readiness(id: string) {
+  if (!projectId.test(id)) throw programNotFound()
+  const project = try (try Registry).project(id)
+  if (project === undefined || project.listingTier === "Retired") throw programNotFound()
+  const program = try (try ReportingPrograms).current(id)
+  if (program === undefined) throw programNotFound()
+  const settings = try IntakeSettings
+  const observed = try (try ReportingReadiness).current(id)
+  const nowMs = try Clock.currentTimeMillis
+  const nowSecond = Math.floor(nowMs / 1000)
+  const observation = modelObservation(observed)
+  const availability = handoffAvailability(observation, nowSecond)
+  const known = availability !== "Unavailable"
+  const stale = availability === "Unavailable" || availability === "StaleAccess"
+  const state = !known ? "unavailable" as const : observation.readiness === "ReadinessEnabled" ? "ready" as const : "disabled" as const
+  const remaining = stale ? 0 : Math.max(0, reportingObservationSeconds - (nowSecond - observation.verifiedAtSecond))
+  const closed = program.closesAt !== undefined && millisOf(program.closesAt) <= nowMs
+  return {
+    projectId: id,
+    repository: program.repository,
+    state,
+    automatic: !settings.automatic ? "off" as const : availability === "Enabled" ? "ready" as const : "unavailable" as const,
+    automaticConfigured: settings.automatic,
+    storedIntake: settings.stored,
+    checkedAt: known ? observed.verifiedAt ?? null : null,
+    stale,
+    maxAgeSeconds: Math.min(readinessSeconds, Math.max(0, remaining - readinessSeconds)),
+    programStatus: program.status ?? null,
+    paidParticipation: program.status === "open" && !closed ? "open" as const : "closed" as const,
+    handoffUrl: handoffLinkShown(observation, nowSecond) ? handoffUrl(program.repository) : null,
+  }
+}
+
+export effect function cachedReadiness(id: string) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const key = cacheKey(request.originalUrl, 0)
+  const cache = try EdgeCache
+  const hit = try cache.match(key)
+  if (hit !== undefined) return hit
+  const answer = try readiness(id)
+  return try cache.put(key, json(answer, 200, { "cache-control": cacheControl(intakeReadiness.cache) }), readinessSeconds)
+}

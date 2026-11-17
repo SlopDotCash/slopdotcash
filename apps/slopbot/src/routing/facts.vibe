@@ -1,0 +1,73 @@
+// spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
+import { first, sql } from "@repo/platform/d1"
+import { GitHub, GitHubMalformed, GitHubRefused, NotFound } from "@repo/platform/github"
+import type { ReadFailure } from "@repo/ports/backend"
+import type { Exemption, MergeHistory } from "../../gen/slopbot__routing.effect.vibe"
+import { type Account, absentOn404 } from "../context/load.vibe"
+import { InstallationRow, installationOf } from "../installation/store.vibe"
+
+export const marker = "Made via @slopdotcash"
+
+export service Participation {
+  member(githubId: string): boolean!ReadFailure
+}
+
+export interface Author {
+  readonly id: number
+  readonly login: string
+}
+
+export interface SearchedRepository {
+  readonly id: number
+  readonly full_name: string
+}
+
+schema PermissionRead { readonly permission: string }
+schema MergedPull { readonly number: number }
+schema MergedSearch { readonly total_count: number; readonly items: ReadonlyArray<MergedPull> }
+schema Counted { readonly n: number }
+
+effect function membershipStatus(path: string) {
+  const status: number = (try GitHub).status(path) catch effect (error) => {
+    if (error._tag === "NotFound") return 404
+    throw error
+  }
+  return status
+}
+
+effect function lookedUpExemption(repositoryId: number, owner: Account, author: Author) {
+  const permission = try absentOn404((try GitHub).json(`/repositories/${repositoryId}/collaborators/${author.login}/permission`, PermissionRead))
+  if (permission !== undefined && (permission.permission === "admin" || permission.permission === "write")) return "Exempt" satisfies Exemption
+  if (owner.type !== "Organization") return "NotExempt" satisfies Exemption
+  const status = try membershipStatus(`/orgs/${owner.login}/members/${author.login}`)
+  return (status === 204 ? "Exempt" : status === 404 ? "NotExempt" : "ExemptionUnknown") satisfies Exemption
+}
+
+export effect function exemptionOf(repositoryId: number, owner: Account, author: Author) {
+  if (author.id === owner.id) return "Exempt" satisfies Exemption
+  const exemption: Exemption = lookedUpExemption(repositoryId, owner, author) catch () => "ExemptionUnknown" satisfies Exemption
+  return exemption
+}
+
+export effect function mergeHistory(repository: SearchedRepository, author: Author) {
+  const query = `repo:${repository.full_name} author:${author.login} is:pr is:merged`
+  const found = (try GitHub).json(`/search/issues?per_page=1&q=${encodeURIComponent(query)}`, MergedSearch) catch effect (error) => match (error) {
+    when NotFound: undefined;
+    when GitHubRefused: undefined;
+    when GitHubMalformed: undefined;
+    default: throw error;
+  }
+  if (found === undefined || !Number.isSafeInteger(found.total_count) || found.total_count < 0) return undefined
+  if (found.total_count > 0 && found.items.length === 0) return undefined
+  return { repository: repository.id, author: author.id, mergedPulls: found.total_count === 0 ? [] : found.items.map((item) => item.number) } satisfies MergeHistory
+}
+
+export effect function humanReopened(itemNodeId: string, revision: string) {
+  const counted = try first(Counted, sql`SELECT COUNT(*) AS n FROM slopbot_actions WHERE review_key = ${`reopen:${itemNodeId}:${revision}`}`)
+  return (counted?.n ?? 0) > 0
+}
+
+export effect function installationFact(installationId: number) {
+  const row = try first(InstallationRow, sql`SELECT installation_id, account_id, account_login, account_type, created_at, suspended_at, removed_at, source_updated_at FROM slopbot_installations WHERE installation_id = ${installationId}`)
+  return try installationOf([row === undefined ? [] : [row]], [])
+}

@@ -1,0 +1,71 @@
+// spec/points/allocation.md, "Largest remainder preserves the fixed pool and resolves equal remainders by actor ID"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/points/penalties.md, "Accepted-work credits are keyed by author, project and UTC month"
+import { type Recipient, allocatePoints, canWriteAllocation } from "../../../gen/points__allocation.effect.vibe"
+import { type Registry, compareCodeUnits, findRepository, pointsOf } from "./checks.vibe"
+import type { BucketAmount, BucketConsumption } from "./kernels/buckets.ts"
+import type { PublishedPenalty, ScoreEvent } from "./schema.vibe"
+
+module verified {
+  import { consumeBuckets as consume, sumBuckets as sum } from "./kernels/buckets.ts"
+  import type { BucketAmount, BucketConsumption } from "./kernels/buckets.ts"
+  /** @throws {never} */
+  export function sumBuckets(count: number, entries: BucketAmount[]): bigint[] { return sum(count, entries) }
+  /** @throws {never} */
+  export function consumeBuckets(initial: bigint[], requests: BucketAmount[]): BucketConsumption { return consume(initial, requests) }
+}
+import { consumeBuckets, sumBuckets } from verified
+
+module whole {
+  /** @throws {never} */
+  export function amountOf(points: number): bigint { return BigInt(points) }
+}
+import { amountOf } from whole
+
+export interface PenaltyDeductions {
+  readonly byActor: ReadonlyMap<string, number>
+  readonly byPenalty: ReadonlyMap<string, number>
+}
+
+export function eventThirds(event: { readonly scoreThirds?: number; readonly points: number }): number {
+  return event.scoreThirds ?? Math.round(event.points * 3)
+}
+
+export function penaltyDeductions(registry: Registry, events: ReadonlyArray<ScoreEvent>, penalties: ReadonlyArray<PublishedPenalty>): PenaltyDeductions {
+  const buckets = new Map<string, number>()
+  const bucketOf = (actorId: string, repository: string, occurredAt: string) => {
+    const key = `${actorId}\0${findRepository(registry, repository)?.projectId ?? ""}\0${occurredAt.slice(0, 7)}`
+    const known = buckets.get(key)
+    if (known !== undefined) return known
+    buckets.set(key, buckets.size)
+    return buckets.size - 1
+  }
+  const credits: BucketAmount[] = events.map((event) => ({ bucket: bucketOf(event.actor.id, event.repository, event.occurredAt), amount: amountOf(pointsOf(eventThirds(event))) }))
+  const ordered = [...penalties].sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id))
+  const requests: BucketAmount[] = ordered.map((penalty) => ({ bucket: bucketOf(penalty.actor.id, penalty.repository, penalty.occurredAt), amount: penalty.debitThirds > 0 ? amountOf(pointsOf(penalty.debitThirds)) : 0n }))
+  const consumed: BucketConsumption = consumeBuckets(sumBuckets(buckets.size, credits), requests)
+  const actors = new Map<string, number>()
+  const actorCredits: BucketAmount[] = []
+  const byPenalty = new Map<string, number>()
+  ordered.forEach((penalty, index) => {
+    const exact = consumed.applied[index] ?? 0n
+    if (exact <= 0n) return
+    if (!actors.has(penalty.actor.id)) actors.set(penalty.actor.id, actors.size)
+    actorCredits.push({ bucket: actors.get(penalty.actor.id) ?? 0, amount: exact })
+    byPenalty.set(penalty.id, Number(exact) / 10)
+  })
+  const totals = sumBuckets(actors.size, actorCredits)
+  return { byActor: new Map([...actors].map(([actor, index]) => [actor, Number(totals[index] ?? 0n) / 10])), byPenalty }
+}
+
+export interface ImplementationWeight {
+  readonly actorNodeId: string
+  readonly lines: number
+}
+
+export function implementationShares(totalScoreThirds: number, weights: ReadonlyArray<ImplementationWeight>): ReadonlyArray<number> | undefined {
+  const total = pointsOf(totalScoreThirds)
+  const order = weights.map((weight) => weight.actorNodeId).sort(compareCodeUnits)
+  const recipients: Recipient[] = weights.map((weight) => ({ actor: order.indexOf(weight.actorNodeId) + 1, lines: weight.lines }))
+  const lineTotal = weights.reduce((sum, weight) => sum + weight.lines, 0)
+  if (!Number.isSafeInteger(total) || !Number.isSafeInteger(lineTotal) || !Number.isSafeInteger(total * Math.max(lineTotal, 1)) || !canWriteAllocation(total, recipients, true, false)) return undefined
+  return allocatePoints(total, recipients).map((share) => share.points / 10)
+}

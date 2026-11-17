@@ -1,0 +1,46 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { setupViewer } from "@repo/backend/client"
+import { type CallFailure, call } from "../platform/api.vibe"
+import { Session } from "./session.vibe"
+
+export const setupViewerLimitBytes = 1_048_576
+
+export type MaintainerCheck =
+  | { readonly kind: "Allowed" }
+  | { readonly kind: "NotAllowed" }
+  | { readonly kind: "Failed"; readonly message: string }
+
+interface Problem {
+  readonly status: number
+  readonly message: string
+}
+
+const accountChanged: Problem = { status: 409, message: "Your account changed. Retry the access check." }
+
+function problemOf(failure: CallFailure): Problem {
+  switch (failure._tag) {
+    case "ActorChanged": return { status: 403, message: failure.message }
+    case "NetworkError": return { status: 0, message: failure.message }
+    case "Refused":
+    case "InvalidResponse":
+      return { status: failure.status, message: failure.message }
+    default: {
+      const _exhaustive: never = failure
+      return _exhaustive
+    }
+  }
+}
+
+function checked(problem: Problem | undefined): MaintainerCheck {
+  if (problem === undefined) return { kind: "Allowed" }
+  return problem.status === 403 ? { kind: "NotAllowed" } : { kind: "Failed", message: problem.message }
+}
+
+export effect function maintainerCheck(projectId: string, actorGithubId: string) {
+  const viewer = call(setupViewer, { params: { id: projectId } }, { limitBytes: setupViewerLimitBytes, expectedActor: actorGithubId }) catch (failure) => problemOf(failure)
+  const problem = "viewer" in viewer ? (viewer.viewer.githubId === actorGithubId ? undefined : accountChanged) : viewer
+  const current = (try Session).current() catch (failure) => problemOf(failure)
+  if (current !== null && "status" in current) return checked(current)
+  if (current?.githubId !== actorGithubId) return checked(accountChanged)
+  return checked(problem)
+}

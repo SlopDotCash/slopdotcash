@@ -1,0 +1,77 @@
+// spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"
+import { type Outcome, exchanged } from "@repo/platform/browser"
+import type { XClient } from "../accounts/routes/admission.vibe"
+
+export const xApi = "https://api.x.com"
+export const xAuthorize = "https://x.com/i/oauth2/authorize"
+export const xScope = "tweet.read users.read"
+
+export type Failed = { readonly kind: "failed"; readonly stage: string; readonly status?: number }
+export type Token = { readonly kind: "token"; readonly token: Redacted.Redacted<string> }
+export type ProviderIdentity = { readonly kind: "identity"; readonly xId: string; readonly username: string; readonly wellFormed: boolean }
+
+const answerBytes = 16384
+const deadlineMs = 15_000
+const longestToken = 4096
+const xIdShape = /^[0-9]{1,30}$/u
+const usernameShape = /^[A-Za-z0-9_]{1,15}$/u
+const unreachable: Outcome = { kind: "unreachable" }
+
+function failed(stage: string, status?: number): Failed {
+  return status === undefined ? { kind: "failed", stage } : { kind: "failed", stage, status }
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function ok(status: number) {
+  return status >= 200 && status <= 299
+}
+
+effect function basic(client: XClient) {
+  const secret = Redacted.value(client.clientSecret)
+  return try orDie(Effect.try(() => `Basic ${btoa(`${encodeURIComponent(client.clientId)}:${encodeURIComponent(secret)}`)}`))
+}
+
+effect function provider(request: HttpClientRequest.HttpClientRequest) {
+  const timed = Effect.timeoutOrElse(exchanged(request, answerBytes), { duration: deadlineMs, orElse: () => Effect.succeed(unreachable) })
+  return try provideService(timed, FetchHttpClient.RequestInit, { redirect: "manual" })
+}
+
+function form(path: string, fields: Readonly<Record<string, string>>, authorization: string) {
+  return HttpClientRequest.bodyUrlParams(HttpClientRequest.make("POST")(`${xApi}${path}`, { headers: { authorization } }), fields)
+}
+
+export effect function exchangeCode(client: XClient, code: string, redirectUri: string, verifier: string) {
+  const outcome = try provider(form("/2/oauth2/token", { grant_type: "authorization_code", code, redirect_uri: redirectUri, code_verifier: verifier }, try basic(client)))
+  if (outcome.kind === "unreachable") return failed("token_exchange")
+  if (!ok(outcome.status)) return failed("token_exchange", outcome.status)
+  if (outcome.kind !== "answered" || !isRecord(outcome.value)) return failed("token_response")
+  const { access_token: token, token_type: type } = outcome.value
+  if (typeof token !== "string" || token === "" || token.length > longestToken || typeof type !== "string" || type.toLowerCase() !== "bearer") return failed("token_response")
+  return { kind: "token", token: Redacted.make(token) } satisfies Token
+}
+
+export effect function currentXUser(token: Redacted.Redacted<string>) {
+  const request = HttpClientRequest.make("GET")(`${xApi}/2/users/me`, { headers: { authorization: `Bearer ${Redacted.value(token)}` } })
+  const outcome = try provider(request)
+  if (outcome.kind === "unreachable") return failed("identity_request")
+  if (!ok(outcome.status)) return failed("identity_request", outcome.status)
+  if (outcome.kind !== "answered" || !isRecord(outcome.value)) return failed("identity_response")
+  const data = outcome.value.data
+  const id = isRecord(data) ? data.id : undefined
+  const username = isRecord(data) ? data.username : undefined
+  const xId = typeof id === "string" ? id : ""
+  const name = typeof username === "string" ? username : ""
+  return { kind: "identity", xId, username: name, wellFormed: xIdShape.test(xId) && usernameShape.test(name) } satisfies ProviderIdentity
+}
+
+export effect function revokeToken(client: XClient, token: Redacted.Redacted<string>) {
+  try provider(form("/2/oauth2/revoke", { token: Redacted.value(token), client_id: client.clientId }, try basic(client)))
+}
+
+export function authorizationUrl(client: XClient, redirectUri: string, state: string, challenge: string) {
+  const query = new URLSearchParams({ response_type: "code", client_id: client.clientId, redirect_uri: redirectUri, scope: xScope, state, code_challenge: challenge, code_challenge_method: "S256" })
+  return `${xAuthorize}?${query.toString()}`
+}

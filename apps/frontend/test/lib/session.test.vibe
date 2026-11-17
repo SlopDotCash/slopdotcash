@@ -1,0 +1,398 @@
+import { assert, layer } from "@effect/vitest"
+import { emailVerification } from "@repo/backend/client"
+import { webCrypto } from "@repo/platform/crypto"
+import { Machine as EmailActions } from "../../gen/frontend__emailAction.effect.vibe"
+import { call } from "../../src/platform/api.vibe"
+import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { type BrowserStore, LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
+import { BrowserSession, compositionState, navigationState, sendComposition, sessionServices } from "../../src/session/browserSession.vibe"
+import { EmailLink, emailActionLayer, emailActionMessages } from "../../src/session/emailAction.vibe"
+import { signIn } from "../../src/session/identity.vibe"
+import { Session } from "../../src/session/session.vibe"
+
+module world {
+  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import { type Handler, type StartedWorker, bundle, migrate, startWorker } from "@repo/platform/testing"
+  import { githubFake } from "@repo/platform/testing/github"
+  import { internet } from "@repo/platform/testing/internet"
+  import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+  import { asFetch } from "@repo/platform/testing/quotes"
+
+  export const site = "https://slop.test"
+  export const identity = "https://identity.slop.test"
+  const backendRoot = `${repoRoot}/apps/backend`
+  const address = "203.0.113.41"
+
+  export interface Sent { readonly githubId: string; readonly token: string }
+
+  export interface World {
+    readonly fetch: typeof globalThis.fetch
+    readonly sent: Array<Sent>
+    readonly requests: Array<string>
+    /** @throws {never} */
+    cookie(): string
+    /** @throws {never} */
+    useCookie(value: string): void
+    /** @throws {never} */
+    beforeNext(path: string, act: () => void): void
+    /** @throws {never} */
+    consent(authorizationUrl: string, login: string): Promise<void>
+    /** @throws {never} */
+    otherTab(login: string): Promise<string>
+    /** @throws {never} */
+    dispose(): Promise<void>
+  }
+
+  interface Fetching {
+    fetch(url: string, init?: { readonly method?: string; readonly headers?: Readonly<Record<string, string>>; readonly body?: string; readonly redirect?: "manual" }): Promise<WebResponse>
+  }
+
+  function answer(status: number, body?: unknown) {
+    return new WebResponse(body === undefined ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  }
+
+  function notify(sent: Array<Sent>): Handler {
+    return async (request: WebRequest) => {
+      const url = new URL(request.url)
+      const body = await request.json() as Record<string, string>
+      if (url.pathname === "/v1/email/capabilities") return answer(200, { enrollmentAvailable: true })
+      if (url.pathname === "/v1/activity-notifications/eligibility") return answer(200, { available: false })
+      if (url.pathname === "/v1/email/verification") {
+        sent.push({ githubId: body.githubId ?? "", token: body.token ?? "" })
+        return answer(204)
+      }
+      return answer(404, {})
+    }
+  }
+
+  function cookieOf(response: WebResponse, name: string): string | undefined {
+    const header = response.headers.get("set-cookie") ?? ""
+    const value = new RegExp(`${name}=([^;,\\s]*)`, "u").exec(header)?.[1]
+    if (value === undefined) return undefined
+    return value === "" || /Max-Age=0/iu.test(header) ? "" : value
+  }
+
+  async function expectStatus(step: string, response: WebResponse, status: number): Promise<WebResponse> {
+    if (response.status === status) return response
+    throw new Error(`${step} answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
+  }
+
+  /** @throws {never} */
+  export async function startWorld(): Promise<World> {
+    const github = githubFake()
+    github.world.addUser({ id: 7, login: "octo", nodeId: "U_octo" })
+    github.world.addUser({ id: 8, login: "hubot", nodeId: "U_hubot" })
+    const net = internet({ github: github.handler })
+    const sent: Array<Sent> = []
+    const requests: Array<string> = []
+    const hooks = new Map<string, () => void>()
+    let jar = ""
+    const mf: StartedWorker = startWorker({
+      script: await bundle(backendRoot, { entry: "worker" }),
+      d1: { SLOP_DB: "slop-private" },
+      vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "", SLOP_ENVIRONMENT: "local", TRACE_AUTH_SECRET: "trace-auth-secret-for-the-session-journey-0001" },
+      services: { SLOP_NOTIFY: notify(sent) },
+      outbound: net.handler,
+      workers: {
+        SLOP_IDENTITY: {
+          name: "identity",
+          script: await bundle(backendRoot, { entry: "identity" }),
+          d1: { IDENTITY_DB: "slop-private" },
+          ratelimits: { IDENTITY_START_LIMITER: { limit: 60, period: 60 }, IDENTITY_POLL_LIMITER: { limit: 600, period: 60 } },
+          vars: {
+            SLOP_ENVIRONMENT: "local",
+            GITHUB_APP_CLIENT_ID: github.app.clientId,
+            GITHUB_APP_CLIENT_SECRET: github.app.clientSecret,
+            IDENTITY_STATE_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+            IDENTITY_ASSERTION_KEY: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+          },
+        },
+      },
+    })
+    const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
+    if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
+    const identityWorker = async () => (await mf.getWorker("identity")) as unknown as Fetching
+
+    const toSite = async (request: WebRequest, url: URL) => {
+      const route = `${request.method} ${url.pathname}`
+      requests.push(route)
+      const hook = hooks.get(route)
+      if (hook !== undefined) {
+        hooks.delete(route)
+        hook()
+      }
+      const headers: Record<string, string> = { ...Object.fromEntries(request.headers), "cf-connecting-ip": address }
+      if (jar !== "") headers.cookie = `__Host-slop_points=${jar}`
+      if (request.method !== "GET") headers.origin = site
+      const body = request.method === "GET" ? undefined : await request.text()
+      const response = await mf.dispatchFetch(url.toString(), { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+      const set = cookieOf(response, "__Host-slop_points")
+      if (set !== undefined) jar = set
+      return response
+    }
+
+    const toIdentity = async (request: WebRequest, url: URL) => {
+      const body = request.method === "GET" ? undefined : await request.text()
+      const headers: Record<string, string> = { ...Object.fromEntries(request.headers), origin: site, "cf-connecting-ip": address }
+      return (await identityWorker()).fetch(url.toString(), { method: request.method, headers, redirect: "manual", ...body === undefined ? {} : { body } })
+    }
+
+    const browser: Handler = async (request: WebRequest) => {
+      const url = new URL(request.url)
+      if (url.origin === site) return toSite(request, url)
+      if (url.origin === identity) return toIdentity(request, url)
+      return new WebResponse(`the page may not reach ${url.host}`, { status: 599 })
+    }
+
+    const consent = async (authorizationUrl: string, login: string) => {
+      const worker = await identityWorker()
+      const authorized = await expectStatus("authorize", await worker.fetch(authorizationUrl, { redirect: "manual" }), 302)
+      const state = cookieOf(authorized, "__Host-slop_oauth_state") ?? ""
+      const github = new URL(authorized.headers.get("location") ?? "")
+      github.searchParams.set("login", login)
+      const consented = await expectStatus("GitHub authorize", await net.handler(new WebRequest(github.toString(), { redirect: "manual" })), 302)
+      await expectStatus("callback", await worker.fetch(consented.headers.get("location") ?? "", { headers: { cookie: `__Host-slop_oauth_state=${state}` }, redirect: "manual" }), 200)
+    }
+
+    const otherTab = async (login: string) => {
+      const worker = await identityWorker()
+      const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json", origin: site, "cf-connecting-ip": address }, body: JSON.stringify(body) })
+      const started = await (await expectStatus("start", await worker.fetch(`${identity}/v1/oauth/start`, json({ audience: "slop-points-web" })), 201)).json() as { flowId: string; pollCapability: string; authorizationUrl: string }
+      await consent(started.authorizationUrl, login)
+      const polled = await (await expectStatus("poll", await worker.fetch(`${identity}/v1/oauth/poll`, json({ flowId: started.flowId, pollCapability: started.pollCapability, audience: "slop-points-web" })), 200)).json() as { assertion: string }
+      const joined = await expectStatus("join", await mf.dispatchFetch(`${site}/api/v1/points/join`, { method: "POST", headers: { "content-type": "application/json", origin: site, "cf-connecting-ip": address }, body: JSON.stringify({ assertion: polled.assertion, public: true }) }), 200)
+      return cookieOf(joined, "__Host-slop_points") ?? ""
+    }
+
+    return {
+      fetch: asFetch(browser),
+      sent,
+      requests,
+      cookie: () => jar,
+      useCookie: (value) => {
+        jar = value
+      },
+      beforeNext: (route, act) => {
+        hooks.set(route, act)
+      },
+      consent,
+      otherTab,
+      dispose: () => mf.dispose(),
+    }
+  }
+}
+import { type World, identity, site, startWorld } from world
+
+service Browser { readonly world: World }
+
+const Started = Layer.effect(Browser, effect {
+  const started = try acquireRelease(promise(() => startWorld()), (opened) => promise(() => opened.dispose()))
+  return { world: started }
+})
+
+const deployment = Layer.succeed(Deployment, {
+  tier: "production",
+  origins: { ...originsOf("production"), site, api: site, identity, browserOrigins: new Set([site]) },
+  pageOrigin: site,
+  localBackendOrigin: undefined,
+  loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),
+})
+
+const onSite = Layer.effect(HttpClient.HttpClient, effect {
+  const client = try HttpClient.HttpClient
+  return HttpClient.mapRequest(client, (request) => request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, site) : request)
+})
+
+effect function tab() {
+  return { session: try storeOver("session", undefined), local: try storeOver("local", undefined) }
+}
+
+function page(world: World, stores: { readonly session: BrowserStore; readonly local: BrowserStore }) {
+  const platform = Layer.mergeAll(
+    deployment,
+    Layer.succeed(SessionStore, stores.session),
+    Layer.succeed(LocalStore, stores.local),
+    Layer.provide(onSite, FetchHttpClient.layer),
+    Layer.succeed(FetchHttpClient.Fetch, world.fetch),
+  )
+  return Layer.provideMerge(sessionServices, platform)
+}
+
+function onPage<A, E, R>(world: World, stores: { readonly session: BrowserStore; readonly local: BrowserStore }, steps: A!E!R) {
+  return Effect.provide(steps, Layer.provideMerge(emailActionLayer, page(world, stores)))
+}
+
+effect function storedAction(stores: { readonly session: BrowserStore }) {
+  const text = try stores.session.values.get("slop:email-action:v1")
+  if (text === undefined) return undefined
+  return try Effect.try(() => JSON.parse(text) as { readonly kind?: string; readonly actor?: string | null })
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function signedInAs(world: World, login: string) {
+  const member = try signIn({ reopen: false, sameTab: false, authorize: (url) => promise(() => world.consent(url, login)) })
+  return member.actor.login
+}
+
+effect function shape() {
+  const navigation = try navigationState()
+  const browser = try compositionState()
+  return {
+    navigation: [navigation.actor, navigation.page, navigation.returnPage, navigation.privateRows],
+    browser: [browser.navigation.actor, browser.draft.actor, browser.details.opened.length, browser.returnPath],
+  }
+}
+
+effect function viewed() {
+  const view = try (try Session).view()
+  return view.status === "signedIn" ? `${view.session.githubLogin}:${view.session.githubId}:${view.session.admin}` : view.status
+}
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Sign in through the identity flow, switch accounts and sign out without showing the prior account (spec/frontend/navigation.md, "Story: Resume an authorized destination after signing in"; spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/composition.md, "Story: Change accounts without disclosing the prior account\'s draft"; spec/frontend/composition.md, "Sign-in keeps only a safe same-origin return destination"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/composition.md, "A focus identity refresh changes the account only through sign-in or sign-out"; spec/backend/identity.md, "At most one poll receives the flow\'s identity"; spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account")', () => effect {
+    const { world } = try Browser
+    const stores = try tab()
+    provide page(world, stores) {
+      const browser = try BrowserSession
+      const erased: Array<number> = []
+      try stores.session.values.set("slop-report-compose:1", "private report text")
+      try scoped(effect {
+        try browser.onAccountChange((actorId) => effect {
+          erased.push(actorId)
+          stores.session.values.remove("slop-report-compose:1") catch () => undefined
+        })
+        const loaded = try viewed()
+        const navigated = try browser.navigate("Inbox")
+        const foreign = try browser.saveReturn("?next=%2F%2Fevil.test")
+        const foreignPath = try browser.returnPath()
+        const saved = try browser.saveReturn("?next=%2Finbox")
+        const signedOut = try shape()
+        const octo = try signedInAs(world, "octo")
+        const asOcto = try shape()
+        const octoView = try viewed()
+        const lifetime = try browser.lifetime()
+        const received = try browser.acceptPrivate(lifetime, 3, true)
+        try sendComposition({ type: "beginReport", projectId: 1 })
+        const writing = try shape()
+        try browser.observe("revalidate")
+        const refreshed = try shape()
+        const keptText = try stores.session.values.get("slop-report-compose:1")
+        const hubot = try signedInAs(world, "hubot")
+        const asHubot = try shape()
+        const hubotView = try viewed()
+        const lateRows = try browser.acceptPrivate(lifetime, 5, true)
+        const afterSwitch = try shape()
+        const erasedText = try stores.session.values.get("slop-report-compose:1")
+        try browser.signOut()
+        const out = try shape()
+        const outView = try viewed()
+        const cookie = world.cookie()
+        try same(
+          { loaded, navigated, foreign, foreignPath, saved, signedOut, octo, asOcto, octoView, received, writing, refreshed, keptText, hubot, asHubot, hubotView, lateRows, afterSwitch, erasedText, out, outView, cookie, erased },
+          {
+            loaded: "checking",
+            navigated: true,
+            foreign: true,
+            foreignPath: "/",
+            saved: true,
+            signedOut: { navigation: [0, "Home", "Inbox", 0], browser: [0, 0, 0, "/inbox"] },
+            octo: "octo",
+            asOcto: { navigation: [7, "Inbox", "Inbox", 0], browser: [7, 0, 0, "/inbox"] },
+            octoView: "octo:7:true",
+            received: true,
+            writing: { navigation: [7, "Inbox", "Inbox", 3], browser: [7, 7, 0, "/inbox"] },
+            refreshed: { navigation: [7, "Inbox", "Inbox", 3], browser: [7, 7, 0, "/inbox"] },
+            keptText: "private report text",
+            hubot: "hubot",
+            asHubot: { navigation: [8, "Inbox", "Inbox", 0], browser: [8, 0, 0, "/inbox"] },
+            hubotView: "hubot:8:false",
+            lateRows: false,
+            afterSwitch: { navigation: [8, "Inbox", "Inbox", 0], browser: [8, 0, 0, "/inbox"] },
+            erasedText: undefined,
+            out: { navigation: [0, "Home", "Inbox", 0], browser: [0, 0, 0, "/"] },
+            outView: "signedOut",
+            cookie: "",
+            erased: [7, 8, 0],
+          },
+        )
+      })
+    }
+  })
+
+  it.effect('An email link survives sign-in, a write for another account is refused, and the token is applied once (spec/frontend/emailAction.md, "Story: Verify an email address after signing in from the link"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/backend/email.md, "Verification is account-bound, single-use, unexpired and applies the consent requested with it"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+    const { world } = try Browser
+    const stores = try tab()
+    const opened = <A, E, R>(steps: A!E!R) => onPage(world, stores, steps)
+    const octoCookie = try opened(effect {
+      try signedInAs(world, "octo")
+      const request = { email: "octo@example.test", enabled: true, idempotencyKey: "octo-request-0001", securityEnabled: true }
+      try call(emailVerification, { body: request }, { limitBytes: 4096, expectedActor: "7" })
+      const cookie = world.cookie()
+      try (try BrowserSession).signOut()
+      return cookie
+    })
+    const token = world.sent.find((mail) => mail.githubId === "7")?.token ?? ""
+    const first = try opened(effect {
+      const link = try EmailLink
+      const actions = try EmailActions
+      try (try BrowserSession).observe("load")
+      const captured = try link.capture(`#verify-email=${token}`)
+      const signedOutCheck = try link.checkSession()
+      const beforeSignIn = try actions.get()
+      const storedBefore = try storedAction(stores)
+      try signedInAs(world, "octo")
+      const afterSignIn = try actions.get()
+      return { captured, signedOutCheck, beforeSignIn: [beforeSignIn.kind, beforeSignIn.tokenValid, beforeSignIn.signedIn, beforeSignIn.boundActor], stored: storedBefore?.kind, afterSignIn: [afterSignIn.signedIn, afterSignIn.generation] }
+    })
+    const reloaded = try opened(effect {
+      const link = try EmailLink
+      const actions = try EmailActions
+      const restored = try actions.get()
+      const check = try link.checkSession()
+      const bound = try actions.get()
+      const storedActor = (try storedAction(stores))?.actor
+      return { restored: [restored.kind, restored.tokenValid, restored.boundActor], check, bound: [bound.boundActor, bound.signedIn, bound.accountChanged], storedActor }
+    })
+    const hubotCookie = try promise(() => world.otherTab("hubot"))
+    world.useCookie(hubotCookie)
+    const otherAccount = try opened(effect {
+      const link = try EmailLink
+      const check = try link.checkSession()
+      const state = try (try EmailActions).get()
+      return { check, state: [state.boundActor, state.signedIn, state.accountChanged] }
+    })
+    world.useCookie(octoCookie)
+    const applied = try opened(effect {
+      const link = try EmailLink
+      const actions = try EmailActions
+      try link.checkSession()
+      world.beforeNext("POST /api/v1/notifications/email/verify", () => world.useCookie(hubotCookie))
+      const raced = try link.confirm()
+      const afterRace = try actions.get()
+      const keptAfterRace = (try stores.session.values.get("slop:email-action:v1")) !== undefined
+      world.useCookie(octoCookie)
+      const confirmed = try link.confirm()
+      const done = try actions.get()
+      const again = try link.confirm()
+      const storedAfter = try stores.session.values.get("slop:email-action:v1")
+      return { raced, afterRace: afterRace.done, keptAfterRace, confirmed, done: [done.done, done.kind], again, storedAfter }
+    })
+    const verifies = world.requests.filter((route) => route === "POST /api/v1/notifications/email/verify").length
+    const restoredLater = try opened(effect { return (try (try EmailActions).get()).kind })
+    try same(
+      { token: token.length, first, reloaded, otherAccount, applied, verifies, restoredLater },
+      {
+        token: 64,
+        first: { captured: true, signedOutCheck: undefined, beforeSignIn: ["VerifyEmail", true, 0, 0], stored: "verify", afterSignIn: [0, 2] },
+        reloaded: { restored: ["VerifyEmail", true, 0], check: undefined, bound: [7, 7, false], storedActor: "7" },
+        otherAccount: { check: emailActionMessages.accountChanged, state: [7, 8, true] },
+        applied: { raced: emailActionMessages.wrongAccount, afterRace: false, keptAfterRace: true, confirmed: undefined, done: [true, "VerifyEmail"], again: undefined, storedAfter: undefined },
+        verifies: 2,
+        restoredLater: "NoEmailAction",
+      },
+    )
+  })
+})

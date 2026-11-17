@@ -1,0 +1,549 @@
+// spec/settlement/vaultSnapshots.md, "Story: Recover or refresh with exact finalized evidence"; spec/settlement/evmScan.md, "Story: Advance coverage only over verified finalized pages"; spec/settlement/solanaScan.md, "Story: Discover a complete frozen interval before processing"; spec/settlement/solanaScan.md, "Story: Checkpoint only after a fully observed transaction"
+import { assert, layer } from "@effect/vitest"
+import { evmRpc } from "@repo/platform/chain/evm"
+import { type Address as SolanaAddress, SYSTEM_PROGRAM, SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { nowSeconds } from "@repo/platform/clock"
+import { webCrypto, sha256Hex } from "@repo/platform/crypto"
+import { D1, d1, first, rows as decodedRows, sql } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { anvil, forward, rpcFaults, serve } from "@repo/platform/testing/chains"
+import { settableClock } from "@repo/platform/testing/clock"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { Notices } from "@repo/ports/operations"
+import { Response } from "miniflare"
+import type { Address } from "viem"
+import { requestRow } from "../gen/settlement__vaultSnapshots.effect.vibe"
+import { type EvmAddress, IMPLEMENTATION_SLOT, awardId, evmAddress } from "../src/chain/evm/abi.ts"
+import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
+import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
+import { decodeProject } from "../src/chain/solana/accounts.ts"
+import { vaultAddress } from "../src/chain/solana/pda.ts"
+import { AuthorizedWallet, WalletHistory } from "../src/payments/wallets.vibe"
+import { PaymentIndexerLive } from "../src/scan/index.vibe"
+import { scanEvmPayments } from "../src/scan/evm.vibe"
+import { scanSolanaPayments, type SolanaScanDeployment } from "../src/scan/solana.vibe"
+import { sendSolanaScan, storedScan } from "../src/scan/solanaStore.vibe"
+import { type RegisteredDeployment, type RegistryManifest, RegistryManifests, registryDeployments } from "../src/vault/deployments.vibe"
+import { type ChainTotals, readEvmTotals } from "../src/vault/evmTotals.vibe"
+import { type ReleaseEnvironment, recoverMissingObservations } from "../src/vault/recovery.vibe"
+import { observationOf, refreshDeployment, refreshVaultSnapshots } from "../src/vault/refresh.vibe"
+import { PaymentRpc } from "../src/vault/rpc.vibe"
+import { identityOf, openSession, registrationOf, registryOf } from "../src/vault/store.vibe"
+import { vaultTotalsOf } from "../src/vault/totals.vibe"
+import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
+import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, nativeMonth, tokenProjects } from "./support/solana/escrow.ts"
+
+type Base = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | RegistryManifests | Wallets | WalletHistory | Notices
+
+service World {
+  readonly escrow: EscrowStack
+  readonly manifests: RegistryManifest[]
+  readonly clock: ReturnType<typeof settableClock>
+  readonly base: Layer.Layer<Base>
+  serve(handler: Parameters<typeof serve>[0]): string!!
+}
+
+service Cluster {
+  readonly escrow: SolanaEscrow
+  readonly tokens: Scenario
+  readonly native: Scenario
+  readonly base: Layer.Layer<Base>
+}
+
+const windowOpen = 1796346000
+const january2027 = 1798761600
+const SOURCE_COMMIT = "7fdedd3507c3f79217ccc896ace0e0b7472ca092"
+const SOLANA_PROGRAM = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+const SOLANA_PROJECT = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
+const LOCAL_SOLANA = "solana-devnet"
+const chains = { Base: "base", Ethereum: "ethereum", Robinhood: "robinhood", Solana: "solana" } as const
+
+function textBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array((hex.length - 2) / 2)
+  for (let index = 0; index < bytes.length; index++) bytes[index] = Number.parseInt(hex.slice(2 + index * 2, 4 + index * 2), 16)
+  return bytes
+}
+
+effect function migrated(name: string) {
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  return try promise(() => database(mf, "SLOP_DB"))
+}
+
+function ports(manifests: ReadonlyArray<RegistryManifest>) {
+  return Layer.mergeAll(
+    Layer.succeed(RegistryManifests, {
+      current: () => sync(() => [...manifests]),
+      project: (projectId) => sync(() => manifests.find((manifest) => manifest.projectId === projectId)),
+    }),
+    Layer.effect(WalletHistory, effect {
+      const db = try D1
+      return {
+        authorized: (owner) => provideService(decodedRows(AuthorizedWallet, sql`SELECT w.id AS claimId, w.record_sha256 AS digest, w.wallet_address AS address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
+      }
+    }),
+    Layer.effect(Wallets, effect {
+      const db = try D1
+      return {
+        effective: (owner) => provideService(first(EffectiveWallet, sql`SELECT wallet_address AS address, id AS claimId, record_sha256 AS digest FROM effective_payment_wallet_claims WHERE github_user_id = ${owner.githubId} AND chain = ${chains[owner.network]}`), D1, db),
+      }
+    }),
+    Layer.succeed(Notices, {
+      statements: () => effect { return [] },
+      fanout: () => effect { return [] },
+    }),
+  )
+}
+
+function baseOf(db: Parameters<typeof d1>[0], manifests: ReadonlyArray<RegistryManifest>): Layer.Layer<Base> {
+  return Layer.provideMerge(ports(manifests), Layer.mergeAll(d1(db), webCrypto, outbound))
+}
+
+function wired(base: Layer.Layer<Base>, rpc: PaymentRpc.Shape) {
+  return Layer.provideMerge(PaymentIndexerLive, Layer.merge(base, Layer.succeed(PaymentRpc, rpc)))
+}
+
+const Started = Layer.effect(World, effect {
+  const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
+  const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
+  const db = try migrated("settlement-vault")
+  const manifests: RegistryManifest[] = [{ projectId: "broken-manifest", revision: 1, manifest: JSON.stringify({ id: "broken-manifest", status: "active", escrow: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 100, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] } }) }]
+  const proxies = try acquireRelease(sync((): Array<{ close(): Promise<void> }> => []), (opened) => promise(() => Promise.all(opened.map((proxy) => proxy.close()))))
+  return {
+    escrow,
+    manifests,
+    clock: settableClock(windowOpen * 1000),
+    base: baseOf(db, manifests),
+    serve: (handler) => promise(async () => {
+      const served = await serve(handler)
+      proxies.push(served)
+      return served.url
+    }),
+  }
+})
+
+const ClusterStarted = Layer.effect(Cluster, effect {
+  const escrow = try acquireRelease(promise(() => escrowDeployment()), (started) => promise(() => started.close()))
+  const tokens = try promise(() => tokenProjects(escrow))
+  const native = try promise(() => nativeMonth(escrow))
+  const db = try migrated("settlement-vault-solana")
+  return { escrow, tokens, native, base: baseOf(db, []) }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function address(text: string) {
+  const parsed = evmAddress(text)
+  if (parsed === undefined) return try die(new Error(`${text} is not an address`))
+  return parsed
+}
+
+effect function codeDigest(at: string) {
+  const { escrow } = try World
+  const code = try promise(() => escrow.chain.rpc("eth_getCode", [at, "latest"]))
+  return try sha256Hex(textBytes(String(code)))
+}
+
+effect function reviewed(project: string, vault: EvmAddress) {
+  const { escrow } = try World
+  const owner = try address(escrow.roles.owner.address)
+  const head = try promise(() => escrow.head())
+  const created = decodeEscrowLogs(escrow.factory, try promise(() => escrow.logs(escrow.factory, 0n, head)))
+    .find((log) => log.kind === "event" && log.event.name === "VaultCreated" && log.event.vault === vault)
+  if (created === undefined) return try die(new Error("the factory logged no VaultCreated for the vault"))
+  const factorySlot = String(try promise(() => escrow.chain.rpc("eth_getStorageAt", [escrow.factory, IMPLEMENTATION_SLOT, "latest"])))
+  const factoryImplementation = `0x${factorySlot.slice(-40)}`
+  const deployment = {
+    network: "base-mainnet", vault, programId: null, upgradeAuthority: null, projectPda: null, networkDomain: null, asset: escrow.dollar, owner,
+    identityAuthority: try address(escrow.roles.authority.address), feeRecipient: FEE_RECIPIENT, deploymentTransaction: created.at.transaction,
+    sourceCommit: SOURCE_COMMIT, codeSha256: try codeDigest(vault), bindingDelaySeconds: "0", rotationDelaySeconds: null,
+    factory: escrow.factory, factoryCodeSha256: try codeDigest(escrow.factory), registrar: try address(escrow.roles.registrar.address),
+    evmUpgrade: {
+      authority: try address(escrow.roles.upgrader.address),
+      vaultImplementation: escrow.implementation,
+      vaultImplementationCodeSha256: try codeDigest(escrow.implementation),
+      factoryImplementation,
+      factoryImplementationCodeSha256: try codeDigest(factoryImplementation),
+    },
+  }
+  return JSON.stringify({ id: project, status: "active", escrow: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] } })
+}
+
+effect function opened(project: string, chainProject: bigint) {
+  const { escrow, manifests } = try World
+  const owner = try address(escrow.roles.owner.address)
+  const vault = try promise(() => escrow.createVault({ owner, projectId: word(chainProject), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: false }))
+  manifests.push({ projectId: project, revision: 3, manifest: try reviewed(project, vault) })
+  try promise(() => escrow.fund(vault, 40_000_000n, escrow.roles.donor.address))
+  escrow.chain.setFinalized(try promise(() => escrow.head()))
+  return vault
+}
+
+effect function rows(text: string, ...params: ReadonlyArray<string>) {
+  return try (try D1).all({ text, params })
+}
+
+effect function evmShell(url: string) {
+  const { base } = try World
+  return wired(base, { urls: { "base-mainnet": Redacted.make([url]), ethereum: Redacted.make([url]) }, genesis: {} })
+}
+
+effect function ours(project: string) {
+  const loaded = try registryDeployments(["base-mainnet"], "ordinary")
+  const deployment = loaded.deployments.find((candidate) => candidate.projectId === project)
+  if (deployment === undefined || deployment.family !== "evm") return try die(new Error("the reviewed vault did not load"))
+  return { deployment, failures: loaded.failures.map((failure) => failure.message) }
+}
+
+effect function awarded(vault: EvmAddress, source: bigint) {
+  const { escrow } = try World
+  const id = try Effect.try(() => awardId(escrow.chainId, vault, word(source)))
+  const data = try Effect.try(() => commitAwardCalldata({ purpose: "OrdinaryPurpose", id, actor: 42n, gross: 1_000_000n, sourceDigest: word(source) }))
+  try promise(() => escrow.send(escrow.roles.owner.address as Address, vault, data))
+  return id
+}
+
+effect function cursorOf(project: string, network: string) {
+  return (try rows("SELECT position FROM payment_chain_cursors WHERE project_id = ? AND network = ?", project, network)).map((row) => row.position)
+}
+
+effect function obligationsOf(project: string) {
+  return (try rows("SELECT id, state FROM payment_obligations WHERE project_id = ? ORDER BY id", project)).map((row) => [row.id, row.state])
+}
+
+effect function offered(deployment: Extract<RegisteredDeployment, { family: "evm" }>, totals: ChainTotals, observedAt: number) {
+  const registration = registrationOf(deployment, totals.decimals)
+  const session = try openSession({ projectId: deployment.projectId }, registryOf({ revision: deployment.revision, ordinary: registration }))
+  try session.send({ type: "beginRead", requestId: 1, purpose: "Ordinary" })
+  const read = requestRow(try session.send({ type: "readTotals", requestId: 1, observation: observationOf(totals, identityOf(deployment, totals.decimals), "Ordinary", observedAt), finalized: true }), 1)
+  const prior = read.phase === "RequestDone" ? read : requestRow(try session.send({ type: "readPrior", requestId: 1 }), 1)
+  const done = prior.phase === "RequestDone" ? prior : requestRow(try session.send({ type: "write", requestId: 1, reply: "WriteAcknowledged" }), 1)
+  return [done.result, done.http]
+}
+
+effect function chainTotals(deployment: Extract<RegisteredDeployment, { family: "evm" }>, url: string) {
+  provide evmRpc({ urls: Redacted.make([url]), chainId: deployment.chainId }) {
+    return try readEvmTotals(deployment)
+  }
+}
+
+effect function recoveryRefusal(environment: ReleaseEnvironment, checkout: string) {
+  return recoverMissingObservations(environment, checkout) catch (error) => error._tag === "RecoveryRefused" ? error.message : error._tag
+}
+
+effect function attempted(deployment: Extract<RegisteredDeployment, { family: "evm" }>) {
+  return scanEvmPayments(deployment) catch () => undefined
+}
+
+function release(overrides: Partial<ReleaseEnvironment>): ReleaseEnvironment {
+  return {
+    actions: "true",
+    repository: "SlopDotCash/slopdotcash",
+    ref: "refs/heads/main",
+    workflowRef: "SlopDotCash/slopdotcash/.github/workflows/deploy.yml@refs/heads/main",
+    eventName: "push",
+    sha: SOURCE_COMMIT,
+    rpcUrls: JSON.stringify({ "solana-mainnet": "https://solana.invalid" }),
+    cloudflareAccount: "0123456789abcdef0123456789abcdef",
+    cloudflareToken: true,
+    ...overrides,
+  }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', () => effect {
+    const world = try World
+    provide world.clock.layer, try evmShell(world.escrow.chain.url) {
+      const project = "vault-journey-store"
+      const vault = try opened(project, 0x7001n)
+      const { deployment, failures } = try ours(project)
+      const unserved = (try registryDeployments(["base-mainnet", "ethereum"], "ordinary")).failures.map((failure) => failure.message)
+      world.manifests.push({ projectId: "vault-journey-shared", revision: 1, manifest: (world.manifests.find((manifest) => manifest.projectId === project)?.manifest ?? "").replace(`"id":"${project}"`, `"id":"vault-journey-shared"`) })
+      const shared = registryDeployments(["base-mainnet"], "ordinary") catch (error) => error._tag
+      world.manifests.pop()
+      try refreshVaultSnapshots([deployment])
+      world.clock.advance(60_000)
+      try refreshVaultSnapshots([deployment])
+      const stored = try rows("SELECT vault, asset_address, block_number, total_deposited, free_balance, reserved_principal, total_service_fees FROM vault_snapshots WHERE project_id = ?", project)
+      const totals = try chainTotals(deployment, world.escrow.chain.url)
+      const now = try nowSeconds()
+      const guarded = {
+        assetChanged: try offered(deployment, { ...totals, block: totals.block + 1n, asset: FEE_RECIPIENT }, now),
+        counterDecreased: try offered(deployment, { ...totals, block: totals.block + 1n, deposited: totals.deposited - 1n }, now),
+        olderAtSameBlock: try offered(deployment, totals, now - 120),
+      }
+      const unchanged = try rows("SELECT vault, asset_address, block_number, total_deposited, free_balance, reserved_principal, total_service_fees FROM vault_snapshots WHERE project_id = ?", project)
+      const withoutFree = try offered(deployment, { ...totals, block: totals.block + 2n, blockTime: january2027, free: undefined }, now)
+      try same({
+        failures,
+        unserved,
+        shared,
+        stored,
+        guarded,
+        unchanged,
+        withoutFree,
+        latest: try rows("SELECT block_number, free_balance FROM vault_snapshots WHERE project_id = ?", project),
+        starts: try rows("SELECT vault, period, free_balance, total_gross_withdrawn FROM vault_month_starts WHERE project_id = ?", project),
+      }, {
+        failures: ["Project broken-manifest escrow deployments unavailable"],
+        unserved: ["Project broken-manifest escrow deployments unavailable", "Project registry has no escrow deployment for served network ethereum"],
+        shared: "VaultShared",
+        stored: [{ vault, asset_address: world.escrow.dollar, block_number: String(totals.block), total_deposited: "40000000", free_balance: "40000000", reserved_principal: "0", total_service_fees: "0" }],
+        guarded: { assetChanged: ["ObservationUnavailable", 503], counterDecreased: ["ObservationUnavailable", 503], olderAtSameBlock: ["ObservationOlder", 200] },
+        unchanged: stored,
+        withoutFree: ["ObservationStored", 200],
+        latest: [{ block_number: String(totals.block + 2n), free_balance: null }],
+        starts: [{ vault, period: "2026-12", free_balance: "40000000", total_gross_withdrawn: "0" }],
+      })
+    }
+  })
+
+  it.effect('A failed refresh keeps the last totals and shows them as stale, never as zero (spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale")', () => effect {
+    const world = try World
+    const project = "vault-journey-stale"
+    const deployment = effect {
+      provide world.clock.layer, try evmShell(world.escrow.chain.url) {
+        try opened(project, 0x7002n)
+        const { deployment } = try ours(project)
+        try refreshVaultSnapshots([deployment])
+        return deployment
+      }
+    }
+    const reviewed = try deployment
+    const faults = try Effect.try(() => rpcFaults(forward(world.escrow.chain.url), [{ fault: "http500" }]))
+    const outage = try world.serve(faults)
+    provide world.clock.layer, try evmShell(outage) {
+      const before = try rows("SELECT total_deposited, free_balance, observed_at FROM vault_snapshots WHERE project_id = ?", project)
+      const failed = try refreshDeployment(reviewed)
+      world.clock.advance(31 * 60_000)
+      const shown = try vaultTotalsOf(project, "Ordinary")
+      try same({
+        result: [failed.result, failed.http],
+        after: try rows("SELECT total_deposited, free_balance, observed_at FROM vault_snapshots WHERE project_id = ?", project),
+        shown: [shown?.freeBaseUnits, shown?.stale],
+      }, { result: ["ObservationUnavailable", 503], after: before, shown: ["40000000", true] })
+    }
+  })
+
+  it.effect('A run on the wrong chain or genesis is refused before any cursor or snapshot moves, a missing genesis pin makes no RPC call, and recovery refuses an untrusted release or unprotected configuration (spec/settlement/evmScan.md, "A run first authenticates the RPC chain, including for an empty page"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals")', () => effect {
+    const world = try World
+    const asked: string[] = []
+    const fakeSolana = try world.serve(async (request) => {
+      const call = (await request.json()) as { id: number; method: string }
+      asked.push(call.method)
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: "OtherGenesis1111111111111111111111111111111" }), { headers: { "content-type": "application/json" } })
+    })
+    const solana: SolanaScanDeployment = {
+      projectId: "solana-journey", scope: "ordinary", network: "solana-mainnet", family: "solana", chain: "solana", vault: SOLANA_PROJECT, asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      owner: SOLANA_PROJECT, identityAuthority: SOLANA_PROJECT, feeRecipient: SOLANA_PROJECT, deploymentTransaction: "", sourceCommit: SOURCE_COMMIT, codeSha256: SOURCE_COMMIT,
+      bindingDelaySeconds: "0", genesisHash: "", programId: SOLANA_PROGRAM, upgradeAuthority: null, projectPda: SOLANA_PROJECT, networkDomain: "", rotationAuthority: SOLANA_PROJECT,
+      rotationDelaySeconds: "0", revision: 1,
+    }
+    const project = "vault-journey-chain"
+    const evm = effect {
+      provide world.clock.layer, try evmShell(world.escrow.chain.url) {
+        try opened(project, 0x7003n)
+        const { deployment } = try ours(project)
+        return scanEvmPayments({ ...deployment, network: "ethereum", chainId: 1n }) catch (error) => error._tag === "ScanRefused" ? error.message : error._tag
+      }
+    }
+    const unpinned = effect {
+      provide world.clock.layer, wired(world.base, { urls: { "solana-mainnet": Redacted.make([fakeSolana]) }, genesis: {} }) {
+        const scanned = scanSolanaPayments(solana) catch (error) => error._tag === "ScanRefused" ? error.message : error._tag
+        const refreshed = try refreshDeployment(solana)
+        return [scanned, refreshed.result, refreshed.http, asked.length]
+      }
+    }
+    const pinned = effect {
+      provide world.clock.layer, wired(world.base, { urls: { "solana-mainnet": Redacted.make([fakeSolana]) }, genesis: { "solana-mainnet": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" } }) {
+        const scanned = scanSolanaPayments(solana) catch (error) => error._tag === "ScanRefused" ? error.message : error._tag
+        const refreshed = try refreshDeployment(solana)
+        return [scanned, refreshed.result, refreshed.http]
+      }
+    }
+    const recovery = effect {
+      provide world.clock.layer, wired(world.base, { urls: {}, genesis: {} }) {
+        return {
+          untrusted: try recoveryRefusal(release({ eventName: "pull_request" }), SOURCE_COMMIT),
+          otherCheckout: try recoveryRefusal(release({}), "0".repeat(40)),
+          noAccount: try recoveryRefusal(release({ cloudflareAccount: "" }), SOURCE_COMMIT),
+          noToken: try recoveryRefusal(release({ cloudflareToken: false }), SOURCE_COMMIT),
+        }
+      }
+    }
+    const outcomes = { evm: try evm, unpinned: try unpinned, pinned: try pinned, recovery: try recovery, asked: [...new Set(asked)] }
+    provide world.base {
+      try same({
+        ...outcomes,
+        cursors: try rows("SELECT network FROM payment_chain_cursors WHERE project_id IN (?, ?)", project, "solana-journey"),
+        scans: try rows("SELECT generation FROM payment_solana_scans WHERE project_id = ?", "solana-journey"),
+        snapshots: try rows("SELECT vault FROM vault_snapshots WHERE project_id = ?", "solana-journey"),
+      }, {
+        evm: "Payment scanner chain mismatch",
+        unpinned: ["Solana genesis trust root unavailable", "ObservationUnavailable", 503, 0],
+        pinned: ["Wrong Solana cluster", "ObservationUnavailable", 503],
+        recovery: {
+          untrusted: "The exact trusted main release is required",
+          otherCheckout: "The exact trusted main release is required",
+          noAccount: "Protected Solana observation configuration is required",
+          noToken: "Protected Solana observation configuration is required",
+        },
+        asked: ["getGenesisHash"],
+        cursors: [],
+        scans: [],
+        snapshots: [],
+      })
+    }
+  })
+
+  it.effect('An award above the finalized tag is not indexed until the tag passes it, then the ledger records it and the cursor advances to the finalized head (spec/settlement/evmScan.md, "A page starts at the cursor and never passes the finalized head"; spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies"; spec/settlement/evmScan.md, "A reviewed deployment record fixes the chain, page size and origin")', () => effect {
+    const world = try World
+    provide world.clock.layer, try evmShell(world.escrow.chain.url) {
+      const project = "vault-journey-finality"
+      const vault = try opened(project, 0x7004n)
+      const { deployment } = try ours(project)
+      try refreshVaultSnapshots([deployment])
+      const pinned = try promise(() => world.escrow.head())
+      world.escrow.chain.setFinalized(pinned)
+      const id = try awarded(vault, 0x9001n)
+      try scanEvmPayments(deployment)
+      const early = { cursor: try cursorOf(project, "base-mainnet"), obligations: try obligationsOf(project) }
+      const head = try promise(() => world.escrow.head())
+      world.escrow.chain.setFinalized(head)
+      try scanEvmPayments(deployment)
+      try same({
+        early,
+        late: { cursor: try cursorOf(project, "base-mainnet"), obligations: try obligationsOf(project) },
+      }, {
+        early: { cursor: [String(pinned)], obligations: [] },
+        late: { cursor: [String(head)], obligations: [[id, "reserved"]] },
+      })
+    }
+  })
+
+  it.effect('An award in a block replaced after the finalized tag covered it is never recorded, and overlapping runs never lower the cursor (spec/settlement/evmScan.md, "Completion advances the cursor monotonically, even when runs finish out of order"; spec/settlement/evmScan.md, "Every recognized event of a page must index before the page verifies")', () => effect {
+    const world = try World
+    provide world.clock.layer, try evmShell(world.escrow.chain.url) {
+      const project = "vault-journey-reorg"
+      const vault = try opened(project, 0x7005n)
+      const { deployment } = try ours(project)
+      try refreshVaultSnapshots([deployment])
+      const snapshot = try promise(() => world.escrow.chain.snapshot())
+      const replaced = try awarded(vault, 0x9002n)
+      world.escrow.chain.setFinalized(try promise(() => world.escrow.head()))
+      try promise(() => world.escrow.chain.revert(snapshot))
+      try promise(() => world.escrow.chain.mine(3))
+      const kept = try awarded(vault, 0x9003n)
+      const head = try promise(() => world.escrow.head())
+      world.escrow.chain.setFinalized(head)
+      try Effect.all([attempted(deployment), attempted(deployment)], { concurrency: 2 })
+      try scanEvmPayments(deployment)
+      const recorded = (try obligationsOf(project)).map(([id]) => id)
+      try same({
+        replaced: recorded.includes(replaced),
+        kept: recorded.includes(kept),
+        cursor: try cursorOf(project, "base-mainnet"),
+      }, { replaced: false, kept: true, cursor: [String(head)] })
+    }
+  })
+})
+
+effect function projectAccount(project: SolanaAddress) {
+  const { escrow } = try Cluster
+  provide solanaRpc({ urls: Redacted.make([escrow.chain.validator.url]), genesis: escrow.chain.validator.genesis }) {
+    return decodeProject(try (try SolanaRpc).account(project, "finalized"), escrow.chain.program)
+  }
+}
+
+effect function scanRefusal(deployment: SolanaScanDeployment) {
+  return scanSolanaPayments(deployment) catch (error) => error._tag === "ScanRefused" ? error.message : error._tag
+}
+
+effect function solanaDeployment(project: SolanaAddress, projectId: string) {
+  const { escrow } = try Cluster
+  const program = escrow.chain.program
+  const decoded = try projectAccount(project)
+  if (decoded.kind !== "decoded") return try die(new Error(`the escrow project ${project} did not decode: ${decoded.issue}`))
+  const state = decoded.value
+  return {
+    projectId, scope: "ordinary", network: LOCAL_SOLANA, family: "solana", chain: "solana", vault: vaultAddress(program, project), asset: state.mint,
+    owner: state.owner, identityAuthority: state.identityAuthority, feeRecipient: state.feeRecipient, deploymentTransaction: "", sourceCommit: SOURCE_COMMIT, codeSha256: "0".repeat(64),
+    bindingDelaySeconds: "0", genesisHash: escrow.chain.validator.genesis, programId: program, upgradeAuthority: escrow.chain.upgradeAuthority.address, projectPda: project,
+    networkDomain: "slop-escrow:solana-localnet", rotationAuthority: escrow.rotationAuthority.address, rotationDelaySeconds: "0", revision: 1,
+  } satisfies SolanaScanDeployment
+}
+
+effect function clusterShell() {
+  const { escrow, base } = try Cluster
+  return wired(base, { urls: { [LOCAL_SOLANA]: Redacted.make([escrow.chain.validator.url]) }, genesis: { [LOCAL_SOLANA]: escrow.chain.validator.genesis } })
+}
+
+effect function signatureOf(scenario: Scenario, label: string) {
+  const sent = scenario.sent.find((entry) => entry.label === label)
+  if (sent === undefined) return try die(new Error(`the scenario sent no ${label}`))
+  return sent.signature
+}
+
+layer(ClusterStarted, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
+  it.effect('Classic SPL, admitted Token-2022 and native SOL vaults store their finalized totals (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/money.md, "Token-2022 admission permits only immutable metadata and immutable token ownership")', () => effect {
+    const { tokens, native, escrow } = try Cluster
+    provide try clusterShell() {
+      const deployments = [
+        try solanaDeployment(tokens.reads[0], "solana-classic"),
+        try solanaDeployment(tokens.reads[4], "solana-token-2022"),
+        try solanaDeployment(native.reads[0], "solana-native"),
+      ]
+      try refreshVaultSnapshots(deployments)
+      try same(
+        try rows("SELECT project_id, asset_address, free_balance FROM vault_snapshots WHERE network = ? ORDER BY project_id", LOCAL_SOLANA),
+        [
+          { project_id: "solana-classic", asset_address: escrow.chain.mints.classic, free_balance: "9000000" },
+          { project_id: "solana-native", asset_address: SYSTEM_PROGRAM, free_balance: "6500000000" },
+          { project_id: "solana-token-2022", asset_address: escrow.chain.mints.token2022, free_balance: "5000000" },
+        ],
+      )
+    }
+  })
+
+  it.effect('A Solana scan keeps the old cursor as the interval boundary, a held payout holds the checkpoint across a restart, and a stale worker cannot checkpoint (spec/settlement/solanaScan.md, "Store one page per invocation and keep the old cursor as the interval boundary"; spec/settlement/solanaScan.md, "Stale or partial work leaves the authoritative prefix intact"; spec/settlement/solanaScan.md, "A fresh scan invocation verifies the selected endpoint\'s network")', () => effect {
+    const { tokens } = try Cluster
+    provide try clusterShell() {
+      const deployment = try solanaDeployment(tokens.reads[0], "solana-scan")
+      const scope = { projectId: deployment.projectId, network: deployment.network }
+      try refreshVaultSnapshots([deployment])
+      try scanSolanaPayments(deployment)
+      const discovered = try storedScan(scope)
+      const processed = try scanRefusal(deployment)
+      const held = try storedScan(scope)
+      const restarted = try scanRefusal(deployment)
+      const resumed = try storedScan(scope)
+      const staleEntry = discovered.top?.entries[0]?.signature ?? ""
+      const stale = sendSolanaScan(scope, { type: "checkpoint", generation: discovered.scan.generation, revision: discovered.scan.revision, identity: "PinnedGenesis", signature: staleEntry, observation: "FinalizedUnrelated" }) catch (error) => error._tag
+      try same({
+        discovered: [discovered.scan.phase, discovered.scan.cursor],
+        processed,
+        restarted,
+        heldAt: held.scan.pending[0],
+        resumed: [resumed.scan.generation, resumed.scan.cursor, resumed.scan.pending[0]],
+        stale: typeof stale === "string" ? stale : "accepted",
+        cursor: try cursorOf("solana-scan", LOCAL_SOLANA),
+        obligations: (try obligationsOf("solana-scan")).map(([, state]) => state),
+      }, {
+        discovered: ["Processing", ""],
+        processed: "Finalized transaction unavailable",
+        restarted: "Finalized transaction unavailable",
+        heldAt: try signatureOf(tokens, "pay classic"),
+        resumed: [held.scan.generation, held.scan.cursor, try signatureOf(tokens, "pay classic")],
+        stale: "Rejected",
+        cursor: [held.scan.cursor],
+        obligations: ["reserved"],
+      })
+    }
+  })
+})

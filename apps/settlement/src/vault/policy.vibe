@@ -1,0 +1,244 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/evmScan.md, "A reviewed deployment record fixes the chain, page size and origin"
+import { base58Decode } from "@repo/platform/chain/solana"
+import { parseBaseUnits, parseNativeCostLimit } from "../kernels/amounts.ts"
+import { type Chain, type NetworkKey, NETWORKS, PAYOUT_FEE_BASIS_POINTS, SECURITY_FEE_BASIS_POINTS, WITHDRAWAL_FEE_BASIS_POINTS, chainFamily, isChain, isNativeAssetAddress, isNetworkKey } from "../kernels/networks.ts"
+
+export type PolicyScope = "ordinary" | "security-bounty"
+
+export error PolicyInvalid { message: string }
+
+export interface UpgradeReview {
+  readonly authority: string
+  readonly vaultImplementation: string
+  readonly vaultImplementationCodeSha256: string
+  readonly factoryImplementation: string
+  readonly factoryImplementationCodeSha256: string
+}
+
+export interface SupersededReview extends UpgradeReview {
+  readonly supersededAtBlock: bigint
+}
+
+export interface EvmUpgrade extends UpgradeReview {
+  readonly history: ReadonlyArray<SupersededReview>
+}
+
+interface DeploymentCommon {
+  readonly projectId: string
+  readonly scope: PolicyScope
+  readonly network: NetworkKey
+  readonly vault: string
+  readonly asset: string
+  readonly owner: string
+  readonly identityAuthority: string
+  readonly feeRecipient: string
+  readonly deploymentTransaction: string
+  readonly sourceCommit: string
+  readonly codeSha256: string
+  readonly bindingDelaySeconds: string
+}
+
+export interface EvmDeployment extends DeploymentCommon {
+  readonly family: "evm"
+  readonly chain: Exclude<Chain, "solana">
+  readonly chainId: bigint
+  readonly scanPageBlocks: bigint
+  readonly gasCeiling: bigint
+  readonly factory: string
+  readonly factoryCodeSha256: string
+  readonly registrar: string
+  readonly evmUpgrade: EvmUpgrade | undefined
+  readonly maxNativeCostWei: string | undefined
+  readonly bindingConsentNonceLimit: 1 | undefined
+}
+
+export interface SolanaDeployment extends DeploymentCommon {
+  readonly family: "solana"
+  readonly chain: "solana"
+  readonly genesisHash: string
+  readonly programId: string
+  readonly upgradeAuthority: string | null
+  readonly projectPda: string
+  readonly networkDomain: string
+  readonly rotationAuthority: string
+  readonly rotationDelaySeconds: string
+}
+
+export type ReviewedDeployment = EvmDeployment | SolanaDeployment
+
+type Fields = Readonly<Record<string, unknown>>
+
+const POLICY_KEYS = ["schemaVersion", "effectiveCycle", "chain", "feeBasisPoints", "withdrawalFeeBasisPoints", "feeMode", "deployments"]
+const REVIEW_KEYS = ["authority", "vaultImplementation", "vaultImplementationCodeSha256", "factoryImplementation", "factoryImplementationCodeSha256"]
+const DEPLOYMENT_KEYS = ["network", "vault", "programId", "upgradeAuthority", "projectPda", "networkDomain", "asset", "owner", "identityAuthority", "feeRecipient", "deploymentTransaction", "sourceCommit", "codeSha256", "bindingDelaySeconds", "rotationDelaySeconds", "factory", "factoryCodeSha256", "registrar"]
+const DIGEST = /^[0-9a-f]{64}$/u
+const COMMIT = /^[0-9a-f]{40}$/u
+const EVM_TRANSACTION = /^0x[0-9a-f]{64}$/u
+const EVM_ACCOUNT = /^0x[0-9a-f]{40}$/u
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/u
+const DELAY = /^(0|[1-9][0-9]{0,9})$/u
+const CYCLE = /^\d{4}-(?:0[1-9]|1[0-2])$/u
+const SUPERSEDED = /^[1-9][0-9]{0,19}$/u
+const MAX_U64 = (1n << 64n) - 1n
+
+function fieldsOf(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function textOf(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function base58Length(value: unknown, minimum: number, maximum: number): number | undefined {
+  if (typeof value !== "string" || value.length < minimum || value.length > maximum || !BASE58.test(value)) return undefined
+  return base58Decode(value)?.length
+}
+
+function fundingAddress(chain: Chain, value: unknown): boolean {
+  if (chain === "solana") return base58Length(value, 32, 44) === 32
+  return typeof value === "string" && EVM_ACCOUNT.test(value) && /[1-9a-f]/u.test(value.slice(2))
+}
+
+function sameKeys(fields: Fields, expected: ReadonlyArray<string>): boolean {
+  return Object.keys(fields).sort().join() === [...expected].sort().join()
+}
+
+effect function exactKeys(value: unknown, expected: ReadonlyArray<string>) {
+  const fields = fieldsOf(value)
+  if (fields === undefined || !sameKeys(fields, expected)) throw new PolicyInvalid({ message: "Invalid escrow policy fields" })
+  return fields
+}
+
+effect function reviewOf(value: unknown, keys: ReadonlyArray<string>, chain: Chain, roles: ReadonlyArray<string>) {
+  const review = try exactKeys(value, keys)
+  const authority = textOf(review.authority)
+  const vaultImplementation = textOf(review.vaultImplementation)
+  const factoryImplementation = textOf(review.factoryImplementation)
+  const vaultCode = textOf(review.vaultImplementationCodeSha256)
+  const factoryCode = textOf(review.factoryImplementationCodeSha256)
+  if (authority === undefined || vaultImplementation === undefined || factoryImplementation === undefined || vaultCode === undefined || factoryCode === undefined
+    || ![authority, vaultImplementation, factoryImplementation].every((address) => fundingAddress(chain, address))
+    || ![vaultCode, factoryCode].every((digest) => DIGEST.test(digest))
+    || roles.some((role) => role.toLowerCase() === authority.toLowerCase()))
+    throw new PolicyInvalid({ message: "Invalid reviewed EVM upgrade" })
+  return { review, reviewed: { authority, vaultImplementation, vaultImplementationCodeSha256: vaultCode, factoryImplementation, factoryImplementationCodeSha256: factoryCode } satisfies UpgradeReview }
+}
+
+effect function upgradeOf(value: unknown, chain: Chain, roles: ReadonlyArray<string>) {
+  const fields = fieldsOf(value)
+  const keys = fields?.history === undefined ? REVIEW_KEYS : [...REVIEW_KEYS, "history"]
+  const current = try reviewOf(value, keys, chain, roles)
+  const listed = current.review.history
+  if (chainFamily(chain) !== "evm" || (listed !== undefined && (!Array.isArray(listed) || listed.length === 0))) throw new PolicyInvalid({ message: "Invalid reviewed EVM upgrade" })
+  const history: SupersededReview[] = []
+  let bound = 0n
+  for (const entry of Array.isArray(listed) ? listed : []) {
+    const earlier = try reviewOf(entry, [...REVIEW_KEYS, "supersededAtBlock"], chain, roles)
+    const text = textOf(earlier.review.supersededAtBlock)
+    const block = text !== undefined && SUPERSEDED.test(text) ? parseBaseUnits(text, MAX_U64) : undefined
+    if (block === undefined || block <= bound)
+      throw new PolicyInvalid({ message: "Reviewed EVM upgrade history needs increasing supersession blocks" })
+    bound = block
+    history.push({ ...earlier.reviewed, supersededAtBlock: block })
+  }
+  return { ...current.reviewed, history } satisfies EvmUpgrade
+}
+
+function deploymentKeys(entry: Fields, chain: Chain): ReadonlyArray<string> {
+  return [
+    ...(entry.evmUpgrade === undefined ? [] : ["evmUpgrade"]),
+    ...(entry.maxNativeCostWei === undefined ? [] : ["maxNativeCostWei"]),
+    ...(entry.bindingConsentNonceLimit === undefined ? [] : ["bindingConsentNonceLimit"]),
+    ...DEPLOYMENT_KEYS,
+    ...(chainFamily(chain) === "solana" ? ["rotationAuthority"] : []),
+  ]
+}
+
+effect function reviewedDeployment(projectId: string, scope: PolicyScope, chain: Chain, value: unknown, networks: Set<string>) {
+  const loose = fieldsOf(value) ?? {}
+  const entry = try exactKeys(value, deploymentKeys(loose, chain))
+  const evm = chainFamily(chain) === "evm"
+  if (entry.maxNativeCostWei !== undefined && (!evm || typeof entry.maxNativeCostWei !== "string" || parseNativeCostLimit(entry.maxNativeCostWei) === undefined))
+    throw new PolicyInvalid({ message: "Invalid EVM native cost limit" })
+  if (entry.bindingConsentNonceLimit !== undefined && (!evm || entry.bindingConsentNonceLimit !== 1))
+    throw new PolicyInvalid({ message: "Invalid binding consent nonce limit" })
+  const roles = [textOf(entry.identityAuthority) ?? "", textOf(entry.feeRecipient) ?? ""]
+  const evmUpgrade = entry.evmUpgrade === undefined ? undefined : try upgradeOf(entry.evmUpgrade, chain, roles)
+  const network = textOf(entry.network)
+  if (network === undefined || !isNetworkKey(network) || NETWORKS[network].chain !== chain || networks.has(network))
+    throw new PolicyInvalid({ message: "A project has one chain and one escrow per network" })
+  networks.add(network)
+  const vault = textOf(entry.vault) ?? ""
+  const owner = textOf(entry.owner) ?? ""
+  const identityAuthority = textOf(entry.identityAuthority) ?? ""
+  const feeRecipient = textOf(entry.feeRecipient) ?? ""
+  const asset = textOf(entry.asset) ?? ""
+  if (![vault, owner, identityAuthority, feeRecipient].every((address) => fundingAddress(chain, address)) || !(isNativeAssetAddress(chain, asset) || fundingAddress(chain, asset)))
+    throw new PolicyInvalid({ message: "Invalid escrow address" })
+  const rotationAuthority = textOf(entry.rotationAuthority) ?? ""
+  if (!evm && (!fundingAddress(chain, rotationAuthority) || [owner, identityAuthority, feeRecipient, vault].includes(rotationAuthority)))
+    throw new PolicyInvalid({ message: "Solana requires an independent rotation authority" })
+  const factory = textOf(entry.factory)
+  const factoryCodeSha256 = textOf(entry.factoryCodeSha256)
+  const registrar = textOf(entry.registrar)
+  const programId = textOf(entry.programId)
+  const projectPda = textOf(entry.projectPda)
+  const networkDomain = textOf(entry.networkDomain)
+  const upgradeAuthority = entry.upgradeAuthority === null ? null : textOf(entry.upgradeAuthority)
+  const shapeMatches = evm
+    ? entry.programId === null && entry.upgradeAuthority === null && entry.projectPda === null && entry.networkDomain === null && entry.rotationDelaySeconds === null
+      && fundingAddress(chain, factory) && fundingAddress(chain, registrar) && factoryCodeSha256 !== undefined && DIGEST.test(factoryCodeSha256)
+    : entry.factory === null && entry.factoryCodeSha256 === null && entry.registrar === null && upgradeAuthority !== undefined
+      && (upgradeAuthority === null || fundingAddress("solana", upgradeAuthority)) && fundingAddress("solana", programId) && fundingAddress("solana", projectPda)
+      && networkDomain !== undefined && DIGEST.test(networkDomain)
+  if (!shapeMatches) throw new PolicyInvalid({ message: "Escrow program does not match the network" })
+  const rotationDelaySeconds = textOf(entry.rotationDelaySeconds)
+  if (!evm && (rotationDelaySeconds === undefined || !DELAY.test(rotationDelaySeconds)))
+    throw new PolicyInvalid({ message: "Escrow rotation delay is missing or below the production minimum" })
+  const bindingDelaySeconds = textOf(entry.bindingDelaySeconds)
+  if (bindingDelaySeconds === undefined || !DELAY.test(bindingDelaySeconds))
+    throw new PolicyInvalid({ message: "Escrow binding delay is missing or below the production minimum" })
+  if (!evm && Number(bindingDelaySeconds) > 0 && Number(rotationDelaySeconds) >= 4 * Number(bindingDelaySeconds))
+    throw new PolicyInvalid({ message: "Escrow rotation delay must be shorter than four binding delays" })
+  if (owner === identityAuthority || owner === feeRecipient || identityAuthority === feeRecipient || vault === owner || vault === feeRecipient || vault === identityAuthority
+    || (evm && [owner, identityAuthority, feeRecipient, vault].includes(registrar ?? "")))
+    throw new PolicyInvalid({ message: "Escrow authorities must have separate roles" })
+  const sourceCommit = textOf(entry.sourceCommit) ?? ""
+  const codeSha256 = textOf(entry.codeSha256) ?? ""
+  const deploymentTransaction = textOf(entry.deploymentTransaction) ?? ""
+  if (!COMMIT.test(sourceCommit) || !DIGEST.test(codeSha256) || !(evm ? EVM_TRANSACTION.test(deploymentTransaction) : base58Length(deploymentTransaction, 64, 88) === 64))
+    throw new PolicyInvalid({ message: "Escrow deployment requires immutable source and transaction evidence" })
+  const common = { projectId, scope, network, vault, asset, owner, identityAuthority, feeRecipient, deploymentTransaction, sourceCommit, codeSha256, bindingDelaySeconds }
+  const facts = NETWORKS[network]
+  const chainId = facts.family === "evm" ? parseBaseUnits(String(facts.chainId)) : undefined
+  if (facts.family === "evm" && chain !== "solana" && chainId !== undefined)
+    return {
+      ...common, family: "evm", chain, chainId, scanPageBlocks: facts.scanPageBlocks, gasCeiling: facts.gasCeiling,
+      factory: factory ?? "", factoryCodeSha256: factoryCodeSha256 ?? "", registrar: registrar ?? "", evmUpgrade,
+      maxNativeCostWei: textOf(entry.maxNativeCostWei), bindingConsentNonceLimit: entry.bindingConsentNonceLimit === 1 ? 1 : undefined,
+    } satisfies EvmDeployment
+  if (facts.family === "solana")
+    return {
+      ...common, family: "solana", chain: "solana", genesisHash: facts.genesisHash, programId: programId ?? "", upgradeAuthority: upgradeAuthority ?? null,
+      projectPda: projectPda ?? "", networkDomain: networkDomain ?? "", rotationAuthority, rotationDelaySeconds: rotationDelaySeconds ?? "",
+    } satisfies SolanaDeployment
+  throw new PolicyInvalid({ message: "A project has one chain and one escrow per network" })
+}
+
+export effect function reviewedPolicy(projectId: string, value: unknown, scope: PolicyScope) {
+  const policy = try exactKeys(value, POLICY_KEYS)
+  const chain = textOf(policy.chain)
+  const feeBasisPoints = scope === "security-bounty" ? SECURITY_FEE_BASIS_POINTS : PAYOUT_FEE_BASIS_POINTS
+  const listed = policy.deployments
+  if (policy.schemaVersion !== "1" || typeof policy.effectiveCycle !== "string" || !CYCLE.test(policy.effectiveCycle) || chain === undefined || !isChain(chain)
+    || policy.feeBasisPoints !== feeBasisPoints || policy.withdrawalFeeBasisPoints !== WITHDRAWAL_FEE_BASIS_POINTS || policy.feeMode !== "deduct-from-gross" || !Array.isArray(listed))
+    throw new PolicyInvalid({ message: "Invalid escrow chain or fee policy" })
+  const networks = new Set<string>()
+  const deployments: ReviewedDeployment[] = []
+  for (const entry of listed) deployments.push(try reviewedDeployment(projectId, scope, chain, entry, networks))
+  return deployments
+}
+
+export function vaultKeyOf(deployment: { readonly network: string; readonly vault: string; readonly family: "evm" | "solana" }): string {
+  return `${deployment.network}:${deployment.family === "solana" ? deployment.vault : deployment.vault.toLowerCase()}`
+}

@@ -1,0 +1,171 @@
+// spec/security/intake.md, "Upload and receipt creation have separate durable states"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
+import { first, rows, sql } from "@repo/platform/d1"
+import { millisOf } from "@repo/platform/clock"
+import type { Phase, Review, Screening } from "../../gen/security__screening.ts"
+import { qualified, recoverable } from "../../gen/security__screening.effect.vibe"
+
+export schema SubmissionRow {
+  id: string
+  project_id: string
+  repository: string
+  reporter_github_id: string
+  reporter_github_login: string
+  origin: string
+  idempotency_key: string
+  marker: string
+  state: string
+  attempt: number
+  attempt_started_at: string | null
+  advisory_ghsa: string | null
+  github_created_at: string | null
+  evidence_digest: string | null
+  failure_code: string | null
+  case_id: string | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export schema StoredIntake {
+  submission_id: string
+  case_id: string
+  received_at: string
+  report_version: number
+  screening_state: string
+  screening_started_at: string | null
+  screening_reason: string | null
+  routed_at: string | null
+  reviewed_at: string | null
+  review_decision: string | null
+  review_reason: string | null
+  revision: number
+}
+
+export schema CaseStanding { id: string; revision: number; receipt_state: string; award_state: string; project_id: string; reporter_github_id: string; appeal_state: string; related_party_review: string }
+
+export schema ReportVersion { version: number; content_sha256: string }
+
+const columns = sql`id, project_id, repository, reporter_github_id, reporter_github_login, origin, idempotency_key, marker, state, attempt, attempt_started_at, advisory_ghsa, github_created_at, evidence_digest, failure_code, case_id, revision, created_at, updated_at`
+const intakeColumns = sql`submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision`
+
+const submissionId = /^ss_[A-Za-z0-9_-]{8,72}$/u
+const reconcileQuietMs = 5 * 60 * 1000
+
+export effect function submissionByKey(reporterGithubId: string, idempotencyKey: string) {
+  return try first(SubmissionRow, sql`SELECT ${columns} FROM security_submissions WHERE reporter_github_id=${reporterGithubId} AND idempotency_key=${idempotencyKey}`)
+}
+
+export effect function submission(id: string) {
+  if (!submissionId.test(id)) return undefined
+  return try first(SubmissionRow, sql`SELECT ${columns} FROM security_submissions WHERE id = ${id}`)
+}
+
+export effect function storedIntake(id: string) {
+  return try first(StoredIntake, sql`SELECT ${intakeColumns} FROM security_submission_intake WHERE submission_id=${id}`)
+}
+
+export effect function caseStanding(caseId: string) {
+  return try first(CaseStanding, sql`SELECT id, revision, receipt_state, award_state, project_id, reporter_github_id, appeal_state, related_party_review FROM security_cases WHERE id = ${caseId}`)
+}
+
+export effect function reportVersions(id: string) {
+  return try rows(ReportVersion, sql`SELECT version, content_sha256 FROM security_intake_reports WHERE submission_id=${id} ORDER BY version`)
+}
+
+export effect function firstVersionDigest(id: string) {
+  return (try first(ReportVersion, sql`SELECT version, content_sha256 FROM security_intake_reports WHERE submission_id=${id} AND version=1`))?.content_sha256
+}
+
+const phases: Readonly<Record<string, Phase>> = { queued: "Queued", running: "Running", legitimate: "Legitimate", "needs-information": "NeedsInformation", spam: "Spam", unavailable: "Unavailable" }
+
+function reviewOf(decision: string | null): Review {
+  return decision === null ? "PendingReview" : decision === "forward" ? "Forward" : "RequestInformation"
+}
+
+export function screeningOf(stored: StoredIntake, reporter: number, digests: ReadonlyArray<string>): Screening {
+  const startedAt = stored.screening_state === "running" ? millisOf(stored.screening_started_at ?? stored.received_at) : 0
+  return {
+    reporter,
+    revision: stored.revision,
+    version: stored.report_version,
+    digest: digests[stored.report_version - 1] ?? "",
+    phase: phases[stored.screening_state] ?? "Unavailable",
+    review: stored.review_decision === null || stored.review_decision === "forward" || stored.review_decision === "request-information" ? reviewOf(stored.review_decision) : "RequestInformation",
+    startedAt: Number.isFinite(startedAt) ? startedAt : 0,
+    routed: stored.routed_at !== null,
+    noticeVersions: [],
+    reportDigests: [...digests],
+  }
+}
+
+function intakeQualified(stored: StoredIntake) {
+  return qualified(screeningOf(stored, 1, []))
+}
+
+function retryable(stored: StoredIntake, nowMs: number) {
+  const screening = screeningOf(stored, 1, [])
+  const started = millisOf(stored.screening_started_at ?? stored.received_at)
+  return recoverable(screening, stored.screening_state === "running" && !Number.isFinite(started) ? { tag: "UnknownClock" } : { tag: "ExactClock", nowMs })
+}
+
+export function submissionView(row: SubmissionRow) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    repository: row.repository,
+    origin: row.origin,
+    state: row.state,
+    revision: row.revision,
+    attempt: row.attempt,
+    advisory: row.advisory_ghsa === null ? null : { ghsa: row.advisory_ghsa, url: `https://github.com/${row.repository}/security/advisories/${row.advisory_ghsa}` },
+    githubCreatedAt: row.github_created_at,
+    failureCode: row.failure_code,
+    caseId: row.case_id,
+    retryAllowed: row.state === "draft" && row.attempt > 0,
+    reconcileAfter: row.state === "uncertain" && row.advisory_ghsa === null && row.attempt_started_at !== null
+      ? new Date(millisOf(row.attempt_started_at) + reconcileQuietMs).toISOString()
+      : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+const revisable: ReadonlyArray<string> = ["needs-information", "spam", "unavailable"]
+const openReceipts: ReadonlyArray<string> = ["received", "needs-information", "triaging"]
+const committedAwards: ReadonlyArray<string> = ["approved", "reserved"]
+
+export function reporterView(row: SubmissionRow, stored: StoredIntake, record: CaseStanding, nowMs: number) {
+  const ready = intakeQualified(stored)
+  const screeningRevisable = stored.review_decision === "request-information" || (stored.review_decision === null && revisable.includes(stored.screening_state))
+  return {
+    ...submissionView(row),
+    intake: {
+      state: stored.review_decision === "request-information" ? "needs-information" : stored.screening_state,
+      receivedAt: stored.received_at,
+      revision: stored.revision,
+      reportVersion: stored.report_version,
+      routingState: stored.routed_at === null ? "pending" : "routed",
+      reason: stored.review_reason ?? stored.screening_reason,
+      reviewedAt: stored.reviewed_at,
+      canReview: false,
+      canForward: ready,
+      canRetryScreening: ready ? stored.routed_at === null : stored.review_decision === null && retryable(stored, nowMs),
+      canAuthorize: ready && row.advisory_ghsa === null,
+      canRevise: ((screeningRevisable && row.advisory_ghsa === null) || record.receipt_state === "needs-information")
+        && row.advisory_ghsa === null
+        && (row.state === "draft" || row.state === "failed")
+        && openReceipts.includes(record.receipt_state)
+        && !committedAwards.includes(record.award_state),
+    },
+  }
+}
+
+export error ReceiptMissing { submissionId: string }
+
+export effect function decorated(row: SubmissionRow) {
+  const stored = try storedIntake(row.id)
+  if (stored === undefined) return { ...submissionView(row), intake: null }
+  const record = try caseStanding(stored.case_id)
+  if (record === undefined) throw new ReceiptMissing({ submissionId: row.id })
+  return reporterView(row, stored, record, try Clock.currentTimeMillis)
+}

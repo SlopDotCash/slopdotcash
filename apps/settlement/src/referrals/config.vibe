@@ -1,0 +1,116 @@
+// spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Recorded funding is exactly 2,000,000 program tokens in the verified token's base units"; spec/settlement/referralAccrual.md, "Verified token units and approved reactivation precede dry-run accrual"
+import { ConfigInvalid, idList } from "@repo/platform/config"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { type Event as ControlEvent, type Referral, type ReferralMode, Rejected as ControlRefused, apply as applyControl, decodeEvent as decodeControlEvent, initial as controlStart } from "../../gen/settlement__referrals.effect.vibe"
+import { canConfigure, canEnableDryRun, configure, initial as ledgerStart, initialRateUnits, poolCap, projectCap } from "../../gen/settlement__referralAccrual.effect.vibe"
+import { fromAmount, parseBaseUnits, toAmount } from "../kernels/amounts.ts"
+import { FIRST_REFERRAL_PERIOD } from "./periods.ts"
+
+export interface ReferralVars {
+  readonly REFERRAL_ACCRUAL_MODE?: string
+  readonly REFERRAL_FIRST_PERIOD?: string
+  readonly REFERRAL_RATE_BASE_PER_MICRO?: string
+  readonly REFERRAL_TOKEN_DECIMALS?: string
+  readonly REFERRAL_POOL_BASE?: string
+  readonly REFERRAL_PROJECT_CAP_BASE?: string
+  readonly REFERRAL_WINDOW_MONTHS?: string
+  readonly REFERRAL_EXCLUDED_GITHUB_IDS?: string
+}
+
+export interface ControlStep {
+  readonly event: ControlEvent
+  readonly by: string
+}
+
+export interface Accruing {
+  readonly tokenUnit: Amount
+  readonly tokenDecimals: number
+  readonly verified: boolean
+  readonly reactivationApproved: boolean
+  readonly excluded: ReadonlySet<string>
+}
+
+export type Program =
+  | { readonly mode: "Off"; readonly control: Referral }
+  | { readonly mode: "DryRun" | "Posting"; readonly control: Referral; readonly ledger: Accruing }
+
+export service ReferralProgram {
+  readonly program: Program
+}
+
+const owner = "owner"
+const modes: ReadonlyArray<ReferralMode> = ["Off", "DryRun", "Posting"]
+const windowMonths = "12"
+const uint256Max = (1n << 256n) - 1n
+
+export effect function controlled(history: ReadonlyArray<ControlStep>) {
+  let state = controlStart
+  for (const step of history) state = try applyControl(state, step.event, step.by)
+  return state
+}
+
+export effect function receiveControl(history: ReadonlyArray<ControlStep>, raw: unknown, by: string) {
+  const step = { event: try decodeControlEvent(raw), by } satisfies ControlStep
+  return { state: try controlled([...history, step]), step }
+}
+
+function historyFor(mode: ReferralMode): ReadonlyArray<ControlStep> {
+  const dryRun: ControlStep = { event: { type: "dryRun" }, by: owner }
+  return mode === "Off" ? [] : mode === "DryRun" ? [dryRun] : [dryRun, { event: { type: "activate" }, by: owner }]
+}
+
+effect function baseUnits(name: string, text: string | undefined) {
+  const value = parseBaseUnits((text ?? "").trim(), uint256Max)
+  if (value === undefined) throw new ConfigInvalid({ name, issue: "not a non-negative integer of base units" })
+  return value
+}
+
+effect function required(name: string, text: string | undefined, expected: string) {
+  if ((text ?? "").trim() !== expected) throw new ConfigInvalid({ name, issue: `must be ${expected}` })
+}
+
+effect function exact(name: string, actual: bigint, expected: Amount) {
+  if (actual !== fromAmount(expected)) throw new ConfigInvalid({ name, issue: `must be ${fromAmount(expected)}` })
+}
+
+effect function ledgerOf(vars: ReferralVars, control: Referral) {
+  try required("REFERRAL_FIRST_PERIOD", vars.REFERRAL_FIRST_PERIOD, FIRST_REFERRAL_PERIOD)
+  try required("REFERRAL_WINDOW_MONTHS", vars.REFERRAL_WINDOW_MONTHS, windowMonths)
+  const decimalsText = (vars.REFERRAL_TOKEN_DECIMALS ?? "").trim()
+  if (!/^(0|[1-9][0-9]?)$/u.test(decimalsText) || Number(decimalsText) > 36) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_DECIMALS", issue: "must be an integer from 0 through 36" })
+  const tokenDecimals = Number(decimalsText)
+  let unit = 1n
+  for (let digit = 0; digit < tokenDecimals; digit++) unit *= 10n
+  const tokenUnit = try orDie(Effect.try(() => toAmount(unit)))
+  try exact("REFERRAL_TOKEN_DECIMALS", unit, control.tokenUnit)
+  const rate = initialRateUnits(tokenUnit)
+  if (fromAmount(rate.remainder) !== 0n) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_DECIMALS", issue: "cannot express three tokens per stablecoin unit exactly" })
+  const capped = { ...ledgerStart, tokenUnit }
+  try exact("REFERRAL_RATE_BASE_PER_MICRO", try baseUnits("REFERRAL_RATE_BASE_PER_MICRO", vars.REFERRAL_RATE_BASE_PER_MICRO), rate.quotient)
+  try exact("REFERRAL_POOL_BASE", try baseUnits("REFERRAL_POOL_BASE", vars.REFERRAL_POOL_BASE), poolCap(capped))
+  try exact("REFERRAL_PROJECT_CAP_BASE", try baseUnits("REFERRAL_PROJECT_CAP_BASE", vars.REFERRAL_PROJECT_CAP_BASE), projectCap(capped))
+  const verified = control.tokenExists
+  if (!canConfigure(ledgerStart, tokenUnit, verified, owner)) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_DECIMALS", issue: "the token is not verified for the ledger" })
+  const { reactivationApproved } = control
+  if (!canEnableDryRun(configure(ledgerStart, tokenUnit, verified, owner), reactivationApproved, owner)) throw new ConfigInvalid({ name: "REFERRAL_ACCRUAL_MODE", issue: "dry-run accrual requires the recorded reactivation approval" })
+  const excluded = new Set(try idList("REFERRAL_EXCLUDED_GITHUB_IDS", vars.REFERRAL_EXCLUDED_GITHUB_IDS))
+  return { tokenUnit, tokenDecimals, verified, reactivationApproved, excluded } satisfies Accruing
+}
+
+export effect function decodeProgram(vars: ReferralVars) {
+  const text = (vars.REFERRAL_ACCRUAL_MODE ?? "Off").trim()
+  const mode = modes.find((candidate) => candidate === text)
+  if (mode === undefined) throw new ConfigInvalid({ name: "REFERRAL_ACCRUAL_MODE", issue: "must be Off, DryRun or Posting" })
+  const control = controlled(historyFor(mode)) catch effect (error) => match (error) {
+    when ControlRefused: throw new ConfigInvalid({ name: "REFERRAL_ACCRUAL_MODE", issue: "Posting requires the recorded funding line and an independent root watcher" });
+    default: throw error;
+  }
+  if (mode === "Off") return { mode, control } satisfies Program
+  return { mode, control, ledger: try ledgerOf(vars, control) } satisfies Program
+}
+
+export function referralProgram(vars: ReferralVars) {
+  return Layer.effect(ReferralProgram, effect {
+    return { program: try decodeProgram(vars) }
+  })
+}

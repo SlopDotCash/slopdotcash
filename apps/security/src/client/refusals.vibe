@@ -1,0 +1,1049 @@
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
+
+const jsonPrivateNoStoreRobotsTag = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "x-robots-tag": "noindex" } as const
+const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
+const textUncachedPlain = { "content-type": "text/plain;charset=UTF-8" } as const
+const textNoStorePlain = { "cache-control": "no-store", "content-type": "text/plain;charset=UTF-8" } as const
+
+const withOriginForbiddenV2 = {
+  originForbidden: { status: 403, error: "origin_forbidden", message: "Requests must come from this site", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV7 = {
+  unauthorized: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonPrivateNoStoreRobotsTag },
+  invalidExpectedActor: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonPrivateNoStoreRobotsTag },
+  actorChanged: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInternalError = {
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  notFound: { status: 404, error: "not_found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV6 = {
+  ...withUnauthorizedAndInvalidExpectedActorV7,
+  ...withInternalError,
+} as const
+
+const withGithubUnavailable = {
+  githubUnavailable: { status: 503, error: "github_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV5 = {
+  ...withUnauthorizedAndInvalidExpectedActorV6,
+  ...withGithubUnavailable,
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV2 = {
+  ...withUnauthorizedAndInvalidExpectedActorV5,
+  reportUnavailable: { status: 503, error: "report_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReport: { status: 400, error: "invalid_report", message: "Invalid report", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportReportHasUnexpectedFields: { status: 400, error: "invalid_report", message: "Report has unexpected fields", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidSummary: { status: 400, error: "invalid_report", message: "Invalid summary", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportSummaryMustBe8: { status: 400, error: "invalid_report", message: "summary must be 8 to 1024 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidDescription: { status: 400, error: "invalid_report", message: "Invalid description", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportDescriptionMustBe20: { status: 400, error: "invalid_report", message: "description must be 20 to 65000 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportGiveASeverityOr: { status: 400, error: "invalid_report", message: "Give a severity or a CVSS vector, not both", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidSeverity: { status: 400, error: "invalid_report", message: "Invalid severity", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidCvssVectorString: { status: 400, error: "invalid_report", message: "Invalid cvssVectorString", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidCweIds: { status: 400, error: "invalid_report", message: "Invalid cweIds", headers: jsonPrivateNoStoreRobotsTag },
+  invalidReportInvalidVulnerabilities: { status: 400, error: "invalid_report", message: "Invalid vulnerabilities", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withNotFoundSubmissionNotFound = {
+  notFoundSubmissionNotFound: { status: 404, error: "not_found", message: "Submission not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withNotFoundReportNotFound = {
+  notFoundReportNotFound: { status: 404, error: "not_found", message: "Report not found", headers: jsonPrivateNoStoreRobotsTag },
+  ...withNotFoundSubmissionNotFound,
+} as const
+
+const withUnauthorized = {
+  ...withUnauthorizedAndInvalidExpectedActorV2,
+  ...withNotFoundReportNotFound,
+} as const
+
+const withInvalidRequestRequestBodyHasUnexpected = {
+  invalidRequestRequestBodyHasUnexpected: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV5 = {
+  ...withOriginForbiddenV2,
+  ...withUnauthorized,
+  ...withInvalidRequestRequestBodyHasUnexpected,
+} as const
+
+const withProjectNotFoundV2 = {
+  projectNotFound: { status: 404, error: "project_not_found", message: "This project is not available for private reporting", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withIntakeRateLimited = {
+  intakeRateLimited: { status: 429, error: "intake_rate_limited", message: "Please wait before requesting more private report work.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV3 = {
+  ...withOriginForbiddenAndUnauthorizedV5,
+  intakeUnavailable: { status: 503, error: "intake_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  ...withProjectNotFoundV2,
+  ...withIntakeRateLimited,
+  reportTooLarge: { status: 413, error: "report_too_large", message: "The private report is too large.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbidden = {
+  ...withOriginForbiddenAndUnauthorizedV3,
+  invalidRequestProvideAValidPrivate: { status: 400, error: "invalid_request", message: "Provide a valid private report request.", headers: jsonPrivateNoStoreRobotsTag },
+  staleRevisionTheReportChangedReload: { status: 409, error: "stale_revision", message: "The report changed. Reload it before acting.", headers: jsonPrivateNoStoreRobotsTag },
+  screeningNotRetryable: { status: 409, error: "screening_not_retryable", message: "This report is not waiting for automatic screening.", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenOnlyACurrentSecurity: { status: 403, error: "forbidden", message: "Only a current security maintainer can review routing.", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestProvideARoutingDecision: { status: 400, error: "invalid_request", message: "Provide a routing decision and reason.", headers: jsonPrivateNoStoreRobotsTag },
+  reportNotEditable: { status: 409, error: "report_not_editable", message: "This report cannot be revised now.", headers: jsonPrivateNoStoreRobotsTag },
+  reportNotEditableTheReportAlreadyHas: { status: 409, error: "report_not_editable", message: "The report already has a decision.", headers: jsonPrivateNoStoreRobotsTag },
+  reportUnchanged: { status: 409, error: "report_unchanged", message: "Update the report before submitting it again.", headers: jsonPrivateNoStoreRobotsTag },
+  notFoundActionNotFound: { status: 404, error: "not_found", message: "Action not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV8 = {
+  ...withOriginForbiddenV2,
+  invalidContentLength: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInvalidRequestRequestBodyMustBe = {
+  invalidRequestRequestBodyMustBe: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV7 = {
+  ...withOriginForbiddenAndInvalidContentLengthV8,
+  payloadTooLarge: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequest: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInvalidRequestRequestBodyMustBe,
+} as const
+
+const withProjectNotFound = {
+  ...withProjectNotFoundV2,
+  advisoryAlreadyRecordedThisAdvisoryAlreadyHas: { status: 409, error: "advisory_already_recorded", message: "This advisory already has a verified case", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInvalidRequestInvalidIdempotencyKey = {
+  invalidRequestInvalidIdempotencyKey: { status: 400, error: "invalid_request", message: "Invalid idempotencyKey", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withPaymentNotPrepared = {
+  paymentNotPrepared: { status: 409, error: "payment_not_prepared", message: "Prepare the payment first", headers: jsonPrivateNoStoreRobotsTag },
+  paymentWalletRequired: { status: 409, error: "payment_wallet_required", message: "The original reporter wallet record is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  paymentWalletRequiredConfirmAPayoutWallet: { status: 409, error: "payment_wallet_required", message: "Confirm a payout wallet for this network in Settings first", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLength = {
+  ...withOriginForbiddenAndInvalidContentLengthV7,
+  ...withUnauthorizedAndInvalidExpectedActorV2,
+  ...withInvalidRequestRequestBodyHasUnexpected,
+  ...withProjectNotFound,
+  ...withInvalidRequestInvalidIdempotencyKey,
+  invalidRequestInvalidReceivedAt: { status: 400, error: "invalid_request", message: "Invalid receivedAt", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestPrivateNoStore: { status: 400, error: "invalid_request", messageFrom: "`${key} must be a ${past ? \"past\" : \"future\"} UTC time`", headers: jsonPrivateNoStoreRobotsTag },
+  ...withPaymentNotPrepared,
+} as const
+
+const withInvalidRequestUnexpectedEvidenceFields = {
+  invalidRequestUnexpectedEvidenceFields: { status: 400, error: "invalid_request", message: "Unexpected evidence fields", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidEvidenceText: { status: 400, error: "invalid_request", message: "Invalid evidence text", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV6 = {
+  ...withOriginForbiddenAndInvalidContentLengthV7,
+  ...withInvalidRequestUnexpectedEvidenceFields,
+} as const
+
+const withNotFoundEvidenceRouteNotFoundV2 = {
+  notFoundEvidenceRouteNotFound: { status: 404, error: "not_found", message: "Evidence route not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceMissingEvidenceObjectIsMissing = {
+  evidenceMissingEvidenceObjectIsMissing: { status: 404, error: "evidence_missing", message: "Evidence object is missing", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withNotFoundEvidenceRouteNotFoundAndEvidenceMissingEvidenceObjectIsMissing = {
+  ...withNotFoundEvidenceRouteNotFoundV2,
+  ...withEvidenceMissingEvidenceObjectIsMissing,
+} as const
+
+const withEvidenceUnavailableV2 = {
+  evidenceUnavailable: { status: 503, error: "evidence_unavailable", message: "Vetting evidence storage is not bound", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceUnavailable = {
+  ...withEvidenceUnavailableV2,
+  evidenceCorruptInvalidBoundedEvidenceTarget: { status: 409, error: "evidence_corrupt", message: "Invalid bounded evidence target", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptInvalidEvidenceGenerationBinding: { status: 409, error: "evidence_corrupt", message: "Invalid evidence generation binding", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptInvalidSelectedEvidenceTarget: { status: 409, error: "evidence_corrupt", message: "Invalid selected evidence target", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptEvidenceMetadataChanged: { status: 409, error: "evidence_corrupt", message: "Evidence metadata changed", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptEvidenceLengthChanged: { status: 409, error: "evidence_corrupt", message: "Evidence length changed", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptEvidenceBytesChanged: { status: 409, error: "evidence_corrupt", message: "Evidence bytes changed", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInternalError,
+} as const
+
+const withForbiddenDesignatedVettingOperatorAccess = {
+  forbiddenDesignatedVettingOperatorAccess: { status: 403, error: "forbidden", message: "Designated vetting operator access is required", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceMissing = {
+  evidenceMissing: { status: 404, error: "evidence_missing", message: "Evidence run is missing", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceExpired: { status: 410, error: "evidence_expired", message: "Evidence access expired; physical retention is governed separately", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceOversizeV2 = {
+  evidenceOversize: { status: 413, error: "evidence_oversize", message: "Large evidence requires a streamed download", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceMissingDeclaredEvidenceBytesAreV2 = {
+  evidenceMissingDeclaredEvidenceBytesAre: { status: 404, error: "evidence_missing", message: "Declared evidence bytes are missing", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceOversize = {
+  ...withEvidenceOversizeV2,
+  ...withEvidenceMissingDeclaredEvidenceBytesAreV2,
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV3 = {
+  ...withUnauthorizedAndInvalidExpectedActorV7,
+  ...withEvidenceUnavailable,
+  ...withForbiddenDesignatedVettingOperatorAccess,
+  ...withEvidenceMissing,
+  ...withEvidenceOversize,
+} as const
+
+const withEvidenceCorrupt = {
+  evidenceCorrupt: { status: 409, error: "evidence_corrupt", message: "Stored evidence chunk layout changed", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidencePending = {
+  evidencePending: { status: 409, error: "evidence_pending", message: "Chunked evidence has not completed whole-file verification", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withUnauthorizedAndInvalidExpectedActor = {
+  ...withUnauthorizedAndInvalidExpectedActorV3,
+  ...withEvidenceCorrupt,
+  ...withEvidencePending,
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV2 = {
+  ...withOriginForbiddenAndInvalidContentLengthV6,
+  ...withNotFoundEvidenceRouteNotFoundAndEvidenceMissingEvidenceObjectIsMissing,
+  ...withUnauthorizedAndInvalidExpectedActor,
+  invalidRequestExplainWhyAccessIs: { status: 400, error: "invalid_request", message: "Explain why access is needed (8 to 500 characters)", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceOversizeLargeEvidenceRequiresA: { status: 413, error: "evidence_oversize", message: "Large evidence requires a native streamed download grant", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV4 = {
+  ...withOriginForbiddenAndUnauthorizedV5,
+  ...withInvalidRequestRequestBodyMustBe,
+} as const
+
+const withInvalidRequestInvalidExpectedRevision = {
+  invalidRequestInvalidExpectedRevision: { status: 400, error: "invalid_request", message: "Invalid expectedRevision", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndUnauthorizedV2 = {
+  ...withOriginForbiddenAndUnauthorizedV4,
+  ...withInvalidRequestInvalidExpectedRevision,
+  staleRevisionTheSubmissionChangedSince: { status: 409, error: "stale_revision", message: "The submission changed since you loaded it", headers: jsonPrivateNoStoreRobotsTag },
+  grantRequired: { status: 409, error: "grant_required", message: "Authorize GitHub to act for you on this submission first", headers: jsonPrivateNoStoreRobotsTag },
+  ...withProjectNotFound,
+} as const
+
+const withOriginForbiddenAndUnauthorized = {
+  ...withOriginForbiddenAndUnauthorizedV2,
+  submissionInProgress: { status: 409, error: "submission_in_progress", message: "This submission is being sent", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV5 = {
+  ...withOriginForbiddenAndInvalidContentLengthV8,
+  ...withNotFoundEvidenceRouteNotFoundV2,
+  ...withEvidenceUnavailable,
+  serviceUnavailable: { status: 503, error: "service_unavailable", message: "Vetting evidence upload is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  vettingUnavailable: { status: 503, error: "vetting_unavailable", message: "The vetting service is not configured", headers: jsonPrivateNoStoreRobotsTag },
+  invalidSignature: { status: 401, error: "invalid_signature", message: "The signed timestamp is missing or stale", headers: jsonPrivateNoStoreRobotsTag },
+  invalidSignatureTheVettingSignatureIs: { status: 401, error: "invalid_signature", message: "The vetting signature is not valid", headers: jsonPrivateNoStoreRobotsTag },
+  payloadTooLargePrivateNoStore: { status: 413, error: "payload_too_large", messageFrom: "`Request body exceeds ${limit} bytes`", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV4 = {
+  ...withOriginForbiddenAndInvalidContentLengthV5,
+  ...withEvidenceMissing,
+  ...withEvidenceMissingEvidenceObjectIsMissing,
+} as const
+
+const withOriginForbiddenAndInvalidContentLengthV3 = {
+  ...withOriginForbiddenAndInvalidContentLengthV4,
+  evidenceCorruptAPhysicalGenerationIs: { status: 409, error: "evidence_corrupt", message: "A physical generation is required for this write", headers: jsonPrivateNoStoreRobotsTag },
+  digestMismatchEvidenceMustMatchIts: { status: 422, error: "digest_mismatch", message: "Evidence must match its declared byte length", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceRetired: { status: 410, error: "evidence_retired", message: "Evidence generation is retiring or retired", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCorruptInvalidEvidenceTargetIdentity: { status: 409, error: "evidence_corrupt", message: "Invalid evidence target identity", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceRetiredEvidenceGenerationNoLonger: { status: 410, error: "evidence_retired", message: "Evidence generation no longer accepts writes", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceConflictEvidenceTargetIdentityAlready: { status: 409, error: "evidence_conflict", message: "Evidence target identity already belongs to other bytes", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceConflictEvidenceTargetPublicationDid: { status: 409, error: "evidence_conflict", message: "Evidence target publication did not select bytes", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInvalidContentLengthContentLengthMustContain = {
+  invalidContentLengthContentLengthMustContain: { status: 400, error: "invalid_content_length", message: "Content-Length must contain only decimal digits", headers: jsonNoStore },
+} as const
+
+const withNotFoundNoStore = {
+  notFoundNoStore: { status: 404, error: "not_found", headers: jsonNoStore },
+  internalErrorInternalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonNoStore },
+} as const
+
+const withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV3 = {
+  vettingUnavailableTheVettingServiceIsNotConfigured: { status: 503, error: "vetting_unavailable", message: "The vetting service is not configured", headers: jsonNoStore },
+  invalidSignatureTheSignedTimestampIs: { status: 401, error: "invalid_signature", message: "The signed timestamp is missing or stale", headers: jsonNoStore },
+  invalidSignatureTheVettingSignatureIsNotValid: { status: 401, error: "invalid_signature", message: "The vetting signature is not valid", headers: jsonNoStore },
+  ...withInvalidContentLengthContentLengthMustContain,
+  ...withNotFoundNoStore,
+} as const
+
+const withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV2 = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV3,
+  notFoundAssessmentNotFoundNoStore: { status: 404, error: "not_found", message: "Assessment not found", headers: jsonNoStore },
+} as const
+
+const withNotFoundProjectNotFound = {
+  notFoundProjectNotFound: { status: 404, error: "not_found", message: "Project not found", headers: jsonNoStore },
+} as const
+
+const withVettingUnavailableTheVettingServiceIsNotConfigured = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV2,
+  alreadyRecorded: { status: 409, error: "already_recorded", message: "This assessment already has a result", headers: jsonNoStore },
+  ...withNotFoundProjectNotFound,
+  evidenceMissingEvidenceRunIsMissing: { status: 404, error: "evidence_missing", message: "Evidence run is missing", headers: jsonNoStore },
+  evidenceCorruptStoredEvidenceChunkLayout: { status: 409, error: "evidence_corrupt", message: "Stored evidence chunk layout changed", headers: jsonNoStore },
+  evidenceUnavailableVettingEvidenceStorageIs: { status: 503, error: "evidence_unavailable", message: "Vetting evidence storage is not bound", headers: jsonNoStore },
+  evidenceExpiredEvidenceAccessExpiredPhysical: { status: 410, error: "evidence_expired", message: "Evidence access expired; physical retention is governed separately", headers: jsonNoStore },
+  evidenceOversizeLargeEvidenceRequiresAStreamedDownload: { status: 413, error: "evidence_oversize", message: "Large evidence requires a streamed download", headers: jsonNoStore },
+  evidenceCorruptNoStore: { status: 409, error: "evidence_corrupt", message: "Invalid bounded evidence target", headers: jsonNoStore },
+  evidenceCorruptInvalidEvidenceGenerationBindingNoStore: { status: 409, error: "evidence_corrupt", message: "Invalid evidence generation binding", headers: jsonNoStore },
+  evidenceCorruptInvalidSelectedEvidenceTargetNoStore: { status: 409, error: "evidence_corrupt", message: "Invalid selected evidence target", headers: jsonNoStore },
+  evidenceMissingDeclaredEvidenceBytesAreMissing: { status: 404, error: "evidence_missing", message: "Declared evidence bytes are missing", headers: jsonNoStore },
+  evidenceCorruptEvidenceMetadataChangedNoStore: { status: 409, error: "evidence_corrupt", message: "Evidence metadata changed", headers: jsonNoStore },
+  evidenceCorruptEvidenceLengthChangedNoStore: { status: 409, error: "evidence_corrupt", message: "Evidence length changed", headers: jsonNoStore },
+  evidenceCorruptEvidenceBytesChangedNoStore: { status: 409, error: "evidence_corrupt", message: "Evidence bytes changed", headers: jsonNoStore },
+  evidenceOversizeAStructuralEvidenceDocument: { status: 413, error: "evidence_oversize", message: "A structural evidence document is too large to parse in one request", headers: jsonNoStore },
+  evidencePendingChunkedEvidenceHasNot: { status: 409, error: "evidence_pending", message: "Chunked evidence has not completed whole-file verification", headers: jsonNoStore },
+  evidenceCorruptCompleteEvidenceDigestChanged: { status: 409, error: "evidence_corrupt", message: "Complete evidence digest changed", headers: jsonNoStore },
+} as const
+
+const withNotFoundEvidenceRouteNotFound = {
+  ...withNotFoundEvidenceRouteNotFoundAndEvidenceMissingEvidenceObjectIsMissing,
+  ...withUnauthorizedAndInvalidExpectedActorV3,
+  grantInvalidInvalidReadGrant: { status: 403, error: "grant_invalid", message: "Invalid read grant", headers: jsonPrivateNoStoreRobotsTag },
+  grantInvalidReadGrantIsExpired: { status: 403, error: "grant_invalid", message: "Read grant is expired, used or belongs to another operator or object", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withOriginForbiddenRequestsMustComeFromV2 = {
+  originForbiddenRequestsMustComeFrom: { status: 403, error: "origin_forbidden", message: "Requests must come from this site", headers: jsonNoStore },
+} as const
+
+const withUnauthorizedSignInWithGitHub = {
+  unauthorizedSignInWithGitHub: { status: 401, error: "unauthorized", message: "Sign in with GitHub", headers: jsonNoStore },
+  invalidExpectedActorExpectedGitHubActorIs: { status: 400, error: "invalid_expected_actor", message: "Expected GitHub actor is invalid", headers: jsonNoStore },
+  actorChangedYourAccountChangedReload: { status: 403, error: "actor_changed", message: "Your account changed. Reload your private view before continuing.", headers: jsonNoStore },
+  ...withNotFoundNoStore,
+} as const
+
+const withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHubV2 = {
+  ...withOriginForbiddenRequestsMustComeFromV2,
+  ...withUnauthorizedSignInWithGitHub,
+  ...withInvalidContentLengthContentLengthMustContain,
+  payloadTooLargeRequestBodyExceeds65536: { status: 413, error: "payload_too_large", message: "Request body exceeds 65536 bytes", headers: jsonNoStore },
+  invalidRequestRequestBodyMustBeValidUTF8: { status: 400, error: "invalid_request", message: "Request body must be valid UTF-8 JSON", headers: jsonNoStore },
+  invalidRequestRequestBodyMustBeAJSONObject: { status: 400, error: "invalid_request", message: "Request body must be a JSON object", headers: jsonNoStore },
+} as const
+
+const withForbiddenAdminAccessIsRequired = {
+  forbiddenAdminAccessIsRequired: { status: 403, error: "forbidden", message: "Admin access is required", headers: jsonNoStore },
+} as const
+
+const withInvalidRequestRequestBodyHasUnexpectedFields = {
+  invalidRequestRequestBodyHasUnexpectedFields: { status: 400, error: "invalid_request", message: "Request body has unexpected fields", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenRequestsMustComeFrom = {
+  ...withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHubV2,
+  ...withForbiddenAdminAccessIsRequired,
+  ...withInvalidRequestRequestBodyHasUnexpectedFields,
+  confirmationRequiredConfirmTheExplicitHuman: { status: 400, error: "confirmation_required", message: "Confirm the explicit human owner decision.", headers: jsonNoStore },
+  invalidRequestProvideAReason1: { status: 400, error: "invalid_request", message: "Provide a reason (1–1000 characters) and owner decision reference (1–500 characters).", headers: jsonNoStore },
+} as const
+
+const withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHub = {
+  ...withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHubV2,
+  ...withNotFoundProjectNotFound,
+} as const
+
+const withUnauthorizedAndInvalidExpectedActorV4 = {
+  ...withUnauthorizedAndInvalidExpectedActorV5,
+  ...withPaymentNotPrepared,
+} as const
+
+const withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIs = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV3,
+  payloadTooLargeRequestBodyExceeds3145728: { status: 413, error: "payload_too_large", message: "Request body exceeds 3145728 bytes", headers: jsonNoStore },
+  sandboxUnavailable: { status: 503, error: "sandbox_unavailable", message: "The isolated runner is not configured", headers: jsonNoStore },
+} as const
+
+const withInvalidRequestInvalidProjectId = {
+  invalidRequestInvalidProjectId: { status: 400, error: "invalid_request", message: "Invalid projectId", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidAdvisory: { status: 400, error: "invalid_request", message: "Invalid advisory", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withEvidenceMissingDeclaredEvidenceBytesAre = {
+  ...withEvidenceMissingDeclaredEvidenceBytesAreV2,
+  ...withEvidenceCorrupt,
+} as const
+
+const withInvalidRequestInvalidRepository = {
+  invalidRequestInvalidRepository: { status: 400, error: "invalid_request", message: "Invalid repository", headers: jsonNoStore },
+  repositoryNotListed: { status: 422, error: "repository_not_listed", message: "The project's current revision does not list this repository", headers: jsonNoStore },
+} as const
+
+const withNotFoundCaseNotFound = {
+  notFoundCaseNotFound: { status: 404, error: "not_found", message: "Case not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withIdempotencyConflict = {
+  idempotencyConflict: { status: 409, error: "idempotency_conflict", message: "That request key was already used", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withParticipationBannedThisAccountCannotStart = {
+  participationBannedThisAccountCannotStart: { status: 403, error: "participation_banned", message: "This account cannot start new Slop work. Existing cases, funded awards and appeals remain available.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withSubmissionClosed = {
+  submissionClosed: { status: 409, error: "submission_closed", message: "This submission is finished", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withScreeningRequired = {
+  screeningRequired: { status: 409, error: "screening_required", message: "The saved report needs screening or an explicit private maintainer routing review.", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withForbiddenTheEvidenceOperatorChanged = {
+  forbiddenTheEvidenceOperatorChanged: { status: 403, error: "forbidden", message: "The evidence operator changed", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withNotFoundAssessmentNotFound = {
+  notFoundAssessmentNotFound: { status: 404, error: "not_found", message: "Assessment not found", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+const withInvalidRequestSendAnEmptyJSON = {
+  invalidRequestSendAnEmptyJSON: { status: 400, error: "invalid_request", message: "Send an empty JSON object", headers: jsonNoStore },
+} as const
+
+const withPinUnavailable = {
+  pinUnavailable: { status: 503, error: "pin_unavailable", messageFrom: "`Slop could not read the integration-branch head or the skill template digest, so a scan cannot be queued. ${error instanceof Error ? error.message : \"\"}`.trim()", headers: jsonNoStore },
+} as const
+
+const withPayloadTooLargeNoStore = {
+  payloadTooLargeNoStore: { status: 413, error: "payload_too_large", messageFrom: "`Request body exceeds ${limit} bytes`", headers: jsonNoStore },
+} as const
+
+const withPayloadTooLargeRequestBodyExceeds1024 = {
+  payloadTooLargeRequestBodyExceeds1024: { status: 413, error: "payload_too_large", message: "Request body exceeds 1024 bytes", headers: jsonNoStore },
+} as const
+
+export const getSecurityProgramsByIdIntake = {
+  programNotFound: { status: 404, error: "program_not_found", message: "No security program", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInternalError,
+  ...withProjectNotFoundV2,
+  ...withGithubUnavailable,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getSecurityCases = {
+  ...withUnauthorizedAndInvalidExpectedActorV4,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postSecurityCases = {
+  ...withOriginForbiddenAndInvalidContentLength,
+  invalidRequestInvalidMode: { status: 400, error: "invalid_request", message: "Invalid mode", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInvalidRequestInvalidProjectId,
+  forbidden: { status: 403, error: "forbidden", message: "Only a security maintainer can import reports", headers: jsonPrivateNoStoreRobotsTag },
+  programNotFoundThisProjectHasNo: { status: 404, error: "program_not_found", message: "This project has no security program", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenOnlyASecurityMaintainer: { status: 403, error: "forbidden", message: "Only a security maintainer can record a case", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequired: { status: 400, error: "confirmation_required", message: "Confirm that you checked the GitHub advisory and its reporter", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidReporterGithubId: { status: 400, error: "invalid_request", message: "Invalid reporterGithubId", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidReporterGithubLogin: { status: 400, error: "invalid_request", message: "Invalid reporterGithubLogin", headers: jsonPrivateNoStoreRobotsTag },
+  conflicted: { status: 403, error: "conflicted", message: "You cannot record your own report", headers: jsonPrivateNoStoreRobotsTag },
+  advisoryAlreadyRecorded: { status: 409, error: "advisory_already_recorded", message: "This advisory already has a verified case.", headers: jsonPrivateNoStoreRobotsTag },
+  claimPending: { status: 409, error: "claim_pending", message: "The reporter already linked this advisory; verify or reject that claim", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const getSecurityCasesById = {
+  ...withUnauthorizedAndInvalidExpectedActorV4,
+  ...withNotFoundCaseNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postSecurityCasesByIdActions = {
+  ...withOriginForbiddenAndInvalidContentLength,
+  ...withNotFoundCaseNotFound,
+  ...withIdempotencyConflict,
+  ...withInvalidRequestInvalidExpectedRevision,
+  staleRevision: { status: 409, error: "stale_revision", message: "The case changed since you loaded it", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowed: { status: 409, error: "action_not_allowed", messageFrom: "`The case does not allow ${action} in its current state`", headers: jsonPrivateNoStoreRobotsTag },
+  receiptCheckUnavailable: { status: 503, error: "receipt_check_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedTheCaseDoesNot: { status: 409, error: "action_not_allowed", message: "The case does not allow triage-appeal in its current state", headers: jsonPrivateNoStoreRobotsTag },
+  analysisRunning: { status: 409, error: "analysis_running", message: "The appeal triage is already running", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedTheCaseDoesNotAllowAnalyzeIn: { status: 409, error: "action_not_allowed", message: "The case does not allow analyze in its current state", headers: jsonPrivateNoStoreRobotsTag },
+  analysisRunningAnalysisIsNotAvailable: { status: 409, error: "analysis_running", message: "Analysis is not available for this report state. Reload the case.", headers: jsonPrivateNoStoreRobotsTag },
+  notVerified: { status: 409, error: "not_verified", message: "The case is not verified yet", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenSecurityMaintainersVerify: { status: 403, error: "forbidden", message: "Security maintainers verify", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequiredConfirmThatTheGitHub: { status: 400, error: "confirmation_required", message: "Confirm that the GitHub advisory exists and names this reporter", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidReason: { status: 400, error: "invalid_request", message: "Invalid reason", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestReasonMustBe8: { status: 400, error: "invalid_request", message: "reason must be 8 to 2000 characters", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenSecurityMaintainersAssign: { status: 403, error: "forbidden", message: "Security maintainers assign", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidGithubId: { status: 400, error: "invalid_request", message: "Invalid githubId", headers: jsonPrivateNoStoreRobotsTag },
+  conflictedTheReporterCannotTriage: { status: 409, error: "conflicted", message: "The reporter cannot triage their own case", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidGithubLogin: { status: 400, error: "invalid_request", message: "Invalid githubLogin", headers: jsonPrivateNoStoreRobotsTag },
+  notAssigned: { status: 409, error: "not_assigned", message: "That account is not an active triager", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenSecurityMaintainersDecide: { status: 403, error: "forbidden", message: "Security maintainers decide", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedTheCaseDoesNotAllowDecideIn: { status: 409, error: "action_not_allowed", message: "The case does not allow decide in its current state", headers: jsonPrivateNoStoreRobotsTag },
+  awardObligationExists: { status: 409, error: "award_obligation_exists", message: "This case already holds an award obligation", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidOutcome: { status: 400, error: "invalid_request", message: "Invalid outcome", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidSeverity: { status: 400, error: "invalid_request", message: "Invalid severity", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidLoss: { status: 400, error: "invalid_request", message: "Invalid loss", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidInScope: { status: 400, error: "invalid_request", message: "Invalid inScope", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidRelatedParty: { status: 400, error: "invalid_request", message: "Invalid relatedParty", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidEvidenceReference: { status: 400, error: "invalid_request", message: "Invalid evidenceReference", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestEvidenceReferenceMustBe1: { status: 400, error: "invalid_request", message: "evidenceReference must be 1 to 500 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidRootCauseKey: { status: 400, error: "invalid_request", message: "Invalid rootCauseKey", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidEvidenceDigest: { status: 400, error: "invalid_request", message: "Invalid evidenceDigest", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidDuplicateOf: { status: 400, error: "invalid_request", message: "Invalid duplicateOf", headers: jsonPrivateNoStoreRobotsTag },
+  invalidDuplicate: { status: 409, error: "invalid_duplicate", message: "The original case is not in this project", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestDuplicateOfAppliesOnlyTo: { status: 400, error: "invalid_request", message: "duplicateOf applies only to duplicates", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestRecordTheRootCause: { status: 400, error: "invalid_request", message: "Record the root cause key", headers: jsonPrivateNoStoreRobotsTag },
+  rootCauseReserved: { status: 409, error: "root_cause_reserved", message: "This root cause already holds an award or a pending review; record a duplicate instead", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidAward: { status: 400, error: "invalid_request", message: "Invalid award", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestAnAwardNeedsA: { status: 400, error: "invalid_request", message: "An award needs a confirmed finding with paid terms", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidDecision: { status: 400, error: "invalid_request", message: "Invalid decision", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedNoPaidTermsWere: { status: 409, error: "action_not_allowed", message: "No paid terms were in force at receipt", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestNoAwardTakesNo: { status: 400, error: "invalid_request", message: "No award takes no amount", headers: jsonPrivateNoStoreRobotsTag },
+  awardNotEligible: { status: 409, error: "award_not_eligible", message: "This program awards only owner-confirmed critical loss-of-funds findings.", headers: jsonPrivateNoStoreRobotsTag },
+  awardNotEligibleThisProgramAwardsOnly: { status: 409, error: "award_not_eligible", message: "This program awards only findings inside its published scope.", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidGrossMinor: { status: 400, error: "invalid_request", message: "Invalid grossMinor", headers: jsonPrivateNoStoreRobotsTag },
+  awardAmountMismatch: { status: 409, error: "award_amount_mismatch", message: "Choose the published award amount or no award for this program.", headers: jsonPrivateNoStoreRobotsTag },
+  invalidAmount: { status: 400, error: "invalid_amount", messageFrom: "error instanceof Error ? error.message : \"Invalid award amount\"", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidPaymentDeadline: { status: 400, error: "invalid_request", message: "Invalid paymentDeadline", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequiredConfirmTheAwardGross: { status: 400, error: "confirmation_required", message: "Confirm the award: gross, both shares, payee and reservation", headers: jsonPrivateNoStoreRobotsTag },
+  earlierQualifyingReport: { status: 409, error: "earlier_qualifying_report", message: "An earlier human-confirmed report already qualifies for this finding. Record this report as a duplicate.", headers: jsonPrivateNoStoreRobotsTag },
+  awardObligationExistsThisCaseAlreadyReserved: { status: 409, error: "award_obligation_exists", message: "This case already reserved a different amount; approve that amount", headers: jsonPrivateNoStoreRobotsTag },
+  participationBanned: { status: 403, error: "participation_banned", message: "A banned account cannot approve or receive a new Slop award. Funded awards and appeals remain available.", headers: jsonPrivateNoStoreRobotsTag },
+  staleRevisionProjectRestrictionsChangedReload: { status: 409, error: "stale_revision", message: "Project restrictions changed. Reload and try again.", headers: jsonPrivateNoStoreRobotsTag },
+  programRestricted: { status: 409, error: "program_restricted", message: "A quarantined, banned, or retired program cannot approve a new award", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedTheCaseHasNo: { status: 409, error: "action_not_allowed", message: "The case has no paid terms to reserve", headers: jsonPrivateNoStoreRobotsTag },
+  fundsUnavailable: { status: 409, error: "funds_unavailable", message: "The program's bounty vault has no current finalized balance in this award's asset", headers: jsonPrivateNoStoreRobotsTag },
+  insufficientFunds: { status: 409, error: "insufficient_funds", message: "The bounty vault's unreserved finalized balance does not cover this award", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenTheProjectOwnerDecides: { status: 403, error: "forbidden", message: "The project owner decides", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidRemediationState: { status: 400, error: "invalid_request", message: "Invalid remediationState", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceRequired: { status: 400, error: "evidence_required", message: "Record the private exact-head test or deployment evidence", headers: jsonPrivateNoStoreRobotsTag },
+  actionNotAllowedVerifyDeployedMitigationOnly: { status: 409, error: "action_not_allowed", message: "Verify deployed mitigation only after the fix is resolved", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestReasonMustBe1: { status: 400, error: "invalid_request", message: "reason must be 1 to 2000 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidDisclosureState: { status: 400, error: "invalid_request", message: "Invalid disclosureState", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidRedactedContentDigest: { status: 400, error: "invalid_request", message: "Invalid redactedContentDigest", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceRequiredBindTheExactApproved: { status: 400, error: "evidence_required", message: "Bind the exact approved redacted content digest", headers: jsonPrivateNoStoreRobotsTag },
+  disclosureApprovalRequired: { status: 409, error: "disclosure_approval_required", message: "Approve these exact redacted bytes before recording disclosure", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestEvidenceReferenceMustBe3: { status: 400, error: "invalid_request", message: "evidenceReference must be 3 to 500 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidEmbargoChange: { status: 400, error: "invalid_request", message: "Invalid embargoChange", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestEmbargoChangeMustBe1: { status: 400, error: "invalid_request", message: "embargoChange must be 1 to 2000 characters", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidRecognition: { status: 400, error: "invalid_request", message: "Invalid recognition", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestReasonMustBe20: { status: 400, error: "invalid_request", message: "reason must be 20 to 2000 characters", headers: jsonPrivateNoStoreRobotsTag },
+  conflictedYouDecidedThisCase: { status: 403, error: "conflicted", message: "You decided this case; another reviewer must", headers: jsonPrivateNoStoreRobotsTag },
+  conflictedYouAlreadyReviewedThis: { status: 403, error: "conflicted", message: "You already reviewed this case; another reviewer must", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequiredAcceptPublicChainVisibility: { status: 400, error: "confirmation_required", message: "Accept public chain visibility before payment", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenOnlyTheReporterMay: { status: 403, error: "forbidden", message: "Only the reporter may consent to this destination", headers: jsonPrivateNoStoreRobotsTag },
+  paymentAlreadyVerified: { status: 409, error: "payment_already_verified", message: "The researcher payment is already verified", headers: jsonPrivateNoStoreRobotsTag },
+  paymentWalletConflict: { status: 409, error: "payment_wallet_conflict", message: "Reporter, payer and fee wallets must remain distinct", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailable: { status: 409, error: "rail_unavailable", message: "No reviewed direct payment route exists for this asset and network", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestUseThePaymentS: { status: 400, error: "invalid_request", message: "Use the payment's approved network", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailableTheProgramHasNo: { status: 409, error: "rail_unavailable", message: "The program has no reviewed settlement on this network", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequiredConfirmTheExact75: { status: 400, error: "confirmation_required", message: "Confirm the exact 75/25 payout and public chain visibility", headers: jsonPrivateNoStoreRobotsTag },
+  paymentNotPending: { status: 409, error: "payment_not_pending", message: "There is no pending direct payment to refresh", headers: jsonPrivateNoStoreRobotsTag },
+  paymentWalletChanged: { status: 409, error: "payment_wallet_changed", message: "The reporter changed wallets. Ask a maintainer to review the frozen payment before sending.", headers: jsonPrivateNoStoreRobotsTag },
+  paymentNetworkChanged: { status: 409, error: "payment_network_changed", message: "Refresh the approved payment on its original network", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailableDirectPaymentIsUnavailable: { status: 409, error: "rail_unavailable", message: "Direct payment is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  paymentRecoveryRequired: { status: 409, error: "payment_recovery_required", message: "The original Solana request is unavailable for safe refresh", headers: jsonPrivateNoStoreRobotsTag },
+  paymentRecoveryRequiredProveTheExpiredRequest: { status: 409, error: "payment_recovery_required", message: "Prove the expired request was not paid before preparing another transaction", headers: jsonPrivateNoStoreRobotsTag },
+  paymentConsentRequired: { status: 409, error: "payment_consent_required", message: "The reporter must accept this exact wallet and public chain visibility", headers: jsonPrivateNoStoreRobotsTag },
+  paymentWalletConflictPayerReporterAndPlatform: { status: 409, error: "payment_wallet_conflict", message: "Payer, reporter and platform fee wallets must be distinct", headers: jsonPrivateNoStoreRobotsTag },
+  paymentProofUnavailable: { status: 409, error: "payment_proof_unavailable", message: "Payment verification is unavailable. Retry after the RPC is configured.", headers: jsonPrivateNoStoreRobotsTag },
+  paymentNonceUnavailable: { status: 409, error: "payment_nonce_unavailable", message: "The payer nonce is outside the supported range", headers: jsonPrivateNoStoreRobotsTag },
+  payerRefused: { status: 409, error: "payer_refused", messageFrom: "error.message", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailableTheBountyVaultPays: { status: 409, error: "rail_unavailable", message: "The bounty vault pays 75/25; a full-award program has no approved settlement rail", headers: jsonPrivateNoStoreRobotsTag },
+  paymentTermsMismatch: { status: 409, error: "payment_terms_mismatch", message: "The approved award must use this rail and asset", headers: jsonPrivateNoStoreRobotsTag },
+  paymentConsentRequiredTheReporterMustAccept: { status: 409, error: "payment_consent_required", message: "The reporter must accept public chain visibility for this payment rail", headers: jsonPrivateNoStoreRobotsTag },
+  settlementExists: { status: 409, error: "settlement_exists", message: "Use the existing settlement; never prepare a second transfer", headers: jsonPrivateNoStoreRobotsTag },
+  paymentVaultUnverified: { status: 409, error: "payment_vault_unverified", message: "A current finalized private vault snapshot is required", headers: jsonPrivateNoStoreRobotsTag },
+  paymentFundsUnavailable: { status: 409, error: "payment_funds_unavailable", message: "The finalized private vault balance does not cover this award", headers: jsonPrivateNoStoreRobotsTag },
+  confirmationRequiredConfirmTheReviewedPayment: { status: 400, error: "confirmation_required", message: "Confirm the reviewed payment recovery", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestProvideTheCancellationTransaction: { status: 400, error: "invalid_request", message: "Provide the cancellation transaction ID", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestProvideTheExpiredRequest: { status: 400, error: "invalid_request", message: "Provide the expired request signatures", headers: jsonPrivateNoStoreRobotsTag },
+  paymentAlreadyVerifiedThisPaymentIsAlready: { status: 409, error: "payment_already_verified", message: "This payment is already verified", headers: jsonPrivateNoStoreRobotsTag },
+  originalPayerRequired: { status: 409, error: "original_payer_required", message: "The original verified payer must confirm recovery", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailablePaymentRecoveryIsUnavailable: { status: 409, error: "rail_unavailable", message: "Payment recovery is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  paymentAlreadyVerifiedThisTransferIsAlready: { status: 409, error: "payment_already_verified", message: "This transfer is already verified", headers: jsonPrivateNoStoreRobotsTag },
+  paymentConsentRequiredTheReporterMustConsent: { status: 409, error: "payment_consent_required", message: "The reporter must consent to the successor wallet first", headers: jsonPrivateNoStoreRobotsTag },
+  paymentRecoveryChanged: { status: 409, error: "payment_recovery_changed", message: "The payment or payout wallets changed. Review recovery again.", headers: jsonPrivateNoStoreRobotsTag },
+  legacyPaymentReviewRequired: { status: 409, error: "legacy_payment_review_required", message: "An issued Solana request lacks its retained block anchor; manual review is required", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestEachExpiredRequestNeeds: { status: 400, error: "invalid_request", message: "Each expired request needs one signature", headers: jsonPrivateNoStoreRobotsTag },
+  recoveryProgressChanged: { status: 409, error: "recovery_progress_changed", message: "Recovery history advanced in another request; check again", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestSignTheExactExpired: { status: 400, error: "invalid_request", message: "Sign the exact expired requests with the original payer wallet", headers: jsonPrivateNoStoreRobotsTag },
+  legacyPaymentReviewRequiredThisLegacyRequestHas: { status: 409, error: "legacy_payment_review_required", message: "This legacy request has no retirement proof; only its original address can resume", headers: jsonPrivateNoStoreRobotsTag },
+  expiryProofRequired: { status: 409, error: "expiry_proof_required", message: "Every issued Solana request needs expiry and retained-history proof", headers: jsonPrivateNoStoreRobotsTag },
+  feePaymentPending: { status: 409, error: "fee_payment_pending", message: "Finish the earlier wallet transfer before cancelling this nonce", headers: jsonPrivateNoStoreRobotsTag },
+  cancellationRequired: { status: 409, error: "cancellation_required", message: "Verify a finalized cancellation at the reserved researcher nonce", headers: jsonPrivateNoStoreRobotsTag },
+  cancellationUnverified: { status: 409, error: "cancellation_unverified", message: "The old request is not proven retired. Verify any approved payment that landed; another successful transfer needs manual review.", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestConfirmOneOrTwo: { status: 400, error: "invalid_request", message: "Confirm one or two external transaction IDs", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailableDirectReceiptVerificationIs: { status: 409, error: "rail_unavailable", message: "Direct receipt verification is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  paymentNotPreparedPrepareTheExactPayment: { status: 409, error: "payment_not_prepared", message: "Prepare the exact payment first", headers: jsonPrivateNoStoreRobotsTag },
+  railUnavailableReceiptVerificationIsUnavailable: { status: 409, error: "rail_unavailable", message: "Receipt verification is unavailable", headers: jsonPrivateNoStoreRobotsTag },
+  paymentUnverified: { status: 409, error: "payment_unverified", message: "Finalized transfers are unavailable or do not match the approved payment", headers: jsonPrivateNoStoreRobotsTag },
+  paymentReplay: { status: 409, error: "payment_replay", message: "This transfer is already credited to another payment", headers: jsonPrivateNoStoreRobotsTag },
+  paymentReplayThisTransferIsAlready: { status: 409, error: "payment_replay", message: "This transfer is already recorded; send only the remaining payment legs", headers: jsonPrivateNoStoreRobotsTag },
+  paymentLegAlreadyVerified: { status: 409, error: "payment_leg_already_verified", message: "This award leg is already paid; send only the remaining transfer", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestUnknownAction: { status: 400, error: "invalid_request", message: "Unknown action", headers: jsonPrivateNoStoreRobotsTag },
+  paymentReplayThisTransferIsAlreadyRecorded: { status: 409, error: "payment_replay", message: "This transfer is already recorded", headers: jsonPrivateNoStoreRobotsTag },
+  rootCauseReservedThisRootCauseAlready: { status: 409, error: "root_cause_reserved", message: "This root cause already reserved an award; record a duplicate instead", headers: jsonPrivateNoStoreRobotsTag },
+  alreadyAssigned: { status: 409, error: "already_assigned", message: "That account is already a triager", headers: jsonPrivateNoStoreRobotsTag },
+  status409: { status: 409, errorFrom: "change.unmet.code", messageFrom: "change.unmet.message", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postSecuritySubmissions = {
+  ...withOriginForbiddenAndUnauthorizedV3,
+  ...withInvalidRequestRequestBodyMustBe,
+  reporterChanged: { status: 403, error: "reporter_changed", message: "Your account changed. Sign in again before submitting this report.", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestASlopReportMust: { status: 400, error: "invalid_request", message: "A Slop report must use the Slop origin.", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInvalidRequestInvalidProjectId,
+  ...withInvalidRequestInvalidIdempotencyKey,
+  idempotencyConflictThatRequestKeyWas: { status: 409, error: "idempotency_conflict", message: "That request key was already used.", headers: jsonPrivateNoStoreRobotsTag },
+  participationBannedThisAccountCannotSubmit: { status: 403, error: "participation_banned", message: "This account cannot submit a new report.", headers: jsonPrivateNoStoreRobotsTag },
+  reportRequired: { status: 400, error: "report_required", message: "Submit the complete private report through Slop.", headers: jsonPrivateNoStoreRobotsTag },
+  ...withParticipationBannedThisAccountCannotStart,
+  invalidRequestInvalidOrigin: { status: 400, error: "invalid_request", message: "Invalid origin", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestANewReportHas: { status: 400, error: "invalid_request", message: "A new report has no advisory yet", headers: jsonPrivateNoStoreRobotsTag },
+  ...withIdempotencyConflict,
+  ...withSubmissionClosed,
+  intakeUnavailableAutomaticPrivateIntakeIs: { status: 409, error: "intake_unavailable", message: "Automatic private intake is not available for this program", headers: jsonPrivateNoStoreRobotsTag },
+  submissionInFlight: { status: 409, error: "submission_in_flight", message: "Finish your submission in progress for this program first", headers: jsonPrivateNoStoreRobotsTag },
+  submissionChanged: { status: 409, error: "submission_changed", message: "Start the submission again", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const getSecuritySubmissions = {
+  ...withUnauthorizedAndInvalidExpectedActorV5,
+  ...withNotFoundReportNotFound,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getSecuritySubmissionsById = {
+  ...withUnauthorized,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postSecuritySubmissionsByIdScreen = {
+  ...withOriginForbidden,
+} as const
+
+export const postSecuritySubmissionsByIdReview = {
+  ...withOriginForbidden,
+} as const
+
+export const postSecuritySubmissionsByIdReport = {
+  ...withOriginForbidden,
+} as const
+
+export const getSecuritySubmissionsAuthorizeCallback = {
+  ...withNotFoundSubmissionNotFound,
+  ...withInternalError,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postSecuritySubmissionsByIdAuthorize = {
+  ...withOriginForbiddenAndUnauthorizedV4,
+  ...withSubmissionClosed,
+  ...withScreeningRequired,
+} as const
+
+export const postSecuritySubmissionsByIdSend = {
+  ...withOriginForbiddenAndUnauthorized,
+  ...withParticipationBannedThisAccountCannotStart,
+  actionNotAllowedVerifyADirectReport: { status: 409, error: "action_not_allowed", message: "Verify a direct report instead", headers: jsonPrivateNoStoreRobotsTag },
+  reconcileRequired: { status: 409, error: "reconcile_required", message: "Check GitHub for this submission before sending again", headers: jsonPrivateNoStoreRobotsTag },
+  submissionAbandoned: { status: 409, error: "submission_abandoned", message: "This submission expired; start again", headers: jsonPrivateNoStoreRobotsTag },
+  alreadySubmitted: { status: 409, error: "already_submitted", message: "GitHub already has this report", headers: jsonPrivateNoStoreRobotsTag },
+  submissionClosedThisSubmissionCannotBe: { status: 409, error: "submission_closed", message: "This submission cannot be sent again", headers: jsonPrivateNoStoreRobotsTag },
+  ...withScreeningRequired,
+  invalidRequestForwardTheSavedReport: { status: 400, error: "invalid_request", message: "Forward the saved report without replacement text.", headers: jsonPrivateNoStoreRobotsTag },
+  intakeChanged: { status: 409, error: "intake_changed", message: "The program's intake changed; start again", headers: jsonPrivateNoStoreRobotsTag },
+  intakeUnavailablePrivateReportingCouldNot: { status: 409, error: "intake_unavailable", message: "Private reporting could not be verified; your draft is kept", headers: jsonPrivateNoStoreRobotsTag },
+  screeningUnavailable: { status: 503, error: "screening_unavailable", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+  ...withIntakeRateLimited,
+  screeningRequiredThisDraftNeedsMore: { status: 409, error: "screening_required", message: "This draft needs more evidence or a private maintainer review before forwarding. Submit it through Slop to track that review.", headers: jsonPrivateNoStoreRobotsTag },
+  submissionInFlightAnotherSubmissionForThis: { status: 409, error: "submission_in_flight", message: "Another submission for this program is being sent", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postSecuritySubmissionsByIdReconcile = {
+  ...withOriginForbiddenAndUnauthorized,
+  nothingToReconcile: { status: 409, error: "nothing_to_reconcile", message: "This submission is not uncertain", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postSecuritySubmissionsByIdVerify = {
+  ...withOriginForbiddenAndUnauthorizedV2,
+  actionNotAllowedThisSubmissionCannotBe: { status: 409, error: "action_not_allowed", message: "This submission cannot be verified now", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const getOperatorVettingEvidence = {
+  ...withUnauthorizedAndInvalidExpectedActor,
+  invalidRequestEnterTheExactAssessment: { status: 400, error: "invalid_request", message: "Enter the exact assessment and run identity", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMissing: { status: 409, error: "assembly_missing", message: "No canonical assembly is bound to this storage run", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyIncomplete: { status: 409, error: "assembly_incomplete", message: "A canonical assembly reference is absent or has a different length", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatch: { status: 409, error: "assembly_mismatch", message: "Canonical assembly does not bind the stored assessment", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyIncompleteARequiredCanonicalEvidence: { status: 409, error: "assembly_incomplete", message: "A required canonical evidence role is missing or changed", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchRetainedQueueEvidenceDoes: { status: 409, error: "assembly_mismatch", message: "Retained queue evidence does not bind the exact assessment manifest", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchRetainedSourceInventoryDoes: { status: 409, error: "assembly_mismatch", message: "Retained source inventory does not bind the assessed commit", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchSourceAndReleaseComparison: { status: 409, error: "assembly_mismatch", message: "Source and release comparison does not bind retained inputs", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchRetainedVMReceiptDoes: { status: 409, error: "assembly_mismatch", message: "Retained VM receipt does not bind the exact overlay", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchVMDiskMapReference: { status: 409, error: "assembly_mismatch", message: "VM disk-map reference is invalid", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchGuestReceiptDoesNot: { status: 409, error: "assembly_mismatch", message: "Guest receipt does not bind the captured source, profile and VM", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchUnknownFilesystemTransport: { status: 409, error: "assembly_mismatch", message: "Unknown filesystem transport", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchInvalidCapturedFilesystemInventory: { status: 409, error: "assembly_mismatch", message: "Invalid captured filesystem inventory", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchFilesystemObjectCountExceeds: { status: 409, error: "assembly_mismatch", message: "Filesystem object count exceeds bound", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchInvalidFilesystemContentReference: { status: 409, error: "assembly_mismatch", message: "Invalid filesystem content reference", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchInvalidFilesystemContentEncoding: { status: 409, error: "assembly_mismatch", message: "Invalid filesystem content encoding", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchNoncanonicalFilesystemContentEncoding: { status: 409, error: "assembly_mismatch", message: "Noncanonical filesystem content encoding", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchFilesystemBytesDifferOr: { status: 409, error: "assembly_mismatch", message: "Filesystem bytes differ or exceed bound", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyIncompleteFilesystemEntriesDoNot: { status: 409, error: "assembly_incomplete", message: "Filesystem entries do not bind retained content", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchFilesystemReviewMetadataDiffers: { status: 409, error: "assembly_mismatch", message: "Filesystem review metadata differs from capture", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchGuestKernelProfileDiffers: { status: 409, error: "assembly_mismatch", message: "Guest kernel profile differs", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchStructuredObservationsDoNot: { status: 409, error: "assembly_mismatch", message: "Structured observations do not bind the retained trace", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchDependencyInventoryDoesNot: { status: 409, error: "assembly_mismatch", message: "Dependency inventory does not bind the captured source", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyIncompleteArtifactLineageIsMissing: { status: 409, error: "assembly_incomplete", message: "Artifact lineage is missing", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchReviewInputMustPreserve: { status: 409, error: "assembly_mismatch", message: "Review input must preserve canonical visibility gaps", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyIncompleteReviewInputBytesAre: { status: 409, error: "assembly_incomplete", message: "Review input bytes are missing", headers: jsonPrivateNoStoreRobotsTag },
+  assemblyMismatchReviewInputDigestChanged: { status: 409, error: "assembly_mismatch", message: "Review input digest changed", headers: jsonPrivateNoStoreRobotsTag },
+  ...withForbiddenTheEvidenceOperatorChanged,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const postOperatorVettingEvidenceByAssessmentClose = {
+  ...withOriginForbiddenAndInvalidContentLengthV6,
+  ...withUnauthorizedAndInvalidExpectedActorV6,
+  ...withEvidenceUnavailableV2,
+  ...withForbiddenDesignatedVettingOperatorAccess,
+  forbiddenOnlyTheEvidencePolicy: { status: 403, error: "forbidden", message: "Only the evidence policy owner may close an exception case", headers: jsonPrivateNoStoreRobotsTag },
+  ...withNotFoundAssessmentNotFound,
+  caseNotException: { status: 409, error: "case_not_exception", message: "Only a finished exception case can be closed manually", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceFailure: { status: 500, error: "evidence_failure", message: "Internal error", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postVettingEvidenceByAssessmentByRun = {
+  ...withOriginForbiddenAndInvalidContentLengthV5,
+  invalidRequestEvidenceManifestMustBe: { status: 400, error: "invalid_request", message: "Evidence manifest must be valid UTF-8 JSON", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestEvidenceManifestMustBeAnObject: { status: 400, error: "invalid_request", message: "Evidence manifest must be an object", headers: jsonPrivateNoStoreRobotsTag },
+  ...withInvalidRequestUnexpectedEvidenceFields,
+  invalidRequestInvalidCanonicalAssemblyDigest: { status: 400, error: "invalid_request", message: "Invalid canonical assembly digest", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidEvidenceManifest: { status: 400, error: "invalid_request", message: "Invalid evidence manifest", headers: jsonPrivateNoStoreRobotsTag },
+  ...withNotFoundAssessmentNotFound,
+  invalidRequestInvalidEvidenceObject: { status: 400, error: "invalid_request", message: "Invalid evidence object", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestInvalidOrDuplicateEvidence: { status: 400, error: "invalid_request", message: "Invalid or duplicate evidence object", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestLargeEvidenceRequiresAn: { status: 400, error: "invalid_request", message: "Large evidence requires an exact ordered bounded chunk layout", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestTheExactTraceObject: { status: 400, error: "invalid_request", message: "The exact trace object must be declared", headers: jsonPrivateNoStoreRobotsTag },
+  invalidRequestTheExactCanonicalAssembly: { status: 400, error: "invalid_request", message: "The exact canonical assembly manifest must be declared", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceConflict: { status: 409, error: "evidence_conflict", message: "Evidence run already binds different bytes", headers: jsonPrivateNoStoreRobotsTag },
+  ...withEvidenceMissingDeclaredEvidenceBytesAre,
+  evidenceCorruptInvalidEvidenceGenerationIdentity: { status: 409, error: "evidence_corrupt", message: "Invalid evidence generation identity", headers: jsonPrivateNoStoreRobotsTag },
+  evidenceCleanup: { status: 409, error: "evidence_cleanup", message: "Evidence cleanup is in progress; retry registration", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const putVettingEvidenceByAssessmentByRunBySha = {
+  ...withOriginForbiddenAndInvalidContentLengthV3,
+  evidenceExpiredEvidenceUploadExpired: { status: 410, error: "evidence_expired", message: "Evidence upload expired", headers: jsonPrivateNoStoreRobotsTag },
+  digestMismatch: { status: 422, error: "digest_mismatch", message: "Upload must match the complete declared bytes", headers: jsonPrivateNoStoreRobotsTag },
+  ...withEvidenceOversize,
+} as const
+
+export const putVettingEvidenceByAssessmentByRunByShaChunksByIndex = {
+  ...withOriginForbiddenAndInvalidContentLengthV3,
+  ...withEvidenceCorrupt,
+  notFoundDeclaredChunkNotFound: { status: 404, error: "not_found", message: "Declared chunk not found", headers: jsonPrivateNoStoreRobotsTag },
+  digestMismatchUploadMustMatchThe: { status: 422, error: "digest_mismatch", message: "Upload must match the exact declared chunk bytes", headers: jsonPrivateNoStoreRobotsTag },
+} as const
+
+export const postVettingEvidenceByAssessmentByRunByShaFinalize = {
+  ...withOriginForbiddenAndInvalidContentLengthV4,
+  invalidRequestFinalizationRequiresAnEmpty: { status: 400, error: "invalid_request", message: "Finalization requires an empty JSON object", headers: jsonPrivateNoStoreRobotsTag },
+  ...withEvidenceMissingDeclaredEvidenceBytesAre,
+  invalidRequestOnlyChunkedEvidenceRequires: { status: 400, error: "invalid_request", message: "Only chunked evidence requires finalization", headers: jsonPrivateNoStoreRobotsTag },
+  ...withEvidenceOversizeV2,
+  ...withEvidencePending,
+} as const
+
+export const postOperatorVettingEvidenceByAssessmentByRunByShaDownloadGrant = {
+  ...withOriginForbiddenAndInvalidContentLengthV2,
+} as const
+
+export const getOperatorVettingEvidenceByAssessmentByRunByShaDownload = {
+  ...withNotFoundEvidenceRouteNotFound,
+  originForbiddenDownloadsRequireAFresh: { status: 403, error: "origin_forbidden", message: "Downloads require a fresh same-origin browser request without ranges", headers: jsonPrivateNoStoreRobotsTag },
+  grantInvalid: { status: 403, error: "grant_invalid", message: "Exactly one download grant is required", headers: jsonPrivateNoStoreRobotsTag },
+  ...withEvidenceCorrupt,
+  evidencePendingWholeFileVerificationIs: { status: 409, error: "evidence_pending", message: "Whole-file verification is incomplete", headers: jsonPrivateNoStoreRobotsTag },
+  forbiddenTheDownloadOperatorChanged: { status: 403, error: "forbidden", message: "The download operator changed", headers: jsonPrivateNoStoreRobotsTag },
+  otherMethods: {
+    ...withOriginForbiddenV2,
+    methodNotAllowed: { status: 405, error: "method_not_allowed", message: "Native downloads require GET", headers: jsonPrivateNoStoreRobotsTag },
+  },
+} as const
+
+export const postOperatorVettingEvidenceByAssessmentByRunByShaGrant = {
+  ...withOriginForbiddenAndInvalidContentLengthV2,
+} as const
+
+export const getOperatorVettingEvidenceByAssessmentByRunByShaBody = {
+  ...withNotFoundEvidenceRouteNotFound,
+  ...withForbiddenTheEvidenceOperatorChanged,
+  otherMethods: {
+    ...withOriginForbiddenV2,
+  },
+} as const
+
+export const getProjectFlagsById = {
+  ...withUnauthorizedSignInWithGitHub,
+  ...withNotFoundProjectNotFound,
+  otherMethods: {
+    ...withOriginForbiddenRequestsMustComeFromV2,
+  },
+} as const
+
+export const postProjectFlagsById = {
+  ...withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHub,
+  participationBannedThisAccountCannotFile: { status: 403, error: "participation_banned", message: "This account cannot file new Slop flags. You can still read or withdraw an existing flag.", headers: jsonNoStore },
+  invalidRequestSendCategoryEvidenceAnd: { status: 400, error: "invalid_request", message: "Send category, evidence and evidenceUrl", headers: jsonNoStore },
+  invalidRequestNoStore: { status: 400, error: "invalid_request", messageFrom: "`category must be one of ${FLAG_CATEGORIES.join(\", \")}`", headers: jsonNoStore },
+  invalidRequestDescribeTheEvidenceIn: { status: 400, error: "invalid_request", message: "Describe the evidence in 20 to 4000 characters: the file, command or behavior and what it does", headers: jsonNoStore },
+  invalidRequestEvidenceUrlMustBeA: { status: 400, error: "invalid_request", message: "evidenceUrl must be a GitHub URL", headers: jsonNoStore },
+  invalidRequestEvidenceUrlMustBeAn: { status: 400, error: "invalid_request", message: "evidenceUrl must be an https://github.com URL", headers: jsonNoStore },
+  ownerCannotFlag: { status: 403, error: "owner_cannot_flag", message: "Project owners pause or update their own project instead of flagging it", headers: jsonNoStore },
+  flaggerStandingUnavailable: { status: 503, error: "flagger_standing_unavailable", message: "Internal error", headers: jsonNoStore },
+  maintainerCannotFlag: { status: 403, error: "maintainer_cannot_flag", message: "Project maintainers fix or pause their own project instead of flagging it", headers: jsonNoStore },
+  flaggerAccountTooNew: { status: 403, error: "flagger_account_too_new", message: "Your GitHub account must be at least 30 days old to flag a project", headers: jsonNoStore },
+  flaggerNeedsAcceptedContribution: { status: 403, error: "flagger_needs_accepted_contribution", message: "You need at least 1 accepted contribution to a Slop project to flag a project", headers: jsonNoStore },
+  flagActive: { status: 409, error: "flag_active", message: "You already have an active flag on this project. Withdraw it to file a new one.", headers: jsonNoStore },
+  flagRetry: { status: 409, error: "flag_retry", message: "The project changed while the flag was recorded. Retry.", headers: jsonNoStore },
+} as const
+
+export const postProjectFlagsByIdWithdraw = {
+  ...withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHub,
+  ...withInvalidRequestSendAnEmptyJSON,
+  notFoundYouHaveNoActive: { status: 404, error: "not_found", message: "You have no active flag on this project", headers: jsonNoStore },
+} as const
+
+export const postAdminVettingExemptionsByIdRevoke = {
+  ...withOriginForbiddenRequestsMustComeFrom,
+  notFoundExemptionNotFound: { status: 404, error: "not_found", message: "Exemption not found.", headers: jsonNoStore },
+} as const
+
+export const getAdminVetting = {
+  ...withUnauthorizedSignInWithGitHub,
+  ...withForbiddenAdminAccessIsRequired,
+  otherMethods: {
+    ...withOriginForbiddenRequestsMustComeFromV2,
+  },
+} as const
+
+export const postAdminVettingExemptions = {
+  ...withOriginForbiddenRequestsMustComeFrom,
+  ...withInvalidRequestInvalidRepository,
+  invalidRequestProvideTheProjectAnd: { status: 400, error: "invalid_request", message: "Provide the project and its current revision.", headers: jsonNoStore },
+  notFoundProjectNotFoundNoStore: { status: 404, error: "not_found", message: "Project not found.", headers: jsonNoStore },
+  staleRevisionTheProjectChangedReview: { status: 409, error: "stale_revision", message: "The project changed. Review its current revision.", headers: jsonNoStore },
+  unsupportedRepository: { status: 409, error: "unsupported_repository", message: "An exemption covers one immutable repository.", headers: jsonNoStore },
+  repositoryMismatch: { status: 409, error: "repository_mismatch", message: "The repository identity no longer matches the registered project.", headers: jsonNoStore },
+  githubUnavailableNoStore: { status: 503, error: "github_unavailable", messageFrom: "unavailable", headers: jsonNoStore },
+  forbiddenTheRegisteredProjectCreator: { status: 403, error: "forbidden", message: "The registered project creator or individual steward needs current repository write or maintain authority.", headers: jsonNoStore },
+  projectRestricted: { status: 409, error: "project_restricted", message: "An admission exemption cannot override a project restriction.", headers: jsonNoStore },
+  projectMalicious: { status: 409, error: "project_malicious", message: "An admission exemption cannot override a malicious finding.", headers: jsonNoStore },
+  staleRevisionTheProjectItsRestrictions: { status: 409, error: "stale_revision", message: "The project, its restrictions or exemption changed. Reload before granting.", headers: jsonNoStore },
+} as const
+
+export const postAdminVettingAssessments = {
+  ...withOriginForbiddenRequestsMustComeFromAndUnauthorizedSignInWithGitHub,
+  ...withForbiddenAdminAccessIsRequired,
+  invalidRequestSendProjectIdRevisionAnd: { status: 400, error: "invalid_request", message: "Send projectId, revision and reason, and optionally repository", headers: jsonNoStore },
+  ...withInvalidRequestInvalidRepository,
+  invalidRequestInvalidProjectIdNoStore: { status: 400, error: "invalid_request", message: "Invalid projectId", headers: jsonNoStore },
+  invalidRequestInvalidRevision: { status: 400, error: "invalid_request", message: "Invalid revision", headers: jsonNoStore },
+  invalidRequestReasonMustBe1To1000Characters: { status: 400, error: "invalid_request", message: "reason must be 1 to 1000 characters", headers: jsonNoStore },
+  vettingUnavailableTheVettingServiceIs: { status: 503, error: "vetting_unavailable", message: "The vetting service is not configured, so a scan cannot be queued", headers: jsonNoStore },
+  staleRevisionScanTheProjectS: { status: 409, error: "stale_revision", message: "Scan the project's current revision", headers: jsonNoStore },
+  ...withPinUnavailable,
+  assessmentQueued: { status: 409, error: "assessment_queued", message: "This revision already has a queued scan", headers: jsonNoStore },
+} as const
+
+export const getVettingSandbox = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIs,
+} as const
+
+export const postVettingSandbox = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIs,
+} as const
+
+export const getVettingRequests = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV3,
+  ...withPayloadTooLargeNoStore,
+  evidenceUnavailablePrivateEvidenceStorageIs: { status: 503, error: "evidence_unavailable", message: "Private evidence storage is required before acquisition", headers: jsonNoStore },
+} as const
+
+export const postVettingResults = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfigured,
+  ...withPayloadTooLargeNoStore,
+  invalidRequestTheResultMustBe: { status: 400, error: "invalid_request", message: "The result must be UTF-8 JSON", headers: jsonNoStore },
+  invalidRequestTheResultMustBeAnObject: { status: 400, error: "invalid_request", message: "The result must be an object", headers: jsonNoStore },
+  invalidVettingResult: { status: 422, error: "invalid_vetting_result", message: "result must be an object", headers: jsonNoStore },
+  invalidVettingResultNoStore: { status: 422, error: "invalid_vetting_result", messageFrom: "message", headers: jsonNoStore },
+  invalidVettingResultSchemaVersionMustBeSlop: { status: 422, error: "invalid_vetting_result", message: "schemaVersion must be slop-vetting-result-v2", headers: jsonNoStore },
+  invalidVettingResultAssessmentIdIsInvalid: { status: 422, error: "invalid_vetting_result", message: "assessmentId is invalid", headers: jsonNoStore },
+  invalidVettingResultProjectIdIsInvalid: { status: 422, error: "invalid_vetting_result", message: "projectId is invalid", headers: jsonNoStore },
+  invalidVettingResultRevisionMustBeA: { status: 422, error: "invalid_vetting_result", message: "revision must be a positive integer", headers: jsonNoStore },
+  invalidVettingResultAssessedMustBeAn: { status: 422, error: "invalid_vetting_result", message: "assessed must be an object", headers: jsonNoStore },
+  invalidVettingResultAssessedCommitShaMustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.commitSha must be a full lowercase commit SHA", headers: jsonNoStore },
+  invalidVettingResultScanMustBeAn: { status: 422, error: "invalid_vetting_result", message: "scan must be an object", headers: jsonNoStore },
+  invalidVettingResultCoverageMustBeAn: { status: 422, error: "invalid_vetting_result", message: "coverage must be an object", headers: jsonNoStore },
+  invalidVettingResultChecksMustBeAn: { status: 422, error: "invalid_vetting_result", message: "checks must be an object", headers: jsonNoStore },
+  invalidVettingResultExecutionMustBeAn: { status: 422, error: "invalid_vetting_result", message: "execution must be an object", headers: jsonNoStore },
+  invalidVettingResultExecutionSecretsProvidedMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.secretsProvided must be false", headers: jsonNoStore },
+  invalidVettingResultExecutionEgressMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.egress must be default-deny", headers: jsonNoStore },
+  invalidVettingResultExecutionStartedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.startedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultExecutionCompletedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.completedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultExecutionCompletedAtIsBefore: { status: 422, error: "invalid_vetting_result", message: "execution.completedAt is before startedAt", headers: jsonNoStore },
+  invalidVettingResultExecutionImageSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "execution.imageSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultExecutionRunIdMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.runId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultExecutionReasonMustBe: { status: 422, error: "invalid_vetting_result", message: "execution.reason must be 1 to 300 printable characters", headers: jsonNoStore },
+  invalidVettingResultReusedAssessmentIdMustNameAnother: { status: 422, error: "invalid_vetting_result", message: "reusedAssessmentId must name another assessment or be null", headers: jsonNoStore },
+  invalidVettingResultConfirmationMustBeAn: { status: 422, error: "invalid_vetting_result", message: "confirmation must be an object", headers: jsonNoStore },
+  invalidVettingResultConfirmationEvidenceMustBe: { status: 422, error: "invalid_vetting_result", message: "confirmation.evidence must be a list of at most 20 items", headers: jsonNoStore },
+  invalidVettingResultConfirmationEvidenceNeedsAt: { status: 422, error: "invalid_vetting_result", message: "confirmation.evidence needs at least one reference", headers: jsonNoStore },
+  invalidVettingResultConfirmationRuleMustBe: { status: 422, error: "invalid_vetting_result", message: "confirmation.rule must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewMustBeAn: { status: 422, error: "invalid_vetting_result", message: "primaryReview must be an object", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewVerdictAndRisk: { status: 422, error: "invalid_vetting_result", message: "primaryReview.verdict and risk must be null when the review did not run", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewProviderMustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.provider must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewModelMustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.model must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewPromptPolicyRevisionMustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.promptPolicyRevision must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewInputManifestSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.inputManifestSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewRunIdMustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.runId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultPrimaryReviewFindingCountMustBe: { status: 422, error: "invalid_vetting_result", message: "primaryReview.findingCount must be a non-negative integer", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewMustBeAn: { status: 422, error: "invalid_vetting_result", message: "specialistReview must be an object", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewVerdictAndRisk: { status: 422, error: "invalid_vetting_result", message: "specialistReview.verdict and risk must be null when the review did not run", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewProviderMustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.provider must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewModelMustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.model must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewPromptPolicyRevisionMustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.promptPolicyRevision must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewInputManifestSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.inputManifestSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewRunIdMustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.runId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultSpecialistReviewFindingCountMustBe: { status: 422, error: "invalid_vetting_result", message: "specialistReview.findingCount must be a non-negative integer", headers: jsonNoStore },
+  invalidVettingResultTheSpecialistReviewMust: { status: 422, error: "invalid_vetting_result", message: "The specialist review must be a separate run", headers: jsonNoStore },
+  invalidVettingResultScanStartedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "scan.startedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultScanCompletedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "scan.completedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultScanCompletedAtIsBefore: { status: 422, error: "invalid_vetting_result", message: "scan.completedAt is before startedAt", headers: jsonNoStore },
+  invalidVettingResultManifestSha256MustBeA: { status: 422, error: "invalid_vetting_result", message: "manifestSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultPolicyVersionMustBeAn: { status: 422, error: "invalid_vetting_result", message: "policyVersion must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultAssessedRepositoryMustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.repository must be 1 to 201 printable characters", headers: jsonNoStore },
+  invalidVettingResultAssessedTemplateSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.templateSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultAssessedInputManifestSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.inputManifestSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultAssessedSourceInventorySha256MustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.sourceInventorySha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultAssessedDependencyLocksMustBe: { status: 422, error: "invalid_vetting_result", message: "assessed.dependencyLocks must be a list of at most 200 items", headers: jsonNoStore },
+  invalidVettingResultScanRunIdMustBe: { status: 422, error: "invalid_vetting_result", message: "scan.runId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultScanReportSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "scan.reportSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultVisibilityGapsMustBeA: { status: 422, error: "invalid_vetting_result", message: "visibilityGaps must be a list of at most 50 items", headers: jsonNoStore },
+  invalidVettingResultArtifactsMustBeA: { status: 422, error: "invalid_vetting_result", message: "artifacts must be a list of at most 500 items", headers: jsonNoStore },
+  invalidVettingResultAnArtifactLeavesQuarantine: { status: 422, error: "invalid_vetting_result", message: "An artifact leaves quarantine only with a clean analysis", headers: jsonNoStore },
+  invalidVettingResultFindingsMustBeA: { status: 422, error: "invalid_vetting_result", message: "findings must be a list of at most 200 items", headers: jsonNoStore },
+  invalidVettingResultSchemaVersionMustBeSlopVettingResultV1: { status: 422, error: "invalid_vetting_result", message: "schemaVersion must be slop-vetting-result-v1", headers: jsonNoStore },
+  invalidVettingResultEnvironmentMustBeAn: { status: 422, error: "invalid_vetting_result", message: "environment must be an object", headers: jsonNoStore },
+  invalidVettingResultTelemetryMustBeAn: { status: 422, error: "invalid_vetting_result", message: "telemetry must be an object", headers: jsonNoStore },
+  invalidVettingResultTelemetryCoverageMustBe: { status: 422, error: "invalid_vetting_result", message: "telemetry.coverage must be an object", headers: jsonNoStore },
+  invalidVettingResultTelemetryTamperDetectedMustBe: { status: 422, error: "invalid_vetting_result", message: "telemetry.tamperDetected must be a boolean", headers: jsonNoStore },
+  invalidVettingResultTelemetryEgressMustBe: { status: 422, error: "invalid_vetting_result", message: "telemetry.egress must be default-deny", headers: jsonNoStore },
+  invalidVettingResultModelReviewsMustBeA: { status: 422, error: "invalid_vetting_result", message: "modelReviews must be a list of at most 2 items", headers: jsonNoStore },
+  invalidVettingResultModelReviewsMustHoldOne: { status: 422, error: "invalid_vetting_result", message: "modelReviews must hold one astra and one opus review", headers: jsonNoStore },
+  invalidVettingResultTheTwoModelReviews: { status: 422, error: "invalid_vetting_result", message: "The two model reviews must be separate runs", headers: jsonNoStore },
+  invalidVettingResultEnvironmentVmProviderMustBe: { status: 422, error: "invalid_vetting_result", message: "environment.vmProvider must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultEnvironmentImageSha256MustBe: { status: 422, error: "invalid_vetting_result", message: "environment.imageSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultEnvironmentCollectorIdMustBe: { status: 422, error: "invalid_vetting_result", message: "environment.collectorId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultEnvironmentRunIdMustBe: { status: 422, error: "invalid_vetting_result", message: "environment.runId must be an exact identifier", headers: jsonNoStore },
+  invalidVettingResultEnvironmentStartedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "environment.startedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultEnvironmentCompletedAtMustBe: { status: 422, error: "invalid_vetting_result", message: "environment.completedAt must be an ISO UTC time", headers: jsonNoStore },
+  invalidVettingResultTelemetryVisibilityGapsMustBe: { status: 422, error: "invalid_vetting_result", message: "telemetry.visibilityGaps must be a list of at most 50 items", headers: jsonNoStore },
+  invalidVettingResultTelemetryCanaryAccessAttemptsMustBe: { status: 422, error: "invalid_vetting_result", message: "telemetry.canaryAccessAttempts must be a non-negative integer", headers: jsonNoStore },
+  invalidVettingResultTraceSha256MustBeA: { status: 422, error: "invalid_vetting_result", message: "traceSha256 must be a lowercase SHA-256", headers: jsonNoStore },
+  invalidVettingResultEnvironmentCompletedAtIsBefore: { status: 422, error: "invalid_vetting_result", message: "environment.completedAt is before startedAt", headers: jsonNoStore },
+  dispositionNotProven: { status: 422, error: "disposition_not_proven", messageFrom: "`The ${result.disposition} disposition is not proven: ${problems.join(\"; \")}`", headers: jsonNoStore },
+  revisionMismatch: { status: 422, error: "revision_mismatch", message: "The result does not describe the queued project revision", headers: jsonNoStore },
+  revisionMismatchTheResultScannedAnother: { status: 422, error: "revision_mismatch", message: "The result scanned another repository", headers: jsonNoStore },
+  commitMismatch: { status: 422, error: "commit_mismatch", messageFrom: "`The result must scan commit ${assessment.commitSha} with skill template ${assessment.templateSha256}, which the queue assigned`", headers: jsonNoStore },
+  reuseMismatch: { status: 422, error: "reuse_mismatch", message: "A reused scan must cite an original clean scan of the same repository, executable inventory, template, policy and report", headers: jsonNoStore },
+  evidenceUnavailableSlopCouldNotRead: { status: 503, error: "evidence_unavailable", message: "Slop could not read the retained evidence. Retry later.", headers: jsonNoStore },
+  evidenceIncomplete: { status: 422, error: "evidence_incomplete", messageFrom: "isScanResult(result) ? \"Clean scan results require the exact retained report, inventory, dependency locks and artifacts\" : \"Clean results require a complete authorized canonical assembly and its exact retained evidence\"", headers: jsonNoStore },
+  staleProject: { status: 409, error: "stale_project", message: "The project changed while the result was recorded. Read the queued scan and retry.", headers: jsonNoStore },
+} as const
+
+export const postVettingJournal = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV2,
+  payloadTooLargeRequestBodyExceeds4096: { status: 413, error: "payload_too_large", message: "Request body exceeds 4096 bytes", headers: jsonNoStore },
+  invalidRequestTheJournalRequestMust: { status: 400, error: "invalid_request", message: "The journal request must be UTF-8 JSON", headers: jsonNoStore },
+  invalidRequestTheJournalRequestMustBeAnObject: { status: 400, error: "invalid_request", message: "The journal request must be an object", headers: jsonNoStore },
+  invalidRequestTheJournalAssessmentId: { status: 400, error: "invalid_request", message: "The journal assessment id is invalid", headers: jsonNoStore },
+  ...withInvalidRequestRequestBodyHasUnexpectedFields,
+  invalidRequestTheJournalOperationIs: { status: 400, error: "invalid_request", message: "The journal operation is not supported", headers: jsonNoStore },
+  invalidRequestTheJournalResultDigest: { status: 400, error: "invalid_request", message: "The journal result digest is invalid", headers: jsonNoStore },
+  invalidRequestTheJournalOriginIs: { status: 400, error: "invalid_request", message: "The journal origin is invalid", headers: jsonNoStore },
+  invalidRequestTheJournalDispositionIs: { status: 400, error: "invalid_request", message: "The journal disposition is not supported", headers: jsonNoStore },
+  alreadyReserved: { status: 409, error: "already_reserved", message: "Publication already reserved; reconcile its outcome", headers: jsonNoStore },
+  invalidRequestTheJournalOutcomeIs: { status: 400, error: "invalid_request", message: "The journal outcome is not supported", headers: jsonNoStore },
+  invalidRequestTheJournalHTTPStatus: { status: 400, error: "invalid_request", message: "The journal HTTP status is invalid", headers: jsonNoStore },
+  noMatchingIntent: { status: 422, error: "no_matching_intent", message: "Publication receipt has no matching intent", headers: jsonNoStore },
+  alreadyRecordedThisPublicationAlreadyHas: { status: 409, error: "already_recorded", message: "This publication already has its receipt", headers: jsonNoStore },
+} as const
+
+export const postVettingReuse = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfigured,
+  ...withPayloadTooLargeRequestBodyExceeds1024,
+  invalidRequestTheLookupMustBe: { status: 400, error: "invalid_request", message: "The lookup must be UTF-8 JSON", headers: jsonNoStore },
+  invalidRequestInvalidScanReuseLookup: { status: 400, error: "invalid_request", message: "Invalid scan reuse lookup", headers: jsonNoStore },
+} as const
+
+export const postVettingRefresh = {
+  ...withVettingUnavailableTheVettingServiceIsNotConfiguredAndInvalidSignatureTheSignedTimestampIsV3,
+  ...withPayloadTooLargeRequestBodyExceeds1024,
+  ...withInvalidRequestSendAnEmptyJSON,
+  ...withPinUnavailable,
+} as const
+
+export const sandboxPostRun = {
+  invalidArtifactRequest: { status: 400, text: "Invalid artifact request", headers: textUncachedPlain },
+  isolatedExecutionUnavailable: { status: 503, text: "Isolated execution unavailable", headers: textNoStorePlain },
+  otherMethods: {
+    methodNotAllowedS405: { status: 405, text: "Method not allowed", headers: textUncachedPlain },
+  },
+} as const

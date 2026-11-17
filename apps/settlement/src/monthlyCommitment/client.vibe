@@ -1,0 +1,20 @@
+// spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"
+import { route } from "@repo/platform/route"
+
+export schema PublishedAuthorization {
+  readonly authorization: Schema.Unknown
+  readonly publishedAt: string
+}
+
+export const monthlyAuthorization = route({
+  method: "GET",
+  path: "/api/v1/payments/projects/:id/monthly/:period/authorization/:network",
+  access: "public",
+  limitKib: 1,
+  request: undefined,
+  answer: PublishedAuthorization,
+  rejected: "monthly_authorization_unavailable",
+  cache: "private",
+})
+
+export const monthlyCommitmentApi = [monthlyAuthorization]

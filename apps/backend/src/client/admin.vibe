@@ -1,0 +1,132 @@
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/security/enforcement.md, "The steward, the listing account, a banned account or a moderator files one open project appeal"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema GithubActorView { githubId: string; githubLogin: string }
+
+export schema AccountReinstatementView { githubId: string; githubLogin: string; banEnforcementId: string }
+
+export schema VettingReviewView { assessmentId: string; maliciousAssessmentIds: ReadonlyArray<string> }
+
+export schema EnforcementRecordView {
+  id: string
+  projectId: string
+  sequence: number
+  action: string
+  stateAfter: string
+  appealAfter: string
+  reason: string
+  evidenceReference: string
+  repositoryGithubId: string
+  repositoryKeys: ReadonlyArray<string>
+  actor: GithubActorView | null
+  systemIssuer?: Readonly<Record<string, string | ReadonlyArray<string>>>
+  actorRole: string
+  decisionSource: string
+  beforeRevision: number
+  beforeManifestSha256: string
+  afterRevision: number | null
+  afterManifestSha256: string | null
+  result: string
+  vettingReview?: VettingReviewView
+  maintainerBans?: ReadonlyArray<GithubActorView>
+  accountReinstatements?: ReadonlyArray<AccountReinstatementView>
+  createdAt: string
+}
+
+export schema EnforcementStateView {
+  state: string
+  appeal: string
+  projectAppeal: string
+  since: string | null
+  restrictedBy: ReadonlyArray<GithubActorView>
+  nextSequence: number
+  revisionPending: boolean
+  moderation: "unconfigured" | "moderator" | "not-moderator"
+  decisionRequired: boolean
+  bannedMaintainers: ReadonlyArray<GithubActorView>
+  records: ReadonlyArray<EnforcementRecordView>
+}
+
+export schema ReferrerView { githubId: string; githubLogin: string }
+
+const adminProjectFields = {
+  id: Schema.String,
+  status: Schema.String,
+  revision: Schema.Number,
+  manifestSha256: Schema.String,
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  sourceApplicationId: Schema.NullOr(Schema.String),
+  referrer: Schema.NullOr(ReferrerView),
+  manifest: Schema.Unknown,
+}
+
+export const AdminProjectView = Schema.Struct(adminProjectFields)
+
+export const AdminListedProject = Schema.Struct({ ...adminProjectFields, enforcement: EnforcementStateView })
+
+export schema AdminProjects { projects: ReadonlyArray<AdminListedProject> }
+
+export const AdminRevisionRequest = Schema.Struct({ manifest: Schema.Unknown, expectedRevision: Schema.Unknown, reason: Schema.Unknown, bountyAmount: Schema.optionalKey(Schema.Unknown) })
+
+export schema AdminRevised { project: AdminProjectView }
+
+export const EnforcementRequest = Schema.Struct({
+  action: Schema.Unknown,
+  reason: Schema.Unknown,
+  evidenceReference: Schema.Unknown,
+  expectedRevision: Schema.Unknown,
+  expectedSequence: Schema.Unknown,
+  responsibleAccounts: Schema.optionalKey(Schema.Unknown),
+})
+
+export schema RevisionPreview {
+  before: number
+  after: number | null
+  statusBefore: string
+  statusAfter: string
+  listingTierBefore: string
+  listingTierAfter: string
+}
+
+export schema EnforcementPreview {
+  projectId: string
+  projectName: string
+  action: string
+  sequence: number
+  stateBefore: string
+  stateAfter: string
+  appealBefore: string
+  appealAfter: string
+  result: string
+  pendingReason: string | null
+  maintainerBans: ReadonlyArray<GithubActorView>
+  accountReinstatements: ReadonlyArray<GithubActorView>
+  revision: RevisionPreview
+}
+
+export schema Previewed { preview: EnforcementPreview }
+
+export schema Decided { preview: EnforcementPreview; record: EnforcementRecordView }
+
+export const AppealRequest = Schema.Struct({ projectId: Schema.Unknown, reason: Schema.Unknown, evidenceReference: Schema.Unknown, appealScope: Schema.optionalKey(Schema.Unknown) })
+
+export schema AccountAppealView { projectId: string; state: string; appeal: string }
+
+export schema AccountAppeals { appeals: ReadonlyArray<AccountAppealView> }
+
+export schema PublicAccountBan { githubId: string; bannedAt: string }
+
+export schema PublicAccountBans { schemaVersion: "slop-account-bans:v1"; bans: ReadonlyArray<PublicAccountBan> }
+
+const publicProjectCache = { browserSeconds: 0, edgeSeconds: 30 } as const
+
+export const adminProjects = route({ method: "GET", path: "/api/v1/admin/projects", access: "session", limitKib: 1, request: undefined, answer: AdminProjects, rejected: "forbidden", cache: "no-store" })
+export const adminManifest = route({ method: "PUT", path: "/api/v1/admin/projects/:id/manifest", access: "sessionWrite", limitKib: 64, request: AdminRevisionRequest, answer: AdminRevised, rejected: "rejected", cache: "no-store" })
+export const enforcementPreview = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement-preview", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Previewed, rejected: "rejected", cache: "no-store" })
+export const enforcementDecision = route({ method: "POST", path: "/api/v1/admin/projects/:id/enforcement", access: "sessionWrite", limitKib: 64, request: EnforcementRequest, answer: Decided, rejected: "rejected", cache: "no-store" })
+export const projectAppeals = route({ method: "POST", path: "/api/v1/project-appeals", access: "sessionWrite", limitKib: 64, request: AppealRequest, answer: Decided, rejected: "rejected", cache: "no-store" })
+export const accountAppeals = route({ method: "GET", path: "/api/v1/project-appeals", access: "session", limitKib: 1, request: undefined, answer: AccountAppeals, rejected: "not_found", cache: "no-store" })
+export const accountBans = route({ method: "GET", path: "/api/v1/project-account-bans", access: "public", limitKib: 1, request: undefined, answer: PublicAccountBans, rejected: "not_found", cache: publicProjectCache, cors: ["*"] })
+
+export const api: ReadonlyArray<AnyRoute> = [adminProjects, adminManifest, enforcementPreview, enforcementDecision, projectAppeals, accountAppeals, accountBans]

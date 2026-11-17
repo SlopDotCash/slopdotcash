@@ -1,0 +1,154 @@
+// spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"
+import { evmRpc } from "@repo/platform/chain/evm"
+import { SolanaRpc, solanaRpc } from "@repo/platform/chain/solana"
+import { nowSeconds } from "@repo/platform/clock"
+import { first, sql } from "@repo/platform/d1"
+import { type Balance, type Identity, type Observation, type Purpose, type RequestResult, type Snapshots, requestRow } from "../../gen/settlement__vaultSnapshots.effect.vibe"
+import { verifiedDeployment } from "../owner/solanaDeployment.vibe"
+import type { RegisteredDeployment } from "./deployments.vibe"
+import { type ChainTotals, readEvmTotals } from "./evmTotals.vibe"
+import type { PolicyScope } from "./policy.vibe"
+import { PaymentRpc } from "./rpc.vibe"
+import { readSolanaTotals } from "./solanaTotals.vibe"
+import { type VaultSession, amountOfBigint, identityOf, openSession, registrationOf, registryOf } from "./store.vibe"
+
+export type Source = "ScheduledRead" | "RecoveryRead"
+
+export interface Refreshed {
+  readonly projectId: string
+  readonly network: string
+  readonly vault: string
+  readonly result: RequestResult
+  readonly http: number
+  readonly reason: string | undefined
+}
+
+export error RefreshFailed { failures: ReadonlyArray<string> }
+
+const REQUEST = 1
+
+schema DecimalsRow { readonly asset_decimals: number }
+
+type Read = { readonly kind: "read"; readonly totals: ChainTotals } | { readonly kind: "failed"; readonly reason: string }
+
+function purposeOf(scope: PolicyScope): Purpose {
+  return scope === "security-bounty" ? "PrivateBounty" : "Ordinary"
+}
+
+function reasonOf(error: { readonly _tag: string; readonly message?: unknown }): string {
+  return (error._tag === "DeploymentMismatch" || error._tag === "DeploymentUnverified") && typeof error.message === "string" ? error.message : error._tag
+}
+
+function balance(value: bigint | undefined): Balance {
+  return value === undefined ? { present: false, amount: [0] } : { present: true, amount: amountOfBigint(value) }
+}
+
+export function observationOf(totals: ChainTotals, identity: Identity, purpose: Purpose, observedAt: number): Observation {
+  return {
+    exists: true,
+    identity: { ...identity, readVault: totals.readVault, asset: totals.asset, decimals: totals.decimals },
+    purpose,
+    block: amountOfBigint(totals.block),
+    blockTime: totals.blockTime,
+    observedAt,
+    counters: {
+      deposits: amountOfBigint(totals.deposited),
+      payments: amountOfBigint(totals.paid),
+      payoutFees: amountOfBigint(totals.payoutFees),
+      withdrawals: amountOfBigint(totals.grossWithdrawn),
+      withdrawalFees: amountOfBigint(totals.withdrawalFees),
+    },
+    balances: {
+      free: balance(totals.free),
+      principal: balance(totals.reservedPrincipal),
+      feesReserved: balance(totals.reservedFees),
+      feesAccrued: balance(totals.accruedFees),
+      reserved: balance(totals.reserved),
+    },
+    legacyServiceFees: [0],
+  }
+}
+
+effect function evmRead(deployment: Extract<RegisteredDeployment, { family: "evm" }>, urls: Redacted.Redacted<ReadonlyArray<string>>) {
+  const totals = Effect.provide(readEvmTotals(deployment), evmRpc({ urls, chainId: deployment.chainId })) catch (error) => reasonOf(error)
+  return (typeof totals === "string" ? { kind: "failed", reason: totals } : { kind: "read", totals }) satisfies Read
+}
+
+effect function verifiedTotals(deployment: Extract<RegisteredDeployment, { family: "solana" }>, source: Source) {
+  if (source === "RecoveryRead") try verifiedDeployment(deployment)
+  return try readSolanaTotals(deployment)
+}
+
+effect function solanaRead(deployment: Extract<RegisteredDeployment, { family: "solana" }>, urls: Redacted.Redacted<ReadonlyArray<string>>, pin: string, source: Source) {
+  const totals = Effect.provide(verifiedTotals(deployment, source), solanaRpc({ urls, genesis: pin })) catch (error) => reasonOf(error)
+  return (typeof totals === "string" ? { kind: "failed", reason: totals } : { kind: "read", totals }) satisfies Read
+}
+
+effect function seenGenesis(urls: Redacted.Redacted<ReadonlyArray<string>>, pin: string) {
+  const reader = effect { return try (try SolanaRpc).genesisHash() }
+  return Effect.provide(reader, solanaRpc({ urls, genesis: pin })) catch (error) => error._tag === "WrongChain" ? error.actual : undefined
+}
+
+function done(state: Snapshots): boolean {
+  return requestRow(state, REQUEST).phase === "RequestDone"
+}
+
+effect function finished(session: VaultSession, deployment: RegisteredDeployment, reason: string | undefined) {
+  const row = requestRow(try session.current(), REQUEST)
+  return { projectId: deployment.projectId, network: deployment.network, vault: deployment.vault, result: row.result, http: row.http, reason } satisfies Refreshed
+}
+
+effect function priorDecimals(deployment: RegisteredDeployment) {
+  return (try first(DecimalsRow, sql`SELECT asset_decimals FROM vault_snapshots WHERE project_id = ${deployment.projectId} AND network = ${deployment.network} AND vault = ${deployment.vault}`))?.asset_decimals
+}
+
+export effect function refreshDeployment(deployment: RegisteredDeployment, source: Source = "ScheduledRead") {
+  const purpose = purposeOf(deployment.scope)
+  const rpc = try PaymentRpc
+  const urls = rpc.urls[deployment.network]
+  const pin = deployment.family !== "solana" ? "" : source === "RecoveryRead" ? deployment.genesisHash : rpc.genesis[deployment.network] ?? ""
+  const seen = urls === undefined || deployment.family !== "solana" || pin === "" ? undefined : try seenGenesis(urls, pin)
+  const read: Read = urls === undefined
+    ? { kind: "failed", reason: "Private RPC configuration unavailable" }
+    : deployment.family === "evm" ? try evmRead(deployment, urls)
+    : pin === "" || seen !== pin ? { kind: "failed", reason: "Solana genesis trust root unavailable" }
+    : try solanaRead(deployment, urls, pin, source)
+  const decimals = (try priorDecimals(deployment)) ?? (read.kind === "read" ? read.totals.decimals : 0)
+  const registration = registrationOf(deployment, decimals)
+  const session = try openSession({ projectId: deployment.projectId }, registryOf(purpose === "Ordinary" ? { revision: deployment.revision, ordinary: registration } : { revision: deployment.revision, privateBounty: registration }))
+  try session.send(source === "RecoveryRead" ? { type: "beginRecovery", requestId: REQUEST, trustedMain: true } : { type: "beginRead", requestId: REQUEST, purpose })
+  if (deployment.family === "solana") {
+    if (done(try session.send({ type: "pinGenesis", requestId: REQUEST, pinnedRoot: pin }))) return try finished(session, deployment, "Solana genesis trust root unavailable")
+    if (seen === undefined) {
+      try session.send({ type: "observationFails", requestId: REQUEST })
+      return try finished(session, deployment, "Solana genesis unavailable")
+    }
+    if (done(try session.send({ type: "checkGenesis", requestId: REQUEST, seenRoot: seen }))) return try finished(session, deployment, "Wrong Solana cluster")
+  }
+  if (read.kind === "failed") {
+    try session.send({ type: "observationFails", requestId: REQUEST })
+    return try finished(session, deployment, read.reason)
+  }
+  const observation = observationOf(read.totals, identityOf(deployment, decimals), purpose, try nowSeconds())
+  if (done(try session.send({ type: "readTotals", requestId: REQUEST, observation, finalized: true }))) return try finished(session, deployment, "Vault totals differ from the reviewed deployment")
+  if (done(try session.send({ type: "readPrior", requestId: REQUEST }))) return try finished(session, deployment, undefined)
+  try session.send({ type: "write", requestId: REQUEST, reply: "WriteAcknowledged" })
+  return try finished(session, deployment, undefined)
+}
+
+function succeeded(refreshed: Refreshed): boolean {
+  return refreshed.result === "ObservationStored" || refreshed.result === "ObservationOlder"
+}
+
+export effect function refreshVaultSnapshots(deployments: ReadonlyArray<RegisteredDeployment>) {
+  const outcomes: Array<{ readonly index: number; readonly failure: string | undefined }> = []
+  for concurrent(4) (const [index, deployment] of deployments.entries()) {
+    const refreshed = refreshDeployment(deployment) catch (error) => error._tag
+    const failure = typeof refreshed === "string"
+      ? `${deployment.projectId} ${deployment.network}: ${refreshed}`
+      : succeeded(refreshed) ? undefined : `${deployment.projectId} ${deployment.network}: ${refreshed.reason ?? refreshed.result}`
+    outcomes.push({ index, failure })
+  }
+  const failures = outcomes.sort((left, right) => left.index - right.index).flatMap((outcome) => outcome.failure === undefined ? [] : [outcome.failure])
+  if (failures.length > 0) throw new RefreshFailed({ failures })
+}
