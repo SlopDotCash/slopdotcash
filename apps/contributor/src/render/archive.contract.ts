@@ -1,4 +1,4 @@
-// spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes"
+// spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"
 import { Arbitrary, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { crc32, fixedDosDate, regularFileMode, storedZip, utf8Flag } from "./archive.ts";

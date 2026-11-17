@@ -160,10 +160,11 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     }))
   })
 
-  it.effect('Only a moved repository is followed, once, at the authority, and the bearer never leaves it (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
+  it.effect('Only a moved repository is followed, once, at the authority, unless the read refuses renames, and the bearer never leaves it (spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority")', () => effect {
     const harness = try Harness
     try Effect.try(() => harness.fake.world.renameRepo("drifter/kit-2", "drifter/kit-moved"))
     const moved = try harness.request("/repos/drifter/kit-2")
+    const stayed = try harness.request("/repos/drifter/kit-2?stay=1")
     try sync(() => { harness.alterations.push({ path: "/repos/drifter/kit-1", location: "https://elsewhere.test/repositories/7101" }) })
     const offAuthority = try harness.request("/repos/drifter/kit-1")
     const member = try harness.request("/members/slop-org/octo")
@@ -171,6 +172,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const hidden = try harness.request("/members/far-org/octo")
     try Effect.try(() => assert.deepStrictEqual({
       moved,
+      stayed,
       offAuthority,
       member,
       outsider,
@@ -180,11 +182,12 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       elsewhere: harness.seen.filter((request) => request.host === "elsewhere.test").length,
     }, {
       moved: { status: 200, body: { id: 7102, name: "kit-moved" } },
+      stayed: { status: 200, body: { failure: "GitHubUnavailable", status: 301, path: "/repos/drifter/kit-2" } },
       offAuthority: { status: 200, body: { failure: "GitHubUnavailable", status: 301, path: "/repos/drifter/kit-1" } },
       member: { status: 200, body: { status: 204 } },
       outsider: { status: 200, body: { failure: "NotFound", path: "/orgs/slop-org/members/drifter" } },
       hidden: { status: 200, body: { status: 302 } },
-      movedSent: [["/repos/drifter/kit-2", true], ["/repositories/7102", true]],
+      movedSent: [["/repos/drifter/kit-2", true], ["/repos/drifter/kit-2", true], ["/repositories/7102", true]],
       publicMembers: 0,
       elsewhere: 0,
     }))

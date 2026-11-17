@@ -13,12 +13,11 @@ export const RunEvidenceLive = Layer.effect(RunEvidence, effect {
   return {
     prOpened: (pullRequest) => effect {
       if (pullRequest.pullRequestNodeId === "" || pullRequest.authorGithubId === "") return false
-      const project = try registry.byRepository(pullRequest.repositoryId)
-      const repository = project?.repositories.find((candidate) => candidate.id === pullRequest.repositoryId)
-      if (project === undefined || repository === undefined) return false
-      const [name, ...aliases] = [...new Set([repository.fullName, ...repository.aliases].map((each) => each.toLowerCase()))]
-      if (name === undefined) return false
-      const found = try db.all(sql`SELECT 1 AS ok FROM run_progress_events e JOIN trace_runs r ON r.id = e.run_id AND r.github_user_id = e.github_user_id WHERE e.github_user_id = ${pullRequest.authorGithubId} AND e.kind = 'pull_request_opened' AND e.source = 'agent' AND r.project_id = ${project.projectId} AND lower(r.repository) IN ${list([name, ...aliases])} AND e.github_object_id = ${pullRequest.pullRequestNodeId} LIMIT 1`)
+      const path = pullRequest.repositoryFullName.toLowerCase()
+      const project = try registry.project(pullRequest.projectId)
+      const registered = (project?.repositories ?? []).map((repository) => ({ id: repository.id, names: [repository.fullName, ...repository.aliases].map((each) => each.toLowerCase()) }))
+      const aliases = new Set(registered.filter((repository) => (repository.id !== "" && repository.id === pullRequest.repositoryId) || repository.names.includes(path)).flatMap((repository) => repository.names).filter((each) => each !== path))
+      const found = try db.all(sql`SELECT 1 AS ok FROM run_progress_events e JOIN trace_runs r ON r.id = e.run_id AND r.github_user_id = e.github_user_id WHERE e.github_user_id = ${pullRequest.authorGithubId} AND e.kind = 'pull_request_opened' AND e.source = 'agent' AND r.project_id = ${pullRequest.projectId} AND lower(r.repository) IN ${list([path, ...aliases])} AND e.github_object_id = ${pullRequest.pullRequestNodeId} LIMIT 1`)
       return (try decoded(Recorded, found, "recorded skill run")).length > 0
     },
   } satisfies RunEvidence.Shape

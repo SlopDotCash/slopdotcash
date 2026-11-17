@@ -2,10 +2,12 @@
 import * as Base64 from "effect/encoding/Base64"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
-import { GitHub, type GitHubFailure, GitHubMalformed, GitHubRefused, NotFound } from "@repo/platform/github"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import type { SavedConsent } from "../../gen/backend__closureConsent.effect.vibe"
 import type { Coverage, PolicyRead } from "../../gen/slopbot__closure.effect.vibe"
-import { type ComparedFile, type GuidanceRead, comparisonFileLimit, guidanceOf, maxDiffChars, maxGuidanceBytes, unreviewedContent } from "../../gen/slopbot__review.effect.vibe"
+import { mayReview, slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type ComparedFile, type GuidanceRead, type GuidanceStatus, comparisonFileLimit, guidanceOf, maxDiffChars, maxGuidanceBytes, unreviewedContent } from "../../gen/slopbot__review.effect.vibe"
+import type { Observed } from "../scope/facts.vibe"
 import { type FileText, type PolicyFileRead, type RepositoryConfig, configLimitBytes, configPath, parsePolicyFile, projectConfig } from "./policyFile.vibe"
 
 module verified {
@@ -56,6 +58,7 @@ schema PriorReview { readonly item_number: number; readonly item_kind: string; r
 export type ItemKind = "issue" | "pull_request"
 
 export interface ReviewTarget {
+  readonly projectId: string
   readonly installationId: number
   readonly repositoryId: number
   readonly itemKind: ItemKind
@@ -117,7 +120,14 @@ const policyGroups: ReadonlyArray<ReadonlyArray<string>> = [
 ]
 const commitSha = /^[0-9a-f]{40}$/u
 const compareLimitBytes = 16 * 1024 * 1024
+const contentsLimitBytes = 2 * 1024 * 1024
 const unreadable: FileText = { text: "", truncated: true }
+const absent = Symbol("absent")
+const policyReads: Readonly<Record<GuidanceStatus, PolicyRead>> = {
+  GuidanceMissing: "PolicyMissing",
+  GuidanceTruncated: "PolicyTruncated",
+  GuidanceComplete: "PolicyComplete",
+}
 
 function repositoryPath(repositoryId: number) {
   return `/repositories/${repositoryId}`
@@ -133,15 +143,15 @@ export effect function absentOn404<A>(read: A!GitHubFailure) {
 
 effect function fileText(repositoryId: number, path: string, ref: string, maxBytes: number) {
   const contentsPath = `${repositoryPath(repositoryId)}/contents/${encodeURIComponent(path).replaceAll("%2F", "/")}?ref=${ref}`
-  const file = (try GitHub).json(contentsPath, ContentsRead) catch effect (error) => match (error) {
-    when NotFound: "absent" as const;
-    when GitHubMalformed: "unreadable" as const;
-    when GitHubRefused: "unreadable" as const;
-    default: throw error;
+  const answer: unknown = (try GitHub).json(contentsPath, Schema.Unknown, { limitBytes: contentsLimitBytes }) catch effect (error) => {
+    if (error._tag === "NotFound") return absent
+    if (error._tag === "GitHubUnavailable" && error.status === 302) return unreadable
+    throw error
   }
-  if (file === "absent") return undefined
-  if (file === "unreadable") return unreadable
-  const bytes = file.type !== "file" || file.content === undefined || file.encoding !== "base64" ? undefined : Result.getOrUndefined(Base64.decode(file.content.replace(/\s+/gu, "")))
+  if (answer === absent) return undefined
+  if (answer === unreadable) return unreadable
+  const file = Schema.is(ContentsRead)(answer) ? answer : undefined
+  const bytes = file === undefined || file.type !== "file" || file.content === undefined || file.encoding !== "base64" ? undefined : Result.getOrUndefined(Base64.decode(file.content.replace(/\s+/gu, "")))
   if (bytes === undefined) return unreadable
   const truncated = bytes.length > maxBytes
   return { text: new TextDecoder().decode(truncated ? bytes.slice(0, maxBytes) : bytes), truncated } satisfies FileText
@@ -161,7 +171,7 @@ export effect function loadPolicy(repositoryId: number, ref: string) {
     }
     reads.push(read)
   }
-  return { files, guidance: guidanceOf(reads) }
+  return { files, guidance: policyReads[guidanceOf(reads)] }
 }
 
 export effect function compareDiff(repositoryId: number, pull: typeof PullRead.Type) {
@@ -208,7 +218,13 @@ effect function revisionOf(issue: typeof IssueRead.Type, pull: typeof PullRead.T
   return pull?.head.sha ?? try sha256Hex(`${issue.title}\n${issue.body ?? ""}`)
 }
 
-export effect function loadContext(target: ReviewTarget) {
+function scopeAllows(target: ReviewTarget, current: Observed) {
+  const scope = slopbotScope(current.observation)
+  return current.projectId === target.projectId && (target.securityOnly ? mayReview(scope) : scope === "Contributor")
+}
+
+export effect function loadContext(target: ReviewTarget, current: Observed) {
+  if (!scopeAllows(target, current)) return undefined
   const github = try GitHub
   const base = repositoryPath(target.repositoryId)
   const repository = try absentOn404(github.json(base, RepositoryRead))

@@ -1,26 +1,21 @@
-// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import { outbound, preflight } from "@repo/platform/http"
-import { rolesFrom } from "@repo/platform/roles"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
 import { AccountRoutes } from "./accounts/routes/index.vibe"
 import { BindingRoutes } from "./bindingConsent/routes.vibe"
 import { CallerLive } from "./caller/live.vibe"
-import { api } from "./client/index.vibe"
+import { api as accounts } from "./client/accounts.vibe"
+import { api as binding } from "./client/bindingConsent.vibe"
+import { api as email } from "./client/email.vibe"
 import { purgeExpired } from "./identity/maintenance.vibe"
-import { EnforcementRoutes } from "./projects/enforcement/routes.vibe"
-import { OwnerProjectRoutes } from "./projects/owner/routes.vibe"
-import { RegistryReadRoutes } from "./projects/public/routes.vibe"
-import { ReferralRoutes } from "./referrals/routes.vibe"
-import { WalletRoutes } from "./wallets/routes.vibe"
+import { type BackendVars, backendServices } from "./services.vibe"
 
-export interface Env {
+export interface Env extends RoleVars, BackendVars {
   readonly SLOP_DB: D1Database
-  readonly ADMIN_GITHUB_IDS: string
-  readonly PROJECT_MODERATOR_GITHUB_IDS: string
-  readonly OPERATOR_GITHUB_IDS?: string
 }
 
 function base(env: Env) {
@@ -28,7 +23,7 @@ function base(env: Env) {
 }
 
 export default worker({
-  services: (env: Env) => Layer.provideMerge(CallerLive, base(env)),
-  routes: Layer.mergeAll(AccountRoutes, RegistryReadRoutes, OwnerProjectRoutes, EnforcementRoutes, WalletRoutes, BindingRoutes, ReferralRoutes, preflight(api)),
+  services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(env)), base(env)),
+  routes: Layer.mergeAll(AccountRoutes, BindingRoutes, preflight([...accounts, ...email, ...binding])),
   scheduled: () => purgeExpired(),
 })

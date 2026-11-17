@@ -5,7 +5,8 @@ import { database, migrate, startWorker } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { ApprovedAward } from "@repo/ports/security";
 import type { Driver, Options } from "../../gen/settlement__directBounty.conformance.ts";
-import type { ArchivedIntent, DirectBounty, Event, Intent, Network, QualifiedRoute, Retirement, Terms, Transfer, TxUse, Wallet } from "../../gen/settlement__directBounty.ts";
+import type { Network } from "../../gen/fees__runtime.ts";
+import type { ArchivedIntent, DirectBounty, Event, Intent, QualifiedRoute, Retirement, Terms, Transfer, TxUse, Wallet } from "../../gen/settlement__directBounty.ts";
 import type { DirectIntent, PaymentWallet } from "../../src/client/direct.vibe";
 import type { EvmDirectRail } from "../../src/direct/evm.vibe";
 import { type Entry, type Facts, type Snapshot, send, snapshot, walletModel } from "../../src/direct/journal.vibe";
@@ -77,7 +78,7 @@ function railOf(route: QualifiedRoute): EvmDirectRail {
 }
 
 const unadmitted: Facts = {
-  approval: { caseId: "", projectId: "", caseRevision: 1, termsRevision: 1, direct: false, split: "StandardSplit", grossBaseUnits: "4", asset: "", rootCauseKey: "", approvedAt: "" },
+  approval: { caseId: "", projectId: "", caseRevision: 1, termsRevision: 1, direct: false, split: "StandardSplit", grossBaseUnits: "4", asset: "", rootCauseKey: "", approvedAt: "", network: "Base" },
   network: "Base",
   rail: { network: "base-mainnet", model: "Base", chainId: 0n, urls: Redacted.make([]), feeRecipient: "" },
   caseRevision: 1,
@@ -109,6 +110,7 @@ function admissionFacts(event: Extract<Event, { type: "admit" }>): Facts | undef
     asset: mapped(terms.asset),
     rootCauseKey: `root-${current.caseId}`,
     approvedAt: "2026-11-16T00:00:00.000Z",
+    network: terms.network,
   };
   return { ...unadmitted, approval: award, network: terms.network, rail: railOf(route), caseRevision: caseVersion, reporterGithubId: String(terms.reporterActor), payerGithubId: String(terms.payerActor) };
 }

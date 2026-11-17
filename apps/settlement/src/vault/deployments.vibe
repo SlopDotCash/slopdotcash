@@ -1,19 +1,8 @@
 // spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/evmScan.md, "A reviewed deployment record fixes the chain, page size and origin"
 import { ConfigInvalid } from "@repo/platform/config"
-import type { ReadFailure } from "@repo/ports/backend"
+import { type RegistryManifest, RegistryManifests } from "@repo/ports/backend"
 import { type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import { PolicyInvalid, type PolicyScope, type ReviewedDeployment, reviewedPolicy, vaultKeyOf } from "./policy.vibe"
-
-export schema RegistryManifest {
-  readonly projectId: string
-  readonly revision: number
-  readonly manifest: string
-}
-
-export service RegistryManifests {
-  current(): ReadonlyArray<RegistryManifest>!ReadFailure
-  project(projectId: string): (RegistryManifest | undefined)!ReadFailure
-}
 
 export type RegisteredDeployment = ReviewedDeployment & { readonly revision: number }
 

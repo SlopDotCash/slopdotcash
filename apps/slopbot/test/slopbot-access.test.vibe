@@ -1,4 +1,4 @@
-// spec/slopbot/reportingReadiness.md, "Story: Observe private reporting and answer repository access from the App's own reads"
+// spec/slopbot/reportingReadiness.md, "Story: Observe private reporting and answer repository access from the App's own reads"; spec/security/reportingReadiness.md, "Story: Keep one current observation per project revision and repository"
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { bundle, database, migrate, startWorker } from "@repo/platform/testing"
@@ -121,12 +121,20 @@ function accessUrl(origin: string, query: Readonly<Record<string, string>>) {
   return `${origin}?${new URLSearchParams(query).toString()}`
 }
 
+function attemptMasked(body: unknown) {
+  if (typeof body !== "object" || body === null || !("read" in body) || typeof body.read !== "object" || body.read === null || !("observation" in body.read)) return body
+  const { observation, ...read } = body.read
+  if (typeof observation !== "object" || observation === null || !("attemptedAt" in observation)) return body
+  const { attemptedAt, ...rest } = observation
+  return { read: { ...read, observation: { ...rest, attempted: typeof attemptedAt === "string" && isoInstant.test(attemptedAt) && attemptedAt > verifiedBefore } } }
+}
+
 function requestsSince(github: GitHubFake, from: number) {
   return github.requests.slice(from).map((request) => `${request.method} ${new URL(request.url).pathname} ${request.status}`)
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Refresh private-reporting readiness once per registered project (spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App\'s own read"; spec/slopbot/reportingReadiness.md, "A paused project without the App installed is a recorded state, never a refresh failure")', () => effect {
+  it.effect('Refresh private-reporting readiness once per registered project (spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/slopbot/reportingReadiness.md, "A paused project without the App installed is a recorded state, never a refresh failure")', () => effect {
     const slopbot = try Slopbot
     try orDie(Effect.try(() => slopbot.github.failNext("GET /repos/ada/charlie/installation", { status: 500 })))
     const before = slopbot.github.requests.length
@@ -137,7 +145,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       refreshed: [refreshed.status, refreshed.body],
       rows: rows.results.map(({ attempted_at, ...row }) => ({ ...row, attempted: typeof attempted_at === "string" && isoInstant.test(attempted_at) && attempted_at > verifiedBefore })),
       reads: requestsSince(slopbot.github, before).filter((line) => !line.startsWith("POST /app/installations")),
-      observed: observed.map((answer) => answer.body),
+      observed: observed.map((answer) => attemptMasked(answer.body)),
       outboundErrors: slopbot.outboundErrors,
     }, {
       refreshed: [200, { checked: 5, failed: 4 }],
@@ -159,9 +167,9 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         "GET /repos/ada/foxtrot/installation 404",
       ],
       observed: [
-        { readiness: "ReadinessEnabled", identityMatches: true, refreshFailed: true, verifiedAt: verifiedBefore },
-        { readiness: "ReadinessUnobserved", identityMatches: false, refreshFailed: true },
-        { readiness: "ReadinessUnobserved", identityMatches: false, refreshFailed: false },
+        { read: { target: { revision: 1, repositoryKey: "ada/alpha", repositoryId: "7001", repositoryNodeId: "R_alpha01" }, observation: { repositoryId: "7001", repositoryNodeId: "R_alpha01", enabled: true, verifiedAt: verifiedBefore, attempted: true, failure: "ReadFailed" } } },
+        { read: { target: { revision: 1, repositoryKey: "ada/bravo", repositoryId: "7002", repositoryNodeId: "R_bravo02" }, observation: { enabled: false, attempted: true, failure: "ReadFailed" } } },
+        { read: null },
       ],
       outboundErrors: [],
     })

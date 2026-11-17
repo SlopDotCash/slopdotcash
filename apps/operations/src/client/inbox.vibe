@@ -45,6 +45,10 @@ export const scamReviewPrefix = "/api/v1/notifications/scam-reviews/"
 
 export const appealPrefix = "/api/v1/notifications/appeals/"
 
+export function asksAcknowledgment(notice: InboxNotice): boolean {
+  return notice.acknowledgedAt !== undefined
+}
+
 export function isNotificationEventKey(value: unknown): value is string {
   return typeof value === "string" && value.length >= 8 && value.length <= 300 && /^[a-z-]+:[\x21-\x7e]+$/u.test(value)
 }

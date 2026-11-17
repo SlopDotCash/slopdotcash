@@ -29,6 +29,27 @@ export function digest(bytes: Uint8Array | string): Promise<string> {
   return Effect.runPromise(Effect.provide(sha256Hex(bytes), webCrypto));
 }
 
+const repositories = [{ id: "slop-test/intake" }];
+const approvers = { technical: [{ githubId: maintainer, githubLogin: "maintainer" }], financial: [{ githubId: "702", githubLogin: "finance" }], dispute: [] };
+const intake = { kind: "github-private-vulnerability-reporting", repository: "slop-test/intake" };
+const usdc = { grossMinor: "1000000", currency: "USDC", decimals: 6, network: "base" };
+
+function bounty(fields: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return { status: "open", amount: usdc, capacity: { awards: 3, closesAt: null, exhaustionRule: "close" }, approvers, intake, sponsor: { githubId: null, name: "Slop" }, ...fields };
+}
+
+export const programs: Readonly<Record<string, Readonly<Record<string, unknown>> | undefined>> = {
+  "intake-fixture": bounty({ eligibility: "in-scope-security", fundingPolicy: "after-approval" }),
+  "intake-full": bounty({ amount: { ...usdc, grossMinor: "500001" }, capacity: { awards: 1, closesAt: null, exhaustionRule: "close" }, split: { researcherBasisPoints: 10000, slopBasisPoints: 0 }, fundingPolicy: "after-approval" }),
+  "intake-unpaid": bounty({ status: "paused" }),
+  "intake-closed": bounty({ capacity: { awards: 3, closesAt: new Date(Date.now() - 3_600_000).toISOString(), exhaustionRule: "close" } }),
+  "intake-restricted": undefined,
+};
+
+function manifest(project: string, securityBounty: Readonly<Record<string, unknown>> | undefined): string {
+  return JSON.stringify({ id: project, status: "active", repositories, ...(securityBounty === undefined ? {} : { securityBounty }) });
+}
+
 export async function started(mode = "on"): Promise<World> {
   const script = await bundle(root, { config: "test/support/intake/vite.config.ts", entry: "intake" });
   const mf = startWorker({
@@ -41,21 +62,22 @@ export async function started(mode = "on"): Promise<World> {
   if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`);
   const db = await database(mf, "SLOP_DB");
   const at = new Date(Date.now() - 86_400_000).toISOString();
-  const seeded = ["intake-fixture", "intake-unpaid", "intake-restricted"].flatMap((project) => {
-    const manifest = JSON.stringify({ id: project, status: "active", repositories: [{ id: "slop-test/intake" }] });
-    return [
-      db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)").bind(project, 1, manifest, "a".repeat(64), "Intake fixture", at),
-      db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").bind(project, "active", 1, manifest, "a".repeat(64), at, at),
-    ];
-  });
-  await db.batch(seeded);
+  const later = new Date(Date.now() + 86_400_000).toISOString();
+  const seeded = Object.entries(programs).flatMap(([project, securityBounty]) => [
+    db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)").bind(project, 1, manifest(project, securityBounty), "a".repeat(64), "Intake fixture", at),
+    db.prepare("INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,?,?,?,?,?)").bind(project, "active", 1, manifest(project, securityBounty), "a".repeat(64), at, at),
+  ]);
+  const published = db.prepare("INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,?,?,?,?,?)").bind("intake-fixture", 2, manifest("intake-fixture", bounty({ amount: { ...usdc, grossMinor: "2000000" } })), "b".repeat(64), "Published after the receipts", later);
+  await db.batch([...seeded, published]);
   return { db, reports: await storage(mf, "PRIVATE_TRACES"), mf };
 }
 
-const tokens = new Map<string, string>();
+const sessions = new WeakMap<World, Map<string, string>>();
 let issued = 0;
 
 async function session(world: World, githubId: string): Promise<string> {
+  const tokens = sessions.get(world) ?? new Map<string, string>();
+  sessions.set(world, tokens);
   const known = tokens.get(githubId);
   if (known !== undefined) return known;
   issued += 1;
@@ -87,6 +109,11 @@ export async function request(world: World, path: string, ask: { readonly as?: s
 export async function faults(world: World, plan: { readonly lostPuts: number; readonly failedPuts: number }): Promise<void> {
   const answer = await request(world, "/api/v1/test/intake-faults", { json: plan });
   if (answer.status !== 200) throw new Error(`fault plan refused: ${answer.status}`);
+}
+
+export async function bans(world: World, githubIds: ReadonlyArray<string>): Promise<void> {
+  const answer = await request(world, "/api/v1/test/intake-bans", { json: { githubIds } });
+  if (answer.status !== 200) throw new Error(`ban plan refused: ${answer.status}`);
 }
 
 export async function rows(world: World, text: string, ...params: ReadonlyArray<string | number | null>): Promise<ReadonlyArray<Record<string, unknown>>> {

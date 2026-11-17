@@ -1,4 +1,4 @@
-// spec/slopbot/reportingReadiness.md, "Story: Observe private reporting and answer repository access from the App's own reads"
+// spec/slopbot/reportingReadiness.md, "Story: Observe private reporting and answer repository access from the App's own reads"; spec/security/reportingReadiness.md, "Story: Keep one current observation per project revision and repository"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
@@ -30,7 +30,7 @@ const refresh = HttpRouter.add("POST", "/__test/reporting-refresh", answered(eff
 
 const observation = HttpRouter.add("GET", "/__test/reporting/:projectId", answered(effect {
   const projectId = (try HttpRouter.params).projectId ?? ""
-  return json(try (try ReportingReadiness).current(projectId))
+  return json({ read: (try (try ReportingReadiness).current(projectId)) ?? null })
 }))
 
 export default worker({ services, routes: Layer.mergeAll(repositoryAccessRoutes, refresh, observation) })

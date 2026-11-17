@@ -89,9 +89,8 @@ const changeOf = (event: Event): Change | undefined => {
           sourceAt: iso(clock.now()),
         },
       };
-    case "verifyDestination":
-    case "setConsent":
-    case "unsubscribe":
+    case "observeEnrollment":
+    case "closeAccount":
       return undefined;
     case "reconcile":
       return {
@@ -145,6 +144,8 @@ const rawChangeOf = (raw: Record<string, unknown>): Record<string, unknown> => {
   }
 };
 
+type Seen = Omit<Inbox, "enrollments" | "configs">;
+
 type Settled = { readonly outcome: "accepted"; readonly value: Projection } | { readonly outcome: "refused" };
 
 const settled = async (sent: Effect.Effect<Projection, unknown, ManagedRuntime.ManagedRuntime.Services<typeof runtime>>): Promise<Settled> => {
@@ -168,7 +169,7 @@ const fieldsOnce = (raw: unknown): Record<string, unknown> | undefined => {
   return Object.fromEntries(Object.keys(event).map((field) => [field, event[field]]));
 };
 
-const modelOf = (projection: Projection): Omit<Inbox, "nextVersion" | "configs"> => {
+const modelOf = (projection: Projection): Seen => {
   const { inbox } = projection;
   const recipient = (actor: number) => actorOf(projection.recipients[actor - 1] ?? "");
   const version = (number: number) => versionOf(projection.versions[number - 1] ?? "");
@@ -186,7 +187,6 @@ const modelOf = (projection: Projection): Omit<Inbox, "nextVersion" | "configs">
       boundVersion: version(notice.boundVersion),
       digest: digestOf(digestText(projection, notice.digest)),
     })),
-    prefs: inbox.prefs.map((preference) => ({ ...preference, recipient: recipient(preference.recipient), version: version(preference.version), effectiveAt: time(preference.effectiveAt) })),
     evidence: projection.references.map(referenceOf).sort((left, right) => left - right),
     config: {
       routes: inbox.config.routes.map((route) => ({
@@ -200,12 +200,12 @@ const modelOf = (projection: Projection): Omit<Inbox, "nextVersion" | "configs">
   };
 };
 
-const view = (state: Inbox): Omit<Inbox, "nextVersion" | "configs"> => {
-  const { nextVersion: _allocated, configs: _released, ...seen } = state;
+const view = (state: Inbox): Seen => {
+  const { enrollments: _enrolled, configs: _released, ...seen } = state;
   return { ...seen, evidence: [...state.evidence].sort((left, right) => left - right) };
 };
 
-export const driver: Driver<Omit<Inbox, "nextVersion" | "configs">> & AsyncDisposable = {
+export const driver: Driver<Seen> & AsyncDisposable = {
   reset: () => {
     world = { generation: world.generation + 1, config: noConfig, keys: new Map() };
     clock.set(base() + 1);
@@ -230,4 +230,4 @@ export const driver: Driver<Omit<Inbox, "nextVersion" | "configs">> & AsyncDispo
   },
 };
 
-export const options: Options<Omit<Inbox, "nextVersion" | "configs">> = { keys: ["inbox"], view, walks: 4, steps: 16 };
+export const options: Options<Seen> = { keys: ["inbox"], view, walks: 4, steps: 16 };

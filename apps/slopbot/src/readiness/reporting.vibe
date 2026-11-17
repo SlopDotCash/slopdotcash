@@ -1,16 +1,16 @@
-// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"; spec/slopbot/reportingReadiness.md, "A paused project without the App installed is a recorded state, never a refresh failure"
+// spec/slopbot/reportingReadiness.md, "A paused project without the App installed is a recorded state, never a refresh failure"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
 import type { ObservedProject } from "../../gen/slopbot__reportingReadiness.ts"
-import { checkedResult, refreshTally } from "../../gen/slopbot__reportingReadiness.effect.vibe"
+import { refreshTally } from "../../gen/slopbot__reportingReadiness.effect.vibe"
 import { reportingRead } from "./reader.vibe"
 import { recordObservation } from "./store.vibe"
 import { registeredProjects } from "./targets.vibe"
 
 export effect function refreshReportingReadiness() {
   const observed: ObservedProject[] = []
-  for (const { paused, target } of try registeredProjects()) {
+  for (const target of try registeredProjects()) {
     const read = try reportingRead(target)
-    const outcome = try recordObservation(target, checkedResult(read, target.expected), read, try Clock.currentTimeMillis)
-    observed.push({ projectId: observed.length + 1, retired: false, paused, outcome })
+    const failure = try recordObservation(target, read, try Clock.currentTimeMillis)
+    observed.push({ projectId: observed.length + 1, retired: false, paused: target.listing === "Paused", read: read.kind, failure })
   }
   return refreshTally(observed)
 }

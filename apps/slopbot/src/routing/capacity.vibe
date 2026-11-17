@@ -2,9 +2,8 @@
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
-import { type AuthorSlots, type CloseMark, type MergeHistory, NotAState, Rejected, type Slot, type SlotStatus, apply, decodeState, slotOf } from "../../gen/slopbot__routing.effect.vibe"
+import { type AuthorSlots, type CloseMark, type MergeHistory, NotAState, Rejected, type Slot, type SlotStatus, apply, day, decodeState } from "../../gen/slopbot__routing.effect.vibe"
 import { ownSlot } from "../../gen/slopbot__reviewLease.effect.vibe"
-import { type Finished, type ReviewRow, claimWrite, finishWrite } from "../lease/writes.vibe"
 
 export schema SlotRow {
   readonly review_key: string
@@ -20,6 +19,7 @@ export interface AuthorScope {
   readonly repositoryId: number
   readonly authorId: number
   readonly reviewKey: string
+  readonly since: string
 }
 
 export interface Instant {
@@ -29,7 +29,6 @@ export interface Instant {
 
 const statuses: Readonly<Record<string, SlotStatus>> = { running: "SlotRunning", completed: "SlotCompleted", failed: "SlotFailed", skipped: "SlotSkipped" }
 const closes: Readonly<Record<string, CloseMark>> = { pending: "ClosePending", confirmed: "CloseConfirmed", rejected: "CloseRejected" }
-const finished: Readonly<Record<Exclude<SlotStatus, "SlotRunning">, Finished>> = { SlotCompleted: "completed", SlotFailed: "failed", SlotSkipped: "skipped" }
 
 export function secondsUntil(iso: string | null): number {
   return iso === null ? Number.NaN : Math.ceil(millisOf(iso) / 1000)
@@ -38,6 +37,11 @@ export function secondsUntil(iso: string | null): number {
 export effect function instant() {
   const millis = try Clock.currentTimeMillis
   return { seconds: Math.floor(millis / 1000), iso: try isoAt(millis) } satisfies Instant
+}
+
+export effect function authorScope(repositoryId: number, authorId: number, reviewKey: string) {
+  const since = try isoAt(try Clock.currentTimeMillis - (day + 1) * 1000)
+  return { repositoryId, authorId, reviewKey, since } satisfies AuthorScope
 }
 
 export function latestClose(reviewKey: Statement, column: "state" | "closed_at"): Statement {
@@ -50,7 +54,10 @@ const ownKey = sql`r.review_key`
 
 export function slotsRead(scope: AuthorScope): Statement {
   return sql`SELECT r.review_key, r.status, r.claim_token, r.lease_expires_at, r.completed_at, ${latestClose(ownKey, "state")} AS close_state, ${latestClose(ownKey, "closed_at")} AS closed_at
-    FROM slopbot_reviews r WHERE r.repository_id = ${scope.repositoryId} AND r.author_id = ${scope.authorId} ORDER BY r.rowid`
+    FROM slopbot_reviews r WHERE r.repository_id = ${scope.repositoryId} AND r.author_id = ${scope.authorId}
+      AND (r.review_key = ${scope.reviewKey} OR r.status = 'running' OR r.completed_at > ${scope.since}
+        OR ${latestClose(ownKey, "state")} = 'pending' OR ${latestClose(ownKey, "closed_at")} > ${scope.since})
+    ORDER BY r.rowid`
 }
 
 export function slotsVersion(scope: AuthorScope): Statement {
@@ -109,25 +116,4 @@ export function slotsAggregate(scope: AuthorScope, history: MergeHistory | undef
 
 export effect function authorSlots(scope: AuthorScope, history: MergeHistory | undefined) {
   return (try load(slotsAggregate(scope, history))).state.slots
-}
-
-export effect function startSlot(row: ReviewRow, token: string, leaseUntil: number, reviewing: boolean, history: MergeHistory | undefined) {
-  const scope = { repositoryId: row.repositoryId, authorId: row.authorId, reviewKey: row.reviewKey }
-  return try update(slotsAggregate(scope, history), (loaded) => effect {
-    const next = try apply(loaded.slots, { type: "start", key: ownSlot, leaseUntil, reviewing })
-    const own = loaded.rows.find((found) => found.review_key === row.reviewKey)
-    return {
-      value: next,
-      writes: [claimWrite({ row, token, expiresAt: try isoAt(leaseUntil * 1000), at: loaded.at.iso, prior: own === undefined ? "absent" : own.status === "skipped" ? "skipped" : "retryable" })],
-    }
-  })
-}
-
-export effect function finishSlot(row: ReviewRow, status: Exclude<SlotStatus, "SlotRunning">) {
-  const scope = { repositoryId: row.repositoryId, authorId: row.authorId, reviewKey: row.reviewKey }
-  return try update(slotsAggregate(scope, undefined), (loaded) => effect {
-    const next = try apply(loaded.slots, { type: "finish", key: ownSlot, status })
-    const token = loaded.rows.find((found) => found.review_key === row.reviewKey)?.claim_token ?? ""
-    return { value: slotOf(next, ownSlot), writes: [finishWrite(row.reviewKey, token, finished[status], {}, loaded.at.iso)] }
-  })
 }

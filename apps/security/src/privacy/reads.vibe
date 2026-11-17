@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"
 import type { R2Bucket } from "@repo/platform/bindings"
 import { D1, first, sql } from "@repo/platform/d1"
 import { isoNow } from "@repo/platform/clock"

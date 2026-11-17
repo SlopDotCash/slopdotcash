@@ -4,8 +4,20 @@ import type { AccountStanding, BanRead } from "../../../gen/backend__projectComp
 
 schema BanRow { enforcement_id: string }
 
+function unreleased(githubId: string) {
+  return sql`b.github_id = ${githubId} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id)`
+}
+
 export effect function activeBans(githubId: string) {
-  return (try rows(BanRow, sql`SELECT b.enforcement_id FROM project_maintainer_bans b WHERE b.github_id = ${githubId} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) ORDER BY b.enforcement_id`)).map((row) => row.enforcement_id)
+  return (try rows(BanRow, sql`SELECT b.enforcement_id FROM project_maintainer_bans b WHERE ${unreleased(githubId)} ORDER BY b.enforcement_id`)).map((row) => row.enforcement_id)
+}
+
+export function unbanned(githubId: string) {
+  return sql`NOT EXISTS (SELECT 1 AS banned, e.id AS enforcementId FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE ${unreleased(githubId)} LIMIT 1)`
+}
+
+export function unbannedFence(githubId: string) {
+  return sql`SELECT CASE WHEN ${unbanned(githubId)} THEN 1 ELSE json('account banned') END AS unbanned`
 }
 
 export effect function banRead(githubId: string) {

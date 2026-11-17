@@ -5,7 +5,7 @@ import { periodOf } from "../../../gen/points__periods.effect.vibe"
 import { type Category, moderatorReview } from "../../../gen/slopbot__categories.effect.vibe"
 import { instantOf } from "../../kernels/records/instants.ts"
 import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
-import { PenaltyPage, PenaltyRow as PublishedRow, historyOrigin, maximumPageRecords, penaltiesPath, penaltiesVersion, penaltyHistoryVersion } from "./wire.vibe"
+import { PenaltyPage, PenaltyRow as PublishedRow, historyOrigin, maximumPageRecords, penaltiesPath, penaltiesVersion, penaltyHistoryVersion } from "@repo/ports/slopbot"
 
 const penaltyFeed = "penalties"
 const envelopeRefused = "Penalty feed page has invalid identity or pagination"

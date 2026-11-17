@@ -1,0 +1,7 @@
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { snapshot } from "./snapshot.vibe"
+
+program({ services: Layer.mergeAll(webCrypto, outbound), commands: { snapshot } }).runMain()

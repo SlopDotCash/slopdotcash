@@ -11,7 +11,8 @@ import type { Accruing } from "./config.vibe"
 import { type FileAccrual, type FileMode, RULE_VERSION, type ReferrerTotal, assembleFile } from "./fileBytes.ts"
 import { type StoredOutcome, countsTowardTotals, modelOutcome, rowConsistent, storedOutcome } from "./judge.ts"
 import { calendarDate, closedBy, isoOfDate, ordinalOf, periodOf, periodOfInstant } from "./periods.ts"
-import type { ReferralAttribution, Snapshot, SourceRow } from "./source.vibe"
+import type { ReferralAttribution } from "@repo/ports/backend"
+import type { Snapshot, SourceRow } from "./source.vibe"
 
 export const leaseMillis = 10 * 60 * 1000
 export const owner = "owner"

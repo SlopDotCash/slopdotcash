@@ -1,4 +1,25 @@
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/wallets.md, "Claim and proof history remains bound to one partition"
 import { area } from "@repo/platform/worker"
+import { AccountRoutes } from "./accounts/routes/index.vibe"
+import { AuthorityLive } from "./authority/live.vibe"
+import { BindingRoutes } from "./bindingConsent/routes.vibe"
+import { CallerLive } from "./caller/live.vibe"
 import { api } from "./client/index.vibe"
+import { EmailConsentLive, EmailEnrollmentLive } from "./email/live.vibe"
+import { EnforcementRoutes } from "./projects/enforcement/routes.vibe"
+import { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "./projects/live.vibe"
+import { OwnerProjectRoutes } from "./projects/owner/routes.vibe"
+import { RegistryReadRoutes } from "./projects/public/routes.vibe"
+import { ReferralAttributionsLive } from "./referrals/attributions.vibe"
+import { ReferralRoutes } from "./referrals/routes.vibe"
+import { WalletsLive } from "./wallets/live.vibe"
+import { WalletRoutes } from "./wallets/routes.vibe"
 
-export const backend = area({ name: "backend", api, routes: Layer.empty, provides: Layer.empty })
+export { type BackendVars, backendServices } from "./services.vibe"
+
+export const backend = area({
+  name: "backend",
+  api,
+  routes: Layer.mergeAll(AccountRoutes, RegistryReadRoutes, OwnerProjectRoutes, EnforcementRoutes, WalletRoutes, BindingRoutes, ReferralRoutes),
+  provides: Layer.mergeAll(CallerLive, RegistryLive, RegistryManifestsLive, RestrictionsLive, WalletsLive, AuthorityLive, EmailConsentLive, EmailEnrollmentLive, ReferralAttributionsLive),
+})

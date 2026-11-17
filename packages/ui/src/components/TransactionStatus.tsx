@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import type { Presentation } from "../../gen/ui__status.ts";
-import { cn } from "../lib/cn.ts";
+import { cn, target } from "../lib/cn.ts";
 import { politeness } from "../lib/live.ts";
 import { Address, type AddressProps } from "./Address.tsx";
 import { ExternalLink } from "./ExternalLink.tsx";
@@ -31,7 +31,7 @@ export function TransactionStatus({ presentation, hash, hashLabel = "Transaction
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Status presentation={presentation} aria-live={politeness.Polite} />
         {explorerUrl === undefined ? null : (
-          <ExternalLink href={explorerUrl} className="text-sm">
+          <ExternalLink href={explorerUrl} className={cn(target, "text-sm text-primary underline underline-offset-4 hover:decoration-2")}>
             {explorerLabel}
           </ExternalLink>
         )}

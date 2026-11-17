@@ -27,7 +27,7 @@ function hydration(world: { readonly fake: GitHubFake }) {
 const view = { registered: true, paused: false, retired: false, legacy: false, quarantined: false }
 const day = 86_400_000
 
-it.live('Census with a count change mid-pass retries once then completes; a second change leaves it incomplete and no snapshot is written (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Publication requires a complete census and keeps the previous snapshot on failure"; spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
+it.live('Census with a count change mid-pass retries once then completes; a second change leaves it incomplete and no snapshot is written (spec/points/census.md, "Story: Collect a complete inventory and a decision for every item"; spec/points/census.md, "Pages follow the cursor chain and a changed count stops the pass"; spec/points/census.md, "Only a complete census is ready for publication"; spec/points/window.md, "A window spans exactly 35 days and never moves back"; spec/points/window.md, "Each permanent ID is recorded once with the reason it counts or not"; spec/points/window.md, "Publication needs a verified complete census; a failure keeps the previous window")', () => effect {
   const clock = settableClock(start)
   const bounds = try windowBounds(start)
   const nextDay = try windowBounds(start + day)
@@ -87,8 +87,8 @@ it.live('Census with a count change mid-pass retries once then completes; a seco
       failure,
       failed: { phase: failedWindow.phase, from: failedWindow.publishedFrom, to: failedWindow.publishedTo, count: failedWindow.publishedCount, written: try fs.exists(kept) },
     }, {
-      issues: { phase: "Ready", countChanges: 1, totalCount: 4, items: 4 },
-      pullRequests: { phase: "Ready", countChanges: 0, totalCount: 2 },
+      issues: { phase: "ReadyForPublication", countChanges: 1, totalCount: 4, items: 4 },
+      pullRequests: { phase: "ReadyForPublication", countChanges: 0, totalCount: 2 },
       listed: 5,
       outcomes: ["Counted", "ExcludedBot"],
       published: { phase: "Published", from: bounds.lowerDay, to: bounds.upper, count: 1, inventory: 4, written: true },

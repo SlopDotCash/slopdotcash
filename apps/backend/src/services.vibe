@@ -1,0 +1,24 @@
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/bindingConsent.md, "Authorization stores a consent the attester can still submit and never edits an earlier one"
+import type { Fetcher } from "@repo/platform/bindings"
+import { outbound } from "@repo/platform/http"
+import { type AccountVars, accountSettings } from "./accounts/routes/index.vibe"
+import { slopbotAccess } from "./authority/live.vibe"
+import { type BindingEnv, bindingServices } from "./bindingConsent/deployments.vibe"
+import { publicGitHub } from "./projects/github/lookup.vibe"
+import { type RewardRpcVars, rewardRpc } from "./projects/tokens/metadata.vibe"
+
+export interface BackendVars extends AccountVars, BindingEnv, RewardRpcVars {
+  readonly SLOP_GITHUB_READ_TOKEN?: string
+  readonly SLOP_GITHUB_API_ORIGIN?: string
+  readonly SLOPBOT?: Fetcher
+}
+
+export function backendServices(env: BackendVars) {
+  return Layer.mergeAll(
+    accountSettings(env),
+    bindingServices(env),
+    Layer.provide(publicGitHub({ token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin: env.SLOP_GITHUB_API_ORIGIN }), outbound),
+    rewardRpc(env),
+    slopbotAccess(env.SLOPBOT),
+  )
+}

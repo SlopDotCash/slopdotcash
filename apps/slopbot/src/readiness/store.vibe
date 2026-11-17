@@ -1,10 +1,10 @@
-// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+// spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import type { ReportingRead, ReportingResult, ReportingRow } from "../../gen/slopbot__reportingReadiness.ts"
-import { emptyRow, mergeObservation, refreshOutcome } from "../../gen/slopbot__reportingReadiness.effect.vibe"
-import type { Target } from "./targets.vibe"
+import type { ReadFailure, ReadKind, ReadinessObservation } from "../../gen/security__reportingReadiness.ts"
+import { apply, decodeState, enabled, noObservation, written } from "../../gen/security__reportingReadiness.effect.vibe"
+import { type Fetched, type NodeIds, type Target, modelRead, modelTarget, nodeIds } from "./targets.vibe"
 
 schema Failure = "unavailable" | "app-not-installed" | "identity-mismatch"
 schema StatusRow {
@@ -16,16 +16,25 @@ schema StatusRow {
   failure: Failure | null
 }
 
-const failures: Readonly<Record<Exclude<ReportingResult, "ReportingVerified">, Failure>> = {
-  ReportingUnavailable: "unavailable",
-  AppNotInstalled: "app-not-installed",
-  IdentityMismatch: "identity-mismatch",
+export interface Stored {
+  readonly repositoryId: number
+  readonly nodeId: string
+  readonly enabled: boolean
+  readonly verifiedAt: number
+  readonly attemptedAt: number
+  readonly failure: ReadFailure
 }
 
-const results: Readonly<Record<Failure, ReportingResult>> = {
-  "unavailable": "ReportingUnavailable",
-  "app-not-installed": "AppNotInstalled",
+const failures: Readonly<Record<Failure, ReadFailure>> = {
+  "unavailable": "ReadFailed",
+  "app-not-installed": "ReadFailed",
   "identity-mismatch": "IdentityMismatch",
+}
+
+const readFailures: Readonly<Record<ReadKind, Failure>> = {
+  Verified: "identity-mismatch",
+  AppNotInstalled: "app-not-installed",
+  ReadUnavailable: "unavailable",
 }
 
 const storedId = /^[1-9][0-9]{0,15}$/u
@@ -41,48 +50,62 @@ effect function instant(text: string | null, label: string) {
   return millis
 }
 
-effect function rowOf([found]: ReadonlyArray<Rows>) {
+effect function storedOf([found]: ReadonlyArray<Rows>) {
   const label = "repository_reporting_status"
   const [row] = try decoded(StatusRow, found ?? [], label)
-  if (row === undefined) return emptyRow
+  if (row === undefined) return undefined
   if (row.repository_id !== null && !storedId.test(row.repository_id)) throw new RowMismatch({ text: label, issue: "a repository ID is not a positive integer" })
+  const verifiedAt = try instant(row.verified_at, label)
   return {
-    rowRepositoryId: row.repository_id === null ? 0 : Number(row.repository_id),
-    rowNodeId: row.repository_node_id ?? "",
-    enabledKnown: row.enabled !== null,
-    rowEnabled: row.enabled === 1,
-    verifiedAt: try instant(row.verified_at, label),
+    repositoryId: row.repository_id === null ? 0 : Number(row.repository_id),
+    nodeId: row.repository_node_id ?? "",
+    enabled: verifiedAt > 0 && row.enabled === 1,
+    verifiedAt,
     attemptedAt: try instant(row.attempted_at, label),
-    failure: row.failure === null ? "ReportingVerified" : results[row.failure],
-  } satisfies ReportingRow
+    failure: row.failure === null ? "NoFailure" : failures[row.failure],
+  } satisfies Stored
 }
 
-function statusOf(target: Target): Aggregate<ReportingRow, RowMismatch, never> {
+function statusOf(target: Target): Aggregate<Stored | undefined, RowMismatch, never> {
   return {
     name: `reporting status of ${target.projectId} revision ${target.revision} at ${target.repositoryKey}`,
     version: sql`SELECT coalesce((SELECT json_array(repository_id, repository_node_id, enabled, verified_at, attempted_at, failure) FROM repository_reporting_status WHERE ${scope(target)}), '') AS version`,
     reads: [sql`SELECT repository_id, repository_node_id, enabled, verified_at, attempted_at, failure FROM repository_reporting_status WHERE ${scope(target)}`],
-    decode: rowOf,
+    decode: storedOf,
   }
 }
 
-effect function written(target: Target, row: ReportingRow) {
-  const verifiedAt = row.enabledKnown ? try isoAt(row.verifiedAt) : null
+function observationOf(target: Target, stored: Stored | undefined, nodes: NodeIds): ReadinessObservation {
+  if (stored === undefined) return noObservation
+  const { revision, repository } = modelTarget(target, nodes)
+  const { repositoryId, enabled, verifiedAt, attemptedAt, failure } = stored
+  return { revision, repository, repositoryId, repositoryNodeId: nodes.id(stored.nodeId), enabled, verifiedAt, attemptedAt, failure }
+}
+
+effect function writeOf(target: Target, observation: ReadinessObservation, read: ReadKind, nodes: NodeIds) {
+  const verified = observation.verifiedAt > 0
+  const nodeId = nodes.text(observation.repositoryNodeId)
+  const failure = observation.failure === "NoFailure" ? null : observation.failure === "IdentityMismatch" ? "identity-mismatch" : readFailures[read]
   return sql`INSERT INTO repository_reporting_status (project_id, project_revision, repository_key, repository_id, repository_node_id, enabled, verified_at, attempted_at, failure)
-    VALUES (${target.projectId}, ${target.revision}, ${target.repositoryKey}, ${row.rowRepositoryId > 0 ? String(row.rowRepositoryId) : null}, ${row.rowNodeId === "" ? null : row.rowNodeId}, ${row.enabledKnown ? (row.rowEnabled ? 1 : 0) : null}, ${verifiedAt}, ${try isoAt(row.attemptedAt)}, ${row.failure === "ReportingVerified" ? null : failures[row.failure]})
+    VALUES (${target.projectId}, ${target.revision}, ${target.repositoryKey}, ${observation.repositoryId > 0 ? String(observation.repositoryId) : null}, ${nodeId === "" ? null : nodeId}, ${verified ? (observation.enabled ? 1 : 0) : null}, ${verified ? try isoAt(observation.verifiedAt) : null}, ${try isoAt(observation.attemptedAt)}, ${failure})
     ON CONFLICT(project_id, project_revision, repository_key) DO UPDATE SET
       repository_id = excluded.repository_id, repository_node_id = excluded.repository_node_id, enabled = excluded.enabled,
       verified_at = excluded.verified_at, attempted_at = excluded.attempted_at, failure = excluded.failure`
 }
 
-effect function decide(target: Target, row: ReportingRow, result: ReportingResult, read: ReportingRead, at: number) {
-  const outcome = refreshOutcome(row, result, read, at)
-  if (at <= row.attemptedAt) return { value: outcome, writes: [] } satisfies Decision<ReportingResult>
-  return { value: outcome, writes: [try written(target, mergeObservation(row, result, read, at))] } satisfies Decision<ReportingResult>
+effect function decide(target: Target, stored: Stored | undefined, fetched: Fetched, at: number) {
+  const nodes = nodeIds([target.expectedNodeId, stored?.nodeId ?? "", fetched.nodeId])
+  const prior = observationOf(target, stored, nodes)
+  const state = try decodeState({ observations: stored === undefined ? [] : [prior] })
+  const event = { type: "refresh" as const, target: modelTarget(target, nodes), read: modelRead(fetched, nodes), attemptedAt: at }
+  const failure = written(prior, event.target, event.read, at).failure
+  const [observation] = enabled(state, event) ? (try apply(state, event)).observations : []
+  if (observation === undefined) return { value: failure, writes: [] } satisfies Decision<ReadFailure>
+  return { value: failure, writes: [try writeOf(target, observation, fetched.kind, nodes)] } satisfies Decision<ReadFailure>
 }
 
-export effect function recordObservation(target: Target, result: ReportingResult, read: ReportingRead, at: number) {
-  return try update(statusOf(target), (row) => decide(target, row, result, read, at))
+export effect function recordObservation(target: Target, fetched: Fetched, at: number) {
+  return try update(statusOf(target), (stored) => decide(target, stored, fetched, at))
 }
 
 export effect function storedObservation(target: Target) {

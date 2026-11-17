@@ -2,7 +2,8 @@
 import { createHash } from "node:crypto";
 import type { Fetcher } from "@repo/platform/bindings";
 import type { GitHubFake } from "@repo/platform/testing/github";
-import type { AccountBanFeed, PenaltyPage, PenaltyRow, ValueHistoryPage, WorkUnitHistoryPage, WorkUnitHistoryRow } from "../../../src/collect/feeds/wire.vibe";
+import type { PublicAccountBans } from "@repo/backend/client";
+import type { PenaltyPage, PenaltyRow, ValueHistoryPage, WorkUnitHistoryPage, WorkUnitHistoryRow } from "@repo/ports/slopbot";
 
 export type Reply =
   | { readonly status?: number; readonly json?: unknown; readonly text?: string; readonly bytes?: Uint8Array; readonly headers?: Readonly<Record<string, string>> }
@@ -92,6 +93,6 @@ export function jointPage(repositoryNodeId: string, pull: number, records: Reado
 }
 
 /** @throws {never} */
-export function banFeed(bans: ReadonlyArray<{ readonly githubId: string; readonly bannedAt: string }>): AccountBanFeed {
+export function banFeed(bans: ReadonlyArray<{ readonly githubId: string; readonly bannedAt: string }>): PublicAccountBans {
   return { schemaVersion: "slop-account-bans:v1", bans };
 }

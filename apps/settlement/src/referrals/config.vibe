@@ -1,4 +1,4 @@
-// spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referrals.md, "Recorded funding is exactly 2,000,000 program tokens in the verified token's base units"; spec/settlement/referralAccrual.md, "Verified token units and approved reactivation precede dry-run accrual"
+// spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"; spec/settlement/referrals.md, "Posting requires every recorded activation fact"; spec/settlement/referralAccrual.md, "Verified token units and approved reactivation precede dry-run accrual"
 import { ConfigInvalid, idList } from "@repo/platform/config"
 import type { Amount } from "../../gen/settlement__money.ts"
 import { type Event as ControlEvent, type Referral, type ReferralMode, Rejected as ControlRefused, apply as applyControl, decodeEvent as decodeControlEvent, initial as controlStart } from "../../gen/settlement__referrals.effect.vibe"
@@ -82,7 +82,6 @@ effect function ledgerOf(vars: ReferralVars, control: Referral) {
   let unit = 1n
   for (let digit = 0; digit < tokenDecimals; digit++) unit *= 10n
   const tokenUnit = try orDie(Effect.try(() => toAmount(unit)))
-  try exact("REFERRAL_TOKEN_DECIMALS", unit, control.tokenUnit)
   const rate = initialRateUnits(tokenUnit)
   if (fromAmount(rate.remainder) !== 0n) throw new ConfigInvalid({ name: "REFERRAL_TOKEN_DECIMALS", issue: "cannot express three tokens per stablecoin unit exactly" })
   const capped = { ...ledgerStart, tokenUnit }

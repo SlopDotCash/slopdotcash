@@ -10,7 +10,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { anvil, forward, rpcFaults, serve } from "@repo/platform/testing/chains"
 import { settableClock } from "@repo/platform/testing/clock"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { EffectiveWallet, Wallets } from "@repo/ports/backend"
+import { EffectiveWallet, type RegistryManifest, RegistryManifests, Wallets } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { Response } from "miniflare"
 import type { Address } from "viem"
@@ -20,12 +20,11 @@ import { commitAwardCalldata } from "../src/chain/evm/actions.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
 import { decodeProject } from "../src/chain/solana/accounts.ts"
 import { vaultAddress } from "../src/chain/solana/pda.ts"
-import { AuthorizedWallet, WalletHistory } from "../src/payments/wallets.vibe"
 import { PaymentIndexerLive } from "../src/scan/index.vibe"
 import { scanEvmPayments } from "../src/scan/evm.vibe"
 import { scanSolanaPayments, type SolanaScanDeployment } from "../src/scan/solana.vibe"
 import { sendSolanaScan, storedScan } from "../src/scan/solanaStore.vibe"
-import { type RegisteredDeployment, type RegistryManifest, RegistryManifests, registryDeployments } from "../src/vault/deployments.vibe"
+import { type RegisteredDeployment, registryDeployments } from "../src/vault/deployments.vibe"
 import { type ChainTotals, readEvmTotals } from "../src/vault/evmTotals.vibe"
 import { type ReleaseEnvironment, recoverMissingObservations } from "../src/vault/recovery.vibe"
 import { observationOf, refreshDeployment, refreshVaultSnapshots } from "../src/vault/refresh.vibe"
@@ -35,7 +34,7 @@ import { vaultTotalsOf } from "../src/vault/totals.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, nativeMonth, tokenProjects } from "./support/solana/escrow.ts"
 
-type Base = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | RegistryManifests | Wallets | WalletHistory | Notices
+type Base = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | RegistryManifests | Wallets | Notices
 
 service World {
   readonly escrow: EscrowStack
@@ -80,16 +79,13 @@ function ports(manifests: ReadonlyArray<RegistryManifest>) {
       current: () => sync(() => [...manifests]),
       project: (projectId) => sync(() => manifests.find((manifest) => manifest.projectId === projectId)),
     }),
-    Layer.effect(WalletHistory, effect {
-      const db = try D1
-      return {
-        authorized: (owner) => provideService(decodedRows(AuthorizedWallet, sql`SELECT w.id AS claimId, w.record_sha256 AS digest, w.wallet_address AS address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
-      }
-    }),
     Layer.effect(Wallets, effect {
       const db = try D1
       return {
         effective: (owner) => provideService(first(EffectiveWallet, sql`SELECT wallet_address AS address, id AS claimId, record_sha256 AS digest FROM effective_payment_wallet_claims WHERE github_user_id = ${owner.githubId} AND chain = ${chains[owner.network]}`), D1, db),
+        payable: (owner) => provideService(first(EffectiveWallet, sql`SELECT e.wallet_address AS address, e.id AS claimId, e.record_sha256 AS digest FROM effective_payment_wallet_claims e WHERE e.github_user_id = ${owner.githubId} AND e.chain = ${chains[owner.network]} AND EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = e.id AND a.github_user_id = e.github_user_id)`), D1, db),
+        authorized: (owner) => provideService(decodedRows(EffectiveWallet, sql`SELECT w.wallet_address AS address, w.id AS claimId, w.record_sha256 AS digest FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
+        fence: (pin) => effect { return sql`EXISTS (SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${pin.claimId} AND w.record_sha256 = ${pin.digest} AND w.github_user_id = ${pin.githubId} AND w.chain = ${chains[pin.network]})` },
       }
     }),
     Layer.succeed(Notices, {

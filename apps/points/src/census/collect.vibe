@@ -141,7 +141,7 @@ export function identities(): Identities {
 }
 
 export effect function censusRun(publishedLower: number = 0) {
-  const start = decodeState({ ...initial, publishedLower }) catch effect () => {
+  const start = decodeState({ ...initial, lowerDay: publishedLower }) catch effect () => {
     throw new CensusBroken({ message: `The published collection window ${publishedLower} is not a census day` })
   }
   return try machineOver(start, () => Effect.void)

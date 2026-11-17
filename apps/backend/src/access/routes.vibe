@@ -1,4 +1,4 @@
-// spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"
+// spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"
 import { millisOf } from "@repo/platform/clock"
 import { type Actor, handleRaw, json } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"

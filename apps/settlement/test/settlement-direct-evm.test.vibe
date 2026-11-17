@@ -1,19 +1,19 @@
 import { assert, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
-import { d1 } from "@repo/platform/d1"
+import { d1, sql } from "@repo/platform/d1"
 import { outbound } from "@repo/platform/http"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { type Anvil, anvil } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
-import { ApprovedAwards } from "@repo/ports/security"
+import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
 import type { Address } from "viem"
 import { reviewedFactory } from "../src/chain/evm/factories.ts"
 import { DirectIntent } from "../src/client/direct.vibe"
 import { evmDirectRails } from "../src/direct/evm.vibe"
 import { DirectBountyLive } from "../src/direct/port.vibe"
-import { type CaseContext, DirectRefused, type FrozenAward, consentPayment, preparePayment, settlementView, verifyPayment } from "../src/direct/routes.vibe"
+import { type CaseContext, DirectRefused, consentPayment, preparePayment, settlementView, verifyPayment } from "../src/direct/routes.vibe"
 import { DirectBounty } from "@repo/ports/settlement"
 
 module numbers {
@@ -64,12 +64,17 @@ const ChainStarted = Layer.mergeAll(LedgerStarted, Layer.effect(Chain, effect {
   return { chain }
 }))
 
-const awards = new Map<string, FrozenAward>()
+const awards = new Map<string, ApprovedAward>()
 const wallets = new Map<string, EffectiveWallet>()
 
 const fakePorts = Layer.mergeAll(
   Layer.succeed(ApprovedAwards, { forCase: (caseId) => effect { return awards.get(caseId) } }),
-  Layer.succeed(Wallets, { effective: ({ githubId }) => effect { return wallets.get(githubId) } }),
+  Layer.succeed(Wallets, {
+    effective: ({ githubId }) => effect { return wallets.get(githubId) },
+    payable: ({ githubId }) => effect { return wallets.get(githubId) },
+    authorized: ({ githubId }) => effect { return [...wallets.entries()].flatMap(([owner, wallet]) => owner === githubId ? [wallet] : []) },
+    fence: ({ githubId, claimId, digest }) => effect { return sql`${wallets.get(githubId)?.claimId === claimId && wallets.get(githubId)?.digest === digest ? 1 : 0} = 1` },
+  }),
 )
 
 const projectManifestSha = "a".repeat(64)
@@ -85,8 +90,8 @@ effect function seedCase(db: D1Database, caseId: string, projectId: string, repo
   ]))
 }
 
-function approved(caseId: string, projectId: string, grossBaseUnits: string, split: FrozenAward["split"]): FrozenAward {
-  return { caseId, projectId, caseRevision: 3, termsRevision: 1, direct: true, split, grossBaseUnits, asset: "0x0000000000000000000000000000000000000000", network: "base", rootCauseKey: `root-${caseId}`, approvedAt: "2026-11-16T00:00:00.000Z" }
+function approved(caseId: string, projectId: string, grossBaseUnits: string, split: ApprovedAward["split"]): ApprovedAward {
+  return { caseId, projectId, caseRevision: 3, termsRevision: 1, direct: true, split, grossBaseUnits, asset: "0x0000000000000000000000000000000000000000", network: "Base", rootCauseKey: `root-${caseId}`, approvedAt: "2026-11-16T00:00:00.000Z" }
 }
 
 effect function reasonOf<A, E, R>(run: A!E!R) {

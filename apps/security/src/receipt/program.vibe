@@ -1,5 +1,6 @@
 // spec/security/journey.md, "The receipt creates the case and the first screening version under the program's terms"; spec/security/terms.md, "Paid terms carry their split, funding policy, eligibility class and asset"
-import type { Statement } from "@repo/platform/d1"
+import { D1, RowMismatch, type Statement, first, sql } from "@repo/platform/d1"
+import { millisOf } from "@repo/platform/clock"
 import type { Json, ReadFailure } from "@repo/ports/backend"
 import type { Amount } from "../../gen/settlement__money.ts"
 import type { ReceiptTerms } from "../../gen/security__terms.ts"
@@ -13,6 +14,7 @@ export interface ReportingProgram {
   readonly approvers: ProgramApprovers | undefined
   readonly status: string | undefined
   readonly closesAt: string | undefined
+  readonly acknowledgeHours: number
 }
 
 export interface ProgramAtReceipt {
@@ -26,6 +28,134 @@ export service ReportingPrograms {
   atReceipt(read: { readonly projectId: string; readonly receivedAt: string }): (ProgramAtReceipt | undefined)!ReadFailure
   unbanned(githubId: string): Statement!!
 }
+
+schema Person { githubId: string }
+schema Approvers { technical: ReadonlyArray<Person>; financial: ReadonlyArray<Person>; dispute: ReadonlyArray<Person> }
+schema Sponsor { githubId: string | null }
+schema OfferedAmount { grossMinor: string; currency: string; decimals: number }
+schema Capacity { awards: number; closesAt: string | null }
+schema Split { researcherBasisPoints: number; slopBasisPoints: number }
+schema IntakeTarget { repository: string }
+schema Bounty { status: string; amount: OfferedAmount; capacity: Capacity; approvers: Approvers; intake: IntakeTarget; sponsor?: Sponsor; split?: Split; eligibility?: string; fundingPolicy?: string }
+schema Repository { id: string; githubUrl?: string; aliases?: ReadonlyArray<string> }
+schema Manifest { repositories: ReadonlyArray<Repository>; securityBounty?: Bounty }
+schema ProjectRow { manifest: string; revision: number }
+schema RevisionRow { revision: number; manifest: string; created_at: string }
+
+interface Parsed {
+  readonly manifest: Manifest
+  readonly raw: unknown
+}
+
+const repositoryPath = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const positiveBaseUnits = /^[1-9][0-9]{0,38}$/u
+const fullAwardSplit = { researcherBasisPoints: 10000, slopBasisPoints: 0 }
+
+function isJson(value: unknown): value is Json {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true
+  if (typeof value === "number") return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every(isJson)
+  return typeof value === "object" && Object.values(value).every(isJson)
+}
+
+function member(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
+}
+
+function pathOf(url: string): string | undefined {
+  try {
+    return new URL(url).pathname.replace(/^\/|\/$/gu, "")
+  } catch {
+    return undefined
+  }
+}
+
+effect function parsed(text: string, label: string) {
+  const raw = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new RowMismatch({ text: label, issue: "not JSON" }) })
+  const manifest = Schema.decodeUnknownEffect(Manifest)(raw) catch effect () => { throw new RowMismatch({ text: label, issue: "not a project manifest" }) }
+  return { manifest, raw } satisfies Parsed
+}
+
+effect function reportingRepository(manifest: Manifest) {
+  const selected = (manifest.securityBounty?.intake.repository ?? manifest.repositories[0]?.id)?.toLowerCase()
+  const repository = manifest.repositories.find((entry) => [entry.id, ...entry.aliases ?? []].some((name) => name.toLowerCase() === selected))
+  const name = repository === undefined ? undefined : repository.githubUrl === undefined ? repository.id : pathOf(repository.githubUrl)
+  if (name === undefined || name.length > 201 || !repositoryPath.test(name)) throw new RowMismatch({ text: "project manifest", issue: "the reporting repository is not registered" })
+  return name
+}
+
+function approversOf(bounty: Bounty): ProgramApprovers {
+  const ids = (people: ReadonlyArray<Person>) => people.map((person) => person.githubId)
+  const sponsor = bounty.sponsor?.githubId
+  return { technical: ids(bounty.approvers.technical), financial: ids(bounty.approvers.financial), dispute: ids(bounty.approvers.dispute), sponsor: sponsor === undefined || sponsor === null ? [] : [sponsor] }
+}
+
+effect function current(projectId: string) {
+  const row = try first(ProjectRow, sql`SELECT manifest, revision FROM projects WHERE id = ${projectId}`)
+  if (row === undefined) return undefined
+  const { manifest, raw } = try parsed(row.manifest, "project manifest")
+  const bounty = manifest.securityBounty
+  const acknowledgeHours = member(member(member(raw, "securityBounty"), "responseTargets"), "acknowledgeHours")
+  return {
+    repository: try reportingRepository(manifest),
+    approvers: bounty === undefined ? undefined : approversOf(bounty),
+    status: bounty?.status,
+    closesAt: bounty?.capacity.closesAt ?? undefined,
+    acknowledgeHours: typeof acknowledgeHours === "number" ? acknowledgeHours : 0,
+  } satisfies ReportingProgram
+}
+
+function isFullAward(split: Split | undefined) {
+  return split?.researcherBasisPoints === fullAwardSplit.researcherBasisPoints && split.slopBasisPoints === fullAwardSplit.slopBasisPoints
+}
+
+effect function shares(grossMinor: string, fullAward: boolean) {
+  if (!positiveBaseUnits.test(grossMinor)) throw new RowMismatch({ text: "program terms", issue: "the gross amount is not positive base units" })
+  if (fullAward) return { grossMinor, researcherMinor: grossMinor, slopMinor: "0" }
+  const gross = try Effect.try({ try: () => BigInt(grossMinor), catch: () => new RowMismatch({ text: "program terms", issue: "the gross amount is not an integer" }) })
+  if (gross % 4n !== 0n) throw new RowMismatch({ text: "program terms", issue: "the gross amount does not split 75/25 exactly" })
+  return { grossMinor, researcherMinor: String((gross * 3n) / 4n), slopMinor: String(gross / 4n) }
+}
+
+effect function frozenTerms(bounty: Bounty, raw: unknown) {
+  const fullAward = isFullAward(bounty.split)
+  const offered = member(member(raw, "securityBounty"), "amount")
+  const network = member(offered, "network")
+  const asset = member(offered, "asset")
+  return {
+    ...(try shares(bounty.amount.grossMinor, fullAward)),
+    ...fullAward ? { split: fullAwardSplit } : {},
+    currency: bounty.amount.currency,
+    decimals: bounty.amount.decimals,
+    ...network !== undefined && isJson(network) ? { network } : {},
+    ...Boolean(asset) && isJson(asset) ? { asset } : {},
+    capacityAwards: bounty.capacity.awards,
+    ...bounty.eligibility === "in-scope-security" ? { eligibility: bounty.eligibility } : {},
+    ...bounty.fundingPolicy === undefined || bounty.fundingPolicy === "" ? {} : { fundingPolicy: bounty.fundingPolicy },
+  } satisfies FrozenTerms
+}
+
+effect function atReceipt(read: { readonly projectId: string; readonly receivedAt: string }) {
+  const row = try first(RevisionRow, sql`SELECT revision, manifest, created_at FROM project_revisions WHERE project_id = ${read.projectId} AND created_at <= ${read.receivedAt} ORDER BY revision DESC LIMIT 1`)
+  if (row === undefined) return undefined
+  const { manifest, raw } = try parsed(row.manifest, "project revision manifest")
+  const bounty = manifest.securityBounty
+  const open = bounty !== undefined && bounty.status === "open" && (bounty.capacity.closesAt === null || !(millisOf(bounty.capacity.closesAt) <= millisOf(read.receivedAt)))
+  return { revision: row.revision, publishedAt: row.created_at, terms: open ? try frozenTerms(bounty, raw) : undefined } satisfies ProgramAtReceipt
+}
+
+function unbanned(githubId: string): Statement {
+  return sql`NOT EXISTS (SELECT 1 AS banned, e.id AS enforcementId FROM project_maintainer_bans b JOIN project_enforcements e ON e.id = b.enforcement_id WHERE b.github_id = ${githubId} AND NOT EXISTS (SELECT 1 FROM project_account_reinstatements released WHERE released.ban_enforcement_id = b.enforcement_id AND released.github_id = b.github_id) LIMIT 1)`
+}
+
+export const reportingProgramsLive = Layer.effect(ReportingPrograms, effect {
+  const db = try D1
+  return {
+    current: (projectId) => provideService(current(projectId), D1, db),
+    atReceipt: (read) => provideService(atReceipt(read), D1, db),
+    unbanned: (githubId) => succeed(unbanned(githubId)),
+  } satisfies ReportingPrograms.Shape
+})
 
 function limbs(base: string): Amount {
   if (!/^[0-9]+$/u.test(base)) return []

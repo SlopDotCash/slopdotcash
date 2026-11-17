@@ -1,10 +1,10 @@
 // spec/backend/projectRegistry.md, "Each permanent repository id and each path key belongs to at most one project"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Account bans and registry conflicts refuse new projects and owner writes"
 import { allChunked, first, list, rows, sql } from "@repo/platform/d1"
 import type { RegistryRead } from "../../gen/backend__projectComposition.effect.vibe"
-import { idOf, repositoryIdsOf, repositoryKeysOf } from "../projects/store/codec.vibe"
-import { type ActiveRestriction, EnforcementRows } from "../projects/store/enforcementRows.vibe"
+import { type RepositoryClaims, idOf, repositoryIdsOf, repositoryKeysOf } from "../projects/store/codec.vibe"
+import { type ActiveRestriction, EnforcementRows } from "@repo/ports/security"
 import { legacyHolder } from "../projects/store/legacy.ts"
-import { type Manifest, manifestOf } from "../projects/store/rows.vibe"
+import { manifestOf } from "../projects/store/rows.vibe"
 
 schema ListedRow { project_id: string }
 schema ManifestRow { manifest: string }
@@ -28,7 +28,7 @@ export function githubIdKey(githubId: string): string {
   return `github:${githubId}`
 }
 
-export function identityOf(manifest: Manifest): Identity {
+export function identityOf(manifest: RepositoryClaims): Identity {
   const githubIds = [...new Set(repositoryIdsOf(manifest).filter((id) => id > 0).map(String))]
   const appended = manifest.repositories.slice(1).flatMap((repository) => repository.githubId === undefined ? [] : [repository.githubId])
   return { githubIds, keys: [...new Set([...repositoryKeysOf(manifest), ...appended.map(githubIdKey)])] }

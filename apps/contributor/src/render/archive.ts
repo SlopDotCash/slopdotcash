@@ -1,4 +1,4 @@
-// spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes"
+// spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"
 import { type SkillFile, comparePaths } from "./render.ts";
 
 const encoder = new TextEncoder();

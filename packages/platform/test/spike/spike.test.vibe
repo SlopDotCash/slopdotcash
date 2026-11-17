@@ -64,7 +64,7 @@ layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "24
       about: [200, "A static file served through the ASSETS binding.\n"],
       missing: 404,
       greeted: [200, { text: "hello ada at k1", length: 3 }],
-      extra: [400, { error: "invalid_body", message: "Request body is not valid for this request" }],
+      extra: [400, { error: "invalid_request", message: "Request body has unexpected fields" }],
       defect: [500, ""],
       failure: [500, { error: "internal_error", message: "Internal error" }],
     })

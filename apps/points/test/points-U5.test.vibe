@@ -2,11 +2,11 @@ import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { outboundVia } from "@repo/platform/http"
 import { systemGit } from "@repo/platform/git"
-import { graphqlClient } from "../src/ingestion/graphql.vibe"
+import { graphqlClient, maxGraphqlRequestAttempts } from "../src/ingestion/graphql.vibe"
 import { collectSearchReferences } from "../src/collect/merged/census.vibe"
 import { commitLineLoader } from "../src/collect/merged/commits.vibe"
 import { collectMergedWork, confirmReviewCensus } from "../src/collect/merged/collection.vibe"
-import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf, repeatFirst, requestsMatching, seeded, start } from "./support/u5/github.ts"
+import { alterNextSearch, bulkCommits, closedAt, day, dropLast, fetcherOf, gatewayFailures, repeatFirst, requestsMatching, seeded, start, statisticsUnavailableAt } from "./support/u5/github.ts"
 
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
@@ -43,7 +43,7 @@ it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect 
       valuePolicyFromMs: start - 10 * day,
       evaluatedReviewKeys: new Set(),
       recollection: { attempt: 1, unavailableSources: [], allowJointHolds: false },
-    })
+    }, (repository, finalReviewCensusCost) => Effect.succeed({ repository: repository.target.id, outcomes: repository.outcomes.length, finalReviewCensusCost }))
     try confirmReviewCensus(collected)
     return collected
   }, githubLayer(world))
@@ -64,6 +64,7 @@ it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect 
     commitPages: requestsMatching(world, "LeaderboardOutcomeCommits"),
     slices: work.searchSliceCount,
     unavailable: work.unavailableSources,
+    afterRepository: work.collections.map((collection) => collection.open),
   }, {
     outcomes: sorted(merged),
     detailed: sorted(merged),
@@ -77,6 +78,7 @@ it.live('Collect merged work end to end (spec/points/census.md, "Story: Collect 
     commitPages: 1,
     slices: 4,
     unavailable: [],
+    afterRepository: [{ repository: "widgets", outcomes: 3, finalReviewCensusCost: 1 }],
   })
 })
 
@@ -86,17 +88,22 @@ it.live('Merge deduplication: one merged work unit per immutable GitHub id acros
   alterNextSearch(world.fake, repeatFirst)
   alterNextSearch(world.fake, repeatFirst)
   const stats = { searchSliceCount: 0 }
-  const references = try Effect.provide(collectSearchReferences({
-    target: target(world),
-    fromMs: start - 35 * day,
+  const search = (seed: ReturnType<typeof seeded>, fromMs: number, counted: { searchSliceCount: number }) => Effect.provide(collectSearchReferences({
+    target: target(seed),
+    fromMs,
     toMs: start,
     qualifier: "merged",
     kindQualifier: "is:pr is:merged",
     expectedKind: "PullRequest",
-    stats,
+    stats: counted,
     commitLines: commitLineLoader(),
-    repositoryNodeId: world.repositoryNodeId,
-  }), githubLayer(world))
+    repositoryNodeId: seed.repositoryNodeId,
+  }), githubLayer(seed))
+  const references = try search(world, start - 35 * day, stats)
+  const leaves = try Effect.try(() => seeded())
+  alterNextSearch(leaves.fake, dropLast)
+  const leafStats = { searchSliceCount: 0 }
+  const perLeaf = try search(leaves, start - 4 * day, leafStats)
   const ids = references.map((reference) => reference.id)
   const shared = references.flatMap((reference) => reference.outcome?.commits ?? []).filter((commit) => commit.oid === world.commits.shared)
   try same({
@@ -105,16 +112,18 @@ it.live('Merge deduplication: one merged work unit per immutable GitHub id acros
     slices: stats.searchSliceCount,
     sharedCommit: [shared.length, shared[0] === shared[1]],
     lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines"),
+    perLeaf: { ids: sorted(perLeaf.map((reference) => reference.id)), slices: leafStats.searchSliceCount, lineBatches: requestsMatching(leaves, "LeaderboardOutcomeCommitLines") },
   }, {
     ids: sorted([world.ids.paired, world.ids.stacked, world.ids.bulk]),
     unique: true,
     slices: 3,
     sharedCommit: [2, true],
     lineBatches: 2,
+    perLeaf: { ids: sorted([leaves.ids.paired, leaves.ids.stacked, leaves.ids.bulk]), slices: 3, lineBatches: 3 },
   })
 })
 
-it.live('A conflicting author link or changed commit metadata fails the read and never chooses a recipient (spec/points/authorship.md, "A fresh complete re-read resolves a held conflict"; spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together")', () => effect {
+it.live('A conflicting author link or changed commit metadata fails the read and never chooses a recipient (spec/points/authorship.md, "Commit identity, observations and line evidence remain bound together")', () => effect {
   const world = try Effect.try(() => seeded())
   const loader = commitLineLoader()
   const identity = { id: world.sharedCommitNodeId, oid: world.commits.shared, parentCount: 1 }
@@ -125,14 +134,37 @@ it.live('A conflicting author link or changed commit metadata fails the read and
     const conflicting = loader.hydrate(world.repositoryNodeId, [{ ...identity, author: actor("grace") }]) catch (error) => refused(error)
     const changed = loader.hydrate(world.repositoryNodeId, [{ ...identity, parentCount: 2, author: null }]) catch (error) => refused(error)
     const aliased = loader.hydrate(world.repositoryNodeId, [{ ...identity, id: "C_other", author: null }]) catch (error) => refused(error)
-    return { repaired: unlinked[0]?.author?.login ?? null, same: unlinked[0] === linked[0], conflicting, changed, aliased }
+    const lineBatches = requestsMatching(world, "LeaderboardOutcomeCommitLines")
+    const pair = [{ id: world.commitNodeIds.grace, oid: world.commits.grace, parentCount: 1, author: null }, { id: world.commitNodeIds.linus, oid: world.commits.linus, parentCount: 1, author: null }]
+    gatewayFailures(world.fake, maxGraphqlRequestAttempts)
+    const split = try commitLineLoader().hydrate(world.repositoryNodeId, pair)
+    const splitRequests = requestsMatching(world, "LeaderboardOutcomeCommitLines") - lineBatches
+    const recovered: string[] = []
+    const recovering = commitLineLoader((repositoryNodeId, commit) => Effect.sync(() => {
+      recovered.push(`${repositoryNodeId}:${commit.oid}`)
+      return { additions: 7, deletions: 2, author: null }
+    }))
+    statisticsUnavailableAt(world.fake, 0)
+    const recovery = try recovering.hydrate(world.repositoryNodeId, pair)
+    const unrecoverable = effect {
+      statisticsUnavailableAt(world.fake, 1)
+      return try commitLineLoader().hydrate(world.repositoryNodeId, pair)
+    }
+    const unrecovered = unrecoverable catch (error) => refused(error)
+    return {
+      repaired: unlinked[0]?.author?.login ?? null, same: unlinked[0] === linked[0], conflicting, changed, aliased, lineBatches,
+      split: { oids: split.map((commit) => commit.oid), requests: splitRequests },
+      recovered: { calls: recovered, first: [recovery[0]?.additions, recovery[0]?.deletions], second: recovery[1]?.oid, unrecovered },
+    }
   }, githubLayer(world))
-  try same({ ...steps, lineBatches: requestsMatching(world, "LeaderboardOutcomeCommitLines") }, {
+  try same(steps, {
     repaired: "linus",
     same: true,
     conflicting: "Commit statistics changed linked commit author",
     changed: "Commit statistics changed immutable commit metadata",
     aliased: "Commit statistics identity changed for an immutable SHA",
     lineBatches: 1,
+    split: { oids: [world.commits.grace, world.commits.linus], requests: maxGraphqlRequestAttempts + 2 },
+    recovered: { calls: [`${world.repositoryNodeId}:${world.commits.grace}`], first: [7, 2], second: world.commits.linus, unrecovered: "CommitStatisticsUnavailable" },
   })
 })

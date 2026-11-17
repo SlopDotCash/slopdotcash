@@ -1,11 +1,27 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["es2024"],
-    "types": ["node"],
+    "lib": [
+      "es2024"
+    ],
+    "types": [
+      "node"
+    ],
     "rootDir": ".",
-    "rootDirs": [".", ".vibe/declarations"]
+    "rootDirs": [
+      ".",
+      ".vibe/declarations"
+    ],
+    "resolveJsonModule": true
   },
-  "include": ["src", "test", "gen/*.ts", "gen/*.vibe", "*.config.ts"],
-  "vibe": { "sidecarDir": ".vibe/declarations" }
+  "include": [
+    "src",
+    "test",
+    "gen/*.ts",
+    "gen/*.vibe",
+    "*.config.ts"
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

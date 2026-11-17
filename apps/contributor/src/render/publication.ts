@@ -1,4 +1,4 @@
-// spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes"
+// spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"
 import { storedZip } from "./archive.ts";
 import { type Role, isProjectId, publicSiteOrigin, templatePaths } from "./fields.ts";
 import { type GuideRequest, type InstallClient, renderInstallGuide } from "./installGuide.ts";

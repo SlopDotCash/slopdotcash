@@ -33,7 +33,7 @@ function quote(token: number): Quote {
 }
 
 function approval(tx: number, nonce: number): SignedSend {
-  return { kind: "Approval", tx, nonce, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 500000000 }
+  return { kind: "Approval", tx, nonce, gasLimit: 1000, fees: { maxFee: 40, priority: 2 }, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0 }
 }
 
 function services(world: World) {
@@ -68,7 +68,7 @@ effect function advance(world: World, elapsed: number) {
 effect function live(world: World) {
   try step(world, { type: "setReleaseVariable", variable: true }, "Owner")
   try step(world, { type: "publishWorker", config: liveBase }, "ReleaseWorkflow")
-  try step(world, { type: "verifyReadiness", listedWallet: 1 }, "Owner")
+  try step(world, { type: "verifyReadiness" }, "Owner")
   try step(world, { type: "setReplacement", active: true }, "Owner")
   for (const token of [1, 2]) {
     try step(world, { type: "addToken", asset: "ProjectToken" })
@@ -98,7 +98,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     try live(world)
     try step(world, { type: "acquireLease", runId: 1, trigger: "Recovery" })
     try step(world, { type: "evaluate", runId: 1, quote: quote(1) })
-    try step(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })
+    try step(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 90000 })
     try step(world, { type: "sign", runId: 1, send: approval(11, 0) })
     try step(world, { type: "broadcastFail", runId: 1, id: 1 })
     const restarted = (try Effect.provide(journal(world.instance, world.names), services(world))).state
@@ -106,15 +106,15 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const reasons = try Effect.provide(rows(ReasonCheck, sql`SELECT reason FROM fee_conversions WHERE substr(run_id, 1, ${world.instance.scope.length}) = ${world.instance.scope} AND reason IS NOT NULL ORDER BY rowid`), d1(world.db))
 
     try step(world, { type: "evaluate", runId: 1, quote: quote(2) })
-    const reusedNonce = try tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })
-    try step(world, { type: "reserveGas", runId: 1, nonce: 1, maximum: 50000 })
+    const reusedNonce = try tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 90000 })
+    try step(world, { type: "reserveGas", runId: 1, nonce: 1, maximum: 90000 })
     try step(world, { type: "sign", runId: 1, send: approval(13, 1) })
     try step(world, { type: "rebroadcast", runId: 1, id: 1, accepted: true })
 
     try advance(world, 180000)
     try step(world, { type: "renewLease", runId: 1 })
-    try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000, worstCaseMicro: 1000 } })
-    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 500000000, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true }
+    try step(world, { type: "replace", runId: 1, id: 1, tx: 12, networkFee: { maxFeeNeeded: 1000, observedAt: 180000 } })
+    const receipt = { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true }
     const settled = try step(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const again = try tried(world, { type: "finalizeSend", runId: 1, id: 1, receipt })
     const gas = try gasRows(world)
@@ -127,7 +127,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       journaled: journaled.map((attempt) => [attempt.attempt, attempt.nonce, attempt.rawTx === world.signed.get(attempt.txId)]),
       reasons: reasons.map((row) => row.reason),
       reusedNonce,
-      settled: [settled.rows[0]?.state, settled.rows[0]?.attempts.length, settled.holdings[0]?.allowance, settled.gas.map((entry) => [entry.nonce, entry.settled, entry.actual])],
+      settled: [settled.rows[0]?.state, settled.rows[0]?.attempts.length, settled.gas.map((entry) => [entry.nonce, entry.settled, entry.actual])],
       again,
       gas: gas.map((row) => [row.nonce, row.tx_id === null ? "-" : row.tx_id === finalRow ? "landed" : "other", row.state, row.actual_wei]),
       immutable: [rewritten, erased],
@@ -136,7 +136,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       journaled: [[0, 0, true]],
       reasons: ["broadcast: journal broadcastFail answer withheld from <url>"],
       reusedNonce: "Rejected",
-      settled: ["Finalized", 2, 500000000, [[0, true, 0], [1, false, 0], [0, true, 40000]]],
+      settled: ["Finalized", 2, [[0, true, 0], [1, false, 0], [0, true, 40000]]],
       again: "Rejected",
       gas: [[0, "other", "signed", "0"], [1, "other", "signed", null], [0, "landed", "signed", "40000000000000"]],
       immutable: ["ConstraintViolation", "ConstraintViolation"],
@@ -149,7 +149,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const takers = try.all [tried(world, { type: "acquireLease", runId: 1, trigger: "Receipts" }), tried(world, { type: "acquireLease", runId: 1, trigger: "Receipts" })]
     try step(world, { type: "evaluate", runId: 1, quote: quote(1) })
     const overCeiling = try tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 100001 })
-    const reservers = try.all [tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 }), tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 50000 })]
+    const reservers = try.all [tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 90000 }), tried(world, { type: "reserveGas", runId: 1, nonce: 0, maximum: 90000 })]
     const busy = try tried(world, { type: "acquireLease", runId: 2, trigger: "Recovery" })
     try advance(world, 840001)
     try step(world, { type: "acquireLease", runId: 2, trigger: "Recovery" })

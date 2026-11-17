@@ -1,3 +1,10 @@
+// spec/contributor/evidence.md, "A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key"; spec/contributor/workflow.md, "The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable"
 import type { AnyRoute } from "@repo/platform/route"
 
 export const api: ReadonlyArray<AnyRoute> = []
+
+export { ReceiptRefused, verifyRunReceipt } from "./receipts/verify.vibe"
+export { type Parsed, type ReceiptPolicyProject, type ReceiptProject, type ReceiptRegistry, joinPolicy, markerOf, parseRunMarker, parseRunReceipt, receiptOf, signingPayload } from "./receipts/receipt.ts"
+export { ProjectRunReceipt, RunMarker } from "./receipts/receipt.schema.ts"
+export { IDENTITY_RECORD, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "./identity/record.schema.ts"
+export * from "./identity/model.schema.ts"

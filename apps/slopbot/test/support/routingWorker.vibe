@@ -25,6 +25,7 @@ export const installationId = 9100
 export const appUserId = "424242"
 export const leaseRepository = 7100
 export const leaseAuthor = 400
+export const routingProject = "routing-project"
 
 schema RouteAsk {
   readonly repositoryId: number
@@ -54,17 +55,19 @@ function leaseRow(key: string): ReviewRow {
 effect function routed() {
   return try answered(effect {
     const ask = try body(RouteAsk, 4)
-    const target: ReviewTarget = { installationId, repositoryId: ask.repositoryId, itemKind: ask.kind, number: ask.number, securityOnly: false, consent: ask.consent }
-    const context = try loadContext(target)
+    const target: ReviewTarget = { projectId: routingProject, installationId, repositoryId: ask.repositoryId, itemKind: ask.kind, number: ask.number, securityOnly: false, consent: ask.consent }
+    const registry = registered(ask.repositoryId)
+    const context = try loadContext(target, { observation: registry, projectId: routingProject })
     if (context === undefined) return json({ readable: false })
     const reviewKey = try reviewKeyOf(context, target, "", [])
-    const decided = try routeItem({ target, context, reviewKey, registry: registered(ask.repositoryId), appUserId, closureEligible: true })
+    const decided = try routeItem({ target, context, reviewKey, registry, appUserId, closureEligible: true })
     const claim = ask.claim === undefined || !reviews(decided.route) ? undefined : try claimReview(reviewRowOf(target, context, reviewKey), { token: ask.claim, route: decided.route, history: decided.history })
     return json({
       route: decided.route,
       file: context.policyFile.file,
       config: context.config,
       coverage: context.coverage,
+      limitations: context.limitations,
       guidance: context.guidance,
       established: decided.slots.established,
       claim: claim === undefined ? "none" : claim.kind === "claimed" ? claim.claim.start : claim.kind,

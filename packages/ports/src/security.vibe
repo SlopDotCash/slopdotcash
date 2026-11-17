@@ -1,7 +1,11 @@
-// spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "Story: Clear each repository by its own admission before work"; spec/security/bounty.md, "Story: Award each underlying finding once, to its first qualifying report"; spec/security/privacy.md, "Story: Read only authorized retained evidence"
+// spec/security/enforcement.md, "Story: Moderators restrict, decide malice and decide appeals independently"; spec/security/enforcement.md, "Story: Clear each repository by its own admission before work"; spec/security/bounty.md, "Story: Award each underlying finding once, to its first qualifying report"; spec/security/privacy.md, "Story: Read only authorized retained evidence"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projectComposition.md, "The composed state keeps the two machines' shared facts equal"; spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"; spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"
 import type { Statement } from "@repo/platform/d1"
+import type { GitHubUnavailable } from "@repo/platform/github"
+import type { Refused } from "@repo/platform/http"
+import type { StorageFailure } from "@repo/platform/r2"
+import type { Rows } from "@repo/platform/stored"
 import { type FileRecovery, type FileRequest, type MergeInput, MergeResolution } from "@repo/platform/git/evidence"
-import type { Json, ReadFailure } from "./backend.vibe"
+import { type Json, Network, type ReadFailure } from "./backend.vibe"
 
 export {
   AutomaticMergeResolution,
@@ -62,6 +66,7 @@ export schema ApprovedAward {
   readonly asset: string
   readonly rootCauseKey: string
   readonly approvedAt: string
+  readonly network: Network
 }
 
 export service ApprovedAwards {
@@ -87,7 +92,7 @@ export schema CaseNoticeAccess {
 }
 
 export service SecurityNoticeAccess {
-  forCase(read: { readonly caseId: string; readonly githubId: string }): CaseNoticeAccess!ReadFailure
+  forCase(read: { readonly caseId: string; readonly githubId: string }): CaseNoticeAccess!(ReadFailure | GitHubUnavailable)
 }
 
 export schema MergeResult {
@@ -109,4 +114,163 @@ export error MergeUnavailable { stage: string }
 export service MergeVerifier {
   reconstruct(request: MergeReconstruction): ReadonlyArray<MergeResult>!MergeUnavailable
   recover(request: MergeFileRecovery): FileRecovery!MergeUnavailable
+}
+
+export service VettingBans {
+  serviceBan(enforcement: { readonly enforcementId: string; readonly projectId: string }): boolean!ReadFailure
+}
+
+export interface EnforcementScope {
+  readonly version: Statement
+  readonly reads: ReadonlyArray<Statement>
+}
+
+export interface RegistryMirror {
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly repositoryGithubIds: ReadonlyArray<string>
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export interface ActiveRestriction {
+  readonly projectId: string
+  readonly repositoryGithubId: string
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export interface EnforcementChange {
+  readonly projectId: string
+  readonly event: unknown
+  readonly by: number
+  readonly before: unknown
+  readonly after: unknown
+  readonly registryBefore: RegistryMirror
+  readonly registryAfter: RegistryMirror
+  readonly at: string
+}
+
+export service EnforcementRows {
+  scope(projectId: string): EnforcementScope!!
+  decode(projectId: string, rows: ReadonlyArray<Rows>, registry: RegistryMirror): unknown!ReadFailure
+  writes(change: EnforcementChange): ReadonlyArray<Statement>!ReadFailure
+  generation(): Statement!!
+  restrictions(): ReadonlyArray<ActiveRestriction>!ReadFailure
+  recordedAt(enforcementIds: ReadonlyArray<string>): (string | undefined)!ReadFailure
+}
+
+export schema AppealState = "none" | "requested" | "granted" | "denied"
+
+export interface RestrictionFacts {
+  readonly projectId: string
+  readonly restriction: Exclude<Restriction, "Clear">
+  readonly appeal: AppealState
+  readonly since: string
+  readonly repositoryGithubId: string
+  readonly repositoryKeys: ReadonlyArray<string>
+}
+
+export type VettingState = "unscanned" | "unverified" | "queued" | "quarantined" | "stale" | "cleared" | "banned"
+
+export interface VettingClearance {
+  readonly state: VettingState
+  readonly [field: string]: Json
+}
+
+export service PublicSecurity {
+  restrictions(): ReadonlyArray<RestrictionFacts>!ReadFailure
+  vetting(project: { readonly projectId: string; readonly revision: number }): VettingClearance!ReadFailure
+}
+
+export schema JournalRow {
+  row: number
+  id: string
+  project_id: string
+  sequence: number
+  action: string
+  state_after: string
+  appeal_after: string
+  reason: string
+  evidence_reference: string
+  repository_github_id: string
+  repository_keys: string
+  actor_github_id: string | null
+  actor_github_login: string | null
+  system_issuer: string | null
+  actor_role: string
+  decision_source: string
+  before_revision: number
+  before_manifest_sha256: string
+  after_revision: number | null
+  after_manifest_sha256: string | null
+  result: string
+  created_at: string
+  review_assessment_id: string | null
+  review_malicious_assessment_ids: string | null
+}
+
+export type AccountAction = "request_reinstatement" | "reinstate_accounts" | "deny_reinstatement"
+
+export interface AccountRecord {
+  readonly id: string
+  readonly projectId: string
+  readonly sequence: number
+  readonly action: AccountAction
+  readonly role: "banned-account" | "project-moderator"
+  readonly actor: { readonly githubId: string; readonly login: string }
+  readonly stateAfter: string
+  readonly appealAfter: string
+  readonly reason: string
+  readonly evidenceReference: string
+  readonly reviewers: ReadonlyArray<string>
+  readonly at: string
+}
+
+export service AccessJournal {
+  rows(): Statement!!
+  version(): Statement!!
+  append(record: AccountRecord): ReadonlyArray<Statement>!!
+  recordAt(projectId: string, sequence: number): Statement!!
+}
+
+export type RetirementOutcome = "backed" | "changed" | "missing"
+
+export interface BackupCopy {
+  readonly key: string
+  readonly sha256: string
+  readonly sizeBytes: number
+}
+
+export interface RetiredSlot {
+  readonly targetKey: string
+  readonly partIndex: number
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly backupDay: string
+}
+
+export type RetirementReceipt =
+  | RetiredSlot & { readonly outcome: "missing" }
+  | RetiredSlot & { readonly outcome: "backed" | "changed"; readonly backup: BackupCopy }
+
+export error RetirementUnrecorded { targetKey: string; issue: string }
+
+export schema GenerationTarget {
+  readonly target_key: string
+  readonly generation_id: string
+  readonly part_index: number
+  readonly sha256: string
+  readonly size_bytes: number
+}
+
+export type MarkerFailure = Refused | RetirementUnrecorded | StorageFailure
+
+export service EvidenceRetirement {
+  freeze(generation: string): string!(ReadFailure | RetirementUnrecorded)
+  pendingTargets(generation: string, limit?: number): ReadonlyArray<GenerationTarget>!ReadFailure
+  retireTarget<E, R>(target: GenerationTarget, receipt: RetirementReceipt, verifyBackup: (copy: BackupCopy) => void!E!R): void!(E | ReadFailure | MarkerFailure)!R
+  finish(generation: string): string!(ReadFailure | RetirementUnrecorded)
+  writeMarker(targetKey: string, outcome: RetirementOutcome, createOnly: boolean): void!MarkerFailure
+  verifyMarker(targetKey: string, outcome?: RetirementOutcome): void!MarkerFailure
+  freezeStatement(generation: string): Statement!!
+  finishStatement(generation: string): Statement!!
 }

@@ -1,12 +1,12 @@
 // spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"
 import { millisOf, nowSeconds } from "@repo/platform/clock"
 import { D1, RowMismatch, rows, sql } from "@repo/platform/d1"
-import type { Network } from "@repo/ports/backend"
+import { type Network, RegistryManifests } from "@repo/ports/backend"
 import { VaultTotals, type VaultPurpose, type VaultTotalsView } from "@repo/ports/settlement"
 import { noObservation, publicTotals } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import { type Chain, isChain } from "../kernels/networks.ts"
 import type { VaultSnapshot } from "../client/vault.vibe"
-import { RegistryManifests, projectDeployments } from "./deployments.vibe"
+import { projectDeployments } from "./deployments.vibe"
 import { vaultKeyOf } from "./policy.vibe"
 
 schema SnapshotRow {

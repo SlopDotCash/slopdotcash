@@ -1,4 +1,4 @@
-// spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes"; spec/contributor/rendering.md, "Maintainer fields appear only in project.json and never change template text"
+// spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"; spec/contributor/skillRendering.md, "A maintainer note that would cross a template rule never takes effect"
 import {
   type ContributionField,
   type Role,

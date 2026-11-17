@@ -1,9 +1,10 @@
-// spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"
+// spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, type Statement, rows, sql } from "@repo/platform/d1"
-import { type AppealSource, type Audience, type DeliveryState, type EmailWord, type Template, inboxItem, listedInInbox, noNotice } from "../../gen/operations__notifications.effect.vibe"
+import { type Key, type Moderation, appealKey, initial, scamKey, visible } from "../../gen/operations__moderation.effect.vibe"
+import { type DeliveryState, type EmailWord, type NoticeAudience, type Template, appealAudience, inboxItem, noNotice } from "../../gen/operations__notifications.effect.vibe"
 import { type EmailDelivery, type InboxNotice, NotificationKind, type NotificationsPage, isNotificationEventKey } from "../client/inbox.vibe"
-import { storedStates } from "../notifications/rows.vibe"
+import { deliveryStates } from "../notifications/rows.vibe"
 
 module verified {
   import { isStoredKind as storable, kindOfStored as kindOf } from "../notifications/kinds.ts"
@@ -24,23 +25,32 @@ export interface Cursor {
 
 schema Facts {
   readonly kind: string
+  readonly penalty_author: string | null
+  readonly penalty_reversed: number
+  readonly case_appellant: string | null
   readonly dispute_appellant: number
-  readonly scam_penalty_stands: number
+  readonly dispute_resolved: number
   readonly resolution_notice: number
 }
 
 schema Readable {
   readonly event_key: string
   readonly kind: string
+  readonly penalty_author: string | null
+  readonly penalty_reversed: number
+  readonly case_appellant: string | null
   readonly dispute_appellant: number
-  readonly scam_penalty_stands: number
+  readonly dispute_resolved: number
   readonly resolution_notice: number
 }
 
 schema UnreadGroup {
   readonly kind: string
+  readonly penalty_author: string | null
+  readonly penalty_reversed: number
+  readonly case_appellant: string | null
   readonly dispute_appellant: number
-  readonly scam_penalty_stands: number
+  readonly dispute_resolved: number
   readonly resolution_notice: number
   readonly count: number
 }
@@ -57,28 +67,36 @@ schema Listed {
   readonly template_version: string | null
   readonly state: string | null
   readonly acknowledged_at: string | null
-  readonly ever_bound: number
+  readonly bound: number
   readonly appeal_resolved: number
+  readonly penalty_author: string | null
+  readonly penalty_reversed: number
+  readonly case_appellant: string | null
   readonly dispute_appellant: number
-  readonly scam_penalty_stands: number
+  readonly dispute_resolved: number
   readonly resolution_notice: number
 }
 
 const disputeKey = sql`n.event_key IN ('slopbot-' || p.appeal_key, 'slopbot-' || p.appeal_key || ':resolved')`
 
-const facts = sql`CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.appellant_github_id = n.recipient_github_id) ELSE 0 END AS dispute_appellant,
-  CASE WHEN n.kind = 'slopbot_scam_review' THEN EXISTS (SELECT 1 FROM slopbot_penalties p WHERE p.item_node_id = substr(n.event_key, length('slopbot-scam-review:') + 1)
-    AND p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL) ELSE 0 END AS scam_penalty_stands,
-  substr(n.event_key, -9) = ':resolved' AS resolution_notice`
+const scamPenalty = sql`FROM slopbot_penalties p WHERE p.item_node_id = substr(n.event_key, length('slopbot-scam-review:') + 1)
+  AND p.category = 'scam' AND p.moderator_review = 1`
+
+const facts = sql`CASE WHEN n.kind = 'slopbot_scam_review' THEN (SELECT p.author_github_id ${scamPenalty}) END AS penalty_author,
+  CASE WHEN n.kind = 'slopbot_scam_review' THEN coalesce((SELECT p.reversed_at IS NOT NULL ${scamPenalty}), 1) ELSE 0 END AS penalty_reversed,
+  CASE WHEN n.kind = 'slopbot_appeal_review' THEN coalesce(
+    (SELECT ap.appellant_github_id FROM slopbot_appeals ap WHERE 'slopbot-' || ap.appeal_key = n.event_key AND ap.escalated_at IS NOT NULL),
+    (SELECT p.appellant_github_id FROM points_disputes p WHERE ${disputeKey} AND p.escalated_at IS NOT NULL)) END AS case_appellant,
+  CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.appellant_github_id = n.recipient_github_id) ELSE 0 END AS dispute_appellant,
+  CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.resolved_at IS NOT NULL) ELSE 0 END AS dispute_resolved,
+  n.kind = 'slopbot_appeal_review' AND substr(n.event_key, -9) = ':resolved' AS resolution_notice`
 
 const appealResolved = sql`CASE WHEN n.kind = 'slopbot_appeal_review' THEN EXISTS (
     SELECT 1 FROM slopbot_appeals ap WHERE 'slopbot-' || ap.appeal_key = n.event_key AND ap.resolved_at IS NOT NULL
     UNION ALL SELECT 1 FROM points_disputes p WHERE ${disputeKey} AND p.resolved_at IS NOT NULL) ELSE 0 END AS appeal_resolved`
 
-const everBound = sql`CASE
-    WHEN s.id IS NOT NULL THEN s.destination_digest IS NOT NULL OR EXISTS (SELECT 1 FROM security_notification_delivery_events e WHERE e.delivery_id = s.id AND e.destination_digest IS NOT NULL)
-    WHEN a.id IS NOT NULL THEN a.destination_digest IS NOT NULL OR EXISTS (SELECT 1 FROM activity_notification_delivery_events e WHERE e.delivery_id = a.id AND e.destination_digest IS NOT NULL)
-    ELSE 0 END AS ever_bound`
+const bound = sql`CASE WHEN s.id IS NOT NULL THEN s.destination_digest IS NOT NULL
+    WHEN a.id IS NOT NULL THEN a.destination_digest IS NOT NULL ELSE 0 END AS bound`
 
 function after(cursor: Cursor | undefined): Statement {
   return cursor === undefined ? sql`1 = 1` : sql`(n.source_at < ${cursor.sourceAt} OR (n.source_at = ${cursor.sourceAt} AND n.event_key > ${cursor.eventKey}))`
@@ -87,7 +105,7 @@ function after(cursor: Cursor | undefined): Statement {
 function listing(recipient: string, cursor: Cursor | undefined): Statement {
   return sql`SELECT n.event_key, n.kind, n.subject, n.detail, n.action_path, n.source_at, n.created_at, n.read_at,
       coalesce(s.template_version, a.template_version) AS template_version, coalesce(s.state, a.state) AS state, s.acknowledged_at,
-      ${everBound}, ${appealResolved}, ${facts}
+      ${bound}, ${appealResolved}, ${facts}
     FROM notifications n
     LEFT JOIN security_notification_outbox s ON s.event_key = n.event_key AND s.recipient_github_id = n.recipient_github_id
       AND s.template_version IN ('security-inbox-v1', 'security-receipt-v1')
@@ -99,15 +117,13 @@ function listing(recipient: string, cursor: Cursor | undefined): Statement {
 
 function unreadGroups(recipient: string): Statement {
   return sql`SELECT n.kind, ${facts}, count(*) AS count FROM notifications n
-    WHERE n.recipient_github_id = ${recipient} AND n.read_at IS NULL GROUP BY 1, 2, 3, 4`
+    WHERE n.recipient_github_id = ${recipient} AND n.read_at IS NULL GROUP BY 1, 2, 3, 4, 5, 6, 7`
 }
 
 function unreadAmong(recipient: string, eventKeys: ReadonlyArray<string>): Statement {
   return sql`SELECT n.event_key, n.kind, ${facts} FROM notifications n
     WHERE n.recipient_github_id = ${recipient} AND n.read_at IS NULL AND n.event_key IN (SELECT value FROM json_each(${JSON.stringify(eventKeys)}))`
 }
-
-const deliveryStates: Readonly<Record<string, DeliveryState>> = Object.fromEntries(Object.entries(storedStates).map(([state, stored]) => [stored, state as DeliveryState]))
 
 const templates: Readonly<Record<string, Template>> = {
   "security-inbox-v1": "CaseTemplate",
@@ -130,19 +146,24 @@ effect function kindOf(text: string) {
   return kindOfStored(text)
 }
 
+const notQueued: DeliveryState = "NotQueued"
+
 effect function stateOf(text: string | null) {
-  if (text === null) return "NotQueued" satisfies DeliveryState
+  if (text === null) return notQueued
   const state = deliveryStates[text]
   if (state === undefined) throw new RowMismatch({ text: "notification outbox", issue: `unknown delivery state ${text}` })
   return state
 }
 
-function appealOf(appellant: boolean, resolutionNotice: boolean): AppealSource {
-  if (!appellant) return "NoAppeal"
-  return resolutionNotice ? "DisputeResolved" : "DisputeOpened"
+const reviewed = "reviewed"
+
+function reviewKey(kind: string): Key | undefined {
+  if (kind === "slopbot_scam_review") return scamKey(reviewed)
+  if (kind === "slopbot_appeal_review") return appealKey(reviewed)
+  return undefined
 }
 
-export const noAudience: Audience = {
+const disputeAppellant: NoticeAudience = {
   steward: false,
   owner: false,
   affectedContributor: false,
@@ -150,21 +171,29 @@ export const noAudience: Audience = {
   moderator: false,
   vettingBan: false,
   staffPath: false,
-  appeal: "NoAppeal",
-  appellant: false,
+  appeal: "DisputeOpened",
+  appellant: true,
   escalated: false,
   resolved: false,
   scamPenaltyStands: false,
   author: false,
 }
 
-function audienceOf(moderator: boolean, found: Facts): Audience {
-  const appellant = found.dispute_appellant === 1
-  return { ...noAudience, moderator, appellant, appeal: appealOf(appellant, found.resolution_notice === 1), scamPenaltyStands: found.scam_penalty_stands === 1 }
-}
-
-effect function listed(moderator: boolean, found: Facts) {
-  return listedInInbox(try kindOf(found.kind), audienceOf(moderator, found))
+export function shownTo(viewer: string, moderator: boolean, found: Facts): boolean {
+  if (found.dispute_appellant === 1) {
+    return appealAudience({ ...disputeAppellant, appeal: found.resolution_notice === 1 ? "DisputeResolved" : "DisputeOpened", resolved: found.dispute_resolved === 1 })
+  }
+  const key = reviewKey(found.kind)
+  if (key === undefined) return true
+  const actor = (githubId: string) => githubId === viewer ? 1 : 2
+  const review: Moderation = {
+    ...initial,
+    moderators: moderator ? [1] : [],
+    items: [{ key, recipient: 1, readAt: 0 }],
+    penalties: found.penalty_author === null ? [] : [{ itemNode: reviewed, author: actor(found.penalty_author), reversed: found.penalty_reversed === 1 }],
+    cases: found.case_appellant === null ? [] : [{ key: reviewed, appellant: actor(found.case_appellant), escalated: true, resolved: false }],
+  }
+  return visible(review, 1, key)
 }
 
 function actionPathOf(row: Listed): string {
@@ -176,7 +205,7 @@ function actionPathOf(row: Listed): string {
 
 effect function shown(row: Listed) {
   const kind = try kindOf(row.kind)
-  const notice = { ...noNotice, id: 1, kind, template: templates[row.template_version ?? ""] ?? "ActivityTemplate", state: try stateOf(row.state), everBound: row.ever_bound === 1 }
+  const notice = { ...noNotice, id: 1, kind, template: templates[row.template_version ?? ""] ?? "ActivityTemplate", state: try stateOf(row.state), digest: row.bound }
   const item = inboxItem(notice, row.appeal_resolved === 1)
   const wireKind = item.appealResolved ? "slopbot_appeal_resolved" : row.kind
   if (!isNotificationKind(wireKind)) throw new RowMismatch({ text: "notifications", issue: `kind ${wireKind} has no Inbox name` })
@@ -201,7 +230,7 @@ effect function listedPage(recipient: string, moderator: boolean, cursor: Cursor
   while (notices.length <= pageSize) {
     const batch = try rows(Listed, listing(recipient, from))
     for (const row of batch) {
-      if (try listed(moderator, row)) notices.push(try shown(row))
+      if (shownTo(recipient, moderator, row)) notices.push(try shown(row))
     }
     const last = batch.at(-1)
     if (batch.length <= pageSize || last === undefined) break
@@ -213,7 +242,7 @@ effect function listedPage(recipient: string, moderator: boolean, cursor: Cursor
 effect function unread(recipient: string, moderator: boolean) {
   let count = 0
   for (const group of try rows(UnreadGroup, unreadGroups(recipient))) {
-    if (try listed(moderator, group)) count += group.count
+    if (shownTo(recipient, moderator, group)) count += group.count
   }
   return count
 }
@@ -233,7 +262,7 @@ export effect function inboxPage(recipient: string, moderator: boolean, cursor: 
 export effect function readableKeys(recipient: string, moderator: boolean, eventKeys: ReadonlyArray<string>) {
   const readable: string[] = []
   for (const found of try rows(Readable, unreadAmong(recipient, eventKeys))) {
-    if (try listed(moderator, found)) readable.push(found.event_key)
+    if (shownTo(recipient, moderator, found)) readable.push(found.event_key)
   }
   return readable
 }

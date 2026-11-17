@@ -8,16 +8,16 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock"
 import { mailCapture } from "@repo/platform/testing/mail"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { EmailConsent, ProjectAudience, Registry } from "@repo/ports/backend"
+import { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@repo/ports/backend"
 import { type Notice, Notices } from "@repo/ports/operations"
-import { ContributorAudience } from "@repo/ports/points"
-import { SecurityNoticeAccess } from "@repo/ports/security"
+import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
+import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
+import { SlopbotAudience } from "@repo/ports/slopbot"
 import type { Release } from "../src/notifications/rows.vibe"
 import { noticePorts } from "../src/notifications/statements.vibe"
 import { mailAdmins } from "../src/notify/admin.vibe"
 import { claimOne } from "../src/notify/claim.vibe"
 import { NotifySettings, notifySettings, releaseFor } from "../src/notify/config.vibe"
-import { DisputeAudience, EmailEnrollment, SlopbotAudience, VettingBans } from "../src/notify/ports.vibe"
 import { reconcile, reconcileRequest } from "../src/notify/reconcile.vibe"
 import { type OutgoingMail, deliver, dispatch, mailVia } from "../src/notify/send.vibe"
 import { sendVerification } from "../src/notify/verification.vibe"
@@ -97,6 +97,7 @@ const FaultyDatabase = Layer.provide(Layer.effect(D1, effect {
 }), Database)
 
 schema ConsentedRow { readonly address: string; readonly version: string }
+schema EnrolledRow { readonly enabled: number | null; readonly security_enabled: number | null; readonly preference_version: string | null; readonly revision: number | null; readonly destination_version: string | null; readonly verified_at: string | null }
 schema DestinationRow { readonly address: string; readonly version: string; readonly verifiedAt: string }
 schema VerificationRow { readonly address: string; readonly state: "queued" | "sending" | "sent" | "unknown" }
 
@@ -113,6 +114,21 @@ const BackendPorts = Layer.mergeAll(
           JOIN notification_email_preferences p ON p.github_id = d.github_id AND p.destination_version = d.destination_version
           WHERE d.github_id = ${consent.githubId} AND ${consented}`)
         return (try decoded(ConsentedRow, found, "consented destination"))[0]
+      },
+      enrollment: (account) => effect {
+        const found = try db.all(sql`SELECT p.enabled, p.security_enabled, p.destination_version AS preference_version, p.revision, d.destination_version, d.verified_at
+          FROM (SELECT ${account.githubId} AS github_id) i LEFT JOIN notification_email_preferences p ON p.github_id = i.github_id
+          LEFT JOIN notification_email_destinations d ON d.github_id = i.github_id`)
+        const [row] = try decoded(EnrolledRow, found, "email enrollment")
+        return {
+          stored: row?.enabled !== null && row?.enabled !== undefined,
+          activity: row?.enabled === 1,
+          security: row?.security_enabled === 1,
+          ...(row?.preference_version == null ? {} : { preferenceVersion: row.preference_version }),
+          ...(row?.revision == null ? {} : { revision: row.revision }),
+          ...(row?.destination_version == null ? {} : { destinationVersion: row.destination_version }),
+          ...(row?.verified_at == null ? {} : { verifiedAt: row.verified_at }),
+        }
       },
     }
   }),

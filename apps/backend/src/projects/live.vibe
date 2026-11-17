@@ -1,15 +1,17 @@
 // spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
-import { D1, type NonEmpty, type Statement, first, list, rows, sql } from "@repo/platform/d1"
-import { type Network, type ProjectView, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { D1, type Statement, first, list, rows, sql } from "@repo/platform/d1"
+import { type Network, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { EnforcementRows } from "@repo/ports/security"
+import { currentPath } from "../authority/live.vibe"
 import { closureOf, listedById } from "../projectRegistry/claims.vibe"
 import { listedStablecoins, retirementOf, tierOf } from "./store/codec.vibe"
-import { EnforcementRows } from "./store/enforcementRows.vibe"
-import { activeBans } from "./store/facts.vibe"
+import { activeBans, unbanned, unbannedFence } from "./store/facts.vibe"
 import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from "./store/rows.vibe"
 
 schema ListedBy { github_id: string | null }
 schema KeyHolder { project_id: string }
 schema ProjectId { id: string }
+schema ManifestRow { id: string; revision: number; manifest: string }
 
 const networks: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
 
@@ -22,13 +24,20 @@ function assetAddressOf(manifest: Manifest): string | undefined {
   return listedStablecoins[manifest.reward.chain ?? ""]?.address
 }
 
+function aliasesOf(repository: Manifest["repositories"][number]): ReadonlyArray<string> {
+  const aliases = repository.aliases ?? []
+  const current = currentPath(repository.githubUrl)
+  const known = [repository.id, ...aliases].map((path) => path.toLowerCase())
+  return current === undefined || known.includes(current.toLowerCase()) ? aliases : [...aliases, current]
+}
+
 function repositoriesOf(manifest: Manifest) {
   return manifest.repositories.map((repository, index) => ({
     id: index === 0 ? String(manifest.authority.repositoryId) : repository.githubId ?? "",
     nodeId: index === 0 ? manifest.authority.repositoryNodeId : repository.nodeId ?? "",
     fullName: repository.id,
     integrationBranch: repository.integrationBranch ?? "",
-    aliases: repository.aliases ?? [],
+    aliases: aliasesOf(repository),
   }))
 }
 
@@ -85,8 +94,8 @@ effect function active() {
 }
 
 export function registryFence(pin: RegistryPin): Statement {
-  const keys = [...new Set(pin.repositoryKeys.map((key) => key.toLowerCase()))]
-  const present = keys.length === 0 ? sql`1` : sql`(SELECT count(DISTINCT k.repository_key) FROM project_repositories k WHERE k.project_id = p.id AND k.repository_key IN (${list(keys as unknown as NonEmpty<string>)})) = ${keys.length}`
+  const [head, ...rest] = [...new Set(pin.repositoryKeys.map((key) => key.toLowerCase()))]
+  const present = head === undefined ? sql`1` : sql`(SELECT count(DISTINCT k.repository_key) FROM project_repositories k WHERE k.project_id = p.id AND k.repository_key IN (${list([head, ...rest])})) = ${rest.length + 1}`
   return sql`EXISTS (SELECT 1 FROM projects p WHERE p.id = ${pin.projectId} AND p.revision = ${pin.revision} AND p.manifest_sha256 = ${pin.manifestSha256} AND p.status = 'active' AND json_extract(p.manifest, '$.status') = 'active' AND json_extract(p.manifest, '$.listingTier') <> 'retired' AND ${present})`
 }
 
@@ -112,5 +121,24 @@ export const RestrictionsLive = Layer.effect(Restrictions, effect {
       return bannedAt === undefined ? { banned: true } : { banned: true, bannedAt }
     }, D1, db),
     project: (projectId) => provideService(provideService(closureOf(projectId), EnforcementRows, enforcement), D1, db),
+    fence: (account) => effect { return unbannedFence(account.githubId) },
+    unbanned: (githubId) => effect { return unbanned(githubId) },
   } satisfies Restrictions.Shape
+})
+
+function registered(row: ManifestRow): RegistryManifest {
+  return { projectId: row.id, revision: row.revision, manifest: row.manifest }
+}
+
+export const RegistryManifestsLive = Layer.effect(RegistryManifests, effect {
+  const db = try D1
+  return {
+    current: () => provideService(effect {
+      return (try rows(ManifestRow, sql`SELECT id, revision, manifest FROM projects ORDER BY id`)).map(registered)
+    }, D1, db),
+    project: (projectId) => provideService(effect {
+      const row = try first(ManifestRow, sql`SELECT id, revision, manifest FROM projects WHERE id = ${projectId}`)
+      return row === undefined ? undefined : registered(row)
+    }, D1, db),
+  } satisfies RegistryManifests.Shape
 })

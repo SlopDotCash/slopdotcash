@@ -1,6 +1,7 @@
-// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+// spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
 import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
-import type { ReportingTarget } from "../../gen/slopbot__reportingReadiness.ts"
+import type { ProjectListing, Read, ReadKind, Target as ModelTarget } from "../../gen/security__reportingReadiness.ts"
+import { noObservation, written } from "../../gen/security__reportingReadiness.effect.vibe"
 
 schema Intake { repository?: string }
 schema SecurityBounty { intake?: Intake | null }
@@ -22,16 +23,44 @@ export interface Target {
   readonly name: string
   readonly repository: string
   readonly repositoryKey: string
-  readonly expected: ReportingTarget
+  readonly listing: ProjectListing
+  readonly expectedRepositoryId: number
+  readonly expectedNodeId: string
 }
 
-export interface Registered {
-  readonly paused: boolean
-  readonly target: Target
+export interface Fetched {
+  readonly kind: ReadKind
+  readonly repositoryId: number
+  readonly nodeId: string
+  readonly enabled: boolean
+}
+
+export interface NodeIds {
+  readonly id: (text: string) => number
+  readonly text: (id: number) => string
 }
 
 const repositoryPath = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/u
 const repositoryId = /^[1-9][0-9]{0,15}$/u
+const storedRepository = 1
+
+export function nodeIds(texts: ReadonlyArray<string>): NodeIds {
+  const distinct = [...new Set(texts.filter((text) => text !== ""))]
+  return { id: (text) => text === "" ? 0 : distinct.indexOf(text) + 1, text: (id) => distinct[id - 1] ?? "" }
+}
+
+export function modelTarget(target: Target, nodes: NodeIds): ModelTarget {
+  return { revision: target.revision, repository: storedRepository, repositoryId: target.expectedRepositoryId, repositoryNodeId: nodes.id(target.expectedNodeId), listing: target.listing }
+}
+
+export function modelRead(fetched: Fetched, nodes: NodeIds): Read {
+  return { kind: fetched.kind, repositoryId: fetched.repositoryId, repositoryNodeId: nodes.id(fetched.nodeId), enabled: fetched.enabled }
+}
+
+export function matchesRegistered(target: Target, fetched: Fetched) {
+  const nodes = nodeIds([target.expectedNodeId, fetched.nodeId])
+  return written(noObservation, modelTarget(target, nodes), modelRead(fetched, nodes), 1).failure === "NoFailure"
+}
 
 effect function manifestOf(row: ProjectRow) {
   const label = `project ${row.id}`
@@ -44,6 +73,11 @@ effect function pathOf(repository: ManifestRepository, label: string) {
   if (githubUrl === "") return repository.id
   const url = try Effect.try({ try: () => new URL(githubUrl), catch: () => new RowMismatch({ text: label, issue: "Invalid reporting repository" }) })
   return url.pathname.replace(/^\/|\/$/gu, "")
+}
+
+function listingOf(manifest: ReportingManifest): ProjectListing {
+  if (manifest.listingTier === "retired") return "Retired"
+  return manifest.status === "paused" ? "Paused" : "Active"
 }
 
 effect function targetOf(row: ProjectRow, manifest: ReportingManifest) {
@@ -64,18 +98,18 @@ effect function targetOf(row: ProjectRow, manifest: ReportingManifest) {
     name: parts[2] ?? "",
     repository: path,
     repositoryKey: path.toLowerCase(),
-    expected: index === 0
-      ? { expectedRepositoryId: Number(authorityId), expectedNodeId: manifest.authority.repositoryNodeId }
-      : { expectedRepositoryId: 0, expectedNodeId: "" },
+    listing: listingOf(manifest),
+    expectedRepositoryId: index === 0 ? Number(authorityId) : 0,
+    expectedNodeId: index === 0 ? manifest.authority.repositoryNodeId : "",
   } satisfies Target
 }
 
 export effect function registeredProjects() {
-  const found: Registered[] = []
+  const found: Target[] = []
   for (const row of try rows(ProjectRow, sql`SELECT id, revision, manifest FROM projects ORDER BY id`)) {
     const manifest = try manifestOf(row)
     if (manifest.listingTier === "retired") continue
-    found.push({ paused: manifest.status === "paused", target: try targetOf(row, manifest) })
+    found.push(try targetOf(row, manifest))
   }
   return found
 }

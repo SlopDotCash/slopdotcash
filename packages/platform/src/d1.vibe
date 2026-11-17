@@ -42,7 +42,7 @@ export function sql(strings: TemplateStringsArray, ...values: ReadonlyArray<SqlV
 }
 
 export function classified(operation: string, message: string): D1Error {
-  return /constraint failed/u.test(message) ? new ConstraintViolation({ message }) : new DatabaseFailure({ operation, message })
+  return /constraint failed|SQLITE_CONSTRAINT/u.test(message) ? new ConstraintViolation({ message }) : new DatabaseFailure({ operation, message })
 }
 
 function failure(operation: string, cause: unknown): D1Error {

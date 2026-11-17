@@ -2,7 +2,7 @@
 import { isoNow } from "@repo/platform/clock"
 import { type NonEmpty, RowMismatch, type Statement, decoded, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type FailureKind, NotAState, type Receipt, type Spend, apply, claimedTop, decodeState, interval, monthTotal } from "../../gen/slopbot__spendAlerts.effect.vibe"
+import { type CostRow, type FailureKind, NotAState, type Provider, type Receipt, type Spend, apply, claimedTop, decodeState, interval, monthTotal } from "../../gen/slopbot__spendAlerts.effect.vibe"
 import { budgetExhausted } from "../route/route.vibe"
 
 schema LedgerRow {
@@ -71,15 +71,20 @@ function receiptOf(outcome: string | null): Receipt {
   return outcome === "ambiguous" ? "Ambiguous" : "NoReceipt"
 }
 
-function providerOf(provider: string) {
-  if (provider === "orbio") return "Orbio"
-  return provider === "surplus" ? "Surplus" : provider
+const providers: Readonly<Record<string, Provider>> = { orbio: "Orbio", surplus: "Surplus" }
+
+effect function providerOf(row: LedgerRow) {
+  const provider = providers[row.provider]
+  if (provider !== undefined) return provider
+  if (row.historical === 1) return "Surplus" satisfies Provider
+  throw new RowMismatch({ text: "slopbot costs", issue: `call ${row.id} names an unknown provider` })
 }
 
 function costReads(scope: Statement) {
   return sql`SELECT c.id, substr(c.created_at, 1, 7) AS month, coalesce(c.provider_cost_micro_usd, c.cost_micro_usd) AS amount, c.provider, c.outcome, c.failure, c.requested_model, c.created_at,
       CASE c.billing_rule WHEN 'call-v1' THEN c.billed_micro_usdc ELSE c.billable_cost_micro_usd END AS billed,
-      (NOT EXISTS (SELECT 1 FROM slopbot_provider_failure_notices n WHERE n.call_id = c.id) AND (c.billing_rule = 'call-v1' OR c.outcome = 'failed')) AS historical,
+      (NOT EXISTS (SELECT 1 FROM slopbot_provider_failure_notices n WHERE n.call_id = c.id) AND (c.billing_rule = 'call-v1' OR c.outcome = 'failed'
+        OR (CASE c.billing_rule WHEN 'call-v1' THEN c.billed_micro_usdc ELSE c.billable_cost_micro_usd END) > 0)) AS historical,
       (c.provider_cost_micro_usd IS NOT NULL) AS known
     FROM slopbot_costs c WHERE ${scope} ORDER BY c.id`
 }
@@ -107,16 +112,20 @@ effect function ledgerOf([costRows, alertRows, noticeRows]: ReadonlyArray<Rows>)
   const alerts = try decoded(AlertRow, alertRows ?? [], "slopbot spend alerts")
   const notices = try decoded(NoticeRow, noticeRows ?? [], "slopbot provider failure notices")
   const ordinal = new Map(costs.map((row, index) => [row.id, index + 1]))
-  const spend = try decodeState({
-    costs: costs.map((row, index) => ({
+  const ledgerCosts: CostRow[] = []
+  for (const [index, row] of costs.entries()) {
+    ledgerCosts.push({
       id: index + 1,
       month: monthNumber(row.month),
       amount: row.amount,
-      provider: providerOf(row.provider),
+      provider: try providerOf(row),
       failure: failureKindOf(row.outcome, row.failure),
       billed: row.billed,
       historical: row.historical === 1,
-    })),
+    })
+  }
+  const spend = try decodeState({
+    costs: ledgerCosts,
     alerts: alerts.map((row) => ({ month: monthNumber(row.month), threshold: row.threshold, recorded: row.recorded, receipt: receiptOf(row.outcome) })),
     failures: notices.map((row) => ({ call: ordinal.get(row.call_id) ?? 0, claimed: row.claimed === 1, receipt: receiptOf(row.outcome) })),
     lowBalanceThreshold: 0,

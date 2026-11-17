@@ -23,6 +23,8 @@ export error JournalRefused { event: string; issue: string }
 
 export interface ProviderContext { readonly firstAvailableSlot: number; readonly finalizedContextSlot: number; readonly signatureContextSlot: number }
 
+type BroadcastStage = "broadcast" | "rebroadcast" | "replacement broadcast"
+
 export interface Facts {
   readonly token?: string
   readonly vault?: string
@@ -30,6 +32,7 @@ export interface Facts {
   readonly route?: W.RouteName
   readonly summary?: string
   readonly detail?: string
+  readonly broadcast?: BroadcastStage
   readonly targetBalanceBefore?: string
   readonly targetBalanceAfter?: string
   readonly intentHash?: string
@@ -290,7 +293,7 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
         : W.evaluation({ ...record.pending, state: "failed", reason: reasonText.RunEndedBeforeSigning })]
     }
     case "broadcastFail":
-      return [W.transition((try sendOf(event.id)).id, ["submitted"], "unknown", detailOf("broadcast: ", facts), now)]
+      return [W.transition((try sendOf(event.id)).id, ["submitted"], "unknown", detailOf(`${facts.broadcast ?? "broadcast"}: `, facts), now)]
     case "rebroadcast": {
       const record = try sendOf(event.id)
       return [event.accepted
@@ -373,16 +376,17 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const maxPriorityFeePerGas = checked.maxPriorityFeePerGas.toString()
       try matchesNative(maxFeePerGas, stepped.maxFee, current.network, event, "the replacement maximum fee")
       try matchesNative(maxPriorityFeePerGas, stepped.priority, current.network, event, "the replacement priority fee")
-      try admitted(journal, current, row.nonce, maximum, false, event)
+      const reserved = try need(next.gas.at(-1), event, "the replacement reservation is missing")
+      try admitted(journal, current, row.nonce, reserved.maximum, false, event)
       const gasId = `fee-gas-${try randomId()}`
       return [
-        W.reserve({ id: gasId, network, wallet: feeWallet, nonce: row.nonce, intentHash, runId: try runOf(event.runId), maximumWei: try weiOf(maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: null, accountProof: null, purpose: "fees" }),
+        W.reserve({ id: gasId, network, wallet: feeWallet, nonce: row.nonce, intentHash, runId: try runOf(event.runId), maximumWei: try weiOf(reserved.maximum, current.network), perTransactionWei: try weiOf(transactionCeilingOf(current.network), current.network), perDayWei: try weiOf(dailyCeilingOf(current.network), current.network), createdAt: now, blockhashSlot: null, accountProof: null, purpose: "fees" }),
         W.replacement({ id: `fee-replacement-${try randomId()}`, conversionId: record.id, network, attempt: row.attempts.length, nonce: row.nonce, txId, rawTx, maxFeePerGas, maxPriorityFeePerGas, gasId, now }),
         W.transition(record.id, ["submitted", "unknown"], "submitted", null, now),
       ]
     }
     case "claim": {
-      const claim = event.claim
+      const claim = event.vaultClaim
       const token = vaultOf(current, claim.vault).token
       const maximum = worstCase(current, claim.gasLimit, claim.fees)
       try admitted(journal, current, claim.nonce, maximum, true, event)
@@ -434,7 +438,6 @@ effect function observe(instance: Instance, journal: Journal, names: Names, even
     topUps: holding.topUps,
     vault: holding.vault > 0 ? try named(names, "vault", holding.vault, event) : undefined,
     vaultObserved: holding.vaultObserved,
-    allowance: holding.allowance,
   })
   const receipts: Array<string> = []
   for (const receipt of next.receipts) receipts.push(try named(names, "receipt", receipt, event))

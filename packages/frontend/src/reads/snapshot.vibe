@@ -3,8 +3,7 @@ import { millisOf } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { type LeaderboardSnapshot, type ModelAttribution, type RepositoryRegistry, type ScoreEvent, PartsInvalid, SnapshotTooLarge, maxPartBytes, maxSnapshotBytes, readParts, validateSnapshot } from "@repo/points/client"
 import { type Change, type EventKind, type LedgerRow, type Marker, type PaymentBasis, type Snapshot, Machine, initial, machineOver, noBasis, noMarker } from "../../gen/frontend__rankedSnapshot.effect.vibe"
-import { NetworkError, Refused, deadlineMs } from "../platform/api.vibe"
-import { boundedBytes } from "../platform/bounded.vibe"
+import { fetchBoundedBytes } from "../platform/bounded.vibe"
 import { Deployment } from "../platform/config.vibe"
 import { Unreadable } from "./resource.vibe"
 import { sharedSnapshot } from "./snapshotCache.vibe"
@@ -100,25 +99,11 @@ export function sampleOf(snapshot: LeaderboardSnapshot): Snapshot {
   }
 }
 
-effect function fetched(url: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>>) {
-  const read = effect {
-    const response = HttpClient.get(url, { headers }) catch effect () => {
-      throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." })
-    }
-    if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}` })
-    return try boundedBytes(response, limitBytes, label)
-  }
-  return try Effect.timeoutOrElse(read, {
-    duration: deadlineMs,
-    orElse: () => Effect.fail(new NetworkError({ timedOut: true, message: "The request timed out. Try again." })),
-  })
-}
-
 effect function leaderboardBytes(attempt: number, retry: number) {
   const { pageOrigin } = try Deployment
   const at = try Clock.currentTimeMillis
-  const root = try fetched(`${pageOrigin}${leaderboardPath}?attempt=${attempt}&retry=${retry}&at=${at}`, maxSnapshotBytes, "snapshot", { accept: "application/json" })
-  return readParts(root, (path) => fetched(`${pageOrigin}${path}`, maxPartBytes, "snapshot part", {})) catch effect (failed) => match (failed) {
+  const root = try fetchBoundedBytes(`${pageOrigin}${leaderboardPath}?attempt=${attempt}&retry=${retry}&at=${at}`, maxSnapshotBytes, "snapshot", { accept: "application/json" })
+  return readParts(root, (path) => fetchBoundedBytes(`${pageOrigin}${path}`, maxPartBytes, "snapshot part")) catch effect (failed) => match (failed) {
     when PartsInvalid: throw new Unreadable({ message: failed.message });
     when SnapshotTooLarge: throw new Unreadable({ message: "Leaderboard exceeds the supported snapshot size" });
     default: throw failed;

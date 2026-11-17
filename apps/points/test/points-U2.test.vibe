@@ -69,7 +69,7 @@ function ids(actors: ReadonlyArray<CommitActor>) {
   return actors.map((actor) => actor.id)
 }
 
-it.effect('Commit credit goes to primary authors, never to a carrier PR or a vendor agent (spec/points/authorship.md, "Primary authorship takes precedence over retained-copy and PR-opener fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight")', () => effect {
+it.effect('Commit credit goes to primary authors, never to a carrier PR or a vendor agent (spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight")', () => effect {
   const replacement = mergeCreditActors(carrier, [commit("a", author, 1, true, 3, 1)])
   const baseSync = mergeCreditActors(carrier, [commit("a", author, 1, true, 3, 1), commit("b", carrier, 2, true, 50, 0)])
   const alreadyCredited = mergeCreditActors(carrier, [commit("a", author, 1, false, 3, 1)])

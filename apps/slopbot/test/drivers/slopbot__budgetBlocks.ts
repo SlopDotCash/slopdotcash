@@ -13,6 +13,9 @@ import type { BudgetState, Event, RowStatus } from "../../gen/slopbot__budgetBlo
 import { budgetBlockedUntil, budgetState, recordBudgetBlock, recordBudgetDispatch, sendBudgetResume } from "../../src/budget/store.vibe";
 import { type Numbered, activeInstallation, deliver, installationState } from "../../src/installation/store.vibe";
 import { type Job, JobQueue } from "../../src/jobs/job.vibe";
+import { type ReviewClaim, claimReview, finishReview } from "../../src/lease/store.vibe";
+import type { Finished, ReviewRow } from "../../src/lease/writes.vibe";
+import { verdictOf } from "../support/settled.ts";
 
 const base = Date.parse("2026-11-01T00:00:00.000Z");
 const clock = settableClock(base + 1000);
@@ -26,6 +29,7 @@ const account = { id: 1, login: "budget-owner", type: "User" };
 let generation = 0;
 const nows = new Map<string, number>();
 const tokens = new Map<string, number>();
+const claims = new Map<string, ReviewClaim>();
 const sends = new Map<string, number>();
 const installs = new Map<string, number[]>();
 
@@ -58,10 +62,9 @@ const noNotices = Layer.mergeAll(
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, queue, noNotices, clock.layer));
 
 const millis = (seconds: number) => base + seconds * 1000;
-const iso = (seconds: number) => new Date(millis(seconds)).toISOString();
 const seconds = (at: number) => (at === 0 ? 0 : (at - base) / 1000);
 const tokenText = (key: string, token: number) => `claim-${reviewKeyOf(key)}-${token}`;
-const stored: Record<Exclude<RowStatus, "NoRow" | "Running">, string> = { Completed: "completed", Failed: "failed", Skipped: "skipped" };
+const stored: Record<Exclude<RowStatus, "NoRow" | "Running">, Finished> = { Completed: "completed", Failed: "failed", Skipped: "skipped" };
 
 function at(key: string) {
   const now = nows.get(key) ?? 1;
@@ -74,39 +77,30 @@ function deliveriesOf(key: string): [Numbered, ...Numbered[]] {
   return [{ deliveryId: `budget-${generation}-${key}-none`, number: 0 }, ...numbers.map((number) => ({ deliveryId: `budget-${generation}-${key}-${number}`, number }))];
 }
 
-async function changed(text: string, ...params: ReadonlyArray<string | number | null>) {
-  const result = await db.prepare(text).bind(...params).run();
-  return result.meta.changes === 1;
+function rowOf(key: string): ReviewRow {
+  return { reviewKey: reviewKeyOf(key), installationId: installationOf(key), repositoryId: 7001, itemKind: "pull_request", itemNumber: 5, itemNodeId: "PR_5", authorId: 77_000 + generation, revision: "head", contentDigest: "content", policyDigest: "policy" };
 }
 
 async function claim(key: string, token: number, leaseUntil: number): Promise<"accepted" | "refused"> {
-  const now = at(key);
-  if (token <= (tokens.get(key) ?? 0) || leaseUntil <= now) return "refused";
+  at(key);
+  if (token <= (tokens.get(key) ?? 0)) return "refused";
   if (!(await runtime.runPromise(activeInstallation(installationOf(key))))) return "refused";
   if ((await runtime.runPromise(budgetBlockedUntil(reviewKeyOf(key)))) !== undefined) return "refused";
-  const claimToken = tokenText(key, token);
-  const resumed = await changed(
-    "UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ? WHERE review_key = ? AND (status IN ('failed', 'skipped') OR (status = 'running' AND lease_expires_at <= ?))",
-    claimToken, iso(leaseUntil), reviewKeyOf(key), iso(now),
-  );
-  const inserted = resumed || await changed(
-    `INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at)
-      SELECT ?, ?, 7001, 'pull_request', 5, 'PR_5', 77, 'head', 'content', 'policy', 'running', ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM slopbot_reviews WHERE review_key = ?)`,
-    reviewKeyOf(key), installationOf(key), iso(now), claimToken, iso(leaseUntil), reviewKeyOf(key),
-  );
-  if (!inserted) return "refused";
-  tokens.set(key, token);
-  return "accepted";
+  const exit = await runtime.runPromiseExit(claimReview(rowOf(key), { token: tokenText(key, token), route: "AdvisoryReview", expiresAt: millis(leaseUntil) / 1000 }));
+  return verdictOf(exit, (outcome) => {
+    if (outcome.kind !== "claimed") return false;
+    tokens.set(key, token);
+    claims.set(key, outcome.claim);
+    return true;
+  });
 }
 
 async function finish(key: string, token: number, status: RowStatus): Promise<"accepted" | "refused"> {
-  const now = at(key);
+  at(key);
   if (status === "NoRow" || status === "Running") return "refused";
-  const done = await changed(
-    "UPDATE slopbot_reviews SET status = ?, completed_at = ?, lease_expires_at = NULL WHERE review_key = ? AND claim_token = ? AND status = 'running' AND lease_expires_at > ?",
-    stored[status], iso(now), reviewKeyOf(key), tokenText(key, token), iso(now),
-  );
-  return done ? "accepted" : "refused";
+  const held = claims.get(key);
+  const claim: ReviewClaim = { reviewKey: reviewKeyOf(key), token: tokenText(key, token), start: held?.token === tokenText(key, token) ? held.start : "First" };
+  return verdictOf(await runtime.runPromiseExit(finishReview(claim, stored[status], {})));
 }
 
 function dispatched(key: string, event: Event) {
@@ -165,6 +159,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
     generation++;
     nows.clear();
     tokens.clear();
+    claims.clear();
     sends.clear();
     installs.clear();
   },

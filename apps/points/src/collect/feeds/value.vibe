@@ -1,7 +1,7 @@
 // spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"
 import { sha256Hex } from "@repo/platform/crypto"
 import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
-import { ValueHistoryPage, WorkUnitHistoryPage, WorkUnitHistoryRow, historyOrigin, maximumPageRecords, valueHistoryPath, valueHistoryVersion, workUnitHistoryPath, workUnitHistoryVersion } from "./wire.vibe"
+import { ValueHistoryPage, WorkUnitHistoryPage, WorkUnitHistoryRow, historyOrigin, maximumPageRecords, valueHistoryPath, valueHistoryVersion, workUnitHistoryPath, workUnitHistoryVersion } from "@repo/ports/slopbot"
 
 const valueFeed = "value history"
 const pageRefused = "Value history page has invalid identity or pagination"

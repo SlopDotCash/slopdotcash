@@ -219,7 +219,7 @@ it.effect('Only template bytes that match the index digest are rendered (spec/co
   ))
 })
 
-it.effect('The server and installer renderers produce identical bytes (spec/contributor/rendering.md, "The server renderer and the installer\'s Python renderer produce identical bytes for every committed template"; spec/contributor/rendering.md, "Substitution is one pass over the four published placeholders and any other SLOP placeholder refuses"; spec/contributor/rendering.md, "Maintainer fields appear only in project.json and never change template text"; spec/contributor/rendering.md, "A template that carries project.json or lacks SKILL.md, or a manifest that fails the field checks, refuses"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
+it.effect('The server and installer renderers produce identical bytes (spec/contributor/rendering.md, "The server renderer and the installer\'s Python renderer produce identical bytes for every committed template"; spec/contributor/rendering.md, "Substitution is one pass over the four published placeholders and any other SLOP placeholder refuses"; spec/contributor/skillRendering.md, "A maintainer note that would cross a template rule never takes effect"; spec/contributor/rendering.md, "A template that carries project.json or lacks SKILL.md, or a manifest that fails the field checks, refuses"; spec/contributor/skillAuthority.md, "A contributor also needs a fresh installable observation of the exact project")', () => effect {
   const trees = { contributor: (try templateTree("contributor")).files, reviewer: (try templateTree("reviewer")).files }
   const digest = sha256Hex(encoder.encode("approved manifest text"))
   const skill = (text: string) => [{ path: "SKILL.md", bytes: encoder.encode(text) }]
@@ -250,7 +250,7 @@ it.effect('The server and installer renderers produce identical bytes (spec/cont
   })
 })
 
-it.effect('The skill archive is a deterministic stored ZIP that Python reads back (spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes")', () => effect {
+it.effect('The skill archive is a deterministic stored ZIP that Python reads back (spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision")', () => effect {
   const { files } = try templateTree("contributor")
   const rendered = renderProjectSkill({ role: "contributor", templateFiles: files, manifest: projects[0], registry: { revision: 7, manifestSha256: "a".repeat(64) } })
   if (rendered.kind !== "rendered") return try die(new Error(`the contributor template did not render: ${rendered.kind}`))

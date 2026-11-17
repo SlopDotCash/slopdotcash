@@ -327,20 +327,55 @@ function appJson(authority: string, app: App) {
   return { id: Number(app.id), slug: app.slug, client_id: app.clientId, name: app.slug, owner: null, html_url: `https://github.com/apps/${app.slug}`, permissions: {}, events: [], installations_count: 0, url: `${authority}/app` };
 }
 
-function lines(bytes: Uint8Array | undefined): string[] {
-  return bytes === undefined || bytes.length === 0 ? [] : new TextDecoder().decode(bytes).split("\n");
+function terminatedLines(bytes: Uint8Array | undefined): string[] | undefined {
+  if (bytes === undefined) return [];
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+  return text.includes("\u0000") ? undefined : text.match(/[^\n]*\n|[^\n]+$/gu) ?? [];
 }
 
-function counted(from: ReadonlyArray<string>, to: ReadonlyArray<string>): number {
-  const left = new Map<string, number>();
-  for (const line of from) left.set(line, (left.get(line) ?? 0) + 1);
-  let only = 0;
-  for (const line of to) {
-    const count = left.get(line) ?? 0;
-    if (count === 0) only += 1;
-    else left.set(line, count - 1);
-  }
-  return only;
+const patchContext = 3;
+
+function hunkRange(start: number, count: number): string {
+  if (count === 1) return `${start + 1}`;
+  return `${count === 0 ? start : start + 1},${count}`;
+}
+
+function patchLines(marker: string, values: ReadonlyArray<string>): string[] {
+  return values.flatMap((line) => line.endsWith("\n") ? [`${marker}${line.slice(0, -1)}`] : [`${marker}${line}`, "\\ No newline at end of file"]);
+}
+
+export interface LineDiff {
+  readonly additions: number;
+  readonly deletions: number;
+  readonly patch: string;
+}
+
+/** @throws {never} */
+export function lineDiff(old: Uint8Array | undefined, now: Uint8Array | undefined): LineDiff | undefined {
+  const before = terminatedLines(old), after = terminatedLines(now);
+  if (before === undefined || after === undefined) return undefined;
+  const shortest = Math.min(before.length, after.length);
+  let prefix = 0;
+  while (prefix < shortest && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < shortest - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+  const start = Math.max(0, prefix - patchContext);
+  const trailing = Math.min(suffix, patchContext);
+  const removed = before.slice(prefix, before.length - suffix), added = after.slice(prefix, after.length - suffix);
+  const oldCount = prefix - start + removed.length + trailing, newCount = prefix - start + added.length + trailing;
+  const patch = [
+    `@@ -${hunkRange(start, oldCount)} +${hunkRange(start, newCount)} @@`,
+    ...patchLines(" ", before.slice(start, prefix)),
+    ...patchLines("-", removed),
+    ...patchLines("+", added),
+    ...patchLines(" ", before.slice(before.length - suffix, before.length - suffix + trailing)),
+  ].join("\n");
+  return { additions: added.length, deletions: removed.length, patch };
 }
 
 function changes(before: ReadonlyMap<string, Uint8Array>, after: ReadonlyMap<string, Uint8Array>) {
@@ -348,9 +383,10 @@ function changes(before: ReadonlyMap<string, Uint8Array>, after: ReadonlyMap<str
   return paths.flatMap((path) => {
     const old = before.get(path), now = after.get(path);
     if (old !== undefined && now !== undefined && blobSha(old) === blobSha(now)) return [];
-    const additions = counted(lines(old), lines(now)), deletions = counted(lines(now), lines(old));
+    const diff = lineDiff(old, now);
+    const additions = diff?.additions ?? 0, deletions = diff?.deletions ?? 0;
     const status = old === undefined ? "added" : now === undefined ? "removed" : "modified";
-    return [{ sha: now === undefined ? null : blobSha(now), filename: path, status, additions, deletions, changes: additions + deletions }];
+    return [{ sha: now === undefined ? null : blobSha(now), filename: path, status, additions, deletions, changes: additions + deletions, ...(diff === undefined ? {} : { patch: diff.patch }) }];
   });
 }
 
@@ -534,22 +570,48 @@ function contents(ctx: Context, repo: Repository, path: string): Response {
   }));
 }
 
-function tree(ctx: Context, repo: Repository, sha: string): Response {
+function directoriesOf(commit: Commit): ReadonlyArray<string> {
+  const directories = new Set<string>();
+  for (const path of commit.files.keys()) {
+    const parts = path.split("/");
+    for (let depth = 1; depth < parts.length; depth += 1) directories.add(`${parts.slice(0, depth).join("/")}/`);
+  }
+  return [...directories];
+}
+
+function subtree(repo: Repository, sha: string): { readonly commit: Commit; readonly prefix: string } | undefined {
   const resolved = resolveRef(repo, sha);
-  const commit = resolved === undefined ? [...repo.commits.values()].find((candidate) => candidate.tree === sha) : repo.commits.get(resolved);
-  if (commit === undefined) return notFound();
+  const named = resolved === undefined ? undefined : repo.commits.get(resolved);
+  if (named !== undefined) return { commit: named, prefix: "" };
+  for (const commit of repo.commits.values()) {
+    if (commit.tree === sha) return { commit, prefix: "" };
+    const prefix = directoriesOf(commit).find((directory) => treeOf(commit, directory) === sha);
+    if (prefix !== undefined) return { commit, prefix };
+  }
+  return undefined;
+}
+
+function tree(ctx: Context, repo: Repository, sha: string): Response {
+  const found = subtree(repo, sha);
+  if (found === undefined) return notFound();
+  const { commit, prefix } = found;
+  const own = prefix === "" ? commit.tree : sha;
   const recursive = ctx.url.searchParams.has("recursive");
   const entries = new Map<string, { path: string; mode: string; type: string; sha: string; size?: number }>();
-  for (const [path, bytes] of commit.files) {
+  for (const [full, bytes] of commit.files) {
+    if (!full.startsWith(prefix)) continue;
+    const path = full.slice(prefix.length);
     const parts = path.split("/");
     for (let depth = 1; depth < parts.length; depth += 1) {
       const dir = parts.slice(0, depth).join("/");
-      if (recursive || depth === 1) entries.set(dir, { path: dir, mode: "040000", type: "tree", sha: treeOf(commit, `${dir}/`) });
+      if (recursive || depth === 1) entries.set(dir, { path: dir, mode: "040000", type: "tree", sha: treeOf(commit, `${prefix}${dir}/`) });
     }
     if (recursive || parts.length === 1) entries.set(path, { path, mode: "100644", type: "blob", sha: blobSha(bytes), size: bytes.length });
   }
-  return reply(200, { sha: commit.tree, url: `${ctx.authority}/repos/${fullName(repo)}/git/trees/${commit.tree}`, tree: [...entries.values()].sort((a, b) => a.path.localeCompare(b.path)), truncated: false });
+  return reply(200, { sha: own, url: `${ctx.authority}/repos/${fullName(repo)}/git/trees/${own}`, tree: [...entries.values()].sort((a, b) => a.path.localeCompare(b.path)), truncated: false });
 }
+
+const compareFileLimit = 300;
 
 function compare(ctx: Context, repo: Repository, spec: string): Response {
   const [baseRef = "", headRef = ""] = spec.split("...");
@@ -562,16 +624,23 @@ function compare(ctx: Context, repo: Repository, spec: string): Response {
   const commitOf = (sha: string | undefined) => (sha === undefined ? undefined : repo.commits.get(sha));
   const baseCommit = commitOf(mergeBase), baseHead = commitOf(base);
   if (baseHead === undefined) return notFound();
-  return reply(200, {
+  const files = changes(baseCommit?.files ?? new Map(), commitOf(head)?.files ?? new Map()).slice(0, compareFileLimit);
+  const commits = ahead.flatMap((sha) => commitOf(sha) ?? []).sort((a, b) => a.date.localeCompare(b.date));
+  const rendered = (commit: Commit) => commitJson(ctx.authority, ctx.world, repo, commit, false);
+  const comparison = (listed: unknown[], withFiles: boolean) => ({
     status,
     ahead_by: ahead.length,
     behind_by: behind.length,
     total_commits: ahead.length,
     base_commit: commitJson(ctx.authority, ctx.world, repo, baseHead, false),
     merge_base_commit: baseCommit === undefined ? null : commitJson(ctx.authority, ctx.world, repo, baseCommit, false),
-    commits: ahead.flatMap((sha) => commitOf(sha) ?? []).sort((a, b) => a.date.localeCompare(b.date)).map((commit) => commitJson(ctx.authority, ctx.world, repo, commit, false)),
-    files: changes(baseCommit?.files ?? new Map(), commitOf(head)?.files ?? new Map()),
+    commits: listed,
+    files: withFiles ? files : [],
   });
+  const query = ctx.url.searchParams;
+  if (!query.has("per_page") && !query.has("page")) return reply(200, comparison(commits.map(rendered), true));
+  const firstPage = (Number(query.get("page") ?? 1) || 1) <= 1;
+  return page(ctx, commits, rendered, (listed) => comparison(listed, firstPage));
 }
 
 function created(ctx: Context): string {

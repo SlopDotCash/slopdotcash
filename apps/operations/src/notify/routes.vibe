@@ -1,6 +1,7 @@
 // spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one"; spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"; spec/backend/email.md, "Delivery of the verification mail has its own state"
 import { handleRaw, json, jsonBody } from "@repo/platform/http"
 import { type AnyRoute, route } from "@repo/platform/route"
+import { EmailEnrollment } from "@repo/ports/backend"
 import {
   notifyPostV1ActivityNotificationsDispatch,
   notifyPostV1ActivityNotificationsEligibility,
@@ -14,7 +15,6 @@ import { notifyInternalHost, slopbotFailureNoticePath, slopbotSpendNoticePath } 
 import type { Channel } from "../notifications/rows.vibe"
 import { adminNotice } from "./admin.vibe"
 import { NotifySettings, type Pilot, enrollmentOpen, releaseFor } from "./config.vibe"
-import { EmailEnrollment } from "./ports.vibe"
 import { reconcile, reconcileRequest } from "./reconcile.vibe"
 import { dispatch } from "./send.vibe"
 import { sendVerification } from "./verification.vibe"

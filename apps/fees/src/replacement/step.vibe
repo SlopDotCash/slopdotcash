@@ -1,8 +1,8 @@
-// spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/fees/conversion.md, "A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
+// spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"; spec/settlement/feeReplacement.md, "Each step raises both fee fields by at least 10% and at most 25%, within three times the original and the absolute ceiling"
 import type { Address, Hex } from "@repo/platform/chain/evm"
 import { nextReplacement } from "@repo/settlement/kernels/feeReplacement"
-import { type EvmFees, type Event, type Fee, type NetworkFeeObservation, feesOf, firstAttempt, latestAttempt, nextFees, replacementDeadlineMarginMs, replacementStepValid, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
-import { replacementSigns, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
+import { type Event, type Fee, type NetworkFeeObservation, latestAttempt, replacementFees, replacementWaitMs } from "../../gen/fees__conversion.effect.vibe"
+import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { exactNumber, parsedType2, wholeBig } from "../evm/abi.ts"
 import { type Broadcast, baseFee, broadcast } from "../evm/client.vibe"
 import type { Facts } from "../journal/store.vibe"
@@ -19,6 +19,8 @@ module verified {
   export function weiOfGwei(value: bigint): bigint { return wei(value, false) }
 }
 import { gweiCeiling, weiOfGwei } from verified
+
+const replacementDeadlineMarginMs = 120_000
 
 export interface ReplacementInput {
   readonly fee: Fee
@@ -72,11 +74,8 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   if (current <= previous.maxFeePerGas) return wait("the signed fee covers the current network fee")
   const maxFeeNeeded = exactNumber(gweiCeiling(current))
   if (maxFeeNeeded === undefined) return wait("the current network fee is outside the journal's exact range")
-  const ceiling = Math.floor(transactionCeilingOf(network) / (row.gasLimit > 0 ? row.gasLimit : 1))
-  const first: EvmFees = feesOf(firstAttempt(row))
-  const last: EvmFees = feesOf(latest)
-  if (!replacementStepValid(first, last, ceiling)) return wait("fee replacement cap reached")
-  const stepped = nextFees(first, last, ceiling)
+  const stepped = replacementFees(fee, row)
+  if (!stepped.ok) return wait("fee replacement cap reached")
   const target = nextReplacement({
     original: { maxFeePerGas: original.maxFeePerGas, maxPriorityFeePerGas: original.maxPriorityFeePerGas },
     latest: { maxFeePerGas: previous.maxFeePerGas, maxPriorityFeePerGas: previous.maxPriorityFeePerGas },
@@ -84,17 +83,16 @@ export effect function replacementPlan<E, R>(input: ReplacementInput, settings: 
   })
   if (target.kind === "Keep") return wait("fee replacement cap reached")
   const { maxFeePerGas, maxPriorityFeePerGas } = target.fees
-  if (!withinUnit(maxFeePerGas, stepped.maxFee) || !withinUnit(maxPriorityFeePerGas, stepped.priority)) return wait("the stepped fees cannot be signed within the bounded step")
+  if (!withinUnit(maxFeePerGas, stepped.maxFee) || !withinUnit(maxPriorityFeePerGas, stepped.priorityFee)) return wait("the stepped fees cannot be signed within the bounded step")
   const priced = try nativeValue(network, original.gas * maxFeePerGas + settings.limits.additionalFeeReserve, settings.kyber)
-  const worstCaseMicro = priced === undefined ? -1 : exactNumber(priced) ?? -1
-  if (worstCaseMicro < 0 || worstCaseMicro * 10 > row.valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
   const valueMicro = wholeBig(row.valueMicro)
   if (valueMicro === undefined) return wait("the send has no recorded value to bound its fee")
+  if (priced === undefined || priced * 10n > valueMicro) return wait("ten times the replacement fee exceeds the recorded value or cannot be priced")
   try claimVerified(recorded, verifyClaim)
   return {
     kind: "Replace",
     intent: { kind: "EvmReplacement", network, recorded, attempts, maxFeePerGas, maxPriorityFeePerGas, valueMicro, preparation },
-    networkFee: { maxFeeNeeded, observedAt: fee.clock, worstCaseMicro },
+    networkFee: { maxFeeNeeded, observedAt: fee.clock },
   } satisfies ReplacementPlan
 }
 

@@ -1,4 +1,4 @@
-// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
 
 export const evidenceTables = [
   "vetting_evidence_runs",

@@ -1,5 +1,5 @@
 import { assert, layer } from "@effect/vitest"
-import { type Answer, type World, admissions, banned, digest, faults, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
+import { type Answer, type World, admissions, banned, bans, digest, faults, other, reporter, reportingStatus, request, rows, started, storedObject } from "./support/intake/harness.ts"
 
 service Intake { readonly world: World }
 
@@ -69,6 +69,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     const replay = try submit(world, "paid-report-key-0001")
     const conflict = try submit(world, "paid-report-key-0001", "intake-fixture", { ...report, description: `${report.description} Also the fee path.` })
     const unpaid = try submit(world, "unpaid-report-key-01", "intake-unpaid")
+    const full = try submit(world, "full-award-key-00001", "intake-full")
+    const closed = try submit(world, "closed-program-key-1", "intake-closed")
     try same({
       refused: [anonymous, extra, changed, short, missing].map(shown),
       created: [created.status, created.cache, saved.intake.revision],
@@ -78,6 +80,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       replay: [replay.status, (replay.body as { readonly replayed: boolean }).replayed, submissionOf(replay).id],
       conflict: shown(conflict),
       unpaid: [unpaid.status, (try caseRows(world, submissionOf(unpaid).caseId)).cases],
+      full: [full.status, (try caseRows(world, submissionOf(full).caseId)).cases],
+      closed: [closed.status, (try caseRows(world, submissionOf(closed).caseId)).cases],
     }, {
       refused: [
         refusal(401, "unauthorized", "Sign in with GitHub"),
@@ -103,6 +107,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       replay: [200, true, saved.id],
       conflict: refusal(409, "idempotency_conflict", "That request key was already used."),
       unpaid: [201, [{ submission_state: "verified", received_at_source: "slop-received", policy_revision: 1, terms: null, award_state: "not-applicable", owner_github_id: "701", revision: 1 }]],
+      full: [201, [{ submission_state: "verified", received_at_source: "slop-received", policy_revision: 1, terms: JSON.stringify({ grossMinor: "500001", researcherMinor: "500001", slopMinor: "0", split: { researcherBasisPoints: 10000, slopBasisPoints: 0 }, currency: "USDC", decimals: 6, network: "base", capacityAwards: 1, fundingPolicy: "after-approval" }), award_state: "pending", owner_github_id: "701", revision: 1 }]],
+      closed: [201, [{ submission_state: "verified", received_at_source: "slop-received", policy_revision: 1, terms: null, award_state: "not-applicable", owner_github_id: "701", revision: 1 }]],
     })
   })
 
@@ -160,11 +166,24 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Unavailable, stale or restricted intake keeps the draft and creates nothing; restricted reports wait for the owner (spec/security/intake.md, "A restricted project\'s new reports wait for an owner decision"; spec/security/intake.md, "The private-reporting handoff reads the repository\'s cached reporting observation, and an observation older than its interval is StaleAccess")', () => effect {
+  it.effect('Unavailable, stale or restricted intake keeps the draft and creates nothing; restricted reports wait for the owner (spec/security/intake.md, "A restricted project\'s new reports wait for an owner decision"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready")', () => effect {
     const world = (try Intake).world
     const restricted = try submit(world, "restricted-key-00001", "intake-restricted", report, "5150")
     const blocked = try submit(world, "banned-key-000000001", "intake-fixture", report, banned)
     const unknown = try submit(world, "unknown-key-0000001", "no-such-project", report, "5150")
+    try promise(() => faults(world, { lostPuts: 0, failedPuts: 1 }))
+    const interrupted = try submit(world, "banned-retry-key-0001", "intake-fixture", report, "8080")
+    try promise(() => bans(world, ["8080"]))
+    const bannedRetry = try submit(world, "banned-retry-key-0001", "intake-fixture", report, "8080")
+    try promise(() => bans(world, []))
+    const normalisedSha = try promise(() => digest(normalised))
+    const [pending] = try promise(() => rows(world, "SELECT id FROM security_intake_rate_admissions WHERE actor_github_id=?", "8080"))
+    const retryObject = try promise(() => storedObject(world, `security-reports/${String(pending?.id)}/1-${normalisedSha}.json`))
+    const off = try acquireRelease(promise(() => started("off")), (running) => promise(() => running.mf.dispose()))
+    const offSubmit = try submit(off, "stored-off-key-00001", "intake-fixture", report, "5150")
+    const offReadiness = try promise(() => request(off, "/api/v1/security-programs/intake-fixture/intake"))
+    const offAttempt = `ss_${(try promise(() => digest(`5150\nstored-off-key-00001\n${normalisedSha}`))).slice(0, 32)}`
+    const offObject = try promise(() => storedObject(off, `security-reports/${offAttempt}/1-${normalisedSha}.json`))
     const readiness = (project: string) => promise(() => request(world, `/api/v1/security-programs/${project}/intake`))
     const unobserved = try readiness("intake-fixture")
     try promise(() => reportingStatus(world, "intake-fixture", { enabled: true, verifiedAt: new Date(Date.now() - 60_000).toISOString(), failure: null }))
@@ -181,6 +200,8 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     try same({
       refused: [restricted, blocked, unknown].map(shown),
       nothing: [try counts(world, "5150"), try counts(world, banned)],
+      bannedRetry: { interrupted: shown(interrupted), retry: shown(bannedRetry), object: retryObject, counts: try counts(world, "8080") },
+      storedOff: { submit: shown(offSubmit), counts: try counts(off, "5150"), object: offObject, storedIntake: (offReadiness.body as Record<string, unknown>).storedIntake },
       readiness: [pick(unobserved), pick(fresh), pick(stale), pick(disabled)],
       closed: shown(closed),
     }, {
@@ -190,6 +211,13 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
         refusal(404, "project_not_found", "This project is not available for private reporting"),
       ],
       nothing: [{ admissions: 0, submissions: 0, cases: 0 }, { admissions: 0, submissions: 0, cases: 0 }],
+      bannedRetry: {
+        interrupted: refusal(503, "report_unavailable", "Internal error"),
+        retry: refusal(403, "participation_banned", "This account cannot submit a new report."),
+        object: undefined,
+        counts: { admissions: 1, submissions: 0, cases: 0 },
+      },
+      storedOff: { submit: refusal(503, "intake_unavailable", "Internal error"), counts: { admissions: 0, submissions: 0, cases: 0 }, object: undefined, storedIntake: false },
       readiness: [
         [200, "public, max-age=0, s-maxage=30", "unavailable", true, "off", true, "open", null],
         [200, "public, max-age=0, s-maxage=30", "ready", false, "off", true, "open", "https://github.com/slop-test/intake/security/advisories/new"],

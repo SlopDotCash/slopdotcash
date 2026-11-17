@@ -1,0 +1,81 @@
+// spec/backend/email.md, "Consent changes are compare-and-set and enabling binds the exact destination version"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/backend/email.md, "Unsubscribe withdraws both categories only for the destination version its token was issued for"
+import { isoNow } from "@repo/platform/clock"
+import { ConstraintViolation, D1, DatabaseFailure, RowMismatch, first, sql } from "@repo/platform/d1"
+import { Conflict } from "@repo/platform/stored"
+import { EmailConsent, EmailEnrollment, type EnrollmentRead } from "@repo/ports/backend"
+import { EmailUnavailable, send } from "../accounts/store/store.vibe"
+import { NotAState, Rejected, mailService } from "../../gen/backend__accounts.effect.vibe"
+
+schema Destination { email: string; destination_version: string; verified_at: string }
+schema Pending { email: string; state: string }
+schema Enrolled { enabled: number | null; security_enabled: number | null; preference_version: string | null; revision: number | null; destination_version: string | null; verified_at: string | null }
+
+const deliveries = { queued: "Queued", sending: "Sending", sent: "Sent", unknown: "DeliveryUnknown" } as const
+
+function isDelivery(state: string): state is keyof typeof deliveries {
+  return Object.hasOwn(deliveries, state)
+}
+
+effect function consented(githubId: string, category: "SecurityMail" | "ActivityMail") {
+  const enabled = category === "SecurityMail" ? sql`p.security_enabled = 1` : sql`p.enabled = 1`
+  const found = try first(Destination, sql`SELECT d.email, d.destination_version, d.verified_at FROM notification_email_destinations d JOIN notification_email_preferences p ON p.github_id = d.github_id WHERE d.github_id = ${githubId} AND ${enabled} AND p.destination_version = d.destination_version`)
+  return found === undefined ? undefined : { address: found.email, version: found.destination_version }
+}
+
+effect function enrollment(githubId: string) {
+  const found = try first(Enrolled, sql`SELECT p.enabled, p.security_enabled, p.destination_version AS preference_version, p.revision, d.destination_version, d.verified_at FROM (SELECT ${githubId} AS github_id) i LEFT JOIN notification_email_preferences p ON p.github_id = i.github_id LEFT JOIN notification_email_destinations d ON d.github_id = i.github_id`)
+  if (found === undefined) return { stored: false, activity: false, security: false } satisfies EnrollmentRead
+  return {
+    stored: found.enabled !== null,
+    activity: found.enabled === 1,
+    security: found.security_enabled === 1,
+    ...(found.preference_version === null ? {} : { preferenceVersion: found.preference_version }),
+    ...(found.revision === null ? {} : { revision: found.revision }),
+    ...(found.destination_version === null ? {} : { destinationVersion: found.destination_version }),
+    ...(found.verified_at === null ? {} : { verifiedAt: found.verified_at }),
+  } satisfies EnrollmentRead
+}
+
+effect function registered(githubId: string) {
+  const found = try first(Destination, sql`SELECT email, destination_version, verified_at FROM notification_email_destinations WHERE github_id = ${githubId}`)
+  return found === undefined ? undefined : { address: found.email, version: found.destination_version, verifiedAt: found.verified_at }
+}
+
+effect function pending(githubId: string, verificationId: string, tokenHash: string) {
+  const found = try first(Pending, sql`SELECT email, state FROM notification_email_verifications WHERE id = ${verificationId} AND github_id = ${githubId} AND token_hash = ${tokenHash} AND consumed_at IS NULL AND cancelled_at IS NULL AND expires_at > ${try isoNow()}`)
+  if (found === undefined || !isDelivery(found.state)) return undefined
+  return { address: found.email, delivery: deliveries[found.state] }
+}
+
+effect function marked(githubId: string, verificationId: string, nextState: "Sending" | "Sent" | "DeliveryUnknown") {
+  const settled = send({ kind: "markEmailDelivery", githubId, verificationId, nextState }, { kind: "service", id: mailService }) catch effect (error) => match (error) {
+    when Rejected: false;
+    when Conflict: false;
+    when DatabaseFailure: throw error;
+    when ConstraintViolation: throw error;
+    when RowMismatch: throw error;
+    when NotAState: throw new RowMismatch({ text: `email enrollment of ${githubId}`, issue: "the stored account rows are not a valid accounts state" });
+    when EmailUnavailable: false;
+  }
+  return settled !== false
+}
+
+export const EmailConsentLive = Layer.effect(EmailConsent, effect {
+  const db = try D1
+  return {
+    destination: (consent) => provideService(consented(consent.githubId, consent.category), D1, db),
+    enrollment: (account) => provideService(enrollment(account.githubId), D1, db),
+  } satisfies EmailConsent.Shape
+})
+
+export const EmailEnrollmentLive = Layer.effect(EmailEnrollment, effect {
+  const db = try D1
+  return {
+    registered: (githubId) => provideService(registered(githubId), D1, db),
+    unsubscribeIssued: (issued) => effect {
+      return sql`INSERT INTO notification_email_unsubscribe_tokens (token_hash, destination_version, issued_at) SELECT ${issued.tokenHash}, ${issued.version}, ${issued.issuedAt} WHERE EXISTS (SELECT 1 FROM notification_email_destinations WHERE destination_version = ${issued.version}) ON CONFLICT(token_hash) DO NOTHING`
+    },
+    pendingVerification: (read) => provideService(pending(read.githubId, read.verificationId, read.tokenHash), D1, db),
+    markVerification: (mark) => provideService(marked(mark.githubId, mark.verificationId, mark.nextState), D1, db),
+  } satisfies EmailEnrollment.Shape
+})

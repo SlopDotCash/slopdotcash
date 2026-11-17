@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { Cause, Effect, Exit, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
-import { d1 } from "@repo/platform/d1";
+import { d1, sql } from "@repo/platform/d1";
 import { database, migrate, startWorker, storage } from "@repo/platform/testing";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
@@ -32,6 +32,8 @@ const objects = Layer.effect(TraceObjects, Effect.gen(function* () {
 const restrictions = Layer.succeed(Restrictions, {
   account: (githubId) => Effect.succeed({ banned: bans.has(githubId) }),
   project: () => Effect.succeed({ restricted: false }),
+  fence: ({ githubId }) => Effect.succeed(bans.has(githubId) ? sql`SELECT json('account banned') AS unbanned` : sql`SELECT 1 AS unbanned`),
+  unbanned: (githubId) => Effect.succeed(bans.has(githubId) ? sql`0` : sql`1`),
 });
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, objects, restrictions));
 

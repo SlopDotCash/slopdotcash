@@ -3,7 +3,7 @@ import {
   type Account, type Comment, type Commit, type GitHubWorld, type Issue, type Item, type Label, type Pull, type Repository, type Review,
   type TimelineEvent, blobSha, treeOf,
 } from "./world.ts";
-import { resolveRef } from "./rest.ts";
+import { lineDiff, resolveRef } from "./rest.ts";
 
 type Value =
   | { readonly kind: "variable"; readonly name: string }
@@ -364,15 +364,14 @@ function commitObj(repo: Repository, sha: string | null | undefined): Obj | null
 
 function counts(repo: Repository, commit: Commit) {
   const parent = repo.commits.get(commit.parents[0] ?? "")?.files ?? new Map<string, Uint8Array>();
-  const lines = (bytes: Uint8Array | undefined) => (bytes === undefined || bytes.length === 0 ? [] : new TextDecoder().decode(bytes).split("\n"));
   let additions = 0, deletions = 0, changed = 0;
   for (const path of new Set([...parent.keys(), ...commit.files.keys()])) {
     const before = parent.get(path), after = commit.files.get(path);
     if (before !== undefined && after !== undefined && blobSha(before) === blobSha(after)) continue;
     changed += 1;
-    const old = lines(before), next = lines(after);
-    additions += next.filter((line) => !old.includes(line)).length;
-    deletions += old.filter((line) => !next.includes(line)).length;
+    const diff = lineDiff(before, after);
+    additions += diff?.additions ?? 0;
+    deletions += diff?.deletions ?? 0;
   }
   return { additions, deletions, changed };
 }

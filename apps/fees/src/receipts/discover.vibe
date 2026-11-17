@@ -1,13 +1,12 @@
 // spec/fees/conversion.md, "Only finalized fee receipts and claims are fee income; gas top-ups never are"
 import { rows, sql } from "@repo/platform/d1"
 import { type Address, EvmRpc, checksum, scanPage } from "@repo/platform/chain/evm"
-import { isNativeAssetAddress } from "@repo/settlement/kernels/networks"
-import { type AssetKind, type Fee, apply, initial } from "../../gen/fees__conversion.effect.vibe"
+import { type Fee, apply, initial } from "../../gen/fees__conversion.effect.vibe"
 import type { Instance, Observed } from "../journal/codec.vibe"
 import { networkNames } from "../journal/codec.vibe"
 import type { EnabledNetwork } from "../runtime/config.vibe"
 import type { Held } from "../runtime/config.vibe"
-import type { TokenFact, VaultFact } from "../runtime/reviewed.vibe"
+import { type TokenFact, type VaultFact, holdingKind } from "../runtime/reviewed.vibe"
 import { safeNumber } from "../conversion/chain.vibe"
 
 module verified {
@@ -42,23 +41,17 @@ export interface Income {
   readonly transfers: ReadonlyArray<Transfer>
   readonly topUps: ReadonlyArray<TopUp>
   readonly counters: ReadonlyArray<VaultCounter>
-  readonly allowances: ReadonlyMap<string, bigint>
 }
 
 export interface EvmScan { readonly fromBlock: bigint; readonly pageBlocks: bigint }
 
 schema JournalToken { token: string }
 
-function assetOf(network: EnabledNetwork, address: string): AssetKind {
-  if (network.definition.target.kind === "usdc" && network.definition.target.address === address) return "TargetStable"
-  return isNativeAssetAddress(network.definition.name, address) ? "NativeAsset" : "ProjectToken"
-}
-
 export effect function candidateTokens(network: EnabledNetwork, reviewed: ReadonlyArray<TokenFact>, scope: string) {
   const found = try rows(JournalToken, sql`SELECT DISTINCT token FROM fee_conversions WHERE network = ${networkNames[network.network]} AND substr(run_id, 1, ${scope.length}) = ${scope} AND kind IN ('conversion', 'approval', 'claim') ORDER BY rowid`)
   const known = new Set(reviewed.map((token) => token.address))
   const journaled = found.map((row) => row.token).filter((token) => !known.has(token))
-  return [...reviewed, ...[...new Set(journaled)].map((address) => ({ address, asset: assetOf(network, address) }) satisfies TokenFact)]
+  return [...reviewed, ...[...new Set(journaled)].map((address) => ({ address, asset: holdingKind(network, address) }) satisfies TokenFact)]
 }
 
 effect function tokenTransfers(token: string, wallet: Address, scan: EvmScan, finalizedHead: bigint) {
@@ -130,7 +123,6 @@ export effect function observed(network: EnabledNetwork, held: Held, tokens: Rea
       topUps: holding?.topUps ?? 0,
       vault: counter?.vault,
       vaultObserved: counter === undefined ? 0 : try exact(counter.accruedTotal, token.address, counter.vault),
-      allowance: try exact(income.allowances.get(token.address) ?? 0n, token.address, "allowance"),
     })
   }
   return { tokens: observed, receipts: counted }

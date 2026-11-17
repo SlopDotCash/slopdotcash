@@ -11,7 +11,7 @@ import { type Vault, initial as vaultInitial } from "../../gen/settlement__vault
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { type ObligationTerms, type PaymentDeployment, type VaultAsset, bindingOf, canonicalAddress, limbs, targetOf, termsDigest } from "./terms.vibe"
-import type { AuthorizedWallet } from "./wallets.vibe"
+import type { EffectiveWallet } from "@repo/ports/backend"
 
 export schema ObligationRow {
   readonly id: string
@@ -102,8 +102,8 @@ export function obligationAggregate(id: string): Aggregate<ObligationRows, RowMi
 export interface Projection {
   readonly deployment: PaymentDeployment
   readonly asset: VaultAsset
-  readonly history: ReadonlyArray<AuthorizedWallet>
-  readonly effective: AuthorizedWallet | undefined
+  readonly history: ReadonlyArray<EffectiveWallet>
+  readonly effective: EffectiveWallet | undefined
   readonly nowSeconds: number
   readonly lease: string | undefined
   readonly requests: ReadonlyArray<DispatchRequest>

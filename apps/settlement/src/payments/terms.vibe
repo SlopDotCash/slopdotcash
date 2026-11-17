@@ -1,11 +1,10 @@
 // spec/settlement/paymentDispatch.md, "A scanner receipt commits through the canonical financial owner"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"
 import { sha256Hex } from "@repo/platform/crypto"
-import type { Network as WalletNetwork } from "@repo/ports/backend"
+import type { EffectiveWallet, Network as WalletNetwork } from "@repo/ports/backend"
 import type { Binding, Network, Scope, Target } from "../../gen/settlement__paymentDispatch.effect.vibe"
 import { toAmount } from "../kernels/amounts.ts"
 import type { Chain } from "../kernels/networks.ts"
 import type { EvmDeployment } from "../vault/policy.vibe"
-import type { AuthorizedWallet } from "./wallets.vibe"
 
 export type Kind = "reserved" | "paid"
 
@@ -90,7 +89,7 @@ export function canonicalAddress(chain: Chain, address: string) {
   return chain === "solana" ? address : address.toLowerCase()
 }
 
-export function bindingOf(chain: Chain, wallet: AuthorizedWallet): Binding {
+export function bindingOf(chain: Chain, wallet: EffectiveWallet): Binding {
   return { claim: wallet.claimId, digest: wallet.digest, address: canonicalAddress(chain, wallet.address) }
 }
 

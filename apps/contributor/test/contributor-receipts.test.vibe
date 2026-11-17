@@ -1,6 +1,6 @@
 import { assert, layer } from "@effect/vitest"
 import { webCrypto } from "@repo/platform/crypto"
-import { IDENTITY_RECORD, READABLE_ATTRIBUTION_MARKERS, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "../src/client/identity/record.schema.ts"
+import { IDENTITY_RECORD, SIGNED_ATTRIBUTION_MARKER, identityRecordText, validateIdentityRecord } from "../src/client/identity/record.schema.ts"
 import { type ReceiptPolicyProject, type ReceiptRegistry, joinPolicy, markerOf, parseRunMarker } from "../src/client/receipts/receipt.ts"
 import { verifyRunReceipt } from "../src/client/receipts/verify.vibe"
 import { bytesOf, manifestOf, reparsed, retained, signedByFreshDevice } from "./fixtures/receipts/historical.ts"
@@ -95,7 +95,6 @@ layer(webCrypto)((it) => {
       validateIdentityRecord({ ...IDENTITY_RECORD, identifiers: { ...IDENTITY_RECORD.identifiers, walletMarker: { slop: "slop-wallet:v1", legacy: "gitarmy-wallet:v1" } } }).kind,
       validateIdentityRecord({ ...IDENTITY_RECORD, finalAcceptedLegacyReleaseLabelEvent: "gitarmy-release-candidate" }).kind,
       SIGNED_ATTRIBUTION_MARKER,
-      READABLE_ATTRIBUTION_MARKERS.join(" "),
     ]
 
     try Effect.try(() => assert.deepStrictEqual({ replayed, tampered, placeholders, policies, identity }, {
@@ -140,7 +139,6 @@ layer(webCrypto)((it) => {
         "invalid",
         "invalid",
         "slop-contribution-attribution:v1",
-        "slop-contribution-attribution:v1 eliza-computer-attribution:v1 elizaos-contribution-attribution:v1 elizaos-contribution-attribution:v2 eliza-computer-attribution:v2",
       ],
     }))
     try Effect.try(() => assert.isAbove(replayed.length, 0))

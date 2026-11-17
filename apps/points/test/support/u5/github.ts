@@ -15,6 +15,7 @@ export interface Seeded {
   readonly commits: { readonly grace: string; readonly shared: string; readonly linus: string };
   readonly ids: { readonly paired: string; readonly stacked: string; readonly bulk: string; readonly closed: string };
   readonly sharedCommitNodeId: string;
+  readonly commitNodeIds: { readonly grace: string; readonly shared: string; readonly linus: string };
   readonly operations: string[];
 }
 
@@ -52,6 +53,7 @@ export function seeded(): Seeded {
     commits: { grace, shared, linus },
     ids: { paired: nodeIdOf(paired), stacked: nodeIdOf(stacked), bulk: nodeIdOf(bulkPull), closed: nodeIdOf(closed) },
     sharedCommitNodeId: created.commits.get(shared)?.nodeId ?? "",
+    commitNodeIds: { grace: created.commits.get(grace)?.nodeId ?? "", shared: created.commits.get(shared)?.nodeId ?? "", linus: created.commits.get(linus)?.nodeId ?? "" },
     operations: [],
   };
 }
@@ -64,8 +66,8 @@ async function forward(fake: GitHubFake, request: Request, body: GraphqlRequest)
   return fake.fetch(new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify(body) }));
 }
 
-async function answered(response: Response, data: unknown): Promise<Response> {
-  return new Response(JSON.stringify({ data }), { status: response.status, headers: response.headers });
+async function answered(response: Response, data: unknown, errors?: unknown): Promise<Response> {
+  return new Response(JSON.stringify(errors === undefined ? { data } : { data, errors }), { status: response.status, headers: response.headers });
 }
 
 /** The fake has no Commit.repository field and does not resolve review nodes; this boundary fills both from its world. @throws {never} */
@@ -77,8 +79,9 @@ export function fetcherOf(world: Seeded): Fetcher {
       world.operations.push(/query\s+(\w+)/u.exec(body.query)?.[1] ?? "anonymous");
       if (body.query.includes("LeaderboardOutcomeCommitLines")) {
         const response = await forward(world.fake, request, { ...body, query: body.query.replace("repository { id }", "") });
-        const payload = (await response.json()) as { data: { nodes: Array<Record<string, unknown> | null>; rateLimit: unknown } };
-        return answered(response, { ...payload.data, nodes: payload.data.nodes.map((node) => (node === null ? null : { ...node, repository: { id: world.repositoryNodeId } })) });
+        if (!response.ok) return response;
+        const payload = (await response.json()) as { data: { nodes: Array<Record<string, unknown> | null>; rateLimit: unknown }; errors?: unknown };
+        return answered(response, { ...payload.data, nodes: payload.data.nodes.map((node) => (node === null ? null : { ...node, repository: { id: world.repositoryNodeId } })) }, payload.errors);
       }
       if (body.query.includes("LeaderboardReviewInlineComments")) {
         const response = await forward(world.fake, request, { query: rateLimitQuery });
@@ -112,4 +115,18 @@ export const repeatFirst: SearchAlteration = (nodes) => (nodes.length === 0 ? no
 /** @throws {never} */
 export function requestsMatching(world: Seeded, name: string): number {
   return world.operations.filter((operation) => operation === name).length;
+}
+
+/** GitHub answers one commit's line statistics with SERVICE_UNAVAILABLE and a null node. @throws {never} */
+export function statisticsUnavailableAt(fake: GitHubFake, index: number): void {
+  fake.alterNext(/^POST \/graphql$/u, async (response) => {
+    const payload = (await response.json()) as { data: { nodes: unknown[] } & Record<string, unknown> };
+    const nodes = payload.data.nodes.map((node, at) => (at === index ? null : node));
+    return answered(response, { ...payload.data, nodes }, [{ type: "SERVICE_UNAVAILABLE", path: ["nodes", index, "additions"], message: "Commit statistics are temporarily unavailable" }]);
+  });
+}
+
+/** @throws {never} */
+export function gatewayFailures(fake: GitHubFake, times: number): void {
+  for (let attempt = 0; attempt < times; attempt += 1) fake.failNext(/^POST \/graphql$/u, { status: 502 });
 }

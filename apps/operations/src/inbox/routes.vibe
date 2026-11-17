@@ -1,14 +1,13 @@
-// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"
 import { first, rows, sql } from "@repo/platform/d1"
 import { Caller, handle, handleRaw, jsonBody, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Access, Route } from "@repo/platform/route"
 import { SecurityNoticeAccess } from "@repo/ports/security"
-import { audienceHolds } from "../../gen/operations__notifications.effect.vibe"
 import { AcknowledgeFields, acknowledgeCaseNotice, appealPrefix, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark, openAppealReview, openScamReview, otherInboxMethods, scamReviewPrefix } from "../client/inbox.vibe"
 import type { Release } from "../notifications/rows.vibe"
 import { deliveryScope, noticeIdOf, observe, readMany, send } from "../notifications/store.vibe"
-import { cursorOf, inboxPage, noAudience, readableKeys } from "./projection.vibe"
+import { cursorOf, inboxPage, readableKeys, shownTo } from "./projection.vibe"
 import { inboxRefusals as refusals, refused } from "./refusals.vibe"
 
 const inboxRelease: Release = { routes: [], generalEmail: false }
@@ -24,11 +23,13 @@ const githubOwner = /^[A-Za-z0-9_.-]{1,39}$/u
 const githubRepository = /^[A-Za-z0-9_.-]{1,100}$/u
 const storedOwnerOrRepository = /^[A-Za-z0-9_.-]+$/u
 
-schema ScamReview { readonly author: number; readonly stands: number }
+const notDispute = { dispute_appellant: 0, dispute_resolved: 0, resolution_notice: 0 }
+
+schema ScamReview { readonly penalty_author: string; readonly penalty_reversed: number }
 
 schema CaseDelivery { readonly id: string; readonly acknowledged_at: string | null }
 
-schema AppealJobRow { readonly job_json: string }
+schema AppealJobRow { readonly job_json: string; readonly appellant_github_id: string }
 
 schema AppealJob {
   readonly owner: string
@@ -124,11 +125,11 @@ effect function scamReview() {
   const path = try requestPath()
   const target = scamReviewTarget(path)
   if (target === undefined) throw refused(refusals.notFound)
-  const reviews = try rows(ScamReview, sql`SELECT p.author_github_id = n.recipient_github_id AS author,
-      (p.category = 'scam' AND p.moderator_review = 1 AND p.reversed_at IS NULL) AS stands
+  const reviews = try rows(ScamReview, sql`SELECT p.author_github_id AS penalty_author, p.reversed_at IS NOT NULL AS penalty_reversed
     FROM notifications n JOIN slopbot_penalties p ON n.event_key = 'slopbot-scam-review:' || p.item_node_id
-    WHERE n.recipient_github_id = ${actor.githubId} AND n.kind = 'slopbot_scam_review' AND n.action_path = ${path}`)
-  const open = reviews.some((review) => audienceHolds("SlopbotScamReview", { ...noAudience, moderator: true, scamPenaltyStands: review.stands === 1, author: review.author === 1 }))
+    WHERE n.recipient_github_id = ${actor.githubId} AND n.kind = 'slopbot_scam_review' AND n.action_path = ${path}
+      AND p.category = 'scam' AND p.moderator_review = 1`)
+  const open = reviews.some((review) => shownTo(actor.githubId, true, { ...notDispute, kind: "slopbot_scam_review", ...review, case_appellant: null }))
   if (!open) throw refused(refusals.notFound)
   return redirect(target)
 }
@@ -146,11 +147,11 @@ effect function appealReview() {
   if (!(try moderator(actor.githubId))) throw refused(refusals.notAuthorized)
   const encoded = (try requestPath()).slice(appealPrefix.length)
   const key = try Effect.try({ try: () => decodeURIComponent(encoded), catch: () => refused(refusals.invalidAppealKey) })
-  const appeal = try first(AppealJobRow, sql`SELECT a.job_json FROM slopbot_appeals a
+  const appeal = try first(AppealJobRow, sql`SELECT a.job_json, a.appellant_github_id FROM slopbot_appeals a
     JOIN notifications n ON n.event_key = 'slopbot-' || a.appeal_key
     WHERE a.appeal_key = ${key} AND a.escalated_at IS NOT NULL AND n.recipient_github_id = ${actor.githubId}
-      AND n.kind = 'slopbot_appeal_review' AND a.appellant_github_id <> ${actor.githubId}`)
-  if (appeal === undefined) throw refused(refusals.notFound)
+      AND n.kind = 'slopbot_appeal_review'`)
+  if (appeal === undefined || !shownTo(actor.githubId, true, { ...notDispute, kind: "slopbot_appeal_review", penalty_author: null, penalty_reversed: 0, case_appellant: appeal.appellant_github_id })) throw refused(refusals.notFound)
   return redirect(try appealTarget(appeal.job_json))
 }
 

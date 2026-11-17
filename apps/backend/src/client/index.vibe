@@ -1,3 +1,22 @@
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import type { AnyRoute } from "@repo/platform/route"
+import { api as accounts } from "./accounts.vibe"
+import { api as admin } from "./admin.vibe"
+import { api as binding } from "./bindingConsent.vibe"
+import { api as email } from "./email.vibe"
+import { api as projectSetup } from "./projectSetup.vibe"
+import { api as projects } from "./projects.vibe"
+import { api as referrals } from "./referrals.vibe"
+import { api as wallets } from "./wallets.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = []
+export * from "./accounts.vibe"
+export * from "./admin.vibe"
+export * from "./bindingConsent.vibe"
+export * from "./email.vibe"
+export * from "./identity.vibe"
+export * from "./projectSetup.vibe"
+export * from "./projects.vibe"
+export * from "./referrals.vibe"
+export * from "./wallets.vibe"
+
+export const api: ReadonlyArray<AnyRoute> = [...accounts, ...email, ...projectSetup, ...projects, ...admin, ...wallets, ...binding, ...referrals]

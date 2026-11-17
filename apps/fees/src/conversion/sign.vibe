@@ -11,7 +11,7 @@ effect function failed(session: Session, detail: string) {
   return recorded.Failed
 }
 
-function sendOf(signed: Signed, reserved: Reservable, tx: number, approved: number, minimumOutput: number): SignedSend {
+function sendOf(signed: Signed, reserved: Reservable, tx: number, minimumOutput: number): SignedSend {
   return {
     kind: signed.kind,
     tx,
@@ -23,8 +23,6 @@ function sendOf(signed: Signed, reserved: Reservable, tx: number, approved: numb
     minimumOutput,
     deadline: signed.deadline,
     blockhashSlot: signed.blockhashSlot,
-    router: signed.router,
-    approvedAmount: approved,
   }
 }
 
@@ -42,13 +40,11 @@ export effect function signIntent(session: Session, token: string, quote: QuoteF
   const signed = chain.sign(intent, reserved) catch effect (error) => { return error }
   if (signed instanceof ChainUnavailable || signed instanceof SendRefused) return try failed(session, detailOf(signed))
   if (signed.rawTx.length > rawTxLimit) return try failed(session, "signed transaction exceeds the storage limit")
-  const approved = safeNumber(signed.approvedAmount)
-  if (approved === undefined) return try failed(session, "sign: the approved amount exceeds the journal's exact range")
   const minimumOutput = quoteNumber(signed.minimumOutput)
   if (minimumOutput === undefined) return try failed(session, "sign: the signed minimum output is negative")
   if (!(try renewed(session, true))) return recorded.Quoted
   const id = pendingIntent(session.state, session.runId).id
-  const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), approved, minimumOutput) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
+  const journaled = step(session, { type: "sign", runId: session.runId, send: sendOf(signed, reserved, session.names.number("tx", signed.txId), minimumOutput) }, { txId: signed.txId, rawTx: signed.rawTx, expiresAt: signed.expiresAt }) catch effect (error) => {
     if (error._tag === "JournalRefused") return error.issue
     throw error
   }

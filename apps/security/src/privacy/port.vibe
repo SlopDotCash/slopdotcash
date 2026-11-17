@@ -1,4 +1,4 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
 import { type Statement, sql } from "@repo/platform/d1"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"

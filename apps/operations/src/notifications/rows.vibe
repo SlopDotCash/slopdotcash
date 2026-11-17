@@ -1,9 +1,9 @@
-// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A notice's destination version and consents are the recipient's current email enrollment"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/notifications.md, "A claimed attempt has one owner; a stale claim becomes ambiguous"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
 import type { Enrollment } from "../../gen/backend__email.ts"
-import { type DeliveryState, type Inbox, type Notice, type NotifyConfig, type Template, decodeState, enrolledPreference } from "../../gen/operations__notifications.effect.vibe"
+import { type DeliveryState, type Inbox, type Notice, type NotifyConfig, type Template, categoryOf, decodeState } from "../../gen/operations__notifications.effect.vibe"
 
 module verified {
   import { isStoredKind as storable, kindOfStored as kindOf, storedKind as stored } from "./kinds.ts"
@@ -48,7 +48,6 @@ export schema EventRow {
   readonly delivery_id: string
   readonly state: string
   readonly evidence_reference: string | null
-  readonly destination_digest: string | null
 }
 
 export schema ConsentRow {
@@ -100,7 +99,7 @@ export interface Projection {
   readonly references: ReadonlyArray<string>
 }
 
-const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "NotQueued">>> = {
+export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "NotQueued" | "Cancelled">>> = {
   queued: "Queued",
   retrying: "Retrying",
   sending: "Sending",
@@ -122,6 +121,7 @@ export const storedStates = {
   Suppressed: "suppressed",
   Exhausted: "exhausted",
   Ambiguous: "ambiguous",
+  Cancelled: "suppressed",
 } as const satisfies Record<Exclude<DeliveryState, "NotQueued">, string>
 
 const templates: Readonly<Record<string, Template>> = {
@@ -186,8 +186,10 @@ effect function kindOf(row: NoticeRow) {
   return kindOfStored(row.kind)
 }
 
+const notQueued: DeliveryState = "NotQueued"
+
 effect function stateOf(row: NoticeRow) {
-  if (row.state === null) return "NotQueued" satisfies DeliveryState
+  if (row.state === null) return notQueued
   const state = deliveryStates[row.state]
   if (state === undefined) throw new RowMismatch({ text: "notification outbox", issue: `unknown delivery state ${row.state}` })
   return state
@@ -214,7 +216,7 @@ export effect function loaded([notices, events, consents]: ReadonlyArray<Rows>) 
 export effect function projected(rows: Loaded, release: Release, now: number) {
   const recipients = rows.consents.map((row) => row.github_id)
   const versions: string[] = []
-  const prefs = rows.consents.map((row, index) => enrolledPreference(index + 1, enrollment(index + 1, row, versions)))
+  const enrollments = rows.consents.map((row, index) => enrollment(index + 1, row, versions))
   const pilots = release.routes.map((route) => route.pilot?.digest)
   const config = configured(release, recipients, pilots)
   const references: string[] = []
@@ -231,15 +233,17 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
     const escalationOf = positionOf(row.escalation_of)
     const createdAt = millisOf(row.created_at)
     const state = try stateOf(row)
+    const kind = try kindOf(row)
     notices.push({
       id: index + 1,
       key: escalationOf > 0 ? 1000 + escalationOf : interned(keys, row.event_key),
-      kind: try kindOf(row),
+      kind,
       recipient: interned(recipients, row.recipient_github_id),
       createdAt,
       readAt: moment(row.read_at),
       acknowledgedAt: moment(row.acknowledged_at),
       channel: row.channel === "security" ? "SecurityOutbox" : row.channel === "activity" ? "ActivityOutbox" : "NoEmail",
+      category: categoryOf(kind),
       template: templates[row.template_version ?? "activity-inbox-v1"] ?? "ActivityTemplate",
       essential: row.essential === 1,
       state,
@@ -249,7 +253,6 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
       prepared: state === "Sending" && row.destination_digest !== null,
       boundVersion: row.destination_version === null ? 0 : interned(versions, row.destination_version),
       digest: digestNumber(row.destination_digest, versions, pilots),
-      everBound: row.destination_digest !== null || events.some((event) => event.destination_digest !== null),
       providerSuppressed: state === "Suppressed" && events.some((event) => event.state === "suppressed" && event.evidence_reference !== null),
       escalationOf,
       escalated: row.channel === "security" && rows.notices.some((other) => other.escalation_of !== null && other.escalation_of === row.outbox_id),
@@ -258,9 +261,8 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
   const inbox = try decodeState({
     clock: now,
     notices,
-    prefs,
+    enrollments,
     evidence: references.map((_, index) => index + 1),
-    nextVersion: versions.length + 1,
     config,
     configs: 0,
   } satisfies Inbox)

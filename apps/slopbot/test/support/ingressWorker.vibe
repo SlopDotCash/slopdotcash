@@ -11,8 +11,7 @@ import { Enforcement, Restriction } from "@repo/ports/security"
 import { ingressRoutes } from "../../src/ingress/routes.vibe"
 import { webhookSettings } from "../../src/ingress/webhook.vibe"
 import { type Job, JobQueue, QueueUnavailable, jobQueue } from "../../src/jobs/job.vibe"
-import type { JobBatch } from "../../src/jobs/message.ts"
-import { type Handled, ReviewBusy, consumer } from "../../src/jobs/retry.vibe"
+import { type Handled, ReviewBusy, settle } from "../../src/jobs/retry.vibe"
 
 export interface Env {
   readonly SLOPBOT_DB: D1Database
@@ -76,6 +75,8 @@ function portsOver(text: string) {
       Layer.succeed(Restrictions, {
         account: () => effect { return { banned: false } },
         project: (projectId) => effect { return { restricted: (byId(projectId)?.restriction ?? "Clear") !== "Clear" } },
+        fence: () => effect { return sql`1` },
+        unbanned: () => effect { return sql`1` },
       }),
       Layer.succeed(Enforcement, {
         project: (projectId) => effect { return { restriction: byId(projectId)?.restriction ?? "Clear", enforcementGeneration: 0, clearanceGeneration: "0" } },
@@ -122,11 +123,4 @@ function recorded(queue: string) {
   }
 }
 
-const app = worker({ services, routes: ingressRoutes })
-const jobs = consumer(services, recorded("slopbot-jobs"))
-const deadLetters = consumer(services, recorded("slopbot-jobs-dlq"))
-
-export default {
-  fetch: app.fetch,
-  queue: (batch: JobBatch, env: Env) => batch.queue === "slopbot-jobs-dlq" ? deadLetters(batch, env) : jobs(batch, env),
-}
+export default worker({ services, routes: ingressRoutes, queue: (message, queue) => settle(message, recorded(queue)) })

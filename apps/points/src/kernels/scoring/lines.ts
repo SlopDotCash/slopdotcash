@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/points/authorship.md, "Primary authorship takes precedence over retained-copy and PR-opener fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"
+// spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"
 import { type ActorKind, type CommitLines, commitWeight, eligibleKind } from "../../../gen/points__authorship.ts";
 
 export interface CommitActor { id: string; kind: string }

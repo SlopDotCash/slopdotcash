@@ -23,7 +23,7 @@ service Http {
   ask(path: string, init?: Ask): Answer!!
 }
 
-const shownHeaders = ["cache-control", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "vary"]
+const shownHeaders = ["cache-control", "access-control-allow-origin", "access-control-allow-methods", "access-control-allow-headers", "vary", "set-cookie"]
 
 const signer = {
   seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
@@ -47,7 +47,7 @@ const Started = Layer.effect(Http, effect {
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "http" }))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
-    vars: { SERVICE_KEYS: Base64.encode(bytes(signer.publicKey)) },
+    vars: { SERVICE_KEYS: Base64.encode(bytes(signer.publicKey)), SLOP_ENVIRONMENT: "staging" },
     services: {
       UPSTREAM: (request) => {
         upstream.push(`${request.method} ${request.url} ${request.headers.get("authorization") ?? ""}`)
@@ -100,6 +100,11 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       closed: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: write, body: "{}" }),
       closedWithoutJson: try http.ask("/api/v1/fixture/session/close", { method: "POST", headers: { ...signedIn, origin: site } }),
       disputeChanged: try note("hello", { ...write, "x-slop-expected-github-id": "8" }, "/api/v1/fixture/disputes"),
+      disputeMalformedActor: try note("hello", { ...write, "x-slop-expected-github-id": "08" }, "/api/v1/fixture/disputes"),
+      disputeEmptyActor: try note("hello", { ...write, "x-slop-expected-github-id": "" }, "/api/v1/fixture/disputes"),
+      disputeAnonymous: try note("hello", { origin: site, "content-type": "application/json" }, "/api/v1/fixture/disputes"),
+      disputeExpired: try note("hello", { ...write, cookie: "__Host-slop_points=expired" }, "/api/v1/fixture/disputes"),
+      expired: try http.ask("/api/v1/fixture/me", { headers: { cookie: "__Host-slop_points=expired" } }),
       stale: try note("stale"),
       rejected: try note("rejected"),
       github: try note("github"),
@@ -126,6 +131,11 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       closed: { status: 200, headers: { "cache-control": "no-store" }, body: { closed: "7" } },
       closedWithoutJson: refusal(403, "origin_forbidden", "Requests must come from this site"),
       disputeChanged: refusal(409, "account_changed", "The selected GitHub account changed."),
+      disputeMalformedActor: refusal(409, "account_changed", "The selected GitHub account changed."),
+      disputeEmptyActor: { status: 200, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "7" } },
+      disputeAnonymous: refusal(401, "not_signed_in", "Sign in to continue."),
+      disputeExpired: refusal(401, "session_expired", "Your session expired. Sign in again.", { "cache-control": "no-store", "set-cookie": "__Host-slop_points=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax" }),
+      expired: refusal(401, "unauthorized", "Sign in with GitHub"),
       stale: refusal(409, "changed_concurrently", "This record changed while saving. Reload and try again."),
       rejected: refusal(409, "note_refused", "This request is not allowed in the current state"),
       github: refusal(503, "github_unavailable", "GitHub could not be checked. Retry."),
@@ -155,6 +165,10 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       foreign: try wallet("https://evil.test", "Bearer fixture"),
       noToken: try wallet("https://slop.cash"),
       wrongToken: try wallet("https://slop.cash", "Bearer forged"),
+      tierListed: try http.ask("/api/v1/fixture/tiered", { headers: { origin: "https://staging.slop.cash" } }),
+      otherTier: try http.ask("/api/v1/fixture/tiered", { headers: { origin: "https://slop.cash" } }),
+      tierPreflight: try http.ask("/api/v1/fixture/tiered", { method: "OPTIONS", headers: { origin: "https://staging.slop.cash", "access-control-request-method": "GET" } }),
+      otherTierPreflight: try http.ask("/api/v1/fixture/tiered", { method: "OPTIONS", headers: { origin: "https://slop.cash", "access-control-request-method": "GET" } }),
     }
     try Effect.try(() => assert.deepStrictEqual(answers, {
       within: { status: 200, headers: { "cache-control": "public, max-age=60, must-revalidate" }, body: { id: "t1", bytes: 8 } },
@@ -180,6 +194,20 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       foreign: refusal(403, "origin_not_allowed", "This origin may not call this route"),
       noToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
       wrongToken: refusal(401, "unauthorized", "Authentication failed", { "cache-control": "no-store", "access-control-allow-origin": "https://slop.cash", vary: "Origin" }),
+      tierListed: { status: 200, headers: { "cache-control": "no-store", "access-control-allow-origin": "https://staging.slop.cash", vary: "Origin" }, body: { id: "tiered", q: "" } },
+      otherTier: refusal(403, "origin_not_allowed", "This origin may not call this route"),
+      tierPreflight: {
+        status: 204,
+        headers: {
+          "cache-control": "no-store",
+          "access-control-allow-origin": "https://staging.slop.cash",
+          "access-control-allow-methods": "GET",
+          "access-control-allow-headers": "",
+          vary: "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        },
+        body: "",
+      },
+      otherTierPreflight: refusal(403, "origin_not_allowed", "This origin may not call this route"),
     }))
   })
 
@@ -195,6 +223,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       notObject: try strict("[]"),
       extraKey: try strict(JSON.stringify({ text: "a", x: 1 })),
       missingKey: try strict("{}"),
+      wrongType: try strict(JSON.stringify({ text: 1 })),
     }
     try Effect.try(() => assert.deepStrictEqual(answers, {
       accepted: { status: 200, headers: { "cache-control": "no-store" }, body: { saved: "hello", by: "strict" } },
@@ -205,6 +234,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       notObject: refusal(400, "invalid_request", "Request body must be a JSON object"),
       extraKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
       missingKey: refusal(400, "invalid_request", "Request body has unexpected fields"),
+      wrongType: refusal(400, "strict_invalid", "Notes must be text"),
     }))
   })
 

@@ -1,6 +1,6 @@
 // spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/routing.md, "Live claims, recent completions and unresolved closes occupy the author's three slots"
 import { first, sql } from "@repo/platform/d1"
-import { GitHub, GitHubMalformed, GitHubRefused, NotFound } from "@repo/platform/github"
+import { GitHub } from "@repo/platform/github"
 import type { ReadFailure } from "@repo/ports/backend"
 import type { Exemption, MergeHistory } from "../../gen/slopbot__routing.effect.vibe"
 import { type Account, absentOn404 } from "../context/load.vibe"
@@ -51,11 +51,9 @@ export effect function exemptionOf(repositoryId: number, owner: Account, author:
 
 export effect function mergeHistory(repository: SearchedRepository, author: Author) {
   const query = `repo:${repository.full_name} author:${author.login} is:pr is:merged`
-  const found = (try GitHub).json(`/search/issues?per_page=1&q=${encodeURIComponent(query)}`, MergedSearch) catch effect (error) => match (error) {
-    when NotFound: undefined;
-    when GitHubRefused: undefined;
-    when GitHubMalformed: undefined;
-    default: throw error;
+  const found = (try GitHub).json(`/search/issues?per_page=1&q=${encodeURIComponent(query)}`, MergedSearch) catch effect (error) => {
+    if (error._tag === "NotFound" || (error._tag === "GitHubRefused" && error.status === 422)) return undefined
+    throw error
   }
   if (found === undefined || !Number.isSafeInteger(found.total_count) || found.total_count < 0) return undefined
   if (found.total_count > 0 && found.items.length === 0) return undefined

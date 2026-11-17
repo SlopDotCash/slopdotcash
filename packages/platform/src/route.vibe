@@ -1,4 +1,5 @@
 // spec/frontend/navigation.md, "Every existing product route is one Page and only private destinations need an account"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import type { Tier } from "./config.vibe"
 
 export type Method = "GET" | "POST" | "PUT" | "DELETE"
 
@@ -24,7 +25,12 @@ export interface Refusal {
   readonly status: number
   readonly code: string
   readonly message: string
+  readonly headers?: Readonly<Record<string, string>>
 }
+
+export type TierOrigins = Readonly<Record<Tier, ReadonlyArray<string>>>
+
+export type Cors = ReadonlyArray<string> | TierOrigins
 
 export interface Route<B, A, X extends Access = Access> {
   readonly method: Method
@@ -36,9 +42,12 @@ export interface Route<B, A, X extends Access = Access> {
   readonly rejected: string
   readonly cache: Cache
   readonly status?: 200 | 201 | 202
-  readonly cors?: ReadonlyArray<string>
+  readonly cors?: Cors
   readonly corsHeaders?: ReadonlyArray<string>
+  readonly invalid?: Refusal
   readonly actorMismatch?: Refusal
+  readonly unauthenticated?: Refusal
+  readonly sessionExpired?: Refusal
 }
 
 export type AnyRoute = Route<unknown, unknown, Access>

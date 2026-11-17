@@ -4,7 +4,6 @@ import { Wallets } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { heldPayouts, indexPaymentEvent } from "../payments/ledger.vibe"
 import type { EventReference, PaymentDeployment } from "../payments/terms.vibe"
-import { WalletHistory } from "../payments/wallets.vibe"
 import type { RegisteredDeployment } from "../vault/deployments.vibe"
 import { PaymentRpc } from "../vault/rpc.vibe"
 
@@ -48,12 +47,12 @@ export function paymentDeploymentOf(deployment: RegisteredDeployment, rpc: Payme
     rpc: urls,
   }
   return deployment.family === "evm"
-    ? { ...common, family: "evm", chain: deployment.chain, chainId: deployment.chainId }
+    ? { ...common, family: "evm", chain: deployment.chain, chainId: deployment.chainId, review: deployment }
     : { ...common, family: "solana", chain: "solana", program: deployment.programId, project: deployment.projectPda, mint: deployment.asset, genesis: rpc.genesis[deployment.network] ?? "" }
 }
 
 export const PaymentIndexerLive = Layer.effect(PaymentIndexer, effect {
-  const services = try Effect.context<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | Notices | WalletHistory | Wallets>()
+  const services = try Effect.context<D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | Notices | Wallets>()
   const rpc = try PaymentRpc
   effect function target(deployment: RegisteredDeployment) {
     const payment = paymentDeploymentOf(deployment, rpc)

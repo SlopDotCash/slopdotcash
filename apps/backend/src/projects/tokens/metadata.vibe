@@ -1,11 +1,12 @@
-// spec/backend/projects.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request, and an unchanged asset keeps its stored reading"
+// spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"
 import { isoNow } from "@repo/platform/clock"
 import { type Address, EvmRpc, type Hex, checksum, evmRpc } from "@repo/platform/chain/evm"
 import { type RpcFailure } from "@repo/platform/chain/rpc"
 import { SolanaRpc, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, address as solanaAddress, decodeMint, solanaRpc } from "@repo/platform/chain/solana"
 import { Refused } from "@repo/platform/http"
-import type { AssetReading } from "../../../gen/backend__projects.effect.vibe"
+import { type AssetReading, assetVerified, maxRewardAssetDecimals } from "../../../gen/backend__rewardAsset.effect.vibe"
 import { putProjectsById } from "../../client/refusals.vibe"
+import { networkKeys } from "../store/codec.vibe"
 
 export type NetworkName = "base" | "ethereum" | "robinhood" | "solana"
 
@@ -206,9 +207,13 @@ function choiceOf(fields: Readonly<Record<string, unknown>> | undefined) {
   return { network, kind, address: canonical, symbol } as const
 }
 
-export interface AssetVerdict {
-  readonly asset: VerifiedAsset
-  readonly reading: AssetReading
+const readAsset = 1
+
+function verdict(asset: VerifiedAsset) {
+  const network = networkKeys[asset.network] ?? 0
+  const reading: AssetReading = { network, asset: readAsset, decimals: asset.decimals, result: "ChainReadDone" }
+  if (!assetVerified(network, readAsset, reading)) return invalid(`The reward token reports more than ${maxRewardAssetDecimals} decimals`)
+  return asset
 }
 
 export effect function verifiedAsset(submitted: unknown, prior: (StoredAsset & { readonly [key: string]: unknown }) | undefined) {
@@ -217,14 +222,16 @@ export effect function verifiedAsset(submitted: unknown, prior: (StoredAsset & {
   if (choice instanceof Refused) throw choice
   const definition = rewardNetworks[choice.network]
   const fixed = { chainId: definition.chainId, cluster: definition.cluster }
-  if (prior !== undefined && prior.network === choice.network && prior.kind === choice.kind && prior.address === choice.address) return { asset: prior as unknown as VerifiedAsset, reading: { asset: 0, decimals: prior.decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+  if (prior !== undefined && prior.network === choice.network && prior.kind === choice.kind && prior.address === choice.address) return { ...prior, network: choice.network, symbol: typeof prior.symbol === "string" ? prior.symbol : choice.symbol }
   const verifiedAt = try isoNow()
   if (choice.kind !== "token") {
     const decimals = choice.kind === "native" ? definition.native.decimals : definition.stablecoin.decimals
-    return { asset: { ...choice, decimals, ...fixed, verifiedAt }, reading: { asset: 0, decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+    return { ...choice, decimals, ...fixed, verifiedAt } satisfies VerifiedAsset
   }
   const read = try readToken(choice.network, choice.address)
   if (read.kind === "unreachable") throw new Refused({ status: putProjectsById.rewardAssetUnverifiedNoStore.status, code: putProjectsById.rewardAssetUnverifiedNoStore.error, message: `${definition.name} could not be reached to verify the reward token. Try again.` })
   if (read.kind === "refused") throw new Refused({ status: putProjectsById.rewardAssetUnverified.status, code: putProjectsById.rewardAssetUnverified.error, message: `The reward token could not be verified on ${definition.name}: ${read.reason}` })
-  return { asset: { ...choice, symbol: read.symbol ?? choice.symbol, decimals: read.decimals, ...fixed, verifiedAt }, reading: { asset: 0, decimals: read.decimals, result: "ChainReadDone" } } satisfies AssetVerdict
+  const checked = verdict({ ...choice, symbol: read.symbol ?? choice.symbol, decimals: read.decimals, ...fixed, verifiedAt })
+  if (checked instanceof Refused) throw checked
+  return checked
 }

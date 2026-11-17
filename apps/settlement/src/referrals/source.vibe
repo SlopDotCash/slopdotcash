@@ -2,22 +2,10 @@
 import { first, rows, sql } from "@repo/platform/d1"
 import { sha256Hex } from "@repo/platform/crypto"
 import { Roles } from "@repo/platform/roles"
-import { type ReadFailure, Restrictions } from "@repo/ports/backend"
+import { ReferralAttributions, Restrictions } from "@repo/ports/backend"
 import { NETWORKS, isNetworkKey } from "../kernels/networks.ts"
 import type { Period } from "../kernels/calendar.ts"
 import { periodBounds } from "./periods.ts"
-
-export schema ReferralAttribution {
-  readonly projectId: string
-  readonly applicantGithubId: string
-  readonly stewardGithubId: string
-  readonly referrerGithubId: string
-  readonly referrerGithubLogin: string
-}
-
-export service ReferralAttributions {
-  referred(): ReadonlyArray<ReferralAttribution>!ReadFailure
-}
 
 export interface SourceRow {
   readonly obligationId: string

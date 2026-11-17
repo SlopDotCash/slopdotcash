@@ -1,4 +1,4 @@
-// spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+// spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"
 import { D1, type Statement, first, rows as selected, sql } from "@repo/platform/d1"
 import { sha256Hex, utf8 } from "@repo/platform/crypto"
 import { StorageFailure } from "@repo/platform/r2"

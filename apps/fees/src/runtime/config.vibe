@@ -1,9 +1,9 @@
-// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"
+// spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/runtime.md, "Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address"
 import { millisOf } from "@repo/platform/clock"
 import { ConfigInvalid, tierOf } from "@repo/platform/config"
 import { positiveBudgetFits } from "@repo/settlement/kernels/budget"
 import type { Environment, Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts"
-import { apply, initial, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
+import { apply, initial, readinessEntryApplies, readyFor, walletOf } from "../../gen/fees__runtime.effect.vibe"
 import { type FeeSecrets, type FeeVars, type NetworkDefinition, type SecretName, definitions, evmNetworks, expectedSecrets, isTokenAddress, networkNamed, networkOrder, secretNames } from "./networks.vibe"
 import { type ReadinessEvent, type ReadinessSettings, decodeReadiness, sameReadiness } from "./readiness.vibe"
 import { jupiter, kyberswap } from "./pins.ts"
@@ -336,7 +336,7 @@ function specEvent(held: Held, event: RuntimeEvent): { readonly event: Event; re
       return { event: { type: "publish", config: workerConfig(event.config, event.source, wallets) }, wallets }
     }
     case "verifyReadiness":
-      return { event: { type: "verifyReadiness", network: event.network, listedWallet: walletId(held.wallets, event.wallet) }, wallets: held.wallets }
+      return { event: { type: "verifyReadiness", network: event.network }, wallets: held.wallets }
     case "chooseEnvironment":
       return { event: { type: "chooseEnvironment", environment: event.environment }, wallets: held.wallets }
     case "setReleaseVariable":
@@ -348,7 +348,14 @@ function specEvent(held: Held, event: RuntimeEvent): { readonly event: Event; re
   }
 }
 
+export function publishedWallet(held: Held, network: Network) {
+  return held.wallets[walletOf(held.runtime, network) - 1]
+}
+
+export error ReadinessUnbound { network: Network }
+
 export effect function send(held: Held, event: RuntimeEvent, by: Sender) {
+  if (event.type === "verifyReadiness" && !readinessEntryApplies(held.runtime, event.network, walletId(held.wallets, event.wallet))) throw new ReadinessUnbound({ network: event.network })
   const next = specEvent(held, event)
   const runtime = try apply(held.runtime, next.event, by)
   return { runtime, wallets: next.wallets } satisfies Held

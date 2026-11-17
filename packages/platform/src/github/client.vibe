@@ -42,6 +42,7 @@ export interface Call {
   readonly json?: unknown
   readonly form?: Readonly<Record<string, string>>
   readonly statusOnly?: boolean
+  readonly followRenamed?: false
 }
 
 export interface Answer {
@@ -53,6 +54,7 @@ export interface Answer {
 export interface ReadOptions {
   readonly accept?: string
   readonly limitBytes?: number
+  readonly followRenamed?: false
 }
 
 export interface PageOptions {
@@ -142,7 +144,7 @@ effect function sent(exchange: Exchange, call: Call, url: string) {
 effect function followed(exchange: Exchange, call: Call) {
   const response = try sent(exchange, call, call.url)
   const location = response.headers.location
-  if (call.method !== "GET" || response.status !== 301 || location === undefined) return response
+  if (call.method !== "GET" || call.followRenamed === false || response.status !== 301 || location === undefined) return response
   const moved = URL.parse(location, call.url)
   if (moved === null || moved.origin !== originOf(exchange.authority) || !movedRepository.test(moved.pathname)) return response
   try drained(response, pathOf(call.url))
@@ -261,7 +263,7 @@ export function githubWith(settings: Settings): Layer.Layer<GitHub, never, HttpC
     return {
       json: (path, schema, options) => effect {
         const url = try located(path)
-        const answer = try read({ method: "GET", url, accept: options?.accept ?? githubJson }, options?.limitBytes ?? defaultLimitBytes)
+        const answer = try read({ method: "GET", url, accept: options?.accept ?? githubJson, followRenamed: options?.followRenamed }, options?.limitBytes ?? defaultLimitBytes)
         return try decoded(schema, try parsed(answer.bytes, path), path)
       },
       pages: (path, itemSchema, options) => effect {

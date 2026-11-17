@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
 
 export type ReadFailure = D1Error | RowMismatch
@@ -69,6 +69,17 @@ export interface RegistryPin {
   readonly repositoryKeys: ReadonlyArray<string>
 }
 
+export schema RegistryManifest {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifest: string
+}
+
+export service RegistryManifests {
+  current(): ReadonlyArray<RegistryManifest>!ReadFailure
+  project(projectId: string): (RegistryManifest | undefined)!ReadFailure
+}
+
 export service Registry {
   project(projectId: string): (ProjectView | undefined)!ReadFailure
   byRepository(repositoryId: string): (ProjectView | undefined)!ReadFailure
@@ -95,6 +106,8 @@ export schema ProjectClosure {
 export service Restrictions {
   account(githubId: string): AccountStanding!ReadFailure
   project(projectId: string): ProjectClosure!ReadFailure
+  fence(account: { readonly githubId: string }): Statement!!
+  unbanned(githubId: string): Statement!!
 }
 
 export schema EffectiveWallet {
@@ -103,8 +116,21 @@ export schema EffectiveWallet {
   readonly digest: string
 }
 
+export interface WalletOwner {
+  readonly githubId: string
+  readonly network: Network
+}
+
+export interface WalletPin extends WalletOwner {
+  readonly claimId: string
+  readonly digest: string
+}
+
 export service Wallets {
-  effective(owner: { readonly githubId: string; readonly network: Network }): (EffectiveWallet | undefined)!ReadFailure
+  effective(owner: WalletOwner): (EffectiveWallet | undefined)!ReadFailure
+  payable(owner: WalletOwner): (EffectiveWallet | undefined)!ReadFailure
+  authorized(owner: WalletOwner): ReadonlyArray<EffectiveWallet>!ReadFailure
+  fence(pin: WalletPin): Statement!!
 }
 
 export schema ConsentedDestination {
@@ -112,6 +138,65 @@ export schema ConsentedDestination {
   readonly version: string
 }
 
+export schema EnrollmentRead {
+  readonly stored: boolean
+  readonly activity: boolean
+  readonly security: boolean
+  readonly preferenceVersion?: string
+  readonly revision?: number
+  readonly destinationVersion?: string
+  readonly verifiedAt?: string
+}
+
 export service EmailConsent {
   destination(consent: { readonly githubId: string; readonly category: MailCategory }): (ConsentedDestination | undefined)!ReadFailure
+  enrollment(account: { readonly githubId: string }): EnrollmentRead!ReadFailure
+}
+
+export schema RegisteredDestination {
+  readonly address: string
+  readonly version: string
+  readonly verifiedAt: string
+}
+
+export schema PendingVerification {
+  readonly address: string
+  readonly delivery: "Queued" | "Sending" | "Sent" | "DeliveryUnknown"
+}
+
+export interface IssuedUnsubscribe {
+  readonly tokenHash: string
+  readonly version: string
+  readonly issuedAt: string
+}
+
+export interface VerificationRead {
+  readonly githubId: string
+  readonly verificationId: string
+  readonly tokenHash: string
+}
+
+export interface VerificationMark {
+  readonly githubId: string
+  readonly verificationId: string
+  readonly nextState: "Sending" | "Sent" | "DeliveryUnknown"
+}
+
+export service EmailEnrollment {
+  registered(githubId: string): (RegisteredDestination | undefined)!ReadFailure
+  unsubscribeIssued(issued: IssuedUnsubscribe): Statement!!
+  pendingVerification(read: VerificationRead): (PendingVerification | undefined)!ReadFailure
+  markVerification(mark: VerificationMark): boolean!ReadFailure
+}
+
+export schema ReferralAttribution {
+  readonly projectId: string
+  readonly applicantGithubId: string
+  readonly stewardGithubId: string
+  readonly referrerGithubId: string
+  readonly referrerGithubLogin: string
+}
+
+export service ReferralAttributions {
+  referred(): ReadonlyArray<ReferralAttribution>!ReadFailure
 }

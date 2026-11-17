@@ -1,13 +1,12 @@
 // spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/listing.md, "Funding never decides placement and placement never establishes funding"; spec/backend/projectComposition.md, "Collection and skills need an active, unrestricted, cleared project at the current revision"
 import { RowMismatch } from "@repo/platform/d1"
-import type { Restriction } from "@repo/ports/security"
 import { type PublicRead, publicRead } from "../../gen/backend__listing.effect.vibe"
 import { initial as unregistered } from "../../gen/backend__projects.effect.vibe"
 import { initial as unrestricted } from "../../gen/security__enforcement.effect.vibe"
 import type { PublicRestriction, RestrictionState } from "../client/projects.vibe"
-import { type Identity, githubIdKey, restrictionFor } from "../projectRegistry/claims.vibe"
-import { idOf, tierOf } from "../projects/store/codec.vibe"
-import { PublicSecurity, type RestrictionFacts, type VettingClearance } from "./security.vibe"
+import { identityOf, restrictionFor } from "../projectRegistry/claims.vibe"
+import { tierOf } from "../projects/store/codec.vibe"
+import { PublicSecurity, type Restriction, type RestrictionFacts, type VettingClearance } from "@repo/ports/security"
 
 schema ClaimedAuthority { repositoryId: string | number }
 schema ClaimedRepository { id: string; aliases?: ReadonlyArray<string>; githubId?: string }
@@ -41,13 +40,6 @@ function stateOf(restriction: Exclude<Restriction, "Clear">): RestrictionState {
   return restriction === "ServiceBan" || restriction === "ModeratorBan" ? "banned" : "quarantined"
 }
 
-function identityFrom(fields: IdentityFields): Identity {
-  const appended = fields.repositories.slice(1).flatMap((repository) => repository.githubId === undefined ? [] : [repository.githubId])
-  const githubIds = [...new Set([idOf(fields.authority.repositoryId), ...appended.map(idOf)].filter((id) => id > 0).map(String))]
-  const paths = fields.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((path) => path.toLowerCase()))
-  return { githubIds, keys: [...new Set([...paths, ...appended.map(githubIdKey)])] }
-}
-
 export effect function standing() {
   const restricted = [...try (try PublicSecurity).restrictions()].sort(byId)
   return { restricted, byProject: new Map(restricted.map((facts) => [facts.projectId, facts])) } satisfies Standing
@@ -57,7 +49,7 @@ export effect function sourceOf(project: StoredProject, current: Standing) {
   const own = current.byProject.get(project.id)
   if (own !== undefined || current.restricted.length === 0) return own
   const fields = decodeIdentity(project.manifest) catch effect (error) => { throw new RowMismatch({ text: `project ${project.id}`, issue: String(error) }) }
-  const shared = restrictionFor(identityFrom(fields), current.restricted)
+  const shared = restrictionFor(identityOf(fields), current.restricted)
   return shared === undefined ? undefined : current.byProject.get(shared.projectId)
 }
 

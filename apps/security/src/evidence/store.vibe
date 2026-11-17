@@ -1,4 +1,4 @@
-// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable"
+// spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
 import { D1, type Statement, decoded, first, rows as selected, sql } from "@repo/platform/d1"
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"

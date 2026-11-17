@@ -1,4 +1,11 @@
+// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { inboxRoutes } from "./inbox/routes.vibe"
+import { noticePorts } from "./notifications/statements.vibe"
 
-export const operations = area({ name: "operations", api, routes: Layer.empty, provides: Layer.empty })
+export { jobAdmission } from "./jobs/live.vibe"
+export { noticePorts }
+export { RunIncomplete, run, settled, type JobRun, type NetworkWork, type Recheck, type Summary } from "./jobs/runner.vibe"
+
+export const operations = area({ name: "operations", api, routes: inboxRoutes, provides: noticePorts })

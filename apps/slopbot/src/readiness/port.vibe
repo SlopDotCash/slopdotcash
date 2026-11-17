@@ -1,20 +1,36 @@
-// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"; spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+// spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
 import { isoAt } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
-import { type ReportingObservation, ReportingReadiness } from "@repo/ports/slopbot"
-import { observationOf } from "../../gen/slopbot__reportingReadiness.effect.vibe"
-import { storedObservation } from "./store.vibe"
-import { currentTarget } from "./targets.vibe"
+import { type ReportingObservation, ReportingReadiness, type ReportingReadinessRead, type ReportingTarget } from "@repo/ports/slopbot"
+import { type Stored, storedObservation } from "./store.vibe"
+import { type Target, currentTarget } from "./targets.vibe"
 
-const unregistered: ReportingObservation = { readiness: "ReadinessUnobserved", identityMatches: false, refreshFailed: false }
+function targetOf(target: Target): ReportingTarget {
+  return {
+    revision: target.revision,
+    repositoryKey: target.repositoryKey,
+    ...target.expectedRepositoryId > 0 ? { repositoryId: String(target.expectedRepositoryId) } : {},
+    ...target.expectedNodeId !== "" ? { repositoryNodeId: target.expectedNodeId } : {},
+  }
+}
+
+effect function observationOf(stored: Stored) {
+  return {
+    ...stored.repositoryId > 0 ? { repositoryId: String(stored.repositoryId) } : {},
+    ...stored.nodeId !== "" ? { repositoryNodeId: stored.nodeId } : {},
+    enabled: stored.enabled,
+    ...stored.verifiedAt > 0 ? { verifiedAt: try isoAt(stored.verifiedAt) } : {},
+    attemptedAt: try isoAt(stored.attemptedAt),
+    failure: stored.failure,
+  } satisfies ReportingObservation
+}
 
 effect function current(projectId: string) {
   const target = try currentTarget(projectId)
-  if (target === undefined) return unregistered
-  const row = try storedObservation(target)
-  const { readiness, identityMatches, refreshFailed } = observationOf(row, target.expected)
-  const observation: ReportingObservation = { readiness, identityMatches, refreshFailed }
-  return row.verifiedAt > 0 ? { ...observation, verifiedAt: try isoAt(row.verifiedAt) } : observation
+  if (target === undefined) return undefined
+  const stored = try storedObservation(target)
+  const read: ReportingReadinessRead = stored === undefined ? { target: targetOf(target) } : { target: targetOf(target), observation: try observationOf(stored) }
+  return read
 }
 
 export const ReportingReadinessLive = Layer.effect(ReportingReadiness, effect {

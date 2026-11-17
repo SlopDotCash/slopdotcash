@@ -1,15 +1,94 @@
-// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"
+// spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
 import type { ReadFailure } from "./backend.vibe"
 
-export schema Readiness = "ReadinessEnabled" | "ReadinessDisabled" | "ReadinessUnobserved"
+export schema ReadinessFailure = "NoFailure" | "ReadFailed" | "IdentityMismatch"
+
+export schema ReportingTarget {
+  readonly revision: number
+  readonly repositoryKey: string
+  readonly repositoryId?: string
+  readonly repositoryNodeId?: string
+}
 
 export schema ReportingObservation {
-  readonly readiness: Readiness
-  readonly identityMatches: boolean
-  readonly refreshFailed: boolean
+  readonly repositoryId?: string
+  readonly repositoryNodeId?: string
+  readonly enabled: boolean
   readonly verifiedAt?: string
+  readonly attemptedAt: string
+  readonly failure: ReadinessFailure
+}
+
+export schema ReportingReadinessRead {
+  readonly target: ReportingTarget
+  readonly observation?: ReportingObservation
 }
 
 export service ReportingReadiness {
-  current(projectId: string): ReportingObservation!ReadFailure
+  current(projectId: string): (ReportingReadinessRead | undefined)!ReadFailure
 }
+
+export schema EscalatedAppeal {
+  readonly appellantGithubId: string
+  readonly resolved: boolean
+}
+
+export schema ScamPenalty {
+  readonly authorGithubId: string
+  readonly reversed: boolean
+}
+
+export service SlopbotAudience {
+  escalatedAppeal(appealKey: string): (EscalatedAppeal | undefined)!ReadFailure
+  scamPenalty(itemNodeId: string): (ScamPenalty | undefined)!ReadFailure
+}
+
+export const historyOrigin = "https://slopbot.slop.cash"
+export const valueHistoryPath = "/v1/value-assessments"
+export const workUnitHistoryPath = "/v1/work-unit-assessments"
+export const penaltiesPath = "/v1/penalties"
+
+export const valueHistoryVersion = "slop-value-history:v1"
+export const workUnitHistoryVersion = "slop-work-unit-history:v1"
+export const penaltiesVersion = "slop-penalties:v1"
+export const penaltyHistoryVersion = "slop-penalty-history:v1"
+
+export const maximumPageRecords = 100
+
+const pageFields = {
+  schemaVersion: Schema.String,
+  repository: Schema.optionalKey(Schema.String),
+  repositoryNodeId: Schema.optionalKey(Schema.String),
+  pullRequestNumber: Schema.Number,
+  records: Schema.Array(Schema.Unknown),
+  nextAfter: Schema.NullOr(Schema.Number),
+}
+
+export const ValueHistoryPage = Schema.Struct(pageFields)
+export type ValueHistoryPage = typeof ValueHistoryPage.Type
+
+export const WorkUnitHistoryPage = Schema.Struct({ ...pageFields, throughSequence: Schema.Number, totalRecords: Schema.Number })
+export type WorkUnitHistoryPage = typeof WorkUnitHistoryPage.Type
+
+export schema WorkUnitHistoryRow {
+  readonly sequence: number
+  readonly record_digest: string
+  readonly record_json: string
+  readonly recorded_at: string
+}
+
+export schema PenaltyRow {
+  readonly item_node_id: string
+  readonly repository_id?: number
+  readonly author_github_id: string
+  readonly category: string
+  readonly table_version: string
+  readonly debit_thirds: number
+  readonly period: string
+  readonly recorded_at: string
+  readonly reversed_at?: string | null
+  readonly reversal?: string | null
+}
+
+export const PenaltyPage = Schema.Struct({ schemaVersion: Schema.String, project: Schema.String, records: Schema.Array(Schema.Unknown), nextAfter: Schema.NullOr(Schema.String) })
+export type PenaltyPage = typeof PenaltyPage.Type

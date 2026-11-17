@@ -25,7 +25,6 @@ import { type AttemptStatus, type PaymentRequest, ExecutorUnavailable, PaymentEx
 import { type Indexed, indexPaymentEvent, obligationState, reindexHeld } from "../src/payments/ledger.vibe"
 import { reconcileFailedAttempts, recoverUncertainAttempts } from "../src/payments/recovery.vibe"
 import { type EvmPaymentDeployment, EvidenceRefused, type PaymentDeployment, type SolanaPaymentDeployment, type VaultAsset, failureTag } from "../src/payments/terms.vibe"
-import { AuthorizedWallet, WalletHistory } from "../src/payments/wallets.vibe"
 import type { EvmDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, escrowStack, word } from "./support/evm/deploy.ts"
 import { type Deployment as SolanaEscrow, type Scenario, escrowDeployment, tokenProjects } from "./support/solana/escrow.ts"
@@ -102,16 +101,13 @@ const Started = Layer.effect(Journey, effect {
 const chains = { Base: "base", Ethereum: "ethereum", Robinhood: "robinhood", Solana: "solana" } as const satisfies Record<Network, string>
 
 const ports = Layer.mergeAll(
-  Layer.effect(WalletHistory, effect {
-    const db = try D1
-    return {
-      authorized: (owner) => provideService(rows(AuthorizedWallet, sql`SELECT w.id AS claimId, w.record_sha256 AS digest, w.wallet_address AS address FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
-    }
-  }),
   Layer.effect(Wallets, effect {
     const db = try D1
     return {
       effective: (owner) => provideService(first(EffectiveWallet, sql`SELECT wallet_address AS address, id AS claimId, record_sha256 AS digest FROM effective_payment_wallet_claims WHERE github_user_id = ${owner.githubId} AND chain = ${chains[owner.network]}`), D1, db),
+      payable: (owner) => provideService(first(EffectiveWallet, sql`SELECT e.wallet_address AS address, e.id AS claimId, e.record_sha256 AS digest FROM effective_payment_wallet_claims e WHERE e.github_user_id = ${owner.githubId} AND e.chain = ${chains[owner.network]} AND EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = e.id AND a.github_user_id = e.github_user_id)`), D1, db),
+      authorized: (owner) => provideService(rows(EffectiveWallet, sql`SELECT w.wallet_address AS address, w.id AS claimId, w.record_sha256 AS digest FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ${owner.githubId} AND w.chain = ${chains[owner.network]} ORDER BY a.rowid`), D1, db),
+      fence: (pin) => effect { return sql`EXISTS (SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${pin.claimId} AND w.record_sha256 = ${pin.digest} AND w.github_user_id = ${pin.githubId} AND w.chain = ${chains[pin.network]})` },
     }
   }),
   Layer.succeed(Notices, {
@@ -123,7 +119,7 @@ const ports = Layer.mergeAll(
     byRepository: () => effect { return undefined },
     byPath: () => effect { return undefined },
     active: () => effect { return [] },
-    fence: () => effect { return sql`SELECT 1` },
+    fence: () => effect { return sql`1` },
   }),
 )
 
@@ -146,7 +142,7 @@ function executorOf(script: Script) {
   })
 }
 
-type Shelled = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | WalletHistory | Wallets | Notices | Registry | PaymentExecutor
+type Shelled = D1 | Experimental.Crypto.Crypto | HttpClient.HttpClient | Wallets | Notices | Registry | PaymentExecutor
 
 effect function on<A, E>(db: D1Database, script: Script, program: A!E!Shelled) {
   provide Layer.mergeAll(Layer.provideMerge(ports, Layer.mergeAll(d1(db), webCrypto, outbound)), executorOf(script)) {

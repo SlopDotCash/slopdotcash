@@ -1,7 +1,8 @@
-// spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim"
-import { D1 } from "@repo/platform/d1"
-import { type Network, Wallets } from "@repo/ports/backend"
+// spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim"; spec/backend/wallets.md, "A single consumption wins and authorization rechecks the current claim"
+import { D1, sql } from "@repo/platform/d1"
+import { type Network, type WalletPin, Wallets } from "@repo/ports/backend"
 import { NotAState, effectiveClaim, payableClaim } from "../../gen/backend__wallets.effect.vibe"
+import { chainName } from "./records.vibe"
 import { type Loaded, claimAt, freshContext, loadPartition } from "./store.vibe"
 
 interface Owner {
@@ -32,6 +33,18 @@ export effect function payableWallet(owner: Owner) {
   return walletAt(loaded, payableClaim(loaded.state))
 }
 
+effect function authorizedWallets(owner: Owner) {
+  const loaded = try partitionOf(owner)
+  return loaded.state.authorizations.flatMap((authorization) => {
+    const wallet = walletAt(loaded, authorization.claim)
+    return wallet === undefined ? [] : [wallet]
+  })
+}
+
+function currentAuthorizedWallet(pin: WalletPin) {
+  return sql`EXISTS (SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${pin.claimId} AND w.record_sha256 = ${pin.digest} AND w.github_user_id = ${pin.githubId} AND w.chain = ${chainName(pin.network)} AND w.source = 'd1_registry')`
+}
+
 export const WalletsLive = Layer.effect(Wallets, effect {
   const db = try D1
   return {
@@ -40,5 +53,16 @@ export const WalletsLive = Layer.effect(Wallets, effect {
         return try effectiveWallet(owner)
       }
     },
+    payable: (owner) => effect {
+      provide D1 = db {
+        return try payableWallet(owner)
+      }
+    },
+    authorized: (owner) => effect {
+      provide D1 = db {
+        return try authorizedWallets(owner)
+      }
+    },
+    fence: (pin) => effect { return currentAuthorizedWallet(pin) },
   } satisfies Wallets.Shape
 })

@@ -1,4 +1,4 @@
-// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A cut below the proposed amount needs a public reason of 20 to 500 characters"
+// spec/settlement/monthly.md, "A month opens with no proposal, pool amount or obligation"; spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/monthly.md, "Obligations follow the frozen shares exactly, excluding only banned accounts"; spec/settlement/monthly.md, "Frozen amounts, recorded triggers and obligation progress never move backwards"; spec/settlement/monthly.md, "A change below the proposed amount is a public cut with a reason and one Inbox notice"; spec/settlement/monthly.md, "Turning the automatic default on never locks a cut with less than 24 hours of notice"
 import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { D1, type D1Error, RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
@@ -6,7 +6,8 @@ import { type Aggregate, type Decision, type Rows, load, update } from "@repo/pl
 import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import type { Exclusion, Relationship } from "../../gen/settlement__payoutExclusions.ts"
 import type { Share } from "../../gen/settlement__allocation.ts"
-import { type AllocationChange, type BanExclusion, type Cut, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, closeProposalWindow, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
+import type { Amount } from "../../gen/settlement__money.ts"
+import { type BanExclusion, type Change, type Cut, type CutNotice, type Eligibility, type Event, type Monthly, type MonthlyPhase, type Obligation, type ObligationState, type RevisionFact, NotAState, apply, canCloseProposalWindow, canObserveSettings, closeProposalWindow, observeSettings, decodeState, initial, noEligibility, noRevision, replaceShare } from "../../gen/settlement__monthly.effect.vibe"
 import { MAX_BASE_UNITS, fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { type Period, formatPeriod, parsePeriod, periodStartSeconds } from "../kernels/calendar.ts"
 import { ordinaryFeeBase, payoutFeeAccepted } from "../kernels/fees.ts"
@@ -90,6 +91,7 @@ export error AllocationExceedsCap { projectId: string; period: string }
 export error ProjectChanged { projectId: string; write: string }
 export error FundingStale { projectId: string; period: string }
 export error FundingFactsMissing { projectId: string; period: string }
+export error CutReasonMissing { projectId: string; period: string }
 export error MonthlyAwardAssetUnreviewed { network: string; asset: string }
 
 export interface MonthKey {
@@ -129,6 +131,7 @@ export interface Extra {
   readonly logins?: ReadonlyMap<number, string>
   readonly funding?: FundingFacts
   readonly alongside?: ReadonlyArray<Statement>
+  readonly reason?: string
 }
 
 const relationships: Readonly<Record<ManifestExclusion["relationship"], Relationship>> = {
@@ -261,7 +264,7 @@ export effect function awardSource(projectId: string, period: Period, actor: num
 
 export schema BaseRow { readonly manifest: string; readonly manifest_sha256: string; readonly source_snapshot_sha256: string; readonly cap_base: string; readonly recipient_count: number; readonly revision: number | null }
 export schema ProposedRow { readonly github_user_id: string; readonly github_login: string; readonly gross_base: string; readonly source_digest: string }
-export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly created_at: string }
+export schema ChangeRow { readonly sequence: number; readonly github_user_id: string; readonly gross_base: string; readonly actor_id: string; readonly created_at: string }
 export schema CutRow { readonly sequence: number; readonly github_user_id: string; readonly proposed_gross_base: string; readonly gross_base: string; readonly reason: string; readonly created_at: string }
 export schema SettingRow { readonly sequence: number; readonly automatic: number }
 export schema RunRow { readonly trigger: "owner" | "automatic"; readonly actor_id: string | null; readonly allocation_sequence: number; readonly network: string; readonly vault: string; readonly frozen_at: string; readonly obligations_created_at: string | null }
@@ -273,14 +276,14 @@ export interface MonthRows {
   readonly proposed: ReadonlyArray<ProposedRow>
   readonly changes: ReadonlyArray<ChangeRow>
   readonly cuts: ReadonlyArray<CutRow>
-  readonly setting: SettingRow | undefined
+  readonly settings: ReadonlyArray<SettingRow>
   readonly run: RunRow | undefined
   readonly obligations: ReadonlyArray<ObligationRow>
   readonly exclusions: ReadonlyArray<ExclusionRow>
 }
 
 export function unproposed(rows: MonthRows): MonthRows {
-  return { base: undefined, proposed: [], changes: [], cuts: [], setting: rows.setting, run: undefined, obligations: [], exclusions: [] }
+  return { base: undefined, proposed: [], changes: [], cuts: [], settings: rows.settings, run: undefined, obligations: [], exclusions: [] }
 }
 
 export interface Loaded {
@@ -298,9 +301,9 @@ export function monthReads(key: MonthKey): ReadonlyArray<Statement> {
   return [
     sql`SELECT manifest, manifest_sha256, source_snapshot_sha256, cap_base, recipient_count, (SELECT min(r.revision) FROM project_revisions r WHERE r.project_id = b.project_id AND r.manifest_sha256 = b.manifest_sha256) AS revision FROM monthly_reward_bases b WHERE ${scope}`,
     sql`SELECT github_user_id, github_login, gross_base, source_digest FROM monthly_reward_base_rows WHERE ${scope} ORDER BY rowid`,
-    sql`SELECT sequence, github_user_id, gross_base, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
+    sql`SELECT sequence, github_user_id, gross_base, actor_id, created_at FROM monthly_allocation_changes WHERE ${scope} ORDER BY sequence`,
     sql`SELECT sequence, github_user_id, proposed_gross_base, gross_base, reason, created_at FROM monthly_allocation_cut_reasons WHERE ${scope} ORDER BY sequence`,
-    sql`SELECT sequence, automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence DESC LIMIT 1`,
+    sql`SELECT sequence, automatic FROM monthly_payment_settings WHERE project_id = ${key.projectId} ORDER BY sequence`,
     sql`SELECT trigger, actor_id, allocation_sequence, network, vault, frozen_at, obligations_created_at FROM monthly_payment_runs WHERE ${scope}`,
     sql`SELECT o.github_user_id, o.gross_base, o.fee_base, o.source_digest, p.github_user_id AS held_actor, p.gross_base AS held_gross, p.fee_base AS held_fee, p.state AS held_state FROM monthly_payment_obligations o LEFT JOIN payment_obligations p ON p.network = o.network AND p.vault = o.vault AND p.source_digest = o.source_digest WHERE o.project_id = ${key.projectId} AND o.period = ${formatPeriod(key.period)} ORDER BY o.rowid`,
     sql`SELECT x.github_user_id, (SELECT b.rowid FROM project_maintainer_bans b WHERE b.enforcement_id = x.enforcement_id AND b.github_id = x.github_user_id) AS ban FROM monthly_payment_exclusions x WHERE x.project_id = ${key.projectId} AND x.period = ${formatPeriod(key.period)} ORDER BY x.rowid`,
@@ -321,7 +324,7 @@ effect function rowsOf(found: ReadonlyArray<Rows>) {
     proposed: try decoded(ProposedRow, proposed ?? [], "monthly base rows"),
     changes: try decoded(ChangeRow, changes ?? [], "monthly allocation changes"),
     cuts: try decoded(CutRow, cuts ?? [], "monthly cut reasons"),
-    setting: (try decoded(SettingRow, settings ?? [], "monthly settings"))[0],
+    settings: try decoded(SettingRow, settings ?? [], "monthly settings"),
     run: (try decoded(RunRow, runs ?? [], "monthly run"))[0],
     obligations: try decoded(ObligationRow, obligations ?? [], "monthly obligations"),
     exclusions: try decoded(ExclusionRow, exclusions ?? [], "monthly exclusions"),
@@ -347,16 +350,21 @@ function progressOf(row: ObligationRow): ObligationState {
   return obligationProgress(row.held_state !== null, row.held_actor === row.github_user_id, row.held_gross === row.gross_base, feeAccepted, row.held_state === "paid")
 }
 
+function settled(month: Monthly, settings: ReadonlyArray<SettingRow>): Monthly {
+  return settings.reduce((observed, row) => {
+    const automatic = row.automatic === 1
+    return canObserveSettings(observed, automatic, row.sequence) ? observeSettings(observed, automatic, row.sequence) : observed
+  }, month)
+}
+
 export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts, now: number) {
   const project = key.projectId
   const period = key.period
   const currentManifest = facts.current === undefined ? undefined : try manifestOf(project, facts.current.manifest)
   const currentRevision = facts.current === undefined || currentManifest === undefined ? noRevision : revisionOf(currentManifest, facts.current.number, period, facts.served)
-  const automatic = rows.setting === undefined || rows.setting.automatic === 1
-  const settingsSequence = rows.setting?.sequence ?? 0
-  const opened = { ...initial, project, period, phase: "Collecting" as MonthlyPhase, now, automatic, settingsSequence, eligibility: facts.eligibility, currentRevision }
+  const opened = { ...initial, project, period, phase: "Collecting" as MonthlyPhase, now, eligibility: facts.eligibility, currentRevision }
   const found = rows.base
-  if (found === undefined) return try decodeState(opened)
+  if (found === undefined) return try decodeState(settled(opened, rows.settings))
   if (found.revision === null) throw new RowMismatch({ text: "monthly base", issue: "the proposal's project revision is not registered" })
   if (rows.proposed.length !== found.recipient_count) throw new RowMismatch({ text: "monthly base rows", issue: "the proposal is incomplete" })
   const proposalManifest = try manifestOf(project, found.manifest)
@@ -364,25 +372,30 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
   const proposedShares: Share[] = []
   for (const row of rows.proposed) proposedShares.push({ actor: try actorOf(row.github_user_id, "monthly base row"), amount: amountOf(try units(row.gross_base, "monthly base row")) })
   let shares = proposedShares
-  const changes: AllocationChange[] = []
+  const reasons = new Map(rows.cuts.map((row) => [row.sequence, row]))
+  const changes: Change[] = []
+  const cuts: Cut[] = []
+  let publicCuts: Cut[] = []
+  const notices: CutNotice[] = []
   for (const row of rows.changes) {
     const actor = try actorOf(row.github_user_id, "monthly change")
+    const by = try actorOf(row.actor_id, "monthly change")
     const amount = amountOf(try units(row.gross_base, "monthly change"))
+    const at = seconds(row.created_at)
+    const reason = reasons.get(row.sequence)
     shares = replaceShare(shares, actor, amount)
-    changes.push({ sequence: row.sequence, actor, amount, at: seconds(row.created_at) })
+    changes.push({ actor, by, amount, sequence: row.sequence, at, cut: reason !== undefined })
+    publicCuts = publicCuts.filter((entry) => entry.actor !== actor)
+    if (reason === undefined) continue
+    if (reason.github_user_id !== row.github_user_id || reason.gross_base !== row.gross_base) throw new RowMismatch({ text: "monthly cut", issue: "the cut differs from its change" })
+    const entry: Cut = { actor, by, proposed: amountOf(try units(reason.proposed_gross_base, "monthly cut")), amount, reasonLength: reason.reason.length, at, sequence: row.sequence }
+    cuts.push(entry)
+    publicCuts.push(entry)
+    notices.push({ project, period, actor, sequence: row.sequence })
   }
-  const cuts: Cut[] = []
-  for (const row of rows.cuts) cuts.push({
-    sequence: row.sequence,
-    actor: try actorOf(row.github_user_id, "monthly cut"),
-    proposed: amountOf(try units(row.proposed_gross_base, "monthly cut")),
-    amount: amountOf(try units(row.gross_base, "monthly cut")),
-    reason: row.reason,
-    reasonLength: row.reason.length,
-    at: seconds(row.created_at),
-  })
+  if (cuts.length !== rows.cuts.length) throw new RowMismatch({ text: "monthly cut", issue: "a cut has no change" })
   const total = amountOf(shares.reduce((sum, share) => sum + fromAmount(share.amount), 0n))
-  const proposed = {
+  const proposed = settled({
     ...opened,
     phase: "Proposed" as MonthlyPhase,
     revision,
@@ -395,7 +408,10 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     sequence: changes.length,
     changes,
     cuts,
-  }
+    publicCuts,
+    notices,
+    latestCutAt: cuts.reduce((last, entry) => Math.max(last, entry.at), 0),
+  }, rows.settings)
   const run = rows.run
   if (run === undefined) return try decodeState(proposed)
   const frozen = {
@@ -404,6 +420,7 @@ export effect function stateOf(key: MonthKey, rows: MonthRows, facts: MonthFacts
     trigger: run.trigger === "owner" ? "OwnerTrigger" as const : "AutomaticTrigger" as const,
     frozenSequence: run.allocation_sequence,
     frozenBy: run.actor_id === null ? 0 : try actorOf(run.actor_id, "monthly run"),
+    frozenAt: seconds(run.frozen_at),
   }
   if (run.obligations_created_at === null) return try decodeState(frozen)
   const obligations: Obligation[] = []
@@ -619,13 +636,16 @@ effect function fundingWrites(key: MonthKey, loaded: Loaded, next: Monthly, fund
   return writes
 }
 
-effect function adjustWrites(key: MonthKey, next: Monthly, event: Extract<Event, { type: "adjust" }>) {
-  const period = formatPeriod(key.period)
+effect function changeWrite(key: MonthKey, next: Monthly, actor: number, amount: Amount, by: number) {
   const created = try isoAt(next.now * 1000)
-  const change = sql`INSERT INTO monthly_allocation_changes (project_id, period, sequence, github_user_id, gross_base, actor_id, created_at) VALUES (${key.projectId}, ${period}, ${next.sequence}, ${String(event.actor)}, ${fromAmount(event.amount).toString()}, ${String(event.fact.actor)}, ${created})`
+  return sql`INSERT INTO monthly_allocation_changes (project_id, period, sequence, github_user_id, gross_base, actor_id, created_at) VALUES (${key.projectId}, ${formatPeriod(key.period)}, ${next.sequence}, ${String(actor)}, ${fromAmount(amount).toString()}, ${String(by)}, ${created})`
+}
+
+effect function cutWrites(key: MonthKey, next: Monthly, event: Extract<Event, { type: "cut" }>, reason: string | undefined) {
   const cut = next.cuts.find((entry) => entry.sequence === next.sequence)
-  if (cut === undefined) return [change]
-  return [change, sql`INSERT INTO monthly_allocation_cut_reasons (project_id, period, sequence, github_user_id, proposed_gross_base, gross_base, reason, actor_id, created_at) VALUES (${key.projectId}, ${period}, ${cut.sequence}, ${String(cut.actor)}, ${fromAmount(cut.proposed).toString()}, ${fromAmount(cut.amount).toString()}, ${cut.reason}, ${String(event.fact.actor)}, ${created})`]
+  if (cut === undefined || reason === undefined || reason.length !== event.reasonLength) throw new CutReasonMissing({ projectId: key.projectId, period: formatPeriod(key.period) })
+  const created = try isoAt(next.now * 1000)
+  return [try changeWrite(key, next, event.actor, event.amount, event.fact.actor), sql`INSERT INTO monthly_allocation_cut_reasons (project_id, period, sequence, github_user_id, proposed_gross_base, gross_base, reason, actor_id, created_at) VALUES (${key.projectId}, ${formatPeriod(key.period)}, ${cut.sequence}, ${String(cut.actor)}, ${fromAmount(cut.proposed).toString()}, ${fromAmount(cut.amount).toString()}, ${reason}, ${String(event.fact.actor)}, ${created})`]
 }
 
 effect function writesFor(key: MonthKey, loaded: Loaded, next: Monthly, event: Event, extra: Extra) {
@@ -635,7 +655,8 @@ effect function writesFor(key: MonthKey, loaded: Loaded, next: Monthly, event: E
     if (current === undefined) throw new ManifestInvalid({ projectId: key.projectId, issue: "the project has no current revision" })
     return [...(try proposalWrites(key, next, current, event.snapshot.digest, extra.logins ?? new Map())), ...alongside]
   }
-  if (event.type === "adjust") return [...(try adjustWrites(key, next, event)), ...alongside]
+  if (event.type === "adjust") return [try changeWrite(key, next, event.actor, event.amount, event.fact.actor), ...alongside]
+  if (event.type === "cut") return [...(try cutWrites(key, next, event, extra.reason)), ...alongside]
   if (event.type === "finalize") return [...(try freezeWrites(key, loaded, next, event.fact.actor)), ...alongside]
   if (event.type === "autoFreeze") return [...(try freezeWrites(key, loaded, next, undefined)), ...alongside]
   if (event.type === "createObligations") return [...(try fundingWrites(key, loaded, next, extra.funding)), ...alongside]

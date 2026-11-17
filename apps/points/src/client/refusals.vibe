@@ -1,4 +1,4 @@
-// spec/points/disputes.md, "Only the recipient opens a dispute of the latest retained revision"
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"
 
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const jsonPublicMaxAge300 = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const

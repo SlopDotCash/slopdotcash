@@ -1,14 +1,15 @@
 // spec/settlement/directBounty.md, "A standard award freezes its network, asset and two split amounts"; spec/settlement/directBounty.md, "Each finalized transaction belongs to one ledger and one exact request"; spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/settlement/payment.md, "Private fee schedules are exact and purpose-bound"; spec/settlement/payment.md, "The released direct full-award rail journals before submission and retain every uncertain attempt"
 import { isoNow } from "@repo/platform/clock"
-import type { Statement } from "@repo/platform/d1"
+import { type Statement, sql } from "@repo/platform/d1"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
-import { type DirectBounty, type Event, type Network, type Transfer, Rejected, authorizedWallets, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.ts"
+import { type DirectBounty, type Event, type Transfer, Rejected, authorizedWallets, noTransfer } from "../../gen/settlement__directBounty.effect.vibe"
 import { type Purpose, type PaymentRail, fullRailAdmission, validSplit } from "../../gen/settlement__payment.effect.vibe"
 import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type DirectRefusal, type DirectSettlementView, type PaymentAsset, type PaymentWallet, type PrepareDetail, type PreparePaymentBody, type RemainingTransfer, type VerifyDetail, type VerifyPaymentBody } from "../client/direct.vibe"
 import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { EVM_NATIVE_ASSET, NETWORKS } from "../kernels/networks.ts"
-import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, modelOfChain, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
+import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
 import { type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
 
 export interface CaseContext {
@@ -19,8 +20,6 @@ export interface CaseContext {
 }
 
 export error DirectRefused { reason: DirectRefusal }
-
-export type FrozenAward = ApprovedAward & { readonly network?: string }
 
 effect function refuse(reason: DirectRefusal): never!DirectRefused {
   throw new DirectRefused({ reason })
@@ -33,7 +32,7 @@ function purposeOf(award: ApprovedAward): { readonly purpose: Purpose; readonly 
 }
 
 effect function directAward(caseId: string) {
-  const award: FrozenAward | undefined = try (try ApprovedAwards).forCase(caseId)
+  const award: ApprovedAward | undefined = try (try ApprovedAwards).forCase(caseId)
   if (award === undefined || !award.direct) return try refuse("railUnavailableTheProgramHasNo")
   const { purpose, rail } = purposeOf(award)
   if (!fullRailAdmission(purpose, rail, noRelease)) return try refuse("railUnavailableTheBountyVaultPays")
@@ -53,15 +52,21 @@ effect function railFor(network: string, missing: DirectRefusal) {
   return rail
 }
 
-effect function frozenRail(award: FrozenAward, network: string, missing: DirectRefusal) {
+effect function frozenRail(award: ApprovedAward, network: string, missing: DirectRefusal) {
   const rail = try railFor(network, missing)
-  const frozen = award.network === undefined ? undefined : modelOfChain(award.network)
-  if (frozen === undefined || award.network !== NETWORKS[rail.network].chain) return try refuse(missing)
-  return { rail, network: frozen }
+  if (rail.model !== award.network) return try refuse(missing)
+  return { rail, network: award.network }
 }
 
 effect function effectiveWallet(githubId: string, network: Network) {
-  return try (try Wallets).effective({ githubId, network })
+  return try (try Wallets).payable({ githubId, network })
+}
+
+effect function walletsUnchanged(network: Network, owners: ReadonlyArray<readonly [string, EffectiveWallet]>) {
+  const wallets = try Wallets
+  let held = sql`1`
+  for (const [githubId, wallet] of owners) held = sql`${held} AND ${try wallets.fence({ githubId, network, claimId: wallet.claimId, digest: wallet.digest })}`
+  return sql`SELECT CASE WHEN ${held} THEN 1 ELSE json('payment wallet changed') END AS wallets`
 }
 
 function sameWallet(left: EffectiveWallet | undefined, right: EffectiveWallet | undefined) {
@@ -146,7 +151,7 @@ export effect function consentPayment(context: CaseContext, body: ConsentPayment
   }, alongside)
 }
 
-effect function refreshed(context: CaseContext, award: FrozenAward, network: string, alongside: ReadonlyArray<Statement>) {
+effect function refreshed(context: CaseContext, award: ApprovedAward, network: string, alongside: ReadonlyArray<Statement>) {
   return try commit(context.caseId, (current) => effect {
     const intent = currentIntent(current)
     if (intent === undefined || current.paid) return try refuse("paymentNotPending")
@@ -212,7 +217,8 @@ export effect function preparePayment(context: CaseContext, body: PreparePayment
       when Rejected: throw prepareRefusal(error);
       default: throw error;
     }
-    return { value: { network: body.network, rail: "direct" } satisfies PrepareDetail, writes }
+    const fence = try walletsUnchanged(network, [[context.reporterGithubId, reporterWallet], [context.actorGithubId, payerWallet]])
+    return { value: { network: body.network, rail: "direct" } satisfies PrepareDetail, writes: [fence, ...writes] }
   }, alongside)
 }
 
@@ -245,7 +251,7 @@ export effect function verifyPayment(context: CaseContext, body: VerifyPaymentBo
   const prepared = currentIntent(existing)
   if (prepared === undefined) return try refuse("paymentNotPreparedPrepareTheExactPayment")
   if (existing.paid) return try refuse("paymentAlreadyVerifiedThisPaymentIsAlready")
-  const award: FrozenAward | undefined = try (try ApprovedAwards).forCase(context.caseId)
+  const award: ApprovedAward | undefined = try (try ApprovedAwards).forCase(context.caseId)
   if (award === undefined) return try refuse("railUnavailableReceiptVerificationIsUnavailable")
   const { rail, network } = try frozenRail(award, prepared.network, "railUnavailableReceiptVerificationIsUnavailable")
   if (prepared.protocolVersion !== 2 || prepared.transactions?.length !== prepared.transfers.length || prepared.transactions.some((transaction) => transaction.nonce === undefined)) return try refuse("paymentUnverified")

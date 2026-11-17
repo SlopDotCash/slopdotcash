@@ -1,7 +1,6 @@
 // spec/settlement/referralAccrual.md, "A complete immutable source snapshot is filed in ordinal-month order"; spec/settlement/referralAccrual.md, "Filed records, first-use wallet pins and exact roots commit atomically"; spec/settlement/referrals.md, "Program configuration starts off and posting requires independent activation"
 import { randomId } from "@repo/platform/crypto"
-import { first, sql } from "@repo/platform/d1"
-import { Wallets } from "@repo/ports/backend"
+import { ReferralAttributions, Wallets } from "@repo/ports/backend"
 import type { Job } from "@repo/platform/worker"
 import { type Wallet, actorAccrued, actors, canAccrueNext, pinnedWallet } from "../../gen/settlement__referralAccrual.effect.vibe"
 import { fromAmount } from "../kernels/amounts.ts"
@@ -9,7 +8,7 @@ import { formatPeriod } from "../kernels/calendar.ts"
 import { type Accruing, ReferralProgram } from "./config.vibe"
 import { type Book, LeaseLost, abandonMonth, accrueNext, acquireLease, beginMonth, fileMonth, openBook, programSetup, releaseLease } from "./accrual.vibe"
 import { pendingPeriods, periodOf } from "./periods.ts"
-import { ReferralAttributions, freezeMonth } from "./source.vibe"
+import { freezeMonth } from "./source.vibe"
 
 export error WalletMalformed { githubId: string }
 
@@ -27,24 +26,16 @@ export type FilingRun =
 
 const evmAddress = /^0x[0-9a-f]{40}$/u
 
-schema Authorization {
-  readonly authorized: number
-}
-
-effect function authorizedClaim(githubId: string, claimId: string) {
-  const row = try first(Authorization, sql`SELECT EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = ${claimId} AND a.github_user_id = ${githubId}) AS authorized`)
-  return row?.authorized === 1
-}
-
 export effect function claimWallets(book: Book) {
   const wallets = try Wallets
   const found: Wallet[] = []
   for (const actor of actors(book.state)) {
     if (pinnedWallet(book.state.pins, actor) !== "" || fromAmount(actorAccrued(book.state, actor)) === 0n) continue
     const githubId = String(actor)
-    const effective = try wallets.effective({ githubId, network: "Robinhood" })
+    const owner = { githubId, network: "Robinhood" } as const
+    const effective = try wallets.effective(owner)
     if (effective === undefined) continue
-    const authorized = try authorizedClaim(githubId, effective.claimId)
+    const authorized = (try wallets.payable(owner))?.claimId === effective.claimId
     const address = effective.address.toLowerCase()
     if (authorized && !evmAddress.test(address)) throw new WalletMalformed({ githubId })
     found.push({ actor, wallet: address, authorized })

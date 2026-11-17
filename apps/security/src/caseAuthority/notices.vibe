@@ -1,0 +1,33 @@
+// spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { D1 } from "@repo/platform/d1"
+import { GitHubUnavailable } from "@repo/platform/github"
+import { Roles } from "@repo/platform/roles"
+import { Authority, Registry, Restrictions } from "@repo/ports/backend"
+import { SecurityNoticeAccess } from "@repo/ports/security"
+import { mayReadAward } from "../../gen/security__cases.effect.vibe"
+import { caseOf, caseStanding } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
+import { ReportingPrograms } from "../receipt/program.vibe"
+import { AuthorityUnavailable, caseAuthority } from "./snapshot.vibe"
+
+const denied = { allowed: false, acknowledgeHours: 0 }
+
+effect function forCase(read: { readonly caseId: string; readonly githubId: string }) {
+  const record = try caseStanding(read.caseId)
+  const viewer = githubNumber(read.githubId)
+  if (record === undefined || viewer === 0) return denied
+  const program = try (try ReportingPrograms).current(record.project_id)
+  const scope = { caseId: record.id, projectId: record.project_id, reporterGithubId: record.reporter_github_id, viewerGithubId: read.githubId, program: program?.approvers }
+  const roles = caseAuthority(scope, 1) catch effect (error) => match (error) {
+    when AuthorityUnavailable: throw new GitHubUnavailable({ path: `/projects/${record.project_id}/authority` });
+    default: throw error;
+  }
+  return { allowed: mayReadAward(caseOf(record, 0, roles), viewer, roles.authority.epoch), acknowledgeHours: program?.acknowledgeHours ?? 0 }
+}
+
+export const SecurityNoticeAccessLive = Layer.effect(SecurityNoticeAccess, effect {
+  const services = try Effect.context<D1 | Roles | Registry | Authority | Restrictions | ReportingPrograms>()
+  return {
+    forCase: (read) => Effect.provide(forCase(read), services),
+  } satisfies SecurityNoticeAccess.Shape
+})

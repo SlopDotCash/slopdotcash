@@ -8,6 +8,12 @@ import { installationId, leaseAuthor, leaseRepository } from "./support/routingW
 
 type Fake = ReturnType<typeof githubFake>
 
+async function pullWith(world: Fake["world"], repo: string, files: Readonly<Record<string, string>>) {
+  const base = world.addCommit(repo, { message: "Target tip" })
+  const head = world.addCommit(repo, { branch: "contribution", parents: [base], files })
+  return world.addPull({ repo, author: "newbie", title: "A contribution", headRef: "contribution", headSha: head })
+}
+
 function policy(file: unknown) {
   return { "README.md": "Keep changes small.\n", ".github/slopbot.json": JSON.stringify(file) }
 }
@@ -36,6 +42,8 @@ async function seed() {
     quiet: world.addIssue({ repo: "ada/quiet", author: "newbie", ...filed }),
     plain: world.addIssue({ repo: "ada/plain", author: "newbie", ...filed }),
     busy: world.addIssue({ repo: "ada/busy", author: "newbie", ...filed }),
+    quietPull: await pullWith(world, "ada/quiet", { "fix.txt": "fixed\n" }),
+    plainPull: await pullWith(world, "ada/plain", { "logo.bin": "\u0000binary" }),
   }
   world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "read", pull_requests: "read" } })
   return { fake, repositories, items, net: internet({ github: fake.handler }), token: fake.tokens.installation(installationId) }
@@ -67,13 +75,14 @@ const Routing = Layer.unwrap(effect {
 interface Asked {
   readonly repositoryId: number
   readonly number: number
+  readonly kind?: "issue" | "pull_request"
   readonly consent?: "Absent" | "Enabled" | "Disabled"
   readonly claim?: string
 }
 
 effect function routed(area: AreaShape, ask: Asked) {
   const answer = try area.post("/test/route", { kind: "issue", consent: "Enabled", ...ask })
-  return answer.body as { readonly route: string; readonly file: string; readonly config: { readonly closure: boolean; readonly audience: string; readonly issues: boolean; readonly pullRequests: boolean; readonly dailyCloseCap: number; readonly categories: Readonly<Record<string, string>> }; readonly established: boolean; readonly claim: string }
+  return answer.body as { readonly route: string; readonly file: string; readonly config: { readonly closure: boolean; readonly audience: string; readonly issues: boolean; readonly pullRequests: boolean; readonly dailyCloseCap: number; readonly categories: Readonly<Record<string, string>> }; readonly coverage: string; readonly limitations: ReadonlyArray<string>; readonly established: boolean; readonly claim: string }
 }
 
 effect function leaseStep(area: AreaShape, step: Readonly<Record<string, unknown>>) {
@@ -89,7 +98,7 @@ effect function installed(area: AreaShape) {
 }
 
 layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Repository files, saved consent and the audience decide the route of each item (spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closure.md, "A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200")', () => effect {
+  it.effect('Repository files, saved consent and the audience decide the route of each item (spec/slopbot/routing.md, "The first failing condition decides, and advisory review stays broad"; spec/slopbot/closure.md, "The effective policy keeps file opt-outs, category restrictions and the saved project consent"; spec/slopbot/closure.md, "A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200"; spec/slopbot/review.md, "Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB")', () => effect {
     const area = try Area
     const { net, repositories, items } = try World
     try installed(area)
@@ -101,12 +110,15 @@ layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     const marked = try routed(area, { repositoryId: repositories.circle, number: items.circleMarked })
     const member = try routed(area, { repositoryId: repositories.circle, number: items.circleMember })
     const quiet = try routed(area, { repositoryId: repositories.quiet, number: items.quiet })
+    const quietPull = try routed(area, { repositoryId: repositories.quiet, number: items.quietPull, kind: "pull_request" })
+    const plainPull = try routed(area, { repositoryId: repositories.plain, number: items.plainPull, kind: "pull_request" })
     try same({
       invalid: [invalid.route, invalid.file, invalid.config.closure, invalid.config.categories.spam, invalid.config.dailyCloseCap],
       optOut: [optOut.route, optOut.file, optOut.config.closure, optOut.config.categories.spam, optOut.config.categories.scam],
       absent: [consented.file, consented.config.closure, unconsented.config.closure],
       audience: [stranger.route, marked.route, member.route, stranger.config.audience],
       switches: [quiet.route, quiet.config.issues, quiet.config.pullRequests],
+      pulls: [quietPull.route, plainPull.route, plainPull.coverage, plainPull.limitations],
       outbound: [net.unexpected.length, area.outboundErrors.length],
     }, {
       invalid: ["AdvisoryReview", "FileInvalid", false, "label", 25],
@@ -114,6 +126,7 @@ layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       absent: ["FileAbsent", true, false],
       audience: ["SkipAudience", "AdvisoryReview", "AdvisoryReview", "participants"],
       switches: ["SkipIssuesOff", false, false],
+      pulls: ["SkipPullsOff", "AdvisoryReview", "CoverageLimited", ["logo.bin: GitHub did not supply a patch (binary or large file)."]],
       outbound: [0, 0],
     })
   })
@@ -163,8 +176,13 @@ layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
       try leaseStep(area, { op: "finish", key: "lease-a", token: "worker-b", start: "Retry", status: "completed", at: start + 1_203_000 }),
       try leaseStep(area, { op: "claim", key: "lease-a", token: "worker-c", at: start + 1_204_000 }),
     ]
+    for (const slot of [1, 2]) {
+      try area.sql("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, completed_at) VALUES (?, ?, ?, 'issue', ?, ?, ?, 'r', 'c', 'p', 'completed', ?, ?)",
+        `lease-filled-${slot}`, installationId, leaseRepository, 200 + slot, `I_lease_filled_${slot}`, leaseAuthor, try isoAt(start + 1_204_000), try isoAt(start + 1_204_000))
+    }
+    const filled = try leaseStep(area, { op: "claim", key: "lease-b", token: "worker-d", at: start + 1_205_000 })
     const row = try area.sql("SELECT repository_id, author_id, status, claim_token, lease_expires_at, completed_at FROM slopbot_reviews WHERE review_key = 'lease-a'")
-    try same({ steps, row }, {
+    try same({ steps, filled, row }, {
       steps: [
         { kind: "claimed", start: "First" },
         { kind: "busy", remainingSeconds: 1140 },
@@ -173,6 +191,7 @@ layer(Routing, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
         { kind: "finished", status: "Completed" },
         { kind: "completed" },
       ],
+      filled: { kind: "limited" },
       row: [{ repository_id: leaseRepository, author_id: leaseAuthor, status: "completed", claim_token: "worker-b", lease_expires_at: null, completed_at: "2026-11-16T12:20:03.000Z" }],
     })
   })

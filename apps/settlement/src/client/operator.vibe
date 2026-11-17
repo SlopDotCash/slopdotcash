@@ -1,0 +1,37 @@
+// spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
+import { type AnyRoute, route } from "@repo/platform/route"
+
+export schema RecoveryScope = "ordinary" | "security-bounty"
+
+export schema RecoveryRequest {
+  readonly scope: RecoveryScope
+  readonly network: string
+  readonly vault: string
+  readonly originalTransactionId: string
+  readonly winnerTransactionId: string
+  readonly reason: string
+  readonly auditRequestId: string
+}
+
+export schema RecoveryAnswer {
+  readonly state: string
+  readonly originalTransactionId: string
+  readonly winnerTransactionId: string
+  readonly blockHash: string
+  readonly blockNumber: string
+}
+
+const ReconcileBody = Schema.Record(Schema.String, Schema.Unknown)
+
+export const reconcileBindingRoute = route({
+  method: "POST",
+  path: "/api/v1/operator/wallet-bindings/reconcile",
+  access: "sessionWrite",
+  limitKib: 64,
+  request: ReconcileBody,
+  answer: RecoveryAnswer,
+  rejected: "recovery_pending_or_rejected",
+  cache: "no-store",
+})
+
+export const operatorApi: ReadonlyArray<AnyRoute> = [reconcileBindingRoute]

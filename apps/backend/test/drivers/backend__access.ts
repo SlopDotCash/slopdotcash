@@ -6,7 +6,7 @@ import { outcome } from "@repo/platform/testing/area";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/backend__access.conformance.ts";
 import type { Access, Event } from "../../gen/backend__access.ts";
-import { AccessJournal, type AccountRecord } from "../../src/access/journal.vibe";
+import { AccessJournal, type AccountRecord } from "@repo/ports/security";
 import { admitted, eventOf, loadAccess, send } from "../../src/access/store.vibe";
 
 const mf = startWorker({ d1: { SLOP_DB: "access-conformance" } });
@@ -103,6 +103,10 @@ async function translated(event: Event): Promise<Event> {
     case "reserveAward":
     case "payAward":
       throw new Error(`${event.type} needs settlement's reserved obligations, which no port exposes to the backend`);
+    case "identify":
+      throw new Error("identify has no stored record of its own: the shell records an identification only with the ban it names");
+    case "triageAppeal":
+      throw new Error("triageAppeal has no stored record: no table holds Slopbot's triage of an account-ban appeal");
     case "ban":
       return { ...event, enforcement: decisions.get(event.enforcement) ?? 0, target: actorOf(event.target) };
     case "appeal":
@@ -167,8 +171,10 @@ async function observed(): Promise<Access> {
   const appealIds = new Map([...modelAppealIds(state)].map(([model, real]) => [real, model]));
   const bans = state.bans.filter((ban) => ours(ban.project));
   const releases = state.releases.filter((release) => bans.some((ban) => ban.enforcement === release.enforcement));
+  const identified = state.identified.filter((entry) => state.enforcements.some((record) => record.id === entry.enforcement && ours(record.project)));
   return {
     enforcements: state.enforcements.filter((entry) => ours(entry.project)).map((entry) => ({ ...entry, id: decision(entry.id), project: byRow.get(entry.project) ?? 0, decidedBy: modelActorOf(entry.decidedBy) })),
+    identified: identified.map((entry) => ({ enforcement: decision(entry.enforcement), target: modelActorOf(entry.target), moderator: modelActorOf(entry.moderator) })),
     bans: bans.map((ban) => ({ enforcement: decision(ban.enforcement), project: byRow.get(ban.project) ?? 0, target: modelActorOf(ban.target), decidedBy: modelActorOf(ban.decidedBy) })),
     releases: releases.map((release) => ({ decision: decision(release.decision), enforcement: decision(release.enforcement), target: modelActorOf(release.target), decidedBy: modelActorOf(release.decidedBy) })),
     appeals: state.appeals.filter((appeal) => appealIds.has(appeal.id)).map((appeal) => ({ ...appeal, id: appealIds.get(appeal.id) ?? 0, enforcement: decision(appeal.enforcement), target: modelActorOf(appeal.target), decidedBy: modelActorOf(appeal.decidedBy) })),

@@ -1,6 +1,7 @@
-// spec/settlement/vaultSnapshots.md, "From December 2026 a month is promised only if a first read within an hour of 00:00 UTC holds this and the previous month's amount"; spec/settlement/vaultSnapshots.md, "A promise is shown only while the vault still covers what is owed, and Slop's pages refuse a withdrawal that would break it"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"
 import { type Period, periodContaining } from "@repo/settlement/kernels/calendar";
-import { type FundingMonthStart, type FundingVault, type PoolCap, type PoolFunding, poolFunding, withdrawalKeepsFunding, zeroedPoolCap } from "./poolFunding.ts";
+import type { PoolDisplay } from "../../gen/frontend__projections.ts";
+import { type FundingMonthStart, type FundingVault, type PoolCap, type PoolFunding, poolFunding, promisedOwed, withdrawalKeepsFunding, zeroedPoolCap } from "./poolFunding.ts";
 import { vectors } from "./vectors.ts";
 
 const VAULT = "0x4F891b8c3d3fab9150fcdc94176b96863cd02899";
@@ -27,38 +28,51 @@ const start = (free: bigint, withdrawn = 0n, blockTime = "2026-12-01T00:04:00Z")
 const fundingOf = ({ network = "base-mainnet", cap = () => 250_000_000n, vaults, now }: Case): PoolFunding =>
   poolFunding({
     pool: { monthlyPool: true, deployments: [{ network, vault: VAULT }], capFor: cap },
-    vaults: vaults?.map((vault) => ({ network: "base-mainnet", vault: VAULT.toLowerCase(), freeBalance: 250_000_000n, ...vault })),
+    read: vaults === undefined ? "PoolLoading" : "PoolCurrent",
+    vaults: (vaults ?? []).map((vault) => ({ network: "base-mainnet", vault: VAULT.toLowerCase(), freeBalance: 250_000_000n, ...vault })),
     networkPays,
     nowMs: Date.parse(now),
   });
 
+interface Shown {
+  readonly display: PoolDisplay;
+  readonly period: Period;
+  readonly owed?: bigint;
+}
+
+const shownFunding = (funding: PoolFunding): Shown => {
+  const owed = promisedOwed(funding);
+  return owed === undefined ? { display: funding.display, period: funding.period } : { display: funding.display, period: funding.period, owed };
+};
+
 const midNovember = "2026-11-15T12:00:00Z";
 
-export const oldPoolFundingVectorsKeepTheirOutcome = vectors<Case, PoolFunding>([
-  [{ vaults: [{}], now: midNovember }, { state: "Promised", period: november, owed: 250_000_000n }],
-  [{ vaults: [{ freeBalance: 249_999_999n }], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ vaults: [], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ vaults: undefined, now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ vaults: [{ freeBalance: null }], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ vaults: [{ vault: "0xother" }], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ network: "ethereum", vaults: [{ network: "ethereum" }], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ network: "base-sepolia", vaults: [{ network: "base-sepolia" }], now: midNovember }, { state: "Promised", period: november, owed: 250_000_000n }],
-  [{ cap: (period) => (period === november ? 500_000_000n : 250_000_000n), vaults: [{}], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ cap: () => 0n, vaults: [{}], now: midNovember }, { state: "PointsOnly", period: november }],
-  [{ vaults: [{ freeBalance: 500_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(500_000_000n)] }], now: "2026-12-02T10:00:00Z" }, { state: "Promised", period: december, owed: 500_000_000n }],
-  [{ vaults: [{ freeBalance: 250_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(250_000_000n)] }], now: "2026-12-02T10:00:00Z" }, { state: "PointsOnly", period: december }],
-  [{ vaults: [{ freeBalance: 900_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(0n)] }], now: "2026-12-10T00:00:00Z" }, { state: "PointsOnly", period: december }],
-  [{ vaults: [{ freeBalance: 900_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(900_000_000n, 0n, "2026-12-01T02:00:00Z")] }], now: "2026-12-10T00:00:00Z" }, { state: "PointsOnly", period: december }],
-  [{ vaults: [{ freeBalance: 250_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(500_000_000n)] }], now: "2026-12-05T00:00:00Z" }, { state: "Promised", period: december, owed: 250_000_000n }],
-  [{ vaults: [{ freeBalance: 100_000_000n, totalGrossWithdrawn: 400_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { state: "WithdrawnDuringMonth", period: december }],
-  [{ vaults: [{ freeBalance: 100_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { state: "PointsOnly", period: december }],
-  [{ vaults: [{ freeBalance: 500_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-02T00:00:00Z" }, { state: "Promised", period: december, owed: 500_000_000n }],
-], fundingOf);
+export const oldPoolFundingVectorsKeepTheirOutcome = vectors<Case, Shown>([
+  [{ vaults: [{}], now: midNovember }, { display: "PoolFunded", period: november, owed: 250_000_000n }],
+  [{ vaults: [{ freeBalance: 249_999_999n }], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ vaults: [], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ vaults: undefined, now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ vaults: [{ freeBalance: null }], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ vaults: [{ vault: "0xother" }], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ network: "ethereum", vaults: [{ network: "ethereum" }], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ network: "base-sepolia", vaults: [{ network: "base-sepolia" }], now: midNovember }, { display: "PoolFunded", period: november, owed: 250_000_000n }],
+  [{ cap: (period) => (period === november ? 500_000_000n : 250_000_000n), vaults: [{}], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ cap: () => 0n, vaults: [{}], now: midNovember }, { display: "PointsOnly", period: november }],
+  [{ vaults: [{ freeBalance: 500_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(500_000_000n)] }], now: "2026-12-02T10:00:00Z" }, { display: "PoolFunded", period: december, owed: 500_000_000n }],
+  [{ vaults: [{ freeBalance: 250_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(250_000_000n)] }], now: "2026-12-02T10:00:00Z" }, { display: "PointsOnly", period: december }],
+  [{ vaults: [{ freeBalance: 900_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(0n)] }], now: "2026-12-10T00:00:00Z" }, { display: "PointsOnly", period: december }],
+  [{ vaults: [{ freeBalance: 900_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(900_000_000n, 0n, "2026-12-01T02:00:00Z")] }], now: "2026-12-10T00:00:00Z" }, { display: "PointsOnly", period: december }],
+  [{ vaults: [{ freeBalance: 250_000_000n, totalGrossWithdrawn: 0n, monthStarts: [start(500_000_000n)] }], now: "2026-12-05T00:00:00Z" }, { display: "PoolFunded", period: december, owed: 250_000_000n }],
+  [{ vaults: [{ freeBalance: 100_000_000n, totalGrossWithdrawn: 400_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { display: "PoolWithdrawn", period: december }],
+  [{ vaults: [{ freeBalance: 100_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-10T00:00:00Z" }, { display: "PointsOnly", period: december }],
+  [{ vaults: [{ freeBalance: 500_000_000n, monthStarts: [start(500_000_000n)] }], now: "2026-12-02T00:00:00Z" }, { display: "PoolFunded", period: december, owed: 500_000_000n }],
+], (input) => shownFunding(fundingOf(input)));
 
+const decemberCase = (free: bigint, withdrawn = 0n): Case => ({ vaults: [{ freeBalance: free, totalGrossWithdrawn: withdrawn, monthStarts: [start(500_000_000n)] }], now: "2026-12-10T00:00:00Z" });
+const promised = fundingOf(decemberCase(400_000_000n));
+const withdrawn = fundingOf(decemberCase(100_000_000n, 400_000_000n));
+const pointsOnly = fundingOf({ vaults: undefined, now: "2026-12-10T00:00:00Z" });
 const pool: PoolCap = { monthlyPool: true, monthlyCapMinor: 250_000_000n, hasCycleCaps: false };
-const promised: PoolFunding = { state: "Promised", period: december, owed: 250_000_000n };
-const withdrawn: PoolFunding = { state: "WithdrawnDuringMonth", period: december };
-const pointsOnly: PoolFunding = { state: "PointsOnly", period: december };
 
 export const unfundedPoolsShowZeroInTheirOwnAsset = vectors<readonly [PoolCap, PoolFunding], ReturnType<typeof zeroedPoolCap>>([
   [[pool, promised], undefined],
@@ -72,11 +86,11 @@ export const unfundedPoolsShowZeroInTheirOwnAsset = vectors<readonly [PoolCap, P
   [[{ ...pool, monthlyPool: false }, pointsOnly], undefined],
 ], ([cap, funding]) => zeroedPoolCap(cap, funding));
 
-export const withdrawalsKeepWhatAPromisedMonthOwes = vectors<readonly [PoolFunding, bigint, bigint], boolean>([
-  [[promised, 400_000_000n, 100_000_000n], true],
-  [[promised, 400_000_000n, 150_000_000n], true],
-  [[promised, 400_000_000n, 150_000_001n], false],
-  [[promised, 100_000_000n, 200_000_000n], false],
-  [[pointsOnly, 100_000_000n, 200_000_000n], true],
-  [[withdrawn, 0n, 1n], true],
-], ([funding, freeBalance, gross]) => withdrawalKeepsFunding({ funding, freeBalance, gross }));
+export const withdrawalsKeepWhatAPromisedMonthOwes = vectors<readonly [PoolFunding, bigint], boolean>([
+  [[promised, 100_000_000n], true],
+  [[promised, 150_000_000n], true],
+  [[promised, 150_000_001n], false],
+  [[promised, 400_000_000n], false],
+  [[pointsOnly, 200_000_000n], true],
+  [[withdrawn, 1n], true],
+], ([funding, gross]) => withdrawalKeepsFunding({ funding, gross }));

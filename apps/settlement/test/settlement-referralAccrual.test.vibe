@@ -1,16 +1,15 @@
 import { assert, it, layer } from "@effect/vitest"
 import type { D1Database } from "@repo/platform/bindings"
 import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { d1 } from "@repo/platform/d1"
+import { d1, sql } from "@repo/platform/d1"
 import { rolesFrom } from "@repo/platform/roles"
 import { database, migrate, startWorker } from "@repo/platform/testing"
 import { type SettableClock, settableClock } from "@repo/platform/testing/clock"
 import { migrationsDir } from "@repo/platform/testing/paths"
-import { Restrictions, Wallets } from "@repo/ports/backend"
+import { type ReferralAttribution, ReferralAttributions, Restrictions, Wallets } from "@repo/ports/backend"
 import { fileClosedMonths } from "../src/referrals/accrualJobs.vibe"
 import { type ReferralVars, decodeProgram, referralProgram } from "../src/referrals/config.vibe"
 import { buildTree, leafHash, verifyProof } from "../src/referrals/merkle.ts"
-import { type ReferralAttribution, ReferralAttributions } from "../src/referrals/source.vibe"
 import { distributorVectors, reviewedVars } from "./support/referralVectors.ts"
 
 module parsing {
@@ -75,12 +74,23 @@ function ports(db: D1Database, facts: World) {
     Layer.succeed(Restrictions, {
       account: (githubId) => effect { return { banned: facts.banned.has(githubId) } },
       project: () => effect { return { restricted: false } },
+      fence: () => effect { return sql`SELECT 1` },
+      unbanned: () => effect { return sql`1` },
     }),
     Layer.succeed(Wallets, {
       effective: ({ githubId }) => effect {
         const [row] = try rowsOf(db, "SELECT wallet_address, id, record_sha256 FROM effective_payment_wallet_claims WHERE github_user_id = ? AND chain = 'robinhood'", githubId)
         return row === undefined ? undefined : { address: String(row.wallet_address), claimId: String(row.id), digest: String(row.record_sha256) }
       },
+      payable: ({ githubId }) => effect {
+        const [row] = try rowsOf(db, "SELECT e.wallet_address, e.id, e.record_sha256 FROM effective_payment_wallet_claims e WHERE e.github_user_id = ? AND e.chain = 'robinhood' AND EXISTS (SELECT 1 FROM payment_wallet_authorizations a WHERE a.claim_id = e.id AND a.github_user_id = e.github_user_id)", githubId)
+        return row === undefined ? undefined : { address: String(row.wallet_address), claimId: String(row.id), digest: String(row.record_sha256) }
+      },
+      authorized: ({ githubId }) => effect {
+        const found = try rowsOf(db, "SELECT w.wallet_address, w.id, w.record_sha256 FROM wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.github_user_id = ? AND w.chain = 'robinhood' ORDER BY a.rowid", githubId)
+        return found.map((row) => ({ address: String(row.wallet_address), claimId: String(row.id), digest: String(row.record_sha256) }))
+      },
+      fence: (pin) => effect { return sql`EXISTS (SELECT 1 FROM effective_payment_wallet_claims w JOIN payment_wallet_authorizations a ON a.claim_id = w.id AND a.github_user_id = w.github_user_id WHERE w.id = ${pin.claimId} AND w.record_sha256 = ${pin.digest} AND w.github_user_id = ${pin.githubId} AND w.chain = 'robinhood')` },
     }),
   )
 }

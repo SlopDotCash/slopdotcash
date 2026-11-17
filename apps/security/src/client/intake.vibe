@@ -1,4 +1,4 @@
-// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
+// spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/security/journey.md, "A reporter revision needs the forwarding draft, the open case and admission, and advances every version together"
 import { type AnyRoute, route } from "@repo/platform/route"
 
 export schema Advisory { ghsa: string; url: string }

@@ -1,12 +1,12 @@
-// spec/security/intake.md, "The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess"
+// spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { millisOf } from "@repo/platform/clock"
 import { json, refuse } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
-import { Registry } from "@repo/ports/backend"
-import { type ReportingObservation as ObservedReporting, ReportingReadiness } from "@repo/ports/slopbot"
-import type { ReportingObservation } from "../../gen/security__intake.ts"
-import { handoffAvailability, handoffLinkShown, reportingObservationSeconds } from "../../gen/security__intake.effect.vibe"
+import { type ProjectView, Registry } from "@repo/ports/backend"
+import { ReportingReadiness, type ReportingReadinessRead } from "@repo/ports/slopbot"
+import type { ProjectListing, ReadinessObservation, Target } from "../../gen/security__reportingReadiness.ts"
+import { fresh, identityMatches, maxAgeMs, readyFor } from "../../gen/security__reportingReadiness.effect.vibe"
 import { intakeReadiness, readinessSeconds } from "../client/intake.vibe"
 import { getSecurityProgramsByIdIntake as readinessRows } from "../client/refusals.vibe"
 import { ReportingPrograms } from "../receipt/program.vibe"
@@ -27,10 +27,45 @@ function programNotFound() {
   return refuse(row.status, row.error, row.message)
 }
 
-function modelObservation(observed: ObservedReporting): ReportingObservation {
-  const verifiedAt = observed.verifiedAt === undefined ? Number.NaN : millisOf(observed.verifiedAt)
-  if (!Number.isFinite(verifiedAt)) return { readiness: "ReadinessUnobserved", identityMatches: observed.identityMatches, refreshFailed: observed.refreshFailed, verifiedAtSecond: 0 }
-  return { readiness: observed.readiness, identityMatches: observed.identityMatches, refreshFailed: observed.refreshFailed, verifiedAtSecond: Math.floor(verifiedAt / 1000) }
+function listingOf(project: ProjectView): ProjectListing {
+  if (project.listingTier === "Retired") return "Retired"
+  return project.manifestStatus === "Paused" ? "Paused" : "Active"
+}
+
+function identity(value: string | undefined, registered: string | undefined) {
+  if (value === undefined) return 0
+  return registered === undefined || value === registered ? 1 : 2
+}
+
+function millisOrZero(iso: string | undefined) {
+  const millis = iso === undefined ? Number.NaN : millisOf(iso)
+  return Number.isFinite(millis) && millis > 0 ? millis : 0
+}
+
+function targetOf(project: ProjectView, read: ReportingReadinessRead | undefined): Target {
+  return {
+    revision: read?.target.revision ?? project.revision,
+    repository: 1,
+    repositoryId: identity(read?.target.repositoryId, undefined),
+    repositoryNodeId: identity(read?.target.repositoryNodeId, undefined),
+    listing: listingOf(project),
+  }
+}
+
+function observationOf(read: ReportingReadinessRead | undefined, target: Target): ReadinessObservation | undefined {
+  const observed = read?.observation
+  if (read === undefined || observed === undefined) return undefined
+  const verifiedAt = millisOrZero(observed.verifiedAt)
+  return {
+    revision: target.revision,
+    repository: target.repository,
+    repositoryId: identity(observed.repositoryId, read.target.repositoryId),
+    repositoryNodeId: identity(observed.repositoryNodeId, read.target.repositoryNodeId),
+    enabled: observed.enabled,
+    verifiedAt,
+    attemptedAt: Math.max(verifiedAt, millisOrZero(observed.attemptedAt)),
+    failure: observed.failure,
+  }
 }
 
 export function handoffUrl(repository: string) {
@@ -44,29 +79,29 @@ export effect function readiness(id: string) {
   const program = try (try ReportingPrograms).current(id)
   if (program === undefined) throw programNotFound()
   const settings = try IntakeSettings
-  const observed = try (try ReportingReadiness).current(id)
+  const read = try (try ReportingReadiness).current(id)
   const nowMs = try Clock.currentTimeMillis
-  const nowSecond = Math.floor(nowMs / 1000)
-  const observation = modelObservation(observed)
-  const availability = handoffAvailability(observation, nowSecond)
-  const known = availability !== "Unavailable"
-  const stale = availability === "Unavailable" || availability === "StaleAccess"
-  const state = !known ? "unavailable" as const : observation.readiness === "ReadinessEnabled" ? "ready" as const : "disabled" as const
-  const remaining = stale ? 0 : Math.max(0, reportingObservationSeconds - (nowSecond - observation.verifiedAtSecond))
+  const target = targetOf(project, read)
+  const observation = observationOf(read, target)
+  const known = observation !== undefined && identityMatches(observation, target) && observation.verifiedAt > 0 && nowMs >= observation.verifiedAt
+  const state = !known ? "unavailable" as const : observation.enabled ? "ready" as const : "disabled" as const
+  const stale = !known || !fresh(observation, nowMs)
+  const ready = readyFor({ observations: observation === undefined ? [] : [observation] }, target, nowMs)
+  const remaining = stale || !known ? 0 : Math.max(0, Math.floor((maxAgeMs - (nowMs - observation.verifiedAt)) / 1000))
   const closed = program.closesAt !== undefined && millisOf(program.closesAt) <= nowMs
   return {
     projectId: id,
     repository: program.repository,
     state,
-    automatic: !settings.automatic ? "off" as const : availability === "Enabled" ? "ready" as const : "unavailable" as const,
+    automatic: !settings.automatic ? "off" as const : ready ? "ready" as const : "unavailable" as const,
     automaticConfigured: settings.automatic,
     storedIntake: settings.stored,
-    checkedAt: known ? observed.verifiedAt ?? null : null,
+    checkedAt: known ? read?.observation?.verifiedAt ?? null : null,
     stale,
     maxAgeSeconds: Math.min(readinessSeconds, Math.max(0, remaining - readinessSeconds)),
     programStatus: program.status ?? null,
     paidParticipation: program.status === "open" && !closed ? "open" as const : "closed" as const,
-    handoffUrl: handoffLinkShown(observation, nowSecond) ? handoffUrl(program.repository) : null,
+    handoffUrl: state === "ready" ? handoffUrl(program.repository) : null,
   }
 }
 

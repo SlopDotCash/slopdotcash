@@ -1,0 +1,17 @@
+// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import { D1, first, sql } from "@repo/platform/d1"
+import { VettingBans } from "@repo/ports/security"
+
+schema ServiceBan { ok: number }
+
+effect function serviceBan(enforcement: { readonly enforcementId: string; readonly projectId: string }) {
+  const found = try first(ServiceBan, sql`SELECT 1 AS ok FROM project_enforcements WHERE id = ${enforcement.enforcementId} AND project_id = ${enforcement.projectId} AND action = 'ban' AND actor_role = 'vetting-service'`)
+  return found !== undefined
+}
+
+export const VettingBansLive = Layer.effect(VettingBans, effect {
+  const services = try Effect.context<D1>()
+  return {
+    serviceBan: (enforcement) => Effect.provide(serviceBan(enforcement), services),
+  } satisfies VettingBans.Shape
+})

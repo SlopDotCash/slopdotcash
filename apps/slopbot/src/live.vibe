@@ -1,4 +1,5 @@
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { ReportingReadinessLive } from "./readiness/port.vibe"
 
-export const slopbot = area({ name: "slopbot", api, routes: Layer.empty, provides: Layer.empty })
+export const slopbot = area({ name: "slopbot", api, routes: Layer.empty, provides: ReportingReadinessLive })

@@ -1,4 +1,9 @@
+// spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { RunEvidenceLive } from "./traces/runEvidence.vibe"
 
-export const contributor = area({ name: "contributor", api, routes: Layer.empty, provides: Layer.empty })
+export { evidenceArtifacts } from "./artifacts/live.vibe"
+export { traceObjects } from "./traces/objects.vibe"
+
+export const contributor = area({ name: "contributor", api, routes: Layer.empty, provides: RunEvidenceLive })

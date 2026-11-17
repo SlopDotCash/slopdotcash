@@ -87,6 +87,8 @@ function services(env: Env, views: ReadonlyArray<ProjectView>, ledgers: Readonly
   const restrictions = Layer.succeed(Restrictions, {
     account: () => effect { return { banned: false } },
     project: () => effect { return { restricted: false } },
+    fence: () => effect { return sql`SELECT 1` },
+    unbanned: () => effect { return sql`1` },
   })
   const closed = Layer.succeed(ClosedMonth, {
     ledger: (month) => effect {

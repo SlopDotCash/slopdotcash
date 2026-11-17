@@ -1,21 +1,28 @@
-// spec/slopbot/reportingReadiness.md, "Each registered, non-retired project gets one private-reporting observation per run from the App's own read"
+// spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"
 import { GitHub } from "@repo/platform/github"
 import { GitHubApp } from "@repo/platform/github/app"
-import type { ReportingRead, ReportingResult } from "../../gen/slopbot__reportingReadiness.ts"
-import { checkedResult } from "../../gen/slopbot__reportingReadiness.effect.vibe"
-import type { Target } from "./targets.vibe"
+import type { ReadKind } from "../../gen/security__reportingReadiness.ts"
+import { type Fetched, type Target, matchesRegistered } from "./targets.vibe"
 
 const Fields = Schema.Record(Schema.String, Schema.Unknown)
 
 const limitBytes = 64 * 1024
-const nodeId = /^[A-Za-z0-9_=-]{4,256}$/u
+const nodeIdPattern = /^[A-Za-z0-9_=-]{4,256}$/u
 
-function readOf(readKind: ReportingResult): ReportingRead {
-  return { readKind, readEnabled: false, readRepositoryId: 0, readNodeId: "", nodeWellFormed: false }
+function unread(kind: ReadKind): Fetched {
+  return { kind, repositoryId: 0, nodeId: "", enabled: false }
 }
 
 function idOf(value: unknown) {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
+function identityOf(target: Target, facts: Readonly<Record<string, unknown>>): Fetched {
+  const fullName = facts["full_name"]
+  const node = facts["node_id"]
+  const sameName = typeof fullName === "string" && fullName.toLowerCase() === target.repository.toLowerCase()
+  const nodeId = typeof node === "string" && nodeIdPattern.test(node) ? node : ""
+  return sameName ? { kind: "Verified", repositoryId: idOf(facts["id"]), nodeId, enabled: false } : { kind: "Verified", repositoryId: 0, nodeId: "", enabled: false }
 }
 
 effect function installationOf(target: Target) {
@@ -24,26 +31,21 @@ effect function installationOf(target: Target) {
 
 effect function appRead(target: Target) {
   const installation = try installationOf(target)
-  if (installation === null) return readOf("AppNotInstalled")
-  if (installation === undefined) return readOf("ReportingUnavailable")
+  if (installation === null) return unread("AppNotInstalled")
+  if (installation === undefined) return unread("ReadUnavailable")
   const scoped = (try GitHubApp).asInstallation(installation, { repositories: [target.name], permissions: { repository_advisories: "read" } })
   provide scoped {
     const github = try GitHub
-    const facts = try github.json(`/repos/${target.owner}/${target.name}`, Fields, { limitBytes })
-    const node = facts["node_id"]
-    const readNodeId = typeof node === "string" ? node : ""
-    const identity: ReportingRead = { readKind: "ReportingVerified", readEnabled: false, readRepositoryId: idOf(facts["id"]), readNodeId, nodeWellFormed: nodeId.test(readNodeId) }
-    const fullName = facts["full_name"]
-    const sameName = typeof fullName === "string" && fullName.toLowerCase() === target.repository.toLowerCase()
-    if (!sameName || checkedResult(identity, target.expected) !== "ReportingVerified") return readOf("IdentityMismatch")
+    const identity = identityOf(target, try github.json(`/repos/${target.owner}/${target.name}`, Fields, { limitBytes }))
+    if (!matchesRegistered(target, identity)) return identity
     const reporting = try github.json(`/repos/${target.owner}/${target.name}/private-vulnerability-reporting`, Fields, { limitBytes })
     const enabled = reporting["enabled"]
-    if (typeof enabled !== "boolean") return readOf("ReportingUnavailable")
-    return { ...identity, readEnabled: enabled }
+    if (typeof enabled !== "boolean") return unread("ReadUnavailable")
+    return { ...identity, enabled } satisfies Fetched
   }
 }
 
 export effect function reportingRead(target: Target) {
   const read = try exit(appRead(target))
-  return Exit.isSuccess(read) ? read.value : readOf("ReportingUnavailable")
+  return Exit.isSuccess(read) ? read.value : unread("ReadUnavailable")
 }

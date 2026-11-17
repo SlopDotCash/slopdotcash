@@ -1,24 +1,16 @@
 // spec/settlement/monthly.md, "The trusted workflow proposes in the first three days for an active, funded, verified project"; spec/settlement/monthly.md, "A month that is not proposed in its window gets no proposal"; spec/settlement/monthly.md, "The allocation is conserved within the month's pool"; spec/settlement/payoutExclusions.md, "A complete accepted-work snapshot carries every actor's categories separately"
 import { nowSeconds } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
-import { ClosedMonth } from "@repo/ports/points"
+import { ClosedMonth, type PointWeight } from "@repo/ports/points"
 import type { WorkRow, WorkSnapshot } from "../../gen/settlement__payoutExclusions.ts"
 import { type Event, type Monthly, apply, canCloseProposalWindow, closeProposalWindow, projectMayPropose, proposalWindowOpen } from "../../gen/settlement__monthly.effect.vibe"
 import { fromAmount } from "../kernels/amounts.ts"
 import { formatPeriod } from "../kernels/calendar.ts"
 import { type MonthKey, MonthlyFacts, amountOf, manifestOf, proposalWrites, readRows, reviewBudgetActive, stateOf, unproposed } from "./store.vibe"
 
-export schema ContributorWeight {
-  readonly githubId: string
-  readonly login: string
-  readonly points: number
-}
-
-export schema ContributorWeights = ReadonlyArray<ContributorWeight>
-
 export type Skip = "NotEligible" | "Unfunded" | "WindowPassed" | "WindowNotOpen" | "ReviewBudget"
 
-export type Failure = "SnapshotMissing" | "SnapshotWithoutLogins" | "ActorInvalid" | "Refused"
+export type Failure = "SnapshotMissing" | "ActorInvalid" | "Refused"
 
 export type Proposed =
   | { readonly kind: "Proposed"; readonly projectId: string; readonly recipients: number; readonly snapshotSha256: string }
@@ -41,7 +33,7 @@ function windowSkip(month: Monthly): Skip {
   return reason === "NotEligible" || reason === "Unfunded" ? reason : "WindowPassed"
 }
 
-effect function rowOf(weight: ContributorWeight) {
+effect function rowOf(weight: PointWeight) {
   const actor = Number(weight.githubId)
   if (!/^[1-9][0-9]{0,19}$/u.test(weight.githubId) || !Number.isSafeInteger(actor) || !Number.isSafeInteger(weight.points) || weight.points < 0) return undefined
   const points = try orDie(Effect.try(() => BigInt(weight.points)))
@@ -62,11 +54,9 @@ export effect function proposeProject(key: MonthKey) {
   if (reviewBudgetActive(manifest, key.period)) return skipped(projectId, "ReviewBudget")
   const ledger = try (try ClosedMonth).ledger({ projectId, period: formatPeriod(key.period) })
   if (ledger === undefined) return failed(projectId, "SnapshotMissing")
-  const weights = Schema.decodeUnknownEffect(ContributorWeights)(ledger.weights) catch () => undefined
-  if (weights === undefined) return failed(projectId, "SnapshotWithoutLogins")
   const workRows: WorkRow[] = []
   const logins = new Map<number, string>()
-  for (const weight of weights) {
+  for (const weight of ledger.weights) {
     const row = try rowOf(weight)
     if (row === undefined) return failed(projectId, "ActorInvalid")
     workRows.push(row)

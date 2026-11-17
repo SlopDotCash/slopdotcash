@@ -71,17 +71,17 @@ function chainStand(stand: Stand, base: Instance) {
       stand.calls.push(`reserve ${intent.nonceFloor}`)
       const facts = stand.signing === "forged"
         ? { intentHash: "0x5555555555555555555555555555555555555555555555555555555555555555" }
-        : try promise(() => factsFor({ type: "reserveGas", runId: 1, nonce: intent.nonceFloor, maximum: 50000 }, generationNames(0), base))
-      return { nonce: intent.nonceFloor, maximumWei: "50000000000000", intentHash: facts.intentHash ?? "" }
+        : try promise(() => factsFor({ type: "reserveGas", runId: 1, nonce: intent.nonceFloor, maximum: 100000 }, generationNames(0), base))
+      return { nonce: intent.nonceFloor, maximumWei: "100000000000000", intentHash: facts.intentHash ?? "" }
     },
     sign: (intent, reserved) => effect {
       stand.calls.push("sign")
-      const send: SignedSend = { kind: "Conversion", tx: 1, nonce: reserved.nonce, gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline, blockhashSlot: 0, router: 6131, approvedAmount: 0 }
+      const send: SignedSend = { kind: "Conversion", tx: 1, nonce: reserved.nonce, gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: 0, deadline, blockhashSlot: 0 }
       const facts = stand.signing === "forged"
         ? { txId: "0x6666666666666666666666666666666666666666666666666666666666666666", rawTx: "0x02f8", expiresAt: undefined }
         : try promise(() => factsFor({ type: "sign", runId: 1, send }, generationNames(0), base))
       stand.signed.push(facts.rawTx ?? "")
-      return { kind: "Conversion", txId: facts.txId ?? "", rawTx: facts.rawTx ?? "", gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: intent.quote.minimumOutput, deadline, blockhashSlot: 0, router: 6131, approvedAmount: 0n, expiresAt: facts.expiresAt }
+      return { kind: "Conversion", txId: facts.txId ?? "", rawTx: facts.rawTx ?? "", gasLimit: 1000, fees: signedFees, inspection: "Inspected", outputToFeeWallet: true, minimumOutput: intent.quote.minimumOutput, deadline, blockhashSlot: 0, expiresAt: facts.expiresAt }
     },
     broadcast: (rawTx) => effect {
       stand.calls.push(`broadcast ${stand.signed.indexOf(rawTx)}`)
@@ -105,7 +105,7 @@ effect function runtimeFor(mode: Mode, network: Network) {
   let runtime: Runtime = try apply(initial, { type: "setReleaseVariable", variable: true }, "Owner")
   if (mode === "Off") return runtime
   runtime = try apply(runtime, { type: "publish", config }, "ReleaseWorkflow")
-  return mode === "Live" ? try apply(runtime, { type: "verifyReadiness", network, listedWallet: 1 }, "Owner") : runtime
+  return mode === "Live" ? try apply(runtime, { type: "verifyReadiness", network }, "Owner") : runtime
 }
 
 interface World {
@@ -119,7 +119,7 @@ interface World {
 }
 
 function incomeOf(transfers: ReadonlyArray<Transfer>): Income {
-  return { transfers, topUps: [], counters: [], allowances: new Map<string, bigint>() }
+  return { transfers, topUps: [], counters: [] }
 }
 
 const pairIncome = incomeOf([{ receipt: "0xaa:0", token: tokenA, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }, { receipt: "0xbb:0", token: tokenB, amount: 4000000000n }])

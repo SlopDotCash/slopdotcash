@@ -217,7 +217,7 @@ export effect function adoptedBinding(entries: Entries, deployment: Deployment, 
   const signedAttempt = withAttempt(authorized.record, attempt.transactionId)
   return try advance(entries, key, signedAttempt.record, [
     { event: { type: "recordIntent", intent: 1 }, by: "account" },
-    { event: { type: "authorize", actor: Number(call.actor), signature: { wallet: destination, signer, intent: 1, expiresAt: Number(call.expiresAt) } }, by: "account" },
+    { event: { type: "authorize", actor: Number(call.actor), signature: { wallet: destination, signer, intent: 1 }, expiresAt: Number(call.expiresAt) }, by: "account" },
     { event: { type: "signBinding", nonce: signed.request.nonce, attempt: signedAttempt.attempt, authority: authorized.authority }, by: "attester" },
   ])
 }

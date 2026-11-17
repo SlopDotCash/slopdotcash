@@ -9,6 +9,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { area, pages } from "@repo/platform/worker"
 import { referralApi } from "../src/client/referrals.vibe"
+import { buildTree } from "../src/referrals/merkle.ts"
 import { referralRoutes } from "../src/referrals/routes.vibe"
 
 interface Env {
@@ -42,11 +43,9 @@ const hundredTwenty = (120n * unit).toString()
 const hundredFifty = (150n * unit).toString()
 const twenty = (20n * unit).toString()
 const firstRoot = `0x${"a".repeat(64)}`
-const secondRoot = `0x${"b".repeat(64)}`
 const unfiledRoot = `0x${"c".repeat(64)}`
-const correctedRoot = `0x${"7".repeat(64)}`
-const firstProof = [`0x${"d".repeat(64)}`]
-const secondProof = [`0x${"e".repeat(64)}`]
+const forgedProof = [`0x${"d".repeat(64)}`]
+const bystander = `0x${"4".repeat(40)}`
 const emptyBody = "{\"referrers\":[]}"
 const assetAnswer = "static asset"
 const program = { network: "robinhood-testnet", chainId: 46630, distributor: `0x${"3".repeat(40)}`, token: `0x${"2".repeat(40)}`, decimals: 18, codeHash: `0x${"f".repeat(64)}` }
@@ -115,8 +114,15 @@ effect function cache(env: Env, body: string | null, observedAt: string | null, 
   try seed(env, "INSERT INTO referral_claim_cache (id, body, observed_at, error_at) VALUES ('program', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, observed_at = excluded.observed_at, error_at = excluded.error_at", body, observedAt, errorAt)
 }
 
-function referrerBody(period: string, cumulative: string, root: string, proof: ReadonlyArray<string>) {
-  return `{"schema":"slop-referral-accrual-file-v1","period":"${period}","referrers":[{"githubId":"${referrer}","githubLogin":"referrer","cumulativeBase":"${cumulative}","wallet":"${wallet}","leaf":{"hash":"${root}","proof":${JSON.stringify(proof)}}},{"githubId":"${otherReferrer}","githubLogin":"walletless","cumulativeBase":"0","wallet":null}]}`
+effect function treeFor(cumulative: string) {
+  const tree = try Effect.try(() => buildTree([{ address: wallet, cumulativeBase: BigInt(cumulative) }, { address: bystander, cumulativeBase: 1n }]))
+  const leaf = tree?.leaves.find((entry) => entry.address === wallet)
+  if (tree === null || leaf === undefined) return try Effect.die("the fixture tree has no referrer leaf")
+  return { root: tree.root, hash: leaf.hash, proof: leaf.proof }
+}
+
+function referrerBody(period: string, cumulative: string, hash: string, proof: ReadonlyArray<string>) {
+  return `{"schema":"slop-referral-accrual-file-v1","period":"${period}","referrers":[{"githubId":"${referrer}","githubLogin":"referrer","cumulativeBase":"${cumulative}","wallet":"${wallet}","leaf":{"hash":"${hash}","proof":${JSON.stringify(proof)}}},{"githubId":"${otherReferrer}","githubLogin":"walletless","cumulativeBase":"0","wallet":null}]}`
 }
 
 effect function same(actual: unknown, expected: unknown) {
@@ -217,8 +223,11 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const seconds = Math.floor(nowMillis / 1000)
     const member = try signIn(claims, referrer)
     const otherMember = try signIn(claims, otherReferrer)
-    const firstEpoch = { epoch: 0, period: "2026-12", root: firstRoot, totalBase: hundred, claimableAt: seconds - 100, voided: false }
-    const secondEpoch = { epoch: 1, period: "2027-01", root: secondRoot, totalBase: hundredFifty, claimableAt: seconds - 10, voided: false }
+    const first = try treeFor(hundred)
+    const second = try treeFor(hundredFifty)
+    const corrected = try treeFor(hundredTwenty)
+    const firstEpoch = { epoch: 0, period: "2026-12", root: first.root, totalBase: hundred, claimableAt: seconds - 100, voided: false }
+    const secondEpoch = { epoch: 1, period: "2027-01", root: second.root, totalBase: hundredFifty, claimableAt: seconds - 10, voided: false }
     const snapshot = { program, deploymentBlock: "1", block: { number: "100", hash: `0x${"9".repeat(64)}`, timestamp: seconds }, observedAt: now, paused: false, pauseAt: null, latestPaused: false, ended: false, epochs: [firstEpoch], claimed: { [wallet]: twenty } }
     const read = (cookie: string) => effect { return try parsed(try ask(claims, "/api/v1/referrals/me", { cookie })) }
     const signedOut = try ask(claims, "/api/v1/referrals/me")
@@ -232,8 +241,8 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     try cache(claims, JSON.stringify(snapshot), now, null)
     const dryRunOnly = try read(member)
     try seed(claims, "DELETE FROM referral_claim_cache")
-    try file(claims, { period: "2026-12", epoch: 1, mode: "live", body: referrerBody("2026-12", hundred, firstRoot, firstProof), root: firstRoot, total: hundred, leaves: 1 })
-    try file(claims, { period: "2027-01", epoch: 2, mode: "live", body: referrerBody("2027-01", hundredFifty, secondRoot, secondProof), root: secondRoot, total: hundredFifty, leaves: 1 })
+    try file(claims, { period: "2026-12", epoch: 1, mode: "live", body: referrerBody("2026-12", hundred, first.hash, first.proof), root: first.root, total: hundred, leaves: 2 })
+    try file(claims, { period: "2027-01", epoch: 2, mode: "live", body: referrerBody("2027-01", hundredFifty, second.hash, second.proof), root: second.root, total: hundredFifty, leaves: 2 })
     try seed(claims, "INSERT INTO referral_claim_wallets (referrer_github_id, wallet, pinned_period, created_at) VALUES (?, ?, '2026-12', ?)", referrer, wallet, now)
     const noCache = try read(member)
     try cache(claims, JSON.stringify(snapshot), now, null)
@@ -257,13 +266,16 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
     const unverifiedProgram = try read(member)
     try cache(claims, null, null, now)
     const unknown = try read(member)
-    try file(claims, { period: "2027-02", epoch: 3, mode: "live", body: referrerBody("2027-02", hundredTwenty, correctedRoot, secondProof), root: correctedRoot, total: hundredTwenty, leaves: 1 })
+    try file(claims, { period: "2027-02", epoch: 3, mode: "live", body: referrerBody("2027-02", hundredTwenty, corrected.hash, corrected.proof), root: corrected.root, total: hundredTwenty, leaves: 2 })
     try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, secondEpoch] }), now, null)
     const totalsDiffer = try read(member)
     try cache(claims, JSON.stringify({ ...snapshot, epochs: [firstEpoch, secondEpoch], paused: true, pauseAt: seconds }), now, null)
     const pausedBelowLeaf = try read(member)
+    try file(claims, { period: "2027-03", epoch: 4, mode: "live", body: referrerBody("2027-03", hundred, first.hash, forgedProof), root: first.root, total: hundred, leaves: 2 })
+    try cache(claims, JSON.stringify({ ...snapshot, epochs: [{ ...firstEpoch, period: "2027-03" }] }), now, null)
+    const wrongProof = try read(member)
     const finalizedAt = try isoAt(seconds * 1000)
-    const claim = { period: "2026-12", epoch: 0, root: firstRoot, cumulativeBase: hundred, proof: firstProof }
+    const claim = { period: "2026-12", epoch: 0, root: first.root, cumulativeBase: hundred, proof: first.proof }
     const account = {
       enabled: true, status: "ready", program, observedAt: now, finalizedAt, wallet, accruedBase: hundredFifty,
       claimedBase: twenty, claimableBase: (80n * unit).toString(), pendingBase: (50n * unit).toString(),
@@ -289,6 +301,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       unknown,
       totalsDiffer,
       pausedBelowLeaf,
+      wrongProof,
     }, {
       signedOut: [401, "{\"error\":\"sign_in_required\"}", privateJson],
       wrongMethods: [[405, methodNotAllowed, privateJson], [405, "", privateJson], [405, methodNotAllowed, privateJson]],
@@ -307,6 +320,7 @@ layer(Layer.mergeAll(Started, webCrypto), { excludeTestServices: true, timeout: 
       unknown: [200, unknownAccount],
       totalsDiffer: [500, internalError],
       pausedBelowLeaf: [200, { ...account, accruedBase: hundredTwenty, paused: true, claimableBase: "0", pendingBase: (100n * unit).toString(), claim: null }],
+      wrongProof: [500, internalError],
     })
   })
 })

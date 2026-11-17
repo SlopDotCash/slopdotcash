@@ -42,7 +42,7 @@ effect function factOf(token: number, address: string, amountIn: number, read: Q
 export effect function evaluateToken(session: Session, token: number, address: string, target: string) {
   const chain = try ConversionChain
   const available = spendable(session.state, token)
-  if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available))) return undefined
+  if (available <= 0 || !canEvaluate(session.state, session.runId, probe(token, available), "Worker")) return undefined
   const held = try chain.balance(address)
   let input = held < wideNumber(available) ? held : wideNumber(available)
   if (input <= 0n) return undefined

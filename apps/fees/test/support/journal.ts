@@ -1,4 +1,4 @@
-// spec/fees/conversion.md, "Simulation samples exercise the outcome order, both send families and conflicting evidence"
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"; spec/fees/conversion.md, "A same-nonce EVM replacement changes only its fees, in bounded steps"
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base58, base64 } from "@scure/base";
@@ -7,7 +7,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { type Hex, keccak256, serializeTransaction, type TransactionSerializableEIP1559 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { Event, Fee } from "../../gen/fees__conversion.ts";
+import { type Event, type Fee, additionalReserve, replacementFees } from "../../gen/fees__conversion.ts";
 import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.ts";
 import type { Instance, NameKind, Names } from "../../src/journal/codec.vibe";
 import type { Facts } from "../../src/journal/store.vibe";
@@ -99,19 +99,11 @@ async function reservedSend(instance: Instance, nonce: number, maximum: number):
   return instance.network === "Solana" ? solanaSend(instance, nonce) : evmSend(instance, nonce, 1, maximum, 0);
 }
 
-function ceilPercent(value: number, percent: number): number {
-  return Math.floor((value * percent + 99) / 100);
-}
-
 async function replacementSend(instance: Instance, state: Fee, id: number): Promise<Signed> {
   const row = state.rows[id - 1];
-  const first = row?.attempts[0];
-  const latest = row?.attempts.at(-1);
-  if (row === undefined || first === undefined || latest === undefined) return { txId: "", rawTx: "", intentHash: "" };
-  const ceiling = Math.floor(transactionCeilingOf(state.network) / (row.gasLimit > 0 ? row.gasLimit : 1));
-  const maxFee = Math.min(ceilPercent(latest.maxFee, 125), first.maxFee * 3, ceiling);
-  const priority = Math.min(ceilPercent(latest.priority, 125), first.priority * 3);
-  return evmSend(instance, row.nonce, row.gasLimit, maxFee, priority);
+  if (row === undefined || row.attempts.length === 0) return { txId: "", rawTx: "", intentHash: "" };
+  const fees = replacementFees(state, row);
+  return evmSend(instance, row.nonce, row.gasLimit, fees.maxFee, fees.priorityFee);
 }
 
 function bound(names: GenerationNames, tx: number, signed: Signed): Facts {
@@ -130,11 +122,11 @@ export async function factsFor(event: Event, names: GenerationNames, instance: I
     case "evaluate": return { targetToken: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", summary: JSON.stringify({ route: "journal" }) };
     case "reserveGas": return { intentHash: (await reservedSend(instance, event.nonce, event.maximum)).intentHash, ...solana ? { blockhashSlot: 40 } : {} };
     case "sign": {
-      const signed = await reservedSend(instance, event.send.nonce, solana ? transactionCeilingOf("Solana") : event.send.gasLimit * event.send.fees.maxFee);
+      const signed = await reservedSend(instance, event.send.nonce, solana ? transactionCeilingOf("Solana") : event.send.gasLimit * event.send.fees.maxFee + additionalReserve(instance.network));
       return { ...bound(names, event.send.tx, signed), expiresAt: Math.ceil((event.send.deadline + instance.epoch) / 1_000) };
     }
     case "claim": {
-      const claim = event.claim;
+      const claim = event.vaultClaim;
       const signed = solana ? solanaSend(instance, claim.nonce) : await evmSend(instance, claim.nonce, claim.gasLimit, claim.fees.maxFee, claim.fees.priority);
       return { ...bound(names, claim.tx, signed), vault: JSON.stringify({ vault: names.text("vault", claim.vault), projectId: `g${generationOf(instance)}-project` }) };
     }

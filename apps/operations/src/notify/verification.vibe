@@ -1,9 +1,9 @@
 // spec/backend/email.md, "Delivery of the verification mail has its own state"
 import { sha256Hex } from "@repo/platform/crypto"
+import { EmailEnrollment } from "@repo/ports/backend"
 import { EmailAddress } from "../notifications/contracts.schema.vibe"
 import type { Configured } from "./config.vibe"
 import { inboxNoticeMime, verificationText } from "./letters.vibe"
-import { EmailEnrollment } from "./ports.vibe"
 import { Mail } from "./send.vibe"
 
 const GithubId = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,19}$/u))

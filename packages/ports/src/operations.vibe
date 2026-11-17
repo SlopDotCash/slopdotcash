@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Control future email with consent bound to a verified destination"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"
+// spec/operations/notifications.md, "Story: Save each notice once with its source change"; spec/operations/notifications.md, "Story: Follow the account's email enrollment and closure"; spec/operations/paymentJobs.md, "Story: Respect service authorization and settle each configured network independently"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"
 import type { Statement } from "@repo/platform/d1"
 import type { MailCategory, Network, ReadFailure } from "./backend.vibe"
 
@@ -44,6 +44,7 @@ export interface Suppression {
 
 export service NoticeOutbox {
   suppress(suppression: Suppression): ReadonlyArray<Statement>!!
+  cancel(closure: { readonly recipientGithubId: string }): ReadonlyArray<Statement>!!
 }
 
 export interface JobKey {
@@ -55,6 +56,17 @@ export interface JobKey {
 export schema Admission = "Admitted" | "Busy"
 
 export service JobAdmission {
-  admit(job: JobKey): Admission!ReadFailure
-  finish(job: JobKey): void!ReadFailure
+  admit(job: JobKey, lease: string): Admission!ReadFailure
+  renew(job: JobKey, lease: string): boolean!ReadFailure
+  finish(job: JobKey, lease: string): void!ReadFailure
+}
+
+export schema IntakeObservation {
+  readonly enabled: boolean
+  readonly verifiedAt: string
+}
+
+export service IntakeHealth {
+  status(): (IntakeObservation | undefined)!ReadFailure
+  version(): Statement!!
 }

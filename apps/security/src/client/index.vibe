@@ -1,3 +1,6 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
 import type { AnyRoute } from "@repo/platform/route"
+import { evidenceApi } from "./evidence.vibe"
+import { intakeApi } from "./intake.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = []
+export const api: ReadonlyArray<AnyRoute> = [...evidenceApi, ...intakeApi]

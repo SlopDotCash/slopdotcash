@@ -126,7 +126,7 @@ async function send(key: string, event: Event): Promise<"accepted" | "refused"> 
     case "commitReceipt": {
       clock.set(time(event.receivedAt));
       const receivedAt = new Date(time(event.receivedAt)).toISOString();
-      const statements = await runtime.runPromise(slopReceipt({
+      const statements = slopReceipt({
         caseId: `sc_conformance_g${generation}_${key}`,
         submissionId: attempt.submissionId,
         projectId: project,
@@ -137,11 +137,12 @@ async function send(key: string, event: Event): Promise<"accepted" | "refused"> 
         receivedAt,
         policyRevision: event.terms.revision,
         terms: frozen(event.terms),
+        receiptTerms: shellTerms(event.terms),
         report: { key: attempt.objectKey, digest: attempt.digest, bytes: attempt.bytes.length },
         ownerGithubId: null,
         unbanned: sql`1`,
-      }));
-      return outcome(entry, committed(attempt, time(event.receivedAt), shellTerms(event.terms), statements));
+      });
+      return outcome(entry, Effect.flatMap(statements, (built) => committed(attempt, time(event.receivedAt), shellTerms(event.terms), built)));
     }
     case "reconcileReceipt": return outcome(entry, reconciled(attempt, await shellNumber(keyText(event.key)), modelNumber(await hex(bytesFor(event.digest)))));
   }

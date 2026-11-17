@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import type { Driver, Options } from "../../gen/fees__runtime.conformance.ts";
-import type { Event, Mode, Network, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts";
-import { type Held, type RuntimeEvent, decodeConfig, send, unpublished } from "../../src/runtime/config.vibe";
+import type { Event, Mode, Runtime, Sender, WorkerConfig } from "../../gen/fees__runtime.ts";
+import { type Held, type RuntimeEvent, decodeConfig, publishedWallet, send, unpublished } from "../../src/runtime/config.vibe";
 import type { ConfigInvalid } from "@repo/platform/config";
 import { type FeeVars, definitions, evmNetworks } from "../../src/runtime/networks.vibe";
 
@@ -35,9 +35,6 @@ function evmAddress(id: number): string {
 function solanaAddress(id: number): string {
   return `${id < 0 ? "N" : "S"}${[...String(Math.abs(id))].map((digit) => digits[Number(digit)]).join("")}`.padEnd(32, "z");
 }
-function walletAddress(network: Network, id: number): string {
-  return definitions[network].family === "evm" ? evmAddress(id) : solanaAddress(id);
-}
 
 const addressIds = new Map<string, number>([[unpublished.wallets[0] ?? "", 1], [unpublished.wallets[1] ?? "", 2]]);
 function remembered(address: string, id: number): string {
@@ -68,7 +65,7 @@ function translated(event: Event): Effect.Effect<RuntimeEvent, ConfigInvalid> {
         (config): RuntimeEvent => ({ type: "publish", source: event.config.source, config }),
       );
     case "verifyReadiness":
-      return Effect.succeed({ type: "verifyReadiness", network: event.network, wallet: remembered(walletAddress(event.network, event.listedWallet), event.listedWallet) });
+      return Effect.succeed({ type: "verifyReadiness", network: event.network, wallet: publishedWallet(held, event.network) ?? "" });
     default:
       return Effect.succeed(event);
   }
@@ -94,7 +91,7 @@ export const driver: Driver = {
           held = next;
           return "accepted" as const;
         }),
-        Effect.catchTags({ Rejected: () => Effect.succeed("refused" as const), ConfigInvalid: () => Effect.succeed("refused" as const) }),
+        Effect.catchTags({ Rejected: () => Effect.succeed("refused" as const), ReadinessUnbound: () => Effect.succeed("refused" as const), ConfigInvalid: () => Effect.succeed("refused" as const) }),
       ),
     );
   },

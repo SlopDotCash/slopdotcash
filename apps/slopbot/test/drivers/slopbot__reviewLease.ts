@@ -3,7 +3,6 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
-import { outcome } from "@repo/platform/testing/area";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/slopbot__reviewLease.conformance.ts";
@@ -11,6 +10,9 @@ import type { ClaimStatus, Event, PriorStart, ReviewLease } from "../../gen/slop
 import type { AuthorSlots } from "../../gen/slopbot__routing.ts";
 import { type ReviewClaim, assertCallClaim, claimReview, finishReview, leaseView } from "../../src/lease/store.vibe";
 import type { Finished, ReviewRow } from "../../src/lease/writes.vibe";
+import { recordCalls } from "../../src/route/calls.vibe";
+import type { CallRecord } from "../../src/route/route.vibe";
+import { settled } from "../support/settled.ts";
 
 const mf = startWorker({ d1: { SLOPBOT_DB: "lease-conformance" } });
 const failed = (await migrate(mf, "SLOPBOT_DB", migrationsDir)).find((applied) => applied.error !== undefined);
@@ -33,6 +35,11 @@ const author = () => 5_500_000 + generation;
 const reviewKey = () => `lease-g${generation}`;
 const at = () => new Date(clock.now()).toISOString();
 const row = (): ReviewRow => ({ reviewKey: reviewKey(), installationId: 1, repositoryId: repository(), itemKind: "issue", itemNumber: 1, itemNodeId: `I_lease_g${generation}`, authorId: author(), revision: "r", contentDigest: "c", policyDigest: "p" });
+
+const leaseCall: CallRecord = {
+  routeStep: 1, gateway: "orbio", requestedModel: "anthropic/claude-sonnet-5.5", servedModel: null, priceKey: "orbio/anthropic/claude-sonnet-5.5",
+  outcome: "ok", failure: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, providerCostMicroUsd: null, providerRequestId: null,
+};
 
 function handle(token: number): ReviewClaim {
   const held = tokens.get(token);
@@ -91,17 +98,12 @@ async function dispatch(event: Event) {
     case "observeClose":
       return closed(event.observed);
     case "recordCall": {
-      const allowed = await outcome(assertCallClaim(handle(event.token)), runtime);
-      if (allowed === "refused") return allowed;
-      await db.prepare(`INSERT INTO slopbot_costs (review_key, installation_id, call_kind, route_step, provider, requested_model, served_model, outcome, failure, input_tokens,
-          cache_write_tokens, cache_read_tokens, output_tokens, price_version, cost_micro_usd, billed_micro_usdc, reconciliation, created_at)
-        VALUES (?, 1, 'triage', 1, 'orbio', 'anthropic/claude-sonnet-5.5', NULL, 'ok', NULL, 0, 0, 0, 0, 'lease-test', 0, 0, 'estimated', ?)`).bind(reviewKey(), at()).run();
-      return "accepted" as const;
+      return settled(assertCallClaim(handle(event.token)).pipe(Effect.andThen(recordCalls(reviewKey(), 1, "triage", [leaseCall]))), runtime);
     }
     case "finish": {
       const status = finished[event.status];
       if (status === undefined) return "refused" as const;
-      return outcome(finishReview(handle(event.token), status, {}), runtime);
+      return settled(finishReview(handle(event.token), status, {}), runtime);
     }
   }
 }

@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@noble/hashes": "catalog:",
     "@repo/backend": "workspace:*",
     "@repo/operations": "workspace:*",

@@ -1,7 +1,8 @@
 // spec/slopbot/jobQueue.md, "A failed or contended handler retries with a bounded delay"; spec/slopbot/jobQueue.md, "A dead-lettered job stays visible and has no recovery route until the owner decides one"
+import type { QueueMessage } from "@repo/platform/bindings"
+import type { Redelivery } from "@repo/platform/worker"
 import { type HandlerResult, maxDeliveries, retryDelay } from "../../gen/slopbot__jobQueue.effect.vibe"
 import { type Job, decodeJob } from "./job.vibe"
-import type { JobBatch, JobMessage } from "./message.ts"
 
 export const maxRetries = maxDeliveries - 1
 
@@ -9,7 +10,7 @@ export error ReviewBusy { remainingSeconds: number }
 
 export type Handled = "Done" | "Resolved" | "SourceChanged"
 
-export interface Settled {
+interface Settled {
   readonly result: HandlerResult
   readonly delaySeconds: number | undefined
 }
@@ -24,30 +25,15 @@ function settledAs(result: Handled): Settled {
   return result === "SourceChanged" ? { result, delaySeconds: retryDelay(result, 0) } : { result, delaySeconds: undefined }
 }
 
-export effect function outcomeOf<E, R>(handled: Handled!E!R) {
+effect function outcomeOf<E, R>(handled: Handled!E!R) {
   const outcome = try exit(handled)
   return Exit.isSuccess(outcome) ? settledAs(outcome.value) : failedWith(Cause.squash(outcome.cause))
 }
 
-export effect function settle<E, R>(message: JobMessage, handle: (job: Job) => Handled!E!R) {
+export effect function settle<E, R>(message: QueueMessage, handle: (job: Job) => Handled!E!R) {
   const job = decodeJob(message.body) catch () => undefined
   const settled = job === undefined ? failedWith(undefined) : try outcomeOf(handle(job))
   try Effect.logInfo("slopbot job settled", { delivery: job?.deliveryId ?? null, kind: job?.kind ?? null, result: settled.result, attempts: message.attempts })
-  if (settled.delaySeconds === undefined) message.ack()
-  else message.retry({ delaySeconds: settled.delaySeconds })
-  return settled
-}
-
-export function consumer<Env extends object, S, LE, E>(services: (env: Env) => Layer.Layer<S, LE>, handle: (job: Job) => Handled!E!S) {
-  const runtimes = new WeakMap<Env, ManagedRuntime.ManagedRuntime<S, LE>>()
-  function runtimeOf(env: Env) {
-    const found = runtimes.get(env)
-    if (found !== undefined) return found
-    const made = ManagedRuntime.make(services(env))
-    runtimes.set(env, made)
-    return made
-  }
-  return (batch: JobBatch, env: Env) => runtimeOf(env).runPromise(effect {
-    for (const message of batch.messages) try settle(message, handle)
-  })
+  if (settled.delaySeconds === undefined) return undefined
+  return { delaySeconds: settled.delaySeconds } satisfies Redelivery
 }

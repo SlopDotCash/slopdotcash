@@ -35,6 +35,7 @@
     "./chain/evm": "./src/chain/evm.vibe",
     "./chain/solana": "./src/chain/solana.vibe",
     "./git": "./src/git/index.ts",
+    "./git/bytes": "./src/git/bytes.ts",
     "./git/evidence": "./src/git/evidence.ts",
     "./testing/area": "./src/testing/area.ts",
     "./testing/internet": "./src/testing/internet.ts",
@@ -46,7 +47,8 @@
     "./testing/github": "./src/testing/github.ts",
     "./testing/providers": "./src/testing/providers.ts",
     "./testing/quotes": "./src/testing/quotes.ts",
-    "./testing/chains": "./src/testing/chains.ts"
+    "./testing/chains": "./src/testing/chains.ts",
+    "./digest": "./src/digest.ts"
   },
   "scripts": {
     "typecheck": "vibelang --noEmit -p .",

@@ -1,9 +1,9 @@
-// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "Telegram stays retired and historical participation awards stay frozen"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"
+// spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "Telegram stays retired and historical participation awards stay frozen"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { type Statement, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
 import { type Accounts, type Event, apply } from "../../../gen/backend__accounts.effect.vibe"
-import { type DeliveryState, type Enrollment, type SecurityChoice, needsVerifiedVersion } from "../../../gen/backend__email.ts"
+import { type VerificationDelivery, type Enrollment, type SecurityChoice, needsVerifiedVersion } from "../../../gen/backend__email.ts"
 import { type Facts, type Loaded, type Names, accountReads, accountVersion, decodeAccounts, issued, known, named, noFacts, requestKeyOf } from "./codec.vibe"
 
 export schema GitHubAssertion { githubId: string; login: string; nodeId: string }
@@ -45,7 +45,7 @@ const verificationSeconds = 1800
 const flowSeconds = 600
 const hourSeconds = 3600
 
-const storedDelivery: Readonly<Record<DeliveryState, string>> = { Queued: "queued", Sending: "sending", Sent: "sent", DeliveryUnknown: "unknown" }
+const storedDelivery: Readonly<Record<VerificationDelivery, string>> = { Queued: "queued", Sending: "sending", Sent: "sent", DeliveryUnknown: "unknown" }
 
 function flag(value: boolean) {
   return value ? 1 : 0

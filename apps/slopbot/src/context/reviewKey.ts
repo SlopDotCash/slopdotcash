@@ -27,8 +27,15 @@ export function joinedParts(parts: string[]): string {
 }
 
 export function reviewKeyParts(input: ReviewKeyInput): string[] {
-  //@ ensures \result.length >= 6
+  //@ ensures \result.length === 6 + input.sortedQualityIds.length + (input.securityOnly ? 1 : 0)
   //@ ensures \result[0] === reviewKeyVersion
+  //@ ensures \result[1] === input.itemNode
+  //@ ensures \result[2] === input.revision
+  //@ ensures \result[3] === input.policyDigest
+  //@ ensures \result[4] === input.itemDigest
+  //@ ensures \result[5] === input.verifierKey
+  //@ ensures forall(k, 0 <= k && k < input.sortedQualityIds.length ==> \result[6 + k] === input.sortedQualityIds[k])
+  //@ ensures input.securityOnly ==> \result[\result.length - 1] === securityReviewPart
   const head = [reviewKeyVersion, input.itemNode, input.revision, input.policyDigest, input.itemDigest, input.verifierKey];
   const withQuality = head.concat(input.sortedQualityIds);
   return input.securityOnly ? withQuality.concat([securityReviewPart]) : withQuality;

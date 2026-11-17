@@ -13,7 +13,6 @@ import { maxBaseUnitsForChain } from "../kernels/networks.ts"
 import { type ObligationRows, type PaidRecord, type Projection, type Reservation, obligationAggregate, payoutOf, project, receiptOf, reservationOf, unreservedSettlement } from "./obligation.vibe"
 import { type EventReference, type FinalizedPaymentEvent, type PaymentDeployment, type VaultAsset, EvidenceRefused, bindingOf, limbs, networkOf, refused, sameAddress, sameEvidence, sameStoredAsset, storedEvidence } from "./terms.vibe"
 import { verifyFinalized } from "./verify.vibe"
-import { WalletHistory } from "./wallets.vibe"
 
 export schema HoldReason = "UnauthorizedDestination" | "LegacyFloorFee"
 
@@ -58,9 +57,9 @@ export effect function vaultAsset(deployment: PaymentDeployment) {
 
 export effect function projectionFor(deployment: PaymentDeployment, asset: VaultAsset, githubUserId: string, lease?: string) {
   const owner = { githubId: githubUserId, network: networkOf(deployment.chain) }
-  const history = try (try WalletHistory).authorized(owner)
-  const current = try (try Wallets).effective(owner)
-  const effective = current === undefined ? undefined : history.find((wallet) => wallet.claimId === current.claimId)
+  const wallets = try Wallets
+  const history = try wallets.authorized(owner)
+  const effective = try wallets.payable(owner)
   return { deployment, asset, history, effective, nowSeconds: try nowSeconds(), lease, requests: [], inspections: [] } satisfies Projection
 }
 

@@ -83,12 +83,6 @@ export const IDENTITY_RECORD: IdentityRecord = {
 
 export const SIGNED_ATTRIBUTION_MARKER = IDENTITY_RECORD.identifiers.contributionMarker.slop;
 
-export const READABLE_ATTRIBUTION_MARKERS: ReadonlyArray<string> = [
-  SIGNED_ATTRIBUTION_MARKER,
-  ...IDENTITY_RECORD.identifiers.contributionMarker.legacy,
-  "eliza-computer-attribution:v2",
-];
-
 const decodeRecord = Schema.decodeUnknownResult(IdentityRecord, { onExcessProperty: "error" });
 
 export type IdentityCheck = { readonly kind: "valid"; readonly record: IdentityRecord } | { readonly kind: "invalid"; readonly reason: string };

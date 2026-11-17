@@ -77,7 +77,6 @@ interface World {
   readonly facts: { eligibility: Eligibility; current: RevisionFact | undefined };
   readonly numbers: Map<number, number>;
   readonly digests: Map<string, string>;
-  readonly reasons: Map<string, string>;
   period: number | undefined;
   closed: boolean;
 }
@@ -99,7 +98,7 @@ const open = async (): Promise<World> => {
   const clock = settableClock(START * 1000);
   const facts: World["facts"] = { eligibility: noEligibility, current: undefined };
   const runtime = runtimeOver(db, clock, facts);
-  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), reasons: new Map(), period: undefined, closed: false };
+  return { mf, db, runtime, clock, facts, numbers: new Map(), digests: new Map(), period: undefined, closed: false };
 };
 
 const current = async () => world ??= await open();
@@ -123,21 +122,13 @@ const hexDigest = (w: World, digest: string) => {
   return hex;
 };
 
-const paddedReason = (w: World, reason: string, length: number) => {
-  const text = length > 0 && reason !== "" ? reason.padEnd(length, "x").slice(0, Math.max(length, 1)) : "";
-  w.reasons.set(text, reason);
-  return text;
-};
-
 const forStore = (w: World, event: Event): Event => {
   if (event.type === "observeRevision") return { ...event, revision: stored(event.revision) };
   if (event.type === "propose") return { ...event, snapshot: { ...event.snapshot, digest: event.snapshot.digest === "" ? "" : hexDigest(w, event.snapshot.digest) }, revision: stored(event.revision) };
-  if (event.type === "adjust") {
-    const reason = paddedReason(w, event.reason, event.reasonLength);
-    return { ...event, reason, reasonLength: reason.length };
-  }
   return event;
 };
+
+const reasonOf = (event: Event) => event.type === "cut" ? "c".repeat(Math.max(event.reasonLength, 0)) : undefined;
 
 const recordInLedger = async (w: World, event: Event & { readonly award: AwardFact }) => {
   const runRow = await w.db.prepare("SELECT network, vault, json_extract(snapshot, '$.asset') AS asset FROM monthly_payment_runs WHERE project_id = ? AND period = ?").bind(PROJECT, formatPeriod(w.period as Period)).all();
@@ -169,7 +160,7 @@ const initialView = (w: World): Monthly => ({
   project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0,
   eligibility: w.facts.eligibility, revision: { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
   currentRevision: w.facts.current ?? { number: 0, effectivePeriod: 0, monthlyAmount: [0], maximum: [0], rewardStartAt: 0, vault: "", asset: "", feePolicy: "", exclusions: [] },
-  cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], trigger: "NoTrigger",
+  cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0, trigger: "NoTrigger",
   frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0,
 });
 
@@ -184,7 +175,6 @@ const observed = async (w: World): Promise<Monthly> => {
     snapshotDigest: w.digests.get(state.snapshotDigest) ?? state.snapshotDigest,
     revision: { ...modelled(state.revision), number: w.numbers.get(state.revision.number) ?? state.revision.number },
     currentRevision: modelled(state.currentRevision),
-    cuts: state.cuts.map((cut) => ({ ...cut, reason: w.reasons.get(cut.reason) ?? cut.reason })),
   });
 };
 
@@ -203,7 +193,7 @@ const dispatch = async (event: Event): Promise<"accepted" | "refused"> => {
     return verdict;
   }
   const sent = forStore(w, event);
-  const verdict = await outcome(w, sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])), funding: await fundingOf(w) }));
+  const verdict = await outcome(w, sendMonth(key, sent, { logins: new Map([1, 2, 3, 4, 5].map((actor) => [actor, `user${actor}`])), funding: await fundingOf(w), reason: reasonOf(event) }));
   if (verdict !== "accepted") return verdict;
   if (event.type === "observeEligibility") w.facts.eligibility = event.eligibility;
   if (event.type === "observeRevision") {

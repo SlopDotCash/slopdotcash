@@ -1,9 +1,10 @@
-// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"
+// spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"; spec/points/periods.md, "Story: Place every Points record in its UTC month"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
 import type { Statement } from "@repo/platform/d1"
 import type { ReadFailure } from "./backend.vibe"
 
 export schema PointWeight {
   readonly githubId: string
+  readonly login: string
   readonly points: number
 }
 
@@ -23,4 +24,14 @@ export service ClosedMonth {
 
 export service ContributorAudience {
   affected(project: Statement): Statement!!
+}
+
+export schema PointsDispute {
+  readonly appellantGithubId: string
+  readonly escalated: boolean
+  readonly resolved: boolean
+}
+
+export service DisputeAudience {
+  dispute(appealKey: string): (PointsDispute | undefined)!ReadFailure
 }

@@ -32,7 +32,7 @@ export const meta: ComponentMeta<TransactionStatusProps> = {
       written.mockClear();
       const canvas = within(canvasElement);
       await expect(canvas.getByText("Finalized")).toBeVisible();
-      await expect(canvas.getByRole("link", { name: "View on Basescan, opens in a new tab" }).getAttribute("href")).toBe(`https://basescan.org/tx/${hash}`);
+      await expect(canvas.getByRole("link", { name: "View on Basescan" }).getAttribute("href")).toBe(`https://basescan.org/tx/${hash}`);
       await userEvent.click(canvas.getByRole("button", { name: "Copy transaction hash" }));
       await waitFor(() => expect(written.mock.calls).toEqual([[hash]]));
     },

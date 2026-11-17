@@ -4,8 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./caller": "./src/caller/live.vibe",
     "./client": "./src/client/index.vibe",
+    "./legacy": "./src/projects/store/legacy.ts",
     "./live": "./src/live.vibe",
+    "./nodeId": "./src/projects/nodeId.ts",
+    "./points": "./src/accounts/routes/index.vibe",
+    "./ports": "./src/ports.vibe",
     "./tables": "./src/tables.ts"
   },
   "scripts": {
@@ -14,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@repo/design-system": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/ports": "workspace:*",
     "effect": "4.1.1",
@@ -21,6 +27,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "4.1.1",
+    "@noble/curves": "catalog:",
     "@types/node": "catalog:",
     "miniflare": "5.20261113.0-beta",
     "typescript": "catalog:",

@@ -118,10 +118,11 @@ effect function searchPages() {
 effect function repository() {
   const owner = try param("owner")
   const name = try param("name")
+  const stay = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).searchParams.has("stay")
   const layer = try client()
   return try reported(effect {
     provide layer {
-      const found = try (try GitHub).json(`/repos/${owner}/${name}`, RepositorySummary)
+      const found = try (try GitHub).json(`/repos/${owner}/${name}`, RepositorySummary, stay ? { followRenamed: false } : {})
       return { id: found.id, name: found.name }
     }
   })

@@ -1,9 +1,10 @@
-// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change"; spec/backend/accounts.md, "The X flow is started by a live session and committed only while that session lives"
 import { millisOf } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
 import { type Accounts, type Member, decodeState } from "../../../gen/backend__accounts.effect.vibe"
-import type { DeliveryState, Enrollment, Verification } from "../../../gen/backend__email.ts"
+import { initial as noNotices } from "../../../gen/operations__notifications.effect.vibe"
+import type { VerificationDelivery, Enrollment, Verification } from "../../../gen/backend__email.ts"
 import type { GitHubIdentity, Identity } from "../../../gen/backend__identity.ts"
 import type { XFlow, XLink } from "../../../gen/backend__xConnection.ts"
 
@@ -92,7 +93,7 @@ function version(names: Names, text: string | null | undefined) {
   return text === null || text === undefined || text === "" ? 0 : intern(names, "version", text)
 }
 
-const deliveries: Readonly<Record<string, DeliveryState>> = { queued: "Queued", sending: "Sending", sent: "Sent", unknown: "DeliveryUnknown" }
+const deliveries: Readonly<Record<string, VerificationDelivery>> = { queued: "Queued", sending: "Sending", sent: "Sent", unknown: "DeliveryUnknown" }
 
 effect function delivery(row: VerificationRow) {
   const state = deliveries[row.state]
@@ -260,6 +261,7 @@ export function decodeAccounts(now: number, facts: Facts) {
       lastEmailId: issued(names, "verification"),
       lastVersion: issued(names, "version"),
       lastUnsubscribe: issued(names, "unsubscribe"),
+      inbox: { ...noNotices, enrollments: modelMembers.map((member) => member.email) },
     })
     return { state, names, members, flows, preferences, destinations, verifications } satisfies Loaded
   }

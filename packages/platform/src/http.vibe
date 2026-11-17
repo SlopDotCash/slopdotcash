@@ -1,11 +1,13 @@
 // spec/backend/accounts.md, "Account identity, sessions and membership"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import type { Issue } from "effect/SchemaIssue"
 import type { Fetcher } from "./bindings.ts"
+import { DeploymentTier } from "./config.vibe"
 import type { D1Error } from "./d1.vibe"
 import { fetchVia } from "./fetcher.ts"
 import { type Access, type AnyRoute, type Refusal, type Route, cacheControl, corsHeadersOf } from "./route.vibe"
 import { type SignatureRefused, type SignedRequest, serviceKeys, verifySigned } from "./signed.vibe"
 
-export error Refused { status: number; code: string; message: string }
+export error Refused { status: number; code: string; message: string; headers?: Readonly<Record<string, string>> }
 
 export function refuse(status: number, code: string, message: string) {
   return new Refused({ status, code, message })
@@ -98,13 +100,22 @@ export effect function jsonBody(limitKib: number) {
   return value
 }
 
-effect function shaped<S extends Schema.Constraint>(schema: S, input: unknown) {
-  return Schema.decodeUnknownEffect(schema)(input, { onExcessProperty: "error" }) catch effect () => { throw refusedBy(admission.unexpectedFields) }
+function keysOnly(issue: Issue): boolean {
+  if (issue._tag === "MissingKey" || issue._tag === "UnexpectedKey") return true
+  if (issue._tag === "Pointer" || issue._tag === "Filter" || issue._tag === "Encoding") return keysOnly(issue.issue)
+  if (issue._tag === "Composite" || issue._tag === "AnyOf") return issue.issues.length > 0 && issue.issues.every(keysOnly)
+  return false
 }
 
-export effect function body<S extends Schema.Constraint>(schema: S, limitKib: number) {
+effect function shaped<S extends Schema.Constraint>(schema: S, input: unknown, invalid: Refusal | undefined) {
+  return Schema.decodeUnknownEffect(schema)(input, { onExcessProperty: "error" }) catch effect (error) => {
+    throw refusedBy(invalid === undefined || keysOnly(error.issue) ? admission.unexpectedFields : invalid)
+  }
+}
+
+export effect function body<S extends Schema.Constraint>(schema: S, limitKib: number, invalid?: Refusal) {
   const input = try jsonBody(limitKib)
-  return try shaped(schema, input)
+  return try shaped(schema, input, invalid)
 }
 
 effect function boundedBytes(request: HttpServerRequest.HttpServerRequest, limitBytes: number) {
@@ -117,12 +128,12 @@ effect function boundedBytes(request: HttpServerRequest.HttpServerRequest, limit
   return new Uint8Array(buffer)
 }
 
-export effect function strictBody<S extends Schema.Constraint>(schema: S, limitBytes: number) {
+export effect function strictBody<S extends Schema.Constraint>(schema: S, limitBytes: number, invalid?: Refusal) {
   const request = try HttpServerRequest.HttpServerRequest
   const bytes = try boundedBytes(request, limitBytes)
   const value: unknown = try Effect.try({ try: () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), catch: () => refusedBy(admission.invalidUtf8Json) })
   if (!isJsonObject(value)) throw refusedBy(admission.invalidJson)
-  return try shaped(schema, value)
+  return try shaped(schema, value, invalid)
 }
 
 export effect function bytesBody(limitBytes: number, contentTypes: readonly [string, ...string[]]) {
@@ -140,10 +151,12 @@ export schema Actor { githubId: string; login: string; actorId: string }
 
 export error Unauthenticated
 
+export error SessionExpired
+
 export error ActorChanged { expected: string }
 
 export service Caller {
-  current(): Actor!(Unauthenticated | ActorChanged | Refused | D1Error)!HttpServerRequest.HttpServerRequest
+  current(route?: Pick<AnyRoute, "actorMismatch">): Actor!(Unauthenticated | SessionExpired | ActorChanged | Refused | D1Error)!HttpServerRequest.HttpServerRequest
 }
 
 export schema Bearer { githubId: string; login: string; roles: ReadonlyArray<string>; tokenId: string }
@@ -176,12 +189,15 @@ export function serviceAuth(configured: string | undefined) {
 export interface Routing {
   readonly rejected: string
   readonly actorMismatch: Refusal
+  readonly unauthenticated: Refusal
+  readonly sessionExpired: Refusal
 }
 
-const unrouted: Routing = { rejected: admission.rejected.code, actorMismatch: admission.actorChanged }
+const unrouted: Routing = { rejected: admission.rejected.code, actorMismatch: admission.actorChanged, unauthenticated: admission.unauthenticated, sessionExpired: admission.unauthenticated }
 
 function routingOf(route: AnyRoute): Routing {
-  return { rejected: route.rejected, actorMismatch: route.actorMismatch ?? admission.actorChanged }
+  const unauthenticated = route.unauthenticated ?? admission.unauthenticated
+  return { rejected: route.rejected, actorMismatch: route.actorMismatch ?? admission.actorChanged, unauthenticated, sessionExpired: route.sessionExpired ?? unauthenticated }
 }
 
 function tagOf(error: unknown) {
@@ -189,11 +205,12 @@ function tagOf(error: unknown) {
 }
 
 function refusalOf(error: unknown, routing: Routing): Refusal | undefined {
-  if (error instanceof Refused) return { status: error.status, code: error.code, message: error.message }
+  if (error instanceof Refused) return { status: error.status, code: error.code, message: error.message, headers: error.headers }
   switch (tagOf(error)) {
     case "Rejected": return { ...admission.rejected, code: routing.rejected }
     case "Conflict": return admission.conflict
-    case "Unauthenticated": return admission.unauthenticated
+    case "Unauthenticated": return routing.unauthenticated
+    case "SessionExpired": return routing.sessionExpired
     case "ActorChanged": return routing.actorMismatch
     case "GitHubUnavailable": return admission.github
     case "RateLimited": return admission.github
@@ -205,7 +222,7 @@ function refusalOf(error: unknown, routing: Routing): Refusal | undefined {
 }
 
 function refusalResponse(refusal: Refusal) {
-  return json({ error: refusal.code, message: refusal.message }, refusal.status)
+  return json({ error: refusal.code, message: refusal.message }, refusal.status, refusal.headers)
 }
 
 effect function internal() {
@@ -224,11 +241,19 @@ export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResp
   return try Effect.catchDefect(Effect.catch(handler, (error) => respond(error, routing)), () => internal())
 }
 
-function allowedOrigin(route: AnyRoute, request: HttpServerRequest.HttpServerRequest) {
+effect function corsOrigins(route: AnyRoute) {
+  const cors = route.cors
+  if (cors === undefined || !("production" in cors)) return cors
+  const deployment = try Effect.serviceOption(DeploymentTier)
+  if (Option.isNone(deployment)) return try die(new Error("A route with per-tier CORS origins is served without DeploymentTier"))
+  return cors[deployment.value.tier]
+}
+
+function allowedOrigin(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
   const origin = request.headers.origin
-  if (route.cors === undefined) return undefined
-  if (route.cors.includes("*")) return "*"
-  return origin !== undefined && route.cors.includes(origin) ? origin : undefined
+  if (origins === undefined) return undefined
+  if (origins.includes("*")) return "*"
+  return origin !== undefined && origins.includes(origin) ? origin : undefined
 }
 
 function withCors(response: HttpServerResponse.HttpServerResponse, origin: string | undefined) {
@@ -237,19 +262,21 @@ function withCors(response: HttpServerResponse.HttpServerResponse, origin: strin
   return origin === "*" ? allowed : HttpServerResponse.setHeader(allowed, "vary", "Origin")
 }
 
-effect function crossOriginAdmitted(route: AnyRoute, request: HttpServerRequest.HttpServerRequest) {
+effect function crossOriginAdmitted(origins: ReadonlyArray<string> | undefined, request: HttpServerRequest.HttpServerRequest) {
   const origin = request.headers.origin
-  if (route.cors === undefined || origin === undefined || origin === originOf(request)) return
-  if (allowedOrigin(route, request) === undefined) throw refusedBy(admission.corsOrigin)
+  if (origins === undefined || origin === undefined || origin === originOf(request)) return
+  if (allowedOrigin(origins, request) === undefined) throw refusedBy(admission.corsOrigin)
 }
 
 effect function served<E, R>(route: AnyRoute, program: HttpServerResponse.HttpServerResponse!E!R) {
   const request = try HttpServerRequest.HttpServerRequest
+  let origins: ReadonlyArray<string> | undefined = undefined
   const response = try answered(effect {
-    try crossOriginAdmitted(route, request)
+    origins = try corsOrigins(route)
+    try crossOriginAdmitted(origins, request)
     return try program
   }, routingOf(route))
-  return withCors(response, allowedOrigin(route, request))
+  return withCors(response, allowedOrigin(origins, request))
 }
 
 const bearerToken = /^Bearer (\S+)$/u
@@ -311,7 +338,7 @@ effect function admissionOf<X extends Access>(route: Route<unknown, unknown, X>,
   const params = Object.fromEntries(Object.entries(found).filter((entry): entry is [string, string] => entry[1] !== undefined))
   const caller = try Caller
   let actor: Actor | Bearer | ServiceSigner | undefined = credential
-  if (route.access === "session" || route.access === "sessionWrite") actor = try caller.current()
+  if (route.access === "session" || route.access === "sessionWrite") actor = try caller.current(route)
   return { params, query: new URL(request.originalUrl).searchParams, actor } as Admission<X>
 }
 
@@ -319,7 +346,7 @@ export function handle<B, A, X extends Access, E, R>(route: Route<B, A, X>, f: (
   return HttpRouter.add(route.method, route.path, served(route, effect {
     const credential = try credentialOf(route, true)
     let decoded: unknown = undefined
-    if (route.request !== undefined) decoded = try body(route.request, route.limitKib)
+    if (route.request !== undefined) decoded = try body(route.request, route.limitKib, route.invalid)
     const admitted = try admissionOf(route, credential)
     const answer = try f({ ...admitted, body: decoded as B })
     const encoded = try orDie(Schema.encodeUnknownEffect(route.answer)(answer))
@@ -342,7 +369,7 @@ effect function preflighted(group: ReadonlyArray<AnyRoute>) {
   const origin = request.headers.origin
   const route = group.find((candidate) => candidate.method === request.headers["access-control-request-method"])
   if (route === undefined) throw refusedBy(admission.corsMethod)
-  if (origin === undefined || allowedOrigin(route, request) === undefined) throw refusedBy(admission.corsOrigin)
+  if (origin === undefined || allowedOrigin(try corsOrigins(route), request) === undefined) throw refusedBy(admission.corsOrigin)
   const allowed = corsHeadersOf(route)
   const requested = (request.headers["access-control-request-headers"] ?? "").split(",").map((header) => header.trim().toLowerCase()).filter((header) => header !== "")
   if (requested.some((header) => !allowed.includes(header))) throw refusedBy(admission.corsHeaders)

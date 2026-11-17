@@ -2,7 +2,7 @@
 import { isoAt, millisOf } from "@repo/platform/clock"
 import { GitHub } from "@repo/platform/github"
 import { FeedRefused, decodedFeed, feedJson, feedTimeoutMs } from "./authoritative.vibe"
-import { AccountBan, AccountBanFeed, accountBanFeedUrl, accountBansVersion, maximumBans } from "./wire.vibe"
+import { PublicAccountBan, PublicAccountBans, accountBans } from "@repo/backend/client"
 
 module verified {
   import { githubUserIdFromNodeId as decoded } from "@repo/backend/nodeId"
@@ -11,6 +11,9 @@ module verified {
 }
 import { githubUserIdFromNodeId } from verified
 
+export const accountBanFeedUrl = `https://slop.cash${accountBans.path}`
+const maximumBans = 10_000
+const AccountBanFeed = Schema.Struct({ schemaVersion: PublicAccountBans.fields.schemaVersion, bans: Schema.Array(Schema.Unknown) })
 const banFeed = "account bans"
 const recordRefused = "The account ban feed has an invalid record"
 const githubId = /^[1-9][0-9]{0,19}$/u
@@ -27,7 +30,7 @@ effect function refuse(reason: string) {
 export effect function participationBans(retainedActorNodeIds: Iterable<string> = [], timeoutMs = feedTimeoutMs) {
   const body = try feedJson({ feed: banFeed, url: accountBanFeedUrl, unavailable: "The account ban feed is unavailable", oversized: "The account ban feed exceeds its bound", notFoundIsOutage: true, timeoutMs })
   const feed = try decodedFeed(AccountBanFeed, body, banFeed, "The account ban feed has an invalid shape")
-  if (feed.schemaVersion !== accountBansVersion || feed.bans.length > maximumBans) try refuse("The account ban feed has an invalid shape")
+  if (feed.bans.length > maximumBans) try refuse("The account ban feed has an invalid shape")
   const retained = new Map<string, Set<string>>()
   for (const nodeId of retainedActorNodeIds) {
     const userId = githubUserIdFromNodeId(nodeId)
@@ -39,7 +42,7 @@ export effect function participationBans(retainedActorNodeIds: Iterable<string> 
   const bans = new Map<string, string>()
   const seen = new Set<string>()
   for (const raw of feed.bans) {
-    const ban = try decodedFeed(AccountBan, raw, banFeed, recordRefused)
+    const ban = try decodedFeed(PublicAccountBan, raw, banFeed, recordRefused)
     const millis = millisOf(ban.bannedAt)
     if (!githubId.test(ban.githubId) || seen.has(ban.githubId) || !Number.isFinite(millis)) try refuse(recordRefused)
     seen.add(ban.githubId)

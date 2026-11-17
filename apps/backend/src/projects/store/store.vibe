@@ -7,8 +7,8 @@ import { type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { Notices } from "@repo/ports/operations"
 import { type Event, type Registry, apply, decodeEvent, decodeState } from "../../../gen/backend__projectComposition.effect.vibe"
 import { registryReadOf, repositoryClaim } from "../../projectRegistry/claims.vibe"
-import { type ProjectFacts, assetKeyIn, assetOf, byOf, idOf, mismatchOf, monthOf, projectState, repositoryIdsOf, repositoryKeysOf, statusText, tierText } from "./codec.vibe"
-import { EnforcementRows, type EnforcementScope, type RegistryMirror } from "./enforcementRows.vibe"
+import { type ProjectFacts, assetKeyIn, assetOf, byOf, exclusionsOf, idOf, mismatchOf, monthOf, networkOf, projectState, repositoryIdsOf, repositoryKeysOf, sameExclusions, statusText, tierText } from "./codec.vibe"
+import { EnforcementRows, type EnforcementScope, type RegistryMirror } from "@repo/ports/security"
 import { accountStanding } from "./facts.vibe"
 import { type ApplicationRow, type Manifest, type ProjectRows, manifestOf, projectReads, projectRows, projectVersion } from "./rows.vibe"
 
@@ -110,15 +110,16 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     if (prospect === undefined) return event
     return {
       ...event,
-      creation: { ...event.creation, assetReading: { ...event.creation.assetReading, asset: assetKeyIn([], assetOf(prospect.manifest).identity) } },
       account: try accountStanding({ actor: by, steward: event.creation.facts.owner }),
       registry: try registryRead(projectId, prospect.repository, repositoryKeysOf(prospect.manifest)),
+      exclusions: [...exclusionsOf(prospect.manifest)],
     } satisfies Event
   }
   if (event.type === "publishOwnerRevision" || event.type === "publishUpdate") {
     const manifest = try submittedOf(projectId, action.revision, event.type)
     const asset = assetKeyIn(rows.revisions.map((entry) => entry.manifest), assetOf(manifest).identity)
-    return { ...event, change: { ...event.change, asset, assetReading: { ...event.change.assetReading, asset } }, account: try accountStanding({ actor: by, steward }) } satisfies Event
+    const exclusions = [...exclusionsOf(manifest)]
+    return { ...event, change: { ...event.change, network: networkOf(manifest), asset, exclusionsChanged: !sameExclusions(exclusions, state.exclusions) }, account: try accountStanding({ actor: by, steward }), exclusions } satisfies Event
   }
   if (event.type === "appendRepository") {
     const manifest = try submittedOf(projectId, action.revision, event.type)
@@ -127,6 +128,7 @@ effect function trusted(rows: ProjectRows, state: Registry, action: Action, pros
     return { ...event, account: try accountStanding({ actor: by, steward }), registry: try registryRead(projectId, event.appendEvidence.facts.repository, claimed) } satisfies Event
   }
   if (event.type === "editConsent" || event.type === "activate") return { ...event, account: try accountStanding({ actor: by, steward }) } satisfies Event
+  if (event.type === "adminRevise") return { ...event, exclusions: [...exclusionsOf(try submittedOf(projectId, action.revision, event.type))] } satisfies Event
   return event
 }
 
@@ -135,9 +137,9 @@ effect function loaded(projectId: string, rows: ReadonlyArray<Rows>, action: Act
   const facts = { administrators: try administrators(), month: monthOf(try isoNow()) }
   const project = projectState(backend, facts)
   const prospect = backend.project === undefined ? try prospectOf(backend, action) : undefined
-  const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
+  const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], network: networkOf(prospect.manifest), asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
   const security = try (try EnforcementRows).decode(projectId, rows.slice(3), mirrorOf(backend))
-  const state = try decodeState({ project: prospective, security })
+  const state = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current) })
   return { rows: backend, state, event: action === undefined ? undefined : try trusted(backend, state, action, prospect) } satisfies Loaded
 }
 
@@ -170,7 +172,7 @@ export interface Written {
 
 function factsOf(after: Registry): ProjectFacts {
   const project = after.project
-  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, asset: project.asset, assetReading: project.assetReading, branch: project.branch, license: project.license }
+  return { status: project.status, tier: project.tier, steward: project.steward, participation: project.participation, repositories: project.repositories, fieldsComplete: project.fieldsComplete, consent: project.consent, network: project.network, asset: project.asset, exclusions: after.exclusions, branch: project.branch, license: project.license }
 }
 
 function checked(manifest: Manifest, projectId: string, after: Registry, rows: ProjectRows) {

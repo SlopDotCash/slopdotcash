@@ -151,12 +151,11 @@ effect function completedReferences<E, R>(references: ReadonlyArray<NodeReferenc
 export effect function collectSearchReferences<E, R>(census: SearchCensus<E, R>) {
   const pageSize = census.pageSize ?? graphqlPageSize
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > graphqlPageSize) throw new MergedRecordInvalid({ message: "Initial search page size must be an integer from 1 to 100" })
-  const references = try collectSearch({
+  return try collectSearch({
     read: (range, after) => searchPage(census.target, census.qualifier, census.kindQualifier, census.expectedKind, range, after, pageSize),
     id: (reference: NodeReference) => reference.id,
     stats: census.stats,
-  }, census.fromMs, census.toMs)
-  return try completedReferences(references, census)
+  }, census.fromMs, census.toMs, (leaf) => completedReferences(leaf, census))
 }
 
 export effect function countSearchResults(target: SearchTarget, fromMs: number, toMs: number, qualifier: SearchQualifier, kindQualifier: KindQualifier, expectedKind: ReferenceKind, stats: SearchStats) {

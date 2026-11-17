@@ -229,7 +229,7 @@ effect function recordSignature(entries: Entries, deployment: Deployment, key: s
   if (observed.record.state.phase === "Unbound" || observed.record.state.phase === "Retired") {
     const intent = observed.record.state.latestIntent + 1
     steps.push({ event: { type: "recordIntent", intent }, by: "account" })
-    steps.push({ event: { type: "authorize", actor: facts.actor, signature: { wallet: facts.wallet, signer: facts.signer, intent, expiresAt: facts.expiresAt } }, by: "account" })
+    steps.push({ event: { type: "authorize", actor: facts.actor, signature: { wallet: facts.wallet, signer: facts.signer, intent }, expiresAt: facts.expiresAt }, by: "account" })
   }
   const attempted = withAttempt(observed.record, signed.id)
   steps.push({ event: { type: "signBinding", nonce: signed.request.nonce, attempt: attempted.attempt, authority: authorityOf(attempted.record, deployment.identityAuthority) }, by: "attester" })

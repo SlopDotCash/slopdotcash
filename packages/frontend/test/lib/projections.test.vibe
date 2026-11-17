@@ -156,7 +156,7 @@ effect function same(actual: unknown, expected: unknown) {
 }
 
 layer(Browser, { excludeTestServices: true, timeout: "120 seconds" })((it) => {
-  it.effect('A visitor reads the published leaderboard and sees project, reviewer and cross-project standings with equal ranks for equal totals (spec/frontend/projections.md, "Story: Read Points standings with equal ranks for equal totals"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/penalties.md, "Standing is the month\'s accepted-work credits minus active debits, never below zero, whatever the order"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division")', () => Effect.provideService(effect {
+  it.effect(`A visitor reads the published leaderboard and sees project, reviewer and cross-project standings with equal ranks for equal totals (spec/frontend/projections.md, "Story: Read Points standings with equal ranks for equal totals"; spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order"; spec/settlement/allocation.md, "The largest remainders receive the remaining units exactly once"; spec/settlement/money.md, "Ordinary fees round upward and private splits require exact division")`, () => Effect.provideService(effect {
     const { cache } = try leaderboard()
     const read = try cache.read(cache.consumer(), registry, false)
     const payment = try validatePaymentSnapshot(read.snapshot, registry)

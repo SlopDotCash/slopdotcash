@@ -1,11 +1,11 @@
-// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account on that confirmed-malicious decision"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal and a moderator decides it"
+// spec/backend/access.md, "A project ban becomes confirmed malice only through the vetting service's ban and a moderator decision"; spec/backend/access.md, "A moderator bans each responsible account the investigation identified"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Access, type Appeal, type Ban, type Event, apply, decodeEvent, initial, latestRecord, vettingService } from "../../gen/backend__access.effect.vibe"
+import { type Access, type Ban, type BanAppeal, type Event, apply, decodeEvent, initial, latestRecord, vettingService } from "../../gen/backend__access.effect.vibe"
 import { type HistoryRow, effectiveAppeal, foldRestriction, openAccountAppeal, openProjectAppeals, unreleasedBans } from "../projects/enforcement/reducers.vibe"
-import { AccessJournal, type AccountAction, JournalRow } from "./journal.vibe"
+import { AccessJournal, type AccountAction, JournalRow } from "@repo/ports/security"
 
 schema ProjectNumber { row: number; id: string }
 schema BanRow { enforcement_id: string; github_id: string; github_login: string }
@@ -43,6 +43,8 @@ export interface Settled {
 
 export error RecordedByEnforcement { event: string }
 export error AwardsUnobserved { event: string }
+export error IdentificationUnrecorded { event: string }
+export error TriageUnrecorded { event: string }
 export error DenialUnrecordable { projectId: string; reason: string }
 export error DecisionNotNext { decision: number; next: number }
 export error ProjectUnknown { project: number }
@@ -95,8 +97,12 @@ function eligibleBans(state: Access, project: number, target: number): ReadonlyA
   return state.bans.filter((ban) => ban.project === project && ban.target === target && !state.releases.some((release) => release.enforcement === ban.enforcement && release.target === target) && !state.appeals.some((appeal) => appeal.enforcement === ban.enforcement && appeal.target === target && appeal.status === "AppealOpen"))
 }
 
-function openAccountAppealsOf(state: Access, project: number): ReadonlyArray<Appeal> {
+function openAccountAppealsOf(state: Access, project: number): ReadonlyArray<BanAppeal> {
   return state.appeals.filter((appeal) => appeal.status === "AppealOpen" && state.bans.some((ban) => ban.enforcement === appeal.enforcement && ban.target === appeal.target && ban.project === project))
+}
+
+function identifiedBan(enforcement: number, target: number): ReadonlyArray<Event> {
+  return [{ type: "identify", enforcement, target }, { type: "ban", enforcement, target }]
 }
 
 interface Journal {
@@ -113,7 +119,7 @@ effect function sentFor(state: Access, journal: Journal, row: JournalRow, projec
   const confirming = row.action === "ban" && row.actor_role === "project-moderator" && latest.role === "VettingRole" && latest.kind === "BanAction" && latest.stateAfter === "ProjectBanned"
   if (recordBans.length > 0 && !confirming) throw new RowMismatch({ text: "maintainer bans", issue: `record ${row.id} bans accounts without a confirmed-malice decision` })
   if (row.action === "ban" && row.actor_role === "vetting-service") return [{ event: { type: "recordVettingBan", project, decision }, by: vettingService }] satisfies ReadonlyArray<Sent>
-  if (confirming) return [{ event: { type: "decideProjectBan", project, decision }, by: actor } satisfies Sent, ...recordBans.map((ban) => ({ event: { type: "ban", enforcement: decision, target: numberOf(ban.github_id) }, by: actor }) satisfies Sent)]
+  if (confirming) return [{ event: { type: "decideProjectBan", project, decision }, by: actor } satisfies Sent, ...recordBans.flatMap((ban) => identifiedBan(decision, numberOf(ban.github_id)).map((event) => ({ event, by: actor }) satisfies Sent))]
   if (row.action === "reinstate" && row.actor_role === "project-moderator" && latest.stateAfter === "ProjectBanned") return [{ event: { type: "reinstateProject", project, decision }, by: actor }] satisfies ReadonlyArray<Sent>
   if (row.action === "request_reinstatement" && row.actor_role === "banned-account") return eligibleBans(state, project, actor).map((ban) => ({ event: { type: "appeal", enforcement: ban.enforcement }, by: actor }) satisfies Sent)
   if (row.action === "reinstate_accounts") return [{ event: { type: "reinstateAccounts", decision, project, targets: [...new Set((journal.releases.get(row.id) ?? []).map((release) => numberOf(release.github_id)))] }, by: actor }] satisfies ReadonlyArray<Sent>
@@ -209,6 +215,8 @@ effect function planned(loaded: Loaded, event: Event, by: number) {
     case "reinstateProject": throw new RecordedByEnforcement({ event: event.type })
     case "reserveAward": throw new AwardsUnobserved({ event: event.type })
     case "payAward": throw new AwardsUnobserved({ event: event.type })
+    case "identify": throw new IdentificationUnrecorded({ event: event.type })
+    case "triageAppeal": throw new TriageUnrecorded({ event: event.type })
     case "ban": {
       const record = state.enforcements.find((entry) => entry.id === event.enforcement)
       return { events: [event], projectId: record === undefined ? "" : projectIdOf(loaded, record.project) ?? "", action: "ban" } satisfies Planned
@@ -317,7 +325,7 @@ export effect function maliceDecision(loaded: Loaded, by: number, projectId: str
   const decision = loaded.nextDecision
   const events: ReadonlyArray<Event> = [
     { type: "decideProjectBan", project, decision },
-    ...accounts.map((account) => ({ type: "ban", enforcement: decision, target: numberOf(account.githubId) }) satisfies Event),
+    ...accounts.flatMap((account) => identifiedBan(decision, numberOf(account.githubId))),
   ]
   const after = try applied(loaded.state, events, by)
   const record = try (try AccessJournal).recordAt(projectId, sequence)

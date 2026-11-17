@@ -8,9 +8,11 @@ import { outcome } from "@repo/platform/testing/area";
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/slopbot__routing.conformance.ts";
-import type { AuthorSlots, Event, MergeHistory, Slot } from "../../gen/slopbot__routing.ts";
-import type { ReviewRow } from "../../src/lease/writes.vibe";
-import { authorSlots, finishSlot, slotsAggregate, startSlot } from "../../src/routing/capacity.vibe";
+import type { AuthorSlots, Event, MergeHistory, Slot, SlotStatus } from "../../gen/slopbot__routing.ts";
+import { type ReviewClaim, claimReview, finishReview } from "../../src/lease/store.vibe";
+import type { Finished, ReviewRow } from "../../src/lease/writes.vibe";
+import { authorSlots, slotsAggregate } from "../../src/routing/capacity.vibe";
+import { settled, verdictOf } from "../support/settled.ts";
 
 const mf = startWorker({ d1: { SLOPBOT_DB: "routing-conformance" } });
 const failed = (await migrate(mf, "SLOPBOT_DB", migrationsDir)).find((applied) => applied.error !== undefined);
@@ -23,11 +25,13 @@ type Observed = { now: number; slots: Omit<Slot, "limited">[] };
 
 let generation = 0;
 let history: MergeHistory | undefined;
+const claims = new Map<number, ReviewClaim>();
+const finished: Record<Exclude<SlotStatus, "SlotRunning">, Finished> = { SlotCompleted: "completed", SlotFailed: "failed", SlotSkipped: "skipped" };
 
 const repositoryOf = () => 6_000_000 + generation * 10;
 const authorOf = () => 5_000_000 + generation * 10;
 const reviewKeyOf = (key: number) => `routing-g${generation}-k${key}`;
-const scope = () => ({ repositoryId: repositoryOf(), authorId: authorOf(), reviewKey: "" });
+const scope = () => ({ repositoryId: repositoryOf(), authorId: authorOf(), reviewKey: "", since: "" });
 
 function rowOf(key: number): ReviewRow {
   return { reviewKey: reviewKeyOf(key), installationId: 1, repositoryId: repositoryOf(), itemKind: "issue", itemNumber: key, itemNodeId: `I_routing_g${generation}_${key}`, authorId: authorOf(), revision: "r", contentDigest: "c", policyDigest: "p" };
@@ -64,6 +68,22 @@ async function closeWith(key: number, change: (slot: Slot) => boolean, sql: stri
 
 const at = () => new Date(clock.now()).toISOString();
 
+async function started(key: number, leaseUntil: number, reviewing: boolean) {
+  const token = `routing-token-${generation}-${key}-${clock.now()}`;
+  const request = { token, route: reviewing ? "AdvisoryReview" as const : "SkipExempt" as const, expiresAt: leaseUntil, ...(history === undefined ? {} : { history }) };
+  const exit = await runtime.runPromiseExit(claimReview(rowOf(key), request));
+  return verdictOf(exit, (outcome) => {
+    if (outcome.kind !== "claimed") return false;
+    claims.set(key, outcome.claim);
+    return true;
+  });
+}
+
+async function ended(key: number, status: Exclude<SlotStatus, "SlotRunning">) {
+  const claim = claims.get(key) ?? { reviewKey: reviewKeyOf(key), token: `routing-never-${generation}-${key}`, start: "First" as const };
+  return settled(finishReview(claim, finished[status], {}), runtime);
+}
+
 async function dispatch(event: Event) {
   switch (event.type) {
     case "elapse":
@@ -78,10 +98,10 @@ async function dispatch(event: Event) {
     }
     case "start":
       if (event.key <= 0) return "refused" as const;
-      return outcome(startSlot(rowOf(event.key), `routing-token-${generation}-${event.key}-${clock.now()}`, event.leaseUntil, event.reviewing, history), runtime);
+      return started(event.key, event.leaseUntil, event.reviewing);
     case "finish":
       if (event.key <= 0 || event.status === "SlotRunning") return "refused" as const;
-      return outcome(finishSlot(rowOf(event.key), event.status), runtime);
+      return ended(event.key, event.status);
     case "reserveClose":
       return closeWith(event.key, (slot) => slot.status === "SlotRunning" && slot.leaseUntil > clock.now() / 1000 && (slot.close === "NoClose" || slot.close === "CloseRejected"),
         `INSERT INTO slopbot_close_attempts (attempt_id, review_key, repository_id, project_id, item_node_id, author_id, revision, recovery_json, penalty_eligible, state, created_at)
@@ -104,6 +124,7 @@ export const driver: Driver<Observed> & AsyncDisposable = {
   reset: () => {
     generation++;
     history = undefined;
+    claims.clear();
     clock.set(1000);
   },
   dispatch: (_key, event: Event) => dispatch(event),

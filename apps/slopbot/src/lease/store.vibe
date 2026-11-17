@@ -2,10 +2,10 @@
 import { isoAt } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, load, update } from "@repo/platform/stored"
-import { type CloseAttempt, type ClaimStatus, type PriorStart, type ReviewLease, canFinish, canRecordCall, decodeState, enabled, leaseSeconds, ownsClaim, apply } from "../../gen/slopbot__reviewLease.effect.vibe"
+import { type ClaimClose, type ClaimStatus, type PriorStart, type ReviewLease, canFinish, canRecordCall, decodeState, enabled, leaseSeconds, ownsClaim, apply } from "../../gen/slopbot__reviewLease.effect.vibe"
 import { type MergeHistory, NotAState as SlotsNotAState, Rejected as SlotsRejected, type Route } from "../../gen/slopbot__routing.effect.vibe"
 import { ReviewBusy } from "../jobs/retry.vibe"
-import { type AuthorScope, type Instant, type SlotsLoaded, instant, latestClose, secondsUntil, slotsAggregate, slotsVersion } from "../routing/capacity.vibe"
+import { type AuthorScope, type Instant, type SlotsLoaded, authorScope, instant, latestClose, secondsUntil, slotsAggregate, slotsVersion } from "../routing/capacity.vibe"
 import { type FinishDetail, type Finished, type ReviewRow, claimWrite, finishWrite } from "./writes.vibe"
 
 export error ReviewLeaseLost { reviewKey: string }
@@ -40,7 +40,7 @@ export schema LeaseRow {
 }
 
 const statuses: Readonly<Record<string, ClaimStatus>> = { running: "Running", completed: "Completed", failed: "Failed", skipped: "Skipped" }
-const closes: Readonly<Record<string, CloseAttempt>> = { pending: "PendingClose", confirmed: "ConfirmedClose", rejected: "RejectedClose" }
+const closes: Readonly<Record<string, ClaimClose>> = { pending: "PendingClose", confirmed: "ConfirmedClose", rejected: "RejectedClose" }
 const finishedStatus: Readonly<Record<Finished, ClaimStatus>> = { completed: "Completed", failed: "Failed", skipped: "Skipped" }
 const ownKey = sql`r.review_key`
 
@@ -122,7 +122,7 @@ effect function refusedClaim(lease: ReviewLease) {
 }
 
 export effect function claimReview(row: ReviewRow, request: ClaimRequest) {
-  const scope = { repositoryId: row.repositoryId, authorId: row.authorId, reviewKey: row.reviewKey }
+  const scope = try authorScope(row.repositoryId, row.authorId, row.reviewKey)
   return try update(claimAggregate(scope, request.history), (loaded) => effect {
     const found = loaded.lease.row
     if (found !== undefined && !sameIdentity(found, row)) throw new ReviewIdentityChanged({ reviewKey: row.reviewKey })

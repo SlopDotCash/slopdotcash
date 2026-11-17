@@ -42,18 +42,20 @@ export effect function dedupedByNodeId<R>(records: ReadonlyArray<R>, id: (node: 
   return [...byId.values()]
 }
 
-export effect function collectSearch<R, E, Q>(slicing: SearchSlicing<R, E, Q>, from: number, to: number): ReadonlyArray<R>!(E | SearchIncomplete | SearchCountChanged)!Q {
+export type LeafCompletion<R, E, Q> = (leaf: ReadonlyArray<R>) => ReadonlyArray<R>!E!Q
+
+export effect function collectSearch<R, E, Q, CE = never, CQ = never>(slicing: SearchSlicing<R, E, Q>, from: number, to: number, complete: LeafCompletion<R, CE, CQ> = (leaf) => Effect.succeed(leaf)): ReadonlyArray<R>!(E | CE | SearchIncomplete | SearchCountChanged)!(Q | CQ) {
   const range = try searchRange(from, to)
   slicing.stats.searchSliceCount += 1
   const first = try slicing.read(range, null)
 
-  effect function split(): ReadonlyArray<R>!(E | SearchIncomplete | SearchCountChanged)!Q {
+  effect function split(): ReadonlyArray<R>!(E | CE | SearchIncomplete | SearchCountChanged)!(Q | CQ) {
     if (to - from <= minimumSearchSliceMs) {
       throw new SearchIncomplete({ message: `GitHub Search cannot reconcile ${first.totalCount} results in a minimum-size range (${range}); refusing a snapshot with incomplete or capped results` })
     }
     const middle = midpoint(from, to)
-    const left = try collectSearch(slicing, from, middle)
-    const right = try collectSearch(slicing, middle, to)
+    const left = try collectSearch(slicing, from, middle, complete)
+    const right = try collectSearch(slicing, middle, to, complete)
     const combined = try dedupedByNodeId([...left, ...right], slicing.id)
     if (combined.length !== first.totalCount) {
       throw new SearchIncomplete({ message: `Split GitHub Search returned ${combined.length} unique references but parent reported ${first.totalCount} for ${range}` })
@@ -77,5 +79,5 @@ export effect function collectSearch<R, E, Q>(slicing: SearchSlicing<R, E, Q>, f
     references.push(...page.nodes)
   }
   const deduped = try dedupedByNodeId(references, slicing.id)
-  return deduped.length === first.totalCount ? deduped : try split()
+  return deduped.length === first.totalCount ? try complete(deduped) : try split()
 }

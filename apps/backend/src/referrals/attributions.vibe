@@ -1,0 +1,28 @@
+// spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"
+import { D1, RowMismatch, rows, sql } from "@repo/platform/d1"
+import { type ReferralAttribution, ReferralAttributions } from "@repo/ports/backend"
+
+schema Attributed {
+  project_id: string
+  applicant_github_id: string | null
+  steward_github_id: string | null
+  referrer_github_id: string
+  referrer_github_login: string
+}
+
+effect function referred() {
+  const found = try rows(Attributed, sql`SELECT p.id AS project_id, COALESCE(a.applicant_github_id, r.actor_github_id) AS applicant_github_id, json_extract(p.manifest, '$.steward.github.actorId') AS steward_github_id, p.referrer_github_id, p.referrer_github_login FROM projects p LEFT JOIN project_applications a ON a.id = p.source_application_id LEFT JOIN project_revisions r ON r.project_id = p.id AND r.revision = 1 AND p.source_application_id IS NULL WHERE p.referrer_github_id IS NOT NULL AND p.referrer_github_login IS NOT NULL ORDER BY p.rowid`)
+  const attributions: ReferralAttribution[] = []
+  for (const row of found) {
+    if (row.applicant_github_id === null || row.steward_github_id === null) throw new RowMismatch({ text: `project ${row.project_id}`, issue: "a referred project has no applicant or steward" })
+    attributions.push({ projectId: row.project_id, applicantGithubId: row.applicant_github_id, stewardGithubId: row.steward_github_id, referrerGithubId: row.referrer_github_id, referrerGithubLogin: row.referrer_github_login })
+  }
+  return attributions
+}
+
+export const ReferralAttributionsLive = Layer.effect(ReferralAttributions, effect {
+  const db = try D1
+  return {
+    referred: () => provideService(referred(), D1, db),
+  } satisfies ReferralAttributions.Shape
+})

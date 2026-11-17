@@ -9,7 +9,7 @@ import { migrationsDir } from "@repo/platform/testing/paths";
 import type { Driver, Options } from "../../gen/slopbot__spendAlerts.conformance.ts";
 import type { CallInput, Event, Spend } from "../../gen/slopbot__spendAlerts.ts";
 import { recordCalls } from "../../src/route/calls.vibe";
-import { type CallRecord, budgetExhausted, triageRoute } from "../../src/route/route.vibe";
+import { type CallRecord, budgetExhausted, stepOf } from "../../src/route/route.vibe";
 import { claimFailureNotice, claimMilestone, monthNumber, recordFailureReceipt, recordMilestoneReceipt, spendIn } from "../../src/spend/store.vibe";
 
 const clock = settableClock(Date.parse("2101-01-15T00:00:00.000Z"));
@@ -19,7 +19,6 @@ if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${fa
 const db = await database(mf, "SLOPBOT_DB");
 const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer));
 
-const [orbioStep, surplusStep] = triageRoute;
 let generation = 0;
 
 function monthText(month: number) {
@@ -48,8 +47,7 @@ function usageFor(estimate: number) {
 }
 
 function callOf(c: CallInput): CallRecord {
-  const step = c.provider === "Orbio" ? orbioStep : surplusStep;
-  if (step === undefined) throw new Error("the triage route has no step for this provider");
+  const step = stepOf(c.provider === "Orbio" ? "OrbioSonnet" : "SurplusSonnet");
   return {
     routeStep: 1,
     gateway: step.gateway,

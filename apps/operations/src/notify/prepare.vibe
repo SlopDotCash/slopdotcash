@@ -3,15 +3,15 @@ import { isoNow } from "@repo/platform/clock"
 import { hmacSha256Hex, sha256Hex } from "@repo/platform/crypto"
 import { D1, type Statement, first, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
-import { EmailConsent, type MailCategory, ProjectAudience, Registry } from "@repo/ports/backend"
-import { ContributorAudience } from "@repo/ports/points"
-import { SecurityNoticeAccess } from "@repo/ports/security"
-import { type AccessCheck, type AppealSource, type Audience, type Kind, type Notice, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
+import { EmailConsent, EmailEnrollment, ProjectAudience, Registry } from "@repo/ports/backend"
+import { ContributorAudience, DisputeAudience } from "@repo/ports/points"
+import { SecurityNoticeAccess, VettingBans } from "@repo/ports/security"
+import { SlopbotAudience } from "@repo/ports/slopbot"
+import { type AccessCheck, type AppealSource, type Kind, type Notice, type NoticeAudience, activityAccess, noNotice, ownerKind } from "../../gen/operations__notifications.effect.vibe"
 import type { Projection } from "../notifications/rows.vibe"
 import { digestText } from "../notifications/store.vibe"
 import type { Claimed } from "./claim.vibe"
 import type { Configured } from "./config.vibe"
-import { DisputeAudience, EmailEnrollment, SlopbotAudience, VettingBans } from "./ports.vibe"
 
 export error PreparationFailed { stage: string }
 
@@ -114,7 +114,7 @@ effect function audienceOf(facts: NoticeFacts) {
     resolved: appeal.resolved,
     scamPenaltyStands: scam.stands,
     author: scam.author,
-  } satisfies Audience
+  } satisfies NoticeAudience
 }
 
 export effect function noticeAccess(facts: NoticeFacts) {
@@ -127,10 +127,6 @@ export interface Destination {
   readonly registeredVersion: string | undefined
 }
 
-function categoryOf(channel: Claimed["channel"], essential: boolean): MailCategory {
-  return channel === "security" || essential ? "SecurityMail" : "ActivityMail"
-}
-
 export effect function destinationOf(claimed: Claimed, pilot: Configured) {
   const held = heldNotice(claimed.projection, claimed.id)
   const digest = digestText(claimed.projection, held.digest)
@@ -139,7 +135,7 @@ export effect function destinationOf(claimed: Claimed, pilot: Configured) {
     if (route === undefined || route.digest !== digest) throw new PreparationFailed({ stage: "pilot destination" })
     return { address: route.email, registeredVersion: undefined } satisfies Destination
   }
-  const consented = (try EmailConsent).destination({ githubId: claimed.recipient, category: categoryOf(claimed.channel, held.essential) }) catch () => undefined
+  const consented = (try EmailConsent).destination({ githubId: claimed.recipient, category: held.category }) catch () => undefined
   if (consented === undefined || consented.version !== digest) throw new PreparationFailed({ stage: "registered destination" })
   return { address: consented.address, registeredVersion: consented.version } satisfies Destination
 }

@@ -35,6 +35,16 @@ export effect function tierOf(text: string | undefined) {
   return tier
 }
 
+export service DeploymentTier {
+  readonly tier: Tier
+}
+
+export function deploymentTier(text: string | undefined) {
+  return Layer.effect(DeploymentTier, effect {
+    return { tier: try tierOf(text) }
+  })
+}
+
 export function loopbackOrigin(origin: string | undefined) {
   return origin !== undefined && loopback.test(origin)
 }

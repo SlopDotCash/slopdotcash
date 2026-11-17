@@ -75,7 +75,7 @@ effect function installationOf(request: AccessRequest) {
   const jwt = Redacted.make(try (try GitHubApp).appJwt())
   provide github({ token: jwt, userAgent }) {
     const app = try GitHub
-    const found = app.json(`/repos/${request.owner}/${request.repo}/installation`, Fields) catch effect (error) => match (error) {
+    const found = app.json(`/repos/${request.owner}/${request.repo}/installation`, Fields, { followRenamed: false }) catch effect (error) => match (error) {
       when NotFound: undefined;
       default: throw error;
     }

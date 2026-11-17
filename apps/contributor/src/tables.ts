@@ -1,1 +1,1 @@
-export const writes = [] as const;
+export { writes } from "./traces/tables.ts";

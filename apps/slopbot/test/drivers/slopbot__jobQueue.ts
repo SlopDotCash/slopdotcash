@@ -1,5 +1,6 @@
 // spec/slopbot/jobQueue.md, "Story: Deliver a job at least once and stop after the retry limit"
 import { Effect, Layer, ManagedRuntime } from "effect";
+import type { QueueMessage } from "@repo/platform/bindings";
 import { webCrypto } from "@repo/platform/crypto";
 import { d1 } from "@repo/platform/d1";
 import { database, migrate, startWorker } from "@repo/platform/testing";
@@ -9,7 +10,6 @@ import type { Driver, Options } from "../../gen/slopbot__jobQueue.conformance.ts
 import type { Copy, Durable, Event, JobKind, JobQueue as Queue } from "../../gen/slopbot__jobQueue.ts";
 import { type DueTable, dueJobs, markDispatched } from "../../src/jobs/due.vibe";
 import { type Job, JobQueue, send } from "../../src/jobs/job.vibe";
-import type { JobMessage } from "../../src/jobs/message.ts";
 import { type Handled, ReviewBusy, maxRetries, settle } from "../../src/jobs/retry.vibe";
 
 const base = Date.parse("2026-11-01T00:00:00.000Z");
@@ -101,24 +101,17 @@ async function due(key: string, state: Held) {
 async function handled(key: string, state: Held, copy: Message, result: string, remaining: number) {
   const durable = await durableOf(key, state.kind);
   if (result === "Resolved" && !(durable.exists && state.now >= durable.dueAt)) return "refused" as const;
-  let decision: { acked: boolean; delaySeconds?: number } = { acked: false };
-  const message: JobMessage = {
-    id: `message-${state.messages.indexOf(copy) + 1}`,
-    body: copy.job,
-    attempts: copy.deliveries,
-    ack: () => { decision = { acked: true }; },
-    retry: (options) => { decision = { acked: false, ...options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds } }; },
-  };
+  const message: QueueMessage = { id: `message-${state.messages.indexOf(copy) + 1}`, body: copy.job, attempts: copy.deliveries, ack: () => undefined, retry: () => undefined };
   const handler = (): Effect.Effect<Handled, ReviewBusy | Error> => result === "Busy" ? Effect.fail(new ReviewBusy({ remainingSeconds: remaining }))
     : result === "Failed" ? Effect.fail(new Error("handler failed"))
     : result === "Resolved" ? Effect.promise(() => resolve(key, state.kind, state.now)).pipe(Effect.as("Resolved" as const))
     : Effect.succeed(result === "SourceChanged" ? "SourceChanged" as const : "Done" as const);
   await at(state.now);
-  await runtime.runPromise(settle(message, handler));
-  if (decision.acked) Object.assign(copy, { status: "acked", settled: "ack" });
+  const redelivery = await runtime.runPromise(settle(message, handler));
+  if (redelivery === undefined) Object.assign(copy, { status: "acked", settled: "ack" });
   else if (copy.deliveries > maxRetries) Object.assign(copy, { status: "deadLettered", settled: "retry" });
   else {
-    const availableAt = state.now + (decision.delaySeconds ?? 0);
+    const availableAt = state.now + redelivery.delaySeconds;
     Object.assign(copy, { status: "pending", availableAt, settled: `retry at ${availableAt}` });
   }
   return "accepted" as const;

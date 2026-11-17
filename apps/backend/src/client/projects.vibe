@@ -1,8 +1,9 @@
 // spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/revisionReceipts.md, "A revision receipt serves manifest text whose SHA-256 equals the approved revision digest"
 import { type AnyRoute, route } from "@repo/platform/route"
+import { AppealState } from "@repo/ports/security"
 
 export schema RestrictionState = "quarantined" | "banned"
-export schema AppealState = "none" | "requested" | "granted" | "denied"
+export { AppealState }
 
 export schema PublicRestriction {
   readonly projectId: string

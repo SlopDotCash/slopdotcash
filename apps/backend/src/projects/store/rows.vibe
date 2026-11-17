@@ -45,6 +45,7 @@ export schema ApplicationRow {
 
 export schema ManifestRepository {
   id: string
+  githubUrl?: string
   aliases?: ReadonlyArray<string>
   integrationBranch?: string
   githubId?: string
@@ -69,7 +70,8 @@ export schema Contribution {
   maintainerNotes?: string
 }
 export schema RewardAsset { network: string; address: string; decimals: number }
-export schema Reward { chain: string | null; fundingState: string; committedMinor: string; paymentMode: string }
+export schema PayoutExclusion { actorId: string; relationship: "owner" | "funded-employee" | "related-party"; fromCycle: string; untilCycle: string | null }
+export schema Reward { chain: string | null; fundingState: string; committedMinor: string; paymentMode: string; payoutExclusions?: ReadonlyArray<PayoutExclusion> }
 export schema Entry {}
 export schema Escrow { deployments?: ReadonlyArray<Entry> }
 export schema Funding { addresses?: ReadonlyArray<Entry>; commitments?: ReadonlyArray<Entry> }

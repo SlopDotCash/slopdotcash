@@ -14,7 +14,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { anvil } from "@repo/platform/testing/chains"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { worker } from "@repo/platform/worker"
-import { Authority, type Permission, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Authority, type Permission, type ProjectView, Registry, type RegistryManifest, RegistryManifests, Restrictions } from "@repo/ports/backend"
 import type { ReviewFacts } from "../gen/settlement__ownerTransactions.effect.vibe"
 import { type EvmAddress, IMPLEMENTATION_SLOT, U256_MAX, bytes32, decodeUint, evmAddress } from "../src/chain/evm/abi.ts"
 import { decodeEscrowLogs } from "../src/chain/evm/events.ts"
@@ -31,7 +31,7 @@ import { ownerRoutes } from "../src/owner/routes.vibe"
 import { type VerifiedDeployment, finalizedFunds, verifiedDeployment } from "../src/owner/solanaDeployment.vibe"
 import { type FundingIntent, checkFunding, reviewFunding } from "../src/owner/solanaFunding.vibe"
 import { type ApprovalRequest, type OwnerReleaseRequest, ReleaseApprover, checkRelease, prepareRelease } from "../src/reserveRelease/release.vibe"
-import { type RegistryManifest, RegistryManifests, registryDeployments } from "../src/vault/deployments.vibe"
+import { registryDeployments } from "../src/vault/deployments.vibe"
 import type { SolanaDeployment } from "../src/vault/policy.vibe"
 import { type EscrowStack, FEE_RECIPIENT, NOVEMBER_2026, entriesFrom, escrowStack, word } from "./support/evm/deploy.ts"
 import { type Deployment, escrowDeployment } from "./support/solana/escrow.ts"
@@ -218,7 +218,7 @@ function ports(views: ReadonlyArray<ProjectView>) {
       byRepository: () => effect { return undefined },
       byPath: () => effect { return undefined },
       active: () => effect { return views },
-      fence: () => effect { return sql`SELECT 1` },
+      fence: () => effect { return sql`1` },
     }),
     Layer.succeed(Authority, {
       repository: (read) => effect {
@@ -229,6 +229,8 @@ function ports(views: ReadonlyArray<ProjectView>) {
     Layer.succeed(Restrictions, {
       account: () => effect { return { banned: false } },
       project: () => effect { return { restricted: false } },
+      fence: () => effect { return sql`SELECT 1` },
+      unbanned: () => effect { return sql`1` },
     }),
   )
 }

@@ -1,5 +1,6 @@
-// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request, and an unchanged asset keeps its stored reading"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"
-import type { ApplicationRow, Manifest, ProjectRows, Revisioned } from "./rows.vibe"
+// spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/rewardAsset.md, "The reward asset's decimals come from one chain read when it is submitted or changed, never from the request"; spec/backend/projectComposition.md, "Payout exclusions change only with a revision and only for later months"; spec/backend/projects.md, "A restriction retires the listing and reinstatement restores only a paused Community listing"
+import type { Exclusion, Relationship } from "../../../gen/settlement__payoutExclusions.ts"
+import type { ApplicationRow, Manifest, PayoutExclusion, ProjectRows, Revisioned } from "./rows.vibe"
 
 export type Kind = "Created" | "Activated" | "OwnerUpdate" | "RepositoryAppended" | "Removed" | "AdminHold" | "AdminDelist" | "AdminException" | "RestrictionRetirement" | "CommunityRestored" | "Placement" | "ConsentChanged"
 export type Status = "Active" | "Paused"
@@ -73,11 +74,16 @@ export function fieldsCompleteOf(manifest: Manifest): boolean {
   })
 }
 
-export function repositoryIdsOf(manifest: Manifest): ReadonlyArray<number> {
+export interface RepositoryClaims {
+  readonly authority: { readonly repositoryId: string | number }
+  readonly repositories: ReadonlyArray<{ readonly id: string; readonly aliases?: ReadonlyArray<string>; readonly githubId?: string }>
+}
+
+export function repositoryIdsOf(manifest: RepositoryClaims): ReadonlyArray<number> {
   return [idOf(manifest.authority.repositoryId), ...manifest.repositories.slice(1).map((repository) => idOf(repository.githubId))]
 }
 
-export function repositoryKeysOf(manifest: Manifest): ReadonlyArray<string> {
+export function repositoryKeysOf(manifest: RepositoryClaims): ReadonlyArray<string> {
   return [...new Set(manifest.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((path) => path.toLowerCase())))]
 }
 
@@ -102,6 +108,30 @@ export function assetOf(manifest: Manifest): RewardAsset {
   const network = manifest.reward.chain ?? "base"
   const listed = listedStablecoins[network] ?? listedStablecoins.base
   return { identity: assetIdentity(network, listed.address), decimals: listed.decimals }
+}
+
+export const networkKeys: Readonly<Record<string, number>> = { base: 1, ethereum: 2, robinhood: 3, solana: 4 }
+
+export function networkOf(manifest: Manifest): number {
+  return networkKeys[(manifest.rewardAsset?.network ?? manifest.reward.chain ?? "base").toLowerCase()] ?? 0
+}
+
+const relationships: Readonly<Record<PayoutExclusion["relationship"], Relationship>> = { owner: "ProjectOwner", "funded-employee": "FundedEmployee", "related-party": "RelatedParty" }
+
+function periodOf(cycle: string | null): number {
+  return cycle === null ? 0 : /^[0-9]{4}-(0[1-9]|1[0-2])$/u.test(cycle) ? Number(cycle.slice(0, 4)) * 100 + Number(cycle.slice(5, 7)) : -1
+}
+
+function exclusionOf(entry: PayoutExclusion): Exclusion {
+  return { actor: idOf(entry.actorId), relationship: relationships[entry.relationship], fromPeriod: periodOf(entry.fromCycle), untilPeriod: periodOf(entry.untilCycle) }
+}
+
+export function exclusionsOf(manifest: Manifest | undefined): ReadonlyArray<Exclusion> {
+  return (manifest?.reward.payoutExclusions ?? []).map(exclusionOf)
+}
+
+export function sameExclusions(left: ReadonlyArray<Exclusion>, right: ReadonlyArray<Exclusion>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 export function assetKeyIn(manifests: ReadonlyArray<Manifest>, identity: string): number {
@@ -209,8 +239,8 @@ export function projectState(rows: ProjectRows, facts: Facts) {
     consent: manifest === undefined ? "Absent" : consentOf(manifest),
     month: facts.month,
     economic: economicOf(history),
+    network: manifest === undefined ? 0 : networkOf(manifest),
     asset,
-    assetReading: reward === undefined ? { asset: 0, decimals: 0, result: "ChainReadUnreachable" } : { asset, decimals: reward.decimals, result: "ChainReadDone" },
     funded: manifest === undefined ? false : fundedOf(manifest),
   }
 }
@@ -234,8 +264,9 @@ export interface ProjectFacts {
   readonly repositories: ReadonlyArray<number>
   readonly fieldsComplete: boolean
   readonly consent: SavedConsent
+  readonly network: number
   readonly asset: number
-  readonly assetReading: { readonly asset: number; readonly decimals: number; readonly result: string }
+  readonly exclusions: ReadonlyArray<Exclusion>
   readonly branch: number
   readonly license: License
 }
@@ -270,8 +301,9 @@ export function mismatchOf(manifest: Manifest, projectId: string, expected: Proj
   if (consentOf(manifest) !== expected.consent) return "slopbot"
   if (branchOf(manifest) !== presence(expected.branch)) return "integrationBranch"
   if (!sameLicense(licenseOf(manifest), expected.license)) return "repositoryLicense"
+  if (networkOf(manifest) !== expected.network) return "rewardAsset.network"
   if (submitted.assetKey !== expected.asset) return "rewardAsset"
   if (submitted.previous !== undefined && expected.asset === submitted.previousAsset && !sameRewardAsset(submitted.previous.rewardAsset, manifest.rewardAsset)) return "rewardAsset"
-  if (expected.assetReading.result === "ChainReadDone" && assetOf(manifest).decimals !== expected.assetReading.decimals) return "rewardAsset.decimals"
+  if (!sameExclusions(exclusionsOf(manifest), expected.exclusions)) return "reward.payoutExclusions"
   return undefined
 }

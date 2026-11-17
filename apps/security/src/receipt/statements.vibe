@@ -2,6 +2,11 @@
 import { type Statement, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
+import type { Award, Event as CaseTransition } from "../../gen/security__cases.ts"
+import { Rejected as CaseRejected, canReceive, initial as noCase, receive } from "../../gen/security__cases.effect.vibe"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { awardStates } from "../intake/rows.vibe"
+import { githubNumber } from "../privacy/reads.vibe"
 import type { FrozenTerms } from "./program.vibe"
 
 export type ReceiptSource = "github-verified" | "slop-received"
@@ -18,6 +23,7 @@ export interface VerifiedReceipt {
   readonly verifiedBy: string
   readonly policyRevision: number | null
   readonly terms: FrozenTerms | undefined
+  readonly award: Award
   readonly source?: ReceiptSource
   readonly receiptEvidenceDigest?: string
 }
@@ -40,7 +46,7 @@ export function caseInsert(input: CaseInsert): Statement {
   const verified = input.verified
   const where = input.guard === undefined ? sql`` : sql` WHERE ${input.guard}`
   return sql`INSERT INTO security_cases (id, project_id, advisory_repository, advisory_ghsa, reporter_github_id, reporter_github_login, submission_state, received_at, verified_at, verified_by_github_id, policy_revision, terms, evidence_digest, receipt_state, remediation_state, award_state, payment_state, disclosure_state, recognition, appeal_state, owner_github_id, next_action, next_action_due_at, received_at_source, receipt_evidence_digest, revision, created_at, updated_at)
-    SELECT ${input.id}, ${input.projectId}, ${input.repository}, ${input.advisory}, ${input.reporter.githubId}, ${input.reporter.login}, ${verified === undefined ? "claimed" : "verified"}, ${verified?.receivedAt ?? null}, ${verified === undefined ? null : input.at}, ${verified?.verifiedBy ?? null}, ${verified?.policyRevision ?? null}, ${verified?.terms === undefined ? null : JSON.stringify(verified.terms)}, NULL, 'received', 'not-started', ${verified?.terms === undefined ? "not-applicable" : "pending"}, 'not-applicable', 'embargoed', 'private', 'none', ${input.ownerGithubId}, ${input.nextAction ?? null}, ${input.nextActionDueAt ?? null}, ${verified?.source ?? null}, ${verified?.receiptEvidenceDigest ?? null}, 1, ${input.at}, ${input.at}${where}`
+    SELECT ${input.id}, ${input.projectId}, ${input.repository}, ${input.advisory}, ${input.reporter.githubId}, ${input.reporter.login}, ${verified === undefined ? "claimed" : "verified"}, ${verified?.receivedAt ?? null}, ${verified === undefined ? null : input.at}, ${verified?.verifiedBy ?? null}, ${verified?.policyRevision ?? null}, ${verified?.terms === undefined ? null : JSON.stringify(verified.terms)}, NULL, 'received', 'not-started', ${awardStates[verified?.award ?? "NotApplicable"]}, 'not-applicable', 'embargoed', 'private', 'none', ${input.ownerGithubId}, ${input.nextAction ?? null}, ${input.nextActionDueAt ?? null}, ${verified?.source ?? null}, ${verified?.receiptEvidenceDigest ?? null}, 1, ${input.at}, ${input.at}${where}`
 }
 
 export interface CaseEvent {
@@ -81,6 +87,7 @@ export interface SlopReceipt {
   readonly receivedAt: string
   readonly policyRevision: number
   readonly terms: FrozenTerms | undefined
+  readonly receiptTerms: ReceiptTerms
   readonly report: StoredReport
   readonly ownerGithubId: string | null
   readonly unbanned: Statement
@@ -91,6 +98,10 @@ function submissionExists(id: string) {
 }
 
 export effect function slopReceipt(input: SlopReceipt) {
+  const terms = input.receiptTerms
+  const event = { type: "receive", source: "SlopReceived", terms, history: "NewReceipt", gross: terms.offeredGross, reportVersion: 1 } satisfies Extract<CaseTransition, { type: "receive" }>
+  if (!canReceive(noCase, event.source, event.terms, event.history, event.gross, event.reportVersion)) throw new CaseRejected({ event, state: noCase, by: githubNumber(input.reporter.githubId) })
+  const received = receive(noCase, event.source, event.terms, event.history, event.gross, event.reportVersion)
   const at = input.receivedAt
   const id = input.submissionId
   const notices = try (try Notices).statements({
@@ -111,7 +122,7 @@ export effect function slopReceipt(input: SlopReceipt) {
       repository: input.repository,
       advisory: null,
       reporter: input.reporter,
-      verified: { receivedAt: at, verifiedBy: "slop", policyRevision: input.policyRevision, terms: input.terms, source: "slop-received", receiptEvidenceDigest: input.report.digest },
+      verified: { receivedAt: at, verifiedBy: "slop", policyRevision: input.policyRevision, terms: input.terms, award: received.award, source: "slop-received", receiptEvidenceDigest: input.report.digest },
       ownerGithubId: input.ownerGithubId,
       nextAction: "Review the saved private report",
       at,

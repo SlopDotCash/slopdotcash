@@ -1,10 +1,10 @@
-// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
+// spec/fees/conversion.md, "Only a finalized receipt of one of the row's own attempts settles it"; spec/fees/conversion.md, "A claim delivers the accrued amount to the configured fee wallet and shares the native budget"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"
 import { type Row, type SendReceipt, canAbandonIntent, isOpen, latestAttempt, replacementWaitMs, wallet } from "../../gen/fees__conversion.effect.vibe"
 import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { type Journal, networkNames, unitsOf } from "../journal/codec.vibe"
 import { type JournaledAttempt, journaledAttempts } from "../journal/queries.vibe"
 import { journal } from "../journal/store.vibe"
-import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber } from "./chain.vibe"
+import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber, wideNumber } from "./chain.vibe"
 import { type Session, renewed, step } from "./session.vibe"
 
 export error ReceiptUnrepresentable { row: number; field: string }
@@ -36,12 +36,20 @@ effect function receiptOf(session: Session, row: Row, landed: Landed) {
     output: try exact(landed.output, row.id, "output"),
     actualNative: try exact(try unitsOf(landed.actualWei, session.state.network, `fee send ${row.id} native fee`), row.id, "actualNative"),
     finalized: true,
-    allowance: try exact(landed.allowance, row.id, "allowance"),
-    feesClaimed: try exact(landed.feesClaimed, row.id, "feesClaimed"),
-    vaultDebit: try exact(landed.vaultDebit, row.id, "vaultDebit"),
-    walletCredit: try exact(landed.walletCredit, row.id, "walletCredit"),
-    roleFree: landed.roleFree,
   } satisfies SendReceipt
+}
+
+function receiptBinds(row: Row, landed: Landed) {
+  if (!landed.succeeded) return true
+  switch (row.kind) {
+    case "Approval": return landed.allowance === wideNumber(row.amountIn)
+    case "Claim": return landed.roleFree && landed.feesClaimed > 0n && landed.feesClaimed === landed.walletCredit && landed.feesClaimed === landed.vaultDebit && landed.feesClaimed >= wideNumber(row.amountIn)
+    case "Conversion": return true
+    default: {
+      const _exhaustive: never = row.kind
+      return _exhaustive
+    }
+  }
 }
 
 function landedFacts(landed: Landed) {
@@ -67,7 +75,7 @@ effect function replaced(session: Session, id: number, send: OpenSend) {
   if (!(try renewed(session, true))) return
   const outcome = chain.broadcast(signed.rawTx) catch effect (error) => { return error }
   const failure = chainFailure(outcome)
-  if (failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: `replacement broadcast: ${detailOf(failure)}` })
+  if (failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { broadcast: "replacement broadcast", detail: detailOf(failure) })
   try Effect.logInfo("fee_send_replaced", { network: session.state.network, kind: row.kind, token: send.token, txId: send.attempts[0]?.txId, replacementTxId: signed.txId, attempt: row.attempts.length, maxFeePerGas: signed.maxFeePerGas, maxPriorityFeePerGas: signed.maxPriorityFeePerGas })
 }
 
@@ -78,7 +86,7 @@ effect function rebroadcast(session: Session, id: number, send: OpenSend) {
   const failure = chainFailure(outcome)
   const state = session.state.rows[id - 1]?.state
   if (state === "Unknown") try step(session, { type: "rebroadcast", runId: session.runId, id, accepted: failure === undefined }, failure === undefined ? {} : { detail: detailOf(failure) })
-  if (state === "Submitted" && failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { detail: `rebroadcast: ${detailOf(failure)}` })
+  if (state === "Submitted" && failure !== undefined) try step(session, { type: "broadcastFail", runId: session.runId, id }, { broadcast: "rebroadcast", detail: detailOf(failure) })
   if (failure instanceof FeeCapTooLow) try replaced(session, id, send)
 }
 
@@ -95,7 +103,7 @@ function openSend(row: Row, token: string, txs: ReadonlyArray<string>, bytes: Re
 effect function settled(session: Session, book: Journal, bytes: ReadonlyMap<string, string>, row: Row) {
   if (row.wallet !== wallet(session.state)) return "open" satisfies Settling
   if (row.state === "Quoted") {
-    if (!canAbandonIntent(session.state, session.runId, row.id)) return "open" satisfies Settling
+    if (!canAbandonIntent(session.state, session.runId, row.id, "Worker")) return "open" satisfies Settling
     return settling((try step(session, { type: "abandonIntent", runId: session.runId, id: row.id })) !== undefined)
   }
   const record = book.sends[row.id - 1]
@@ -109,6 +117,10 @@ effect function settled(session: Session, book: Journal, bytes: ReadonlyMap<stri
   const legacyApproval = row.kind === "Approval" && !withBytes(send)
   switch (status.kind) {
     case "landed": {
+      if (!receiptBinds(row, status)) {
+        try Effect.logWarning("fee_send_receipt_mismatch", { network: session.state.network, kind: row.kind, row: row.id, txId: status.txId })
+        return settling(legacyApproval)
+      }
       const finalized = (try step(session, { type: "finalizeSend", runId: session.runId, id: row.id, receipt: try receiptOf(session, row, status) }, landedFacts(status))) !== undefined
       return settling(finalized || legacyApproval)
     }

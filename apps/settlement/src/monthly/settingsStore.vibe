@@ -1,17 +1,14 @@
-// spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettings.md, "The journal is append-only and the current value is its last entry"; spec/settlement/monthlySettings.md, "Turning the default on is refused while an open cut notice crosses an unfrozen month's cutoff"
-import { isoAt, millisOf, nowSeconds } from "@repo/platform/clock"
+// spec/settlement/monthlySettings.md, "The default starts on, and each change appends the next sequence"; spec/settlement/monthlySettings.md, "The journal is append-only and the current value is its last entry"
+import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import { type Change, type CutNotice, type Event, type Settings, type SettingsAuthority, NotAState, apply, decodeState, initial } from "../../gen/settlement__monthlySettings.effect.vibe"
-import { cutoffAt, parsePeriod } from "../kernels/calendar.ts"
+import { type Change, type Event, type Settings, type SettingsAuthority, NotAState, apply, decodeState, initial } from "../../gen/settlement__monthlySettings.effect.vibe"
 import { type CurrentRevision, ManifestInvalid, MonthlyFacts, ProjectChanged, actorClear, revisionFence } from "./store.vibe"
 
 schema SettingRow { readonly sequence: number; readonly automatic: number; readonly actor_id: string }
-schema OpenCutRow { readonly period: string; readonly latest: string }
 
 export interface LoadedSettings {
   readonly state: Settings
-  readonly openCuts: ReadonlyArray<CutNotice>
   readonly now: number
   readonly current: CurrentRevision | undefined
 }
@@ -25,15 +22,14 @@ export interface SettingChoice {
 function reads(projectId: string): ReadonlyArray<Statement> {
   return [
     sql`SELECT sequence, automatic, actor_id FROM monthly_payment_settings WHERE project_id = ${projectId} ORDER BY sequence`,
-    sql`SELECT x.period, max(x.created_at) AS latest FROM monthly_allocation_cut_reasons x WHERE x.project_id = ${projectId} AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id = x.project_id AND r.period = x.period) GROUP BY x.period ORDER BY x.period`,
   ]
 }
 
 function version(projectId: string): Statement {
-  return sql`SELECT json_array((SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${projectId}), (SELECT count(*) FROM monthly_allocation_cut_reasons WHERE project_id = ${projectId}), (SELECT count(*) FROM monthly_payment_runs WHERE project_id = ${projectId})) AS version`
+  return sql`SELECT json_array((SELECT count(*) FROM monthly_payment_settings WHERE project_id = ${projectId})) AS version`
 }
 
-effect function decodeSettings(projectId: string, revision: number, now: number, current: CurrentRevision | undefined, [settings, cuts]: ReadonlyArray<Rows>) {
+effect function decodeSettings(projectId: string, revision: number, now: number, current: CurrentRevision | undefined, [settings]: ReadonlyArray<Rows>) {
   const rows = try decoded(SettingRow, settings ?? [], "monthly settings")
   const changes: Change[] = []
   for (const row of rows) {
@@ -43,13 +39,7 @@ effect function decodeSettings(projectId: string, revision: number, now: number,
   }
   const last = changes.at(-1)
   const state = try decodeState({ ...initial, project: projectId, revision, automatic: last === undefined ? true : last.automatic, sequence: changes.length, changes })
-  const openCuts: CutNotice[] = []
-  for (const row of try decoded(OpenCutRow, cuts ?? [], "open monthly cuts")) {
-    const period = parsePeriod(row.period)
-    if (period === undefined) throw new RowMismatch({ text: "open monthly cuts", issue: `${row.period} is not a month` })
-    openCuts.push({ period, latestCutAt: Math.floor(millisOf(row.latest) / 1000), cutoff: cutoffAt(period) })
-  }
-  return { state, openCuts, now, current } satisfies LoadedSettings
+  return { state, now, current } satisfies LoadedSettings
 }
 
 function aggregate(projectId: string, revision: number, now: number, current: CurrentRevision | undefined): Aggregate<LoadedSettings, NotAState | RowMismatch, never> {
@@ -68,10 +58,6 @@ effect function scope(projectId: string) {
 
 export effect function loadSettings(projectId: string) {
   return (try load(try scope(projectId))).state
-}
-
-export effect function automaticAt(projectId: string) {
-  return (try loadSettings(projectId)).state.automatic
 }
 
 effect function decide(projectId: string, loaded: LoadedSettings, event: Event) {
@@ -95,8 +81,6 @@ export effect function setAutomatic(projectId: string, choice: SettingChoice) {
     automatic: choice.automatic,
     expectedSequence: choice.expectedSequence,
     authority: choice.authority,
-    openCuts: [...loaded.openCuts],
-    now: loaded.now,
   }))
   const stored = try first(StoredSetting, sql`SELECT sequence FROM monthly_payment_settings WHERE project_id = ${projectId} AND sequence = ${next.sequence} AND actor_id = ${String(choice.authority.actor)}`)
   if (stored === undefined) throw new ProjectChanged({ projectId, write: "monthly setting" })

@@ -1,8 +1,8 @@
 // spec/contributor/artifactTransport.md, "Each request carries a credential only at the GitHub authority"
 import { Registry } from "@repo/ports/backend"
+import { type ArtifactFinding, type ArtifactRequest, EvidenceArtifacts, type VerificationPurpose } from "@repo/ports/contributor"
 import { fullContentLimitBytes } from "./limits.ts"
 import { type Planned, type Reference, carriesGitHubCredential, planArtifacts, planCounts } from "./policy.ts"
-import { type ArtifactFinding, type ArtifactRequest, EvidenceArtifacts, type VerificationPurpose } from "./port.vibe"
 import { type Fetched, fetchArtifact } from "./transport.vibe"
 
 export interface ArtifactSettings {

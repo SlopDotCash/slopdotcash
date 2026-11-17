@@ -2,7 +2,7 @@
 import { RowMismatch, decoded } from "@repo/platform/d1"
 import { millisOf } from "@repo/platform/clock"
 import type { Rows } from "@repo/platform/stored"
-import { type AssetKind, type Attempt, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
+import { type HoldingKind, type Attempt, type Coverage, type ExpiryProof, type ExpiryScan, type Fee, type Holding, type ProviderFinding, type Reason, type Reservation, type Row, type RowState, type SendKind, type Trigger, dayMs, decodeState, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, transactionCeilingOf } from "../../gen/fees__runtime.effect.vibe"
 import type { Held } from "../runtime/config.vibe"
 import { signedFees } from "./signedSend.ts"
@@ -52,12 +52,11 @@ export function ledger(): Names {
 
 export interface Observed {
   readonly address: string
-  readonly asset: AssetKind
+  readonly asset: HoldingKind
   readonly received: number
   readonly topUps: number
   readonly vault: string | undefined
   readonly vaultObserved: number
-  readonly allowance: number
 }
 
 export interface Reviewed { readonly vault: string; readonly deployment: string; readonly token: string }
@@ -492,7 +491,6 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
       vaultObserved,
       accrued: vaultObserved - claimed - openClaims,
       claimed,
-      allowance: seen?.allowance ?? 0,
     }
   })
 

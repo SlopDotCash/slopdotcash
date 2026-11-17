@@ -5,31 +5,34 @@ import { NetworkError, Refused, deadlineMs } from "./api.vibe"
 
 export { BodyTooLarge, BodyUnreadable, boundedBytes } from "@repo/platform/browser"
 
-export effect function boundedText(response: HttpClientResponse.HttpClientResponse, limitBytes: number, label: string) {
-  const bytes = try boundedBytes(response, limitBytes, label)
-  return try Effect.try({
+effect function jsonOf(bytes: Uint8Array, label: string) {
+  const text = try Effect.try({
     try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     catch: () => new BodyUnreadable({ label, reason: `${label} returned text that is not UTF-8` }),
   })
-}
-
-export effect function boundedJson(response: HttpClientResponse.HttpClientResponse, limitBytes: number, label: string) {
-  const text = try boundedText(response, limitBytes, label)
   return try Effect.try({
     try: (): unknown => JSON.parse(text),
     catch: () => new BodyUnreadable({ label, reason: `${label} returned invalid JSON` }),
   })
 }
 
-effect function fetchedJson(url: string, limitBytes: number, label: string) {
-  const response = HttpClient.get(url, { headers: { accept: "application/json" } }) catch effect () => { throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." }) }
-  if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}` })
-  return try boundedJson(response, limitBytes, label)
+export effect function boundedJson(response: HttpClientResponse.HttpClientResponse, limitBytes: number, label: string) {
+  return try jsonOf(try boundedBytes(response, limitBytes, label), label)
 }
 
-export effect function fetchBounded(url: string, limitBytes: number, label: string) {
-  return try Effect.timeoutOrElse(fetchedJson(url, limitBytes, label), {
+effect function fetchedBytes(url: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>>) {
+  const response = HttpClient.get(url, { headers }) catch effect () => { throw new NetworkError({ timedOut: false, message: "The network request failed. Try again." }) }
+  if (response.status < 200 || response.status > 299) throw new Refused({ status: response.status, error: "http_status", message: `${label} returned ${response.status}` })
+  return try boundedBytes(response, limitBytes, label)
+}
+
+export effect function fetchBoundedBytes(url: string, limitBytes: number, label: string, headers: Readonly<Record<string, string>> = {}) {
+  return try Effect.timeoutOrElse(fetchedBytes(url, limitBytes, label, headers), {
     duration: deadlineMs,
     orElse: () => Effect.fail(new NetworkError({ timedOut: true, message: "The request timed out. Try again." })),
   })
+}
+
+export effect function fetchBounded(url: string, limitBytes: number, label: string) {
+  return try jsonOf(try fetchBoundedBytes(url, limitBytes, label, { accept: "application/json" }), label)
 }

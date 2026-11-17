@@ -43,7 +43,7 @@ export interface R2ObjectBody extends R2Object {
 
 export interface R2PutOptions {
   readonly sha256?: string;
-  readonly onlyIf?: { readonly etagDoesNotMatch?: string };
+  readonly onlyIf?: { readonly etagMatches?: string; readonly etagDoesNotMatch?: string };
   readonly httpMetadata?: { readonly contentType?: string };
   readonly customMetadata?: Readonly<Record<string, string>>;
 }
@@ -77,7 +77,7 @@ export interface QueueMessage {
   /** @throws {never} */
   ack(): void;
   /** @throws {never} */
-  retry(): void;
+  retry(options?: QueueSendOptions): void;
 }
 
 export interface MessageBatch {

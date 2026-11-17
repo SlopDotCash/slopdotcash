@@ -1,3 +1,11 @@
 import type { AnyRoute } from "@repo/platform/route"
 
+export * from "./snapshot/schema.vibe"
+export * from "./snapshot/parts.vibe"
+export { SnapshotInvalid, decodeSnapshot, validatePaymentSnapshot, validatePublishable, validateSnapshot } from "./snapshot/validate.vibe"
+export { type ImplementationWeight, type PenaltyDeductions, eventThirds, implementationShares, penaltyDeductions } from "./snapshot/shares.vibe"
+export { type Registry, compareCodeUnits, pointsOf, registryOf } from "./snapshot/checks.vibe"
+export { leaderboardMethodology } from "./snapshot/methodology.vibe"
+export { isCreditEligibleCommitAuthor } from "../kernels/scoring/lines.ts"
+
 export const api: ReadonlyArray<AnyRoute> = []

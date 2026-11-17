@@ -257,6 +257,7 @@ async function dispatch(event: Event, by: unknown): Promise<"accepted" | "refuse
     case "identityCompleteCallback":
       return outcome(completeCallback(senderNumber(by), knownFlow(event.flowId), { actorId: githubOf(event.github.actor), login: loginOf(event.github.login), nodeId: event.github.nodeId > 0 ? actorOf(event.github.nodeId) : undefined }));
     case "identityPoll": return identityPoll(event);
+    case "saveNotice": throw new Error("saveNotice adds an operations notice: the accounts store neither loads nor writes notification rows, which operations' Notices port owns");
     default: {
       const _exhaustive: never = event;
       return _exhaustive;

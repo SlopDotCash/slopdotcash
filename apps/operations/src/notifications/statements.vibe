@@ -1,4 +1,4 @@
-// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Consent binds one verified destination version and opt-out suppresses waiting mail"
+// spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "A committed enrollment change suppresses waiting mail that lost its consent"; spec/operations/notifications.md, "Account closure cancels every waiting notice of the account in the same write"
 import { isoNow } from "@repo/platform/clock"
 import { type Statement, sql } from "@repo/platform/d1"
 import type { MailCategory } from "@repo/ports/backend"
@@ -44,7 +44,15 @@ function suppressWaiting(suppression: Suppression, at: string): ReadonlyArray<St
   return suppression.categories.flatMap((category) => withdrawn(category, suppression.recipientGithubId, suppression.version, at))
 }
 
-export const noticesLive = Layer.succeed(Notices, {
+function cancelWaiting(recipient: string, at: string): ReadonlyArray<Statement> {
+  const ofRecipient = sql`recipient_github_id = ${recipient} AND ${waiting}`
+  return [
+    sql`UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE ${ofRecipient}`,
+    sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE ${ofRecipient}`,
+  ]
+}
+
+const noticesLive = Layer.succeed(Notices, {
   statements: (batch) => effect {
     const at = try isoNow()
     return batch.notices.map((notice) => saveNotice(notice, at, batch.onlyIf))
@@ -54,9 +62,12 @@ export const noticesLive = Layer.succeed(Notices, {
   },
 })
 
-export const noticeOutboxLive = Layer.succeed(NoticeOutbox, {
+const noticeOutboxLive = Layer.succeed(NoticeOutbox, {
   suppress: (suppression) => effect {
     return suppressWaiting(suppression, try isoNow())
+  },
+  cancel: (closure) => effect {
+    return cancelWaiting(closure.recipientGithubId, try isoNow())
   },
 })
 

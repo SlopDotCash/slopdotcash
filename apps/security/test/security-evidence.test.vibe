@@ -197,7 +197,7 @@ layer(Started, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
     })
   })
 
-  it.effect('Close only a finished exception case as the policy owner, keep successful admission evidence permanent and end ordinary access ninety days after closure (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"; spec/security/privacy.md, "Only ordinary scanner evidence and scanner access logs ever become deletable")', () => effect {
+  it.effect('Close only a finished exception case as the policy owner, keep successful admission evidence permanent and end ordinary access ninety days after closure (spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days")', () => effect {
     const world = (try Evidence).world
     const exception = vetting("3")
     const pending = vetting("4")

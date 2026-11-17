@@ -1,9 +1,10 @@
 // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/projectRegistry.md, "A new or appended repository must be unlisted and unrestricted by id and path"
 import { sha256Hex } from "@repo/platform/crypto"
-import { GitHub, type GitHubFailure, github } from "@repo/platform/github"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { Refused } from "@repo/platform/http"
 import * as Hex from "effect/encoding/Hex"
 import { getProjectGithubOwnedRepositories as ownedRows, postProjects, putProjectsById } from "../../client/refusals.vibe"
+import { type GitHubReadConfig, githubReads } from "../../referrals/name.vibe"
 import { validIntegrationBranch } from "../owner/definition.ts"
 
 export const githubLogin = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u
@@ -18,9 +19,9 @@ export service ReadToken {
   readonly configured: boolean
 }
 
-export function publicGitHub(token: string | undefined) {
-  const configured = token !== undefined && token.trim().length > 0
-  return Layer.merge(Layer.succeed(ReadToken, { configured }), github({ userAgent: "slop.cash-project-setup", ...(configured ? { token: Redacted.make(token) } : {}) }))
+export function publicGitHub(config: GitHubReadConfig) {
+  const configured = config.token !== undefined && config.token.trim().length > 0
+  return Layer.merge(Layer.succeed(ReadToken, { configured }), githubReads(config))
 }
 
 export interface Actor {

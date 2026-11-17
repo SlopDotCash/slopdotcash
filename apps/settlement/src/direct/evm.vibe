@@ -3,7 +3,7 @@ import { isoAt } from "@repo/platform/clock"
 import { type Address, EvmRpc, type Hex, type Receipt, type Transaction, evmRpc, recoverDigest } from "@repo/platform/chain/evm"
 import { type JsonRpc, jsonRpc } from "@repo/platform/chain/rpc"
 import { ConfigInvalid, jsonVar } from "@repo/platform/config"
-import type { Network } from "../../gen/settlement__directBounty.ts"
+import type { Network } from "../../gen/fees__runtime.ts"
 import { reviewedFactory } from "../chain/evm/factories.ts"
 import { executionGasCost, nativeFeeTotal } from "../kernels/budget.ts"
 import { EVM_NATIVE_ASSET, NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
@@ -70,10 +70,6 @@ const defaultRpcUrls: Readonly<Partial<Record<NetworkKey, string>>> = {
 }
 
 const modelNetworks: Readonly<Record<"base" | "ethereum" | "robinhood", Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood" }
-
-export function modelOfChain(chain: string): Network | undefined {
-  return chain === "base" || chain === "ethereum" || chain === "robinhood" ? modelNetworks[chain] : undefined
-}
 
 export function evmModel(network: string): Network | undefined {
   if (!isNetworkKey(network)) return undefined

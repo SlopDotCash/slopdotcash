@@ -1,7 +1,7 @@
 // spec/settlement/signer.md, "Each service key permits only its named operations and none can pay, withdraw or upgrade"; spec/fees/runtime.md, "Signing needs a live mode and owner-verified readiness for the exact wallet"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
 import type { EvmRpc, Hex } from "@repo/platform/chain/evm"
 import type { RpcFailure } from "@repo/platform/chain/rpc"
-import { type SignedSend, maximumSafeValue, swapRouter } from "../../gen/fees__conversion.effect.vibe"
+import { type SignedSend, maximumSafeValue } from "../../gen/fees__conversion.effect.vibe"
 import { type Network, type Runtime, buybackSigns, conversionSigns, replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { type Type2, exactNumber, parsedType2, sameFields, signerOf, transactionId, unsignedType2, type Unsigned } from "../evm/abi.ts"
 import type { ApprovalRefused } from "../evm/approval.vibe"
@@ -39,7 +39,6 @@ export interface EvmPrepared {
   readonly deadline: number
   readonly expiresAt: number | undefined
   readonly minimumOutput: bigint
-  readonly approvedAmount: bigint
 }
 
 export interface SolanaPrepared {
@@ -170,7 +169,6 @@ effect function prepared(options: EvmWalletOptions, intent: EvmIntent) {
     deadline: expiresAt === undefined ? maximumSafeValue : expiresAt * 1000,
     expiresAt,
     minimumOutput: call?.minimumOutput ?? 0n,
-    approvedAmount: call?.approvedAmount ?? 0n,
   } satisfies EvmPrepared
 }
 
@@ -220,8 +218,7 @@ export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined
   const { prepared: ready } = signed
   const kind = ready.intent.kind === "KyberApprove" ? "Approval" : ready.intent.kind === "KyberSwap" ? "Conversion" : undefined
   const minimumOutput = exactNumber(ready.minimumOutput)
-  const approvedAmount = exactNumber(ready.approvedAmount)
-  if (kind === undefined || minimumOutput === undefined || approvedAmount === undefined) return undefined
+  if (kind === undefined || minimumOutput === undefined) return undefined
   return {
     kind,
     tx,
@@ -233,8 +230,6 @@ export function modelSend(signed: EvmSigned, tx: number): SignedSend | undefined
     minimumOutput,
     deadline: ready.deadline,
     blockhashSlot: 0,
-    router: swapRouter,
-    approvedAmount,
   }
 }
 

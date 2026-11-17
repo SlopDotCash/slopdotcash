@@ -90,7 +90,11 @@ export interface WorkerApp<Env extends object, S, LE, A, RE, SE, QE> {
   readonly services: (env: Env) => Layer.Layer<S, LE>
   readonly routes: Layer.Layer<A, RE, Routes<S | Execution>>
   readonly scheduled?: (controller: ScheduledController) => void!SE!(S | Execution)
-  readonly queue?: (message: QueueMessage) => void!QE!S
+  readonly queue?: (message: QueueMessage, queue: string) => (Redelivery | void)!QE!S
+}
+
+export interface Redelivery {
+  readonly delaySeconds: number
 }
 
 export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<Env, S, LE, A, RE, SE, QE>) {
@@ -113,11 +117,12 @@ export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<
   }
 }
 
-effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessage) => void!SE!S) {
+effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessage, queue: string) => (Redelivery | void)!SE!S) {
   for (const message of batch.messages) {
-    const outcome = try exit(handle(message))
-    if (Exit.isSuccess(outcome)) message.ack()
-    else message.retry()
+    const outcome = try exit(handle(message, batch.queue))
+    if (Exit.isFailure(outcome)) message.retry()
+    else if (outcome.value === undefined) message.ack()
+    else message.retry({ delaySeconds: outcome.value.delaySeconds })
   }
 }
 

@@ -1,7 +1,7 @@
 // spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
 import { EdgeCache, cacheKey } from "@repo/platform/cache"
 import { RowMismatch, first, sql } from "@repo/platform/d1"
-import { EnforcementRows } from "../store/enforcementRows.vibe"
+import { EnforcementRows } from "@repo/ports/security"
 
 schema Generations { enforcement: number; registry: number }
 

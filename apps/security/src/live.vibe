@@ -1,4 +1,36 @@
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "References, permanent admission and pending uploads are separate"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+import type { R2Bucket } from "@repo/platform/bindings"
 import { area } from "@repo/platform/worker"
+import { SecurityNoticeAccessLive } from "./caseAuthority/notices.vibe"
 import { api } from "./client/index.vibe"
+import { VettingBansLive } from "./enforcement/vettingBans.vibe"
+import { evidenceBucket } from "./evidence/objects.vibe"
+import { evidenceRoutes } from "./evidence/routes.vibe"
+import { intakeSettings } from "./intake/availability.vibe"
+import { intakeRoutes } from "./intake/routes.vibe"
+import { AuditLive } from "./privacy/port.vibe"
+import { reportBucket } from "./privacy/reads.vibe"
+import { reportingProgramsLive } from "./receipt/program.vibe"
 
-export const security = area({ name: "security", api, routes: Layer.empty, provides: Layer.empty })
+export { SecurityNoticeAccessLive, VettingBansLive }
+
+export interface SecurityEnv {
+  readonly VETTING_EVIDENCE: R2Bucket
+  readonly PRIVATE_TRACES: R2Bucket
+  readonly SLOP_PRIVATE_INTAKE_MODE?: string
+}
+
+export function securityBindings(env: SecurityEnv) {
+  return Layer.mergeAll(
+    evidenceBucket(env.VETTING_EVIDENCE),
+    reportBucket(env.PRIVATE_TRACES),
+    intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: false }),
+  )
+}
+
+export const security = area({
+  name: "security",
+  api,
+  routes: Layer.mergeAll(evidenceRoutes, intakeRoutes),
+  provides: Layer.mergeAll(AuditLive, VettingBansLive, Layer.provideMerge(SecurityNoticeAccessLive, reportingProgramsLive)),
+})

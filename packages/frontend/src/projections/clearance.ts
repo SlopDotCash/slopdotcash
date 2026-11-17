@@ -1,4 +1,4 @@
-// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "A recorded incomplete result, an acquisition refusal included, notifies the listing account and the steward once"
+// spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "A recorded result updates its repository once and confirmed malice bans at once"
 export type ClearanceTone = "success" | "warning" | "danger" | "info" | "neutral";
 export type ClearanceIcon = "pass" | "fail" | "skip" | "partial" | "held" | "note" | "review";
 export type FindingsLocation = "repository" | "template" | "both" | "unknown";

@@ -1,4 +1,4 @@
-// spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/rendering.md, "The same template files, approved manifest, revision and digest render the same sorted bytes"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
+// spec/contributor/publication.md, "The server renders only template files whose bytes match the index digest"; spec/contributor/publication.md, "The bootstrap's renderer contract names files that exist byte-identical at the build commit"; spec/contributor/skillRendering.md, "Rendering depends only on the template commit and the approved revision"; spec/contributor/skillAuthority.md, "Only the exact GitHub API authority receives the optional credential"
 import { Arbitrary, Option, Schema } from "effect";
 import { contract } from "vibestack/testing";
 import { type Role, contributionFields, publicSiteOrigin, templatePaths } from "./fields.ts";

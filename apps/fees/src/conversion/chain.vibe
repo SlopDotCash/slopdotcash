@@ -75,8 +75,6 @@ export interface Signed {
   readonly minimumOutput: bigint
   readonly deadline: number
   readonly blockhashSlot: number
-  readonly router: number
-  readonly approvedAmount: bigint
   readonly expiresAt?: number
 }
 

@@ -13,7 +13,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@repo/backend": "workspace:*",
+    "@repo/contributor": "workspace:*",
     "@repo/operations": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/ports": "workspace:*",

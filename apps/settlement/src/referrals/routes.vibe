@@ -8,6 +8,8 @@ import { type AccrualIndexEntry, Digest32, Instant, ReferralAccount, ReferralPro
 import { type Period, formatPeriod, parsePeriod } from "../kernels/calendar.ts"
 import { parseBaseUnits, toAmount } from "../kernels/amounts.ts"
 import { activeEpochIndex, ageSeconds, claimsView, pendingWindowShown } from "./claimsView.ts"
+import type { Hex } from "viem"
+import { verifyProof } from "./merkle.ts"
 import { accountRefusals, accrualRefusals, parityAnswer, privateAccountHeaders, publicFileHeaders } from "./refusals.vibe"
 
 schema FileRow {
@@ -232,6 +234,17 @@ effect function chainView(githubId: string, wallet: string | null, snapshot: Cla
   } satisfies ChainView
 }
 
+function isDigest(value: string): value is Hex {
+  return /^0x[0-9a-f]{64}$/u.test(value)
+}
+
+effect function proofHolds(root: string, wallet: string | null, cumulativeBase: string, proof: ReadonlyArray<string>) {
+  const hashes = proof.filter(isDigest)
+  if (wallet === null || !isDigest(root) || hashes.length !== proof.length) return false
+  const leaf = { address: wallet, cumulativeBase: try baseUnits(cumulativeBase) }
+  return Effect.try(() => verifyProof(root, leaf, hashes)) catch () => false
+}
+
 effect function knownAccount(unknown: ReferralAccount, chain: ChainView, status: "stale" | "ready", claimable: bigint, pending: bigint) {
   const { snapshot, current } = chain
   const paused = snapshot.paused || snapshot.latestPaused
@@ -240,6 +253,7 @@ effect function knownAccount(unknown: ReferralAccount, chain: ChainView, status:
   const claim = ready && claimable > 0n && current !== undefined && chain.leaf?.leaf !== undefined
     ? { period: current.period, epoch: current.epoch, root: current.root, cumulativeBase: chain.leaf.cumulativeBase, proof: chain.leaf.leaf.proof }
     : null
+  if (claim !== null && !(try proofHolds(claim.root, unknown.wallet, claim.cumulativeBase, claim.proof))) throw new ClaimsFailed({ reason: "Referral claim proof could not be verified" })
   return {
     ...unknown,
     status,

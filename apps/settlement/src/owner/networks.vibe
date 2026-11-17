@@ -1,5 +1,6 @@
 // spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"
 import { REVIEWED_FACTORIES } from "../chain/evm/factories.ts"
+import { REVIEWED_SOLANA_PROGRAMS } from "../chain/solana/programs.ts"
 import type { NetworkKey } from "../kernels/networks.ts"
 import { servedNetworks } from "../vault/deployments.vibe"
 
@@ -29,7 +30,7 @@ export effect function paymentNetworksFrom(vars: PaymentNetworkVars) {
   const map = try parsed(vars.PAYMENT_RPC_URLS ?? "{}")
   const endpoints: Fields = typeof map === "object" && map !== null && !Array.isArray(map) ? map as Fields : {}
   const url = (network: NetworkKey) => httpsUrl(endpoints[network])
-  const served = [...new Set([...names, ...REVIEWED_FACTORIES.map((factory) => factory.network).filter((network) => url(network) !== undefined)])]
+  const served = [...new Set([...names, ...[...REVIEWED_FACTORIES, ...REVIEWED_SOLANA_PROGRAMS].map((reviewed) => reviewed.network).filter((network) => url(network) !== undefined)])]
   return {
     served,
     urls: (network: NetworkKey) => effect {

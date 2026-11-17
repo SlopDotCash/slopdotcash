@@ -24,7 +24,7 @@ const githubUsers: Record<string, number> = { "Fresh-name": 0, taken: 999 }
 
 const Started = Layer.effect(Backend, effect {
   const github: string[] = []
-  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "worker" }))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { SLOP_DB: "slop-private" },

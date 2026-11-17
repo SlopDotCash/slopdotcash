@@ -1,9 +1,9 @@
-// spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "An upload intent is a five-minute one-time capability that only its exact retry renews"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "Progress events are the owner's agent-source records, idempotent by key and refused once finalized"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"
+// spec/contributor/traceServer.md, "Run creation is keyed by the authenticated actor and idempotency key"; spec/contributor/traceServer.md, "An upload intent is a five-minute one-time capability that only its exact retry renews"; spec/contributor/traceServer.md, "A capability upload reserves one permanent object before writing and attaches only while still allowed"; spec/contributor/traceServer.md, "Finalization needs an attached trace and freezes the run"; spec/contributor/traceServer.md, "Progress events are the owner's agent-source records, idempotent by key and refused once finalized"; spec/contributor/traceServer.md, "A banned owner starts nothing new and a different actor changes nothing"; spec/contributor/traceServer.md, "The clock, private-intake observation and ban state come from their owning services"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { type NonEmpty, type RowMismatch, type Statement, decoded, first, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
-import type { ReadFailure, Restrictions } from "@repo/ports/backend"
+import { type ReadFailure, Restrictions } from "@repo/ports/backend"
 import { type Event, type NotAState, type Put, type TraceServer, Rejected, apply, enabled, serverRuntime } from "../../gen/contributor__traceServer.effect.vibe"
 import { EventRow, IntentRow, KeyRow, ObjectRow, ReservationRow, RunRow, type RunRows, type StoredEventKind, type StoredSource, type TraceContentType, contentTypeOf, contentTypes, eventKindOf, modelOf, runStates, sameBlob, sourceOf } from "./codec.vibe"
 import { IntakeRow, bannedOf, intakeRead, intakeVersion, secondsAt } from "./facts.vibe"
@@ -210,6 +210,14 @@ function unchanged(loaded: Loaded, next: TraceServer, extra: Partial<Settled> = 
   return { value: { state: next, run: loaded.rows.run, ...extra }, writes: [] }
 }
 
+effect function settle<DE, DR>(scope: Scope, decide: (loaded: Loaded) => Decision<Settled>!DE!DR) {
+  return try update(aggregate(scope), (loaded) => effect {
+    const decision = try decide(loaded)
+    if (decision.writes.length === 0) return decision
+    return { ...decision, writes: [...decision.writes, try (try Restrictions).fence({ githubId: loaded.owner })] } satisfies Decision<Settled>
+  })
+}
+
 export effect function inspect(input: Inspect) {
   return (try load(aggregate(scopeOf(input.run, input.owner, "every", input.digests, input.puts)))).state
 }
@@ -222,7 +230,7 @@ export effect function capability(tokenHash: string) {
 export effect function createRun(input: CreateRun) {
   const id = try randomId()
   const by = Number(input.owner)
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, input.owner))), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, input.owner)), (loaded) => effect {
     const stored = loaded.rows.run
     const request = input.request
     const project = request.projectId === "" ? 0 : stored === undefined || stored.project_id === request.projectId ? 1 : 2
@@ -259,7 +267,7 @@ export effect function createRun(input: CreateRun) {
 }
 
 export effect function createIntent(input: CreateIntent) {
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { intent: input.key })), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { intent: input.key }), (loaded) => effect {
     const next = try apply(loaded.model, { type: "createIntent", key: input.key, digest: input.digest, byteCount: input.byteCount, contentType: contentTypeOf[input.contentType] }, input.by)
     const prior = loaded.rows.intents.find((intent) => intent.idempotency_key === input.key)
     if (next.reply !== "ReplyCreated" && next.reply !== "ReplyRenewed") return unchanged(loaded, next, prior === undefined ? {} : { intent: prior })
@@ -290,7 +298,7 @@ export effect function createIntent(input: CreateIntent) {
 }
 
 export effect function beginPut(input: BeginPut) {
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [input.digest], input.puts)), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [input.digest], input.puts), (loaded) => effect {
     const next = try apply(loaded.model, { type: "beginPut", key: input.key, digest: input.digest, byteCount: input.byteCount, contentType: contentTypeOf[input.contentType] }, serverRuntime)
     const put = next.puts.length > loaded.model.puts.length ? next.puts[next.puts.length - 1] : undefined
     if (put === undefined) return unchanged(loaded, next)
@@ -312,7 +320,7 @@ export effect function writeBytes(input: WriteBytes) {
   if (reserved === undefined || !enabled(current.model, attempt, input.by)) throw new Rejected({ event: attempt, state: current.model, by: input.by })
   const conflicting = current.model.objects.some((object) => object.digest === reserved.blob.digest && !sameBlob(object, reserved.blob))
   const succeeds = !conflicting && (try (try TraceObjects).store({ digest: reserved.blob.digest, size: reserved.blob.size, contentType: contentTypes[reserved.blob.contentType] }, input.bytes))
-  return try update(aggregate(scope), (loaded) => effect {
+  return try settle(scope, (loaded) => effect {
     const next = try apply(loaded.model, { type: "writeBytes", key: input.key, succeeds }, input.by)
     if (next.objects.length === loaded.model.objects.length) return unchanged(loaded, next)
     const blob = reserved.blob
@@ -325,7 +333,7 @@ export effect function writeBytes(input: WriteBytes) {
 }
 
 export effect function attachPut(input: AttachPut) {
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [], input.puts)), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, ""), {}, [], input.puts), (loaded) => effect {
     const written = loaded.model.puts.find((put) => put.key === input.key && put.stage === "PutWritten")
     const next = try apply(loaded.model, { type: "attachPut", key: input.key }, serverRuntime)
     const intent = loaded.rows.intents.find((row) => row.idempotency_key === input.key)
@@ -347,7 +355,7 @@ export effect function attachPut(input: AttachPut) {
 }
 
 export effect function finalize(input: Finalize) {
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)))), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by))), (loaded) => effect {
     const next = try apply(loaded.model, { type: "finalize", key: input.key }, input.by)
     if (next.reply !== "ReplyCreated") return unchanged(loaded, next)
     const run = try recorded(loaded)
@@ -363,7 +371,7 @@ export effect function appendEvent(input: AppendEvent) {
   const id = try randomId()
   const occurred = secondsAt(input.occurredAt)
   const occurredAt = Number.isSafeInteger(occurred) ? occurred : -1
-  return try update(aggregate(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { event: input.key })), (loaded) => effect {
+  return try settle(scopeOf(input.run, fallbackOwner(input.run, senderText(input.by)), { event: input.key }), (loaded) => effect {
     const next = try apply(loaded.model, {
       type: "appendEvent",
       key: input.key,

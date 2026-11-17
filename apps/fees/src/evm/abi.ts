@@ -1,4 +1,4 @@
-// spec/fees/conversion.md, "A conversion approval grants exactly the intent's input to the pinned router, and its swap signs only at that finalized allowance"; spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
+// spec/fees/conversion.md, "Native gas is reserved before signing and committed atomically with the signed row"
 import {
   type Address,
   decodeEventLog,

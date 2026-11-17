@@ -1,12 +1,12 @@
 // spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/evidence.md, "Last-reference cleanup excludes new references and waits for all admitted uploads"
 import type { D1Database, R2Bucket } from "@repo/platform/bindings"
-import { isoNow } from "@repo/platform/clock"
-import { sha256Hex, webCrypto } from "@repo/platform/crypto"
-import { D1, d1, sql } from "@repo/platform/d1"
-import { ActorChanged, Caller, Unauthenticated, handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, sql } from "@repo/platform/d1"
+import { handleRaw, json, refuse, serviceAuth } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { getSecuritySubmissionsById } from "../../../src/client/refusals.vibe"
 import { EvidenceBucket, evidenceBucket, verifiedPart } from "../../../src/evidence/objects.vibe"
@@ -24,29 +24,6 @@ interface Env {
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
   readonly MAINTAINER_GITHUB_IDS: string
 }
-
-const sessionToken = /^[A-Za-z0-9_-]{40,128}$/u
-const githubId = /^[1-9][0-9]{0,19}$/u
-
-const caller = Layer.effect(Caller, effect {
-  const db = try D1
-  const crypto = try Experimental.Crypto.Crypto
-  return {
-    current: () => effect {
-      const request = try HttpServerRequest.HttpServerRequest
-      const token = request.cookies["__Host-slop_points"] ?? ""
-      if (!sessionToken.test(token)) throw new Unauthenticated()
-      const hash = try provideService(sha256Hex(token), Experimental.Crypto.Crypto, crypto)
-      const now = try isoNow()
-      const [member] = try db.all(sql`SELECT m.actor_id, m.github_id, m.login FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${hash} AND s.expires_at > ${now} AND m.closed_at IS NULL`)
-      if (member === undefined || typeof member.github_id !== "string" || typeof member.login !== "string" || typeof member.actor_id !== "string") throw new Unauthenticated()
-      const expected = request.headers["x-slop-expected-github-id"]
-      if (expected !== undefined && !githubId.test(expected)) throw refuse(400, "invalid_expected_actor", "Expected GitHub actor is invalid")
-      if (expected !== undefined && expected !== member.github_id) throw new ActorChanged({ expected })
-      return { githubId: member.github_id, login: member.login, actorId: member.actor_id }
-    },
-  } satisfies Caller.Shape
-})
 
 const fixtureProject: ProjectView = {
   projectId: "evidence-fixture",
@@ -77,6 +54,8 @@ function ports(env: Env) {
     Layer.succeed(Restrictions, {
       account: () => succeed({ banned: false }),
       project: () => succeed({ restricted: false }),
+      fence: () => succeed(sql`SELECT 1`),
+      unbanned: () => succeed(sql`1`),
     } satisfies Restrictions.Shape),
   )
 }
@@ -132,7 +111,7 @@ export default worker({
     Layer.succeed(Backups, { binding: env.EVIDENCE_BACKUPS }),
     rolesFrom(env),
     Layer.provide(serviceAuth(env.VETTING_RESULT_PUBLIC_KEYS), webCrypto),
-    Layer.provide(caller, Layer.merge(d1(env.SLOP_DB), webCrypto)),
+    Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     ports(env),
   ),
   routes: Layer.mergeAll(evidenceRoutes, testRoutes),

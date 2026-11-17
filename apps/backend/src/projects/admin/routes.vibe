@@ -81,8 +81,9 @@ function revisedManifest(current: Readonly<Record<string, unknown>>, next: Reado
   return { ...current, status: next.status, listingTier: next.listingTier, steward: next.steward, participation: next.participation }
 }
 
-function eventOf(change: Change): Event {
-  return change.kind === "place" ? { type: "place", tier: change.tier } : { type: "adminRevise", kind: change.adminKind, steward: change.steward }
+function eventOf(change: Change, expectedRevision: number, reason: string): Event {
+  if (change.kind === "place") return { type: "place", tier: change.tier }
+  return { type: "adminRevise", exception: { kind: change.adminKind, steward: change.steward, expectedRevision, reason: reason === "" ? 0 : 1 }, exclusions: [] }
 }
 
 function restrictionText(restriction: string): string {
@@ -111,7 +112,7 @@ effect function revise(actor: Actor, projectId: string) {
   const change = try changeOf(previous, next)
   const text = JSON.stringify(revisedManifest(previous, next))
   const by = Number(actor.githubId)
-  send({ projectId, event: eventOf(change), by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
+  send({ projectId, event: eventOf(change, expectedRevision, reason), by, revision: { manifestText: text, reason, actor: { githubId: actor.githubId, login: actor.login } } }) catch effect (error) => match (error) {
     when Rejected: throw try restricted(projectId, error);
     default: throw error;
   }

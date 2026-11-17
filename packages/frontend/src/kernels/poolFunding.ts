@@ -1,7 +1,7 @@
-// spec/settlement/vaultSnapshots.md, "From December 2026 a month is promised only if a first read within an hour of 00:00 UTC holds this and the previous month's amount"; spec/settlement/vaultSnapshots.md, "A promise is shown only while the vault still covers what is owed, and Slop's pages refuse a withdrawal that would break it"
+// spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Slop's pages refuse a withdrawal below the promised amount"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes"
 import { fromAmount, toAmount } from "@repo/settlement/kernels/amounts";
-import { type Period, periodContaining, shiftPeriod } from "@repo/settlement/kernels/calendar";
-import { type MonthStart, type PayingVault, promiseFor, withdrawalKeepsPromise } from "@repo/settlement/kernels/promise";
+import { cutoffAt, FIRST_PERIOD, type Period, periodContaining, periodStartSeconds, shiftPeriod } from "@repo/settlement/kernels/calendar";
+import { owedNow, type PoolDisplay, type PoolFacts, type PoolRead, poolDisplay, withdrawalAllowedOnSlopPages } from "../../gen/frontend__projections.ts";
 import type { AssetKind } from "./assetText.ts";
 
 export interface FundingMonthStart {
@@ -30,10 +30,11 @@ export interface FundedPool {
   readonly capFor: (period: Period) => bigint;
 }
 
-export type PoolFunding =
-  | { readonly state: "Promised"; readonly period: Period; readonly owed: bigint }
-  | { readonly state: "WithdrawnDuringMonth"; readonly period: Period }
-  | { readonly state: "PointsOnly"; readonly period: Period };
+export interface PoolFunding {
+  readonly period: Period;
+  readonly facts: PoolFacts;
+  readonly display: PoolDisplay;
+}
 
 export interface PoolCap {
   readonly monthlyPool: boolean;
@@ -47,69 +48,58 @@ export interface ZeroedPoolCap {
   readonly monthlyCapDisplay: "0 TOKEN" | "$0";
 }
 
+const firstReadWindowSeconds = 60 * 60;
+
 const canonicalVault = (vault: string) => (vault.startsWith("0x") ? vault.toLowerCase() : vault);
 
 const vaultKey = (network: string, vault: string) => `${network}\n${canonicalVault(vault)}`;
 
-/** @throws {RangeError} */
-function payingVault(vault: FundingVault, recorded: ReadonlySet<string>): PayingVault {
-  const address = canonicalVault(vault.vault);
-  return {
-    network: vault.network,
-    vault: address,
-    pays: recorded.has(vaultKey(vault.network, address)),
-    free: { present: vault.freeBalance !== null, amount: toAmount(vault.freeBalance ?? 0n) },
-    withdrawn: toAmount(vault.totalGrossWithdrawn ?? 0n),
-    starts: (vault.monthStarts ?? []).map((start): MonthStart => ({
-      network: vault.network,
-      vault: address,
-      period: start.period,
-      free: toAmount(start.freeBalance),
-      withdrawn: toAmount(start.totalGrossWithdrawn),
-      blockTime: start.blockTime,
-    })),
-  };
-}
+const sum = (values: ReadonlyArray<bigint>) => values.reduce((total, value) => total + value, 0n);
 
 /** @throws {RangeError} */
-export function poolFunding({ pool, vaults, networkPays, nowMs }: {
+export function poolFunding({ pool, read, vaults, networkPays, nowMs }: {
   pool: FundedPool;
-  vaults: ReadonlyArray<FundingVault> | undefined;
+  read: PoolRead;
+  vaults: ReadonlyArray<FundingVault>;
   networkPays: (network: string) => boolean;
   nowMs: number;
 }): PoolFunding {
   const nowSeconds = Math.floor(nowMs / 1000);
   const period = periodContaining(nowSeconds);
-  if (!pool.monthlyPool || vaults === undefined) return { state: "PointsOnly", period };
+  const prior = shiftPeriod(period, -1);
   const recorded = new Set(pool.deployments.filter((deployment) => networkPays(deployment.network)).map((deployment) => vaultKey(deployment.network, deployment.vault)));
-  const promise = promiseFor(
-    vaults.map((vault) => payingVault(vault, recorded)),
-    nowSeconds,
-    toAmount(pool.capFor(period)),
-    toAmount(pool.capFor(shiftPeriod(period, -1))),
-  );
-  switch (promise.state) {
-    case "Promised":
-      return { state: "Promised", period, owed: fromAmount(promise.owed) };
-    case "WithdrawnDuringMonth":
-      return { state: "WithdrawnDuringMonth", period };
-    case "PointsOnly":
-      return { state: "PointsOnly", period };
-    default: {
-      const _exhaustive: never = promise.state;
-      return _exhaustive;
-    }
-  }
+  const counted = vaults.filter((vault) => vault.freeBalance !== null && recorded.has(vaultKey(vault.network, vault.vault)));
+  const firstReads = counted.flatMap((vault) => {
+    const first = vault.monthStarts?.find((start) => start.period === period && start.blockTime - periodStartSeconds(period) < firstReadWindowSeconds);
+    return first === undefined ? [] : [{ first, withdrawnNow: vault.totalGrossWithdrawn }];
+  });
+  const facts: PoolFacts = {
+    read,
+    monthlyPool: pool.monthlyPool,
+    period,
+    amount: toAmount(pool.capFor(period)),
+    priorAmount: toAmount(prior >= FIRST_PERIOD ? pool.capFor(prior) : 0n),
+    priorPending: nowSeconds < cutoffAt(prior),
+    freeNow: toAmount(sum(counted.map((vault) => vault.freeBalance ?? 0n))),
+    monthStartRead: firstReads.length > 0,
+    freeAtStart: toAmount(sum(firstReads.map(({ first }) => first.freeBalance))),
+    withdrawnSince: firstReads.some(({ first, withdrawnNow }) => withdrawnNow !== undefined && withdrawnNow > first.totalGrossWithdrawn),
+  };
+  return { period, facts, display: poolDisplay(facts) };
+}
+
+/** @throws {never} */
+export function promisedOwed(funding: PoolFunding): bigint | undefined {
+  return funding.display === "PoolFunded" ? fromAmount(owedNow(funding.facts)) : undefined;
 }
 
 /** @throws {never} */
 export function zeroedPoolCap({ monthlyPool, monthlyCapMinor, hasCycleCaps, assetKind }: PoolCap, funding: PoolFunding): ZeroedPoolCap | undefined {
-  if (!monthlyPool || funding.state === "Promised" || (monthlyCapMinor === 0n && !hasCycleCaps)) return undefined;
+  if (!monthlyPool || funding.display === "PoolFunded" || (monthlyCapMinor === 0n && !hasCycleCaps)) return undefined;
   return { monthlyCapMinor: 0n, monthlyCapDisplay: assetKind !== undefined && assetKind !== "stablecoin" ? "0 TOKEN" : "$0" };
 }
 
 /** @throws {RangeError} */
-export function withdrawalKeepsFunding({ funding, freeBalance, gross }: { funding: PoolFunding; freeBalance: bigint; gross: bigint }): boolean {
-  const owed = funding.state === "Promised" ? funding.owed : 0n;
-  return withdrawalKeepsPromise({ state: funding.state, period: funding.period, owed: toAmount(owed) }, toAmount(freeBalance), toAmount(gross));
+export function withdrawalKeepsFunding({ funding, gross }: { funding: PoolFunding; gross: bigint }): boolean {
+  return withdrawalAllowedOnSlopPages(funding.facts, toAmount(gross));
 }
