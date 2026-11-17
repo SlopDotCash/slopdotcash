@@ -8720,7 +8720,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "sha256": "87497c5ccca6eaf79743564461656940eb56624e7791b07a5b422ff7982f1d5d",
+      "sha256": "e443be718189710f6996f086b03d9f472ab1fbf34fefc1f9dff19cb03b2247fa",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
@@ -8728,7 +8728,7 @@
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [87, 91, 96, 190, 210, 211, 363, 365],
+      "candidateLines": [88, 92, 97, 191, 211, 212, 364, 366],
       "review": "mapped-abstraction"
     },
     {

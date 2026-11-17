@@ -229,13 +229,12 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
           ],
           stop_reason: "end_turn",
           stop_sequence: null,
-          usage:
-            requests === 1
-              ? { input_tokens: 10, output_tokens: 10 }
-              : { input_tokens: 10, output_tokens: 10, cost: 500.000001 },
+          usage: { input_tokens: 10, output_tokens: 10 },
         },
-        // The Orbio backstop reports its charge in usage.cost.
-        requests === 1 ? {} : undefined,
+        {
+          headers:
+            requests === 1 ? {} : { "x-si-buyer-cost-micro": "500000001" },
+        },
       );
     },
   });
@@ -264,8 +263,6 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
   const env = {
     SURPLUS_API_KEY: "local-only",
     SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}`,
-    ORBIO_API_KEY: "local-only",
-    ORBIO_BASE_URL: `http://127.0.0.1:${server.port}`,
   };
   const prompt = {
     system: "Local accounting fixture",
@@ -335,7 +332,7 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
     await dispatchSpendAlert(h.db, h.notify);
     await dispatchSpendAlert(h.db, h.notify);
     expect(h.mail).toHaveLength(1);
-    // The Orbio backstop served the job, so the Surplus failure is recorded
+    // The second Surplus step served the job, so the first failure is recorded
     // without an email (operator decision, 17 November 2026).
     const later = () => new Date(Date.now() + 5 * 60 * 1000);
     await Promise.all([

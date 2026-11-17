@@ -83,11 +83,10 @@ test("general-review qualification refuses an absent or irrelevant limitation", 
 });
 
 test("general-review receipted failures retain the two-request ceiling", async () => {
-  // Surplus then Orbio: the route has one Surplus step since 17 November 2026.
   const source = provider(null, 503);
   await expect(
     qualifyGeneralReview(
-      { SURPLUS_API_KEY: "synthetic-only", ORBIO_API_KEY: "synthetic-only" },
+      { SURPLUS_API_KEY: "synthetic-only" },
       false,
       source.fetch,
     ),
