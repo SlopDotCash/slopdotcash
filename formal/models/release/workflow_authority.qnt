@@ -2,6 +2,8 @@
 // @source scripts/inspect-value-intake.ts
 // @source scripts/inspect-value-intake-history.ts
 // @evidence scripts/inspect-value-intake.test.ts
+// @source scripts/inspect-slopbot-runtime.ts
+// @evidence scripts/inspect-slopbot-runtime.test.ts
 // @source .github/workflows/fee-worker-bindings.yml
 // @source .github/workflows/payment-event-reconciliation.yml
 // @source scripts/inspect-fee-worker-bindings.ts
