@@ -269,9 +269,14 @@ test("the owner sets, changes and clears the intake cap on the manage page", asy
     });
 
     await field.fill("20");
-    await expect(
-      page.getByText("At 20 open outside pull requests", { exact: true }),
-    ).toBeVisible();
+    const proposedCap = page
+      .getByRole("region", { name: "Changes", exact: true })
+      .locator("dd")
+      .filter({ hasText: "At 20 open outside pull requests" });
+    await expect(proposedCap).toBeVisible();
+    await expect(proposedCap).toHaveText(
+      "At 20 open outside pull requests Live now",
+    );
     await page.screenshot({
       path: info.outputPath("manage-intake-cap.png"),
       fullPage: true,
