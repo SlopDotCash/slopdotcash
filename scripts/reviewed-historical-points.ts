@@ -786,9 +786,29 @@ export function reconstructHistoricalPoints(
       const audited = packet.sourceAudit.sources.find(
         (item) => item.id === squash.sourceId,
       );
+      const submitted = earlier.get(squash.sourceId);
+      if (submitted) {
+        const context = retirement.earlierAcceptanceProof?.contextSources.find(
+          (item) => item.id === squash.sourceId,
+        );
+        // One reviewed PR may have both submitted commits and a separate
+        // accepted squash output. Bind the two roles to the same live source.
+        check(
+          context?.mergeSha === squash.commit.sha &&
+            submitted.repositoryNodeId === squash.repositoryNodeId &&
+            submitted.sourceUrl === squash.sourceUrl &&
+            submitted.headSha === squash.headSha &&
+            submitted.occurredAt === squash.occurredAt &&
+            submitted.author?.id === squash.author?.id &&
+            submitted.author?.kind === squash.author?.kind &&
+            !submitted.commits.some(
+              (commit) => commit.sha === squash.commit.sha,
+            ),
+          "Submitted source and accepted squash bindings differ",
+        );
+      }
       check(
-        !earlier.has(squash.sourceId) &&
-          squash.sourceId !== source.sourceId &&
+        squash.sourceId !== source.sourceId &&
           squash.repositoryNodeId === source.repositoryNodeId &&
           audited?.headSha === squash.headSha &&
           audited.mergedAt === squash.occurredAt &&
@@ -1110,8 +1130,12 @@ export function reconstructHistoricalPoints(
           matches.length === 1,
           "Duplicate claim coverage is missing or repeated",
         );
-        const squash = squashes.get(matches[0].sourceId);
-        const owner = earlier.get(matches[0].sourceId) ?? squash;
+        const candidateSquash = squashes.get(matches[0].sourceId);
+        const squash =
+          candidateSquash?.commit.sha === commit.sha
+            ? candidateSquash
+            : undefined;
+        const owner = squash ?? earlier.get(matches[0].sourceId);
         const retained =
           squash?.commit ??
           earlier
