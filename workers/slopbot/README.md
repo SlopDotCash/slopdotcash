@@ -62,10 +62,9 @@ entitlement, execution success or the cause of an earlier import failure.
    closable result still goes through model triage and independent confirmation;
    model verdicts replace the hint.
 6. **Models.** `models.ts` starts with Surplus `claude-sonnet-5.5`, then
-   Orbio `anthropic/claude-sonnet-5.5` as the backstop (operator decisions,
-   16 and 17 November 2026; Surplus `gpt-6.1-terra` left the route on
-   17 November after failing the verdict schema on most calls). A Surplus
-   spending denial goes directly to Orbio. Missing
+   Surplus `gpt-6.1-terra`, then Orbio `anthropic/claude-sonnet-5.5` as the
+   backstop (operator decision, 16 November 2026). A Surplus spending denial
+   skips the remaining Surplus model and goes directly to Orbio. Missing
    provider keys skip that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
    internal provider cost and a zero billed amount.
 7. **Close gates.** A close needs all of the following (`review.ts`,
