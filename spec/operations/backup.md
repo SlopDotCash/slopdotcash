@@ -65,8 +65,9 @@ pure val initial: Backup = { phase: NotStarted, cycleDay: 0, clockDay: 0, expect
     { ...unclassified, id: 4, declared: 7, stored: 8 },
     { ...unclassified, id: 5, declared: 7, stored: 0 }),
   accessLog: List({ day: 0, removed: false }, { day: 200, removed: false }), startedDays: List(), waitingDays: List(),
-  generations: List({ id: 1, lifecycle: GenerationOpen, referencesEligible: false }, { id: 2, lifecycle: GenerationOpen, referencesEligible: false }),
-  targets: List(), retirementReleased: false, deletionReceipts: List(), retentionMissingTargets: List() }
+  generations: List({ id: 1, lifecycle: GenerationOpen, referencesEligible: true }, { id: 2, lifecycle: GenerationOpen, referencesEligible: false }),
+  targets: List({ ...noTarget, key: 1, generation: 1, written: true, published: true }, { ...noTarget, key: 2, generation: 2 }),
+  retirementReleased: false, deletionReceipts: List(), retentionMissingTargets: List() }
 pure val unclassified: EvidenceObject = { id: 0, closedDay: 0, admission: false, generation: Generational, declared: 0, stored: 0,
   marker: false, copy: Unclassified, receiptDay: 0, receiptDigest: 0, retention: Kept }
 pure def cycleOpen(b: Backup): bool = b.phase == Copying or b.phase == FailedQueue or b.phase == CleanupPending
@@ -411,22 +412,23 @@ pure val weight_beginRestore = 5
 pure val weight_checkChain = 5
 pure val weight_writeDestination = 5
 pure val weight_readDestination = 5
-pure val weight_retain = 5
+pure val weight_retain = 10
 pure val weight_failPage = 12
 pure val weight_replayFailed = 6
 pure val weight_start = 6
-pure val weight_classify = 6
-pure val weight_writeMissingMarker = 4
-pure val weight_beginCleanup = 4
+pure val weight_classify = 10
+pure val weight_writeMissingMarker = 10
+pure val weight_beginCleanup = 10
+pure val weight_setRetention = 10
 pure val generationValues = Set(1, 2)
 pure val keyValues = Set(1, 2)
 pure val exactValues = Set(true, false)
 pure val releasedValues = Set(true, false)
-pure val weight_reserveTarget = 3
-pure val weight_freezeGeneration = 8
-pure val weight_markTarget = 8
-pure val weight_recordRetirement = 8
-pure val weight_retireGeneration = 8
-pure val weight_settleReference = 8
-pure val weight_setRetirementRelease = 4
+pure val weight_reserveTarget = 1
+pure val weight_freezeGeneration = 15
+pure val weight_markTarget = 15
+pure val weight_recordRetirement = 15
+pure val weight_retireGeneration = 15
+pure val weight_settleReference = 15
+pure val weight_setRetirementRelease = 10
 ```
