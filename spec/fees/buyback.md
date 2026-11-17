@@ -14,7 +14,7 @@ network's fee journal (`fee_conversions`), sharing its lease, nonce floor,
 native reservation, rebroadcast of unknown sends and one open send per
 token; this machine does not model that sharing, and binding each send here
 to a row of the [conversion journal](./conversion.md) is a composition
-obligation.
+obligation that [the composition](./composition.md) states.
 
 One instance follows one source network: Base, Ethereum or Solana. It
 bridges that network's buyback share to the Robinhood Chain fee wallet and
@@ -93,8 +93,10 @@ pure def canPublishWorker(b: Buyback, config: R::WorkerConfig, by: R::Sender): b
 pure def publishWorker(b: Buyback, config: R::WorkerConfig, by: R::Sender): Buyback = { ...b, runtime: R::publish(b.runtime, config, by) }
 pure def canSetReleaseVariable(b: Buyback, variable: bool, by: R::Sender): bool = R::canSetReleaseVariable(b.runtime, variable, by)
 pure def setReleaseVariable(b: Buyback, variable: bool, by: R::Sender): Buyback = { ...b, runtime: R::setReleaseVariable(b.runtime, variable, by) }
-pure def canVerifyReadiness(b: Buyback, readyNetwork: R::Network, by: R::Sender): bool = R::canVerifyReadiness(b.runtime, readyNetwork, by)
-pure def verifyReadiness(b: Buyback, readyNetwork: R::Network, by: R::Sender): Buyback = { ...b, runtime: R::verifyReadiness(b.runtime, readyNetwork, by) }
+pure def canVerifyReadiness(b: Buyback, readyNetwork: R::Network, listedWallet: int, by: R::Sender): bool =
+  R::canVerifyReadiness(b.runtime, readyNetwork, listedWallet, by)
+pure def verifyReadiness(b: Buyback, readyNetwork: R::Network, listedWallet: int, by: R::Sender): Buyback =
+  { ...b, runtime: R::verifyReadiness(b.runtime, readyNetwork, listedWallet, by) }
 pure def signs(b: Buyback): bool = R::buybackSigns(b.runtime, network(b))
 pure def alwaysRuntimeSound(b: Buyback): bool = R::alwaysPublishedPassedPreflight(b.runtime) and R::alwaysUnpublishedInert(b.runtime)
   and R::alwaysBuybackNeedsLiveConverter(b.runtime) and R::alwaysStagingBuybackOff(b.runtime)
@@ -161,7 +163,7 @@ re-check the cost and every term, so a changed cost refuses either.
 
 ```quint
 type BridgeOrder = { orderId: int, tx: int, amount: int, takeAmount: int, costBps: int, receiver: str, authority: str,
-  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int }
+  beneficiary: str, externalCall: bool, affiliateFee: int, reservedTaker: str, solana: bool, nativeFee: int, balance: int }
 pure def unreleased(spends: List[Spend], now: int): int = spends.foldl(0, (total, spend) =>
   total + (if (not(spend.released) and spend.at > now - dayMs and spend.at <= now) spend.amount else 0))
 pure def spentInWindow(spends: List[Spend], now: int): int = unreleased(spends, now)
@@ -180,6 +182,7 @@ pure def orderTermsValid(b: Buyback, request: BridgeOrder): bool =
     and request.receiver == "fees" and request.authority == "fees" and request.beneficiary == "fees"
     and not(request.externalCall) and request.affiliateFee == 0 and request.reservedTaker == ""
     and spentInWindow(b.bridgeSpends, b.clock) + request.amount <= 5000000000 and bridgeNativeAllowed(b, request)
+    and withinSourceBalance(request)
 pure def canApproveOrder(b: Buyback, request: BridgeOrder): bool =
   signs(b) and b.orderPhase == NoOrder and not(request.solana) and orderTermsValid(b, request)
     and request.tx > 0 and not(b.txs.includes(request.tx))
@@ -202,6 +205,32 @@ pure def order(b: Buyback, request: BridgeOrder): Buyback =
     bridgeSpends: b.bridgeSpends.append({ id: request.orderId, at: b.clock, amount: request.amount, released: false }),
     bridgeNative: if (request.solana) b.bridgeNative.append({ id: request.orderId, at: b.clock, amount: request.nativeFee, released: false }) else b.bridgeNative }
 pure def sometimesApprovalRefusedCostChange(b: Buyback): bool = b.orderPhase == Approving and b.approval.phase == Finalized
+```
+
+### An order never spends more than the source fee wallet's finalized balance of its input, so an owner sweep only lowers the next order
+
+Each run reads the fee wallet's balance of the leg's input (the source
+network's USDC) at a finalized block before it forms an approval or an
+order, and both send at most that balance: the amount is the least of the
+due share, that balance and the remaining value cap. The owner may sweep the
+fee wallet outside the Worker at any time; a sweep changes no income,
+commitment or outcome, so it only lowers the balance the next run reads and
+with it the next order. A committed share stays committed until a proven
+failure or refund releases it.
+
+```quint
+pure def boundedSend(due: int, balance: int, cap: int): int =
+  val held = if (due < balance) due else balance
+  if (held < cap) held else cap
+pure def withinSourceBalance(request: BridgeOrder): bool = request.balance >= 0 and request.amount <= request.balance
+pure def lawBoundedSendWithinEveryBound(due: int, balance: int, cap: int): bool =
+  (due >= 0 and balance >= 0 and cap >= 0) implies
+    boundedSend(due, balance, cap) >= 0 and boundedSend(due, balance, cap) <= due
+      and boundedSend(due, balance, cap) <= balance and boundedSend(due, balance, cap) <= cap
+      and (boundedSend(due, balance, cap) == due or boundedSend(due, balance, cap) == balance or boundedSend(due, balance, cap) == cap)
+pure val dueValues = Set(0, 500000000, 1000000000)
+pure val balanceValues = Set(0, 600000000, 2000000000)
+pure val capValues = Set(0, 700000000, 5000000000)
 ```
 
 ### A deposit is in transit only from its finalized order receipt; a failed order releases its share
@@ -337,15 +366,17 @@ pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMod
   { ...R::liveAll, source: 3, buybackMode: R::Off })
 pure val requestValues = Set(
   { orderId: 1, tx: 21, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 1, tx: 22, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: true, nativeFee: 40000000, balance: 600000000 },
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 151, receiver: "fees", authority: "fees", beneficiary: "fees",
-    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 600000000 },
   { orderId: 2, tx: 24, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees",
-    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000 })
+    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000, balance: 600000000 },
+  { orderId: 1, tx: 25, amount: 500000000, takeAmount: 495000000, costBps: 150, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000, balance: 499999999 })
 pure val receiptValues = Set({ tx: 21, succeeded: true, finalized: true }, { tx: 22, succeeded: true, finalized: true },
   { tx: 22, succeeded: false, finalized: true }, { tx: 23, succeeded: true, finalized: true }, { tx: 24, succeeded: false, finalized: true },
   { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false })

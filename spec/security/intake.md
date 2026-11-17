@@ -54,6 +54,30 @@ pure def retryUpload(i: Intake, key: int): Intake = { ...i, phase: Uploading }
 pure def alwaysAdmittedBeforeWrite(i: Intake): bool = i.phase != Editing implies i.admissions.length() > 0 and i.key > 0 and i.digest > 0
 ```
 
+### A report body holds between 1 and 262,144 bytes and any other size creates nothing
+
+The request is read within 256 KiB (`MAX_SEND_BYTES` in
+`backend/security/submissions.ts`); a larger request answers 400
+`invalid_request` before rate admission (`begin`) and creates nothing: no
+admission, no R2 object, no case and no receipt. The stored object is the
+normalised report (`JSON.stringify` of the parsed input), refused after rate
+admission with 413
+`report_too_large` above 262,144 bytes (`MAX_REPORT_BYTES` in
+`backend/security/report-intake.ts`), a check the envelope bound makes
+unreachable in practice; `security_intake_reports.byte_count` (migration
+`0101`) keeps the same bound as a database check. An empty report is refused
+by the input schema, and a stored object whose size differs from its recorded
+count is never shown.
+
+```quint
+pure val maxReportBytes = 262144
+pure def reportBytesAccepted(bytes: int): bool = bytes >= 1 and bytes <= maxReportBytes
+pure def lawReportSizeBound(bytes: int): bool =
+  (bytes < 1 or bytes > 262144) implies not(reportBytesAccepted(bytes))
+pure def lawLargestReportAccepted(bytes: int): bool = bytes == 262144 implies reportBytesAccepted(bytes)
+pure val bytesValues = Set(0, 1, 262144, 262145)
+```
+
 ### Only verified exact object bytes permit an atomic case and Inbox receipt
 
 The transaction creates case and reporter Inbox receipt together under the
@@ -95,6 +119,60 @@ their reads and appeals are unaffected.
 ```quint
 pure def lawRestrictedRefusesNewReports(i: Intake, key: int, digest: int, reporter: int, repository: int, projectRevision: int, nowMs: int): bool =
   i.availability == RestrictedAwaitingOwnerDecision implies not(canBegin(i, key, digest, reporter, repository, projectRevision, nowMs))
+```
+
+### The private-reporting handoff reads the repository's cached reporting observation, and an observation older than its interval is StaleAccess
+
+GitHub private vulnerability reporting on the program's reporting repository
+is observed by Slopbot's hourly refresher and cached per project revision
+and repository (`repository_reporting_status`, migrations `0006` and `0086`;
+`backend/security/reporting-readiness.ts`). A read takes that row: with no
+row, no verified time, a repository identity that differs from the
+registered one, or a verified time in the future, the answer is
+`Unavailable`. A row whose last refresh failed, or whose verified time is one
+hour (3,600 s) old or older, is `StaleAccess`: the last verified value is
+kept and reported with a stale marker; a failed refresh never overwrites it. A fresh enabled row is `Enabled`, a fresh disabled row
+`Disabled`. Only a fresh `Enabled` answer marks the automatic GitHub handoff
+ready. The handoff link is a separate answer (`handoffLinkShown`): it is
+shown while the last verified value is enabled for the registered repository
+and its verified time is not in the future, fresh or stale, as `handoffUrl` is
+in `intakeReadiness` (`backend/security/handler.ts`), and no
+answer offers a public fallback. This answer governs the
+GitHub handoff only: Slop's stored intake (`canBegin`, `commitReceipt`) is
+gated by storage configuration, participation bans and the rate admission,
+as `acceptStoredReport` was, and the shell does not feed this answer to
+`observeAvailability`.
+
+```quint
+type ReportingReadiness = ReadinessEnabled | ReadinessDisabled | ReadinessUnobserved
+type ReportingObservation = { readiness: ReportingReadiness, identityMatches: bool, refreshFailed: bool, verifiedAtSecond: int }
+pure val reportingObservationSeconds = 3600
+pure def handoffAvailability(reportingObservation: ReportingObservation, nowSecond: int): IntakeAvailability =
+  if (reportingObservation.readiness == ReadinessUnobserved or not(reportingObservation.identityMatches) or
+      nowSecond < reportingObservation.verifiedAtSecond) Unavailable
+  else if (reportingObservation.refreshFailed or nowSecond - reportingObservation.verifiedAtSecond >= reportingObservationSeconds) StaleAccess
+  else if (reportingObservation.readiness == ReadinessEnabled) Enabled
+  else Disabled
+pure def lawOldObservationIsStale(reportingObservation: ReportingObservation, nowSecond: int): bool =
+  (reportingObservation.readiness != ReadinessUnobserved and reportingObservation.identityMatches and
+    nowSecond - reportingObservation.verifiedAtSecond >= 3600) implies handoffAvailability(reportingObservation, nowSecond) == StaleAccess
+pure def lawStaleNeverEnabledOrDisabled(reportingObservation: ReportingObservation, nowSecond: int): bool =
+  (reportingObservation.refreshFailed or nowSecond - reportingObservation.verifiedAtSecond >= 3600) implies
+    (handoffAvailability(reportingObservation, nowSecond) != Enabled and handoffAvailability(reportingObservation, nowSecond) != Disabled)
+pure def handoffLinkShown(reportingObservation: ReportingObservation, nowSecond: int): bool =
+  reportingObservation.readiness == ReadinessEnabled and reportingObservation.identityMatches and
+    nowSecond >= reportingObservation.verifiedAtSecond
+pure def lawStaleEnabledShowsLink(reportingObservation: ReportingObservation, nowSecond: int): bool =
+  (reportingObservation.readiness == ReadinessEnabled and reportingObservation.identityMatches and
+    nowSecond >= reportingObservation.verifiedAtSecond and handoffAvailability(reportingObservation, nowSecond) == StaleAccess)
+    implies handoffLinkShown(reportingObservation, nowSecond)
+pure def lawLinkNeedsEnabled(reportingObservation: ReportingObservation, nowSecond: int): bool =
+  handoffAvailability(reportingObservation, nowSecond) == Disabled implies not(handoffLinkShown(reportingObservation, nowSecond))
+pure val freshObservation: ReportingObservation = { readiness: ReadinessEnabled, identityMatches: true, refreshFailed: false, verifiedAtSecond: 0 }
+pure val reportingObservationValues = Set(freshObservation, { ...freshObservation, readiness: ReadinessDisabled },
+  { ...freshObservation, readiness: ReadinessUnobserved }, { ...freshObservation, identityMatches: false },
+  { ...freshObservation, refreshFailed: true })
+pure val nowSecondValues = Set(-1, 0, 3599, 3600)
 ```
 
 The [GitHub forwarding model](./forwarding.md) owns the researcher's separate

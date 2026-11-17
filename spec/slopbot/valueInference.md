@@ -280,6 +280,163 @@ pure def alwaysRetainedBandIsValid(v: ValueInference): bool =
   v.retained != noRetained implies v.retained.sizeBand >= 0 and v.retained.sizeBand <= 5
 ```
 
+## Story: Retain only a proposal the collected evidence supports
+
+> As a contributor, I want a value proposal to count only when its size
+> band, review credits and citations are backed by the evidence Slopbot
+> collected, so a model cannot invent a source or credit.
+
+### A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence
+
+Source `VALUE_ASSESSMENT_SCHEMA` and `validateValueAssessment` in
+`src/lib/value-assessment.ts` (rubric `slop-value-2026-10-09`),
+`validateEvidenceAssessment` in `workers/slopbot/value-review.ts` and
+`validateWorkUnitAssessment` in `value-work-unit-review.ts`. The single
+route assesses nothing for a source that is indirectly accepted, a
+no-change promotion or a native-merge acceptance (`singleRouteAllowed` is
+false): such a source takes the joint route
+([work units](./workUnits.md) "A claim is one changed path in one commit
+and belongs to its first accepted carrier"). A proposal has
+exactly the schema's fields, a non-empty rationale and six non-empty
+dimensions (`alignment`, `impact`, `complexity`, `verification`,
+`maintenance`, `overlap`). Every evidence and related-PR URL it cites was
+collected. A merged source assessed as `assessed` needs a tier and at
+least one evidence URL; an unmerged source or an `unresolved` proposal has
+no tier, and `unresolved` names at least one limitation. An `assessed`
+proposal relates only PRs whose full evidence is in the same joint
+assessment. Each collected formal review appears exactly once with its
+review tier: `none`, `triage` 1, `standard` 3, `deep` 9 or `specialist` 24
+thirds. A duplicate names an earlier collected review, other than itself,
+by submission time and has tier `none`. A positive review tier needs an
+`assessed` proposal for a closed source, two distinct cited URLs including
+the review's own, and a review eligible under the self-review, bot,
+post-merge and retained-copy boundaries. The implementation tiers `micro`
+to `exceptional` are the Points size bands 0 to 5 of
+[allocation](../points/allocation.md) (`none` has no band). A joint
+assessment validates each unit this way, with merged meaning the unit has
+claims, closed always true and the single-route condition not applying.
+It is refused as a whole (`validJointUnits`) when the joint evidence has
+any limitation, a unit has neither claims nor reviews, a unit names an
+unknown claim or review, or a collected review is not used in exactly one
+unit; the claims of the units with claims must also form the complete
+partition of [work units](./workUnits.md) "A complete partition assigns
+every claim to exactly one outcome". An output that fails this check is
+never a `ValidResult`.
+
+```quint
+import allocation as A from "../points/allocation"
+type ProposalStatus = ProposalAssessed | ProposalUnresolved
+type ProposalTier = TierNull | TierNone | TierMicro | TierSmall | TierMedium | TierLarge | TierXl | TierExceptional
+type ReviewTier = ReviewNone | ReviewTriage | ReviewStandard | ReviewDeep | ReviewSpecialist
+type ReviewAward = { sourceId: str, duplicateOf: str, reviewTier: ReviewTier, citedUrls: List[str], explained: bool }
+type ValueProposal = { exactShape: bool, status: ProposalStatus, tier: ProposalTier, rationaleGiven: bool,
+  evidenceUrls: List[str], relatedPulls: List[str], limitations: int, awards: List[ReviewAward] }
+type CollectedReview = { reviewId: str, reviewUrl: str, submittedAt: int, eligible: bool }
+type CollectedEvidence = { urls: List[str], relatedUrls: List[str], jointUrls: List[str],
+  reviews: List[CollectedReview], requiredIds: List[str], merged: bool, closed: bool, singleRouteAllowed: bool }
+type JointUnit = { unitClaims: List[str], unitReviews: List[str] }
+pure val noCollectedReview: CollectedReview = { reviewId: "", reviewUrl: "", submittedAt: 0, eligible: false }
+pure def tierBand(t: ProposalTier): int =
+  if (t == TierMicro) 0 else if (t == TierSmall) 1 else if (t == TierMedium) 2 else if (t == TierLarge) 3
+  else if (t == TierXl) 4 else if (t == TierExceptional) 5 else -1
+pure def tierThirds(t: ProposalTier): int =
+  if (t == TierMicro) 1 else if (t == TierSmall) 3 else if (t == TierMedium) 9 else if (t == TierLarge) 24
+  else if (t == TierXl) 45 else if (t == TierExceptional) 75 else 0
+pure def reviewThirds(t: ReviewTier): int =
+  if (t == ReviewTriage) 1 else if (t == ReviewStandard) 3 else if (t == ReviewDeep) 9
+  else if (t == ReviewSpecialist) 24 else 0
+pure def collectedReview(e: CollectedEvidence, reviewId: str): CollectedReview =
+  e.reviews.select(r => r.reviewId == reviewId).nthOr(0, noCollectedReview)
+pure def knownReview(e: CollectedEvidence, reviewId: str): bool = e.reviews.some(r => r.reviewId == reviewId)
+pure def citedCollected(cited: List[str], collected: List[str]): bool =
+  cited.every(u => u != "" and collected.includes(u))
+pure def validAward(a: ReviewAward, p: ValueProposal, e: CollectedEvidence): bool =
+  val own = collectedReview(e, a.sourceId)
+  val earlier = collectedReview(e, a.duplicateOf)
+  a.sourceId != "" and knownReview(e, a.sourceId) and e.requiredIds.includes(a.sourceId) and
+  p.awards.select(o => o.sourceId == a.sourceId).length() == 1 and
+  (a.duplicateOf == "" or (a.duplicateOf != a.sourceId and knownReview(e, a.duplicateOf) and
+    a.reviewTier == ReviewNone and earlier.submittedAt > 0 and own.submittedAt > 0 and
+    earlier.submittedAt < own.submittedAt)) and
+  a.explained and citedCollected(a.citedUrls, e.urls) and
+  (a.reviewTier == ReviewNone or (p.status == ProposalAssessed and e.closed and
+    a.citedUrls.some(x => a.citedUrls.some(y => x != y)) and a.citedUrls.includes(own.reviewUrl) and own.eligible))
+pure def validProposal(p: ValueProposal, e: CollectedEvidence): bool =
+  e.singleRouteAllowed and p.exactShape and p.rationaleGiven and citedCollected(p.evidenceUrls, e.urls) and
+  citedCollected(p.relatedPulls, e.urls) and
+  not(p.status == ProposalAssessed and e.merged and (p.tier == TierNull or p.evidenceUrls.length() == 0)) and
+  ((e.merged and p.status == ProposalAssessed) or p.tier == TierNull) and
+  p.relatedPulls.every(u => e.relatedUrls.includes(u)) and
+  (p.status == ProposalUnresolved or p.relatedPulls.every(u => e.jointUrls.includes(u))) and
+  (p.status == ProposalAssessed or p.limitations > 0) and
+  p.awards.every(a => validAward(a, p, e)) and p.awards.length() == e.requiredIds.length()
+pure def lawTierBandsPriceAsPublished(tier: ProposalTier): bool =
+  tierBand(tier) >= 0 implies A::sizePoints(tierBand(tier)) == 10 * tierThirds(tier)
+pure def lawUnmergedHasNoTier(sampleProposal: ValueProposal, sampleEvidence: CollectedEvidence): bool =
+  (validProposal(sampleProposal, sampleEvidence) and not(sampleEvidence.merged)) implies sampleProposal.tier == TierNull
+pure def lawUncollectedCitationRefused(sampleProposal: ValueProposal, sampleEvidence: CollectedEvidence): bool =
+  sampleProposal.evidenceUrls.some(u => not(sampleEvidence.urls.includes(u))) implies
+    not(validProposal(sampleProposal, sampleEvidence))
+pure def lawReviewCreditNeedsEligibleReview(sampleProposal: ValueProposal, sampleEvidence: CollectedEvidence): bool =
+  validProposal(sampleProposal, sampleEvidence) implies sampleProposal.awards.every(a =>
+    a.reviewTier == ReviewNone or (collectedReview(sampleEvidence, a.sourceId).eligible and
+      a.citedUrls.includes(collectedReview(sampleEvidence, a.sourceId).reviewUrl)))
+pure def validJointUnits(units: List[JointUnit], jointReviews: List[str], jointClaims: List[str],
+  jointLimitations: int): bool =
+  jointLimitations == 0 and jointReviews.every(r => jointReviews.select(x => x == r).length() == 1) and
+  units.every(u => (u.unitClaims.length() > 0 or u.unitReviews.length() > 0) and
+    u.unitClaims.every(c => jointClaims.includes(c)) and u.unitReviews.every(r => jointReviews.includes(r))) and
+  jointReviews.every(r => units.select(u => u.unitReviews.includes(r)).length() == 1) and
+  units.every(u => u.unitReviews.every(r => u.unitReviews.select(x => x == r).length() == 1))
+pure def lawIndirectSourcesNeverSingleAssessed(sampleProposal: ValueProposal, sampleEvidence: CollectedEvidence): bool =
+  not(sampleEvidence.singleRouteAllowed) implies not(validProposal(sampleProposal, sampleEvidence))
+pure def lawJointLimitationRefused(sampleUnits: List[JointUnit], jointReviews: List[str], jointClaims: List[str],
+  jointLimitations: int): bool =
+  jointLimitations > 0 implies not(validJointUnits(sampleUnits, jointReviews, jointClaims, jointLimitations))
+pure def lawJointReviewUsedOnce(sampleUnits: List[JointUnit], jointReviews: List[str], jointClaims: List[str],
+  jointLimitations: int): bool =
+  validJointUnits(sampleUnits, jointReviews, jointClaims, jointLimitations) implies
+    jointReviews.every(r => sampleUnits.select(u => u.unitReviews.includes(r)).length() == 1)
+pure def lawJointEmptyUnitRefused(sampleUnits: List[JointUnit], jointReviews: List[str], jointClaims: List[str],
+  jointLimitations: int): bool =
+  sampleUnits.some(u => u.unitClaims.length() == 0 and u.unitReviews.length() == 0) implies
+    not(validJointUnits(sampleUnits, jointReviews, jointClaims, jointLimitations))
+pure def lawJointUnknownClaimRefused(sampleUnits: List[JointUnit], jointReviews: List[str], jointClaims: List[str],
+  jointLimitations: int): bool =
+  sampleUnits.some(u => u.unitClaims.some(c => not(jointClaims.includes(c)))) implies
+    not(validJointUnits(sampleUnits, jointReviews, jointClaims, jointLimitations))
+pure def lawDuplicateEarnsNothing(sampleProposal: ValueProposal, sampleEvidence: CollectedEvidence): bool =
+  validProposal(sampleProposal, sampleEvidence) implies
+    sampleProposal.awards.every(a => a.duplicateOf == "" or reviewThirds(a.reviewTier) == 0)
+pure val firstReview: CollectedReview = { reviewId: "r1", reviewUrl: "u-r1", submittedAt: 10, eligible: true }
+pure val laterReview: CollectedReview = { reviewId: "r2", reviewUrl: "u-r2", submittedAt: 20, eligible: false }
+pure val mergedEvidence: CollectedEvidence = { urls: List("u-pr", "u-r1", "u-r2"), relatedUrls: List(), jointUrls: List(),
+  reviews: List(firstReview, laterReview), requiredIds: List("r1", "r2"), merged: true, closed: true,
+  singleRouteAllowed: true }
+pure val creditedAward: ReviewAward = { sourceId: "r1", duplicateOf: "", reviewTier: ReviewStandard,
+  citedUrls: List("u-r1", "u-pr"), explained: true }
+pure val duplicateAward: ReviewAward = { sourceId: "r2", duplicateOf: "r1", reviewTier: ReviewNone,
+  citedUrls: List("u-r2"), explained: true }
+pure val assessedProposal: ValueProposal = { exactShape: true, status: ProposalAssessed, tier: TierSmall,
+  rationaleGiven: true, evidenceUrls: List("u-pr"), relatedPulls: List(), limitations: 0,
+  awards: List(creditedAward, duplicateAward) }
+pure val sampleProposalValues = Set(assessedProposal, { ...assessedProposal, evidenceUrls: List("u-invented") },
+  { ...assessedProposal, tier: TierNull }, { ...assessedProposal, status: ProposalUnresolved, tier: TierNull, limitations: 1 },
+  { ...assessedProposal, awards: List(creditedAward) },
+  { ...assessedProposal, awards: List(creditedAward, { ...duplicateAward, reviewTier: ReviewTriage }) },
+  { ...assessedProposal, awards: List({ ...creditedAward, sourceId: "r2", citedUrls: List("u-r2", "u-pr") },
+    { ...duplicateAward, sourceId: "r1", duplicateOf: "r2" }) })
+pure val sampleEvidenceValues = Set(mergedEvidence, { ...mergedEvidence, merged: false, closed: false },
+  { ...mergedEvidence, singleRouteAllowed: false })
+pure val claimedUnit: JointUnit = { unitClaims: List("c1"), unitReviews: List("r1") }
+pure val sampleUnitsValues = Set(List(claimedUnit, { unitClaims: List("c2"), unitReviews: List("r2") }),
+  List(claimedUnit, { unitClaims: List(), unitReviews: List() }), List(claimedUnit, { ...claimedUnit, unitClaims: List("c2") }),
+  List({ ...claimedUnit, unitClaims: List("c9") }), List(claimedUnit))
+pure val jointReviewsValues = Set(List("r1", "r2"), List("r1"), List())
+pure val jointClaimsValues = Set(List("c1", "c2"))
+pure val jointLimitationsValues = Set(0, 1)
+```
+
 ## Story: Publish under the current exact authority
 
 ### A retained inference survives stale publication without another charge

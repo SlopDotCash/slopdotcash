@@ -145,6 +145,126 @@ pure def sometimesRetriedComplete(c: Census): bool = c.phase == Ready and c.coun
 pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and c.items.some(i => blocked(i)) and c.items.some(i => not(blocked(i)))
 ```
 
+### A maintainer claim counts only from a trusted association or a claim label, and a claim comment lapses after seven days
+
+The GitHub adapter supplies each item's `claimed` from this derivation
+(`src/lib/leaderboard.ts`, `issueClaim`, `pullRequestClaim`,
+`latestClaimComment`), at the collection's reference time. The claim
+sources are tried in this order: a non-bot assignee (on a pull request, one
+other than its author); for an issue, an open pull request that references
+it; a claim comment; a claim label. A claim comment is a Markdown line that
+starts `CLAIMING:` on an issue or `CLAIMING REVIEW:` on a pull request,
+written by a non-bot author whose association is `OWNER`, `MEMBER` or
+`COLLABORATOR`, never by the pull request's own author, created at or
+before the reference time and no more than seven days (604,800,000 ms)
+before it. A claim label is, ignoring case, `claimed`, `in-progress`,
+`in progress` or `working` (each optionally followed by `: name`),
+`status: claimed` or `status: in-progress` on an issue, and
+`review-claimed` or `review-in-progress` (optionally followed by `: name`)
+or `review: claimed` on a pull request. A label claim does not lapse. The
+adapter matches the line and label patterns and supplies the booleans
+below; times are integer milliseconds.
+
+```quint
+pure val claimMaxAgeMs = 604800000
+type ClaimSource = NoClaim | AssigneeClaim | LinkedPullRequestClaim | CommentClaim | LabelClaim
+type ClaimComment = { botAuthor: bool, trustedAssociation: bool, byItemAuthor: bool, claimLine: bool, createdAt: int }
+type ClaimEvidence = { kind: ItemKind, otherAssignee: bool, openLinkedPullRequest: bool, comments: List[ClaimComment],
+  claimLabel: bool }
+pure def claimCommentCounts(claim: ClaimEvidence, comment: ClaimComment, now: int): bool =
+  not(comment.botAuthor) and comment.trustedAssociation and comment.claimLine and
+  (claim.kind == IssueItem or not(comment.byItemAuthor)) and
+  comment.createdAt <= now and now - comment.createdAt <= claimMaxAgeMs
+pure def claimSource(claim: ClaimEvidence, now: int): ClaimSource =
+  if (claim.otherAssignee) AssigneeClaim
+  else if (claim.kind == IssueItem and claim.openLinkedPullRequest) LinkedPullRequestClaim
+  else if (claim.comments.some(m => claimCommentCounts(claim, m, now))) CommentClaim
+  else if (claim.claimLabel) LabelClaim
+  else NoClaim
+pure def claimedFrom(claim: ClaimEvidence, now: int): bool = claimSource(claim, now) != NoClaim
+pure def lawUntrustedOrBotCommentNeverClaims(claim: ClaimEvidence, comment: ClaimComment, now: int): bool =
+  (comment.botAuthor or not(comment.trustedAssociation)) implies not(claimCommentCounts(claim, comment, now))
+pure def lawClaimCommentLapsesAfterSevenDays(claim: ClaimEvidence, comment: ClaimComment, now: int): bool =
+  (now - comment.createdAt > claimMaxAgeMs or comment.createdAt > now) implies not(claimCommentCounts(claim, comment, now))
+pure def lawAuthorCannotClaimOwnPullRequest(claim: ClaimEvidence, comment: ClaimComment, now: int): bool =
+  (claim.kind == PullRequestItem and comment.byItemAuthor) implies not(claimCommentCounts(claim, comment, now))
+pure def lawNoClaimWithoutEvidence(claim: ClaimEvidence, now: int): bool =
+  (not(claim.otherAssignee) and not(claim.openLinkedPullRequest) and not(claim.claimLabel) and
+    claim.comments.every(m => not(claimCommentCounts(claim, m, now)))) implies not(claimedFrom(claim, now))
+pure def lawLabelClaimNeverLapses(claim: ClaimEvidence, now: int): bool = claim.claimLabel implies claimedFrom(claim, now)
+pure val claimComment: ClaimComment = { botAuthor: false, trustedAssociation: true, byItemAuthor: false, claimLine: true,
+  createdAt: 1000000000 }
+pure val commentValues = Set(claimComment, { ...claimComment, botAuthor: true }, { ...claimComment, trustedAssociation: false },
+  { ...claimComment, byItemAuthor: true }, { ...claimComment, claimLine: false }, { ...claimComment, createdAt: 395200000 },
+  { ...claimComment, createdAt: 395199999 })
+pure val issueClaim: ClaimEvidence = { kind: IssueItem, otherAssignee: false, openLinkedPullRequest: false,
+  comments: List(claimComment), claimLabel: false }
+pure val claimValues = Set(issueClaim, { ...issueClaim, comments: List() }, { ...issueClaim, comments: List(), claimLabel: true },
+  { ...issueClaim, comments: List(), openLinkedPullRequest: true },
+  { ...issueClaim, kind: PullRequestItem, openLinkedPullRequest: true, comments: List() },
+  { ...issueClaim, kind: PullRequestItem, comments: List({ ...claimComment, byItemAuthor: true }) },
+  { ...issueClaim, kind: PullRequestItem, otherAssignee: true, comments: List() })
+pure val nowValues = Set(1000000000, 1604800000, 1604800001)
+```
+
+### A live collection spends at most 4,900 GraphQL cost points per rate-limit window, keeps a 100-point reserve and recollects a changed review census once within the same budget
+
+The live GraphQL client of `scripts/generate-leaderboard.ts`
+(`MAX_GENERATION_COST`, `MINIMUM_RATE_LIMIT_RESERVE`, `ensureBudget`,
+`ensureEstimatedBudget`, `runGenerator`) checks each estimated cost before
+it spends it. What is available is the smaller of 4,900 less the larger of
+the cost this run spent in the current rate-limit window and the points the
+shared token lost since this run's first response in that window, and the
+reported remaining points less a reserve of 100. A cost that fits is spent.
+One that does not fit waits for the reported reset once, which starts a new
+window with nothing spent; a cost that still does not fit after waiting for
+that same reset, or that exceeds 4,900 on its own, stops the collection with
+no partial snapshot. Before GitHub has reported a rate limit, the first
+request is sent. A changed review census (`ReviewCensusChangedError`) or an
+enumerated node that became unavailable (`SourceNodeUnavailableError`)
+discards the first attempt and recollects every source once, with the same
+client: the cost spent, the reserve and the reset already waited for carry
+over. Any other failure, or a second such failure, stops the collection.
+Publication is outside the retry. The [ingestion read](./ingestion.md) is a
+separate REST transport with no budget of its own.
+
+```quint
+pure val maxGenerationCost = 4900
+pure val rateLimitReserve = 100
+type Budget = { windowSpent: int, windowDrain: int, remaining: int, waitedForReset: bool }
+type BudgetDecision = SpendNow | WaitForReset | StopCollection
+type RetryCause = ReviewCensusChanged | SourceNodeUnavailable | OtherFailure
+pure def availableCost(budget: Budget): int =
+  val used = if (budget.windowSpent > budget.windowDrain) budget.windowSpent else budget.windowDrain
+  val byCap = maxGenerationCost - used
+  val byReserve = budget.remaining - rateLimitReserve
+  if (byCap < byReserve) byCap else byReserve
+pure def budgetDecision(budget: Budget, cost: int): BudgetDecision =
+  if (cost < 0 or cost > maxGenerationCost) StopCollection
+  else if (cost <= availableCost(budget)) SpendNow
+  else if (budget.waitedForReset) StopCollection
+  else WaitForReset
+pure def afterReset(remaining: int): Budget = { windowSpent: 0, windowDrain: 0, remaining: remaining, waitedForReset: true }
+pure def recollects(attempt: int, cause: RetryCause): bool = attempt == 1 and cause != OtherFailure
+pure def lawSpendKeepsCapAndReserve(budget: Budget, cost: int): bool =
+  budgetDecision(budget, cost) == SpendNow implies
+    (budget.windowSpent + cost <= maxGenerationCost and budget.windowDrain + cost <= maxGenerationCost and
+      budget.remaining - cost >= rateLimitReserve)
+pure def lawWaitsOnceForAReset(budget: Budget, cost: int): bool =
+  budget.waitedForReset implies budgetDecision(budget, cost) != WaitForReset
+pure def lawResetStillShortStops(remaining: int, cost: int): bool =
+  (cost >= 0 and cost <= maxGenerationCost and remaining - rateLimitReserve < cost) implies
+    budgetDecision(afterReset(remaining), cost) == StopCollection
+pure def lawRecollectsOnlyOnceAndOnlyForCensusChurn(attempt: int, cause: RetryCause): bool =
+  recollects(attempt, cause) implies (attempt == 1 and (cause == ReviewCensusChanged or cause == SourceNodeUnavailable))
+pure val openBudget: Budget = { windowSpent: 0, windowDrain: 0, remaining: 5000, waitedForReset: false }
+pure val budgetValues = Set(openBudget, { ...openBudget, windowSpent: 4800 }, { ...openBudget, remaining: 150 },
+  { ...openBudget, windowDrain: 4900, waitedForReset: true }, { ...openBudget, remaining: 50 })
+pure val costValues = Set(-1, 0, 1, 100, 4900, 4901)
+pure val remainingValues = Set(0, 100, 5000)
+pure val attemptValues = Set(1, 2)
+```
+
 ### Simulation samples include repeated cursors, count changes and blocked items
 
 ```quint

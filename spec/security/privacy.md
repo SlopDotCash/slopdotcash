@@ -72,6 +72,59 @@ financial amounts unless the receiving view has case authority; that
 omission is a shell and frontend obligation verified by conformance, not by
 this machine.
 
+### A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range
+
+A designated scanner operator asks for a read grant on one evidence object of
+one run of one assessment (`backend/vetting/evidence.ts`). The grant records
+the operator, the object and a reason, is audited as `grant`, and expires
+after fifteen minutes. Only the SHA-256 of its random token is stored. Small
+evidence is read with the token in `x-vetting-read-grant`; large evidence
+needs a download grant, delivered as an `HttpOnly`, `Secure`,
+`SameSite=Strict` cookie scoped to that object's download path. Redeeming
+consumes the grant in one compare-and-set (`consumed_at` was empty, the
+token, object and operator match and the grant has not expired), so a second
+use, an expired grant, another operator's grant or a grant for another object
+answers 403 `grant_invalid` and delivers nothing. A download that is not a
+GET (HEAD included) answers 405 `method_not_allowed`; one that is not a
+same-origin browser request or carries a `Range` header answers 403
+`origin_forbidden`; one with no grant cookie or more than one answers 403
+`grant_invalid`. These refusals come before the grant is consumed. A
+consumed grant stays consumed when the stream later aborts, and the stream
+records `download-authorized`, `download-started` and exactly one of
+`download-finished`, `download-failed` or `download-cancelled`. The response
+offers no ranges (`accept-ranges: none`).
+
+```quint
+type DownloadMethod = DownloadGet | DownloadHead | DownloadOther
+type EvidenceDownload = { method: DownloadMethod, sameOrigin: bool, ranged: bool, grantCookies: int }
+type DownloadRefusal = DownloadAccepted | MethodNotAllowed | OriginForbidden | GrantInvalid
+type EvidenceGrant = { grantOperator: int, grantObject: int, expiresAtMinute: int, consumed: bool }
+pure def downloadRefusal(download: EvidenceDownload): DownloadRefusal =
+  if (download.method != DownloadGet) MethodNotAllowed
+  else if (not(download.sameOrigin) or download.ranged) OriginForbidden
+  else if (download.grantCookies != 1) GrantInvalid
+  else DownloadAccepted
+pure def grantRedeemable(grant: EvidenceGrant, operator: int, evidenceObject: int, nowMinute: int): bool =
+  not(grant.consumed) and grant.grantOperator == operator and grant.grantObject == evidenceObject and nowMinute < grant.expiresAtMinute
+pure def redeemed(grant: EvidenceGrant): EvidenceGrant = { ...grant, consumed: true }
+pure def lawGrantRedeemedOnce(grant: EvidenceGrant, operator: int, evidenceObject: int, nowMinute: int): bool =
+  not(grantRedeemable(redeemed(grant), operator, evidenceObject, nowMinute))
+pure def lawExpiredGrantRefused(grant: EvidenceGrant, operator: int, evidenceObject: int, nowMinute: int): bool =
+  nowMinute >= grant.expiresAtMinute implies not(grantRedeemable(grant, operator, evidenceObject, nowMinute))
+pure def lawHeadAndRangeRefused(download: EvidenceDownload): bool =
+  (download.method != DownloadGet or download.ranged) implies downloadRefusal(download) != DownloadAccepted
+pure def lawOneGrantCookie(download: EvidenceDownload): bool =
+  download.grantCookies != 1 implies downloadRefusal(download) != DownloadAccepted
+pure val cleanDownload: EvidenceDownload = { method: DownloadGet, sameOrigin: true, ranged: false, grantCookies: 1 }
+pure val downloadValues = Set(cleanDownload, { ...cleanDownload, method: DownloadHead }, { ...cleanDownload, ranged: true },
+  { ...cleanDownload, sameOrigin: false }, { ...cleanDownload, grantCookies: 2 }, { ...cleanDownload, grantCookies: 0 })
+pure val openGrant: EvidenceGrant = { grantOperator: 18633264, grantObject: 1, expiresAtMinute: 15, consumed: false }
+pure val grantValues = Set(openGrant, { ...openGrant, consumed: true }, { ...openGrant, grantOperator: 202660855 })
+pure val operatorValues = Set(18633264, 202660855)
+pure val evidenceObjectValues = Set(1, 2)
+pure val nowMinuteValues = Set(0, 14, 15)
+```
+
 ## Story: Retain private records permanently and scanner evidence by policy
 
 ### Only ordinary scanner evidence and scanner access logs ever become deletable

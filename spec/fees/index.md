@@ -8,4 +8,6 @@ PRD sections 6 and 11 govern fee-only services and SLOP buyback. No fee operatio
 - [Buyback bridge leg of one source network](./buyback.md)
 - [Buyback purchase pool and burn](./buybackPool.md)
 - [Buyback finalized RPC observation](./buybackRpc.md)
+- [Buyback sends, arrivals and income across the fee machines](./composition.md)
+- [Administrator fee report](./feeReport.md)
 - [Settlement and signer boundaries](../settlement/)

@@ -131,6 +131,49 @@ pure def sometimesReviewed(r: Reviews): bool = r.reviewers.length() > 0
 pure def sometimesFiveReviewers(r: Reviews): bool = r.reviewers.length() == 5
 ```
 
+### A review is empty unless it is an approval or a change request with twenty substantive characters or an inline comment
+
+This is the substance test of `src/lib/leaderboard.ts`
+(`reviewExclusionReason`, `hasSubstantiveReviewBody`). Only the review
+states `APPROVED` and `CHANGES_REQUESTED` are decisions; a comment-only,
+dismissed or pending review is `non-decision`. A decision is substantive
+when its body, with HTML comments removed, the characters `#`, `*`, `_`,
+`>`, the backtick, `~`, `[`, `]`, `(`, `)`, `!` and `-` deleted and the ends
+trimmed, has at least 20 characters, or when it has an inline comment;
+otherwise it is `insufficient-substance`. The adapter counts the characters
+and supplies the number.
+
+The test applies where production applies it: to the qualification of a
+pull request merged before the value policy, and to the open pull request
+hint that a decided review still needs substance to qualify after merge
+(`isExpandableReviewOpportunity`). The five-reviewer pool of this file
+(bands 10, 30, 90 and 240) is the value-policy pool
+(`valueReviewCandidate`): it refuses a missing or bot reviewer, a missing
+time, a review at or after the merge and an external-prize repository, and
+otherwise takes the assessment's verdict alone. For this pool the adapter
+sets `ReviewEvidence.emptyOrDuplicate` from the assessment only, never from
+`emptyReview`, so a comment-only or short review the assessment credits
+keeps its band.
+
+```quint
+type ReviewDecision = ApprovedDecision | ChangesRequestedDecision | CommentedOnly | DismissedReview | PendingReview
+type ReviewContent = { decision: ReviewDecision, substantiveChars: int, inlineComments: int }
+pure val substantiveMinimum = 20
+pure def decided(content: ReviewContent): bool =
+  content.decision == ApprovedDecision or content.decision == ChangesRequestedDecision
+pure def emptyReview(content: ReviewContent): bool =
+  not(decided(content) and (content.substantiveChars >= substantiveMinimum or content.inlineComments > 0))
+pure def lawNonDecisionIsEmpty(content: ReviewContent): bool = not(decided(content)) implies emptyReview(content)
+pure def lawSubstantiveDecisionIsNotEmpty(content: ReviewContent): bool =
+  (decided(content) and (content.substantiveChars >= substantiveMinimum or content.inlineComments > 0)) implies
+    not(emptyReview(content))
+pure val substantiveApproval: ReviewContent = { decision: ApprovedDecision, substantiveChars: 20, inlineComments: 0 }
+pure val contentValues = Set(substantiveApproval, { ...substantiveApproval, substantiveChars: 19 },
+  { ...substantiveApproval, decision: ChangesRequestedDecision, substantiveChars: 0, inlineComments: 1 },
+  { ...substantiveApproval, decision: CommentedOnly, substantiveChars: 400, inlineComments: 3 },
+  { ...substantiveApproval, decision: DismissedReview }, { ...substantiveApproval, decision: PendingReview })
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

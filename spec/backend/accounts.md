@@ -25,8 +25,16 @@ random values and are issued here from counters that never repeat.
 Shell obligations outside this model: the allowed browser origins and
 same-origin JSON write check, the 20-per-minute POST limiter per client
 address, exact body key sets, cookie attributes, ASCII case folding of the
-closure confirmation, and the `x-slop-expected-github-id` header, which
-refuses with `account_changed` when it names another account.
+closure confirmation, and the `x-slop-expected-github-id` header. That
+header only narrows the session and never supplies authority: the Points
+dispute routes refuse a value naming another account with 409
+`account_changed`, and every other session route refuses a malformed value
+(not `^[1-9]\d{0,19}$`) with 400 `invalid_expected_actor` and another
+account with 403 `actor_changed` (`backend/http.ts` `requireActor`). The
+same request hardening serves every area's routes (`@repo/platform/http`):
+bounded bodies with exact key sets, D1 reads that bind at most 100
+parameters (long ID lists go in batches of 90), the stable error mapping and
+the trace API's per-route browser headers.
 
 ## Story: Sign in with GitHub and keep one immutable account
 

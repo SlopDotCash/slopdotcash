@@ -16,9 +16,9 @@ or audience authority reader (security, Slopbot appeal and dispute
 authority), evaluated immediately before the step that uses it; it is a
 verified-evidence record, never a caller flag. `ProviderEvidence` comes only
 from the separate operator reconciliation path that reads independent
-provider records. `UnsubscribeToken` is a token whose keyed digest the
-transport verified; it names the recipient, destination version and category
-it was issued for. `NotifyConfig` is the recipient configuration of the
+provider records. `InboxUnsubscribeToken` is a token whose keyed digest the
+transport verified; it names the recipient and the destination version it was
+issued for, and no category. `NotifyConfig` is the recipient configuration of the
 reviewed notification Worker release (`SLOP_NOTIFY_RELEASE`): each
 operator-verified pilot destination of the restricted security pilot
 (PRD SEC-16), its effective time, the configured backup of each recipient,
@@ -51,7 +51,8 @@ type Template = CaseTemplate | ReceiptTemplate | ActivityTemplate
 type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted | Delivered | Bounced | Suppressed | Exhausted | Ambiguous
 type Notice = { id: int, key: int, kind: Kind, recipient: int, createdAt: int, readAt: int, acknowledgedAt: int,
   channel: Channel, template: Template, essential: bool, state: DeliveryState, attempts: int, nextAt: int,
-  claimedAt: int, prepared: bool, boundVersion: int, digest: int, providerSuppressed: bool, escalationOf: int, escalated: bool }
+  claimedAt: int, prepared: bool, boundVersion: int, digest: int, everBound: bool, providerSuppressed: bool, escalationOf: int,
+  escalated: bool }
 type Preference = { recipient: int, activity: bool, security: bool, saved: bool, version: int, effectiveAt: int, revision: int }
 type Route = { recipient: int, backup: int, pilotDigest: int, pilotEffectiveAt: int }
 type NotifyConfig = { routes: List[Route], generalEmail: bool }
@@ -74,7 +75,7 @@ pure def publishConfig(i: Inbox, config: NotifyConfig): Inbox = { ...i, config: 
 pure def alwaysConfigValid(i: Inbox): bool = validConfig(i.config)
 pure val noNotice: Notice = { id: 0, key: 0, kind: ProjectRevision, recipient: 0, createdAt: 0, readAt: 0, acknowledgedAt: 0,
   channel: NoEmail, template: ActivityTemplate, essential: false, state: NotQueued, attempts: 0, nextAt: 0, claimedAt: 0,
-  prepared: false, boundVersion: 0, digest: 0, providerSuppressed: false, escalationOf: 0, escalated: false }
+  prepared: false, boundVersion: 0, digest: 0, everBound: false, providerSuppressed: false, escalationOf: 0, escalated: false }
 pure def pref(i: Inbox, recipient: int): Preference = i.prefs.foldl(noPreference, (found, p) => if (p.recipient == recipient) p else found)
 pure def notice(i: Inbox, id: int): Notice = i.notices.nthOr(id - 1, noNotice)
 pure def securityKind(kind: Kind): bool = kind == SecurityCase or kind == SecurityReportReceived
@@ -106,7 +107,7 @@ pure def stepNoticesPermanent(before: Inbox, after: Inbox): bool = after.notices
   and before.notices.every(n => after.notices.some(a => a.id == n.id and a.key == n.key and a.kind == n.kind
     and a.recipient == n.recipient and a.channel == n.channel and a.createdAt == n.createdAt and a.escalationOf == n.escalationOf
     and (n.readAt > 0 implies a.readAt == n.readAt) and (n.acknowledgedAt > 0 implies a.acknowledgedAt == n.acknowledgedAt)
-    and (n.escalated implies a.escalated)))
+    and (n.escalated implies a.escalated) and (n.everBound implies a.everBound)))
 pure def sometimesReplayKeptOne(i: Inbox): bool = i.notices.length() == 1 and i.notices.some(n => n.state == Queued)
 ```
 
@@ -119,10 +120,14 @@ verification and needs fresh consent; waiting mail bound to the earlier
 version is suppressed. Activity consent governs optional notices; security
 consent governs private case notices, report receipts and essential wallet
 notices. Enabling either requires a verified destination. Turning a channel
-off, in settings or with a verified unsubscribe token for the current
-destination version, suppresses its queued and retrying rows without erasing
-the Inbox; a provider call already in flight cannot be recalled. Every
-preference save increments a revision.
+off in settings suppresses its queued and retrying rows without erasing the
+Inbox; a provider call already in flight cannot be recalled. An unsubscribe
+token carries no category: a verified token for the current destination
+version withdraws both activity and security consent, as the account
+enrollment does (`spec/backend/email.md`, "Unsubscribe withdraws both
+categories only for the destination version its token was issued for"), and
+suppresses every queued and retrying row of that recipient. A token for an
+earlier version changes nothing. Every preference save increments a revision.
 
 ```quint
 pure def updatePref(i: Inbox, recipient: int, p: Preference): List[Preference] =
@@ -141,19 +146,16 @@ pure def setConsent(i: Inbox, activity: bool, security: bool, by: int): Inbox =
     notices: i.notices.listMap(n => if (n.recipient == by and waiting(n) and (
       (not(activity) and n.channel == ActivityOutbox and not(n.essential))
       or (not(security) and (n.channel == SecurityOutbox or n.essential)))) { ...n, state: Suppressed } else n) }
-type Category = ActivityMail | SecurityMail
-type UnsubscribeToken = { recipient: int, version: int, category: Category }
-pure def canUnsubscribe(i: Inbox, token: UnsubscribeToken): bool =
+type InboxUnsubscribeToken = { recipient: int, version: int }
+pure def canUnsubscribe(i: Inbox, token: InboxUnsubscribeToken): bool =
   val p = pref(i, token.recipient)
   token.recipient > 0 and p.recipient == token.recipient and token.version > 0 and token.version == p.version
-pure def unsubscribe(i: Inbox, token: UnsubscribeToken): Inbox =
+pure def unsubscribe(i: Inbox, token: InboxUnsubscribeToken): Inbox =
   val p = pref(i, token.recipient)
-  val security = token.category == SecurityMail
-  { ...i, prefs: updatePref(i, token.recipient, { ...p, saved: true, revision: p.revision + 1,
-      activity: if (security) p.activity else false, security: if (security) false else p.security }),
-    notices: i.notices.listMap(n => if (n.recipient == token.recipient and waiting(n) and (
-      (not(security) and n.channel == ActivityOutbox and not(n.essential))
-      or (security and (n.channel == SecurityOutbox or n.essential)))) { ...n, state: Suppressed } else n) }
+  { ...i, prefs: updatePref(i, token.recipient, { ...p, saved: true, revision: p.revision + 1, activity: false, security: false }),
+    notices: i.notices.listMap(n => if (n.recipient == token.recipient and waiting(n)) { ...n, state: Suppressed } else n) }
+pure def stepUnsubscribeWithdrawsBoth(before: Inbox, via: str, after: Inbox): bool =
+  via == "unsubscribe" implies after.prefs.every(p => before.prefs.includes(p) or (not(p.activity) and not(p.security)))
 pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
   (via == "setConsent" or via == "verifyDestination" or via == "unsubscribe") implies after.notices.length() == before.notices.length()
     and before.notices.every(n => after.notices.some(a => a.id == n.id and (a.state == n.state or a.state == Suppressed)))
@@ -161,6 +163,47 @@ pure def alwaysConsentNeedsDestination(i: Inbox): bool = i.nextVersion > 0
   and i.prefs.every(p => (p.activity or p.security) implies p.version > 0)
 pure def sometimesOptOutSuppressed(i: Inbox): bool = i.notices.some(n => n.state == Suppressed and n.attempts == 0)
 pure def sometimesUnsubscribed(i: Inbox): bool = i.prefs.some(p => p.saved and p.version > 0 and not(p.security) and not(p.activity) and p.revision > 1)
+```
+
+### A notice's destination version and consents are the recipient's current email enrollment
+
+The owner's decision on which service owns enrollment is pending (O26,
+OD5). Modelled meanwhile, as the old notify Worker behaved: the backend
+account service enrolls and the operations outbox delivers. The machine's
+`prefs` stand for this projection of the account
+[email enrollment](../backend/email.md): before each `prepare` the shell
+loads the recipient's preference as
+`enrolledPreference(enrollment.actor, enrollment)` from the backend
+email-consent port and keeps no other copy; binding the two is a composition
+obligation (see the introduction). The destination version is the current
+verified destination's, effective from its verification; consent counts only
+when it was saved for that same version. A stored choice counts as saved
+when it is for the current version or turned security mail off, so the
+pilot destination is withheld exactly when the stored security choice is
+off, whatever version it was saved for, as the old notify Worker did. The
+alternative is that operations owns enrollment and the backend reads consent
+from it.
+
+```quint
+import email as E from "../backend/email"
+pure def enrolledPreference(recipient: int, enrollment: E::Enrollment): Preference =
+  val currentDestination = enrollment.destination.version > 0 and enrollment.preference.version == enrollment.destination.version
+  { recipient: recipient, activity: currentDestination and enrollment.preference.activity,
+    security: currentDestination and enrollment.preference.security,
+    saved: enrollment.preference.stored and (currentDestination or not(enrollment.preference.security)),
+    version: enrollment.destination.version, effectiveAt: enrollment.destination.verifiedAt,
+    revision: enrollment.preference.revision }
+pure def lawEnrolledConsentNeedsCurrentDestination(recipient: int, enrollment: E::Enrollment): bool =
+  val p = enrolledPreference(recipient, enrollment)
+  (p.activity or p.security) implies (p.version > 0 and enrollment.preference.version == p.version)
+pure def lawPilotBlockedOnlyByExplicitOptOut(recipient: int, enrollment: E::Enrollment): bool =
+  val p = enrolledPreference(recipient, enrollment)
+  (p.saved and not(p.security)) iff (enrollment.preference.stored and not(enrollment.preference.security))
+pure val enrollmentValues = Set(E::newEnrollment(1, 0)).union(Set({ ...E::newEnrollment(1, 0),
+  destination: { address: "a", version: 2, verifiedAt: 5 },
+  preference: { stored: true, activity: true, security: true, version: 2, revision: 1 } }))
+  .union(Set({ ...E::newEnrollment(2, 0), destination: { address: "b", version: 3, verifiedAt: 7 },
+    preference: { stored: true, activity: true, security: false, version: 2, revision: 2 } }))
 ```
 
 ## Story: Deliver each attempt once and never resend an uncertain one
@@ -239,7 +282,7 @@ pure def prepare(i: Inbox, id: int, attempt: int, access: AccessCheck): Inbox = 
   val updated = if (unavailable(access)) retried(i, n)
     else if (not(allowed(access)) or not(usable)) { ...n, state: Suppressed }
     else if (destinationEffectiveAt(i, n) > i.clock) retried(i, n)
-    else { ...n, prepared: true, digest: destinationDigest(i, n) }
+    else { ...n, prepared: true, digest: destinationDigest(i, n), everBound: true }
   { ...i, notices: setNotice(i, id, updated) }
 pure def canFailPreparation(i: Inbox, id: int, attempt: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and owns(n, attempt)
@@ -256,6 +299,78 @@ pure def sometimesSuppressedWithoutAccess(i: Inbox): bool = i.notices.some(n => 
 pure def sometimesPilotAccepted(i: Inbox): bool = i.notices.some(n => n.state == ProviderAccepted and n.digest > 1000)
 pure def sometimesRetriedBeforeEffective(i: Inbox): bool = i.notices.some(n => n.state == Retrying and n.digest == 0)
   and i.config.routes.some(r => r.pilotEffectiveAt > i.clock)
+```
+
+### Each notice kind names the role its recipient must still hold when the attempt is prepared
+
+The authority reader answers `Allowed` for an activity notice only when the
+recipient still belongs to its kind's audience at preparation, from the
+current project, enforcement, appeal and penalty records and the
+administrator and moderator sets of the current configuration snapshot;
+otherwise it answers `Denied` and the attempt is suppressed. A payout
+exception reaches only the project's current steward. A project ban made by
+the vetting service reaches a current owner, a current affected contributor
+or current staff (an administrator or moderator), whichever writer won the
+shared notice key. Every other project-owner notice (ready, revision, scan
+failed, installation lost, quarantined, banned, reinstatement requested,
+reinstated, reinstatement denied) reaches a current owner, or current staff
+when its action path is the administration page. A reinstatement review
+reaches a current moderator. A scam-closure account review reaches a current
+moderator who is not the closed account's author, and only while the scam
+penalty is not reversed. An escalated Slopbot appeal reaches a current
+moderator who is not its appellant while the appeal is open; a points
+dispute's opening notice reaches its appellant, or a current moderator while
+the dispute is escalated and open; its resolution notice reaches its
+appellant once resolved. An appeal notice whose appeal record is missing is
+suppressed. Other activity kinds need no role beyond being the recipient.
+Private case notices and report receipts keep the case authority reader.
+
+```quint
+type AppealSource = NoAppeal | EscalatedAppeal | DisputeOpened | DisputeResolved
+type Audience = { steward: bool, owner: bool, affectedContributor: bool, administrator: bool, moderator: bool,
+  vettingBan: bool, staffPath: bool, appeal: AppealSource, appellant: bool, escalated: bool, resolved: bool,
+  scamPenaltyStands: bool, author: bool }
+pure def ownerKind(kind: Kind): bool = kind == ProjectReady or kind == ProjectRevision or kind == ProjectScanFailed
+  or kind == ProjectInstallationLost or kind == ProjectQuarantined or kind == ProjectBanned
+  or kind == ReinstatementRequested or kind == ProjectReinstated or kind == ReinstatementDenied
+pure def appealAudience(audience: Audience): bool =
+  if (audience.appeal == EscalatedAppeal)
+    audience.moderator and audience.escalated and not(audience.resolved) and not(audience.appellant)
+  else if (audience.appeal == DisputeOpened)
+    audience.appellant or (audience.moderator and audience.escalated and not(audience.resolved))
+  else if (audience.appeal == DisputeResolved) audience.appellant and audience.resolved
+  else false
+pure def audienceHolds(kind: Kind, audience: Audience): bool =
+  val staff = audience.administrator or audience.moderator
+  if (kind == PayoutException) audience.steward
+  else if (kind == ProjectBanned and audience.vettingBan) audience.owner or audience.affectedContributor or staff
+  else if (ownerKind(kind)) audience.owner or (audience.staffPath and staff)
+  else if (kind == ReinstatementReview) audience.moderator
+  else if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands and not(audience.author)
+  else if (kind == SlopbotAppealReview) appealAudience(audience)
+  else true
+pure def activityAccess(kind: Kind, audience: Audience): AccessCheck =
+  if (audienceHolds(kind, audience)) Allowed({ acknowledgeHours: 0 }) else Denied
+pure def lawFormerOwnerLosesOwnerNotices(noticeKind: Kind, audience: Audience): bool =
+  (ownerKind(noticeKind) and not(audience.vettingBan) and not(audience.owner) and not(audience.staffPath))
+    implies not(audienceHolds(noticeKind, audience))
+pure def lawScamReviewNeverReachesAuthorOrAfterReversal(audience: Audience): bool =
+  (audience.author or not(audience.scamPenaltyStands)) implies not(audienceHolds(SlopbotScamReview, audience))
+pure def lawPayoutExceptionOnlyToSteward(audience: Audience): bool =
+  audienceHolds(PayoutException, audience) iff audience.steward
+pure val audienceValues = Set(
+  { steward: true, owner: false, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
+    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+  { steward: false, owner: false, affectedContributor: true, administrator: false, moderator: false, vettingBan: true,
+    staffPath: false, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+  { steward: false, owner: false, affectedContributor: false, administrator: true, moderator: false, vettingBan: false,
+    staffPath: true, appeal: NoAppeal, appellant: false, escalated: false, resolved: false, scamPenaltyStands: false, author: false },
+  { steward: false, owner: false, affectedContributor: false, administrator: false, moderator: true, vettingBan: false,
+    staffPath: false, appeal: EscalatedAppeal, appellant: false, escalated: true, resolved: false, scamPenaltyStands: true, author: false },
+  { steward: false, owner: false, affectedContributor: false, administrator: false, moderator: true, vettingBan: false,
+    staffPath: false, appeal: DisputeOpened, appellant: true, escalated: true, resolved: true, scamPenaltyStands: false, author: true },
+  { steward: false, owner: true, affectedContributor: false, administrator: false, moderator: false, vettingBan: false,
+    staffPath: false, appeal: DisputeResolved, appellant: true, escalated: false, resolved: true, scamPenaltyStands: true, author: true })
 ```
 
 ### Only independent provider evidence for the exact attempt and destination settles a send
@@ -312,6 +427,61 @@ pure def canAcknowledge(i: Inbox, id: int, by: int, access: AccessCheck): bool =
 pure def acknowledge(i: Inbox, id: int, by: int, access: AccessCheck): Inbox =
   { ...i, notices: setNotice(i, id, { ...notice(i, id), acknowledgedAt: i.clock }) }
 pure def alwaysAcknowledgmentForCases(i: Inbox): bool = i.notices.every(n => n.acknowledgedAt > 0 implies n.template == CaseTemplate)
+```
+
+### The Inbox shows one delivery word and never the address, digest, provider reference or attempt count
+
+An Inbox item carries the notice's identity, kind, read and acknowledgment
+times and one email word, and no other outbox field. Queued, retrying and
+sending rows read `queued`; provider acceptance reads `sent`, never
+delivered; independent delivery evidence reads `delivered`; a bounce, or an
+exhausted row any of whose attempts ever bound a destination, reads
+`failed`; an ambiguous row reads `uncertain`. A row that sent nothing
+(suppressed for consent, access or destination, never queued, or exhausted
+without ever binding a destination) shows no email word, so the Inbox never
+reveals why private mail was withheld. Each claim clears the current
+attempt's destination digest, but whether any attempt bound one is kept for
+good, as the old notify Worker kept the digest of an earlier attempt: an
+exhaustion whose last attempt never reached the provider, or whose
+preparation failed after binding, still reads `failed` once some attempt
+bound a destination. Only case notices show an acknowledgment time.
+
+The stored kinds are the 21 of `Kind`. A Slopbot appeal review whose appeal
+or points dispute has since been resolved is shown as resolved, the 22nd
+kind the Inbox parser accepts; titles and links stay a presentation table.
+Appeal and scam reviews are listed only to current moderators, a points
+dispute's notices also to its appellant, and a scam review only while its
+penalty stands, by the audience of "Each notice kind names the role its
+recipient must still hold when the attempt is prepared".
+
+```quint
+type EmailWord = NoEmailWord | QueuedWord | SentWord | DeliveredWord | FailedWord | UncertainWord
+type InboxItem = { id: int, key: int, kind: Kind, appealResolved: bool, readAt: int, acknowledgedAt: int,
+  asksAcknowledgment: bool, email: EmailWord }
+pure def emailWord(delivery: DeliveryState, everBound: bool): EmailWord =
+  if (delivery == Queued or delivery == Retrying or delivery == Sending) QueuedWord
+  else if (delivery == ProviderAccepted) SentWord
+  else if (delivery == Delivered) DeliveredWord
+  else if (delivery == Bounced or (delivery == Exhausted and everBound)) FailedWord
+  else if (delivery == Ambiguous) UncertainWord
+  else NoEmailWord
+pure def inboxItem(n: Notice, appealResolved: bool): InboxItem =
+  { id: n.id, key: n.key, kind: n.kind, appealResolved: n.kind == SlopbotAppealReview and appealResolved,
+    readAt: n.readAt, acknowledgedAt: if (n.template == CaseTemplate) n.acknowledgedAt else 0,
+    asksAcknowledgment: n.template == CaseTemplate, email: emailWord(n.state, n.everBound) }
+pure def listedInInbox(kind: Kind, audience: Audience): bool =
+  if (kind == SlopbotScamReview) audience.moderator and audience.scamPenaltyStands
+  else if (kind == SlopbotAppealReview) audience.moderator
+    or (audience.appellant and (audience.appeal == DisputeOpened or audience.appeal == DisputeResolved))
+  else true
+pure def lawEmailWordNeverOverstates(delivery: DeliveryState, everBound: bool): bool =
+  val word = emailWord(delivery, everBound)
+  (word == SentWord iff delivery == ProviderAccepted) and (word == DeliveredWord iff delivery == Delivered)
+    and ((delivery == Suppressed or delivery == NotQueued) implies word == NoEmailWord)
+pure def lawOnlyAppealReviewsShowResolved(noticeKind: Kind, appealResolved: bool): bool =
+  inboxItem({ ...noNotice, id: 1, kind: noticeKind }, appealResolved).appealResolved implies noticeKind == SlopbotAppealReview
+pure def sometimesEarlierBindingOutlivesTheClaim(i: Inbox): bool =
+  i.notices.some(n => n.everBound and n.digest == 0 and n.attempts > 1)
 ```
 
 ### A failed or overdue case notice escalates once to a backup with current access
@@ -400,6 +570,5 @@ pure val configValues = Set(
     { recipient: 3, backup: 0, pilotDigest: 0, pilotEffectiveAt: 0 }), generalEmail: true },
   { routes: List({ recipient: 1, backup: 2, pilotDigest: 7, pilotEffectiveAt: 0 }, { recipient: 2, backup: 1, pilotDigest: 8, pilotEffectiveAt: 5000000 }),
     generalEmail: false })
-pure val tokenValues = Set({ recipient: 1, version: 1, category: SecurityMail }, { recipient: 1, version: 1, category: ActivityMail },
-  { recipient: 2, version: 2, category: SecurityMail })
+pure val tokenValues = Set({ recipient: 1, version: 1 }, { recipient: 1, version: 2 }, { recipient: 2, version: 2 })
 ```

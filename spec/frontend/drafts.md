@@ -88,3 +88,56 @@ value allowed by their declared types and product rules.
 ```quint
 pure val viaValues = Set("", "a", "b")
 ```
+
+## Story: Keep a submitted report's text only while it can still be sent
+
+> As a reporter, I want the text of a report I sent from Slop to survive a
+> GitHub redirect or an uncertain send, and to be gone from this tab once it
+> can no longer be sent or I sign out.
+
+### Submitted report text is kept only while its submission can still be sent and is erased on sign-out
+
+The tab keeps the text of each submission in session storage under
+`slop-intake-draft:<submission id>`; storage may be unavailable, and the text
+then stays in memory only, so the page never leaves for GitHub without a saved
+copy. The text is still needed only for a submission made on Slop that has no
+advisory yet and is a draft, sending, uncertain, or failed with a failure that
+a resend can fix. The failures `author-mismatch`, `already-recorded`,
+`not-private-report` and `unverifiable` are terminal. Each time the signed-in
+reporter's submission list loads, every stored text whose submission is not in
+that list or is no longer needed is removed. Sign-out removes every stored
+report text and every `slop-report-compose:` entry of the tab, which is the
+list-pruning with an empty list.
+
+```quint
+type IntakeStage = IntakeDraft | IntakeSubmitting | IntakeUncertain | IntakeFailed | IntakeSettled
+type IntakeRecord = { fromSlop: bool, hasAdvisory: bool, intake: IntakeStage, terminalFailure: bool }
+type IntakeEntry = { id: int, record: IntakeRecord }
+pure val terminalFailureCodes = Set("author-mismatch", "already-recorded", "not-private-report", "unverifiable")
+pure def draftStillNeeded(intakeRecord: IntakeRecord): bool =
+  intakeRecord.fromSlop and not(intakeRecord.hasAdvisory) and
+    (intakeRecord.intake == IntakeDraft or intakeRecord.intake == IntakeSubmitting or intakeRecord.intake == IntakeUncertain or
+      (intakeRecord.intake == IntakeFailed and not(intakeRecord.terminalFailure)))
+pure def keptDraftIds(intakeEntries: List[IntakeEntry], storedIds: List[int]): List[int] =
+  storedIds.select(id => intakeEntries.some(e => e.id == id and draftStillNeeded(e.record)))
+pure def lawTerminalFailureErasesText(intakeRecord: IntakeRecord): bool =
+  (intakeRecord.intake == IntakeFailed and intakeRecord.terminalFailure) implies not(draftStillNeeded(intakeRecord))
+pure def lawOnlySlopSubmissionsWithoutAdvisoryKeepText(intakeRecord: IntakeRecord): bool =
+  draftStillNeeded(intakeRecord) implies intakeRecord.fromSlop and not(intakeRecord.hasAdvisory)
+pure def lawPruningKeepsOnlyNeededText(intakeEntries: List[IntakeEntry], storedIds: List[int]): bool =
+  keptDraftIds(intakeEntries, storedIds).every(id => storedIds.includes(id) and
+    intakeEntries.some(e => e.id == id and draftStillNeeded(e.record)))
+pure def lawSignOutErasesEveryText(storedIds: List[int]): bool = keptDraftIds(List(), storedIds) == List()
+pure val intakeRecordValues = Set(
+  { fromSlop: true, hasAdvisory: false, intake: IntakeUncertain, terminalFailure: false },
+  { fromSlop: true, hasAdvisory: false, intake: IntakeFailed, terminalFailure: true },
+  { fromSlop: true, hasAdvisory: false, intake: IntakeFailed, terminalFailure: false },
+  { fromSlop: false, hasAdvisory: false, intake: IntakeDraft, terminalFailure: false },
+  { fromSlop: true, hasAdvisory: true, intake: IntakeSubmitting, terminalFailure: false },
+  { fromSlop: true, hasAdvisory: false, intake: IntakeSettled, terminalFailure: false }
+)
+pure val intakeEntriesValues = Set(List(),
+  List({ id: 1, record: { fromSlop: true, hasAdvisory: false, intake: IntakeDraft, terminalFailure: false } },
+    { id: 2, record: { fromSlop: true, hasAdvisory: false, intake: IntakeFailed, terminalFailure: true } }))
+pure val storedIdsValues = Set(List(), List(1, 2, 3))
+```

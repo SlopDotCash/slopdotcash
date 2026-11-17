@@ -248,6 +248,70 @@ pure def claimableFor(p: Publication, actor: int): ClaimableView =
       M::subtractAmounts(entry, claimedFor(p, actor)) else M::zero }
 ```
 
+### The claims read answers only the signed-in account's cached view of the active root and says when it is stale
+
+`GET /api/v1/referrals/me` reads only the signed-in session's own account,
+answers `private, no-store`, and never reads the chain per request: a
+15-minute job refreshes the finalized distributor snapshot this machine
+caches (`refreshCache`). A request without a session is refused. The
+program is not shown at all until a month has been filed in posting mode
+(PRD section 11: no copy announces it early); a dry-run filing never shows
+it. The shell passes the latest posting-mode filing it read, which must be
+one of the ledger's filings, or the empty filing when there is none. The
+page reads no program mode, so after the owner turns the program off it
+keeps showing the filed history and claims; whether deactivation should hide
+the page is an owner decision still pending. The accrued amount is the
+account's cumulative amount as of that posting-mode filing, wallet or not;
+the claimed amount comes from finalized claims; the claimable amount is the
+active root's leaf for the account's pinned wallet less what it already
+claimed. The cache is stale when its last refresh failed or when the
+observation or its finalized block is more than 48 hours old; a stale or
+invalidated cache keeps the amounts it has but advertises no claimable
+amount, as the bounded-history rule below requires. An active root with no
+filed record of the same period and total, or claimed plus claimable above
+accrued, is an explicit failure, never a ready answer. Development
+`backend/referrals/claims.ts` (`handleReferralClaims`),
+`backend/referrals/cache.ts` and `src/lib/referral-claims.ts`
+(`REFERRAL_CACHE_MAX_AGE_MS`).
+
+```quint
+type ClaimsStatus = SignInRequired | ProgramNotShown | ClaimsUnknown | ClaimsReady | ClaimsStale | ClaimsFailed
+type ClaimsRead = { status: ClaimsStatus, accrued: M::Amount, claimed: M::Amount, claimable: M::Amount }
+pure val claimCacheRefreshSeconds = 900
+pure val claimCacheMaxAgeSeconds = 172800
+pure def claimCacheStale(refreshFailed: bool, observedAgeSeconds: int, finalizedAgeSeconds: int): bool =
+  refreshFailed or observedAgeSeconds > claimCacheMaxAgeSeconds or finalizedAgeSeconds > claimCacheMaxAgeSeconds
+pure def accruedThrough(a: A::Accrual, actor: int, period: int): M::Amount =
+  a.records.foldl(M::zero, (sum, r) => M::addAmounts(sum, if (r.referrer == actor and r.payout.period <= period) r.amount else M::zero))
+pure def rootFiled(p: Publication, a: A::Accrual): bool = activeRoot(p).id == 0
+  or a.filings.some(file => file.period == activeRoot(p).period and M::equalAmounts(file.total, activeRoot(p).total))
+pure def claimsRead(p: Publication, a: A::Accrual, posting: A::Filing, sessionActor: int,
+  refreshFailed: bool, observedAgeSeconds: int, finalizedAgeSeconds: int): ClaimsRead =
+  val view = claimableFor(p, sessionActor)
+  val stale = claimCacheStale(refreshFailed, observedAgeSeconds, finalizedAgeSeconds)
+  val accrued = accruedThrough(a, sessionActor, posting.period)
+  val claimed = claimedFor(p, sessionActor)
+  val nothing = { status: ProgramNotShown, accrued: M::zero, claimed: M::zero, claimable: M::zero }
+  if (sessionActor <= 0) { ...nothing, status: SignInRequired }
+  else if (posting.period == 0 or not(a.filings.includes(posting))) nothing
+  else if (not(view.known)) { status: ClaimsUnknown, accrued: accrued, claimed: claimed, claimable: M::zero }
+  else if (not(rootFiled(p, a)) or M::compareAmounts(M::addAmounts(claimed, view.amount), accrued) > 0) { ...nothing, status: ClaimsFailed }
+  else if (stale) { status: ClaimsStale, accrued: accrued, claimed: claimed, claimable: M::zero }
+  else { status: ClaimsReady, accrued: accrued, claimed: claimed, claimable: view.amount }
+pure def lawClaimsReadConsistent(p: Publication, a: A::Accrual, posting: A::Filing, sessionActor: int,
+  refreshFailed: bool, observedAgeSeconds: int, finalizedAgeSeconds: int): bool =
+  val answer = claimsRead(p, a, posting, sessionActor, refreshFailed, observedAgeSeconds, finalizedAgeSeconds)
+  answer.status == ClaimsReady implies M::compareAmounts(M::addAmounts(answer.claimed, answer.claimable), answer.accrued) <= 0
+pure def lawNoPostingFilingHides(p: Publication, a: A::Accrual, sessionActor: int,
+  refreshFailed: bool, observedAgeSeconds: int, finalizedAgeSeconds: int): bool =
+  sessionActor > 0 implies claimsRead(p, a, A::emptyFiling, sessionActor, refreshFailed, observedAgeSeconds, finalizedAgeSeconds).status == ProgramNotShown
+pure val postingValues = Set(A::emptyFiling, filedPosting, { ...filedPosting, period: 24321 })
+pure val sessionActorValues = Set(0, 3, 4)
+pure val refreshFailedValues = Set(false, true)
+pure val observedAgeSecondsValues = Set(0, 172801)
+pure val finalizedAgeSecondsValues = Set(0, 172801)
+```
+
 ### History, native holds and cumulative claims remain bounded
 
 Discovered by the proof: a structurally valid prepared record could otherwise
@@ -335,12 +399,18 @@ pure val heightValues = Set(1, 2)
 ```
 
 ```quint
-pure val reviewedControl: R::Referral = { mode: R::Posting, reactivationApproved: true, tokenExists: true, fundingFinalized: true, watcherOperating: true,
+pure val reviewedControl: R::Referral = { mode: R::Posting, reactivationApproved: true, tokenExists: true, tokenUnit: R::verifiedTokenUnit, fundingFinalized: true, watcherOperating: true,
   poster: "poster", watcher: "watcher", activations: 1 }
 pure val filedLedger: A::Accrual = { phase: A::Ready, configured: true, tokenUnit: List(0, 0, 1), attributions: List({ project: 1, applicant: 1, steward: 2, referrer: 3 }), rates: List({ fromPeriod: 24322, numerator: List(3, 0, 0), denominator: List(1) }), records: List({ payout: { id: 1, project: 1, period: 24322, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }, referrer: 3, eligible: true, rate: { fromPeriod: 24322, numerator: List(3, 0, 0), denominator: List(1) }, computed: List(0, 0, 3, 0, 0), amount: List(0, 0, 3, 0, 0), outcome: A::Accrued }), staged: List(), filings: List({ period: 24322, sourceDigest: "source", sourceCount: 1, recordCount: 1, entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0) }), pins: List({ actor: 3, wallet: "wallet", authorized: true }), nextPeriod: 24323, activePeriod: 24322, sourceDigest: "source", sourceCount: 1, leaseRun: "", pending: List() }
 pure val fundedChain: D::Distributor = { configured: true, token: "token", tokenUnit: List(0, 0, 1), epochCap: List(0, 0, 0, 0, 2), postSpacing: 0, owner: "owner", pendingOwner: "", poster: "poster", paused: false, now: 1, deployedAt: 1, lastUnpausedAt: 1, epochs: List(), latestRootClaimed: false, claims: List(), balance: List(0, 0, 0, 0, 2), deposited: List(0, 0, 0, 0, 2), paid: List(0), rescued: List(0), depositReceipts: List(1) }
 pure val controlValues = Set(R::initial, reviewedControl)
+pure val filedPosting: A::Filing = filedLedger.filings.nthOr(0, A::emptyFiling)
 pure val aValues = Set(A::initial, filedLedger)
+pure val pValues = Set(initial, { ...initial, cacheFresh: true },
+  { ...initial, cacheFresh: true, roots: List({ ...emptyRoot, id: 1, epoch: 0, merkleRoot: "merkle", period: 24322,
+    entries: filedPosting.entries, total: filedPosting.total, height: 1 }) },
+  { ...initial, cacheFresh: true, roots: List({ ...emptyRoot, id: 1, epoch: 0, merkleRoot: "merkle", period: 24321,
+    entries: filedPosting.entries, total: filedPosting.total, height: 1 }) })
 pure val chainValues = Set(D::initial, fundedChain)
 pure val rootReceiptValues = Set({ attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
   { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "wrong", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },

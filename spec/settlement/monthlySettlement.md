@@ -51,10 +51,12 @@ pure def canObserveSettings(s: MonthlySettlement, automatic: bool, settingsSeque
   MO::canObserveSettings(s.month, automatic, settingsSequence)
 pure def observeSettings(s: MonthlySettlement, automatic: bool, settingsSequence: int): MonthlySettlement =
   { ...s, month: MO::observeSettings(s.month, automatic, settingsSequence) }
-pure def canAdjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact): bool =
-  MO::canAdjust(s.month, actor, amount, expectedSequence, fact)
-pure def adjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact): MonthlySettlement =
-  { ...s, month: MO::adjust(s.month, actor, amount, expectedSequence, fact) }
+pure def canAdjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact,
+  reason: str, reasonLength: int): bool =
+  MO::canAdjust(s.month, actor, amount, expectedSequence, fact, reason, reasonLength)
+pure def adjust(s: MonthlySettlement, actor: int, amount: M::Amount, expectedSequence: int, fact: MO::AuthorityFact,
+  reason: str, reasonLength: int): MonthlySettlement =
+  { ...s, month: MO::adjust(s.month, actor, amount, expectedSequence, fact, reason, reasonLength) }
 pure def canFinalize(s: MonthlySettlement, expectedSequence: int, fact: MO::AuthorityFact): bool =
   MO::canFinalize(s.month, expectedSequence, fact)
 pure def finalize(s: MonthlySettlement, expectedSequence: int, fact: MO::AuthorityFact): MonthlySettlement =
@@ -188,6 +190,37 @@ pure def canMaterialize(s: MonthlySettlement, proof: E::LeafProof, ev: E::ChainE
     and E::canMaterialize(s.escrow, proof, ev) and MO::canRecordReserved(s.month, awardFact(s, proof.actor, false))
 pure def materialize(s: MonthlySettlement, proof: E::LeafProof, ev: E::ChainEvent): MonthlySettlement =
   { ...s, escrow: E::materialize(s.escrow, proof, ev), month: MO::recordReserved(s.month, awardFact(s, proof.actor, false)) }
+```
+
+### On EVM each monthly call examines at most 16 proven leaves from a cursor that passes a leaf only once it is finalized
+
+Development `workers/payment-executor/core.ts` (`submitEvmMonthly`,
+`maxLeaves = 16`) advances an admitted EVM month by one bounded call: it
+examines at most 16 leaves of the signed tree, in tree order, starting at
+the cursor journaled for that tree. Each leaf is its own transaction and its
+own `materialize` event above. The cursor passes a leaf only once that
+leaf's award is committed at a finalized block and the sender's own
+journaled nonce for it has settled, so a lost or replaced call resumes at
+the first leaf that is not yet finalized and never skips one. A sent
+transaction is not evidence of a reservation. The Solana path
+(`solana-monthly.ts`, `submitSolanaMonthly`) keeps no cursor: each call
+scans the tree from its first leaf, skips leaves whose finalized settled
+marker exists, and sends at most its `limit` transactions (one by default).
+This machine does not order `materialize` events, since either family may
+commit any proven leaf; the cursor is a library contract the EVM shell keeps.
+
+```quint
+pure val leavesPerCall = 16
+pure def leafInCall(cursor: int, leafCount: int, index: int): bool =
+  cursor >= 0 and index >= cursor and index < cursor + leavesPerCall and index < leafCount
+pure def nextLeafCursor(cursor: int, index: int, finalizedCommitted: bool, nonceSettled: bool): int =
+  if (index == cursor and finalizedCommitted and nonceSettled) cursor + 1 else cursor
+pure def lawCallBounded(cursor: int, leafCount: int, index: int): bool =
+  leafInCall(cursor, leafCount, index) implies index - cursor < leavesPerCall and index < leafCount
+pure def lawCursorWaitsForFinality(cursor: int, index: int, finalizedCommitted: bool, nonceSettled: bool): bool =
+  nextLeafCursor(cursor, index, finalizedCommitted, nonceSettled) >= cursor
+    and nextLeafCursor(cursor, index, finalizedCommitted, nonceSettled) <= cursor + 1
+    and (not(finalizedCommitted and nonceSettled) implies nextLeafCursor(cursor, index, finalizedCommitted, nonceSettled) == cursor)
 ```
 
 ### The vault keeps its other operations while the month is reserved

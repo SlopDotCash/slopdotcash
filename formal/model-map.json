@@ -6304,7 +6304,8 @@
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md",
-        "spec/contracts/solanaEscrow.md"
+        "spec/contracts/solanaEscrow.md",
+        "spec/settlement/money.md"
       ]
     },
     {
@@ -8328,7 +8329,8 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/settlement/evmScan.md",
-        "spec/settlement/keeperScan.md"
+        "spec/settlement/keeperScan.md",
+        "spec/settlement/referralWatch.md"
       ]
     },
     {

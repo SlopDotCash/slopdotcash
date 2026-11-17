@@ -129,9 +129,11 @@ Same-nonce EVM fee replacement has its own owner activation, independent of
 source approval.
 
 ```quint
-pure def canVerifyReadiness(r: Runtime, network: Network, by: Sender): bool =
+pure def canVerifyReadiness(r: Runtime, network: Network, listedWallet: int, by: Sender): bool =
   by == Owner and r.published and listed(r.networks, network) and not(readyFor(r.ready, network))
-pure def verifyReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, true) }
+    and readinessEntryApplies(r, network, listedWallet)
+pure def verifyReadiness(r: Runtime, network: Network, listedWallet: int, by: Sender): Runtime =
+  { ...r, ready: setReady(r.ready, network, true) }
 pure def canWithdrawReadiness(r: Runtime, network: Network, by: Sender): bool = by == Owner and readyFor(r.ready, network)
 pure def withdrawReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, false) }
 pure def canSetReplacement(r: Runtime, active: bool, by: Sender): bool = by == Owner and active != r.replacementActive
@@ -157,6 +159,42 @@ pure def sometimesReadinessWithdrawn(r: Runtime): bool = r.published and r.conve
 pure def sometimesSolanaKeptAcrossEvmWalletChange(r: Runtime): bool = r.ready.solana and not(r.ready.base) and r.evmWallet != 1
 ```
 
+### Owner readiness and replacement activation are reviewed Worker configuration bound to the exact fee wallet address
+
+The owner's decision on where readiness lives is pending. Until it is made,
+readiness and the replacement activation are reviewed Worker configuration:
+the variable `FEE_READY` lists `network:walletAddress` pairs and
+`FEE_REPLACEMENT_ACTIVE` switches replacement, and either changes only
+through a reviewed pull request and a release. Each listed pair is applied
+as an `Owner` readiness verification carrying the pair's address, which the
+shell sends only after authenticating the owner's approval of the reviewed
+change; the release job's own authority never stands in for it. The
+verification is admitted only when that address equals the published fee
+wallet of that network; a pair naming any other address grants nothing.
+The alternative under review is an owner record kept by the owner console;
+the alternative of letting the release itself grant readiness would replace
+the rule that a publication never grants it and is not modelled. Either way
+readiness is the owner's act, a publication never grants it, and a
+publication that changes a fee wallet drops the readiness of every network
+that wallet serves. The production cut-over publishes with both modes `Off`
+and no readiness. The old Worker kept no readiness record: readiness was the
+operational check of #1285.
+
+```quint
+pure def readinessEntryApplies(r: Runtime, network: Network, listedWallet: int): bool =
+  listedWallet > 0 and listedWallet == walletOf(r, network)
+pure def stepReadinessOnlyByOwnerOrPublication(before: Runtime, via: str, after: Runtime): bool =
+  (after.ready != before.ready implies (via == "verifyReadiness" or via == "withdrawReadiness" or via == "publish"))
+    and (after.replacementActive != before.replacementActive implies via == "setReplacement")
+pure def stepPublicationNeverGrantsReadiness(before: Runtime, via: str, after: Runtime): bool = via == "publish" implies
+  (after.ready.base implies before.ready.base) and (after.ready.ethereum implies before.ready.ethereum)
+    and (after.ready.robinhood implies before.ready.robinhood) and (after.ready.solana implies before.ready.solana)
+pure def stepWalletChangeClearsReadiness(before: Runtime, after: Runtime): bool =
+  (after.evmWallet != before.evmWallet implies not(after.ready.base) and not(after.ready.ethereum) and not(after.ready.robinhood))
+    and (after.solanaWallet != before.solanaWallet implies not(after.ready.solana))
+pure def sometimesReplacementActive(r: Runtime): bool = r.replacementActive and r.published and r.ready.base
+```
+
 ### Simulation samples cover complete, incomplete and staging configurations
 
 ```quint
@@ -173,4 +211,5 @@ pure val configValues = Set(liveAll, { ...liveAll, source: 2, buybackMode: Off }
 pure val environmentValues = Set(Production, Staging)
 pure val networkValues = Set(Base, Robinhood, Solana, Ethereum)
 pure val byValues = Set(ReleaseWorkflow, Owner, Other)
+pure val listedWalletValues = Set(1, 2, 3)
 ```

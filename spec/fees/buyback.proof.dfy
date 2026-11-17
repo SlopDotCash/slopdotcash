@@ -325,25 +325,25 @@ lemma setReleaseVariable_ensures(b: Buyback, variable: bool, by_: fees__runtime_
   }
 }
 
-lemma verifyReadiness_ensures(b: Buyback, readyNetwork: fees__runtime_Network, by_: fees__runtime_Sender)
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysSourcesOnce(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysRuntimeSound(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysShareBounded(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysWindowLimits(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysJournalPastAndPositive(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysPendingOrderReserved(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysPoolNonNegative(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysLocalShareBounded(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysSourceLegsOnly(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> alwaysBurnBounded(verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepNewSourceUnseen(b, verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepOrderOutcomeOnce(b, verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepIncomeMonotonic(b, verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepJournalRetained(b, verifyReadiness(b, readyNetwork, by_)))
-  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, by_) ==> stepSignaturesNeedLiveBuyback(b, "verifyReadiness", verifyReadiness(b, readyNetwork, by_)))
+lemma verifyReadiness_ensures(b: Buyback, readyNetwork: fees__runtime_Network, listedWallet: int, by_: fees__runtime_Sender)
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysSourcesOnce(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysRuntimeSound(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysShareBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysWindowLimits(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysJournalPastAndPositive(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysPendingOrderReserved(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysPoolNonNegative(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysLocalShareBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysSourceLegsOnly(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> alwaysBurnBounded(verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepNewSourceUnseen(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepOrderOutcomeOnce(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepIncomeMonotonic(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepJournalRetained(b, verifyReadiness(b, readyNetwork, listedWallet, by_)))
+  ensures (inv(b) ==> canVerifyReadiness(b, readyNetwork, listedWallet, by_) ==> stepSignaturesNeedLiveBuyback(b, "verifyReadiness", verifyReadiness(b, readyNetwork, listedWallet, by_)))
 {
-  if inv(b) && canVerifyReadiness(b, readyNetwork, by_) {
-    var after := verifyReadiness(b, readyNetwork, by_);
+  if inv(b) && canVerifyReadiness(b, readyNetwork, listedWallet, by_) {
+    var after := verifyReadiness(b, readyNetwork, listedWallet, by_);
     UnchangedCumulative(b, after);
   }
 }

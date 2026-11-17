@@ -11,6 +11,14 @@ clearance generation inside the SQL write). It also derives what consumers
 read: collection and skill publication, the Slopbot review scope, monthly
 eligibility and the setup status.
 
+Every revision the registry appends also appends one row of the
+[revision receipt store](./revisionReceipts.md) in the same D1 insert: the
+shell calls its `appendRevision` with the project's new `revision` and the
+canonical manifest text of that revision, so the store's row count equals the
+project's `revision` (shell obligation). The receipt store declares an opaque
+digest function and cannot be imported, so no composed rule here can state
+that equality; its guard refuses any revision number but the next one.
+
 Three inputs come from other areas and are typed evidence, never caller
 claims: the account standing from [participation restrictions](./access.md)
 (the moderator account-ban list read for the acting account and for the
@@ -117,12 +125,12 @@ pure def policyCurrent(p: P::Project, policy: PolicyCheck): bool = policy.revisi
 pure def restrictionPlan(p: P::Project, policy: PolicyCheck): E::RevisionPlan =
   if (p.retirement != P::NotRetired) E::RevisionNotNeeded else if (policy.result == PolicyAccepts) E::RevisionAppended else E::RevisionPending
 pure def retiredFor(plan: E::RevisionPlan, p: P::Project): P::Project = P::withRestrictionRetirement(plan == E::RevisionAppended, p)
-pure def canRequestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): bool =
-  c.project.revision > 0 and E::canRequestAssessment(c.security, by, repository, requestOrigin, assessmentId) and
+pure def canRequestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, livePin: E::LivePin, authority: P::AuthorityRead): bool =
+  c.project.revision > 0 and E::canRequestAssessment(c.security, by, repository, requestOrigin, assessmentId, livePin) and
   ((requestOrigin == E::SetupCheck or requestOrigin == E::OwnerRescan) implies
     (c.project.retirement == P::NotRetired and (by == E::vettingService or P::currentAuthority(c.project, by, authority))))
-pure def requestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): Registry =
-  { ...c, security: E::requestAssessment(c.security, by, repository, requestOrigin, assessmentId) }
+pure def requestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, livePin: E::LivePin, authority: P::AuthorityRead): Registry =
+  { ...c, security: E::requestAssessment(c.security, by, repository, requestOrigin, assessmentId, livePin) }
 pure def canRecordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): bool =
   policyCurrent(c.project, policy) and
   E::canRecordResult(c.security, by, scanOutcome, if (scanOutcome.disposition == A::DMalicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded)

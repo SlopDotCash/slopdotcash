@@ -146,6 +146,98 @@ pure def sometimesReceiptBindsTrace(e: Evidence): bool = e.receipt.signed and e.
 pure def sometimesChangedSelectionRefused(e: Evidence): bool = e.phase == UploadFailed and e.storedDigest != "" and e.storedDigest != e.digest
 ```
 
+### A receipt verifies only under its exact published schema version, signing payload and Ed25519 device key
+
+This is what the signature verifier checks before `signReceipt`
+(legacy `src/lib/run-receipts.ts` and `scripts/run-receipt-crypto.ts`;
+historical receipts in production ingestion data verify under the same
+rules). The marker object has exactly the keys `provider`, `model`,
+`client`, `skill_revision` and `run`; `run` has exactly `schema_version`,
+`run_id` (`run_` and 26 Crockford base-32 characters), `project`,
+`repository`, `started_at`, `completed_at`, `skill_sha256`, `usage` (exactly
+`source`, `confidence`, `input_tokens`, `output_tokens`,
+`cache_creation_tokens`, `cache_read_tokens`, `total_tokens`,
+`cost_micro_usd`, `session_count`), `trajectory_sha256`,
+`signature_algorithm`, `device_public_key`, `device_key_id` and
+`device_signature`, plus `policy_acknowledgement` exactly when the schema
+version is `"2"` and an optional `trace_upload`. Version `"1"` carries no
+acknowledgement; no other version is accepted. The project must be
+registered, the repository must belong to it, the skill revision must name
+the project's skill source, and completion may not precede start. The
+signing payload is `JSON.stringify` of `{ provider, model, client,
+skill_revision, run }` in that key order with `device_signature` removed
+from `run`; the signature algorithm is `ed25519`, `device_key_id` is the
+SHA-256 hex of the DER SPKI public key, and the Ed25519 signature verifies
+over the payload's UTF-8 bytes. The policy join resolves the project's
+policy at the receipt's own immutable skill revision: a version 1 receipt
+completed at or after the project's receipt-policy activation is refused; a
+version 2 receipt must acknowledge the current policy revision and its
+license, inbound-terms and prize-rules digests while no policy is active,
+and once one is, must start at or after the activation and match the first
+pinned binding of its acknowledged revision, starting at or after that
+binding's activation. A version 2 acknowledgement's `acknowledged_at` must
+fall within the run, at or after `started_at` and at or before
+`completed_at`. Usage must be consistent: its source is `ccusage-session-v20`
+or `none` and its confidence `bounded`, `exact` or `unavailable`;
+`unavailable` usage carries zero in every count and cost, available usage
+needs source `ccusage-session-v20`, a nonzero `total_tokens` and a nonzero
+`session_count`, and source `none` requires confidence `unavailable`. A
+`trace_upload` has exactly `authority`, `object_id`, `server_run_id` and
+`sha256`, its authority is `https://api.slop.cash`, its `object_id` is
+`sha256:` followed by its `sha256`, and that digest equals the run's
+`trajectory_sha256`. A valid signature proves byte and key continuity, not
+that the usage it reports is true. The exact keys and bytes are the
+receipt's `//@` contract; this rule states the decision.
+
+```quint
+type ReceiptSchemaVersion = ReceiptV1 | ReceiptV2 | ReceiptOtherVersion
+type ReceiptShape = { version: ReceiptSchemaVersion, exactKeys: bool, acknowledged: bool, ackRevision: str, ackDigests: str,
+  algorithm: str, keyIdMatches: bool, signatureValid: bool, startedAt: int, completedAt: int,
+  projectRegistered: bool, repositoryOfProject: bool, skillOfProject: bool, ackWithinRun: bool, usageConsistent: bool,
+  traceUploadMatches: bool }
+type PolicyPin = { pinRevision: str, pinActivatedAt: int, pinDigests: str }
+type ReceiptPolicy = { policyActive: bool, activatedAt: int, currentRevision: str, currentDigests: str, pins: List[PolicyPin] }
+pure val noPin: PolicyPin = { pinRevision: "", pinActivatedAt: 0, pinDigests: "" }
+pure def receiptVerifies(shape: ReceiptShape): bool = shape.exactKeys and shape.projectRegistered
+  and shape.repositoryOfProject and shape.skillOfProject and shape.completedAt >= shape.startedAt
+  and ((shape.version == ReceiptV1 and not(shape.acknowledged)) or (shape.version == ReceiptV2 and shape.acknowledged))
+  and shape.algorithm == "ed25519" and shape.keyIdMatches and shape.signatureValid
+  and (shape.version == ReceiptV2 implies shape.ackWithinRun) and shape.usageConsistent and shape.traceUploadMatches
+pure def receiptPolicyJoins(shape: ReceiptShape, policy: ReceiptPolicy): bool =
+  val pinned = policy.pins.select(x => x.pinRevision == shape.ackRevision)
+  val pin = pinned.nthOr(0, noPin)
+  if (shape.version == ReceiptV1) not(policy.policyActive and shape.completedAt >= policy.activatedAt)
+  else if (not(policy.policyActive)) shape.acknowledged and shape.ackRevision == policy.currentRevision
+    and shape.ackDigests == policy.currentDigests
+  else shape.acknowledged and shape.startedAt >= policy.activatedAt and pinned.length() > 0
+    and shape.startedAt >= pin.pinActivatedAt and shape.ackDigests == pin.pinDigests
+pure def lawVerifiedReceiptIsEd25519(shape: ReceiptShape): bool =
+  receiptVerifies(shape) implies shape.algorithm == "ed25519" and shape.keyIdMatches and shape.signatureValid
+pure def lawVerifiedReceiptIsConsistent(shape: ReceiptShape): bool =
+  receiptVerifies(shape) implies shape.usageConsistent and shape.traceUploadMatches
+    and (shape.version == ReceiptV2 implies shape.ackWithinRun)
+pure def lawAcknowledgementMatchesSchema(shape: ReceiptShape): bool =
+  receiptVerifies(shape) implies (shape.acknowledged iff shape.version == ReceiptV2) and shape.version != ReceiptOtherVersion
+pure def lawV1RefusedAfterActivation(shape: ReceiptShape, policy: ReceiptPolicy): bool =
+  (shape.version == ReceiptV1 and policy.policyActive and shape.completedAt >= policy.activatedAt)
+    implies not(receiptPolicyJoins(shape, policy))
+pure def lawV2NeedsItsPinnedPolicy(shape: ReceiptShape, policy: ReceiptPolicy): bool =
+  (shape.version == ReceiptV2 and policy.policyActive and receiptPolicyJoins(shape, policy)) implies
+    policy.pins.some(x => x.pinRevision == shape.ackRevision) and shape.startedAt >= policy.activatedAt
+pure val shapeA: ReceiptShape = { version: ReceiptV2, exactKeys: true, acknowledged: true, ackRevision: "r1", ackDigests: "d",
+  algorithm: "ed25519", keyIdMatches: true, signatureValid: true, startedAt: 10, completedAt: 20,
+  projectRegistered: true, repositoryOfProject: true, skillOfProject: true, ackWithinRun: true, usageConsistent: true,
+  traceUploadMatches: true }
+pure val shapeValues = Set(shapeA, { ...shapeA, version: ReceiptV1, acknowledged: false }, { ...shapeA, version: ReceiptV1 },
+  { ...shapeA, algorithm: "rsa" }, { ...shapeA, ackRevision: "r2" }, { ...shapeA, completedAt: 5 },
+  { ...shapeA, ackWithinRun: false }, { ...shapeA, usageConsistent: false }, { ...shapeA, traceUploadMatches: false },
+  { ...shapeA, version: ReceiptOtherVersion })
+pure val policyA: ReceiptPolicy = { policyActive: true, activatedAt: 15, currentRevision: "r1", currentDigests: "d",
+  pins: List({ pinRevision: "r1", pinActivatedAt: 0, pinDigests: "d" }) }
+pure val policyValues = Set(policyA, { ...policyA, activatedAt: 0 }, { ...policyA, policyActive: false },
+  { ...policyA, activatedAt: 0, pins: List() })
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

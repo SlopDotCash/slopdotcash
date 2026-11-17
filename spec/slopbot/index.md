@@ -19,8 +19,18 @@ Slopbot review remains free.
 - [Work units and the joint journal](./workUnits.md)
 - [Historical subscription import](./historicalImport.md)
 - [Incomplete assessments in the private Inbox](./assessmentInbox.md)
+- [Value evidence integrity](./valueEvidence.md)
+- [Finding categories and the published penalty table](./categories.md)
 - [Closure eligibility](./closure.md)
+- [Closure activation and qualification](./closureActivation.md)
+- [Close capacity and the reopen breaker](./closeCapacity.md)
+- [Close attempts and their recovery](./closeAttempt.md)
+- [Maintainer holds of uncertain findings](./maintainerHold.md)
 - [Appeals and immutable penalties](./appeals.md)
+- [Value disputes](./valueDisputes.md)
+- [Points disputes triage](./pointsDisputes.md)
+- [Private reporting readiness and repository access](./reportingReadiness.md)
+- [Public Slopbot feeds](./publicFeeds.md)
 
 The shell verifies GitHub events, repository identity, exact source, current
 roles, isolation and provider receipts. These models never establish model

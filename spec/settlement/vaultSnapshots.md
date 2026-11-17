@@ -60,8 +60,9 @@ type DeploymentRow = { registration: Registration, observation: Observation }
 type RequestRow = { id: int, purpose: Purpose, source: Source, phase: RequestPhase, result: RequestResult, http: int,
   capture: int, expected: int, network: str, tx: str, registration: Registration, incoming: Observation,
   genesisRoot: str, genesisConfirmed: bool, genesisProbes: int }
+type MonthStart = { network: str, vault: str, period: int, free: M::Amount, withdrawn: M::Amount, blockTime: int }
 type Snapshots = { revision: Revision, history: List[Revision], ordinary: DeploymentRow, privateBounty: DeploymentRow,
-  requests: List[RequestRow] }
+  requests: List[RequestRow], monthStarts: List[MonthStart] }
 pure val noIdentity: Identity = { chain: Evm, network: "", vault: "", readVault: "", asset: "", decimals: 0, rules: "" }
 pure val noRegistration: Registration = { tx: "", revision: 0, identity: noIdentity }
 pure val noRevision: Revision = { number: 0, ordinaryPolicy: 0, privatePolicy: 0 }
@@ -77,7 +78,7 @@ pure val noRequest: RequestRow = { id: 0, purpose: Ordinary, source: Registratio
   result: NoResult, http: 0, capture: 0, expected: 0, network: "", tx: "", registration: noRegistration,
   incoming: noObservation, genesisRoot: "", genesisConfirmed: false, genesisProbes: 0 }
 pure val initial: Snapshots = { revision: firstRevision, history: List(firstRevision),
-  ordinary: noDeployment, privateBounty: noDeployment, requests: List() }
+  ordinary: noDeployment, privateBounty: noDeployment, requests: List(), monthStarts: List() }
 pure def deployment(s: Snapshots, purpose: Purpose): DeploymentRow = if (purpose == Ordinary) s.ordinary else s.privateBounty
 pure def setDeployment(purpose: Purpose, row: DeploymentRow, s: Snapshots): Snapshots =
   if (purpose == Ordinary) { ...s, ordinary: row } else { ...s, privateBounty: row }
@@ -251,7 +252,7 @@ pure def write(s: Snapshots, requestId: int, reply: WriteReply): Snapshots =
   val row = deployment(s, r.purpose)
   val prior = row.observation
   val nextObservation = { ...r.incoming, legacyServiceFees: if (prior.exists) prior.legacyServiceFees else M::zero }
-  val committed = setDeployment(r.purpose, { ...row, observation: nextObservation }, s)
+  val committed = withMonthStart(nextObservation, setDeployment(r.purpose, { ...row, observation: nextObservation }, s))
   if (reply == WriteFailed) finish(r, ObservationUnavailable, 503, s)
   else if (writable(r.incoming, prior) and reply == WriteReplyLost) finish(r, ObservationReplyLost, 503, committed)
   else if (writable(r.incoming, prior)) finish(r, ObservationStored, 200, committed)
@@ -292,7 +293,8 @@ pure val solanaRead: Observation = { ...ordinaryRead, identity: solana }
 pure val observationValues = Set(ordinaryRead, privateRead, solanaRead,
   { ...ordinaryRead, block: List(2), observedAt: 1 }, { ...ordinaryRead, observedAt: 2 },
   { ...ordinaryRead, block: List(2), counters: zeroCounters },
-  { ...solanaRead, block: List(2), observedAt: 1 }, { ...solanaRead, observedAt: 2 })
+  { ...solanaRead, block: List(2), observedAt: 1 }, { ...solanaRead, observedAt: 2 },
+  { ...ordinaryRead, block: List(3), blockTime: 1796083300, observedAt: 3, balances: { ...zeroBalances, free: { present: true, amount: List(7) } } })
 pure val baseCreation: Creation = { identity: evm, transaction: "creation-one", reviewed: 1, purpose: Ordinary, status: FinalizedCreation }
 pure val creationValues = Set(baseCreation, { ...baseCreation, identity: solana }, { ...baseCreation, purpose: PrivateBounty },
   { ...baseCreation, status: IncludedCreation }, { ...baseCreation, status: PendingCreation },
@@ -314,6 +316,136 @@ pure val weight_checkGenesis = 12
 pure val weight_readTotals = 12
 pure val weight_readPrior = 12
 pure val weight_write = 12
+```
+
+## Story: A month is promised only when it was funded on its first day
+
+### The first finalized read of each UTC month is recorded once per vault and never changes
+
+After an observation whose free balance is reported is stored, the vault's
+first read of the UTC month of its finalized block time is recorded, unless
+that vault (network and address) already has one for that month (migration
+`0127`, `vault_month_starts`; development
+`backend/payments/vault-snapshots.ts` `recordMonthStart`). The month start is
+display evidence written by a separate statement after the observation
+write: its failure never fails the refresh and only leaves that month
+unpromised, which is the state of a vault with no month start. The model
+records the successful insert with the stored observation. The row keeps the
+free balance and the cumulative gross withdrawn at that block, and it is
+never updated or deleted. A read with no reported free balance records
+nothing, so that month is never shown as promised. An observation that is
+not stored records no month start.
+
+```quint
+import calendar as C from "./calendar"
+pure val noMonthStart: MonthStart = { network: "", vault: "", period: 0, free: M::zero, withdrawn: M::zero, blockTime: 0 }
+pure def sameMonthStart(left: MonthStart, right: MonthStart): bool =
+  left.network == right.network and left.vault == right.vault and left.period == right.period
+pure def monthStartOf(observation: Observation): MonthStart =
+  { network: observation.identity.network, vault: observation.identity.vault,
+    period: C::utcPeriod(observation.blockTime), free: observation.balances.free.amount,
+    withdrawn: observation.counters.withdrawals, blockTime: observation.blockTime }
+pure def withMonthStart(observation: Observation, s: Snapshots): Snapshots =
+  val start = monthStartOf(observation)
+  if (observation.balances.free.present and observation.blockTime > 0 and M::validAmount(start.free) and M::validAmount(start.withdrawn)
+    and not(s.monthStarts.some(m => sameMonthStart(m, start))))
+    { ...s, monthStarts: s.monthStarts.append(start) } else s
+pure def alwaysOneMonthStartPerVault(s: Snapshots): bool = s.monthStarts.every(m => m.blockTime > 0
+  and M::validAmount(m.free) and M::validAmount(m.withdrawn) and C::utcPeriod(m.blockTime) == m.period
+  and s.monthStarts.select(o => sameMonthStart(o, m)).length() == 1)
+pure def stepMonthStartsNeverChange(before: Snapshots, after: Snapshots): bool =
+  before.monthStarts.every(m => after.monthStarts.includes(m)) and after.monthStarts.length() <= before.monthStarts.length() + 1
+pure def sometimesMonthStartRecorded(s: Snapshots): bool = s.monthStarts.length() > 0
+```
+
+### From December 2026 a month is promised only if a first read within an hour of 00:00 UTC holds this and the previous month's amount
+
+Operator decision of 15 November 2026 (PRD section 6). A monthly pool shows
+its amount as money only on a vault of a paying network. Before December 2026
+the current free balance alone decides. From December 2026 the vault's first
+read of the month must come less than one hour after 00:00 UTC on the 1st and
+hold this month's amount plus the previous month's amount, which is reserved
+only after its cutoff; November 2026 is the first month that owes anything.
+A month that fails this shows points only for the whole month. The project
+is judged over every recorded deployment on a paying network together: the
+free balance now, the free balance at each vault's first read of the month,
+and money withdrawn since, at any of those vaults. A vault whose free balance
+is not reported counts for nothing, and a vault with no first read inside
+the hour adds nothing to the month-start total. The caller supplies, for each
+recorded deployment, its stored observation, its month starts and whether
+its network pays, and the amounts of this and the previous month from the
+project's revisions. Development `src/lib/pool-funding.ts`
+(`poolFundingStatus`) and `backend/projects/pool-funding.ts`.
+
+```quint
+type PromiseState = PointsOnly | Promised | WithdrawnDuringMonth
+type Promise = { state: PromiseState, period: int, owed: M::Amount }
+type PayingVault = { network: str, vault: str, pays: bool, free: Balance, withdrawn: M::Amount, starts: List[MonthStart] }
+pure val fundedOnFirstFrom = 202612
+pure val firstPayingPeriod = 202611
+pure val firstReadWindowSeconds = 3600
+pure val priorCutoffSeconds = 259200
+pure def payingVaultOf(row: DeploymentRow, pays: bool, starts: List[MonthStart]): PayingVault =
+  { network: row.registration.identity.network, vault: row.registration.identity.vault, pays: pays and registered(row.registration),
+    free: if (row.observation.exists) row.observation.balances.free else missingBalance,
+    withdrawn: row.observation.counters.withdrawals, starts: starts }
+pure def firstReadOf(v: PayingVault, period: int): MonthStart =
+  v.starts.select(m => m.network == v.network and m.vault == v.vault and m.period == period
+    and C::withinFirstSeconds(m.blockTime, firstReadWindowSeconds)).nthOr(0, noMonthStart)
+pure def countedVaults(vaults: List[PayingVault]): List[PayingVault] =
+  vaults.select(v => v.pays and v.free.present and M::validAmount(v.free.amount))
+pure def freeNowOf(vaults: List[PayingVault]): M::Amount =
+  countedVaults(vaults).foldl(M::zero, (sum, v) => M::addAmounts(sum, v.free.amount))
+pure def promiseFor(vaults: List[PayingVault], now: int, amount: M::Amount, previousAmount: M::Amount): Promise =
+  val period = C::utcPeriod(now)
+  val prior = if (C::previousPeriod(period) >= firstPayingPeriod) previousAmount else M::zero
+  val priorPending = C::withinFirstSeconds(now, priorCutoffSeconds)
+  val owed = M::addAmounts(amount, if (priorPending) prior else M::zero)
+  val counted = countedVaults(vaults)
+  val covers = counted.length() > 0 and M::compareAmounts(freeNowOf(vaults), owed) >= 0
+  val freeAtStart = counted.foldl(M::zero, (sum, v) => M::addAmounts(sum, firstReadOf(v, period).free))
+  val withdrawnSince = counted.some(v => firstReadOf(v, period).blockTime > 0
+    and M::compareAmounts(v.withdrawn, firstReadOf(v, period).withdrawn) > 0)
+  val points = { state: PointsOnly, period: period, owed: M::zero }
+  if (not(M::positiveAmount(amount))) points
+  else if (period < fundedOnFirstFrom) (if (covers) { state: Promised, period: period, owed: owed } else points)
+  else if (M::compareAmounts(freeAtStart, M::addAmounts(amount, prior)) < 0) points
+  else if (covers) { state: Promised, period: period, owed: owed }
+  else if (withdrawnSince) { state: WithdrawnDuringMonth, period: period, owed: M::zero }
+  else points
+pure def lawNoPayingVaultPromisesNothing(vaults: List[PayingVault], now: int, amount: M::Amount, previousAmount: M::Amount): bool =
+  countedVaults(vaults).length() == 0 implies promiseFor(vaults, now, amount, previousAmount).state == PointsOnly
+pure def lawPromiseCovered(vaults: List[PayingVault], now: int, amount: M::Amount, previousAmount: M::Amount): bool =
+  promiseFor(vaults, now, amount, previousAmount).state == Promised implies
+    M::compareAmounts(freeNowOf(vaults), promiseFor(vaults, now, amount, previousAmount).owed) >= 0
+pure val splitStarts: List[MonthStart] = List({ network: "Base", vault: "vault", period: 202612, free: List(3), withdrawn: List(0), blockTime: 1796083300 },
+  { network: "Solana", vault: "other", period: 202612, free: List(3), withdrawn: List(0), blockTime: 1796083300 })
+pure val baseVault: PayingVault = { network: "Base", vault: "vault", pays: true, free: { present: true, amount: List(3) }, withdrawn: List(0), starts: splitStarts }
+pure val solanaVault: PayingVault = { ...baseVault, network: "Solana", vault: "other" }
+pure val vaultsValues = Set(List(), List(baseVault), List(baseVault, solanaVault), List(baseVault, { ...solanaVault, pays: false }),
+  List(baseVault, { ...solanaVault, free: { present: true, amount: List(1) }, withdrawn: List(2) }))
+pure val amountValues = Set(List(0), List(5), List(7))
+pure val previousAmountValues = Set(List(0), List(1))
+```
+
+### A promise is shown only while the vault still covers what is owed, and Slop's pages refuse a withdrawal that would break it
+
+The contract lets the owner withdraw free funds at any time; enforcing the
+promise on chain needs a separate reviewed upgrade. Slop's own withdrawal
+form refuses an amount that would leave the cached free balance below what a
+promised month still owes. When a month funded on the 1st is no longer
+covered after a withdrawal during that month, the project page says that
+funds were withdrawn; otherwise an uncovered month shows points only.
+
+```quint
+pure def withdrawalKeepsPromise(promise: Promise, free: M::Amount, gross: M::Amount): bool =
+  promise.state != Promised or
+    (M::compareAmounts(free, gross) >= 0 and M::compareAmounts(M::subtractAmounts(free, gross), promise.owed) >= 0)
+pure def lawPointsOwesNothing(promise: Promise, free: M::Amount, gross: M::Amount): bool =
+  promise.state != Promised implies withdrawalKeepsPromise(promise, free, gross)
+pure val promiseValues = Set({ state: Promised, period: 202612, owed: List(5) }, { state: PointsOnly, period: 202612, owed: List(0) })
+pure val freeValues = Set(List(4), List(9))
+pure val grossValues = Set(List(1), List(5))
 ```
 
 ## Story: Public vault totals show the last finalized value, never a fabricated zero
@@ -342,7 +474,7 @@ pure def lawFailureKeepsLastValue(observation: Observation, now: int): bool = ob
     and publicTotals(observation, now, true).free == shown(observation.balances.free))
 pure def lawNullIsNotZero(observation: Observation, now: int, refreshFailed: bool): bool =
   (observation.exists and not(observation.balances.free.present)) implies not(publicTotals(observation, now, refreshFailed).free.reported)
-pure val nowValues = Set(1, 1800, 1802)
+pure val nowValues = Set(1, 1800, 1802, 1796083300, 1796100000)
 pure val refreshFailedValues = Set(true, false)
 ```
 

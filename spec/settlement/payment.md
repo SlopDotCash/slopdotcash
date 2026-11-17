@@ -162,6 +162,26 @@ pure def sometimesFullHeld(p: Payment): bool = p.configured and p.purpose == Pri
 pure def sometimesHeld(p: Payment): bool = p.phase == Held
 ```
 
+### A Solana pay pre-check may read confirmed chain time only to avoid an early send, never as evidence
+
+Owner decision pending (STATE owner queue "settlement D9"); this rule models
+the default, which keeps production behaviour. Before sending a permissionless
+pay of a bound Solana award, the sender may read the cluster's confirmed
+block time and skip the send while that time is earlier than the award's
+payable time: its commit time plus the project's award delay, read from the
+award account. The program enforces the delay itself, and the delay is zero
+today, so the read only saves a transaction that would fail. The confirmed
+time is never stored, never forms an event of this machine and never marks
+anything paid, held or failed; every recorded fact stays finalized. The
+alternative the owner may choose is to read only finalized time, which can
+delay a send by the finality lag. Development
+`workers/payment-executor/solana.ts` (`confirmedChainTime`, `payBoundAward`).
+
+```quint
+pure def solanaPayMayAttempt(confirmedChainTime: int, committedAt: int, delaySeconds: int): bool =
+  committedAt > 0 and delaySeconds >= 0 and confirmedChainTime >= committedAt + delaySeconds
+```
+
 ## Story: Preserve policy-specific private awards
 
 ### Private fee schedules are exact and purpose-bound

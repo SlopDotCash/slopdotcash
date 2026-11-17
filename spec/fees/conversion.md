@@ -56,7 +56,7 @@ type Row = { id: int, token: int, kind: SendKind, live: bool, state: RowState, r
 type Reservation = { id: int, runId: int, nonce: int, maximum: int, state: GasState, row: int, tx: int,
   settled: bool, actual: int, settledDay: int, blockhashSlot: int }
 type Holding = { token: int, asset: AssetKind, balance: int, feeIncome: int, topUps: int, sold: int, usdcOut: int,
-  vault: int, vaultObserved: int, accrued: int, claimed: int }
+  vault: int, vaultObserved: int, accrued: int, claimed: int, allowance: int }
 type Lease = { holder: int, expiresAt: int }
 type ReviewedVault = { vault: int, deployment: int, token: int }
 type Fee = { runtime: R::Runtime, network: R::Network, clock: int, lease: Lease, nextRun: int,
@@ -103,8 +103,10 @@ pure def canPublishWorker(f: Fee, config: R::WorkerConfig, by: R::Sender): bool 
 pure def publishWorker(f: Fee, config: R::WorkerConfig, by: R::Sender): Fee = { ...f, runtime: R::publish(f.runtime, config, by) }
 pure def canSetReleaseVariable(f: Fee, variable: bool, by: R::Sender): bool = R::canSetReleaseVariable(f.runtime, variable, by)
 pure def setReleaseVariable(f: Fee, variable: bool, by: R::Sender): Fee = { ...f, runtime: R::setReleaseVariable(f.runtime, variable, by) }
-pure def canVerifyReadiness(f: Fee, by: R::Sender): bool = R::canVerifyReadiness(f.runtime, f.network, by)
-pure def verifyReadiness(f: Fee, by: R::Sender): Fee = { ...f, runtime: R::verifyReadiness(f.runtime, f.network, by) }
+pure def canVerifyReadiness(f: Fee, listedWallet: int, by: R::Sender): bool =
+  R::canVerifyReadiness(f.runtime, f.network, listedWallet, by)
+pure def verifyReadiness(f: Fee, listedWallet: int, by: R::Sender): Fee =
+  { ...f, runtime: R::verifyReadiness(f.runtime, f.network, listedWallet, by) }
 pure def canWithdrawReadiness(f: Fee, by: R::Sender): bool = R::canWithdrawReadiness(f.runtime, f.network, by)
 pure def withdrawReadiness(f: Fee, by: R::Sender): Fee = { ...f, runtime: R::withdrawReadiness(f.runtime, f.network, by) }
 pure def canSetReplacement(f: Fee, active: bool, by: R::Sender): bool = R::canSetReplacement(f.runtime, active, by)
@@ -132,7 +134,7 @@ and only a finalized claim moves it into the wallet.
 type FinalizedTransfer = { receipt: int, token: int, amount: int, toFeeWallet: bool, sameAsset: bool, finalized: bool }
 type VaultAccrual = { vault: int, recipient: int, accruedTotal: int, height: int, finalized: bool }
 pure val noHolding: Holding = { token: 0, asset: ProjectToken, balance: 0, feeIncome: 0, topUps: 0, sold: 0, usdcOut: 0,
-  vault: 0, vaultObserved: 0, accrued: 0, claimed: 0 }
+  vault: 0, vaultObserved: 0, accrued: 0, claimed: 0, allowance: 0 }
 pure def validToken(f: Fee, token: int): bool = token >= 1 and token <= f.holdings.length()
 pure def holding(f: Fee, token: int): Holding = f.holdings.nthOr(token - 1, noHolding)
 pure def withHolding(token: int, h: Holding, f: Fee): List[Holding] = f.holdings.listMap(x => if (x.token == token) h else x)
@@ -277,7 +279,7 @@ blockhash it was signed against; that slot never changes.
 type EvmFees = { maxFee: int, priority: int }
 type RouteInspection = Inspected | Unresolved
 type SignedSend = { kind: SendKind, tx: int, nonce: int, gasLimit: int, fees: EvmFees, inspection: RouteInspection,
-  outputToFeeWallet: bool, minimumOutput: int, deadline: int, blockhashSlot: int }
+  outputToFeeWallet: bool, minimumOutput: int, deadline: int, blockhashSlot: int, router: int, approvedAmount: int }
 pure val noGas: Reservation = { id: 0, runId: 0, nonce: -1, maximum: 0, state: Abandoned, row: 0, tx: 0, settled: true, actual: 0,
   settledDay: 0, blockhashSlot: 0 }
 pure val noRow: Row = { id: 0, token: 0, kind: Conversion, live: false, state: Failed, reason: NoReason, runId: 0, wallet: 0, amountIn: 0,
@@ -321,7 +323,7 @@ pure def canSign(f: Fee, runId: int, send: SignedSend): bool =
     and (send.kind == Conversion or (send.kind == Approval and f.network != R::Solana))
     and (send.kind == Conversion implies send.minimumOutput >= intent.minimumOutput and send.minimumOutput > 0)
     and (if (f.network == R::Solana) send.blockhashSlot > 0 else send.blockhashSlot == 0)
-    and intent.valueMicro <= remaining(f)
+    and intent.valueMicro <= remaining(f) and approvalBound(f, runId, send)
 pure def sign(f: Fee, runId: int, send: SignedSend): Fee =
   val intent = pendingIntent(f, runId)
   val held = ownReservation(f, runId)
@@ -362,6 +364,51 @@ pure def sometimesSharedNonceSequence(f: Fee): bool = f.gas.some(g => g.state ==
   and f.rows.some(r => r.token == 1 and r.nonce == 0) and f.rows.some(r => r.token == 2 and r.nonce == 1)
 ```
 
+### A conversion approval grants exactly the intent's input to the pinned router, and its swap signs only at that finalized allowance
+
+On an EVM network a project token is spent by the pinned KyberSwap router
+(`0x6131…37b5`, the same address on every EVM network), which needs an ERC-20
+allowance. While the finalized allowance to that router is below the
+intent's input, the only send the intent may sign is an approval: a call of
+`approve(router, amountIn)` on the token with no native value, never an
+unlimited amount and never another spender. Its receipt settles only when
+the allowance read at the receipt's finalized block equals the approved
+amount; anything else leaves the send open. The swap itself calls the same
+pinned router and signs only once the finalized allowance covers its input;
+a finalized swap consumes its input from the allowance. A native asset
+carries its input as value, so it never approves. The KyberSwap router pin
+is the EVM router: Solana has no allowance and never approves, and its swap
+calls the pinned Jupiter program
+(`JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4`) instead
+(`workers/fee-converter/solana.ts`, `JUPITER_PROGRAM`; `config.ts` gives the
+KyberSwap router only to the EVM networks). Each router stands for its
+address as an integer here; the adapter maps it.
+
+```quint
+pure val swapRouter = 6131
+pure val jupiterProgram = 6
+pure def routerOf(f: Fee): int = if (f.network == R::Solana) jupiterProgram else swapRouter
+pure def needsAllowance(f: Fee, token: int): bool = f.network != R::Solana and holding(f, token).asset == ProjectToken
+pure def approvalBound(f: Fee, runId: int, send: SignedSend): bool =
+  val intent = pendingIntent(f, runId)
+  val held = holding(f, intent.token).allowance
+  send.router == routerOf(f) and (if (send.kind == Approval)
+    needsAllowance(f, intent.token) and send.approvedAmount == intent.amountIn and held < intent.amountIn
+  else send.approvedAmount == 0 and (needsAllowance(f, intent.token) implies held >= intent.amountIn))
+pure def approvalReceiptMatches(r: Row, receipt: SendReceipt): bool =
+  receipt.allowance >= 0 and ((r.kind == Approval and receipt.succeeded) implies receipt.allowance == r.amountIn)
+pure def allowanceAfter(r: Row, h: Holding, receipt: SendReceipt): int =
+  if (not(receipt.succeeded)) h.allowance
+  else if (r.kind == Approval) receipt.allowance
+  else if (r.kind == Conversion) (if (h.allowance > r.amountIn) h.allowance - r.amountIn else 0)
+  else h.allowance
+pure def alwaysAllowanceOnlyFromApprovals(f: Fee): bool =
+  f.holdings.every(h => h.allowance >= 0 and (not(needsAllowance(f, h.token)) implies h.allowance == 0))
+    and f.rows.every(r => r.kind == Approval implies needsAllowance(f, r.token))
+pure def sometimesSwapAfterApproval(f: Fee): bool = f.rows.some(a => a.kind == Approval and a.state == Finalized
+  and f.rows.some(c => c.kind == Conversion and c.token == a.token and c.id > a.id and c.attempts.length() > 0))
+```
+
 ## Story: Reconcile every send from finalized evidence before another starts
 
 ### Only a finalized receipt of one of the row's own attempts settles it
@@ -371,12 +418,13 @@ charged its actual fee and every other attempt with that nonce is charged
 nothing. A success credits the exact output; the balance before is evidence
 only, and an output below the signed minimum is recorded as such. A revert
 consumes its actual fee and leaves the token in the wallet. A claim moves
-exactly its claimed amount from the vault into fee income. An approval
-moves no value. A record from a different fee wallet stays open and blocks
+exactly the amount of its `FeesClaimed` event from the vault into fee income
+and records it as the row's output. An approval moves no value. A record from a different fee wallet stays open and blocks
 its token: a wallet change is no authority to reinterpret a retained send.
 
 ```quint
-type SendReceipt = { tx: int, succeeded: bool, output: int, actualNative: int, finalized: bool }
+type SendReceipt = { tx: int, succeeded: bool, output: int, actualNative: int, finalized: bool, allowance: int,
+  feesClaimed: int, vaultDebit: int, walletCredit: int, roleFree: bool }
 pure def landedIn(r: Row, tx: int): bool = r.attempts.some(a => a.tx == tx)
 pure def settleGas(f: Fee, r: Row, tx: int, actualNative: int): List[Reservation] =
   f.gas.listMap(g => if (g.state == Signed and not(g.settled) and g.nonce == r.nonce)
@@ -386,7 +434,8 @@ pure def canFinalizeSend(f: Fee, runId: int, id: int, receipt: SendReceipt): boo
   val r = f.rows.nthOr(id - 1, noRow)
   leaseHeld(f, runId) and r.id == id and (r.state == Submitted or r.state == Unknown) and r.wallet == wallet(f)
     and receipt.finalized and landedIn(r, receipt.tx) and receipt.actualNative >= 0 and receipt.output >= 0
-    and (r.kind == Approval implies receipt.output == 0)
+    and (r.kind == Approval implies receipt.output == 0) and approvalReceiptMatches(r, receipt)
+    and claimRoleFreeAtReceipt(r, receipt) and claimReceiptMatches(r, receipt)
 pure def finalizeSend(f: Fee, runId: int, id: int, receipt: SendReceipt): Fee =
   val r = f.rows.nthOr(id - 1, noRow)
   val h = holding(f, r.token)
@@ -395,22 +444,24 @@ pure def finalizeSend(f: Fee, runId: int, id: int, receipt: SendReceipt): Fee =
   val claimed = credited and r.kind == Claim
   { ...f, rows: f.rows.listMap(x => if (x.id == id) { ...x, state: if (credited) Finalized else Failed,
       reason: if (not(credited)) Reverted else if (converted and receipt.output < r.minimumOutput) BelowSignedMinimum else NoReason,
-      output: if (converted) receipt.output else 0 } else x),
+      output: if (converted) receipt.output else if (claimed) receipt.feesClaimed else 0 } else x),
     gas: settleGas(f, r, receipt.tx, receipt.actualNative),
     overrun: f.overrun or overran(f, receipt.tx, receipt.actualNative),
     holdings: withHolding(r.token, { ...h,
-      balance: if (converted) h.balance - r.amountIn else if (claimed) h.balance + r.amountIn else h.balance,
+      balance: if (converted) h.balance - r.amountIn else if (claimed) h.balance + receipt.feesClaimed else h.balance,
       sold: if (converted) h.sold + r.amountIn else h.sold,
       usdcOut: if (converted) h.usdcOut + receipt.output else h.usdcOut,
-      feeIncome: if (claimed) h.feeIncome + r.amountIn else h.feeIncome,
-      claimed: if (claimed) h.claimed + r.amountIn else h.claimed,
-      accrued: if (r.kind == Claim and not(credited)) h.accrued + r.amountIn else h.accrued }, f) }
+      feeIncome: if (claimed) h.feeIncome + receipt.feesClaimed else h.feeIncome,
+      claimed: if (claimed) h.claimed + receipt.feesClaimed else h.claimed,
+      vaultObserved: if (claimed) h.vaultObserved + receipt.feesClaimed - r.amountIn else h.vaultObserved,
+      accrued: if (r.kind == Claim and not(credited)) h.accrued + r.amountIn else h.accrued,
+      allowance: allowanceAfter(r, h, receipt) }, f) }
 pure def finalizedOutput(f: Fee, token: int): int =
   f.rows.foldl(0, (t, r) => if (r.kind == Conversion and r.state == Finalized and r.token == token) t + r.output else t)
 pure def alwaysOutputFromReceipts(f: Fee): bool = f.holdings.every(h => h.usdcOut == finalizedOutput(f, h.token)
   and h.sold == f.rows.foldl(0, (t, r) => if (r.kind == Conversion and r.state == Finalized and r.token == h.token) t + r.amountIn else t))
 pure def alwaysClaimsFromReceipts(f: Fee): bool = f.holdings.every(h =>
-  h.claimed == f.rows.foldl(0, (t, r) => if (r.kind == Claim and r.state == Finalized and r.token == h.token) t + r.amountIn else t)
+  h.claimed == f.rows.foldl(0, (t, r) => if (r.kind == Claim and r.state == Finalized and r.token == h.token) t + r.output else t)
     and h.claimed <= h.feeIncome)
 pure def sometimesConverted(f: Fee): bool = f.rows.some(r => r.kind == Conversion and r.state == Finalized and r.output > 0)
 pure def sometimesReverted(f: Fee): bool = f.rows.some(r => r.reason == Reverted)
@@ -518,7 +569,7 @@ replacement is reserved and journaled before broadcast, and every attempt
 stays in the journal.
 
 ```quint
-type NetworkFeeObservation = { maxFeeNeeded: int, observedAt: int }
+type NetworkFeeObservation = { maxFeeNeeded: int, observedAt: int, worstCaseMicro: int }
 pure def ceilPercent(value: int, percent: int): int = (value * percent + 99) / 100
 pure def lesser(a: int, b: int): int = if (a < b) a else b
 pure def nextFees(original: EvmFees, latest: EvmFees, feeCeiling: int): EvmFees =
@@ -544,7 +595,7 @@ pure def canReplace(f: Fee, runId: int, id: int, tx: int, networkFee: NetworkFee
   leaseHeld(f, runId) and R::replacementSigns(f.runtime, f.network) and not(f.overrun) and r.id == id and r.live
     and (r.state == Submitted or r.state == Unknown) and r.wallet == wallet(f) and r.attempts.length() > 0
     and networkFee.observedAt == f.clock and f.clock - latest.at >= replacementWaitMs and latest.maxFee < networkFee.maxFeeNeeded
-    and tx > 0 and not(txUsed(f, tx))
+    and tx > 0 and not(txUsed(f, tx)) and replacementValueBound(f, r, networkFee)
     and replacementStepValid(feesOf(firstAttempt(r)), feesOf(latest), ceiling)
     and liabilityOf(f.gas.append({ ...noGas, id: f.gas.length() + 1, nonce: r.nonce, maximum: r.gasLimit * stepped.maxFee,
       state: Signed, settled: false }), day(f)) <= R::dailyCeilingOf(f.network)
@@ -561,6 +612,28 @@ pure def alwaysAttemptsKeepContent(f: Fee): bool = f.rows.every(r => r.attempts.
 pure def sometimesReplaced(f: Fee): bool = f.rows.some(r => r.attempts.length() > 1)
 ```
 
+### A replacement keeps ten times its worst-case fee within the recorded value and at least two minutes before the swap deadline
+
+The replacement's worst-case native fee is its gas limit times the stepped
+maximum fee plus the network's additional data and operator reserve (Base),
+priced in USDC micro-units by the pinned quote reader at the moment of
+signing. Ten times that price must not exceed the value recorded on the
+row; an unpriced fee is negative here and refuses. A swap is replaced only
+while the current time is more than 120 seconds before its router deadline,
+since a replacement landing after the deadline would revert; approvals and
+claims carry no deadline. The adapter re-verifies a claim's reviewed vault
+and re-checks a buyback send's recorded intent before it forms the event.
+
+```quint
+pure val replacementDeadlineMarginMs = 120000
+pure def replacementValueBound(f: Fee, r: Row, networkFee: NetworkFeeObservation): bool =
+  networkFee.worstCaseMicro >= 0 and networkFee.worstCaseMicro * 10 <= r.valueMicro
+    and (r.kind == Conversion implies f.clock + replacementDeadlineMarginMs < r.deadline)
+pure def alwaysAttemptsWithinDeadline(f: Fee): bool = f.rows.every(r => (r.kind == Conversion and r.live) implies
+  r.attempts.every(a => a.at < r.deadline))
+pure def sometimesReplacedSwap(f: Fee): bool = f.rows.some(r => r.kind == Conversion and r.attempts.length() > 1)
+```
+
 ## Story: Claim only accrued fees from reviewed vaults
 
 ### A claim delivers the accrued amount to the configured fee wallet and shares the native budget
@@ -575,7 +648,7 @@ outside the Worker.
 
 ```quint
 type VaultClaim = { vault: int, deployment: int, recipient: int, amount: int, valueMicro: int, gasValue: int,
-  tx: int, nonce: int, gasLimit: int, fees: EvmFees, blockhashSlot: int }
+  tx: int, nonce: int, gasLimit: int, fees: EvmFees, blockhashSlot: int, roleFree: bool }
 pure def claimAdmitted(f: Fee, c: VaultClaim): bool =
   val v = vaultOf(f, c.vault)
   v.vault > 0 and v.deployment == c.deployment and c.recipient == wallet(f) and holding(f, v.token).vault == c.vault
@@ -585,7 +658,7 @@ pure def canClaim(f: Fee, runId: int, claim: VaultClaim): bool =
   val token = vaultOf(f, claim.vault).token
   leaseHeld(f, runId) and f.trigger == Recovery and R::networkSigns(f.runtime, f.network) and f.runtime.converterMode == R::Live
     and (R::converts(f.network) or R::buybackSigns(f.runtime, f.network))
-    and not(f.overrun) and claimAdmitted(f, claim) and openRows(f, token) == 0
+    and not(f.overrun) and claimAdmitted(f, claim) and claimRoleFree(claim) and openRows(f, token) == 0
     and pendingIntent(f, runId).id == 0 and ownReservation(f, runId).id == 0
     and claim.tx > 0 and not(txUsed(f, claim.tx)) and claim.gasLimit > 0 and claim.fees.maxFee > 0
     and claim.fees.priority >= 0 and claim.fees.priority <= claim.fees.maxFee
@@ -605,6 +678,47 @@ pure def claim(f: Fee, runId: int, claim: VaultClaim): Fee =
     gas: f.gas.append({ id: f.gas.length() + 1, runId: runId, nonce: claim.nonce, maximum: worstCase(f, claim.gasLimit, claim.fees),
       state: Signed, row: id, tx: claim.tx, settled: false, actual: 0, settledDay: 0, blockhashSlot: claim.blockhashSlot }) }
 pure def sometimesClaimFinalized(f: Fee): bool = f.holdings.some(h => h.claimed > 0)
+```
+
+### A claim needs a fee wallet that holds no role in the reviewed vault, re-verified at the claim and at its receipt
+
+Before a claim and again at the finalized block of its receipt, the
+observation adapter verifies the reviewed deployment of the vault at that
+block (code hashes, factory, registrar, asset and fee recipient; on Solana
+the `Config` account and its distinct authorities) and confirms that the fee
+wallet is not the vault owner, the registrar, the upgrade authority, the
+current or pending identity authority, or a pending upgrade authority. Only
+then does it report the wallet role-free. A fee wallet that holds or is
+proposed for any role never claims, and a receipt read while it does leaves
+the claim open: the fee wallet must never gain authority over a vault.
+
+```quint
+pure def claimRoleFree(claim: VaultClaim): bool = claim.roleFree
+pure def claimRoleFreeAtReceipt(r: Row, receipt: SendReceipt): bool =
+  (r.kind == Claim and receipt.succeeded) implies receipt.roleFree
+pure def sometimesClaimSigned(f: Fee): bool = f.rows.some(r => r.kind == Claim and r.attempts.length() > 0)
+```
+
+### A finalized claim credits only when its FeesClaimed amount equals the vault debit and the fee wallet credit
+
+The receipt of a successful claim must come from the fee wallet to the
+reviewed vault and carry exactly one `FeesClaimed` event of that vault naming
+the fee wallet. Its amount must equal the vault's debit in the asset and the
+fee wallet's net credit in this transaction, and be at least the amount
+recorded on the claim row. `claimFees()` pays everything accrued when it
+executes, so fees that accrue between signing and inclusion make the event
+larger than the row; the claim then credits the event amount, never the
+recorded one, and the excess is accrual the vault reached before the claim.
+For a native-asset vault the pinned implementation emits the event only
+after its exact send, so the event amount is both the debit and the credit.
+A receipt that does not match leaves the claim open; it is never credited
+at another amount (`workers/fee-converter/evm.ts` and `solana.ts`,
+`claimReceipt`, whose result is the row's `amount_out`).
+
+```quint
+pure def claimReceiptMatches(r: Row, receipt: SendReceipt): bool =
+  (r.kind == Claim and receipt.succeeded) implies
+    receipt.feesClaimed >= r.amountIn and receipt.vaultDebit == receipt.feesClaimed and receipt.walletCredit == receipt.feesClaimed
 ```
 
 ## Story: Keep every journal record and its evidence
@@ -649,7 +763,9 @@ pure val nonceValues = Set(0, 1)
 pure val maximumValues = Set(50000, 5000000)
 pure val amountValues = Set(1000000000)
 pure val tokenValues = Set(1, 2)
-pure val networkFeeValues = Set({ maxFeeNeeded: 1000, observedAt: 180000 }, { maxFeeNeeded: 1000, observedAt: 0 })
+pure val networkFeeValues = Set({ maxFeeNeeded: 1000, observedAt: 180000, worstCaseMicro: 1000 },
+  { maxFeeNeeded: 1000, observedAt: 0, worstCaseMicro: 1000 }, { maxFeeNeeded: 1000, observedAt: 180000, worstCaseMicro: 100000000 },
+  { maxFeeNeeded: 1000, observedAt: 180000, worstCaseMicro: -1 })
 pure val acceptedValues = Set(true, false)
 pure val activeValues = Set(true)
 pure val variableValues = Set(true)
@@ -671,18 +787,27 @@ pure val quoteValues = Set(
   { token: 1, route: Found, amountIn: 500000000, output: 450000000, minimumOutput: 445500000, gasValue: 1000, impactBps: -1 },
   { token: 2, route: Found, amountIn: 500000000, output: 2000000000, minimumOutput: 1980000000, gasValue: 1000, impactBps: 50 })
 pure val sendValues = Set(
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0 },
-  { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40 },
-  { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0 },
-  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40 })
-pure val receiptValues = Set({ tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: true },
-  { tx: 11, succeeded: false, output: 0, actualNative: 40000, finalized: true },
-  { tx: 11, succeeded: true, output: 450000000, actualNative: 60000, finalized: true },
-  { tx: 11, succeeded: true, output: 400000000, actualNative: 40000, finalized: true },
-  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true },
-  { tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: false })
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 0 },
+  { kind: Conversion, tx: 14, nonce: 1, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 0 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, router: 6, approvedAmount: 0 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, router: 6131, approvedAmount: 0 },
+  { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 500000000 },
+  { kind: Approval, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 0, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 9007199254740991 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Unresolved, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, router: 6131, approvedAmount: 0 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1000, fees: { maxFee: 50, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 0, router: 7, approvedAmount: 0 },
+  { kind: Conversion, tx: 11, nonce: 0, gasLimit: 1, fees: { maxFee: 5000000, priority: 2 }, inspection: Inspected, outputToFeeWallet: true, minimumOutput: 445500000, deadline: 9000000000, blockhashSlot: 40, router: 6, approvedAmount: 0 })
+pure val receiptValues = Set(
+  { tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true },
+  { tx: 11, succeeded: false, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true },
+  { tx: 11, succeeded: true, output: 450000000, actualNative: 60000, finalized: true, allowance: 0, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true },
+  { tx: 11, succeeded: true, output: 400000000, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true },
+  { tx: 11, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 500000000, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true },
+  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 1000000000, vaultDebit: 1000000000, walletCredit: 1000000000, roleFree: true },
+  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 1000000000, vaultDebit: 1000000000, walletCredit: 999999999, roleFree: true },
+  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 1000000500, vaultDebit: 1000000500, walletCredit: 1000000500, roleFree: true },
+  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 999999999, vaultDebit: 999999999, walletCredit: 999999999, roleFree: true },
+  { tx: 12, succeeded: true, output: 0, actualNative: 40000, finalized: true, allowance: 0, feesClaimed: 1000000000, vaultDebit: 1000000000, walletCredit: 1000000000, roleFree: false },
+  { tx: 11, succeeded: true, output: 450000000, actualNative: 40000, finalized: false, allowance: 0, feesClaimed: 0, vaultDebit: 0, walletCredit: 0, roleFree: true })
 pure val deadlineValues = Set({ finalizedTime: 9000000001, included: false }, { finalizedTime: 9000000001, included: true })
 pure val scanValues = Set(
   { tx: 11, operator: 1, revision: 1, coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 }, complete: true, blockhashSlot: 40, runId: 1 },
@@ -698,9 +823,11 @@ pure val proofValues = Set(
     coverage: { fromSlot: 30, tipSlot: 500, tipHash: 9, blocks: 470, digest: 3 } })
 pure val claimValues = Set(
   { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
-    fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0 },
+    fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0, roleFree: true },
   { vault: 7, deployment: 71, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
-    fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0 })
+    fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0, roleFree: true },
+  { vault: 7, deployment: 70, recipient: 1, amount: 1000000000, valueMicro: 900000000, gasValue: 1000, tx: 12, nonce: 0, gasLimit: 1000,
+    fees: { maxFee: 50, priority: 2 }, blockhashSlot: 0, roleFree: false })
 pure val weight_evaluate = 8
 pure val weight_reserveGas = 8
 pure val weight_sign = 10

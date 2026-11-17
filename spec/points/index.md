@@ -26,3 +26,5 @@ trace evidence remain separate and never change a payment share.
 - [GitHub ingestion reads and transport](./ingestion.md)
 - [Recovery across verified publication copies](./recovery.md)
 - [Exact-prefix publication](./publication.md)
+- [Contributor profile census](./profiles.md)
+- [Repository merge activity](./mergeActivity.md)

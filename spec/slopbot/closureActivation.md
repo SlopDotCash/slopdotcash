@@ -111,6 +111,127 @@ pure def revokeVerifier(a: Activation, by: int): Activation =
 pure def alwaysLaunchKeepsVerifierUnset(a: Activation): bool = not(a.verifierLaunchLifted) implies a.verifierProfile == ""
 ```
 
+### An objective-quality receipt counts only when signed by the configured verifier key under the approved profile, bound to the exact subject and unexpired
+
+Source `verifyQualityReceipt` and `loadQualityEvidence` in
+`workers/slopbot/quality.ts` and `workers/slopbot/QUALITY.md`. The trust
+settings are the Worker configuration `SLOPBOT_QUALITY_VERIFIER_KEY` (a raw
+Ed25519 public key) and `SLOPBOT_QUALITY_PROFILE_SHA256`; with either unset
+no receipt is read. A receipt is an issue comment whose body is the marker
+`<!-- slopbot:quality-evidence:v1 -->`, a newline and a JSON envelope with
+string `payload` (at most 32,768 characters) and `signature` fields. The
+signature must verify over the UTF-8 bytes of marker, newline and payload
+under the configured key. The comment's author grants nothing: the
+signature is the only authority, and a comment by the App or anyone else
+counts the same. The payload must have version 1, status `verified`,
+isolation `approved-vm`, no visibility gaps, the configured profile, and
+exactly the reviewed repository ID, item node, head and base commits,
+policy digest and SHA-256 of the reviewed item text. It was verified at or
+before now, expires after now, and covers at most 24 hours. Its rule quote
+must appear in a complete guidance file it names, its evidence in the item
+text, and its kind must be `removed_behavior`, `reproduced_regression` or
+`contradicted_claim` with that kind's predicate checked against the bytes
+read (QUALITY.md, "Three supported checks"). The defect ID is the SHA-256
+of the payload, and a repeated ID counts once. Intake reads at most the
+first 100 comments and the comment a receipt event names; an omitted
+receipt can only leave the review advisory. Any failure ignores the
+receipt.
+
+```quint
+type ReceiptKind = RemovedBehavior | ReproducedRegression | ContradictedClaim | UnsupportedKind
+type QualityTrust = { verifierKey: str, profile: str }
+type QualitySubject = { repository: int, itemNode: str, headSha: str, baseSha: str, policyDigest: str,
+  itemDigest: str }
+type QualityReceipt = { commentAuthor: int, markerExact: bool, payloadChars: int, signedBy: str,
+  signatureValid: bool, receiptVersion: int, verifiedStatus: bool, approvedVm: bool, visibilityGaps: int,
+  receiptProfile: str, subject: QualitySubject, verifiedAt: int, expiresAt: int, ruleInGuidance: bool,
+  evidenceInItem: bool, receiptKind: ReceiptKind, predicateHolds: bool }
+pure val qualityPayloadLimit = 32768
+pure val qualityWindowSeconds = 86400
+pure def receiptCounts(r: QualityReceipt, trust: QualityTrust, subject: QualitySubject, now: int): bool =
+  trust.verifierKey != "" and trust.profile != "" and r.markerExact and r.payloadChars <= qualityPayloadLimit and
+  r.signatureValid and r.signedBy == trust.verifierKey and r.receiptVersion == 1 and r.verifiedStatus and
+  r.approvedVm and r.visibilityGaps == 0 and r.receiptProfile == trust.profile and r.subject == subject and
+  r.verifiedAt <= now and r.expiresAt > now and r.expiresAt - r.verifiedAt <= qualityWindowSeconds and
+  r.ruleInGuidance and r.evidenceInItem and r.receiptKind != UnsupportedKind and r.predicateHolds
+pure def lawCommentAuthorGrantsNoTrust(sampleReceipt: QualityReceipt, sampleTrust: QualityTrust, now: int): bool =
+  receiptCounts({ ...sampleReceipt, commentAuthor: 1 }, sampleTrust, sampleReceipt.subject, now) iff
+    receiptCounts({ ...sampleReceipt, commentAuthor: 2 }, sampleTrust, sampleReceipt.subject, now)
+pure def lawExpiredReceiptNeverCounts(sampleReceipt: QualityReceipt, sampleTrust: QualityTrust, now: int): bool =
+  sampleReceipt.expiresAt <= now implies not(receiptCounts(sampleReceipt, sampleTrust, sampleReceipt.subject, now))
+pure def lawOtherKeyNeverCounts(sampleReceipt: QualityReceipt, sampleTrust: QualityTrust, now: int): bool =
+  sampleReceipt.signedBy != sampleTrust.verifierKey implies
+    not(receiptCounts(sampleReceipt, sampleTrust, sampleReceipt.subject, now))
+pure def lawUnconfiguredVerifierReadsNothing(sampleReceipt: QualityReceipt, sampleTrust: QualityTrust, now: int): bool =
+  (sampleTrust.verifierKey == "" or sampleTrust.profile == "") implies
+    not(receiptCounts(sampleReceipt, sampleTrust, sampleReceipt.subject, now))
+pure def lawReceiptWindowAtMostADay(sampleReceipt: QualityReceipt, sampleTrust: QualityTrust, now: int): bool =
+  receiptCounts(sampleReceipt, sampleTrust, sampleReceipt.subject, now) implies
+    sampleReceipt.expiresAt - sampleReceipt.verifiedAt <= qualityWindowSeconds
+```
+
+### Objective closure also needs the qualified profile, a shadow proposal under the current key and the 1 November 2026 effective time
+
+Source `qualityQualified` and the shadow insert in `review.ts`, and
+migration `0040_slopbot_quality_shadow.sql`. A low-quality verdict uses a
+counted receipt only when it is unexpired and both independent verdicts
+cite its evidence and its exact rule. Each confirmed proposal that passes
+the live source, eligibility and appeal rechecks is recorded once per
+review key in `slopbot_quality_shadow` (repository, item, revision, policy
+digest, profile, verifier key and defect ID), whether or not it may close;
+the record grants neither closure nor a penalty. Closing on it also needs
+the time at or after `2026-11-01T00:00:00Z`, this machine's qualified
+verifier profile (`verifierProfile`, set only by `qualifyVerifier`, in
+place of the old `SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256`) equal to both
+the configured and the receipt's profile, and a shadow record for the same
+repository, profile and verifier key, as well as every gate of
+[closure](./closure.md). Launch keeps the qualified profile unset
+("Objective low-quality closure also needs a qualified verifier profile,
+which launch keeps unset"), so objective closure stays unavailable. Closure's
+`ActivationView.verifierQualified` is exactly
+`receiptCounts(r, trust, subject, now) and objectiveCloseQualified(r, a, trust, now, shadows)`
+for the receipt whose defect ID both verdicts cite, read from the same
+activation state. A quality closure is never penalty-eligible.
+
+```quint
+type QualityShadow = { repository: int, profile: str, verifierKey: str }
+pure val qualityEffectiveAt = 1793491200
+pure def objectiveCloseQualified(r: QualityReceipt, a: Activation, trust: QualityTrust, now: int,
+  shadows: List[QualityShadow]): bool =
+  now >= qualityEffectiveAt and a.verifierProfile != "" and a.verifierProfile == r.receiptProfile and
+  trust.profile == r.receiptProfile and
+  shadows.some(s => s.repository == r.subject.repository and s.profile == r.receiptProfile and
+    s.verifierKey == trust.verifierKey)
+pure def lawUnsetQualifiedProfileNeverCloses(sampleReceipt: QualityReceipt, a: Activation, sampleTrust: QualityTrust,
+  now: int, shadows: List[QualityShadow]): bool =
+  a.verifierProfile == "" implies not(objectiveCloseQualified(sampleReceipt, a, sampleTrust, now, shadows))
+pure def lawLaunchNeverQualifiesObjectiveClose(sampleReceipt: QualityReceipt, a: Activation, sampleTrust: QualityTrust,
+  now: int, shadows: List[QualityShadow]): bool =
+  (not(a.verifierLaunchLifted) and alwaysLaunchKeepsVerifierUnset(a)) implies
+    not(objectiveCloseQualified(sampleReceipt, a, sampleTrust, now, shadows))
+pure def lawNoShadowNeverCloses(sampleReceipt: QualityReceipt, a: Activation, sampleTrust: QualityTrust,
+  now: int): bool =
+  not(objectiveCloseQualified(sampleReceipt, a, sampleTrust, now, List()))
+pure def lawBeforeEffectiveTimeNeverCloses(sampleReceipt: QualityReceipt, a: Activation, sampleTrust: QualityTrust,
+  now: int, shadows: List[QualityShadow]): bool =
+  now < qualityEffectiveAt implies not(objectiveCloseQualified(sampleReceipt, a, sampleTrust, now, shadows))
+pure val reviewedSubject: QualitySubject = { repository: 7, itemNode: "pr", headSha: "head", baseSha: "base",
+  policyDigest: "policy", itemDigest: "item" }
+pure val signedReceipt: QualityReceipt = { commentAuthor: 3, markerExact: true, payloadChars: 900, signedBy: "key",
+  signatureValid: true, receiptVersion: 1, verifiedStatus: true, approvedVm: true, visibilityGaps: 0,
+  receiptProfile: "profile", subject: reviewedSubject, verifiedAt: 1793491200, expiresAt: 1793520000,
+  ruleInGuidance: true, evidenceInItem: true, receiptKind: RemovedBehavior, predicateHolds: true }
+pure val sampleReceiptValues = Set(signedReceipt, { ...signedReceipt, signedBy: "other" },
+  { ...signedReceipt, expiresAt: 1793577601 }, { ...signedReceipt, signatureValid: false },
+  { ...signedReceipt, subject: { ...reviewedSubject, headSha: "newer" } },
+  { ...signedReceipt, receiptKind: UnsupportedKind }, { ...signedReceipt, visibilityGaps: 1 })
+pure val sampleTrustValues = Set({ verifierKey: "key", profile: "profile" },
+  { verifierKey: "key", profile: "other" }, { verifierKey: "", profile: "profile" })
+pure val nowValues = Set(1793491100, 1793491300, 1793520000)
+pure val shadowsValues = Set(List(), List({ repository: 7, profile: "profile", verifierKey: "key" }),
+  List({ repository: 8, profile: "profile", verifierKey: "key" }))
+```
+
 ### Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off
 
 The switch is `SLOPBOT_CLOSURE_ENABLED` in the Slopbot worker configuration.

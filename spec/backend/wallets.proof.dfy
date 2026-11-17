@@ -25,6 +25,30 @@ lemma register_ensures(b: WalletRegistration, registration: Registration, by_: s
   }
 }
 
+lemma registerByBearer_ensures(b: WalletRegistration, registration: Registration, by_: string)
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysPartitionValid(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysPredecessors(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysClaimsAdmitted(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysOneConsumption(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysOneAuthorization(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysAuthorizationAdmitted(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysAuthorizationIncreases(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysOperatorRecordsMatchClaims(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> alwaysPossessionRecordsValid(registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepClaimsRetained(b, registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepAuthorizationsRetained(b, registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepConsumedRetained(b, registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepFirstProofPersists(b, registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepOperatorHistoryRetained(b, registerByBearer(b, registration, by_)))
+  ensures (inv(b) ==> canRegisterByBearer(b, registration, by_) ==> stepPossessionRecordsPermanent(b, registerByBearer(b, registration, by_)))
+{
+  if inv(b) && canRegisterByBearer(b, registration, by_) {
+    assert canRegister(b, registration, by_);
+    assert registerByBearer(b, registration, by_) == register(b, registration, by_);
+    register_ensures(b, registration, by_);
+  }
+}
+
 lemma consume_ensures(b: WalletRegistration, requestId: int)
   ensures (inv(b) ==> canConsume(b, requestId) ==> alwaysPartitionValid(consume(b, requestId)))
   ensures (inv(b) ==> canConsume(b, requestId) ==> alwaysPredecessors(consume(b, requestId)))

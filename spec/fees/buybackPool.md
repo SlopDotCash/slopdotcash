@@ -18,7 +18,8 @@ adapter, `PurchaseQuote` and `BurnRequest` come from the pinned swap and
 token readers after the signed bytes were checked, and `SwapReceipt` and
 `SendReceipt` are finalized receipts. As for the bridge legs, every send is
 also a row of the Robinhood Chain fee journal in the implementation; binding
-it to that [journal](./conversion.md) is a composition obligation.
+it to that [journal](./conversion.md) is a composition obligation that
+[the composition](./composition.md) states.
 
 ## Story: Credit each proven arrival and each Robinhood share once
 
@@ -85,8 +86,10 @@ pure def canPublishWorker(p: Pool, config: R::WorkerConfig, by: R::Sender): bool
 pure def publishWorker(p: Pool, config: R::WorkerConfig, by: R::Sender): Pool = { ...p, runtime: R::publish(p.runtime, config, by) }
 pure def canSetReleaseVariable(p: Pool, variable: bool, by: R::Sender): bool = R::canSetReleaseVariable(p.runtime, variable, by)
 pure def setReleaseVariable(p: Pool, variable: bool, by: R::Sender): Pool = { ...p, runtime: R::setReleaseVariable(p.runtime, variable, by) }
-pure def canVerifyReadiness(p: Pool, by: R::Sender): bool = R::canVerifyReadiness(p.runtime, R::Robinhood, by)
-pure def verifyReadiness(p: Pool, by: R::Sender): Pool = { ...p, runtime: R::verifyReadiness(p.runtime, R::Robinhood, by) }
+pure def canVerifyReadiness(p: Pool, listedWallet: int, by: R::Sender): bool =
+  R::canVerifyReadiness(p.runtime, R::Robinhood, listedWallet, by)
+pure def verifyReadiness(p: Pool, listedWallet: int, by: R::Sender): Pool =
+  { ...p, runtime: R::verifyReadiness(p.runtime, R::Robinhood, listedWallet, by) }
 pure def signs(p: Pool): bool = R::buybackSigns(p.runtime, R::Robinhood)
 pure def alwaysRuntimeSound(p: Pool): bool = R::alwaysPublishedPassedPreflight(p.runtime) and R::alwaysUnpublishedInert(p.runtime)
   and R::alwaysBuybackNeedsLiveConverter(p.runtime) and R::alwaysStagingBuybackOff(p.runtime)
@@ -108,7 +111,7 @@ leg, state, reason, value and mode adds no record.
 ```quint
 type RouteResult = RouteFound | NoRouteResult
 type PurchaseQuote = { route: RouteResult, tx: int, spent: int, minimum: M::Amount, gasValue: int, slippageBps: int,
-  impactBps: int, receiver: str, tokenPaused: bool }
+  impactBps: int, receiver: str, tokenPaused: bool, balance: int }
 pure val maximumSafeValue = 9007199254740991
 pure def remaining(p: Pool): int =
   val runLeft = runCap - p.runSpent
@@ -136,13 +139,13 @@ pure def canBeginRun(p: Pool): bool = R::runs(p.runtime) and p.runtime.buybackMo
 pure def beginRun(p: Pool): Pool = { ...p, runNumber: p.runNumber + 1, runSpent: 0 }
 pure def canDecidePurchase(p: Pool, quote: PurchaseQuote): bool =
   p.runNumber > 0 and p.runtime.buybackMode != R::Off and not(B::openSend(p.purchase)) and quote.spent > 0 and quote.spent <= p.credit
-    and quote.gasValue >= 0 and (purchaseDecision(p, quote).state != Quoted or p.runtime.buybackMode == R::DryRun)
+    and quote.gasValue >= 0 and withinUsdgBalance(quote) and (purchaseDecision(p, quote).state != Quoted or p.runtime.buybackMode == R::DryRun)
 pure def decidePurchase(p: Pool, quote: PurchaseQuote): Pool = note(purchaseDecision(p, quote), p)
 pure def canPurchase(p: Pool, quote: PurchaseQuote): bool =
   signs(p) and p.runNumber > 0 and not(B::openSend(p.purchase)) and purchaseDecision(p, quote).state == Quoted
     and quote.tx > 0 and not(p.txs.includes(quote.tx)) and quote.spent <= p.credit
     and M::validAmount(quote.minimum) and M::positiveAmount(quote.minimum)
-    and quote.receiver == "fees" and not(quote.tokenPaused)
+    and quote.receiver == "fees" and not(quote.tokenPaused) and withinUsdgBalance(quote)
 pure def purchase(p: Pool, quote: PurchaseQuote): Pool =
   { ...p, credit: p.credit - quote.spent, runSpent: p.runSpent + quote.spent,
     purchase: { tx: quote.tx, phase: B::Submitted, amount: quote.spent }, purchaseMinimum: quote.minimum, txs: p.txs.append(quote.tx),
@@ -150,6 +153,20 @@ pure def purchase(p: Pool, quote: PurchaseQuote): Pool =
 pure def sometimesPurchasePending(p: Pool): bool = p.decisions.some(d => d.leg == PurchaseLeg and d.state == Pending)
 pure def sometimesPurchaseDryQuoted(p: Pool): bool = p.decisions.some(d => d.leg == PurchaseLeg and d.state == Quoted)
 pure def sometimesPurchaseCapSkipped(p: Pool): bool = p.decisions.some(d => d.leg == PurchaseLeg and d.state == Skipped)
+```
+
+### A purchase never spends more than the Robinhood fee wallet's finalized USDG balance
+
+Each Robinhood Chain run reads the fee wallet's USDG balance at a finalized
+block and quotes at most the least of the pool credit and that balance
+(`B::boundedSend` with the remaining value cap), before the cap fitting that
+may scale the input down further. Neither an evaluation nor a purchase ever
+spends more than that balance, so an owner sweep of the wallet outside the
+Worker only lowers the next purchase and leaves the credit for later runs.
+
+```quint
+pure def withinUsdgBalance(quote: PurchaseQuote): bool = quote.balance >= 0 and quote.spent <= quote.balance
+pure def sometimesPurchaseBelowCredit(p: Pool): bool = B::openSend(p.purchase) and p.credit > 0
 ```
 
 ### Acquired SLOP is credited only from the finalized swap receipt
@@ -273,11 +290,12 @@ pure val variableValues = Set(true)
 pure val byValues = Set(R::ReleaseWorkflow, R::Owner)
 pure val configValues = Set(R::liveAll, { ...R::liveAll, source: 2, converterMode: R::DryRun, buybackMode: R::DryRun })
 pure val quoteValues = Set(
-  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false },
-  { route: RouteFound, tx: 24, spent: 495000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false },
-  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 5000000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false },
-  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 101, impactBps: 300, receiver: "fees", tokenPaused: false },
-  { route: NoRouteResult, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false })
+  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: RouteFound, tx: 24, spent: 495000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 5000000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 101, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: NoRouteResult, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance: 600000000 },
+  { route: RouteFound, tx: 24, spent: 25000000, minimum: List(5), gasValue: 1000, slippageBps: 100, impactBps: 300, receiver: "fees", tokenPaused: false, balance: 24999999 })
 pure val swapValues = Set({ tx: 24, succeeded: true, finalized: true, output: List(6), toFeeWallet: true, slopToken: true },
   { tx: 24, succeeded: false, finalized: true, output: List(0), toFeeWallet: true, slopToken: true },
   { tx: 24, succeeded: true, finalized: true, output: List(6), toFeeWallet: false, slopToken: true })

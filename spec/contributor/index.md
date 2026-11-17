@@ -21,6 +21,8 @@ obligation.
 - [Discovery snapshot](./discoverySnapshot.md)
 - [Frozen review frontier](./reviewEpoch.md)
 - [Live project terms preflight](./termsPreflight.md)
+- [Generated project skill rendering](./rendering.md)
+- [Project skill publication and site discovery files](./publication.md)
 - [Commit and registry authority for skill bytes](./skillAuthority.md)
 - [Skill package validation runtime](./skillValidation.md)
 - [Skill installation](./installation.md)

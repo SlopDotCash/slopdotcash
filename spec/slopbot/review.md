@@ -34,6 +34,7 @@ left queued. The bound scope is the one the routing decision derived.
 ```quint
 import routing as R from "./routing"
 import repositoryScope as RS from "./repositoryScope"
+import closure as C from "./closure"
 type Provider = OrbioSonnet | SurplusSonnet | SurplusTerra
 type CallKind = Triage | Confirm
 type CallOutcome = CallOk | CallFailed | CallBudgetDenied
@@ -258,4 +259,144 @@ pure val secondsValues = Set(10, 60)
 pure val weight_recordCall = 6
 pure val weight_recheckRegistry = 6
 pure val weight_start = 3
+```
+
+## Story: Read the whole bounded input and keep one disclosed review comment
+
+> As a maintainer, I want to know exactly what Slopbot read before it acted,
+> and to see one Slopbot review comment per item that hostile text cannot
+> turn into links or mentions.
+
+### Coverage is complete only when the whole compared diff fits in 120,000 characters and under 300 files, and guidance only when every policy file found is within 64 KiB
+
+Source `loadPolicy`, `pullDiff` and `loadContext` in
+`workers/slopbot/review.ts` and `fileText` in `github.ts`. Guidance is read
+from the default branch at the recorded base commit: the first present file
+of each group `AGENTS.md`/`agents.md`; `CONTRIBUTING.md`/`contributing.md`/
+`.github/CONTRIBUTING.md`/`docs/CONTRIBUTING.md`; `README.md`/`readme.md`. A
+present file over 64 KiB, or one GitHub returns without base64 file
+content, is truncated: guidance with any truncated file is incomplete, and
+no file at all is missing. The reading is closure's policy read
+(`guidanceOf` returns its `PolicyRead`), so truncated or missing guidance
+grounds no quoted-rule category ([closure](./closure.md)). The diff compares the
+current target branch tip with the head commit. The files are taken in
+GitHub's order, at most 300; each contributes the chunk
+`--- <name> (<status>)` with its patch, and is included only when GitHub
+supplied a patch and the running total stays within 120,000 characters.
+Each omitted file is one named limitation, and a comparison of 300 or more
+files adds one more. Coverage is complete only when nothing was omitted,
+and `unreviewedContent` is the `unreviewed` count `finish` receives, so a
+limited result can never label, close or penalize. An issue has no diff
+and its coverage is its text.
+
+```quint
+type ComparedFile = { chunkChars: int, patched: bool }
+type DiffTally = { includedChars: int, omitted: int, considered: int }
+type GuidanceRead = { found: bool, bytes: int, readable: bool }
+pure val maxDiffChars = 120000
+pure val comparisonFileLimit = 300
+pure val maxGuidanceBytes = 65536
+pure def tallyFile(t: DiffTally, f: ComparedFile): DiffTally =
+  if (t.considered >= comparisonFileLimit) t
+  else if (f.patched and t.includedChars + f.chunkChars <= maxDiffChars)
+    { ...t, includedChars: t.includedChars + f.chunkChars, considered: t.considered + 1 }
+  else { ...t, omitted: t.omitted + 1, considered: t.considered + 1 }
+pure def diffTally(files: List[ComparedFile]): DiffTally =
+  files.foldl({ includedChars: 0, omitted: 0, considered: 0 }, (t, f) => tallyFile(t, f))
+pure def unreviewedContent(files: List[ComparedFile]): int =
+  diffTally(files).omitted + (if (files.length() >= comparisonFileLimit) 1 else 0)
+pure def diffChars(files: List[ComparedFile]): int = files.foldl(0, (n, f) => n + f.chunkChars)
+pure def coverageComplete(files: List[ComparedFile]): bool =
+  files.length() < comparisonFileLimit and files.every(f => f.patched and f.chunkChars > 0) and
+  diffChars(files) <= maxDiffChars
+pure def guidanceTruncated(g: GuidanceRead): bool = not(g.readable) or g.bytes > maxGuidanceBytes
+pure def guidanceOf(reads: List[GuidanceRead]): C::PolicyRead =
+  if (reads.every(g => not(g.found))) C::PolicyMissing
+  else if (reads.some(g => g.found and guidanceTruncated(g))) C::PolicyTruncated
+  else C::PolicyComplete
+pure def lawFileLimitNeverComplete(sampleDiff: List[ComparedFile]): bool =
+  sampleDiff.length() >= comparisonFileLimit implies not(coverageComplete(sampleDiff))
+pure def lawMissingPatchNeverComplete(sampleDiff: List[ComparedFile]): bool =
+  sampleDiff.some(f => not(f.patched)) implies not(coverageComplete(sampleDiff))
+pure def lawOverBudgetNeverComplete(sampleDiff: List[ComparedFile]): bool =
+  diffChars(sampleDiff) > maxDiffChars implies not(coverageComplete(sampleDiff))
+pure def lawTruncatedGuidanceIncomplete(sampleGuidance: List[GuidanceRead]): bool =
+  sampleGuidance.some(g => g.found and guidanceTruncated(g)) implies guidanceOf(sampleGuidance) == C::PolicyTruncated
+pure def lawNoGuidanceIsMissing(sampleGuidance: List[GuidanceRead]): bool =
+  sampleGuidance.every(g => not(g.found)) implies guidanceOf(sampleGuidance) == C::PolicyMissing
+pure val smallPatch: ComparedFile = { chunkChars: 40, patched: true }
+pure val sampleDiffValues = Set(List(), List(smallPatch), List(smallPatch, { chunkChars: 40, patched: false }),
+  List({ chunkChars: 120001, patched: true }), List({ chunkChars: 119990, patched: true }, smallPatch))
+pure val sampleGuidanceValues = Set(List(), List({ found: false, bytes: 0, readable: false }),
+  List({ found: true, bytes: 900, readable: true }, { found: true, bytes: 65537, readable: true }),
+  List({ found: true, bytes: 0, readable: false }), List({ found: true, bytes: 65536, readable: true }))
+```
+
+### Each item carries one Slopbot review comment, found again only through the App's own actor, and echoed text is neutralized
+
+Source `upsertComment`, `commentBody`, `disclosure` and `neutralize` in
+`review.ts`, `findReviewComment` in `github.ts`, and the table
+`slopbot_item_comments`. The comment ID is kept per item node. Without a
+kept ID, the item's comment history is read in pages of 100, at most 100
+pages: a comment is Slopbot's only when its author is a `Bot` whose ID is
+the configured App user ID and its body is the marker
+`<!-- slopbot:review -->` or starts with that marker and a newline. Two
+different such comments, an unreadable page or a history longer than 100
+pages refuse the write for reconciliation. A found comment's ID is kept
+before it is edited; with none, one is created and GitHub must answer 201
+with a positive ID, which is then kept. An edit answered 404 forgets the
+kept ID and looks again, at most twice; any other answer than 200 with the
+same ID refuses. Each write first rechecks the review claim and the
+registered scope. The body discloses the provider, the requested model and
+the route step (or "deterministic pre-filter (no model)"), and names the
+served model as unverified. Every piece of model or repository text echoed
+into it is neutralized: each `@` is followed by a zero-width space, `<`
+becomes `&lt;`, `](` and `]:` gain a space after the bracket, `://`
+becomes `:` with a zero-width space before `//`, and the result is cut to
+1,500 characters.
+
+```quint
+type IssueComment = { commentId: int, botAuthor: bool, authorId: int, startsWithMarker: bool }
+type CommentHistory = { comments: List[IssueComment], pagesRead: int, historyComplete: bool }
+type CommentLookup = CommentNotFound | CommentFound | CommentConflict | HistoryUnavailable
+type CommentPlan = UpdateKept | UpdateFound | CreateComment | RefuseComment
+type EchoedText = { neutralized: bool, echoChars: int }
+pure val reviewCommentMarker = "<!-- slopbot:review -->"
+pure val commentHistoryPageLimit = 100
+pure val echoLimitChars = 1500
+pure def ownReviewComment(c: IssueComment, appUser: int): bool =
+  appUser > 0 and c.commentId > 0 and c.botAuthor and c.authorId == appUser and c.startsWithMarker
+pure def lookupOutcome(h: CommentHistory, appUser: int): CommentLookup =
+  if (not(h.historyComplete) or h.pagesRead > commentHistoryPageLimit) HistoryUnavailable
+  else if (h.comments.some(a => ownReviewComment(a, appUser) and
+    h.comments.some(b => ownReviewComment(b, appUser) and b.commentId != a.commentId))) CommentConflict
+  else if (h.comments.some(c => ownReviewComment(c, appUser))) CommentFound
+  else CommentNotFound
+pure def commentPlan(keptCommentId: int, h: CommentHistory, appUser: int): CommentPlan =
+  val found = lookupOutcome(h, appUser)
+  if (keptCommentId > 0) UpdateKept
+  else if (found == CommentFound) UpdateFound
+  else if (found == CommentNotFound) CreateComment
+  else RefuseComment
+pure def publishableEcho(echoed: List[EchoedText]): bool =
+  echoed.every(e => e.neutralized and e.echoChars >= 0 and e.echoChars <= echoLimitChars)
+pure def lawOtherActorsCommentNeverFound(sampleHistory: CommentHistory, appUser: int): bool =
+  sampleHistory.comments.every(c => not(c.botAuthor) or c.authorId != appUser) implies
+    lookupOutcome(sampleHistory, appUser) != CommentFound
+pure def lawConflictNeverWrites(sampleHistory: CommentHistory, appUser: int): bool =
+  lookupOutcome(sampleHistory, appUser) == CommentConflict implies commentPlan(0, sampleHistory, appUser) == RefuseComment
+pure def lawIncompleteHistoryNeverCreates(sampleHistory: CommentHistory, appUser: int): bool =
+  not(sampleHistory.historyComplete) implies commentPlan(0, sampleHistory, appUser) == RefuseComment
+pure def lawRawEchoNeverPublished(sampleEcho: List[EchoedText]): bool =
+  sampleEcho.some(e => not(e.neutralized)) implies not(publishableEcho(sampleEcho))
+pure val ownComment: IssueComment = { commentId: 11, botAuthor: true, authorId: 4, startsWithMarker: true }
+pure val appUserValues = Set(4, 5)
+pure val sampleHistoryValues = Set({ comments: List(), pagesRead: 1, historyComplete: true },
+  { comments: List(ownComment), pagesRead: 1, historyComplete: true },
+  { comments: List(ownComment, { ...ownComment, commentId: 12 }), pagesRead: 1, historyComplete: true },
+  { comments: List({ ...ownComment, botAuthor: false }), pagesRead: 1, historyComplete: true },
+  { comments: List({ ...ownComment, authorId: 9 }), pagesRead: 1, historyComplete: true },
+  { comments: List(ownComment), pagesRead: 101, historyComplete: false })
+pure val sampleEchoValues = Set(List(), List({ neutralized: true, echoChars: 1500 }),
+  List({ neutralized: false, echoChars: 10 }), List({ neutralized: true, echoChars: 1501 }))
 ```

@@ -37,6 +37,15 @@ complete heading and disables typing and deletion. The persistent header stays
 at viewport top while scrolling. The existing main landmark and keyboard
 navigation remain, without restoring the removed Skip to content link.
 
+The heading is a parameter of this rule. Owner decision frontend-ui:OD1 is
+pending: production shows the accessible heading "MAKE MONEY SHIPPING OPEN
+SOURCE." while it types and deletes four rotating actions ("SHIPPING OPEN
+SOURCE.", "SECURING THE WEB.", "HACKING THE PLANET.", "BUILDING AGI."; hold
+2 400 ms, type 55 ms and delete 30 ms per character, 220 ms between actions),
+and that production behaviour is the default. The alternative is the sentence
+the samples below use. Either choice keeps the stable accessible name and the
+static heading under reduced motion.
+
 ```quint
 type Motion = NormalMotion | ReducedMotion
 pure def campaignAnimationEnabled(motion: Motion): bool = motion == NormalMotion
@@ -274,3 +283,117 @@ pure val symbolValues = Set(
 Ticker notation does not alter integer amounts, asset identity, reward terms,
 or the existing formatting of dollar-denominated amounts. A prefix does not
 supply an exchange rate or a USD equivalent.
+
+## Story: Read exact amounts in their own asset
+
+> As a contributor, sponsor or project owner, I want every amount shown
+> exactly as the base units it records, in its asset's decimals, so that
+> what I read is what is owed or paid.
+
+### Amounts display exactly in their asset's decimals with grouped whole digits and no trailing fraction zeros
+
+An amount is canonical integer base units and its asset's decimals, from 0 to
+36 (six when the registry names no asset). The text is the whole part with
+comma groups of three digits, then, when the remainder is not zero, a point
+and the remainder padded to the decimals with its trailing zeros removed. The
+formatter works on big integers and never on floating point; its reverse
+parses whole and fraction digits and refuses more fraction digits than the
+asset has. The model below states the same arithmetic over integers;
+the hand-written formatter carries it as a `//@` contract on its round trip.
+Grouping is a rendering of the whole part. Project cards may abbreviate a
+token pool or a bounty amount in compact notation (at most two fraction
+digits); a page where an amount is reviewed, signed or paid always shows the
+exact text.
+
+```quint
+type ShownAmount = { whole: int, fraction: int, fractionDigits: int }
+pure val decimalPlaces = List(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36)
+pure def tenTo(power: int): int = decimalPlaces.foldl(1, (product, place) => if (place < power) product * 10 else product)
+pure def validDecimals(decimals: int): bool = decimals >= 0 and decimals <= 36
+pure def trailingZeros(remainder: int, decimals: int): int =
+  if (remainder == 0) decimals
+  else decimalPlaces.foldl(0, (zeros, place) =>
+    if (place <= decimals and remainder % tenTo(place) == 0) place else zeros)
+pure def showAmount(units: int, decimals: int): ShownAmount =
+  val scale = tenTo(decimals)
+  val remainder = units % scale
+  val zeros = trailingZeros(remainder, decimals)
+  { whole: units / scale, fraction: remainder / tenTo(zeros), fractionDigits: decimals - zeros }
+pure def lawShownAmountRoundTrips(units: int, decimals: int): bool =
+  (units >= 0 and validDecimals(decimals)) implies
+    showAmount(units, decimals).whole * tenTo(decimals) +
+      showAmount(units, decimals).fraction * tenTo(decimals - showAmount(units, decimals).fractionDigits) == units
+pure def lawNoTrailingFractionZero(units: int, decimals: int): bool =
+  (units >= 0 and validDecimals(decimals) and showAmount(units, decimals).fractionDigits > 0)
+    implies showAmount(units, decimals).fraction % 10 != 0
+pure def lawWholeAmountHasNoFraction(units: int, decimals: int): bool =
+  (units >= 0 and validDecimals(decimals) and units % tenTo(decimals) == 0)
+    implies showAmount(units, decimals).fractionDigits == 0
+pure val unitsValues = Set(0, 1, 10, 1500000, 1234567, 100000000)
+pure val decimalsValues = Set(0, 2, 6)
+```
+
+## Story: See the site under the name it was reached by
+
+> As a visitor who came through slop.tech, I want the site to name slop.tech
+> wherever it names its own domain.
+
+### The wordmark and footer domain follow the serving host
+
+The shell lowercases the host name and removes one trailing dot. `slop.tech`
+and `www.slop.tech` are shown as slop.tech; every other host, including
+staging and local hosts, as slop.cash. The production Pages Function applies
+the same choice to the social metadata of each HTML response (canonical
+origin, site name and `og-slop-tech.png` or `og-slop-cash.png`), adds
+`no-transform` to its cache control and varies on the host; that code is
+carried byte for byte.
+
+```quint
+type PublicDomain = SlopCash | SlopTech
+pure def publicDomain(normalizedHost: str): PublicDomain =
+  if (normalizedHost == "slop.tech" or normalizedHost == "www.slop.tech") SlopTech else SlopCash
+pure def lawOnlyTechHostsShowTech(normalizedHost: str): bool =
+  publicDomain(normalizedHost) == SlopTech iff Set("slop.tech", "www.slop.tech").contains(normalizedHost)
+pure val normalizedHostValues = Set("slop.cash", "slop.tech", "www.slop.tech", "localhost", "staging.slop.cash")
+```
+
+## Story: Hand the contribution prompt to an agent
+
+> As a contributor, I want to open the prompt in the agent I use, or copy it
+> for any other agent.
+
+### Agent shortcuts sit beside the generic agent setup and opening one also copies the prompt
+
+Beside the prompt and its Copy button ("Copy", "Copied", or "Select text" when
+the clipboard refuses), "Open in" offers Cursor, Claude, ChatGPT, Grok, Meta AI
+(Muse Spark), OpenClaw and Hermes Agent. The web agents open their own
+new-chat page with the prompt prefilled in a new tab without a referrer;
+OpenClaw opens its own scheme with the prompt as a message, and Hermes Agent,
+which has no prompt link, opens its confirmed skill install for this site's
+`SKILL.md`, both in the same tab. Opening any of them also copies the prompt.
+Any provider, model and agent client may participate, so the list is never
+exclusive: the generic prompt and copy stay available whatever the list holds.
+
+```quint
+type AgentTarget = WebChat | AppScheme
+type AgentShortcut = { agent: str, target: AgentTarget, carriesPrompt: bool }
+pure val agentShortcuts = List(
+  { agent: "Cursor", target: WebChat, carriesPrompt: true },
+  { agent: "Claude", target: WebChat, carriesPrompt: true },
+  { agent: "ChatGPT", target: WebChat, carriesPrompt: true },
+  { agent: "Grok", target: WebChat, carriesPrompt: true },
+  { agent: "Meta AI (Muse Spark)", target: WebChat, carriesPrompt: true },
+  { agent: "OpenClaw", target: AppScheme, carriesPrompt: true },
+  { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
+pure def opensNewTab(shortcut: AgentShortcut): bool = shortcut.target == WebChat
+pure def openingCopiesPrompt(shortcut: AgentShortcut): bool = true
+pure def genericPromptAvailable(shortcuts: List[AgentShortcut]): bool = true
+pure def lawOpeningAnyShortcutCopies(shortcut: AgentShortcut): bool = openingCopiesPrompt(shortcut)
+pure def lawShortcutsNeverReplaceGenericSetup(shortcuts: List[AgentShortcut]): bool = genericPromptAvailable(shortcuts)
+pure def lawOnlyWebChatsOpenNewTabs(shortcut: AgentShortcut): bool = opensNewTab(shortcut) iff shortcut.target == WebChat
+pure val shortcutValues = Set(
+  { agent: "Claude", target: WebChat, carriesPrompt: true },
+  { agent: "Hermes Agent", target: AppScheme, carriesPrompt: false })
+pure val shortcutsValues = Set(List(), agentShortcuts)
+```

@@ -90,6 +90,27 @@ pure val submissionValues = Set(1, 2)
 pure val requestEpochValues = Set(1, 2, 3, 4)
 ```
 
+### A focus identity refresh changes the account only through sign-in or sign-out
+
+The shell's focus re-read of the session reaches the browser session through
+the navigation rule "An identity refresh applies only within the navigation
+lifetime that requested it". The same account keeps the report draft, its
+mounted details and the return destination. Another account or no account
+erases them exactly as authentication and logout do.
+
+```quint
+pure def canRefreshAccount(b: BrowserSession, refreshedActor: int, requestEpoch: int): bool =
+  N::canRefreshIdentity(b.navigation, refreshedActor, requestEpoch)
+pure def refreshAccount(b: BrowserSession, refreshedActor: int, requestEpoch: int): BrowserSession =
+  if (refreshedActor == b.navigation.actor) b
+  else if (refreshedActor == 0) logout(b)
+  else authenticate(b, refreshedActor)
+pure def stepRefreshChangesAccountOnlyByClearing(before: BrowserSession, via: str, after: BrowserSession): bool =
+  (via == "refreshAccount" and after.navigation.actor != before.navigation.actor) implies
+    after.draft == D::initial and after.details.opened.size() == 0
+pure val refreshedActorValues = Set(0, 1, 2)
+```
+
 ### Account changes erase drafts and preserve every child invariant
 
 ```quint

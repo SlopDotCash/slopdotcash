@@ -47,3 +47,50 @@ pure def lawOpenProposalNeverFreezes(project: str, period: int): bool =
 pure val projectValues = Set("", "p")
 pure val periodValues = Set(-1, 24320)
 ```
+
+### Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months
+
+The settlement adapter derives `obligationExists` with the predicate of
+`scripts/points-protection-sql.ts` (`protectedPointAwardSql`,
+`pointProtectionQuery`). A project-month is protected when a monthly
+payment run or a monthly allocation change exists for that project and
+month, when a direct transfer of the project names that month as its
+contribution month, or when the project has any payment obligation, of any
+month, that no monthly payment obligation maps (same project, network,
+vault and source digest). The one reviewed Base qualification payment
+(PRD section 11, issue 904) is pinned data outside this predicate: its
+finalized, paid obligation and its matching `paid` event never protect a
+month. This is stricter than the settlement phase alone, which never freezes
+an open proposal. The owner's decision is pending: the
+alternative is to freeze only on the monthly settlement phase and its
+approved, funded, scheduled or paid obligations; until then the stricter
+production predicate is kept, so more months are protected, never fewer.
+
+The individual records are private to the settlement adapter
+(`pointProtectionQuery` is a private, read-only preflight): whether a
+project-month has a payment run, an allocation change, a direct transfer or
+an unmapped obligation never becomes a public source status. They stay in
+the trusted runner, and only the combined freeze bit, through
+`declassifyProtected`, reaches the freeze evidence.
+
+```quint
+type SecretProtectionRecords = { paymentRun: bool, allocationChange: bool, directTransfer: bool,
+  unmappedObligation: bool }
+pure def declassifyProtected(protection: SecretProtectionRecords): bool =
+  protection.paymentRun or protection.allocationChange or protection.directTransfer or protection.unmappedObligation
+pure def freezeEvidenceOf(project: str, period: int, phase: SettlementPhase, monthlyObligation: bool,
+  protectedMonth: bool): FreezeEvidence =
+  { project: project, period: period, phase: phase, obligationExists: monthlyObligation or protectedMonth }
+pure def lawLegacyRecordsFreeze(project: str, period: int, phase: SettlementPhase,
+  protection: SecretProtectionRecords): bool =
+  (project != "" and period >= 0 and declassifyProtected(protection)) implies
+    freezes(freezeEvidenceOf(project, period, phase, false, declassifyProtected(protection)))
+pure def lawNoRecordKeepsOpenProposalOpen(project: str, period: int, protection: SecretProtectionRecords): bool =
+  not(declassifyProtected(protection)) implies
+    (not(freezes(freezeEvidenceOf(project, period, Proposed, false, declassifyProtected(protection)))) and
+      not(freezes(freezeEvidenceOf(project, period, Collecting, false, declassifyProtected(protection)))))
+pure val unprotected: SecretProtectionRecords = { paymentRun: false, allocationChange: false, directTransfer: false,
+  unmappedObligation: false }
+pure val protectionValues = Set(unprotected, { ...unprotected, paymentRun: true }, { ...unprotected, allocationChange: true },
+  { ...unprotected, directTransfer: true }, { ...unprotected, unmappedObligation: true })
+```

@@ -41,6 +41,8 @@ type Issuer = ByModerator | ByVettingService | ByContributorFlags | ByAppellant
 type JournalEntry = { seq: int, kind: RecordAction, issuer: Issuer, actor: int, result: RevisionPlan }
 type Recipient = ListingAccount | StewardAccount | IndependentModerators
 type Notice = { entry: int, to: Recipient }
+type ScanNotice = { assessment: int, to: Recipient }
+type TemplateReplacement = { assessment: int, replaces: int, repository: int }
 type Enforcement = { projectId: int, repositories: List[int], original: Set[int], frozen: Set[int],
   creator: int, steward: int, revision: int, administrators: Set[int], moderators: Set[int],
   restriction: Restriction, epoch: int, restrictedBy: Set[int], appeal: Appeal, appellants: Set[int],
@@ -48,7 +50,7 @@ type Enforcement = { projectId: int, repositories: List[int], original: Set[int]
   seq: int, assessmentIds: Set[int], latest: int -> Assessment,
   flags: List[Flag], withdrawn: Set[int], resolved: List[int], clockDay: int,
   grants: List[Grant], grantSeq: int -> int, exempt: Set[int], exemptSteward: int -> int, revocations: List[int],
-  journal: List[JournalEntry], notices: List[Notice] }
+  journal: List[JournalEntry], notices: List[Notice], scanNotices: List[ScanNotice], replacements: List[TemplateReplacement] }
 pure val unassessed: Assessment = { id: 0, state: NotAssessed, revision: 0, requestSeq: 0, requestEpoch: 0, reused: false, verified: false, snapshot: List() }
 pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(),
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
@@ -57,7 +59,7 @@ pure val initial: Enforcement = { projectId: 1, repositories: List(1), original:
   seq: 0, assessmentIds: Set(), latest: Map(),
   flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
   grants: List(), grantSeq: Map(), exempt: Set(), exemptSteward: Map(), revocations: List(),
-  journal: List(), notices: List() }
+  journal: List(), notices: List(), scanNotices: List(), replacements: List() }
 pure val vettingService = 0
 pure val platform = -1
 pure def latestOf(e: Enforcement, repository: int): Assessment =
@@ -130,10 +132,13 @@ investigation of any listed repository at any time; it controls clearance
 even after an owner-approved grant. During a flag-only pause the signed
 refresh queues a fresh scan when the latest one is not fresh or does not
 cover every active flag. A repository has at most one pending assessment.
-The request captures the active flag receipts and the restriction epoch.
+The request captures the active flag receipts and the restriction epoch, and
+needs a readable live pin of its repository (see "An unavailable live pin
+queues nothing and leaves the repository's clearance unchanged").
 
 ```quint
 type RequestOrigin = SetupCheck | OwnerRescan | AdminInvestigation | FlagRecovery
+type LivePin = LiveTemplateCurrent | LiveTemplateReleased | LivePinUnavailable
 pure def activeFlag(e: Enforcement, f: Flag): bool =
   not(e.withdrawn.contains(f.receipt)) and not(e.resolved.includes(f.receipt)) and e.clockDay - f.filedDay < 90
 pure def activeReceipts(e: Enforcement): List[int] = e.flags.select(f => activeFlag(e, f)).listMap(f => f.receipt)
@@ -141,8 +146,9 @@ pure def freshClean(e: Enforcement, repository: int): bool =
   assessedClean(e, repository) and not(latestOf(e, repository).reused) and latestOf(e, repository).requestEpoch == e.epoch
 pure def coversActiveFlags(e: Enforcement, repository: int): bool =
   e.flags.every(f => activeFlag(e, f) implies latestOf(e, repository).snapshot.includes(f.receipt))
-pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): bool =
+pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int, livePin: LivePin): bool =
   e.revision > 0 and e.repositories.includes(repository) and assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
+  livePin != LivePinUnavailable and
   latestOf(e, repository).state != APending and
   (if (requestOrigin == SetupCheck) by >= 0 and e.restriction == Clear and latestOf(e, repository).state == NotAssessed and
      not(repositoryCleared(e, repository))
@@ -153,7 +159,7 @@ pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestO
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
 pure def pendingAssessment(id: int, revision: int, requestSeq: int, requestEpoch: int, snapshot: List[int]): Assessment =
   { id: id, state: APending, revision: revision, requestSeq: requestSeq, requestEpoch: requestEpoch, reused: false, verified: false, snapshot: snapshot }
-pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
+pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int, livePin: LivePin): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
     latest: e.latest.put(repository, pendingAssessment(assessmentId, e.revision, e.seq + 1, e.epoch, activeReceipts(e))) }
 pure def alwaysLatestIdsRequested(e: Enforcement): bool =
@@ -161,6 +167,69 @@ pure def alwaysLatestIdsRequested(e: Enforcement): bool =
 pure def alwaysSequencedRequests(e: Enforcement): bool =
   e.repositories.every(r => latestOf(e, r).requestSeq <= e.seq and latestOf(e, r).requestEpoch <= e.epoch and
     latestOf(e, r).revision <= e.revision)
+```
+
+### A template-replacement retry queues one new assessment that names the pending assessment it replaces
+
+The template endpoint serves only the deployed skill-template bundle, so a
+pending assessment assigned to an older bundle cannot be acquired after a
+release. During the signed refresh of a clear project (not flag-paused, not
+retired and with no banned repository, `refreshQueue` in
+`backend/vetting/handler.ts`), the vetting service queues one replacement for
+the repository's latest pending assessment when the live pin shows a newer
+template digest. The replacement keeps the replaced request's revision,
+manifest, content digest, commit and repository, takes the live template
+digest, captures the currently active flag receipts and records the replaced
+assessment's id (`replaces_assessment_id`, migration `0103`, immutable once
+written). The insert happens only while the named assessment is still the
+latest pending row of that repository, so a concurrent result or a second
+retry creates nothing. The replaced row stays pending and is never the
+repository's latest again. Because the replacement continues the replaced
+request rather than starting a new one, it keeps the replaced request's
+sequence: an owner-approved grant that covered the replaced request covers its
+replacement (`replacesTemplate` in `backend/vetting/persistence.ts`), while a
+free-form request reason alone never does.
+
+```quint
+pure def canReplaceTemplateAssessment(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int, livePin: LivePin): bool =
+  by == vettingService and e.restriction == Clear and e.repositories.includes(repository) and replaces > 0 and
+  latestOf(e, repository).state == APending and latestOf(e, repository).id == replaces and
+  assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and livePin == LiveTemplateReleased
+pure def replaceTemplateAssessment(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int, livePin: LivePin): Enforcement =
+  val replaced = latestOf(e, repository)
+  { ...e, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
+    latest: e.latest.put(repository, pendingAssessment(assessmentId, replaced.revision, replaced.requestSeq, e.epoch, activeReceipts(e))),
+    replacements: e.replacements.append({ assessment: assessmentId, replaces: replaces, repository: repository }) }
+pure val replacesValues = Set(1, 2, 3)
+pure def sometimesTemplateReplaced(e: Enforcement): bool =
+  e.replacements.length() > 0 and latestOf(e, 1).state == APending
+pure def sometimesReplacementKeepsGrant(e: Enforcement): bool =
+  e.replacements.length() > 0 and e.exempt.contains(1) and latestOf(e, 1).state == APending and cleared(e)
+```
+
+### An unavailable live pin queues nothing and leaves the repository's clearance unchanged
+
+Every request reads the live pin (the integration-branch head on GitHub and
+the deployed skill-template digest, `backend/vetting/live-pin.ts`) of the
+repository it queues, and an unreadable pin queues nothing for that
+repository. The owner's setup check, an automatic scan and the administrator
+route read every pin before writing any row (`queueRepositories` in
+`backend/vetting/handler.ts`), so one unreadable pin queues nothing for any
+repository of the request: the setup check and an automatic scan answer
+`unavailable`, the administrator route answers 503 `pin_unavailable`. The
+signed refresh reads each repository's pin as it queues it, so an unreadable
+pin queues nothing for that repository and is reported as `pin_unavailable`;
+rows already queued in that refresh stand. Its flag-pause recovery and its
+template-replacement check read every pin they compare before planning any
+row, and skip the whole project with `pin_unavailable` when one is
+unreadable. The caller's change stands and the next signed refresh tries
+again. A pin is never guessed or read from a cache that the read failed to refresh.
+
+```quint
+pure def lawUnavailablePinQueuesNothing(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): bool =
+  not(canRequestAssessment(e, by, repository, requestOrigin, assessmentId, LivePinUnavailable))
+pure def lawUnavailablePinReplacesNothing(e: Enforcement, by: int, repository: int, replaces: int, assessmentId: int): bool =
+  not(canReplaceTemplateAssessment(e, by, repository, replaces, assessmentId, LivePinUnavailable))
 ```
 
 ### A recorded result updates its repository once and confirmed malice bans at once
@@ -211,7 +280,7 @@ pure def recordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: Re
       revisionPending: if (e.restriction == Clear) plan == RevisionPending else e.revisionPending or plan == RevisionPending,
       findings: e.findings.union(Set(scanOutcome.assessment)),
       journal: restrictionEntry(e, ByVettingService, 0, RecordBan, plan), notices: owners(e) }
-  else updated
+  else withScanFailure(scanOutcome.assessment, updated)
 pure val scanOutcomeValues = Set(
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true },
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: true, retained: true },
@@ -227,6 +296,33 @@ pure val scanOutcomeValues = Set(
 pure def alwaysMaliceBanned(e: Enforcement): bool =
   e.repositories.some(r => latestOf(e, r).state == AMalicious) implies (e.restriction == ServiceBan or e.restriction == ModeratorBan)
 pure def alwaysServiceBanFindings(e: Enforcement): bool = e.restriction == ServiceBan implies e.findings.size() > 0
+```
+
+### A recorded incomplete result, an acquisition refusal included, notifies the listing account and the steward once
+
+Every incomplete result tells the project's owners, in the same D1 batch that
+records it, that the scan could not establish clearance
+(`notifyProjectScanFailed` in `backend/notifications/events.ts`, kind
+`project_scan_failed`). The recipients are the listing account and the
+current steward (`PROJECT_OWNERS`); the notice key is the assessment
+(`project-scan:<assessment id>`), so a replay adds nothing (the operations
+[notification](../operations/notifications.md) rule "A replay of the same
+source change and recipient adds nothing"). An acquisition refusal (a missing
+or moved repository, or a path-policy refusal of the exact pin,
+`publishAcquisitionRefusal` in `workers/vetting/run.ts`) is published as an
+incomplete result with every surface unsupported, so it notifies the same
+way. A clean or malicious result sends no scan-failed notice; a malicious one
+notifies through its Ban entry.
+
+```quint
+pure def withScanFailure(assessment: int, e: Enforcement): Enforcement =
+  if (e.scanNotices.some(n => n.assessment == assessment)) e
+  else { ...e, scanNotices: e.scanNotices.append({ assessment: assessment, to: ListingAccount })
+    .append({ assessment: assessment, to: StewardAccount }) }
+pure def lawScanFailureNotifiesOnce(assessment: int, e: Enforcement): bool =
+  withScanFailure(assessment, withScanFailure(assessment, e)).scanNotices == withScanFailure(assessment, e).scanNotices
+pure def sometimesScanFailureNoticed(e: Enforcement): bool =
+  e.scanNotices.length() > 0 and latestOf(e, 1).state == AIncomplete
 ```
 
 ### Retained evidence is checked when clearance relies on it
@@ -403,6 +499,32 @@ pure def alwaysActiveActorsUnique(e: Enforcement): bool =
   e.flags.every(first => e.flags.every(second =>
     (activeFlag(e, first) and activeFlag(e, second) and first.actor == second.actor) implies first.receipt == second.receipt))
 pure def alwaysResolvedFlagsExist(e: Enforcement): bool = e.resolved.every(receipt => e.flags.some(f => f.receipt == receipt))
+```
+
+### Flag evidence text is readable only by its reporter and administrators, and the public sees only the restriction
+
+A flag's category, evidence text (20 to 4,000 characters, migration `0060`)
+and evidence URL are private. The signed-in member's flag route
+(`GET /api/v1/project-flags/<project>`, `backend/vetting/flags.ts`) returns
+only that member's own active flag with its evidence, and never another
+member's flag, its reporter or the number of flags. Administrators read the
+active flags beside each project in the administrator vetting view. Everyone
+else, the steward and moderators who are not administrators included, sees
+only the project's restriction and whether flags alone placed it.
+
+```quint
+type FlagView = FlagWithEvidence | FlagHidden
+pure def flagView(e: Enforcement, viewer: int, receipt: int): FlagView =
+  if (viewer > 0 and (e.administrators.contains(viewer) or e.flags.some(f => f.receipt == receipt and f.actor == viewer)))
+    FlagWithEvidence
+  else FlagHidden
+pure def pausedByFlagsOnly(e: Enforcement): bool = e.restriction == FlagQuarantine
+pure def lawFlagEvidenceOnlyToReporterOrAdministrator(e: Enforcement, viewer: int, receipt: int): bool =
+  (not(e.administrators.contains(viewer)) and not(e.flags.some(f => f.receipt == receipt and f.actor == viewer)))
+    implies flagView(e, viewer, receipt) == FlagHidden
+pure def lawStewardSeesNoFlagEvidence(e: Enforcement, receipt: int): bool =
+  (e.steward > 0 and not(e.administrators.contains(e.steward)) and e.flags.every(f => f.actor != e.steward))
+    implies flagView(e, e.steward, receipt) == FlagHidden
 ```
 
 ### A fresh clean scan of every repository lifts a flag-only pause

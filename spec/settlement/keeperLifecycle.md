@@ -35,8 +35,8 @@ type KeeperMode = Off | DryRun | Execute | InvalidMode
  type RunPhase = NoRun | SelectingMode | CheckingIdentity | Working
  type RunResult = Ran | RanPartly | RanOff | RunFailed
  type Configuration = { mode: KeeperMode, configValid: bool, registry: int, projectSelection: int,
-  replacementActivated: bool, feeCeiling: int, gasLimit: int, transactionCap: int, dayCap: int }
- type SendAttempt = { bytes: int, maxFee: int, priorityFee: int }
+  replacementActivated: bool, feeCeiling: int, gasLimit: int, transactionCap: int, dayCap: int, additionalFeeReserve: int }
+ type SendAttempt = { bytes: int, maxFee: int, priorityFee: int, signedAt: int, extraFee: int }
  type RequestRow = { id: int, caller: Caller, instance: int, binding: int, phase: RequestPhase, http: int, result: RequestResult }
  type FinishedRun = { identity: int, outcome: RunResult }
  type LiveRun = { identity: int, phase: RunPhase, stagedBytes: int, staged: SendAttempt, attempted: bool, partial: bool }
@@ -44,10 +44,10 @@ type KeeperMode = Off | DryRun | Execute | InvalidMode
   attempts: List[SendAttempt], winner: int, day: int, daySpent: int, held: int }
  type Lifecycle = { instance: int, config: Configuration, liveRun: LiveRun, latestRun: int,
   requests: List[RequestRow], results: List[FinishedRun], journal: Journal }
-pure val noAttempt: SendAttempt = { bytes: 0, maxFee: 0, priorityFee: 0 }
+pure val noAttempt: SendAttempt = { bytes: 0, maxFee: 0, priorityFee: 0, signedAt: 0, extraFee: 0 }
 pure val noRun: LiveRun = { identity: 0, phase: NoRun, stagedBytes: 0, staged: noAttempt, attempted: false, partial: false }
 pure val offConfiguration: Configuration = { mode: Off, configValid: true, registry: 1, projectSelection: 1,
-  replacementActivated: false, feeCeiling: 3000, gasLimit: 100, transactionCap: 200000, dayCap: 400000 }
+  replacementActivated: false, feeCeiling: 3000, gasLimit: 100, transactionCap: 200000, dayCap: 400000, additionalFeeReserve: 0 }
 pure val noRequest: RequestRow = { id: 0, caller: PublicRoute, instance: 0, binding: 0, phase: Done, http: 0, result: NotFound }
 pure val noResult: FinishedRun = { identity: 0, outcome: RunFailed }
 pure val initial: Lifecycle = { instance: 1, config: offConfiguration, liveRun: noRun, latestRun: 0,
@@ -119,12 +119,13 @@ type SignerReport = { wallet: str, expectedWallet: str }
 type GasEvidence = { bytes: int, finalized: bool, charged: int }
 pure def canIndexReads(k: Lifecycle, runId: int): bool = matchesRun(k, runId, Working)
 pure def indexReads(k: Lifecycle, runId: int): Lifecycle = { ...k, journal: { ...k.journal, indexed: true } }
-pure def cost(k: Lifecycle, maxFee: int): int = maxFee * k.config.gasLimit
+pure def cost(k: Lifecycle, maxFee: int): int = maxFee * k.config.gasLimit + k.config.additionalFeeReserve
 pure def withinBudget(k: Lifecycle, maxFee: int): bool =
   maxFee > 0 and cost(k, maxFee) <= k.config.transactionCap and k.journal.daySpent + cost(k, maxFee) <= k.config.dayCap
 pure def canStageAttempt(k: Lifecycle, runId: int, attempt: SendAttempt, signer: SignerReport): bool =
   matchesRun(k, runId, Working) and k.config.mode == Execute and signer.wallet != "" and signer.wallet == signer.expectedWallet
     and attempt.bytes > 0 and attempt.priorityFee >= 0 and attempt.priorityFee <= attempt.maxFee and withinBudget(k, attempt.maxFee)
+    and extraFeeReserved(k, attempt.extraFee)
     and k.journal.signedBytes == 0 and not(k.liveRun.attempted)
 pure def stageAttempt(k: Lifecycle, runId: int, attempt: SendAttempt, signer: SignerReport): Lifecycle = { ...k,
   liveRun: { ...k.liveRun, stagedBytes: attempt.bytes, staged: attempt, attempted: true } }
@@ -164,15 +165,17 @@ pure def latestAttempt(k: Lifecycle): SendAttempt = k.journal.attempts.nthOr(k.j
 pure def originalAttempt(k: Lifecycle): SendAttempt = k.journal.attempts.nthOr(0, noAttempt)
 pure def replacementFees(k: Lifecycle): R::Fees = R::nextReplacementFees(originalAttempt(k).maxFee, originalAttempt(k).priorityFee,
   latestAttempt(k).maxFee, latestAttempt(k).priorityFee, k.config.feeCeiling)
-pure def canReplace(k: Lifecycle, runId: int, bytes: int): bool =
+pure def canReplace(k: Lifecycle, runId: int, bytes: int, now: int, baseFee: int, extraFee: int): bool =
   val proposed = replacementFees(k)
   matchesRun(k, runId, Working) and k.config.mode == Execute and k.config.replacementActivated
+    and replacementDue(k, now, baseFee) and extraFeeReserved(k, extraFee)
     and k.journal.signedBytes > 0 and k.journal.gasHeld and not(k.journal.gasSettled)
     and bytes > 0 and not(k.journal.attempts.some(a => a.bytes == bytes)) and proposed.ok
     and cost(k, proposed.maxFee) <= k.config.transactionCap and k.journal.daySpent + cost(k, proposed.maxFee) <= k.config.dayCap
-pure def replace(k: Lifecycle, runId: int, bytes: int): Lifecycle =
+pure def replace(k: Lifecycle, runId: int, bytes: int, now: int, baseFee: int, extraFee: int): Lifecycle =
   val proposed = replacementFees(k)
-  { ...k, journal: { ...k.journal, attempts: k.journal.attempts.append({ bytes: bytes, maxFee: proposed.maxFee, priorityFee: proposed.priorityFee }),
+  { ...k, journal: { ...k.journal, attempts: k.journal.attempts.append({ bytes: bytes, maxFee: proposed.maxFee, priorityFee: proposed.priorityFee,
+      signedAt: now, extraFee: extraFee }),
     held: cost(k, proposed.maxFee) } }
 pure def canObserveDay(k: Lifecycle, day: int): bool = day > k.journal.day
 pure def observeDay(k: Lifecycle, day: int): Lifecycle = { ...k, journal: { ...k.journal, day: day, daySpent: 0 } }
@@ -191,6 +194,41 @@ pure def sometimesReplacedThenSettled(k: Lifecycle): bool = k.journal.attempts.l
 pure def sometimesOriginalWinsAfterReplacement(k: Lifecycle): bool = k.journal.attempts.length() >= 2
   and k.journal.winner == originalAttempt(k).bytes and k.journal.winner > 0
 pure def sometimesHeldAcrossMidnight(k: Lifecycle): bool = k.journal.gasHeld and k.journal.day > 0
+```
+
+### A send becomes replaceable only after ten minutes unmined and while the base fee exceeds its max fee
+
+The wait runs from the signing time of the latest retained attempt, so each
+replacement waits ten minutes again. The latest base fee is read from the
+network for each decision; while it is at or below the latest attempt's
+maximum fee, or it cannot be read, the keeper only rebroadcasts the latest
+journaled bytes. Development `workers/payment-executor/core.ts`
+(`FEE_BUMP_POLICY.waitMs`, `replaceUnderpricedAttempt`).
+
+```quint
+pure val replacementWaitSeconds = 600
+pure def replacementDue(k: Lifecycle, now: int, baseFee: int): bool =
+  now - latestAttempt(k).signedAt >= replacementWaitSeconds and baseFee > latestAttempt(k).maxFee
+pure val nowValues = Set(100, 700, 1400)
+pure val baseFeeValues = Set(500, 5000)
+```
+
+### On Base the worst-case cost also reserves the L1 and operator fee upper bound read at one block
+
+A Base send also pays the L1 data fee and the operator fee, which the gas
+limit and fee fields do not cover. The deployment reviews a fixed additional
+fee reserve; it is zero on other networks. Before each signature, original
+or replacement, the budget adapter reads the GasPriceOracle's
+`getL1FeeUpperBound` for the unsigned transaction's size and `getOperatorFee`
+for its gas limit at one block number, and refuses when their sum exceeds the
+reserve. The worst-case cost of every attempt counts the whole reserve
+against the per-transaction and UTC-day caps. Development
+`scripts/payment-keeper/budget.ts` (`baseOracleFee`, `budgetEvmSigner`).
+
+```quint
+pure def extraFeeReserved(k: Lifecycle, extraFee: int): bool =
+  extraFee >= 0 and extraFee <= k.config.additionalFeeReserve
+pure val extraFeeValues = Set(0, 4000, 6000)
 ```
 
 ### Core completion and per-request result delivery have independent lifetimes
@@ -255,8 +293,9 @@ pure def sometimesPartial(k: Lifecycle): bool = k.requests.some(r => r.result ==
 pure val dryConfig: Configuration = { ...offConfiguration, mode: DryRun }
 pure val executeConfig: Configuration = { ...offConfiguration, mode: Execute }
 pure val configValues = Set(offConfiguration, dryConfig, executeConfig, { ...executeConfig, registry: 2 }, { ...executeConfig, configValid: false },
-  { ...executeConfig, replacementActivated: true })
-pure val attemptValues = Set({ bytes: 1, maxFee: 1000, priorityFee: 100 }, { bytes: 1, maxFee: 3000, priorityFee: 100 })
+  { ...executeConfig, replacementActivated: true }, { ...executeConfig, replacementActivated: true, additionalFeeReserve: 5000 })
+pure val attemptValues = Set({ bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 0 },
+  { bytes: 1, maxFee: 3000, priorityFee: 100, signedAt: 1, extraFee: 0 }, { bytes: 1, maxFee: 1000, priorityFee: 100, signedAt: 1, extraFee: 4000 })
 pure val signerValues = Set({ wallet: "gas", expectedWallet: "gas" }, { wallet: "other", expectedWallet: "gas" })
 pure val evidenceValues = Set({ bytes: 1, finalized: true, charged: 50000 }, { bytes: 2, finalized: true, charged: 60000 },
   { bytes: 1, finalized: false, charged: 0 })

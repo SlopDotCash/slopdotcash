@@ -1968,3 +1968,9 @@ lemma lawUnitGap_ensures(a: seq<int>, b: seq<int>)
     AmountValueOrder(addAmounts(a,[1]),b);
   }
 }
+
+lemma lawLegacyFloorOneBelow_ensures(a: seq<int>)
+  ensures (lawLegacyFloorOneBelow(a) == true)
+{
+  lawEqualReflexive_ensures(ordinaryFeeAmount(a));
+}

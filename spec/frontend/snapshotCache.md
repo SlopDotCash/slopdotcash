@@ -101,3 +101,39 @@ pure val weight_acquire = 4
 pure val weight_release = 3
 pure val weight_complete = 3
 ```
+
+## Story: Reuse a recent snapshot and retry a failed read once
+
+> As a visitor moving between public pages, I want a snapshot read a moment
+> ago to be reused, an old one to be labelled stale, and a failed read to be
+> tried once more before I see an error.
+
+### A cached snapshot is fresh for 60 seconds, stale 8 hours after generation, and a failed read retries once after 400 ms unless aborted
+
+A completed, validated snapshot is reused without a new read while its age
+since completion is at least 0 and under 60 000 ms, and only for the registry
+it was built from; a forced refresh discards it. A displayed snapshot is
+labelled stale once more than 8 hours (28 800 000 ms) have passed since its
+`generatedAt`; the page re-renders at that boundary. A failed read is retried
+exactly once, 400 ms later, unless its consumers aborted it; the second
+failure is the read's error.
+
+```quint
+pure val snapshotCacheMs = 60000
+pure val snapshotStaleAfterMs = 28800000
+pure val snapshotRetries = 1
+pure val snapshotRetryDelayMs = 400
+pure def snapshotCacheFresh(ageMs: int): bool = ageMs >= 0 and ageMs < snapshotCacheMs
+pure def snapshotStale(nowMs: int, generatedMs: int): bool = nowMs - generatedMs > snapshotStaleAfterMs
+pure def retryRead(retriesUsed: int, aborted: bool): bool = not(aborted) and retriesUsed >= 0 and retriesUsed < snapshotRetries
+pure def lawFutureCacheIsNotFresh(ageMs: int): bool = ageMs < 0 implies not(snapshotCacheFresh(ageMs))
+pure def lawCacheExpiresAtSixtySeconds(ageMs: int): bool = ageMs >= snapshotCacheMs implies not(snapshotCacheFresh(ageMs))
+pure def lawStaleOnlyAfterEightHours(nowMs: int, generatedMs: int): bool =
+  snapshotStale(nowMs, generatedMs) iff nowMs >= generatedMs + snapshotStaleAfterMs + 1
+pure def lawAtMostOneRetry(retriesUsed: int, aborted: bool): bool =
+  retryRead(retriesUsed, aborted) implies retriesUsed == 0 and not(aborted)
+pure val ageMsValues = Set(-1, 0, 59999, 60000)
+pure val nowMsValues = Set(0, 28800000, 28800001)
+pure val generatedMsValues = Set(0, 1)
+pure val retriesUsedValues = Set(0, 1)
+```

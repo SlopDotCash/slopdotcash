@@ -11,6 +11,7 @@ verification remain external evidence boundaries for the future shell.
 - [Custom referral name reservations](./referralCodes.md)
 - [Project automatic-closure consent](./closureConsent.md)
 - [Project registration](./projects.md)
+- [Project revision receipts](./revisionReceipts.md)
 - [Project discovery placement](./listing.md)
 - [Participation restrictions and retained rights](./access.md)
 - [Registry and security composition](./projectComposition.md)

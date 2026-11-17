@@ -293,6 +293,36 @@ pure def lawFullPrivateConservation(a: Amount): bool = privateSplitPossible(a) i
   equalAmounts(addAmounts(privateFeeAmount(a), privateResearcherAmount(a)), a)
 ```
 
+### The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise
+
+New fee computation always rounds up: every new obligation, withdrawal,
+frozen monthly award and attestation snapshot uses `ordinaryFeeAmount`.
+A vault deployed before fees rounded up holds awards and withdrawals whose
+fee is `floor(gross / 50)`; the deployed contract keeps them
+([EVM escrow](../contracts/evmEscrow.md)), and historical v1 records retain
+their original fee (Slop AGENTS). The old application accepted finalized
+evidence of such a legacy ordinary award, withdrawal or frozen v1 monthly
+snapshot when its fee was either the rounded-up fee or the floor fee
+(development `src/lib/verified-money.ts` `ordinaryFeeMatches`,
+`freezeMonthlyAmounts(rows, legacyFloorFee)`,
+`backend/payments/monthly-attestation.ts` and `contracts/evm/adapter.ts`).
+`ordinaryFeeEvidenceMatches` states that acceptance for a caller that knows
+the award's fee terms. [Payment evidence](./payment.md) does not use it yet:
+it still requires the configured rounded-up fee, so legacy floor-fee
+evidence is held for investigation. Whether payment configuration carries
+the award's fee terms and accepts the floor fee is an owner decision still
+pending.
+
+```quint
+pure def legacyFloorFeeAmount(gross: Amount): Amount = divideAmounts(gross, List(50)).quotient
+pure def ordinaryFeeEvidenceMatches(gross: Amount, fee: Amount, legacyTerms: bool): bool =
+  validAmount(gross) and validAmount(fee) and
+    (equalAmounts(fee, ordinaryFeeAmount(gross)) or (legacyTerms and equalAmounts(fee, legacyFloorFeeAmount(gross))))
+pure def lawLegacyFloorOneBelow(a: Amount): bool = validAmount(a) implies
+  equalAmounts(ordinaryFeeAmount(a), if (positiveAmount(divideAmounts(a, List(50)).remainder))
+    addAmounts(legacyFloorFeeAmount(a), List(1)) else legacyFloorFeeAmount(a))
+```
+
 ### Multiplication, division and derived fees preserve valid limb representations
 
 Products, quotient, remainder and fees retain nonempty base-1000 limbs.

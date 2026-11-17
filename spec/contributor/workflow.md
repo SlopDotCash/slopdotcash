@@ -273,6 +273,74 @@ pure def sometimesRevised(c: Contribution): bool = c.head > 1
 pure def sometimesRunRecorded(c: Contribution): bool = c.runRecorded
 ```
 
+### The attribution marker uses the published identity record, refuses placeholder identity and keeps legacy markers readable
+
+The attribution footer is the line `Made via @slopdotcash`, the rows
+`AI provider/model: <provider> / <model>`, `Client / agent tooling:
+<client>`, `Contribution skill revision: <revision>` (for ordinary
+disclosure, `N/A - ordinary GitHub contribution without optional run
+evidence`; a signed run adds its `Compute receipt:` row first),
+`Attribution status: self-reported`, the lane signature `— [<lane>]` (U+2014),
+and the marker line `<!-- <marker> <JSON> -->` on its own line outside any
+code fence. The marker identifiers come from the published identity record
+(`/protocol/identity-v1.json`, `contributionMarker`): every project emits
+`slop-contribution-attribution:v1`, except a target repository whose own
+validator predates Slop identity v1, which keeps its legacy pair (today only
+`elizaos/eliza`: `eliza-computer-attribution:v1` for ordinary disclosure and
+`elizaos-contribution-attribution:v2` for a signed run). Readers accept the
+Slop marker and every legacy marker (`eliza-computer-attribution:v1` or
+`:v2`, `elizaos-contribution-attribution:v1` or `:v2`), so historical pull
+requests keep their attribution. Provider and client are identifiers of at
+most 64 characters, model and client version of at most 128, each matching
+`^[@~]?[A-Za-z0-9](?:[A-Za-z0-9._:@/+~-]{0,126}[A-Za-z0-9])?$` whose
+normalized form (lowercase, every character outside `a-z0-9` removed) is not
+a placeholder. A model that cannot be established may be declared
+`unavailable` (exactly that word, in any letter case) in ordinary disclosure
+only; any other model whose normalized form is `unavailable`, such as
+`un-available`, is refused, and a signed receipt needs the exact model.
+
+```quint
+type IdentityField = ProviderField | ModelField | ClientField | VersionField
+type DisclosureKind = OrdinaryDisclosure | SignedDisclosure
+type MarkerPair = { ordinary: str, signed: str }
+pure val slopMarker = "slop-contribution-attribution:v1"
+pure val legacyMarkers = List("eliza-computer-attribution:v1", "elizaos-contribution-attribution:v1",
+  "elizaos-contribution-attribution:v2")
+pure val readableMarkers = Set("slop-contribution-attribution:v1", "eliza-computer-attribution:v1",
+  "eliza-computer-attribution:v2", "elizaos-contribution-attribution:v1", "elizaos-contribution-attribution:v2")
+pure val commonPlaceholders = Set("na", "none", "null", "other", "placeholder", "tbd", "todo", "unknown", "unspecified")
+pure def fieldPlaceholders(identityField: IdentityField): Set[str] =
+  if (identityField == ClientField) Set("agent", "app", "cli", "client")
+  else if (identityField == ModelField) Set("ai", "claude", "gemini", "gpt", "grok", "llama", "llm", "model")
+  else if (identityField == ProviderField) Set("ai", "model", "provider")
+  else Set("current", "latest", "version")
+pure def emittedMarkers(repositoryKey: str): MarkerPair =
+  if (repositoryKey == "elizaos/eliza") { ordinary: "eliza-computer-attribution:v1", signed: "elizaos-contribution-attribution:v2" }
+  else { ordinary: slopMarker, signed: slopMarker }
+pure def exactIdentity(normalized: str, lowered: str, shaped: bool, identityField: IdentityField, disclosure: DisclosureKind): bool =
+  if (identityField == ModelField and normalized == "unavailable") disclosure == OrdinaryDisclosure and lowered == "unavailable"
+  else shaped and normalized != "" and not(commonPlaceholders.contains(normalized))
+    and not(fieldPlaceholders(identityField).contains(normalized))
+pure def lawEmittedMarkersComeFromIdentityRecord(repositoryKey: str): bool =
+  val pair = emittedMarkers(repositoryKey)
+  (pair.ordinary == slopMarker or legacyMarkers.includes(pair.ordinary))
+  and (pair.signed == slopMarker or legacyMarkers.includes(pair.signed))
+pure def lawEveryMarkerStaysReadable(repositoryKey: str): bool =
+  readableMarkers.contains(emittedMarkers(repositoryKey).ordinary) and readableMarkers.contains(emittedMarkers(repositoryKey).signed)
+  and legacyMarkers.every(x => readableMarkers.contains(x)) and readableMarkers.contains(slopMarker)
+pure def lawPlaceholderIdentityRefused(normalized: str, lowered: str, shaped: bool, identityField: IdentityField,
+  disclosure: DisclosureKind): bool =
+  (commonPlaceholders.contains(normalized) or fieldPlaceholders(identityField).contains(normalized)) implies
+    not(exactIdentity(normalized, lowered, shaped, identityField, disclosure))
+pure def lawSignedReceiptNeedsExactModel(lowered: str, shaped: bool): bool =
+  not(exactIdentity("unavailable", lowered, shaped, ModelField, SignedDisclosure))
+pure def lawOnlyTheExactUnavailableWordDeclares(lowered: str, shaped: bool): bool =
+  exactIdentity("unavailable", lowered, shaped, ModelField, OrdinaryDisclosure) implies lowered == "unavailable"
+pure val repositoryKeyValues = Set("elizaos/eliza", "o/r")
+pure val normalizedValues = Set("", "na", "gpt", "unavailable", "claudeopus45")
+pure val loweredValues = Set("unavailable", "un-available")
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
 These input sets bound simulation only. The generated guards accept every

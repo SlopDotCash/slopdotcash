@@ -87,6 +87,46 @@ pure def registrationReadback(b: WalletRegistration, wallet: str, by: str): int 
   if (by == b.actor and sameRegistryWallet(b, wallet)) b.claims.length() else 0
 ```
 
+### The trace API's bearer claim registers through the same partition line, and current-claim reads change nothing
+
+The trace API's `POST /api/v1/wallet-claims` (`backend/trace/handler.ts`
+`createContributorWalletClaim`, `insertWalletClaim`; migrations 0001, 0003,
+0010, 0017 and 0021) authenticates a writer's bearer token and supplies its
+actor as `by`; the chain defaults to Solana. It checks the predecessor before
+anything else: `supersedesClaimId` must name this partition's current claim,
+or be absent when there is none, or the request is refused
+(`stale_wallet_claim`, 409), even when it names the current wallet. A
+predecessor that is current and a registry claim of the same address
+returns that claim unchanged (200). Otherwise one `d1_registry` claim, its
+audit record and one `wallet_changed` Inbox notice commit in one batch
+(201), exactly as `register` appends them; the server computes the record
+digest over the canonical record and its own observation time, and a record
+digest that already exists returns its claim and appends nothing. The reads
+`GET /wallet-claims/current?chain=` (the bearer's own partition; 404 when it
+has no claim), `GET /wallet-claims/actors/:githubId/current?chain=` (public;
+`null` when there is no claim; a 60-second cache) and
+`GET /wallet-claims/:id` (public; immutable) project this state and change
+nothing. The current claim is the newest claim of the partition, historical
+ones included; it is not the payable claim.
+
+```quint
+pure def canRegisterByBearer(b: WalletRegistration, registration: Registration, by: str): bool =
+  by == b.actor and registration.wallet != "" and registration.predecessor == b.claims.length()
+    and (sameRegistryWallet(b, registration.wallet) or
+      (registration.digest != "" and not(b.claims.some(claim => claim.digest == registration.digest))))
+pure def registerByBearer(b: WalletRegistration, registration: Registration, by: str): WalletRegistration =
+  register(b, registration, by)
+pure def currentClaimRead(b: WalletRegistration): int = b.claims.length()
+pure def lawBearerRegistrationIsRegistration(b: WalletRegistration, registration: Registration, by: str): bool =
+  canRegisterByBearer(b, registration, by) implies
+    (canRegister(b, registration, by) and registerByBearer(b, registration, by) == register(b, registration, by))
+pure def lawBearerStalePredecessorRefused(b: WalletRegistration, registration: Registration, by: str): bool =
+  registration.predecessor != b.claims.length() implies not(canRegisterByBearer(b, registration, by))
+pure def lawCurrentClaimIsNewest(b: WalletRegistration): bool =
+  currentClaimRead(b) == b.claims.length() and claimAt(b, currentClaimRead(b)) == currentClaim(b)
+pure val weight_registerByBearer = 10
+```
+
 ### The server issues an expiring challenge for the exact current registry claim
 
 The canonical message commits the authorization purpose, audience, actor,

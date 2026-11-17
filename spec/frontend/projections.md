@@ -3,6 +3,10 @@
 PRD sections 2, 3, 6, 7, 8 and 9. Public pages derive from the registry and
 validated journals. They retain source-count integrity and explicit freshness.
 These pure projections form contracts for eventual view components.
+Whether a monthly pool is funded, and the month it is promised for, is owned
+by [vault snapshots](../settlement/vaultSnapshots.md); pages cite those rules
+and no rule here restates them. Further public views are in
+[derived public views](./views.md).
 
 ## Story: Show only the records a viewer may read
 

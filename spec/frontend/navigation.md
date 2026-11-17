@@ -14,16 +14,20 @@ reject external redirects and invalid route parameters before making an event.
 
 ```quint
 type Page = Home | Projects | Project | AddProject | ManageProject | Profile | Rankings | Cycle | Settings | Payouts | Inbox | Report | Recovery | Administration | Gone
+  | HowItWorks | Sponsors | CycleArchive | Login | VettingEvidence | SecurityCases | SecurityProgram
 type Navigation = { page: Page, returnPage: Page, actor: int, epoch: int, privateEpoch: int, privateRows: int }
 pure val initial: Navigation = { page: Home, returnPage: Home, actor: 0, epoch: 0, privateEpoch: 0, privateRows: 0 }
 pure def privatePage(page: Page): bool = page == AddProject or page == ManageProject or page == Settings or
-  page == Payouts or page == Inbox or page == Report or page == Recovery or page == Administration
+  page == Payouts or page == Inbox or page == Report or page == Recovery or page == Administration or
+  page == VettingEvidence or page == SecurityCases
 ```
 
 ### Navigation gates private destinations on a signed-in account
 
 Deep links keep their destination through sign-in. The backend still checks the
 specific account, project and case authority for every read and mutation.
+Signing out changes no address: it ends the session and clears private data,
+a public page stays shown, and a private one shows sign-in in place.
 
 ```quint
 pure def navigate(n: Navigation, destination: Page): Navigation = {
@@ -36,7 +40,7 @@ pure def signIn(n: Navigation, actorId: int): Navigation = {
   privateRows: 0, privateEpoch: n.epoch + 1
 }
 pure def signOut(n: Navigation): Navigation = {
-  ...n, actor: 0, page: Home, epoch: n.epoch + 1,
+  ...n, actor: 0, page: if (privatePage(n.returnPage)) Home else n.returnPage, epoch: n.epoch + 1,
   privateRows: 0, privateEpoch: n.epoch + 1
 }
 ```
@@ -56,6 +60,27 @@ pure def alwaysPrivateRowsHaveOwner(n: Navigation): bool = n.privateRows > 0 imp
 pure def alwaysEpochsAreValid(n: Navigation): bool = n.epoch >= 0 and n.privateEpoch >= 0 and n.privateRows >= 0
 ```
 
+### An identity refresh applies only within the navigation lifetime that requested it
+
+The Inbox, security cases and email preferences re-read the session when the
+window regains focus. The shell stamps each such read with the navigation
+epoch it started in. An answer from an older epoch, for example one that
+started before a later sign-out, is refused, so it can neither sign the old
+account back in nor reset a remounted page. An answer naming the account that
+is already signed in changes nothing: an open email draft stays editable and
+its lifetime is kept. An answer naming no account signs out; one naming another
+account signs that account in, both exactly as the explicit transitions do.
+
+```quint
+pure def canRefreshIdentity(n: Navigation, actorId: int, requestEpoch: int): bool = actorId >= 0 and requestEpoch == n.epoch
+pure def refreshIdentity(n: Navigation, actorId: int, requestEpoch: int): Navigation =
+  if (actorId == n.actor) n else if (actorId == 0) signOut(n) else signIn(n, actorId)
+pure def stepSameAccountRefreshKeepsLifetime(before: Navigation, via: str, after: Navigation): bool =
+  (via == "refreshIdentity" and after.actor == before.actor) implies after == before
+pure def stepAccountChangeStartsLifetime(before: Navigation, after: Navigation): bool =
+  after.actor != before.actor implies after.epoch > before.epoch and after.privateRows == 0
+```
+
 ### A private destination and a cleared sign-out state are reachable
 
 ```quint
@@ -72,4 +97,106 @@ value allowed by their declared types and product rules.
 
 ```quint
 pure val requestEpochValues = Set(0, 1, 2)
+```
+
+## Story: Open every product route at its existing address
+
+> As a visitor or a member, I want every link I was sent, in an email, a skill
+> or a page, to open the same place it always did, and a private page to ask
+> me to sign in right there.
+
+### Every existing product route is one Page and only private destinations need an account
+
+The router reads the existing URLs: `/` Home, `/how-it-works`, `/sponsors`,
+`/cycles` (the cycle archive), `/points` (Rankings), `/account` (Settings),
+`/login`, `/earnings` (Payouts), `/inbox`, `/admin`, `/projects/new`,
+`/vetting-evidence`, `/security` (security cases), `/projects/<id>`,
+`/projects/<id>/manage`, `/projects/<id>/security` (the security program),
+`/cycles/<project>/<cycle>` and `/contributors/<login>`; anything else, or a
+segment that does not decode, is Gone. `/points?x` opens Settings. Three
+pages have no address of their own: Projects is the project list on Home,
+Report is the report form inside the security program, and Recovery is the
+payout consent section of Payouts. Login is public. Only the private pages
+need a signed-in account; every other destination opens signed out.
+
+```quint
+pure def routedPage(page: Page): Page =
+  if (page == Projects) Home else if (page == Report) SecurityProgram else if (page == Recovery) Payouts else page
+pure def routePattern(page: Page): str =
+  val routed = routedPage(page)
+  match routed {
+  | Home => "/" | HowItWorks => "/how-it-works" | Sponsors => "/sponsors" | CycleArchive => "/cycles"
+  | Rankings => "/points" | Settings => "/account" | Login => "/login" | Payouts => "/earnings"
+  | Inbox => "/inbox" | Administration => "/admin" | AddProject => "/projects/new"
+  | VettingEvidence => "/vetting-evidence" | SecurityCases => "/security" | Project => "/projects/:project"
+  | ManageProject => "/projects/:project/manage" | SecurityProgram => "/projects/:project/security"
+  | Cycle => "/cycles/:project/:cycle" | Profile => "/contributors/:login" | _ => ""
+}
+pure def lawEachAddressNamesOnePage(page: Page, other: Page): bool =
+  (routePattern(page) == routePattern(other) and routePattern(page) != "") implies routedPage(page) == routedPage(other)
+pure def lawEveryRoutedPageHasAddress(page: Page): bool = routedPage(page) != Gone implies routePattern(page) != ""
+pure def lawPublicDestinationOpensSignedOut(destination: Page): bool =
+  not(privatePage(destination)) implies navigate(initial, destination).page == destination
+pure def lawPrivateDestinationWaitsForAccount(destination: Page): bool =
+  privatePage(destination) implies navigate(initial, destination).page == Home and navigate(initial, destination).returnPage == destination
+```
+
+### Administration sections and project selection are parameters of the one Administration page
+
+`/admin` takes `?project=<id>` to select a project and `?section=` for
+`security`, `settings` or `skills` of that project; any other value, `overview`
+included, shows the overview, and the `#admin-vetting` fragment opens the
+security section. `?section=fees` without a selected project shows the fee
+conversions. Links in sent emails to `/admin/applications/<id>` open the
+overview. None of these is a page of its own: each is the private
+Administration page, and the backend checks administrator authority for every
+read.
+
+```quint
+type AdminSectionParam = SectionAbsent | SectionSecurity | SectionSettings | SectionSkills | SectionFees | SectionOther
+type AdminView = AdminOverview | AdminSecurity | AdminSettings | AdminSkills | AdminFees
+type AdminRequest = { section: AdminSectionParam, projectSelected: bool, vettingFragment: bool }
+pure def adminView(adminRequest: AdminRequest): AdminView =
+  if (adminRequest.section == SectionFees and not(adminRequest.projectSelected)) AdminFees
+  else if (adminRequest.section == SectionSecurity) AdminSecurity
+  else if (adminRequest.section == SectionSettings) AdminSettings
+  else if (adminRequest.section == SectionSkills) AdminSkills
+  else if (adminRequest.vettingFragment) AdminSecurity
+  else AdminOverview
+pure def adminPage(adminRequest: AdminRequest): Page = Administration
+pure def lawAdminViewsArePrivateAdministration(adminRequest: AdminRequest): bool =
+  adminPage(adminRequest) == Administration and privatePage(adminPage(adminRequest))
+pure def lawFeesNeedNoSelectedProject(adminRequest: AdminRequest): bool =
+  adminView(adminRequest) == AdminFees implies not(adminRequest.projectSelected)
+pure def lawVettingFragmentOpensSecurity(adminRequest: AdminRequest): bool =
+  (adminRequest.section == SectionAbsent and adminRequest.vettingFragment) implies adminView(adminRequest) == AdminSecurity
+pure val adminRequestValues = Set(
+  { section: SectionFees, projectSelected: false, vettingFragment: false },
+  { section: SectionFees, projectSelected: true, vettingFragment: false },
+  { section: SectionAbsent, projectSelected: true, vettingFragment: true },
+  { section: SectionSkills, projectSelected: true, vettingFragment: true },
+  { section: SectionOther, projectSelected: false, vettingFragment: false }
+)
+```
+
+### A signed-out private destination keeps its URL and shows sign-in in place with private reads disabled
+
+`returnPage` is the destination the address bar names. Signed out on a private
+destination, the shell keeps that URL and renders the sign-in panel in place
+(a polite "Checking sign-in…" status, then "Sign in with GitHub" returning to
+the same URL, or an alert when the session check fails), while the machine's
+page stays Home and no private read can be received. Settings' `#wallets`
+section is the one part of a private page that renders signed out, because it
+holds only this browser's wallet choice. Otherwise the shown page is the
+addressed one, signed in or out: signing out on a public page leaves that page
+shown at its URL.
+
+```quint
+pure def signInShownInPlace(n: Navigation): bool = n.actor == 0 and privatePage(n.returnPage)
+pure def alwaysSignInInPlaceHoldsNoPrivateData(n: Navigation): bool =
+  signInShownInPlace(n) implies n.privateRows == 0 and not(privatePage(n.page))
+pure def alwaysAddressedPageIsShownWhenAllowed(n: Navigation): bool =
+  n.page == n.returnPage or (n.actor == 0 and privatePage(n.returnPage) and n.page == Home)
+pure def sometimesSignInShownInPlace(n: Navigation): bool = signInShownInPlace(n) and n.returnPage == Inbox
+pure def sometimesPublicPageSignedOut(n: Navigation): bool = n.actor == 0 and n.page == SecurityProgram
 ```

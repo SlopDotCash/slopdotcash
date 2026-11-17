@@ -5,8 +5,10 @@ jobs refresh, and a failed refresh never becomes an empty or partial
 leaderboard. This machine represents one GitHub read in the ingestion
 transport of `scripts/github-ingestion-read.ts` and the legacy
 `github_ingestion_read` and `ingestion_retry` models. The legacy
-`github_budget_window` model has no counterpart: the current transport keeps
-no request budget or window, so none is modeled here. The [census](./census.md) consumes the result; the [quota
+`github_budget_window` model has no counterpart here: this REST read
+transport keeps no request budget or window, so none is modeled here. The
+live GraphQL collection keeps its own cost budget, modeled in the
+[census](./census.md). The census consumes the result; the [quota
 recovery](./quotaRecovery.md) collector owns the historical campaign.
 
 Only a GET to the GitHub API is retried. A rate-limited response (403 with a

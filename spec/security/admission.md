@@ -165,8 +165,10 @@ pure val sandboxRunValues = Set({ artifacts: 1, internetDisabled: true, secretsP
 
 ### The primary and specialist reviews decide clean, incomplete or escalation
 
-The primary review (Surplus Claude Sonnet 5.5 under the 11 November 2026
-owner decision) reads the complete assessed inventory. An ambiguous or
+The primary review follows the provider route of "Scan reviews call Orbio
+first and fall back to the pinned Surplus profiles in the approved order"
+(owner confirmation pending, OD6); Slop development used Surplus Claude
+Sonnet 5.5. It reads the complete assessed inventory. An ambiguous or
 high-risk result escalates to a specialist review (GPT-6.1 Terra or a
 specialist investigation). A declined review is incomplete. A provider outage
 returns the assessment to the queue. A model label never confirms malice.
@@ -174,9 +176,10 @@ returns the assessment to the queue. A model label never confirms malice.
 ```quint
 type PrimaryOutcome = PrimaryClean | PrimaryEscalate | PrimaryDeclined | PrimaryUnavailable
 type SpecialistOutcome = SpecialistClean | SpecialistDeclined | SpecialistUnavailable
-pure def canReviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome): bool =
-  s.phase == Reviewing and s.deterministic and s.reviewed == s.inventory and s.primary == NotRun
-pure def reviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome): Scan =
+pure def canReviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome, providerFailures: int): bool =
+  s.phase == Reviewing and s.deterministic and s.reviewed == s.inventory and s.primary == NotRun and
+  (primaryOutcome == PrimaryUnavailable implies scanProviderAfter(providerFailures) == ScanProvidersExhausted)
+pure def reviewPrimary(s: Scan, primaryOutcome: PrimaryOutcome, providerFailures: int): Scan =
   if (primaryOutcome == PrimaryUnavailable) resetRun(Queued, s)
   else if (primaryOutcome == PrimaryDeclined) { ...s, primary: ReviewDeclined, phase: Evidence, disposition: DIncomplete }
   else { ...s, primary: ReviewCompleted, escalated: primaryOutcome == PrimaryEscalate }
@@ -190,6 +193,43 @@ pure def alwaysDeclinedIsIncomplete(s: Scan): bool =
   (s.primary == ReviewDeclined or s.specialist == ReviewDeclined) implies s.disposition == DIncomplete
 pure def alwaysSpecialistOnlyAfterEscalation(s: Scan): bool =
   s.specialist != NotRun implies s.primary == ReviewCompleted and s.escalated
+```
+
+### Scan reviews call Orbio first and fall back to the pinned Surplus profiles in the approved order
+
+The owner decision of 11 November 2026 (PRD section 5, "Owner decision, 11
+November 2026") names the route for repository scanning: Claude Sonnet 5.5
+through Orbio first; any Orbio failure, exhausted credits included, goes
+directly to Surplus Claude Sonnet 5.5 and then to Surplus GPT-6.1 Terra, with
+no second Orbio model before the backup. Slop development called Surplus
+only (primary Surplus Claude Sonnet 5.5, specialist GPT-6.1 Terra,
+`workers/vetting/scanners.ts`), so this route is the written decision, not
+production behaviour, and the owner's confirmation that it applies to scans
+is pending (open decision OD6); the alternative keeps the Surplus-only scan
+route. The route applies to the primary review; the specialist stays Surplus
+GPT-6.1 Terra. Only when every provider of the route has failed is the
+primary review `PrimaryUnavailable`, which returns the assessment to the
+queue: `reviewPrimary` carries the number of providers that failed, and its
+guard refuses `PrimaryUnavailable` before the route is exhausted. Each result records the provider and model that produced it. Private
+report screening, maintainer assessment and appeal triage keep the fixed
+Surplus route of [screening](./screening.md).
+
+```quint
+type ScanProvider = ScanOrbioSonnet | ScanSurplusSonnet | ScanSurplusTerra | ScanProvidersExhausted
+pure def scanProviderAfter(providerFailures: int): ScanProvider =
+  if (providerFailures <= 0) ScanOrbioSonnet
+  else if (providerFailures == 1) ScanSurplusSonnet
+  else if (providerFailures == 2) ScanSurplusTerra
+  else ScanProvidersExhausted
+pure def lawScanStartsWithOrbio(providerFailures: int): bool =
+  providerFailures <= 0 implies scanProviderAfter(providerFailures) == ScanOrbioSonnet
+pure def lawOrbioIsTriedOnce(providerFailures: int): bool =
+  providerFailures > 0 implies scanProviderAfter(providerFailures) != ScanOrbioSonnet
+pure def lawSurplusSonnetBeforeTerra(providerFailures: int): bool =
+  scanProviderAfter(providerFailures) == ScanSurplusTerra implies scanProviderAfter(providerFailures - 1) == ScanSurplusSonnet
+pure def lawUnavailableOnlyAfterRoute(s: Scan, providerFailures: int): bool =
+  providerFailures < 3 implies not(canReviewPrimary(s, PrimaryUnavailable, providerFailures))
+pure val providerFailuresValues = Set(0, 1, 2, 3)
 ```
 
 ### Synthesis decides the repository result and confirmed malice needs trusted evidence
@@ -297,6 +337,57 @@ pure def stepUnknownNeverResends(before: Scan, via: str, after: Scan): bool =
 pure def stepAttemptsCount(before: Scan, after: Scan): bool = after.attempts >= before.attempts
 ```
 
+### A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window
+
+Every request from the vetting service (refresh, queue read, reuse lookup,
+sandbox, evidence upload and result) carries `x-slop-vetting-timestamp`,
+`x-slop-vetting-key` (the SHA-256 of one configured raw Ed25519 key in
+`VETTING_RESULT_PUBLIC_KEYS`) and `x-slop-vetting-signature` (64 bytes,
+base64). The signed message is the five lines `slop-vetting:v1`, the method,
+the path with its query, the timestamp and the SHA-256 hex of the exact body
+bytes (`vettingSignedMessage` in `backend/vetting/handler.ts`). With no key
+configured the route answers 503 `vetting_unavailable`. A timestamp that is
+not an ISO-8601 UTC instant (`YYYY-MM-DDTHH:MM:SS[.mmm]Z`) or lies more than
+300,000 ms from the server clock in either direction, an unknown key, a
+signature of the wrong length, and a signature that does not verify over the
+received method, path, timestamp and body each answer 401
+`invalid_signature` and change nothing. The body is read within the route's
+byte limit (256 KiB for a result, 1,024 bytes for the refresh) before it is
+digested. Only an accepted request makes the shell supply the vetting-service
+sender (`0`) to [enforcement](./enforcement.md). The window bounds replay:
+the same signed request is refused once it is older than five minutes, and a
+body swapped under a valid signature never verifies.
+
+```quint
+pure val signatureWindowMs = 300000
+type SignedFields = { signedMethod: int, signedPath: int, signedTimestampMs: int, signedBodyDigest: int }
+type ServiceRequest = { method: int, pathAndQuery: int, timestampMs: int, bodyDigest: int,
+  keyConfigured: bool, keyKnown: bool, signedOver: SignedFields }
+pure def withinSignatureWindow(timestampMs: int, atMs: int): bool =
+  atMs - timestampMs <= signatureWindowMs and timestampMs - atMs <= signatureWindowMs
+pure def serviceRequestAccepted(serviceRequest: ServiceRequest, atMs: int): bool =
+  serviceRequest.keyConfigured and serviceRequest.keyKnown and
+  withinSignatureWindow(serviceRequest.timestampMs, atMs) and
+  serviceRequest.signedOver.signedMethod == serviceRequest.method and
+  serviceRequest.signedOver.signedPath == serviceRequest.pathAndQuery and
+  serviceRequest.signedOver.signedTimestampMs == serviceRequest.timestampMs and
+  serviceRequest.signedOver.signedBodyDigest == serviceRequest.bodyDigest
+pure def lawStaleServiceRequestRefused(serviceRequest: ServiceRequest, atMs: int): bool =
+  not(withinSignatureWindow(serviceRequest.timestampMs, atMs)) implies not(serviceRequestAccepted(serviceRequest, atMs))
+pure def lawSwappedBodyRefused(serviceRequest: ServiceRequest, atMs: int): bool =
+  serviceRequest.signedOver.signedBodyDigest != serviceRequest.bodyDigest implies not(serviceRequestAccepted(serviceRequest, atMs))
+pure def lawReplayedOnOtherRouteRefused(serviceRequest: ServiceRequest, atMs: int): bool =
+  (serviceRequest.signedOver.signedPath != serviceRequest.pathAndQuery or serviceRequest.signedOver.signedMethod != serviceRequest.method)
+    implies not(serviceRequestAccepted(serviceRequest, atMs))
+pure val signedRequestFields: SignedFields = { signedMethod: 1, signedPath: 1, signedTimestampMs: 0, signedBodyDigest: 1 }
+pure val signedServiceRequest: ServiceRequest = { method: 1, pathAndQuery: 1, timestampMs: 0, bodyDigest: 1,
+  keyConfigured: true, keyKnown: true, signedOver: signedRequestFields }
+pure val serviceRequestValues = Set(signedServiceRequest, { ...signedServiceRequest, bodyDigest: 2 },
+  { ...signedServiceRequest, pathAndQuery: 2 }, { ...signedServiceRequest, keyKnown: false },
+  { ...signedServiceRequest, keyConfigured: false })
+pure val atMsValues = Set(0, 300000, 300001, -300001)
+```
+
 ### The outcome is what enforcement reads
 
 The signed result request carries this record. Enforcement accepts it only
@@ -355,5 +446,6 @@ A clean assessment records only the evaluated commit. Routine later changes
 retain admission under policy without claiming the changed bytes were
 scanned; a different immutable repository identity needs its own admission
 (enforcement). The approved provider fallback order of the 11 November 2026
-owner decision (Orbio first, then Surplus) is a provider-routing shell
-obligation, not modeled here.
+owner decision (Orbio first, then Surplus) is stated in "Scan reviews call
+Orbio first and fall back to the pinned Surplus profiles in the approved
+order"; calling the providers is the shell's.

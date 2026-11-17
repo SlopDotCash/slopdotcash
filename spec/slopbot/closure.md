@@ -119,6 +119,94 @@ pure def lawFileOptOutWins(sampleObservation: SourceObservation): bool =
   (sampleObservation.file == FileValid and not(sampleObservation.fileClosure)) implies not(effectiveClosure(sampleObservation))
 ```
 
+### A repository file is valid only with version 1, a known audience, known keys and category modes, and a daily close cap from 0 to 200
+
+Source `parseRepositoryConfig`, `configProblem` and `labelOnlyConfig` in
+`workers/slopbot/contracts.ts`, and `loadContext` in `review.ts`. The
+adapter reads `.github/slopbot.json` from the default branch at the
+recorded base commit, at most 16 KiB. A file that exists but is truncated,
+unreadable or not JSON is invalid, never a reason to use the defaults. A
+valid file is one JSON object whose keys are among `version`, `audience`,
+`issues`, `pullRequests`, `closure`, `reviewExempt`, `dailyCloseCap` and
+`categories`; whose `version` is exactly the number 1; whose `audience` is
+`protection` or `participants`; whose four flags, when present, are
+booleans (absent: `issues` and `pullRequests` true, `closure` and
+`reviewExempt` false); whose `dailyCloseCap`, when present, is an integer
+from 0 to 200 (absent: 25); and whose `categories`, when present, is an
+object mapping the nine category names other than `none` to `off`, `label`
+or `close`, never `missing_evidence` to `close`. Unlisted categories keep
+their default modes. As in the development code, `out_of_scope: "close"`
+leaves the file valid, and the effective policy above still makes that
+category label-only. Every other problem makes the observation
+`FileInvalid`, which the rule above makes label-only with no closure and
+the default cap of 25. The shell parses the bytes into `RepositoryFile`:
+`ValueInteger` is a JSON number that is a whole number, and an integer
+outside the safe range is `ValueOther`.
+
+```quint
+type FileValue = ValueMissing | ValueBool | ValueInteger | ValueText | ValueObject | ValueOther
+type CategoryOverride = { categoryKey: str, modeName: str }
+type RepositoryFile = { jsonObject: bool, truncated: bool, fileKeys: List[str], versionValue: FileValue,
+  versionNumber: int, audienceValue: FileValue, audienceText: str, issuesValue: FileValue,
+  pullRequestsValue: FileValue, closureValue: FileValue, closureSetting: bool, reviewExemptValue: FileValue,
+  capValue: FileValue, capNumber: int, categoriesValue: FileValue, overrides: List[CategoryOverride] }
+pure val fileConfigKeys = Set("version", "audience", "issues", "pullRequests", "closure", "reviewExempt",
+  "dailyCloseCap", "categories")
+pure val fileCategoryKeys = Set("spam", "scam", "empty", "duplicate", "out_of_scope", "busywork",
+  "missing_evidence", "gaming", "low_quality")
+pure val fileModeNames = Set("off", "label", "close")
+pure val fileReadLimitBytes = 16384
+pure val fileMaxDailyCloseCap = 200
+pure val fileDefaultDailyCloseCap = 25
+pure def optionalBoolean(fileValue: FileValue): bool = fileValue == ValueMissing or fileValue == ValueBool
+pure def validOverride(o: CategoryOverride): bool =
+  fileCategoryKeys.contains(o.categoryKey) and fileModeNames.contains(o.modeName) and
+  not(o.categoryKey == "missing_evidence" and o.modeName == "close")
+pure def repositoryFileValid(f: RepositoryFile): bool =
+  f.jsonObject and not(f.truncated) and f.fileKeys.every(k => fileConfigKeys.contains(k)) and
+  f.versionValue == ValueInteger and f.versionNumber == 1 and
+  f.audienceValue == ValueText and (f.audienceText == "protection" or f.audienceText == "participants") and
+  optionalBoolean(f.issuesValue) and optionalBoolean(f.pullRequestsValue) and optionalBoolean(f.closureValue) and
+  optionalBoolean(f.reviewExemptValue) and
+  (f.capValue == ValueMissing or
+    (f.capValue == ValueInteger and f.capNumber >= 0 and f.capNumber <= fileMaxDailyCloseCap)) and
+  (f.categoriesValue == ValueMissing or (f.categoriesValue == ValueObject and f.overrides.every(o => validOverride(o))))
+pure def policyFileOf(present: bool, f: RepositoryFile): PolicyFile =
+  if (not(present)) FileAbsent else if (repositoryFileValid(f)) FileValid else FileInvalid
+pure def fileClosureOf(f: RepositoryFile): bool =
+  repositoryFileValid(f) and f.closureValue == ValueBool and f.closureSetting
+pure def fileDailyCloseCap(f: RepositoryFile): int =
+  if (repositoryFileValid(f) and f.capValue == ValueInteger) f.capNumber else fileDefaultDailyCloseCap
+pure def lawFileCapWithinRange(sampleFile: RepositoryFile): bool =
+  fileDailyCloseCap(sampleFile) >= 0 and fileDailyCloseCap(sampleFile) <= fileMaxDailyCloseCap
+pure def lawInvalidFileNeverOptsIn(sampleFile: RepositoryFile): bool =
+  not(repositoryFileValid(sampleFile)) implies
+    (policyFileOf(true, sampleFile) == FileInvalid and not(fileClosureOf(sampleFile)) and
+      fileDailyCloseCap(sampleFile) == fileDefaultDailyCloseCap)
+pure def lawUnknownKeyInvalidates(sampleFile: RepositoryFile): bool =
+  sampleFile.fileKeys.some(k => not(fileConfigKeys.contains(k))) implies not(repositoryFileValid(sampleFile))
+pure def lawTruncatedFileInvalid(sampleFile: RepositoryFile): bool =
+  sampleFile.truncated implies not(repositoryFileValid(sampleFile))
+pure def lawMissingEvidenceNeverConfiguredToClose(sampleFile: RepositoryFile): bool =
+  (repositoryFileValid(sampleFile) and sampleFile.categoriesValue == ValueObject) implies
+    sampleFile.overrides.every(o => not(o.categoryKey == "missing_evidence" and o.modeName == "close"))
+pure def lawMissingFileDefersToProject(sampleFile: RepositoryFile): bool =
+  policyFileOf(false, sampleFile) == FileAbsent
+pure val minimalFile: RepositoryFile = { jsonObject: true, truncated: false, fileKeys: List("version", "audience"),
+  versionValue: ValueInteger, versionNumber: 1, audienceValue: ValueText, audienceText: "protection",
+  issuesValue: ValueMissing, pullRequestsValue: ValueMissing, closureValue: ValueMissing, closureSetting: false,
+  reviewExemptValue: ValueMissing, capValue: ValueMissing, capNumber: 0, categoriesValue: ValueMissing, overrides: List() }
+pure val sampleFileValues = Set(minimalFile,
+  { ...minimalFile, fileKeys: List("version", "audience", "closure", "dailyCloseCap"), closureValue: ValueBool,
+    closureSetting: true, capValue: ValueInteger, capNumber: 200 },
+  { ...minimalFile, capValue: ValueInteger, capNumber: 201 }, { ...minimalFile, versionNumber: 2 },
+  { ...minimalFile, audienceText: "everyone" }, { ...minimalFile, fileKeys: List("version", "audience", "extra") },
+  { ...minimalFile, truncated: true }, { ...minimalFile, jsonObject: false }, { ...minimalFile, issuesValue: ValueText },
+  { ...minimalFile, categoriesValue: ValueObject, overrides: List({ categoryKey: "missing_evidence", modeName: "close" }) },
+  { ...minimalFile, categoriesValue: ValueObject, overrides: List({ categoryKey: "out_of_scope", modeName: "close" }) },
+  { ...minimalFile, categoriesValue: ValueObject, overrides: List({ categoryKey: "none", modeName: "off" }) })
+```
+
 ### Only the author's own authenticated run for the exact PR supplies participation authority
 
 Participation needs an active Slop membership (`points_members.closed_at IS
