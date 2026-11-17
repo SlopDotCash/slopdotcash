@@ -181,27 +181,32 @@ test("unproven retained work becomes a source-specific attribution hold", async 
   expect(result.valueDecisions.size).toBe(0);
 });
 
-test("counted discovery still requires the full retained-copy proof", async () => {
-  const previous = candidate("proof");
-  const optimized = candidate("proof", "main", true, false, true);
-  const before = await previous.run();
-  const after = await optimized.run();
-  expect(optimized.reads).toContain("counted discussion");
-  expect(after.retainedCommitAuthors).toEqual(before.retainedCommitAuthors);
-  expect(after.implementationAttributionHolds).toEqual(
-    before.implementationAttributionHolds,
-  );
-  expect(after.implementationAttributionHolds.has(optimized.acceptedId)).toBe(
-    true,
-  );
-  expect(
-    optimized.reads.filter((path) =>
-      /\/(?:files|commits)(?:\/|\?)/u.test(path),
-    ),
-  ).toEqual(
-    previous.reads.filter((path) => /\/(?:files|commits)(?:\/|\?)/u.test(path)),
-  );
-});
+test.each([false, true])(
+  "counted discovery still requires the full retained-copy proof (repository alias: %s)",
+  async (alias) => {
+    const previous = candidate("proof", "main", true, alias);
+    const optimized = candidate("proof", "main", true, alias, true);
+    const before = await previous.run();
+    const after = await optimized.run();
+    expect(optimized.reads).toContain("counted discussion");
+    expect(after.retainedCommitAuthors).toEqual(before.retainedCommitAuthors);
+    expect(after.implementationAttributionHolds).toEqual(
+      before.implementationAttributionHolds,
+    );
+    expect(after.implementationAttributionHolds.has(optimized.acceptedId)).toBe(
+      true,
+    );
+    expect(
+      optimized.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    ).toEqual(
+      previous.reads.filter((path) =>
+        /\/(?:files|commits)(?:\/|\?)/u.test(path),
+      ),
+    );
+  },
+);
 
 test("two merged PRs can resolve the same retained original through a registered alias", async () => {
   const { run, route, canonical, reads } = candidate(
