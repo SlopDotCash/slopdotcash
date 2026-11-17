@@ -1,6 +1,6 @@
 {
   "fileExtensions": ["ts", "tsx"],
   "tsConfig": { "compilerOptions": { "module": "nodenext", "allowImportingTsExtensions": true, "jsx": "react-jsx", "paths": { "@repo/ui": ["./packages/ui/src/index.ts"] } } },
-  "excludeRegExp": ["(^|/)(node_modules|dist|storybook-static|\\.vibe|\\.cache)/", "^(vibestack/)?(examples|fixtures)/", "/test/fixtures?/", "^(migrations|skills|data|cycles|src/lib|scripts/escrow-acceptance)/", "^scripts/(render-install-guide\\.mjs|local-solana-validator\\.mjs|check-referral-roots\\.ts)$", "(^|/)contracts/solana/(integration|scripts)/", "(^|/)contracts/solana/package[^/]*\\.json$", "(^|/)contracts/evm/integration/", "(^|/)contracts/evm/[^/]+\\.integration\\.ts$", "(^|/)frontend/public/"],
+  "excludeRegExp": ["(^|/)(node_modules|dist|storybook-static|\\.vibe|\\.cache)/", "^(vibestack/)?(examples|fixtures)/", "/test/fixtures?/"],
   "detectiveOptions": { "ts": { "skipTypeImports": true }, "tsx": { "skipTypeImports": true } }
 }
