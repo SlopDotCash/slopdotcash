@@ -34,6 +34,7 @@ import {
   updatePendingRecord,
   validPendingAttemptId,
 } from "./lib/pending-attempt";
+import { receivedNotice } from "./lib/vault-auto-register";
 import {
   checkSolanaVaultAction,
   reviewSolanaVaultAction,
@@ -510,7 +511,12 @@ export function VaultActions({
         // Included in a canonical block but not final: say it arrived, keep
         // the saved request and keep checking. It counts only once final.
         const network = networkLabel(deployment.network);
-        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const received = receivedNotice(
+          pending.operation,
+          network,
+          hash,
+          provisional,
+        );
         const waitingNotice =
           fromWallet || pending.batchId
             ? "Submitted. Waiting for finalized chain evidence."
@@ -521,7 +527,7 @@ export function VaultActions({
           autoErrored.current = false;
           if (result === "received") {
             receivedShown.current = true;
-            setNotice(receivedNotice);
+            setNotice(received);
           } else if (receivedShown.current) {
             // The block that carried it was replaced; it is pending again.
             receivedShown.current = false;
@@ -553,7 +559,7 @@ export function VaultActions({
           setPending(candidate);
         }
         receivedShown.current = result === "received";
-        setNotice(result === "received" ? receivedNotice : waitingNotice);
+        setNotice(result === "received" ? received : waitingNotice);
         return;
       }
       receivedShown.current = false;
