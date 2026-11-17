@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "06ba282a853c7def225039d743259ba7701287be963f0099592faf61e0456321",
+      "sha256": "73046a65fccda53691f345c097fed54f35481af99fac3311441a2ff33ef8a5cb",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [18, 49, 71],
+      "candidateLines": [22, 53, 75],
       "review": "mapped-abstraction"
     },
     {
@@ -4139,6 +4139,16 @@
         41, 45, 57, 59, 93, 107, 176, 215, 224, 229, 232, 259, 276, 283, 322,
         407, 437, 441, 562
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-slopbot-runtime.ts",
+      "sha256": "db38c58d810523daf8994a9262f774fdd45ea83f5a14480d7741a590394d2735",
+      "models": [
+        "formal/models/release/slopbot_runtime_metadata.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "candidateLines": [99, 101, 107, 110, 148, 164, 195],
       "review": "mapped-abstraction"
     },
     {
@@ -14863,6 +14873,23 @@
       ]
     },
     {
+      "path": "formal/models/release/slopbot_runtime_metadata.qnt",
+      "sha256": "1a127485a24cff0ad1116c2f3bd5ac54cdd307307ea326c2b0e44df740847707",
+      "sources": ["scripts/inspect-slopbot-runtime.ts"],
+      "scenarios": [
+        "deniedRefusedTest",
+        "deploymentDriftRefusedTest",
+        "incoherentVersionRefusedTest",
+        "invalidRuntimeRefusedTest",
+        "malformedExpectedSourceTest",
+        "malformedRefusedTest",
+        "missingAuthorityTest",
+        "positiveMetadataTest",
+        "privacyProjectionTest",
+        "wrongSourceRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/release/staging_release_order.qnt",
       "sha256": "91db17ebec6009138aaa6d46aa0f6b764675bbe05e2ea9baa5e95bf4a2f297db",
       "sources": [
@@ -14917,7 +14944,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "4e37824e0dfe9f88fca111fe636106d98c831d3089b859a1874ca7a814829a00",
+      "sha256": "4e9655091ad946dbfe2188973a54d12d78b7139a9ff9966d7f5d3336240c1c4e",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14931,6 +14958,7 @@
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
+        "scripts/inspect-slopbot-runtime.ts",
         "scripts/inspect-value-intake-history.ts",
         "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",

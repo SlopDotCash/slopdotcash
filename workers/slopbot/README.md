@@ -18,6 +18,13 @@ Network waits and wall-time caps are separate. After a protected release,
 verify the 100% active version, `cpu_ms = 300000`, Standard usage and a supported
 plan before retrying an import. This budget does not guarantee completion.
 
+The protected main `fee-worker-bindings.yml` workflow accepts an optional exact
+`slopbot_source` SHA for a separate read-only metadata job. Its
+`slopbot-runtime.json` artifact retains only the matching source, active version,
+CPU limit, usage model and deployment stability. Missing, denied, malformed or
+changing metadata stays unavailable. The receipt does not verify Paid plan
+entitlement, execution success or the cause of an earlier import failure.
+
 ## Flow
 
 1. **Webhook.** `POST /github/webhook` verifies `X-Hub-Signature-256`, records
