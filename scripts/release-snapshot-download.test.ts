@@ -10,6 +10,30 @@ const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
   "utf8",
 );
+test("retained and fresh preparation have separate lanes with one production lock", () => {
+  const prepare = workflow
+    .split("  prepare:\n")[1]
+    .split("    # The public elizaOS")[0];
+  const group =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
+    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}";
+  const cancellation =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
+    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+  expect(prepare).toContain(group);
+  expect(prepare).toContain(cancellation);
+  expect(workflow.match(/^ {6}group: slop-production$/gm)).toHaveLength(1);
+  const deployment = workflow.split("  deploy:\n")[1];
+  expect(
+    deployment.indexOf("Refuse older retained production data"),
+  ).toBeLessThan(deployment.indexOf("Require scoped Cloudflare credentials"));
+  const freshness = deployment
+    .split("      - name: Refuse older retained production data\n")[1]
+    .split("\n      - name:")[0];
+  expect(freshness).toContain("inputs.use_published_data == true");
+  expect(freshness).toContain("(inputs.rotate_robinhood_rpc_from || '') == ''");
+  expect(freshness).toContain("(inputs.rotate_solana_rpc_from || '') == ''");
+});
 const step = (name: string) =>
   workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
 const publishedDataGuard = step(

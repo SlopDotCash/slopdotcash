@@ -159,3 +159,130 @@ test("the exact public missing-item response replays from the immutable evidence
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const mode of [
+  "renamed",
+  "renamed-existing",
+  "different-id",
+  "canonical-name-mismatch",
+  "private",
+  "missing",
+  "same-name",
+] as const)
+  test(`renamed public reference ${mode} preserves immutable repository identity`, async () => {
+    const source = fixture({ direct: true, textOnly: true });
+    source.pull.body = "See old-owner/old-name#23";
+    const client = GitHubClient.forToken(
+      "synthetic-read-token",
+      Object.assign(
+        async (_url: RequestInfo | URL, init?: RequestInit) => {
+          const { query, variables } = JSON.parse(String(init?.body));
+          if (query.includes("timelineItems"))
+            return Response.json({
+              data: {
+                repository: {
+                  pullRequest: {
+                    id: source.pull.node_id,
+                    timelineItems: {
+                      nodes: [],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  },
+                },
+              },
+            });
+          if (query.includes("SlopValueReferenceRepository"))
+            return Response.json({
+              data: {
+                repository:
+                  mode === "missing"
+                    ? null
+                    : {
+                        id: "R_original",
+                        isPrivate: mode === "private",
+                        nameWithOwner:
+                          mode === "same-name"
+                            ? "old-owner/old-name"
+                            : "new-owner/new-name",
+                      },
+              },
+            });
+          if (variables.owner === "old-owner")
+            return Response.json({
+              data: { repository: null },
+              errors: [{ type: "NOT_FOUND", path: ["repository"] }],
+            });
+          return Response.json({
+            data: {
+              rateLimit: {
+                cost: 1,
+                limit: 5000,
+                remaining: 4999,
+                resetAt: "2026-11-15T09:00:00Z",
+              },
+              repository: {
+                id: mode === "different-id" ? "R_different" : "R_original",
+                isPrivate: false,
+                nameWithOwner:
+                  mode === "canonical-name-mismatch"
+                    ? "other-owner/other-name"
+                    : "new-owner/new-name",
+                issueOrPullRequest:
+                  mode === "renamed-existing"
+                    ? {
+                        __typename: "PullRequest",
+                        id: "PR_renamed",
+                        number: 23,
+                        url: "https://github.com/new-owner/new-name/pull/23",
+                      }
+                    : null,
+              },
+            },
+            ...(mode === "renamed-existing"
+              ? {}
+              : {
+                  errors: [
+                    {
+                      type: "NOT_FOUND",
+                      path: ["repository", "issueOrPullRequest"],
+                    },
+                  ],
+                }),
+          });
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    );
+    const result = await collectValueReferenceEvidence(
+      { ...source.client, graphql: client.graphql.bind(client) },
+      repository.id,
+      1,
+    );
+    if (mode === "renamed-existing") {
+      expect(result.references).toEqual([
+        {
+          id: "PR_renamed",
+          number: 23,
+          url: "https://github.com/new-owner/new-name/pull/23",
+          repository: "new-owner/new-name",
+        },
+      ]);
+      expect(result.limitations).toEqual([]);
+      expect(result.unavailablePublicReferences).toEqual([]);
+    } else if (mode === "renamed") {
+      expect(result.references).toEqual([]);
+      expect(result.limitations).toEqual([]);
+      expect(result.unavailablePublicReferences).toEqual([
+        {
+          repository: "new-owner/new-name",
+          repositoryNodeId: "R_original",
+          number: 23,
+        },
+      ]);
+    } else {
+      expect(result.limitations).toEqual([
+        "Outgoing reference is unavailable or private",
+      ]);
+      expect(result.unavailablePublicReferences).toEqual([]);
+    }
+  });

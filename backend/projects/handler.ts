@@ -52,6 +52,7 @@ import {
   type VaultSetupInput,
 } from "../../src/lib/vault-setup";
 import {
+  type ApiError,
   apiErrorResponse,
   exactKeys,
   fail,
@@ -1374,8 +1375,10 @@ async function ownerVault(
   request: Request,
   deps: ProjectApiDependencies,
   projectId: string,
+  /** A saved register request the server repeats as the account that made it. */
+  saved?: { actor: GithubActor; body: Record<string, unknown> },
 ): Promise<Response> {
-  const actor = actorOf(await requireSession(request, deps));
+  const actor = saved?.actor ?? actorOf(await requireSession(request, deps));
   const current = await deps.persistence.getProject(projectId);
   if (!current) fail(404, "not_found", "Project not found");
   const enforcements = await deps.persistence.listEnforcements();
@@ -1438,7 +1441,7 @@ async function ownerVault(
       revision: current.revision,
       networks: await deps.vaultSetup.networks(current),
     });
-  const body = await readStrictJsonObject(request);
+  const body = saved?.body ?? (await readStrictJsonObject(request));
   exactKeys(
     body,
     ["step", "expectedRevision", "network", "claimId", "automatic"],
@@ -1477,6 +1480,12 @@ async function ownerVault(
     );
     if (existing) {
       await deps.vaultSetup.observe(current, existing, input.payoutPolicy);
+      await deps.persistence.closeRegisteredVaultCreation(
+        projectId,
+        input.network,
+        transactionId,
+        deps.now().toISOString(),
+      );
       return json(200, {
         status: "registered",
         deployment: existing,
@@ -1571,11 +1580,37 @@ async function ownerVault(
     input,
     transactionId,
   );
-  if (!verified) return json(200, { status: "pending" });
-  // Included but not final: answer the verified deployment so the owner can
-  // fund it now. Nothing is registered, appended or observed before finality.
-  if (verified.evidence !== "finalized")
-    return json(200, { status: "pending", provisional: verified.deployment });
+  if (!verified || verified.evidence !== "finalized") {
+    // Not final yet. Keep the owner's request so the server can repeat it
+    // after the owner leaves the page; a failed save never changes the answer.
+    if (!saved) {
+      const now = deps.now();
+      await deps.persistence
+        .saveVaultCreation({
+          id: `svc_${deps.randomId().replaceAll("-", "")}`,
+          projectId,
+          network: input.network,
+          transactionId,
+          requestJson: JSON.stringify(body),
+          actor,
+          now: now.toISOString(),
+          nextAttemptAt: new Date(
+            now.getTime() + SAVED_CREATION_RETRY_MS,
+          ).toISOString(),
+        })
+        .catch((error) =>
+          console.error("vault creation save failed", errorName(error)),
+        );
+    }
+    // Included but not final: answer the verified deployment so the owner can
+    // fund it now. Nothing is registered, appended or observed before finality.
+    return json(
+      200,
+      verified
+        ? { status: "pending", provisional: verified.deployment }
+        : { status: "pending" },
+    );
+  }
   const { deployment } = verified;
   const updated = await appendRevision(request, deps, {
     current,
@@ -1584,9 +1619,16 @@ async function ownerVault(
       ? attachBountyVault(current.manifest, deployment, utcPeriodOf(deps.now()))
       : attachOrdinaryVault(current.manifest, deployment),
     ownerParticipation: true,
-    reason:
-      "Owner registered a finalized vault verified against the reviewed factory and project policy.",
+    reason: saved
+      ? "Slop finished the owner's saved vault registration after finality, verified against the reviewed factory and project policy."
+      : "Owner registered a finalized vault verified against the reviewed factory and project policy.",
   });
+  await deps.persistence.closeRegisteredVaultCreation(
+    projectId,
+    input.network,
+    transactionId,
+    deps.now().toISOString(),
+  );
   await deps.vaultSetup.observe(updated, deployment, input.payoutPolicy);
   return json(200, {
     status: "registered",
@@ -1601,6 +1643,132 @@ async function ownerVault(
         }
       : {}),
   });
+}
+
+/** Log the kind of an unexpected failure, never its message. */
+const errorName = (error: unknown) =>
+  error instanceof Error ? error.name : "unknown";
+
+const SAVED_CREATION_RETRY_MS = 2 * 60_000;
+const SAVED_CREATION_SLOW_RETRY_MS = 10 * 60_000;
+const SAVED_CREATION_FAST_ATTEMPTS = 15;
+const SAVED_CREATION_EXPIRY_MS = 48 * 60 * 60_000;
+const SAVED_CREATION_BATCH = 3;
+const SAVED_CREATION_SWEEP_MS = 60_000;
+/** Refusals of the creation itself. Access or network trouble is asked again. */
+const SAVED_CREATION_FINAL = new Set([
+  "vault_creation_failed",
+  "vault_creation_invalid",
+  "vault_already_registered",
+]);
+
+/**
+ * Repeats each due saved register request as the account that made it,
+ * through the ordinary owner route: current access, restrictions, policy and
+ * finalized chain evidence are all checked again, and nothing registers
+ * without them. A creation ends when it registers, is refused, or is two days
+ * old (PRD section 6, operator decision of 17 November 2026).
+ */
+export async function finishSavedVaultCreations(
+  request: Request,
+  deps: ProjectApiDependencies,
+): Promise<{ registered: number; waiting: number; ended: number }> {
+  const result = { registered: 0, waiting: 0, ended: 0 };
+  if (!deps.vaultSetup) return result;
+  const now = deps.now();
+  const origin = new URL(request.url).origin;
+  for (const saved of await deps.persistence.dueVaultCreations(
+    now.toISOString(),
+    SAVED_CREATION_BATCH,
+  )) {
+    if (
+      now.getTime() - Date.parse(saved.createdAt) >
+      SAVED_CREATION_EXPIRY_MS
+    ) {
+      await deps.persistence.endVaultCreation(
+        saved.id,
+        "expired",
+        "expired",
+        now.toISOString(),
+      );
+      result.ended += 1;
+      continue;
+    }
+    const next = new Date(
+      now.getTime() +
+        (saved.attempts < SAVED_CREATION_FAST_ATTEMPTS
+          ? SAVED_CREATION_RETRY_MS
+          : SAVED_CREATION_SLOW_RETRY_MS),
+    ).toISOString();
+    // Another request may be finishing the same creation: take the check
+    // before any chain or GitHub read.
+    if (
+      !(await deps.persistence.claimVaultCreation(
+        saved.id,
+        saved.attempts,
+        next,
+      ))
+    )
+      continue;
+    try {
+      const response = await ownerVault(
+        new Request(
+          `${origin}/api/v1/project-vaults/${encodeURIComponent(saved.projectId)}`,
+          { method: "POST" },
+        ),
+        deps,
+        saved.projectId,
+        {
+          actor: saved.actor,
+          body: JSON.parse(saved.requestJson) as Record<string, unknown>,
+        },
+      );
+      const answer = (await response.json()) as { status?: unknown };
+      if (answer.status === "registered") result.registered += 1;
+      else result.waiting += 1;
+    } catch (error) {
+      const code = String((error as ApiError)?.code ?? errorName(error));
+      if (SAVED_CREATION_FINAL.has(code)) {
+        await deps.persistence.endVaultCreation(
+          saved.id,
+          "refused",
+          code,
+          now.toISOString(),
+        );
+        result.ended += 1;
+      } else {
+        // Keep the reason of the latest refusal with the waiting creation.
+        await deps.persistence
+          .noteVaultCreation(saved.id, code)
+          .catch(() => undefined);
+        result.waiting += 1;
+      }
+    }
+  }
+  return result;
+}
+
+/** When this isolate next looks for due saved creations. Tests reset it. */
+export const savedVaultCreationSweep = { nextAt: 0 };
+
+/**
+ * Looks for due saved creations behind a project API request, at most once a
+ * minute per isolate. The request only supplies the moment; the saved request
+ * carries the owner. A failure is logged and never reaches the response.
+ */
+function sweepSavedVaultCreations(
+  request: Request,
+  deps: ProjectApiDependencies,
+): void {
+  if (!deps.waitUntil || !deps.vaultSetup) return;
+  const now = Date.now();
+  if (now < savedVaultCreationSweep.nextAt) return;
+  savedVaultCreationSweep.nextAt = now + SAVED_CREATION_SWEEP_MS;
+  deps.waitUntil(
+    finishSavedVaultCreations(request, deps).catch((error) =>
+      console.error("saved vault creation sweep failed", errorName(error)),
+    ),
+  );
 }
 
 /**
@@ -1853,6 +2021,10 @@ async function removeProject(
   // The stored immutable repository, never submitted facts or creator status,
   // supplies authority. Recheck even an already-removed retry.
   requireAuthority(await currentAuthority(deps, current.manifest, actor));
+  // A restriction's own paused, retired revision is not a removal.
+  refuseRestrictedRemoval(
+    projectRestriction(projectId, await deps.persistence.listEnforcements()),
+  );
   if (enforcedManifest(current.manifest))
     return json(200, { project: adminProject(current) });
   if (current.revision !== expectedRevision)
@@ -1862,6 +2034,7 @@ async function removeProject(
     manifest: { ...current.manifest, status: "paused", listingTier: "retired" },
     actor,
     reason: "Removed by a current repository maintainer",
+    removal: true,
   });
   return json(200, { project: adminProject(project) });
 }
@@ -2180,6 +2353,8 @@ async function appendRevision(
     applicationId?: string;
     /** Recheck owner eligibility within the guarded enforcement snapshot. */
     ownerParticipation?: true;
+    /** Recheck a maintainer removal within the same snapshot. */
+    removal?: true;
   },
 ): Promise<ProjectRecord> {
   const { current, actor } = input;
@@ -2192,6 +2367,7 @@ async function appendRevision(
   if (input.ownerParticipation)
     assertMaintainerNotBanned(current.manifest, actor, enforcements);
   const restriction = projectRestriction(projectId, enforcements);
+  if (input.removal) refuseRestrictedRemoval(restriction);
   // A new revision cannot lift a Quarantine or a Ban (PRD ADM-06).
   if (restriction.state !== "clear" && !enforcedManifest(manifest)) {
     fail(
@@ -2387,6 +2563,20 @@ function assertMaintainerNotBanned(
       403,
       "maintainer_banned",
       "A moderator banned this maintainer after a confirmed malicious scan result. The account cannot start new Slop participation. The banned account, project steward or original applicant may appeal the project decision.",
+    );
+}
+
+/**
+ * Removal waits until the project's own Quarantine or Ban is lifted.
+ * Reinstatement lists the project again from the revision the restriction
+ * opened on (PRD ADM-06), which would undo a removal recorded under it.
+ */
+function refuseRestrictedRemoval(restriction: ProjectRestriction): void {
+  if (restriction.state !== "clear")
+    fail(
+      409,
+      "project_restricted",
+      `The project is ${restriction.state}; request reinstatement before removing it`,
     );
 }
 
@@ -3134,6 +3324,8 @@ export async function handleProjectApi(
           : part,
     )
     .join("/")}`;
+  if (parts.length > 0 && isProjectRoute(parts))
+    sweepSavedVaultCreations(request, deps);
   try {
     if (
       request.method !== "GET" &&

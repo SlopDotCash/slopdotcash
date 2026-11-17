@@ -6,7 +6,8 @@
  *
  * A month's proposal is written once: a later run with a different ledger
  * leaves the stored proposal and its rows unchanged. The owner then changes
- * amounts privately, and the payments coordinator freezes the current
+ * amounts (a cut below the proposal needs a public reason), and the payments
+ * coordinator freezes the current
  * allocations at the configured cutoff (backend/payments/monthly.ts). This
  * script reads no chain and authorizes, reserves or pays nothing.
  */

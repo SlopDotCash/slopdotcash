@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
@@ -58,6 +58,7 @@ try {
   // Execute the same release helper the protected workflow invokes. Only
   // Cloudflare replies are controlled; configurations and publication files are real.
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+  const versionId = "12345678-1234-1234-1234-123456789abc";
   for (const scenario of [
     "absent",
     "existing",
@@ -67,7 +68,7 @@ try {
   ]) {
     const folder = join(directory, scenario);
     const calls = [];
-    const provider = async (args) => {
+    const provider = async (args, env) => {
       calls.push(args);
       if (args[0] === "deployments" && args[1] === "list") {
         if (scenario === "existing") return { status: 0, stdout: "[]" };
@@ -77,26 +78,36 @@ try {
           stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: ${scenario === "auth" ? "10000" : "10007"}]`,
         };
       }
-      if (args[0] === "deploy") return { status: 0, stdout: "" };
-      if (args[0] === "versions")
+      if (args[0] === "deploy") {
+        const worker = JSON.parse(await readFile(args[2], "utf8"));
+        await appendFile(
+          env.WRANGLER_OUTPUT_FILE_PATH,
+          `${JSON.stringify({
+            type: "deploy",
+            version: 1,
+            worker_name: worker.name,
+            version_id: versionId,
+          })}\n`,
+        );
+        return { status: 0, stdout: "" };
+      }
+      if (args[0] === "versions" && args[1] === "view")
         return {
           status: 0,
-          stdout: JSON.stringify([
-            {
-              id: "fixture",
-              annotations: {
-                "workers/tag": (scenario === "wrong-source" ? "b" : "a").repeat(
-                  40,
-                ),
-              },
+          stdout: JSON.stringify({
+            id: versionId,
+            annotations: {
+              "workers/tag": (scenario === "wrong-source" ? "b" : "a").repeat(
+                40,
+              ),
             },
-          ]),
+          }),
         };
       if (args[1] === "status")
         return {
           status: 0,
           stdout: JSON.stringify({
-            versions: [{ version_id: "fixture", percentage: 100 }],
+            versions: [{ version_id: versionId, percentage: 100 }],
           }),
         };
       throw new Error("Unexpected provider operation");

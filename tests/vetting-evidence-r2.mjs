@@ -1,4 +1,5 @@
 // Run Miniflare in its supported Node runtime; the tests still use real R2.
+import { rename, writeFile } from "node:fs/promises";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 
 const runtime = new Miniflare(
@@ -41,3 +42,16 @@ try {
 } finally {
   await runtime.dispose();
 }
+
+// Acknowledgement follows real runtime disposal. It allows the Bun caller to
+// verify shutdown even if its child-process exit notification is delayed.
+const completionPath = process.argv[2];
+if (completionPath) {
+  await writeFile(
+    `${completionPath}.tmp`,
+    JSON.stringify({ pid: process.pid, completed: true }),
+    { flag: "wx", mode: 0o600 },
+  );
+  await rename(`${completionPath}.tmp`, completionPath);
+}
+process.exit(0);

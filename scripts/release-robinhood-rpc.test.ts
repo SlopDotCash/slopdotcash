@@ -302,3 +302,156 @@ test("rotation counts only aggregate unresolved live journal work", () => {
     "verify",
   );
 });
+
+test("Solana rotation changes only its two endpoint bindings and retains other lineages", async () => {
+  const { rotationMessage } = await import("./release-robinhood-rpc");
+  const resources = {
+    script: { etag: "fixture-code" },
+    script_runtime: { compatibility_date: "2026-07-30" },
+    bindings: [
+      { name: "BUYBACK_MODE", type: "plain_text", text: "live" },
+      { name: "FEE_CONVERTER_MODE", type: "plain_text", text: "live" },
+      {
+        name: "FEE_CONVERTER_NETWORKS",
+        type: "plain_text",
+        text: "base,ethereum,robinhood",
+      },
+      { name: "FEE_DB", type: "d1", id: "fixture-d1" },
+      { name: "RPC_URL_ROBINHOOD", type: "secret_text" },
+      { name: "RPC_URL_SOLANA", type: "secret_text" },
+      { name: "FEE_WALLET_KEY_SOLANA", type: "secret_text" },
+    ],
+  };
+  const before = {
+    ...previous,
+    annotations: {
+      "workers/message": `slop.cash release ${sha}; Robinhood RPC rotation from ${deploymentId}`,
+    },
+    resources,
+  };
+  const after = {
+    ...candidate,
+    annotations: {
+      "workers/tag": sha,
+      "workers/message": rotationMessage(sha, before, "solana"),
+    },
+    resources: {
+      ...resources,
+      bindings: [
+        ...resources.bindings,
+        { name: "SOLANA_RECOVERY_RPC_URL", type: "secret_text" },
+      ],
+    },
+  };
+  expect(() => requireSameWorker(before, after, sha, "solana")).not.toThrow();
+  expect(() =>
+    requireSameWorker(
+      before,
+      {
+        ...after,
+        resources: {
+          ...after.resources,
+          bindings: after.resources.bindings.filter(
+            (binding) => binding.name !== "FEE_WALLET_KEY_SOLANA",
+          ),
+        },
+      },
+      sha,
+      "solana",
+    ),
+  ).toThrow();
+  expect(() =>
+    requireSameWorker(
+      before,
+      {
+        ...after,
+        resources: {
+          ...after.resources,
+          bindings: after.resources.bindings.filter(
+            (binding) => binding.name !== "SOLANA_RECOVERY_RPC_URL",
+          ),
+        },
+      },
+      sha,
+      "solana",
+    ),
+  ).toThrow();
+  expect(() =>
+    requireSameWorker(
+      before,
+      {
+        ...after,
+        annotations: {
+          ...after.annotations,
+          "workers/message": `slop.cash release ${sha}; Solana RPC rotation from ${beforeId}`,
+        },
+      },
+      sha,
+      "solana",
+    ),
+  ).toThrow();
+  expect(() =>
+    checkInheritedVersion({ active, latest: after }, before),
+  ).toThrow();
+  expect(checkInheritedVersion({ active, latest: after }, after)).toBe(
+    deploymentId,
+  );
+});
+
+test("Solana rotation counts only its unresolved sends, native reservations and active leases", async () => {
+  const { requireQuietSolanaJournal, unresolvedSolanaWork } = await import(
+    "./release-robinhood-rpc"
+  );
+  using db = new Database(":memory:");
+  db.exec(`CREATE TABLE fee_conversions(id TEXT,network TEXT,mode TEXT,kind TEXT,state TEXT);
+    CREATE TABLE fee_bridge_outcomes(bridge_id TEXT);
+    CREATE TABLE fee_native_gas(network TEXT,state TEXT,actual_wei TEXT);
+    CREATE TABLE fee_converter_locks(network TEXT,expires_at TEXT);
+    INSERT INTO fee_conversions VALUES('other','base','live','bridge','submitted'),('done','solana','live','bridge','finalized');
+    INSERT INTO fee_bridge_outcomes VALUES('done');
+    INSERT INTO fee_native_gas VALUES('solana','signed','0');`);
+  const read = () => ({
+    success: true,
+    result: [
+      {
+        success: true,
+        results: [
+          db.query(unresolvedSolanaWork).get() as Record<string, unknown>,
+        ],
+      },
+    ],
+  });
+  expect(() => requireQuietSolanaJournal(read())).not.toThrow();
+  db.exec(`INSERT INTO fee_conversions VALUES('pending','solana','live','claim','unknown');
+    INSERT INTO fee_native_gas VALUES('solana','reserved',NULL);
+    INSERT INTO fee_converter_locks VALUES('solana','9999-12-31T00:00:00.000Z');`);
+  expect(read().result[0].results[0]).toEqual({
+    openSends: 1,
+    openGas: 1,
+    activeLocks: 1,
+  });
+  expect(() => requireQuietSolanaJournal(read())).toThrow("unresolved");
+  expect(() =>
+    requireQuietSolanaJournal({ success: true, result: [] }),
+  ).toThrow();
+});
+
+test("a later Robinhood rotation preserves the promoted Solana lineage", async () => {
+  const { rotationMessage } = await import("./release-robinhood-rpc");
+  const before = {
+    ...previous,
+    annotations: {
+      "workers/message": `slop.cash release ${sha}; Solana RPC rotation from ${deploymentId}`,
+    },
+  };
+  expect(rotationMessage(sha, before, "robinhood")).toBe(
+    `slop.cash release ${sha}; Solana RPC rotation from ${deploymentId}; Robinhood RPC rotation from ${beforeId}`,
+  );
+  const latest = {
+    ...candidate,
+    annotations: {
+      "workers/message": `slop.cash release ${sha}; Solana RPC rotation from ${deploymentId}`,
+    },
+  };
+  expect(() => checkInheritedVersion({ active, latest }, previous)).toThrow();
+});

@@ -2,6 +2,7 @@
 // @source workers/slopbot/verified-retained-binding.ts
 // @source workers/slopbot/value-consumption.ts
 // @source workers/slopbot/value-work-unit-consumption.ts
+// @evidence workers/slopbot/value-repair-metadata-compat.test.ts
 // Public consumers pin throughSequence and totalRecords. Three pages abstract
 // a full immutable lineage. Corrupt, missing and stale are never zero credit.
 module bot_value_history {

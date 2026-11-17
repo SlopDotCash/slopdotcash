@@ -28,6 +28,10 @@ on:
         description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
         type: string
         default: ""
+      rotate_solana_rpc_from:
+        description: "Manual main only: bind the qualified public Solana RPC pair from this active Worker version UUID"
+        type: string
+        default: ""
       skip_proofs:
         description: "Manual main or development release only: do not repeat the Quint state-model and LemmaScript proof runs; every other check and all deployment verification still run"
         type: boolean
@@ -113,7 +117,8 @@ jobs:
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+      # Manual retained-data production can prepare beside live collection.
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
@@ -148,14 +153,28 @@ jobs:
         if: (inputs.rotate_robinhood_rpc_from || '') != ''
         env:
           EXPECTED_VERSION: ${{ inputs.rotate_robinhood_rpc_from }}
+          SOLANA_ROTATION: ${{ inputs.rotate_solana_rpc_from }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           test "$GITHUB_REF" = "refs/heads/main"
+          test -z "$SOLANA_ROTATION"
           if ! [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]; then
             echo "::error::The Robinhood RPC rotation requires the active Worker version UUID."
             exit 1
           fi
+
+      - name: Require manual main for a Solana RPC rotation
+        if: (inputs.rotate_solana_rpc_from || '') != ''
+        env:
+          EXPECTED_VERSION: ${{ inputs.rotate_solana_rpc_from }}
+          ROBINHOOD_ROTATION: ${{ inputs.rotate_robinhood_rpc_from }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test -z "$ROBINHOOD_ROTATION"
+          [[ "$EXPECTED_VERSION" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]]
 
       - name: Require manual main or development release for published data
         if: inputs.use_published_data == true
@@ -490,6 +509,14 @@ jobs:
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Install the pinned merge collector for source tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
       # verify:code without formal:check: the Quint state-models job runs that
       # same check for this SHA, and the quality gate requires it. Running it
       # here too repeated about 15 minutes of model scenarios on every run.
@@ -774,6 +801,10 @@ jobs:
       name: slop-staging
       url: https://staging.slop.cash
     steps:
+      - name: Set staging order retry deadline
+        run: |
+          # Keep quota recovery in the first five minutes of the 20-minute job.
+          echo "STAGING_ORDER_RETRY_UNTIL=$(($(date +%s) + 300))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -953,7 +984,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: ${{ (inputs.rotate_solana_rpc_from || '') != '' && 90 || 30 }}
     concurrency:
       # Only publication holds this lock. Neither environment requires a
       # manual reviewer: the reviewed main merge is the release decision.
@@ -1077,6 +1108,10 @@ jobs:
             exit 0
           fi
 
+      - name: Refuse older retained production data
+        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        run: bun scripts/check-retained-release-data.ts dist
+
       - name: Require scoped Cloudflare credentials
         if: steps.release-input.outputs.superseded != 'true'
         env:
@@ -1090,7 +1125,7 @@ jobs:
           fi
 
       - name: Check fee-converter RPC inheritance before publication
-        if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -1115,8 +1150,31 @@ jobs:
           fi
           bun --no-env-file scripts/release-robinhood-rpc.ts rotate
 
+      - name: Bind the production fee-converter public Solana RPC pair
+        if: (inputs.rotate_solana_rpc_from || '') != ''
+        timeout-minutes: 75
+        env:
+          RELEASE_SUPERSEDED: ${{ steps.release-input.outputs.superseded }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_FEE_CONVERTER_RELEASE: ${{ vars.SLOP_FEE_CONVERTER_RELEASE }}
+          SLOP_SOLANA_RPC_EXPECTED_VERSION: ${{ inputs.rotate_solana_rpc_from }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_SUPERSEDED" != true
+          bun --no-env-file scripts/release-robinhood-rpc.ts rotate-solana
+
+      - name: Retain Solana RPC qualification
+        if: always() && (inputs.rotate_solana_rpc_from || '') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: solana-rpc-qualification-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/solana-rpc-public-pair-proof.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Qualify Slopbot review and value models with the real provider
-        if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOPBOT_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         timeout-minutes: 11
         env:
           ORBIO_API_KEY: ${{ secrets.ORBIO_API_KEY }}
@@ -1126,7 +1184,7 @@ jobs:
         run: bun --no-env-file scripts/qualify-value-models.ts
 
       - name: Qualify private report screening with the real provider
-        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         timeout-minutes: 4
         env:
           SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
@@ -1138,7 +1196,7 @@ jobs:
         run: bun --no-env-file scripts/qualify-security-screening.ts
 
       - name: Require reviewed Pages project
-        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -1147,7 +1205,7 @@ jobs:
         run: bun --no-env-file scripts/prepare-vetting-public-key.ts preflight production
 
       - name: Validate optional Slopbot value scoring settings
-        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
           SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: ${{ vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD }}
           SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD: ${{ vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD }}
@@ -1179,12 +1237,12 @@ jobs:
           NODE
 
       - name: Derive production scanner public key
-        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
           SLOP_VETTING_SIGNING_JWK: ${{ secrets.SLOP_VETTING_SIGNING_JWK }}
         run: bun scripts/prepare-vetting-public-key.ts derive production "$RUNNER_TEMP/scanner-public-key.json"
       - name: Deploy private identity and Cloudflare Pages
-        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         id: pages-deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -1982,7 +2040,7 @@ jobs:
           done
 
       - name: Retain notification release evidence
-        if: always() && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: always() && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: slop-notify-production-${{ github.run_id }}
@@ -1993,7 +2051,7 @@ jobs:
           retention-days: 14
 
       - name: Verify Cloudflare deployment commit metadata
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         id: deployment-metadata
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -2050,7 +2108,7 @@ jobs:
           exit 1
 
       - name: Verify published skill and leaderboard
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         run: |
           set -euo pipefail
           verify_download() {
@@ -2106,7 +2164,7 @@ jobs:
           verify_download / "$expected_root" index.html
 
       - name: Verify active private trace API boundary
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         run: |
           set -euo pipefail
           response="$RUNNER_TEMP/slop-active-private-api-response.json"
@@ -2145,7 +2203,7 @@ jobs:
           exit 1
 
       - name: Report optional intake health
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         run: |
           status="$(curl --silent --show-error --max-time 30 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' https://api.slop.cash/api/v1/private-request-intake)"
           if [ "$status" != "200" ]; then
@@ -2153,7 +2211,7 @@ jobs:
           fi
 
       - name: Require public identity OAuth app
-        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        if: steps.release-input.outputs.superseded != 'true' && steps.pages-deploy.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:
           GITHUB_CLIENT_ID: ${{ steps.pages-deploy.outputs.github_client_id }}
         run: |
@@ -2163,18 +2221,62 @@ jobs:
           # Run this after Pages verification so an identity configuration
           # failure cannot suppress an unrelated, already-verified site fix.
           github_app_response="$RUNNER_TEMP/slop-identity-github-app.json"
-          github_app_status="$(
-            curl --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --max-filesize 65536 \
-              --output "$github_app_response" \
-              --write-out "%{http_code}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/apps/slop-identity
-          )"
+          github_app_headers="$RUNNER_TEMP/slop-identity-github-app.headers"
+          # Unauthenticated API calls share a small per-address quota on hosted
+          # runners, so a 403 or 429 is often GitHub refusing the runner, not
+          # the App. Retry a few times before deciding.
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            github_app_status="$(
+              curl --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --max-filesize 65536 \
+                --dump-header "$github_app_headers" \
+                --output "$github_app_response" \
+                --write-out "%{http_code}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                https://api.github.com/apps/slop-identity
+            )" || github_app_status=000
+            case "$github_app_status" in
+              200) break ;;
+              403|429|000)
+                if [ "$attempt" -lt 4 ]; then
+                  echo "GitHub answered HTTP $github_app_status for the public App lookup; retrying (attempt $attempt)."
+                  sleep $((attempt * 15))
+                  continue
+                fi
+                ;;
+            esac
+            break
+          done
           if [ "$github_app_status" != "200" ]; then
+            rate_limited=false
+            if [ "$github_app_status" = "429" ] || grep -qi '^x-ratelimit-remaining: 0' "$github_app_headers" 2>/dev/null; then
+              rate_limited=true
+            fi
+            if [ "$rate_limited" = true ]; then
+              # The API quota for this runner address is spent. The public App
+              # page answers 404 for a private or missing App, so a 200 still
+              # proves contributors can find it. The contract fields are
+              # checked on the next release whose lookup is not refused.
+              page_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
+                  --output /dev/null \
+                  --write-out "%{http_code}" \
+                  https://github.com/apps/slop-identity
+              )" || page_status=000
+              if [ "$page_status" = "200" ]; then
+                echo "::warning::GitHub's unauthenticated API quota for this runner was spent (HTTP $github_app_status); the public Slop Identity App page answered 200, so the App is still public. Contract fields were not re-read this release."
+                exit 0
+              fi
+              echo "::error::The Slop Identity GitHub App lookup was rate limited (HTTP $github_app_status) and its public page answered HTTP $page_status."
+              exit 1
+            fi
             echo "::error::The Slop Identity GitHub App is not publicly discoverable (HTTP $github_app_status)."
             exit 1
           fi

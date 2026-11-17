@@ -13,6 +13,12 @@ import {
   useProjectDraftSave,
   useProjectDraftStore,
 } from "./lib/project-draft-store";
+import {
+  protectedPathProblem,
+  READY_LABEL_DEFAULTS,
+  READY_LABEL_LIMITS,
+  type ReadyLabelSettings,
+} from "./lib/slopbot-ready.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -53,6 +59,12 @@ import {
   slopbotInstallScopeNote,
   validRepositoryPath,
 } from "./lib/project-contracts";
+import {
+  normalizeWebsiteInput,
+  normalizeXInput,
+  withOwnerLinks,
+  xInputValue,
+} from "./lib/project-links";
 import {
   boundedText,
   type FundingChoice,
@@ -157,6 +169,8 @@ const EMPTY_PROPOSAL = {
   headline: "",
   image: "",
   goal: "",
+  website: "",
+  x: "",
   criteria: "",
   contributionGuide: "",
   supportedTasks: "",
@@ -208,6 +222,8 @@ const FIELD_STEP: Partial<Record<ProposalField, number>> = {
   image: 0,
   headline: 0,
   goal: 0,
+  website: 0,
+  x: 0,
   criteria: 0,
   contributionGuide: 0,
   supportedTasks: 0,
@@ -284,6 +300,10 @@ function proposalErrors(p: Proposal): FieldErrors {
   if (goal) errors.goal = goal;
   const criteria = lengthError(p.criteria, 6, 2_000);
   if (criteria) errors.criteria = criteria;
+  const website = normalizeWebsiteInput(p.website);
+  if (!website.ok) errors.website = website.error;
+  const x = normalizeXInput(p.x);
+  if (!x.ok) errors.x = x.error;
   // The remaining skill fields are optional; empty defers to the repository.
   for (const field of SKILL_RULE_FIELDS) {
     const value = p[field];
@@ -662,6 +682,163 @@ function ClosureConsent({
           You can turn this off at any time.
         </p>
       )}
+    </div>
+  );
+}
+
+type ReadyDraft = {
+  readyLabel: string;
+  readyApprovals: string;
+  readyMaxLines: string;
+  readyMaxFiles: string;
+  readyProtectedPaths: string;
+};
+
+/** The owner's slopbot:ready settings as typed, with any problems. */
+function readyLabelDraft(value: ReadyDraft): {
+  settings: Omit<ReadyLabelSettings, "enabled"> | null;
+  errors: Record<string, string | undefined>;
+} {
+  const limits = READY_LABEL_LIMITS;
+  const whole = (text: string, min: number, max: number) => {
+    const n = /^\d{1,6}$/u.test(text.trim()) ? Number(text.trim()) : Number.NaN;
+    return Number.isSafeInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const approvals = whole(
+    value.readyApprovals,
+    limits.minApprovals,
+    limits.maxApprovals,
+  );
+  const maxChangedLines = whole(
+    value.readyMaxLines,
+    limits.minChangedLines,
+    limits.maxChangedLines,
+  );
+  const maxChangedFiles = whole(
+    value.readyMaxFiles,
+    limits.minChangedFiles,
+    limits.maxChangedFiles,
+  );
+  const protectedPaths = [
+    ...new Set(
+      value.readyProtectedPaths
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const pathProblem =
+    protectedPaths.length > limits.maxProtectedPaths
+      ? `List at most ${limits.maxProtectedPaths} paths.`
+      : (protectedPaths
+          .map((path) => {
+            const problem = protectedPathProblem(path);
+            return problem === null ? null : `${path}: ${problem}`;
+          })
+          .find((problem) => problem !== null) ?? undefined);
+  const errors = {
+    readyApprovals:
+      approvals === null
+        ? `Enter a whole number from ${limits.minApprovals} to ${limits.maxApprovals}.`
+        : undefined,
+    readyMaxLines:
+      maxChangedLines === null
+        ? `Enter a whole number from ${limits.minChangedLines} to ${limits.maxChangedLines}.`
+        : undefined,
+    readyMaxFiles:
+      maxChangedFiles === null
+        ? `Enter a whole number from ${limits.minChangedFiles} to ${limits.maxChangedFiles}.`
+        : undefined,
+    readyProtectedPaths: pathProblem,
+  };
+  return {
+    settings:
+      approvals === null ||
+      maxChangedLines === null ||
+      maxChangedFiles === null ||
+      pathProblem !== undefined
+        ? null
+        : { approvals, maxChangedLines, maxChangedFiles, protectedPaths },
+    errors,
+  };
+}
+
+function readySummary(settings: ReadyLabelSettings | undefined): string {
+  if (settings?.enabled !== true) return "Off";
+  const extra = settings.protectedPaths.length;
+  return `On: ${settings.approvals} approval${settings.approvals === 1 ? "" : "s"}, at most ${settings.maxChangedLines} lines in ${settings.maxChangedFiles} files${extra ? `, ${extra} extra protected path${extra === 1 ? "" : "s"}` : ""}`;
+}
+
+/**
+ * The slopbot:ready label (PRD section 5): off unless the owner turns it on.
+ * Slopbot labels a pull request it could merge safely; a human merges.
+ */
+function ReadyLabelFields({
+  value,
+  set,
+  error,
+}: {
+  value: ReadyDraft;
+  set: (field: keyof ReadyDraft) => (next: string) => void;
+  error: (field: keyof ReadyDraft) => string | undefined;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="ready-label-hint"
+          checked={value.readyLabel === "true"}
+          name="readyLabel"
+          onChange={(event) =>
+            set("readyLabel")(String(event.currentTarget.checked))
+          }
+          type="checkbox"
+        />{" "}
+        Label pull requests that are ready to merge
+      </label>
+      <p className="field-hint" id="ready-label-hint">
+        Slopbot adds <code>slopbot:ready</code> when checks pass, its review has
+        no finding, maintainers approved the latest commit, the change is small
+        and it touches no protected path such as CI, dependencies, contracts or
+        policy files. Slopbot never merges.
+      </p>
+      {value.readyLabel === "true" ? (
+        <>
+          <TextField
+            error={error("readyApprovals")}
+            inputMode="numeric"
+            label="Approvals required"
+            name="readyApprovals"
+            onChange={set("readyApprovals")}
+            value={value.readyApprovals}
+          />
+          <TextField
+            error={error("readyMaxLines")}
+            inputMode="numeric"
+            label="Most changed lines"
+            name="readyMaxLines"
+            onChange={set("readyMaxLines")}
+            value={value.readyMaxLines}
+          />
+          <TextField
+            error={error("readyMaxFiles")}
+            inputMode="numeric"
+            label="Most changed files"
+            name="readyMaxFiles"
+            onChange={set("readyMaxFiles")}
+            value={value.readyMaxFiles}
+          />
+          <TextField
+            error={error("readyProtectedPaths")}
+            hint="One per line, for example docs/legal/ or *.sql. These add to the built-in list."
+            label="Extra protected paths"
+            multiline
+            name="readyProtectedPaths"
+            onChange={set("readyProtectedPaths")}
+            value={value.readyProtectedPaths}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1103,6 +1280,10 @@ function ProjectProposalForm({
   };
   const valid = Object.keys(errors).length === 0;
   const p = proposal;
+  const websiteInput = normalizeWebsiteInput(p.website);
+  const websiteLink = websiteInput.ok ? websiteInput.value : null;
+  const xInput = normalizeXInput(p.x);
+  const xLink = xInput.ok ? xInput.value : null;
   const branches =
     branchChoices?.repository === p.repository ? branchChoices.names : [];
   const slug =
@@ -1310,10 +1491,14 @@ function ProjectProposalForm({
         mode: "open-declared",
         disclosureRequired: true,
       },
-      links: {
-        repository: `https://github.com/${repository}`,
-        issues: `https://github.com/${repository}/issues`,
-      },
+      links: withOwnerLinks(
+        {
+          repository: `https://github.com/${repository}`,
+          issues: `https://github.com/${repository}/issues`,
+        },
+        websiteLink,
+        xLink,
+      ),
     };
   })();
   const bounty = manifest.securityBounty;
@@ -1637,6 +1822,25 @@ function ProjectProposalForm({
               onChange={set("goal")}
               value={p.goal}
             />
+            <div className="setup-rule-grid">
+              <TextField
+                error={shown("website")}
+                label="Website (optional)"
+                name="website"
+                onChange={set("website")}
+                placeholder="https://example.com"
+                type="url"
+                value={p.website}
+              />
+              <TextField
+                error={shown("x")}
+                label="X account (optional)"
+                name="x"
+                onChange={set("x")}
+                placeholder="@handle"
+                value={p.x}
+              />
+            </div>
             <TextField
               error={shown("criteria")}
               label="Acceptance criteria"
@@ -1962,11 +2166,13 @@ function ProjectProposalForm({
   );
 }
 
-type UpdateDraft = {
+type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
   headline: string;
   goal: string;
+  website: string;
+  x: string;
   criteria: string;
   note: string;
   fundingMode: string;
@@ -1982,8 +2188,15 @@ type UpdateDraft = {
 const DRAFT_FIELDS = [
   "image",
   "automaticClosure",
+  "readyLabel",
+  "readyApprovals",
+  "readyMaxLines",
+  "readyMaxFiles",
+  "readyProtectedPaths",
   "headline",
   "goal",
+  "website",
+  "x",
   "criteria",
   ...SKILL_RULE_FIELDS,
   "fundingMode",
@@ -2212,11 +2425,25 @@ function ProjectUpdateForm({
       reward.paymentMode === "enabled" ||
       BigInt(reward.committedMinor) > 0n ||
       (current.escrow?.deployments.length ?? 0) > 0);
+  const currentReady = current.slopbot?.readyLabel;
   const initial: UpdateDraft = {
     automaticClosure: String(current.slopbot?.automaticClosure === true),
+    readyLabel: String(currentReady?.enabled === true),
+    readyApprovals: String(
+      currentReady?.approvals ?? READY_LABEL_DEFAULTS.approvals,
+    ),
+    readyMaxLines: String(
+      currentReady?.maxChangedLines ?? READY_LABEL_DEFAULTS.maxChangedLines,
+    ),
+    readyMaxFiles: String(
+      currentReady?.maxChangedFiles ?? READY_LABEL_DEFAULTS.maxChangedFiles,
+    ),
+    readyProtectedPaths: (currentReady?.protectedPaths ?? []).join("\n"),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
+    website: current.links.website ?? "",
+    x: xInputValue(current.links.x),
     criteria: current.contribution?.approvedScope ?? "",
     note: "",
     fundingMode: capMinor === "0" ? "none" : "monthly",
@@ -2332,9 +2559,24 @@ function ProjectUpdateForm({
         : undefined,
   );
   const amountMinor = amount.valid ? amount.minor : null;
+  const websiteInput = normalizeWebsiteInput(value.website);
+  const xInput = normalizeXInput(value.x);
+  const ready = readyLabelDraft(value);
+  const readyOn = value.readyLabel === "true";
+  // Off keeps the owner's last numbers so turning it back on restores them.
+  const nextReady: ReadyLabelSettings | undefined = readyOn
+    ? ready.settings
+      ? { enabled: true, ...ready.settings }
+      : currentReady
+    : currentReady
+      ? { ...currentReady, enabled: false }
+      : undefined;
   const errors: Record<string, string | undefined> = {
+    ...(readyOn ? ready.errors : {}),
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
+    website: websiteInput.ok ? undefined : websiteInput.error,
+    x: xInput.ok ? undefined : xInput.error,
     criteria: lengthError(value.criteria, 6, 2_000),
     note:
       value.note.trim() === "" ? undefined : lengthError(value.note, 1, 500),
@@ -2435,12 +2677,25 @@ function ProjectUpdateForm({
             ],
           }
         : {}),
-      ...(source.slopbot !== undefined || value.automaticClosure === "true"
-        ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
+      ...(source.slopbot !== undefined ||
+      value.automaticClosure === "true" ||
+      nextReady !== undefined
+        ? {
+            slopbot: {
+              automaticClosure: value.automaticClosure === "true",
+              ...(nextReady ? { readyLabel: nextReady } : {}),
+            },
+          }
         : {}),
       image: value.image || undefined,
       headline: value.headline.trim(),
       description: value.goal.trim(),
+      // An invalid entry keeps the published link until it is corrected.
+      links: withOwnerLinks(
+        source.links,
+        websiteInput.ok ? websiteInput.value : (source.links.website ?? null),
+        xInput.ok ? xInput.value : (source.links.x ?? null),
+      ),
       contribution: {
         ...(source.contribution ?? {}),
         approvedScope: value.criteria.trim(),
@@ -2477,6 +2732,12 @@ function ProjectUpdateForm({
       after:
         next.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
     },
+    {
+      field: "readyLabel",
+      label: "Slopbot ready label",
+      before: readySummary(current.slopbot?.readyLabel),
+      after: readySummary(next.slopbot?.readyLabel),
+    },
     ...(current.image !== next.image
       ? [
           {
@@ -2506,6 +2767,18 @@ function ProjectUpdateForm({
       label: "Goal",
       before: current.description,
       after: next.description,
+    },
+    {
+      field: "website",
+      label: "Website",
+      before: current.links.website ?? "None",
+      after: next.links.website ?? "None",
+    },
+    {
+      field: "x",
+      label: "X account",
+      before: current.links.x ?? "None",
+      after: next.links.x ?? "None",
     },
     {
       field: "approvedScope",
@@ -2829,6 +3102,23 @@ function ProjectUpdateForm({
             onChange={set("goal")}
             value={value.goal}
           />
+          <TextField
+            error={shown("website")}
+            label="Website (optional)"
+            name="website"
+            onChange={set("website")}
+            placeholder="https://example.com"
+            type="url"
+            value={value.website}
+          />
+          <TextField
+            error={shown("x")}
+            label="X account (optional)"
+            name="x"
+            onChange={set("x")}
+            placeholder="@handle"
+            value={value.x}
+          />
         </details>
         <details className="proposal-advanced">
           <summary>Contribution rules</summary>
@@ -2844,6 +3134,11 @@ function ProjectUpdateForm({
           <ClosureConsent
             onChange={set("automaticClosure")}
             value={value.automaticClosure}
+          />
+          <ReadyLabelFields
+            error={(field) => shown(field)}
+            set={set}
+            value={value}
           />
           <details className="proposal-skill-rules">
             <summary>Contributor instructions</summary>

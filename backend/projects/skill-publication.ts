@@ -7,6 +7,10 @@
  * reinstatement path; ordinary publication does not request reinstatement.
  */
 
+import {
+  listedThisMonth,
+  type PoolFundingIndex,
+} from "../../src/lib/pool-funding";
 import type {
   ProjectEnforcement,
   ProjectRecord,
@@ -98,6 +102,14 @@ export type SkillPublicationDependencies = {
     project: ProjectRecord,
     templateSha256: string,
   ): Promise<VettingClearance>;
+  /**
+   * The cached vault rows behind `GET /api/v1/pool-funding`. Discovery lists
+   * an active monthly pool only when it is funded this month
+   * (`listedThisMonth`). Null or a failed read lists every cleared project
+   * as before, so a funding outage never empties discovery.
+   */
+  poolFunding(): Promise<PoolFundingIndex | null>;
+  now?: () => Date;
 };
 
 /** Paths the generated publication defines, plus readable aliases. */
@@ -178,22 +190,39 @@ function listed(
   );
 }
 
+/** Null when the funding cannot be read: discovery then lists as before. */
+async function readPoolFunding(
+  deps: SkillPublicationDependencies,
+): Promise<PoolFundingIndex | null> {
+  try {
+    return await deps.poolFunding();
+  } catch {
+    console.error("project discovery pool funding unavailable");
+    return null;
+  }
+}
+
 /** The routing index the bootstrap skill matches a repository origin against. */
 async function discovery(
   deps: SkillPublicationDependencies,
 ): Promise<Response> {
-  const [all, records] = await Promise.all([
+  const [all, records, funding] = await Promise.all([
     deps.listProjects(),
     deps.listEnforcements(),
+    readPoolFunding(deps),
   ]);
+  const now = deps.now?.() ?? new Date();
   const template = await deps.loadTemplate();
   // Paused projects may still be cleared (legacy exemption) and may serve
   // skill bytes for inspection, but the bootstrap skill and installer only
   // accept active projects. Keep the discovery index identical to that gate.
+  // An unfunded monthly pool is not listed this month (operator decision,
+  // 16 November 2026); its skills still serve by direct link.
   const candidates = all.filter(
     (project) =>
       project.status === "active" &&
       listed(project, records) &&
+      listedThisMonth(project.manifest, funding, now) &&
       publishesGeneratedSkills(project.manifest),
   );
   const clearances = await Promise.all(

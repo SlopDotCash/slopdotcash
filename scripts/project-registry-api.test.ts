@@ -115,7 +115,14 @@ import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 afterEach(async () => {
-  await retained?.dispose();
+  const previous = retained;
+  retained = undefined!;
+  try {
+    await previous?.dispose();
+  } finally {
+    sqlite?.close();
+    sqlite = undefined!;
+  }
 });
 let vetting: CloudflareVettingPersistence;
 let scans = 0;
@@ -141,10 +148,16 @@ beforeEach(async () => {
   sqlite = database.sqlite;
   db = database.db;
   persistence = new CloudflareProjectPersistence(database.db);
-  retained = await localVettingEvidence(
-    database.db,
-    () => new Date("2026-10-18T12:00:00.000Z"),
-  );
+  try {
+    retained = await localVettingEvidence(
+      database.db,
+      () => new Date("2026-10-18T12:00:00.000Z"),
+    );
+  } catch (error) {
+    sqlite.close();
+    sqlite = undefined!;
+    throw error;
+  }
   vetting = new CloudflareVettingPersistence(
     database.db,
     async (a) => a.result !== null && retained.evidence.retained(a.result),
@@ -715,6 +728,48 @@ describe("project registry API", () => {
     expect(JSON.parse(prior?.manifestText ?? "{}").image).toBe(image);
   });
 
+  test("owner website and X links publish as presentation, validate and clear", async () => {
+    access = ADMIN_ACCESS;
+    await listProject();
+    const current = await persistence.getProject("open-registry");
+    if (!current) throw new Error("Missing listed project");
+    const links = {
+      ...current.manifest.links,
+      website: "https://open-registry.example",
+      x: "https://x.com/openregistry",
+    };
+    const published = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: { ...current.manifest, links },
+      expectedRevision: current.revision,
+    });
+    expect(published.status).toBe(200);
+    expect((await published.json()).changes).toEqual({
+      presentation: ["links"],
+      executable: [],
+      financial: [],
+    });
+    const stored = await persistence.getProject("open-registry");
+    expect(stored?.manifest.links).toEqual(links);
+    // The terms revision is untouched: links are not a material term.
+    expect(stored?.manifest.terms).toEqual(current.manifest.terms);
+    const invalid = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: {
+        ...current.manifest,
+        links: { ...links, x: "https://x.com/openregistry/status/1" },
+      },
+      expectedRevision: 2,
+    });
+    expect(invalid.status).toBe(422);
+    const cleared = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: current.manifest,
+      expectedRevision: 2,
+    });
+    expect(cleared.status).toBe(200);
+    const after = await persistence.getProject("open-registry");
+    expect(after?.manifest.links.website).toBeUndefined();
+    expect(after?.manifest.links.x).toBeUndefined();
+  });
+
   test("an owner revision publishes at once and appends only its expected revision", async () => {
     access = ADMIN_ACCESS;
     await listProject();
@@ -1101,6 +1156,53 @@ describe("project registry API", () => {
           ?.manifestText ?? "{}",
       ).securityBounty.split,
     ).toEqual(initialProgram.split);
+    // Owners add their own "does not qualify" lines as a new terms revision.
+    const exclusions = ["Price feed staleness within the documented heartbeat"];
+    const withExclusions = {
+      ...currentBounty.manifest,
+      securityBounty: {
+        ...currentBounty.manifest.securityBounty,
+        scope: {
+          ...currentBounty.manifest.securityBounty?.scope,
+          excludedFindings: exclusions,
+        },
+      },
+    };
+    const repeated = await call("PUT", "projects/bounty-first", "applicant", {
+      expectedRevision: currentBounty.revision,
+      manifest: {
+        ...withExclusions,
+        securityBounty: {
+          ...withExclusions.securityBounty,
+          scope: {
+            ...withExclusions.securityBounty.scope,
+            excludedFindings: [...exclusions, exclusions[0].toUpperCase()],
+          },
+        },
+      },
+    });
+    expect(repeated.status).toBe(422);
+    expect((await repeated.json()).error).toBe("invalid_manifest");
+    const excluded = await call("PUT", "projects/bounty-first", "applicant", {
+      expectedRevision: currentBounty.revision,
+      manifest: withExclusions,
+    });
+    expect(excluded.status).toBe(200);
+    const excludedBounty = await persistence.getProject("bounty-first");
+    expect(excludedBounty?.revision).toBe(currentBounty.revision + 1);
+    expect(
+      excludedBounty?.manifest.securityBounty?.scope.excludedFindings,
+    ).toEqual(exclusions);
+    expect(
+      JSON.parse(
+        (
+          await persistence.getRevisionText(
+            "bounty-first",
+            currentBounty.revision,
+          )
+        )?.manifestText ?? "{}",
+      ).securityBounty.scope.excludedFindings,
+    ).toBeUndefined();
     const solanaToken = "So11111111111111111111111111111111111111112";
     const metadataReader = deps.readTokenMetadata;
     deps.readTokenMetadata = async (network, address) => {
@@ -2467,6 +2569,8 @@ async function publicationRequests() {
           return { commitSha: livePin.commitSha, templateSha256 };
         },
       ),
+    // Funding is covered by its own discovery test; null lists as before.
+    poolFunding: async () => null,
     cache,
   };
   const get = (path: string) =>
