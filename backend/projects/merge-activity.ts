@@ -13,8 +13,14 @@
  * Project pages read the stored rows through `GET /api/v1/merge-activity`;
  * they never read GitHub per page view (PRD section 9). A failed read keeps
  * the last values with their date. Nothing here writes to GitHub.
+ *
+ * The same read also counts every open outside pull request, answered or
+ * not, for a maintainer's intake cap (operator decision, 17 November 2026;
+ * `src/lib/intake-cap.mjs`). A project with an intake cap is read at every
+ * hourly run instead of once a day, so its pause follows the queue.
  */
 
+import { type IntakeCount, intakeCap } from "../../src/lib/intake-cap.mjs";
 import { validRepositoryPath } from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type { D1Database, D1QueryStatement } from "../d1";
@@ -30,10 +36,15 @@ export const MEDIAN_WINDOW_DAYS = 30;
 /** A repository is read again after this long; failures retry after an hour. */
 const REFRESH_AFTER_MS = 20 * 60 * 60 * 1000;
 const RETRY_AFTER_MS = 60 * 60 * 1000;
+/** A project with an intake cap is read again at the next hourly run. */
+const INTAKE_REFRESH_AFTER_MS = 45 * 60 * 1000;
 /** Repositories read per scheduled run, so one run stays short. */
 export const REPOSITORIES_PER_RUN = 15;
 const OPEN_PAGE = 50;
 const OPEN_PAGES = 6;
+/** Open pull requests past the waiting pages are only counted, in lighter pages. */
+const COUNT_PAGE = 100;
+const COUNT_PAGES = 7;
 const MERGED_PAGE = 100;
 const MERGED_PAGES = 3;
 const MAINTAINER = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -56,6 +67,10 @@ export type MergeActivity = {
   waitingCapped: boolean;
   mergedOutside30d: number;
   medianMergeHours: number | null;
+  /** Open outside pull requests, drafts left out, answered or not. */
+  openOutside: number;
+  /** More open pull requests exist than one read counts; the count is a floor. */
+  openOutsideCapped: boolean;
 };
 
 export function median(values: readonly number[]): number | null {
@@ -74,6 +89,8 @@ export function summarizeMergeActivity(
   merged: readonly MergedPull[],
   latestMergedAt: string | null,
   now: Date,
+  /** Open outside pull requests counted beyond `open`, and whether more remain. */
+  counted: { more: number; capped: boolean } = { more: 0, capped: false },
 ): MergeActivity {
   const waitingBefore = now.getTime() - WAITING_DAYS * DAY_MS;
   const windowStart = now.getTime() - MEDIAN_WINDOW_DAYS * DAY_MS;
@@ -103,6 +120,10 @@ export function summarizeMergeActivity(
     waitingCapped: openCapped,
     mergedOutside30d: recent.length,
     medianMergeHours: median(hours),
+    openOutside:
+      open.filter((pull) => pull.outside && !pull.isDraft).length +
+      counted.more,
+    openOutsideCapped: counted.capped,
   };
 }
 
@@ -132,6 +153,15 @@ const OPEN_QUERY = `query($owner:String!,$name:String!,$after:String){
         comments(first:60){nodes{authorAssociation author{__typename}}}}
     }
     latest:pullRequests(states:MERGED,first:10,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{mergedAt}}
+  }
+}`;
+
+const COUNT_QUERY = `query($owner:String!,$name:String!,$after:String){
+  repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:${COUNT_PAGE},after:$after,orderBy:{field:CREATED_AT,direction:ASC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{isDraft authorAssociation author{__typename}}
+    }
   }
 }`;
 
@@ -184,6 +214,7 @@ export async function readMergeActivity(
   let latestMergedAt: string | null = null;
   let after: string | null = null;
   let openCapped = false;
+  let countAfter: string | null = null;
   for (let page = 0; page < OPEN_PAGES; page += 1) {
     type OpenData = {
       repository: {
@@ -229,9 +260,42 @@ export async function readMergeActivity(
     }
     // Oldest first: once a page reaches pull requests newer than seven days,
     // the rest cannot be waiting.
-    if (!connection.pageInfo.hasNextPage || reachedRecent) break;
-    if (page === OPEN_PAGES - 1) openCapped = true;
+    if (!connection.pageInfo.hasNextPage) break;
     after = connection.pageInfo.endCursor;
+    if (reachedRecent || page === OPEN_PAGES - 1) {
+      if (!reachedRecent) openCapped = true;
+      countAfter = after;
+      break;
+    }
+  }
+  // The rest of the open list is only counted for the intake cap.
+  const counted = { more: 0, capped: false };
+  for (let page = 0; countAfter !== null; page += 1) {
+    if (page === COUNT_PAGES) {
+      counted.capped = true;
+      break;
+    }
+    type CountData = {
+      repository: {
+        pullRequests: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: Array<Associated & { isDraft: boolean }>;
+        };
+      } | null;
+    };
+    const data: CountData = await graphql<CountData>(
+      fetcher,
+      token,
+      COUNT_QUERY,
+      { owner, name, after: countAfter },
+    );
+    if (!data.repository) throw new Error("github-repository-missing");
+    const connection = data.repository.pullRequests;
+    for (const node of connection.nodes)
+      if (!node.isDraft && outsideAuthor(node)) counted.more += 1;
+    countAfter = connection.pageInfo.hasNextPage
+      ? connection.pageInfo.endCursor
+      : null;
   }
   const since = new Date(now.getTime() - MEDIAN_WINDOW_DAYS * DAY_MS)
     .toISOString()
@@ -266,7 +330,14 @@ export async function readMergeActivity(
     if (!data.search.pageInfo.hasNextPage) break;
     after = data.search.pageInfo.endCursor;
   }
-  return summarizeMergeActivity(open, openCapped, merged, latestMergedAt, now);
+  return summarizeMergeActivity(
+    open,
+    openCapped,
+    merged,
+    latestMergedAt,
+    now,
+    counted,
+  );
 }
 
 /** Repository paths a project lists now, in registry order. */
@@ -298,14 +369,31 @@ type StoredRow = {
   waiting_capped: number | null;
   merged_outside_30d: number | null;
   median_merge_hours: number | null;
+  open_outside: number | null;
+  open_outside_capped: number | null;
 };
 
-/** True when the repository is due: never read, stale, or a failure an hour old. */
-export function due(row: StoredRow | undefined, now: Date): boolean {
+/**
+ * True when the repository is due: never read, stale, or a failure an hour
+ * old. `intake` is true for a project with an intake cap, which is read at
+ * every hourly run.
+ */
+export function due(
+  row: Pick<StoredRow, "attempted_at" | "failure"> | undefined,
+  now: Date,
+  intake = false,
+): boolean {
   if (!row) return true;
   const attempted = Date.parse(row.attempted_at);
-  if (row.failure !== null) return now.getTime() - attempted >= RETRY_AFTER_MS;
-  return now.getTime() - attempted >= REFRESH_AFTER_MS;
+  if (row.failure !== null)
+    return (
+      now.getTime() - attempted >=
+      (intake ? INTAKE_REFRESH_AFTER_MS : RETRY_AFTER_MS)
+    );
+  return (
+    now.getTime() - attempted >=
+    (intake ? INTAKE_REFRESH_AFTER_MS : REFRESH_AFTER_MS)
+  );
 }
 
 /**
@@ -347,7 +435,7 @@ export async function refreshMergeActivity(
   for (const project of projects)
     for (const repository of measuredRepositories(project)) {
       const row = stored.get(`${project.id}\n${repository}`);
-      if (due(row, now))
+      if (due(row, now, intakeCap(project) !== null))
         queue.push({
           projectId: project.id,
           repository,
@@ -373,8 +461,9 @@ export async function refreshMergeActivity(
           `INSERT INTO repository_merge_activity
              (project_id, repository, observed_at, attempted_at, failure,
               last_merged_at, waiting_outside, waiting_capped,
-              merged_outside_30d, median_merge_hours)
-           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+              merged_outside_30d, median_merge_hours,
+              open_outside, open_outside_capped)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (project_id, repository) DO UPDATE SET
              observed_at = excluded.observed_at,
              attempted_at = excluded.attempted_at,
@@ -383,7 +472,9 @@ export async function refreshMergeActivity(
              waiting_outside = excluded.waiting_outside,
              waiting_capped = excluded.waiting_capped,
              merged_outside_30d = excluded.merged_outside_30d,
-             median_merge_hours = excluded.median_merge_hours`,
+             median_merge_hours = excluded.median_merge_hours,
+             open_outside = excluded.open_outside,
+             open_outside_capped = excluded.open_outside_capped`,
         )
         .bind(
           item.projectId,
@@ -395,6 +486,8 @@ export async function refreshMergeActivity(
           activity.waitingCapped ? 1 : 0,
           activity.mergedOutside30d,
           activity.medianMergeHours,
+          activity.openOutside,
+          activity.openOutsideCapped ? 1 : 0,
         )
         .run();
       read += 1;
@@ -420,6 +513,29 @@ export async function refreshMergeActivity(
   return { read, failed };
 }
 
+/**
+ * The stored open counts by project for the intake cap (`intakePaused` in
+ * src/lib/intake-cap.mjs). Throws when D1 cannot be read; callers fail open.
+ */
+export async function readIntakeCounts(
+  db: Database,
+): Promise<Map<string, IntakeCount[]>> {
+  const { results } = await db
+    .prepare(
+      `SELECT project_id, observed_at, open_outside
+         FROM repository_merge_activity
+        WHERE observed_at IS NOT NULL AND open_outside IS NOT NULL`,
+    )
+    .all<Pick<StoredRow, "project_id" | "observed_at" | "open_outside">>();
+  const index = new Map<string, IntakeCount[]>();
+  for (const row of results ?? []) {
+    const list = index.get(row.project_id) ?? [];
+    list.push({ openOutside: row.open_outside, observedAt: row.observed_at });
+    index.set(row.project_id, list);
+  }
+  return index;
+}
+
 /** `GET /api/v1/merge-activity`: every stored repository row, by project. */
 export async function handleMergeActivityApi(
   request: Request,
@@ -442,7 +558,8 @@ export async function handleMergeActivityApi(
       .prepare(
         `SELECT project_id, repository, observed_at, attempted_at, failure,
                 last_merged_at, waiting_outside, waiting_capped,
-                merged_outside_30d, median_merge_hours
+                merged_outside_30d, median_merge_hours,
+                open_outside, open_outside_capped
            FROM repository_merge_activity
           WHERE observed_at IS NOT NULL
           ORDER BY project_id, repository`,
@@ -460,6 +577,8 @@ export async function handleMergeActivityApi(
         waitingCapped: row.waiting_capped === 1,
         mergedOutsideLast30Days: row.merged_outside_30d,
         medianHoursToMerge: row.median_merge_hours,
+        openOutside: row.open_outside,
+        openOutsideCapped: row.open_outside_capped === 1,
       });
       projects.set(row.project_id, list);
     }

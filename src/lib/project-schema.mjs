@@ -25,6 +25,7 @@ import {
   assertFundingAddresses,
   fundingAssetForNetwork,
 } from "./funding-address.mjs";
+import { assertIntakeCap } from "./intake-cap.mjs";
 import LEGACY_PROJECTS from "./legacy-projects.json" with { type: "json" };
 import { validatePayoutExclusions } from "./payout-exclusions.mjs";
 import {
@@ -1268,9 +1269,11 @@ function validateProjectDefinition(
     const slopbot = record(project.slopbot, "project.slopbot");
     exactKeys(
       slopbot,
-      slopbot.readyLabel === undefined
-        ? ["automaticClosure"]
-        : ["automaticClosure", "readyLabel"],
+      [
+        "automaticClosure",
+        ...(slopbot.intakeCap === undefined ? [] : ["intakeCap"]),
+        ...(slopbot.readyLabel === undefined ? [] : ["readyLabel"]),
+      ],
       "project.slopbot",
     );
     if (typeof slopbot.automaticClosure !== "boolean")
@@ -1280,6 +1283,8 @@ function validateProjectDefinition(
         slopbot.readyLabel,
         "project.slopbot.readyLabel",
       );
+    if (slopbot.intakeCap !== undefined)
+      assertIntakeCap(slopbot.intakeCap, "project.slopbot.intakeCap");
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&
