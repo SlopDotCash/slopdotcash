@@ -5840,7 +5840,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "sha256": "3f7498a345284f3ad8ce740fd2430b88d83aa7139b784127c77903ba7ff07ee6",
+      "sha256": "ae96593dcc5148093f6943f8635daf60aab1805ea15eed8a788934452dd7b961",
       "models": [
         "formal/models/api/api_intake_cap.qnt",
         "formal/models/api/api_project_revision_receipt.qnt",
