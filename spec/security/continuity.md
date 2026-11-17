@@ -54,12 +54,14 @@ pure def caseReporter(s: Continuity): int = PA::caseOf(s.award, 1).reporter
 pure def reporterMember(s: Continuity): A::Member = A::memberByActor(s.accounts, s.reporterAccount)
 pure def withAward(a: PA::PrivateAward, s: Continuity): Continuity = { ...s, award: a }
 pure def withAccounts(a: A::Accounts, s: Continuity): Continuity = { ...s, accounts: a }
+// The Inbox knows the reporter by the case's actor, as the starting state records it.
+pure def reporterClosure(s: Continuity): E::Enrollment = { ...E::closeEnrollment(reporterMember(s).email), actor: caseReporter(s) }
 pure def reporterClosed(s: Continuity): bool = reporterMember(s).membership == A::Closed
 pure def canCloseReporter(s: Continuity, by: int, session: int, confirmation: str): bool = by == caseReporter(s)
   and A::senderActor(s.accounts, session) == s.reporterAccount and A::canClose(s.accounts, session, confirmation)
-  and N::canCloseAccount(s.award.inbox, N::accountService, E::closeEnrollment(reporterMember(s).email))
+  and N::canCloseAccount(s.award.inbox, N::accountService, reporterClosure(s))
 pure def closeReporter(s: Continuity, by: int, session: int, confirmation: str): Continuity =
-  { ...withAccounts(A::close(s.accounts, session, confirmation), withAward(PA::withInbox(N::closeAccount(s.award.inbox, N::accountService, E::closeEnrollment(reporterMember(s).email)), s.award), s)),
+  { ...withAccounts(A::close(s.accounts, session, confirmation), withAward(PA::withInbox(N::closeAccount(s.award.inbox, N::accountService, reporterClosure(s)), s.award), s)),
     closedBeforePaid: s.award.settlement.payment.phase != P::Paid }
 pure def alwaysInboxConsentFollowsEnrollment(s: Continuity): bool =
   (N::enrollmentOf(s.award.inbox, caseReporter(s)).preference.activity implies reporterMember(s).email.preference.activity)
