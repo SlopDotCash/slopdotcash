@@ -9388,7 +9388,7 @@
     },
     {
       "path": "workers/slopbot/wrangler.toml",
-      "sha256": "5b0cbea63d87b82c7d5cea292a47b9cee0bb7ae1ab1db2c3b28eb6e0cc71efc3",
+      "sha256": "6011bcf5967b63ccbdf938acefd49151a1c7866a4ca79091f3d3d9cb8eb33f46",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",

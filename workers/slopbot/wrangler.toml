@@ -6,6 +6,9 @@ main = "entrypoint.ts"
 compatibility_date = "2026-07-30"
 workers_dev = false
 
+[limits]
+cpu_ms = 300_000
+
 [[d1_databases]]
 binding = "SLOPBOT_DB"
 database_name = "slop-private"
