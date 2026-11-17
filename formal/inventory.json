@@ -5563,7 +5563,7 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "21d21818ba9a2ffb22464ebae29080d5fdff6007c4d9ad88dd04816b61726668",
+      "sha256": "f43b462d7757b73d0e8c235f21e43c0c0d451a69e01bb35a06e8fd8e18d06546",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
@@ -6010,7 +6010,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "ed2e21136348e5c8371b0e3c104c35ee83f04b35d513131969d38fa9383dd351",
+      "sha256": "8f92729c32984e3b427e157521f445744a5b6deb8ffc1b44a67dadea853167c3",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -6023,7 +6023,7 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 36, 46, 53, 80, 82, 145, 154, 163, 169, 179, 182, 183, 185, 186, 187,
+        2, 36, 45, 53, 80, 82, 145, 154, 163, 169, 179, 182, 183, 185, 186, 187,
         188, 210, 213, 221, 223, 233, 293, 315, 377, 425, 426, 429, 438, 440,
         442, 448, 449, 450, 455, 456, 461, 465, 466, 476, 482, 493, 494, 495,
         502, 503, 505, 510, 515, 521, 522, 523, 532, 539, 540, 573, 581, 591,
