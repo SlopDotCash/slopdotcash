@@ -4145,12 +4145,12 @@
     },
     {
       "path": "scripts/inspect-value-intake-history.ts",
-      "sha256": "4434e33c4bd49476cb8b733ba3d4a0cdc49813eed5d0c3ce56a7d65ef86c4624",
+      "sha256": "26277d9800886d4830b1c19d8f81778b4ab7736257fda1f94275df7d632ca913",
       "models": [
         "formal/models/release/intake_history_projection.qnt",
         "formal/models/release/workflow_authority.qnt"
       ],
-      "candidateLines": [159, 166, 222],
+      "candidateLines": [177, 184, 240],
       "review": "mapped-abstraction"
     },
     {
@@ -14698,13 +14698,14 @@
     },
     {
       "path": "formal/models/release/intake_history_projection.qnt",
-      "sha256": "310034c6a2e950a64ba48ea6570921299be9afb5a29abbee62e308f6a32f65c1",
+      "sha256": "3057ecb131dc32497de906c23fb2f87c1eb978feb814e9466eb22c6c99e2758b",
       "sources": ["scripts/inspect-value-intake-history.ts"],
       "scenarios": [
         "boundedStableProjectionTest",
         "changedDeploymentKeepsNoRowsTest",
         "invalidWindowHasNoCallsTest",
         "refusedQueryKeepsNoRowsTest",
+        "sampledQueryRefusedTest",
         "truncatedQueryNotCompleteTest"
       ]
     },

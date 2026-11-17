@@ -77,6 +77,15 @@ export function storedIntakeFailure(
 ) {
   const row = object(value);
   const metadata = object(row?.$metadata);
+  const workers = object(row?.$workers);
+  // The provider's per-event flag is distinct from result pagination.
+  if (
+    row &&
+    Object.hasOwn(row, "$workers") &&
+    (!workers ||
+      (Object.hasOwn(workers, "truncated") && workers.truncated !== false))
+  )
+    return null;
   if (
     !row ||
     metadata?.service !== worker ||
@@ -117,6 +126,15 @@ class HistoryReadFailure extends Error {
   ) {
     super("Intake history inspection unavailable");
   }
+}
+
+/** Cloudflare documents absent ABR metadata as level1. Other values are uncertain. */
+function unsampledStatistics(value: unknown) {
+  if (value === undefined) return true;
+  const stats = object(value);
+  return (
+    stats !== null && (stats.abr_level === undefined || stats.abr_level === 1)
+  );
 }
 
 export async function inspectValueIntakeHistory(input: {
@@ -203,7 +221,7 @@ export async function inspectValueIntakeHistory(input: {
     queryDry: true,
     maximumEvents,
     attribution:
-      "Bounded retained observations only; no private request or source identity is inferred.",
+      "Bounded retained observations only; no private request/source identity, unsampled source coverage or absence of failures is established.",
   };
   try {
     const before = await active("deployment-read");
@@ -229,6 +247,11 @@ export async function inspectValueIntakeHistory(input: {
       count > 1_000_000
     )
       throw new HistoryReadFailure("history-shape");
+    if (
+      !unsampledStatistics(run.statistics) ||
+      !unsampledStatistics(result?.statistics)
+    )
+      throw new HistoryReadFailure("history-sampling");
     const observations = rows
       .map((row) => storedIntakeFailure(row, timeframe))
       .filter((row) => row !== null);

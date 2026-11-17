@@ -240,6 +240,11 @@ messages, bodies, stacks, request IDs and query-run IDs are discarded. Missing,
 unprojectable, truncated or unavailable evidence does not establish a cause or
 prove that an import succeeded. Deployment stability now does not establish
 the version that produced an earlier observation.
+The provider's `$workers.truncated` flag and both reported ABR levels are also
+checked: a truncated/invalid event or sampled/invalid query cannot report a
+complete read. Absent ABR metadata follows the provider's documented default
+of 1. A bounded read still does not establish unsampled source coverage or the
+absence of failures.
 
 The Cloudflare query API requires the `Workers Observability Write` permission
 even for its dry read. Use only the existing protected credential. A refusal

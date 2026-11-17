@@ -232,6 +232,65 @@ test("a changed deployment cannot report a complete observation", async () => {
   expect(result.complete).toBe(false);
   expect(result.observations).toEqual([]);
 });
+for (const truncated of [true, "true", null])
+  test("provider event truncation metadata refuses complete inspection", async () => {
+    const t = transport({
+      query: {
+        run: { status: "COMPLETED", dry: true },
+        events: { count: 1, events: [{ ...event, $workers: { truncated } }] },
+      },
+    });
+    const result = await inspectValueIntakeHistory({
+      ...input,
+      request: t.request,
+    });
+    expect(result.complete).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('"$workers"');
+  });
+for (const abr of [2, 0, -1, "1", null])
+  test("sampled or invalid query metadata refuses even an empty result", async () => {
+    const t = transport({
+      query: {
+        run: { status: "COMPLETED", dry: true, statistics: { abr_level: abr } },
+        events: { count: 0, events: [] },
+      },
+    });
+    const result = await inspectValueIntakeHistory({
+      ...input,
+      request: t.request,
+    });
+    expect(result.complete).toBe(false);
+  });
+test("the separate response sampling metadata is also checked", async () => {
+  const t = transport({
+    query: {
+      run: { status: "COMPLETED", dry: true, statistics: { abr_level: 1 } },
+      statistics: { abr_level: 2 },
+      events: { count: 0, events: [] },
+    },
+  });
+  const result = await inspectValueIntakeHistory({
+    ...input,
+    request: t.request,
+  });
+  expect(result.complete).toBe(false);
+});
+test("explicit unsampled query and untruncated event metadata are admitted", async () => {
+  const t = transport({
+    query: {
+      run: { status: "COMPLETED", dry: true, statistics: { abr_level: 1 } },
+      statistics: { abr_level: 1 },
+      events: {
+        count: 1,
+        events: [{ ...event, $workers: { truncated: false } }],
+      },
+    },
+  });
+  expect(
+    (await inspectValueIntakeHistory({ ...input, request: t.request }))
+      .complete,
+  ).toBe(true);
+});
 test("an unprojectable matching row cannot report complete inspection", async () => {
   const t = transport({
     query: {
