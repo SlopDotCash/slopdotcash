@@ -162,9 +162,9 @@
     },
     {
       "path": ".github/workflows/vetting-controller.yml",
-      "sha256": "1ad4c2f3a430ef0b22bc75f7aa47f282c46285320439d136862c2f98cab8d8e2",
+      "sha256": "48fbd7948eac50446fb35f1391b33a24a63dab5a244f2cbb307ae4db2996f87b",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [40, 45, 49, 50, 59, 61, 83, 98, 124],
+      "candidateLines": [54, 59, 63, 64, 73, 75, 97, 112, 138],
       "review": "mapped-abstraction"
     },
     {

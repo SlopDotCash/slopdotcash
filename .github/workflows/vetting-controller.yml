@@ -24,9 +24,23 @@ jobs:
       actions: write
       contents: read
     steps:
+      # The repository's GITHUB_TOKEN quota is shared by every workflow and is
+      # often spent, so a dedicated GitHub App with only Actions read/write on
+      # this repository dispatches the scan when it is configured. Without the
+      # App, or if minting fails, the step uses GITHUB_TOKEN as before.
+      - name: Mint scan dispatch token
+        id: dispatch-token
+        if: vars.SCAN_DISPATCH_APP_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SCAN_DISPATCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SCAN_DISPATCH_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-actions: write
       - name: Dispatch protected scanner branches
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.dispatch-token.outputs.token || github.token }}
           TRIGGER_EVENT: ${{ github.event_name }}
           RELEASE_REF: ${{ github.event.workflow_run.head_branch }}
           RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
