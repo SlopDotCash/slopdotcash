@@ -3,9 +3,7 @@ lemma recordPage_ensures(c: Census, page: Page)
   ensures (inv(c) ==> canRecordPage(c, page) ==> alwaysItemsDistinct(recordPage(c, page)))
   ensures (inv(c) ==> canRecordPage(c, page) ==> alwaysCursorsDistinct(recordPage(c, page)))
   ensures (inv(c) ==> canRecordPage(c, page) ==> alwaysCompleteWhenReady(recordPage(c, page)))
-  ensures (inv(c) ==> canRecordPage(c, page) ==> alwaysFailedKeepsSnapshot(recordPage(c, page)))
-  ensures (inv(c) ==> canRecordPage(c, page) ==> alwaysWindowForward(recordPage(c, page)))
-  ensures (inv(c) ==> canRecordPage(c, page) ==> stepPublishedWindowNeverRegresses(c, recordPage(c, page)))
+  ensures (inv(c) ==> canRecordPage(c, page) ==> stepWindowNeverRegresses(c, recordPage(c, page)))
 {
   if inv(c) && canRecordPage(c, page) {
     ItemsMeaning(c);

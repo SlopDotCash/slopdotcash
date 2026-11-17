@@ -159,6 +159,8 @@ pure def completionCurrent(l: Ledger): bool = l.completionRevision == l.revision
 pure def canApprovePhase(l: Ledger, by: int, decision: int): bool = maintainer(l, by) and completionCurrent(l) and decision > 0
 pure def approvePhase(l: Ledger, by: int, decision: int): Ledger = { ...l, phaseApproval: decision }
 pure def laterPhaseAllowed(l: Ledger): bool = completionCurrent(l) and l.phaseApproval > 0
+pure def lawUnprovedBlocksCompletion(ledger: Ledger): bool =
+  ledger.obligations.some(o => o.kind == Simulated or o.kind == TimedOut) implies not(mvpComplete(ledger))
 pure def alwaysCompletionWasEarned(l: Ledger): bool = completionCurrent(l) implies mvpComplete(l)
 pure def alwaysPhaseNeedsCompletion(l: Ledger): bool = l.phaseApproval > 0 implies maintainer(l, l.completedBy)
 pure def sometimesCompleted(l: Ledger): bool = completionCurrent(l)
@@ -186,6 +188,12 @@ pure val oValues = Set(missing(1, ModelObligation), { ...missing(1, ModelObligat
   { ...missing(1, ModelObligation), resultRevision: 1, kind: Waived, approval: 1 },
   { ...missing(1, ModelObligation), resultRevision: 1, kind: TimedOut, recorder: 3 },
   { ...missing(1, ModelObligation), resultRevision: 1, kind: Skipped, recorder: 3 })
+pure val reviewedRequirement: Obligation = { ...missing(1, RequirementObligation), resultRevision: 1, kind: Conformant, recorder: 3, reviewer: 1 }
+pure val reviewedGate: Obligation = { ...missing(2, ReleaseGate), resultRevision: 1, kind: LiveVerified, recorder: 3, reviewer: 1 }
+pure val completeLedger: Ledger = { ...initial, inventory: "inv-a", obligations: List(reviewedRequirement, reviewedGate) }
+pure val ledgerValues = Set(initial, completeLedger,
+  { ...completeLedger, obligations: List(reviewedRequirement, reviewedGate, { ...reviewedRequirement, id: 3, kind: Simulated }) },
+  { ...completeLedger, obligations: List(reviewedRequirement, reviewedGate, { ...missing(3, ModelObligation), resultRevision: 1, kind: TimedOut, recorder: 3, reviewer: 1 }) })
 pure val byValues = Set(1, 3)
 pure val resultValues = Set(Simulated, Proved, Conformant, LiveVerified, TimedOut, Skipped, Failed, FiniteVerified)
 pure val revisionValues = Set(1, 2)

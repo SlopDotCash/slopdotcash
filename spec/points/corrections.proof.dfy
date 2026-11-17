@@ -7,8 +7,8 @@ lemma lawProtectionRace_ensures(manifest: Manifest)
     assert prepare(initial, manifest).phase.Prepared?;
     var protected := protect(prepare(initial, manifest), settledFreeze);
     assert protected.frozen && protected.history == initial.history;
-    assert commit(protected).phase.Protected?;
-    assert commit(protected).history == initial.history;
+    assert commit(protected, false, Actor.TrustedWorkflow).phase.Protected?;
+    assert commit(protected, false, Actor.TrustedWorkflow).history == initial.history;
   }
 }
 
@@ -17,7 +17,7 @@ lemma lawReallocationPreservesPool_ensures(manifest: Manifest)
 {
   if manifest == readyManifest {
     ReadyManifestAllocates();
-    var corrected := commit(prepare(initial, manifest));
+    var corrected := commit(prepare(initial, manifest), false, Actor.TrustedWorkflow);
     assert corrected.phase.Applied?;
     assert corrected.pool == initial.pool && corrected.occurredAt == initial.occurredAt;
     assert points__allocation_canWriteAllocation(30, manifest.recipients, true, false);
@@ -29,7 +29,7 @@ lemma lawReplayPreservesRevocation_ensures(manifest: Manifest)
 {
   if manifest == readyManifest {
     ReadyManifestAllocates();
-    var committed := commit(prepare(initial, manifest));
+    var committed := commit(prepare(initial, manifest), false, Actor.TrustedWorkflow);
     assert committed.phase.Applied? && manifest.digest in committed.applied;
     var revoked := revoke(committed, readyRevocation);
     assert manifest.digest in revoked.applied;
@@ -42,7 +42,7 @@ lemma ReadyManifestAllocates()
   ensures completeCorrection(initial, readyManifest)
   ensures predecessorMatches(initial, readyManifest)
   ensures prepare(initial, readyManifest).phase.Prepared?
-  ensures commit(prepare(initial, readyManifest)).phase.Applied?
+  ensures commit(prepare(initial, readyManifest), false, Actor.TrustedWorkflow).phase.Applied?
 {
   var a := points__allocation_Recipient(1, 1);
   var b := points__allocation_Recipient(2, 2);

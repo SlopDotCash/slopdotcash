@@ -52,14 +52,14 @@ lemma PrefixFoldLength(prefix: seq<PublishedRecord>, full: seq<PublishedRecord>)
   }
 }
 
-lemma stage_ensures(p: Publication, candidate: seq<PublishedRecord>)
-  ensures (inv(p) ==> canStage(p) ==> alwaysUniqueVisible(stage(p, candidate)))
-  ensures (inv(p) ==> canStage(p) ==> alwaysCanonicalVisible(stage(p, candidate)))
-  ensures (inv(p) ==> canStage(p) ==> stepCanonicalObservationsOnly(p, "stage", stage(p, candidate)))
-  ensures (inv(p) ==> canStage(p) ==> stepOnlyPublicationChangesHistory(p, "stage", stage(p, candidate)))
-  ensures (inv(p) ==> canStage(p) ==> stepExactHistory(p, stage(p, candidate)))
+lemma stage_ensures(p: Publication, candidate: seq<PublishedRecord>, censusPhase: points__census_CensusPhase, historicalHold: bool)
+  ensures (inv(p) ==> canStage(p, censusPhase, historicalHold) ==> alwaysUniqueVisible(stage(p, candidate, censusPhase, historicalHold)))
+  ensures (inv(p) ==> canStage(p, censusPhase, historicalHold) ==> alwaysCanonicalVisible(stage(p, candidate, censusPhase, historicalHold)))
+  ensures (inv(p) ==> canStage(p, censusPhase, historicalHold) ==> stepCanonicalObservationsOnly(p, "stage", stage(p, candidate, censusPhase, historicalHold)))
+  ensures (inv(p) ==> canStage(p, censusPhase, historicalHold) ==> stepOnlyPublicationChangesHistory(p, "stage", stage(p, candidate, censusPhase, historicalHold)))
+  ensures (inv(p) ==> canStage(p, censusPhase, historicalHold) ==> stepExactHistory(p, stage(p, candidate, censusPhase, historicalHold)))
 {
-  if inv(p) && canStage(p) {
+  if inv(p) && canStage(p, censusPhase, historicalHold) {
     PrefixAgreesWithSlice(p.visible, p.visible);
   }
 }
