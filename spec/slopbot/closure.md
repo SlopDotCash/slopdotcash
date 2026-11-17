@@ -52,21 +52,21 @@ becomes a full-review decision after reinstatement.
 ```quint
 import categories as F from "./categories"
 import closureConsent as CC from "../backend/closureConsent"
-type ItemKind = PullRequest | Issue
+type ReviewItemKind = PullRequest | Issue
 type RepositoryScope = Unregistered | Active | SecurityOnly | ReversalOnly
 type SourceStatus = SourceUnknown | SourceCurrent | SourceSuperseded
 type InstallationStatus = InstallationUnknown | InstallationActive | InstallationSuspended | InstallationRemoved
-type ItemState = ItemUnknown | ItemOpen | ItemClosed | ItemMerged
+type ItemCondition = ItemUnknown | ItemOpen | ItemClosed | ItemMerged
 type ClosedBy = NotClosed | ClosedBySlopbot | ClosedByHuman
 type Coverage = CoverageUnknown | CoverageComplete | CoverageLimited
 type Assignment = AssignmentUnknown | Unassigned | Assigned
 type AuthorRole = RoleUnknown | Maintainer | NonMaintainer
 type PolicyFile = FileAbsent | FileValid | FileInvalid
 type CategoryMode = ModeOff | ModeLabel | ModeClose
-type ReviewIdentity = { project: int, repository: int, kind: ItemKind, itemNode: str, revision: str,
+type ReviewIdentity = { project: int, repository: int, kind: ReviewItemKind, itemNode: str, revision: str,
   contentDigest: str, author: int }
 type SourceObservation = { identity: ReviewIdentity, scope: RepositoryScope, source: SourceStatus,
-  installation: InstallationStatus, item: ItemState, closedBy: ClosedBy, draft: bool, coverage: Coverage,
+  installation: InstallationStatus, item: ItemCondition, closedBy: ClosedBy, draft: bool, coverage: Coverage,
   assignment: Assignment, authorRole: AuthorRole, projectRevision: int, consent: CC::SavedConsent,
   file: PolicyFile, fileClosure: bool, modeCategory: F::Category, fileMode: CategoryMode, securityAuthorized: bool }
 pure val reviewedItem: ReviewIdentity = { project: 1, repository: 7, kind: PullRequest, itemNode: "pr",
@@ -108,7 +108,7 @@ pure def effectiveMode(o: SourceObservation, category: F::Category): CategoryMod
   else if (F::neverCloses(category) and o.fileMode == ModeClose) ModeLabel
   else o.fileMode
 pure def effectiveClosure(o: SourceObservation): bool =
-  CC::checkedOnLoad(o.consent) and (o.file == FileAbsent or (o.file == FileValid and o.fileClosure))
+  CC::consents(o.consent) and (o.file == FileAbsent or (o.file == FileValid and o.fileClosure))
 pure def lawMissingConsentNeverCloses(sampleObservation: SourceObservation): bool =
   sampleObservation.consent != CC::Enabled implies not(effectiveClosure(sampleObservation))
 pure def lawInvalidFileIsLabelOnly(sampleObservation: SourceObservation, category: F::Category): bool =
@@ -265,9 +265,9 @@ sequence number zero, is unusable, so every decision is made on a real read.
 
 ```quint
 type Phase = Unreviewed | Triaged | Decided
-type Outcome = Undecided | Advisory | LabelFinding | Uncertain | SecurityAdvisory | CloseCandidate
+type ClosureOutcome = Undecided | Advisory | LabelFinding | Uncertain | SecurityAdvisory | CloseCandidate
 type Closure = { identity: ReviewIdentity, gate: GateObservation, phase: Phase, triage: AssessedVerdict,
-  hasConfirm: bool, confirm: AssessedVerdict, outcome: Outcome, decidedScope: RepositoryScope, decidedSeq: int,
+  hasConfirm: bool, confirm: AssessedVerdict, outcome: ClosureOutcome, decidedScope: RepositoryScope, decidedSeq: int,
   findingLabel: bool, securityCommented: bool, maintainerReopened: bool, authorAppealed: bool, appealUpheld: bool }
 pure val initial: Closure = { identity: reviewedItem, gate: unobserved, phase: Unreviewed, triage: notAssessed,
   hasConfirm: false, confirm: notAssessed, outcome: Undecided, decidedScope: Unregistered, decidedSeq: 0,
@@ -295,7 +295,7 @@ pure def canRecordConfirm(c: Closure, verdict: Verdict, grounding: GroundingChec
   c.phase == Triaged and validVerdict(verdict) and needsConfirm(c) and mayPostOrdinary(c)
 pure def recordConfirm(c: Closure, verdict: Verdict, grounding: GroundingCheck, related: RelatedItemCheck): Closure =
   { ...c, hasConfirm: true, confirm: assess(verdict, grounding, related, c.identity) }
-pure def outcomeFor(c: Closure): Outcome =
+pure def outcomeFor(c: Closure): ClosureOutcome =
   if (c.gate.source.scope == SecurityOnly) SecurityAdvisory
   else if (c.triage.verdict.category == F::NoFinding or c.gate.source.coverage != CoverageComplete or
     effectiveMode(c.gate.source, c.triage.verdict.category) == ModeOff) Advisory
@@ -385,8 +385,8 @@ keeps its own review (`appeal-before-finding`). Each blocks review actions on
 this revision; a newer head is a new instance.
 
 ```quint
-type ReopenRole = ReopenByMaintainer | ReopenByAuthor | ReopenByOther
-type ReopenEvidence = { itemNode: str, revision: str, actor: int, role: ReopenRole, at: int }
+type ReopenActorRole = ReopenByMaintainer | ReopenByAuthor | ReopenByOther
+type ReopenEvidence = { itemNode: str, revision: str, actor: int, role: ReopenActorRole, at: int }
 pure def findingRecorded(c: Closure): bool = c.phase == Decided and c.triage.verdict.category != F::NoFinding
 pure def canObserveReopen(c: Closure, reopen: ReopenEvidence): bool =
   reopen.itemNode == c.identity.itemNode and reopen.revision == c.identity.revision and reopen.at > 0 and

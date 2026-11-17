@@ -7,7 +7,9 @@ PRD sections 2, 3, 7 and 9, with the pinned `backend/points/handler.ts`,
 account service: the [identity Worker](./identity.md) store it consumes
 assertions from, every membership, every web session, the
 [X connection registry](./xConnection.md) and each member's
-[email enrollment](./email.md). Wallets, obligations, settlement history,
+[email enrollment](./email.md), together with the
+[notice outbox](../operations/notifications.md) whose consent snapshot and
+closure cancellation it commits in the same write. Wallets, obligations, settlement history,
 private cases and historical Points stay attached to the immutable actor and
 are not changed by any transition here.
 
@@ -18,7 +20,9 @@ the request. Negative senders are the service's own internal paths, which
 the shell establishes from its code, never from a request: the identity
 Worker's GitHub callback handler, clock and hourly job (`I::githubExchange`,
 `I::workerClock`, `I::identityCron`), the X callback handler after its own
-OAuth exchange (`xCallback`), and the private mail service (`mailService`). The clock is the service's trusted clock in seconds. Session,
+OAuth exchange (`xCallback`), the private mail service (`mailService`), and
+the source-change writers that save a notice in their own transaction
+(`noticeSource`). The clock is the service's trusted clock in seconds. Session,
 verification, destination-version and unsubscribe identifiers stand for
 random values and are issued here from counters that never repeat.
 
@@ -44,6 +48,7 @@ one hour from sign-in. Session IDs are issued in order and never reused.
 import identity as I from "./identity"
 import email as E from "./email"
 import xConnection as X from "./xConnection"
+import notifications as N from "../operations/notifications"
 type Membership = Open | Closed
 type Member = { actor: int, githubId: int, login: str, membership: Membership, public: bool,
   joinedAt: int, closedAt: int, xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }
@@ -51,12 +56,14 @@ type Session = { id: int, actor: int, expiresAt: int }
 type HistoricalAward = { actor: int, at: int, points: int }
 type Accounts = { now: int, identity: I::Identity, members: List[Member], sessions: List[Session], lastSession: int,
   xRegistry: X::XRegistry, xConfigured: bool, mailAvailable: bool, telegramClaims: List[str],
-  xAwards: List[HistoricalAward], refusedSignIns: List[int], lastEmailId: int, lastVersion: int, lastUnsubscribe: int }
+  xAwards: List[HistoricalAward], refusedSignIns: List[int], lastEmailId: int, lastVersion: int, lastUnsubscribe: int,
+  inbox: N::Inbox }
 pure val sessionLifetime = 60 * 60
 pure val participationPointsEnd = 1792800000
 pure val launchClock = 1794614400
 pure val xCallback = -5
 pure val mailService = -6
+pure val noticeSource = -7
 pure val absentMember: Member = { actor: 0, githubId: 0, login: "", membership: Closed, public: false,
   joinedAt: 0, closedAt: 0, xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(1, 0) }
 pure def memberByGithub(s: Accounts, githubId: int): Member = s.members.select(m => m.githubId == githubId).nthOr(0, absentMember)
@@ -273,13 +280,17 @@ pure def close(s: Accounts, by: int, confirmation: str): Accounts =
   val m = memberByActor(s, senderActor(s, by))
   { ...s, members: replaceMember(s.members, { ...m, membership: Closed, public: false, closedAt: s.now,
       xLink: X::noLink, telegramLinked: false, email: E::closeEnrollment(m.email) }),
-    sessions: s.sessions.select(x => x.actor != m.actor), xRegistry: X::dropActorFlows(s.xRegistry, m.actor) }
+    sessions: s.sessions.select(x => x.actor != m.actor), xRegistry: X::dropActorFlows(s.xRegistry, m.actor),
+    inbox: N::closeAccount(s.inbox, N::accountService, E::closeEnrollment(m.email)) }
 pure def alwaysClosedPrivate(s: Accounts): bool = s.members.every(m => if (m.membership == Closed)
     not(m.public) and m.xLink == X::noLink and not(m.telegramLinked) and m.closedAt > 0
       and not(m.email.preference.activity) and not(m.email.preference.security)
       and m.email.verifications.every(v => v.consumed or v.cancelled)
       and not(s.sessions.some(x => x.actor == m.actor)) and not(s.xRegistry.flows.some(f => f.actor == m.actor))
     else m.closedAt == 0)
+pure def stepClosureCancelsWaitingMail(before: Accounts, after: Accounts): bool = after.members.every(m =>
+  (m.membership == Closed and memberByActor(before, m.actor).membership == Open) implies
+    N::noWaitingMail(after.inbox, m.githubId))
 pure def stepClosedAtStable(before: Accounts, after: Accounts): bool = before.members.every(m =>
   (m.membership == Closed and memberByActor(after, m.actor).membership == Closed) implies memberByActor(after, m.actor).closedAt == m.closedAt)
 pure def lawClosureInvalidatesEverySession(s: Accounts, by: int, confirmation: str, other: int): bool =
@@ -351,6 +362,12 @@ pure def alwaysXLinkReserved(s: Accounts): bool = s.members.every(m => m.xLink.x
 pure def alwaysXLinkPublicWhenRecent(s: Accounts): bool = s.members.every(m =>
   (m.xLink.xId != "" and m.xLink.verifiedAt >= launchClock) implies m.xLink.public)
 pure def stepXReservationsPermanent(before: Accounts, after: Accounts): bool = X::claimsPermanent(before.xRegistry, after.xRegistry)
+pure def stepXConfersNoOtherAuthority(before: Accounts, via: str, after: Accounts): bool =
+  (via == "startX" or via == "claimXCallback" or via == "commitX" or via == "failX" or via == "disconnectX" or
+    via == "publishX") implies (after.sessions == before.sessions and after.identity == before.identity and
+    after.inbox == before.inbox and after.xAwards == before.xAwards and
+    after.members.every(m => memberByActor(before, m.actor).githubId == m.githubId and
+      memberByActor(before, m.actor).membership == m.membership and memberByActor(before, m.actor).email == m.email))
 pure def stepFailedXKeepsLink(before: Accounts, via: str, after: Accounts): bool =
   (via == "failX" or via == "claimXCallback" or via == "startX") implies after.members == before.members
 ```
@@ -361,19 +378,28 @@ pure def stepFailedXKeepsLink(before: Accounts, via: str, after: Accounts): bool
 > own signed-in session, and unsubscribe links to stop mail without giving
 > anyone access to my account.
 
-### Email requests, verification and consent changes need a live session of the same account
+### Email requests, verification and consent changes need a live session of the same account, and the outbox sees each change
 
 The account service supplies the clock, fresh identifiers and the count of
 other accounts' recent requests for the same address to the
 [email component](./email.md). Unsubscribe uses only its capability. Only
 the private mail service (`mailService`) records verification delivery and
-issues the unsubscribe capability of each mail it sends.
+issues the unsubscribe capability of each mail it sends. A verification, a
+consent save and an unsubscribe hand the committed enrollment to the notice
+outbox in the same write, and closure cancels the account's waiting mail
+there, so the outbox never queues or keeps mail on consent the account no
+longer has.
 
 ```quint
 pure def otherAccountsRecent(s: Accounts, githubId: int, addressKey: str): int =
   s.members.select(m => m.githubId != githubId).foldl(0, (sum, m) => sum + E::sameAddressRecent(m.email, s.now, addressKey))
 pure def senderMember(s: Accounts, by: int): Member = memberByActor(s, senderActor(s, by))
 pure def withEmail(s: Accounts, m: Member, e: E::Enrollment): List[Member] = replaceMember(s.members, { ...m, email: e })
+pure def syncMail(e: E::Enrollment, i: N::Inbox): N::Inbox =
+  if (N::canObserveEnrollment(i, N::accountService, e)) N::observeEnrollment(i, N::accountService, e) else i
+type MailView = { destination: E::Destination, preference: E::Preference, pilot: int }
+pure def mailView(e: E::Enrollment): MailView =
+  { destination: e.destination, preference: e.preference, pilot: e.pilotVersion }
 pure def canRequestEmail(s: Accounts, by: int, requestKey: int, address: str, addressKey: str, activity: bool, security: bool): bool =
   val m = senderMember(s, by)
   senderActor(s, by) > 0 and E::requestOutcome(m.email, s.now, requestKey, address, addressKey, activity, security,
@@ -391,12 +417,14 @@ pure def canVerifyEmail(s: Accounts, by: int, token: int, checkedRevision: int):
   senderActor(s, by) > 0 and E::canVerify(senderMember(s, by).email, s.now, token, checkedRevision)
 pure def verifyEmail(s: Accounts, by: int, token: int, checkedRevision: int): Accounts =
   val m = senderMember(s, by)
-  { ...s, lastVersion: s.lastVersion + 1, members: withEmail(s, m, E::verify(m.email, s.now, token, s.lastVersion + 1)) }
+  val e = E::verify(m.email, s.now, token, s.lastVersion + 1)
+  { ...s, lastVersion: s.lastVersion + 1, members: withEmail(s, m, e), inbox: syncMail(e, s.inbox) }
 pure def canSetEmailConsent(s: Accounts, by: int, activity: bool, choice: E::SecurityChoice, suppliedVersion: int, checkedRevision: int): bool =
   senderActor(s, by) > 0 and E::consentOutcome(senderMember(s, by).email, activity, choice, suppliedVersion, checkedRevision) == E::ConsentSaved
 pure def setEmailConsent(s: Accounts, by: int, activity: bool, choice: E::SecurityChoice, suppliedVersion: int, checkedRevision: int): Accounts =
   val m = senderMember(s, by)
-  { ...s, members: withEmail(s, m, E::setConsent(m.email, activity, choice, suppliedVersion, checkedRevision)) }
+  val e = E::setConsent(m.email, activity, choice, suppliedVersion, checkedRevision)
+  { ...s, members: withEmail(s, m, e), inbox: syncMail(e, s.inbox) }
 pure def canIssueUnsubscribe(s: Accounts, by: int, githubId: int): bool =
   by == mailService and hasGithubMember(s, githubId) and E::canIssueUnsubscribe(memberByGithub(s, githubId).email, s.lastUnsubscribe + 1)
 pure def issueUnsubscribe(s: Accounts, by: int, githubId: int): Accounts =
@@ -408,7 +436,8 @@ pure def canUnsubscribe(s: Accounts, token: int): bool =
   token > 0 and unsubscribeHolder(s, token).actor > 0 and E::canUnsubscribe(unsubscribeHolder(s, token).email, token)
 pure def unsubscribe(s: Accounts, token: int): Accounts =
   val m = unsubscribeHolder(s, token)
-  { ...s, members: withEmail(s, m, E::unsubscribe(m.email, token)) }
+  val e = E::unsubscribe(m.email, token)
+  { ...s, members: withEmail(s, m, e), inbox: syncMail(e, s.inbox) }
 pure def alwaysEmailValid(s: Accounts): bool = s.members.every(m => E::wellFormed(m.email, s.now)
   and m.email.verifications.every(v => v.id <= s.lastEmailId
     and s.members.every(o => o.githubId == m.githubId or not(o.email.verifications.some(w => w.id == v.id))))
@@ -421,6 +450,14 @@ pure def stepConsentOnlyFromExplicitChoice(before: Accounts, via: str, after: Ac
   after.members.every(m => ((m.email.preference.activity and not(memberByActor(before, m.actor).email.preference.activity))
     or (m.email.preference.security and not(memberByActor(before, m.actor).email.preference.security)))
     implies (via == "verifyEmail" or via == "setEmailConsent"))
+pure def canSaveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int): bool =
+  by == noticeSource and hasGithubMember(s, githubId) and N::canSave(s.inbox, key, kind, githubId)
+pure def saveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int): Accounts =
+  { ...s, inbox: N::save(s.inbox, key, kind, githubId) }
+pure def alwaysOutboxSeesCurrentConsent(s: Accounts): bool =
+  s.members.every(m => mailView(N::enrollmentOf(s.inbox, m.githubId)) == mailView(m.email))
+pure def sometimesClosureCancelledMail(s: Accounts): bool =
+  N::anyCancelled(s.inbox) and s.members.some(m => m.membership == Closed)
 pure def stepEmailHistoryRetained(before: Accounts, after: Accounts): bool = before.members.every(m =>
   E::historyRetained(m.email, memberByActor(after, m.actor).email)) and before.lastEmailId <= after.lastEmailId
     and before.lastVersion <= after.lastVersion and before.lastUnsubscribe <= after.lastUnsubscribe
@@ -482,7 +519,8 @@ pure val initial: Accounts = { now: launchClock, identity: launchIdentity, membe
     claims: List({ xId: "123456789012345678901234567890", actor: 1101, claimedAt: participationPointsEnd - 900 }) },
   xConfigured: true, mailAvailable: true, telegramClaims: List("tg-legacy"),
   xAwards: List({ actor: 1101, at: participationPointsEnd - 900, points: 10 }), refusedSignIns: List(),
-  lastEmailId: 0, lastVersion: 1000, lastUnsubscribe: 0 }
+  lastEmailId: 0, lastVersion: 1000, lastUnsubscribe: 0,
+  inbox: { ...N::initial, enrollments: List(legacyMember.email) } }
 pure def sometimesLegacyPublished(s: Accounts): bool = memberByActor(s, 1101).public and memberByActor(s, 1101).xLink.public
 pure def sometimesStoredActorReused(s: Accounts): bool = s.sessions.some(x => x.actor == 1101)
 pure def sometimesTwoSessions(s: Accounts): bool = s.sessions.select(x => x.actor == 1101 and x.expiresAt > s.now).length() >= 2
@@ -522,7 +560,10 @@ pure val weight_identityStart = 3
 pure val weight_identityClaimCallback = 3
 pure val weight_identityCompleteCallback = 3
 pure val weight_identityPoll = 3
-pure val byValues = Set(0, 1, 2, 3, -1, -2, -3, -5, -6)
+pure val byValues = Set(0, 1, 2, 3, -1, -2, -3, -5, -6, -7)
+pure val keyValues = Set(1)
+pure val kindValues = Set(N::SecurityCase, N::PayoutHeld)
+pure val weight_saveNotice = 4
 pure val targetValues = Set(1, 2, 3)
 pure val tokenValues = Set(1, 2, 3, 4, 5)
 pure val clientValues = Set(1)

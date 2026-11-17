@@ -32,9 +32,9 @@ generations for a single review key. Actual opaque tokens remain in the shell.
 import routing as R from "./routing"
 type ClaimStatus = NoReview | Running | Skipped | Failed | Completed
 type PriorStart = First | Retry | Reconcile
-type CloseAttempt = NoCloseAttempt | PendingClose | ConfirmedClose | RejectedClose
+type ClaimClose = NoCloseAttempt | PendingClose | ConfirmedClose | RejectedClose
 type ReviewLease = { status: ClaimStatus, token: int, now: int, expires: int,
-  completedToken: int, callRecorded: bool, currentCalled: bool, kind: PriorStart, close: CloseAttempt }
+  completedToken: int, callRecorded: bool, currentCalled: bool, kind: PriorStart, close: ClaimClose }
 pure val leaseSeconds = 1200
 pure val initial: ReviewLease = { status: NoReview, token: 0, now: 0, expires: 0,
   completedToken: 0, callRecorded: false, currentCalled: false, kind: First, close: NoCloseAttempt }
@@ -53,10 +53,10 @@ pure def claim(s: ReviewLease, token: int, expires: int, slots: R::AuthorSlots, 
   { ...s, status: Running, token: token, expires: expires, currentCalled: false,
     kind: if (s.close == PendingClose) Reconcile
       else if (s.callRecorded or s.status == Failed or s.status == Running) Retry else First }
-pure def canObserveClose(s: ReviewLease, observed: CloseAttempt): bool =
+pure def canObserveClose(s: ReviewLease, observed: ClaimClose): bool =
   (observed == PendingClose and s.close != PendingClose and s.status == Running and s.kind != Reconcile)
     or (s.close == PendingClose and (observed == ConfirmedClose or observed == RejectedClose))
-pure def observeClose(s: ReviewLease, observed: CloseAttempt): ReviewLease = { ...s, close: observed }
+pure def observeClose(s: ReviewLease, observed: ClaimClose): ReviewLease = { ...s, close: observed }
 pure def canRecordCall(s: ReviewLease, token: int): bool = ownsClaim(s, token) and s.kind != Reconcile
 pure def recordCall(s: ReviewLease, token: int): ReviewLease = { ...s, callRecorded: true, currentCalled: true }
 ```

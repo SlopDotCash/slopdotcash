@@ -9,9 +9,8 @@ never see it. Source is `backend/notifications/incomplete-assessments.ts`,
 `backend/notifications/incomplete-assessments.workflow.mjs`,
 `workers/slopbot/value-processing.ts` and
 `migrations/0115_incomplete_value_inbox.sql` at the pinned development
-revision. The preserved draft `formal/drafts/assessment-inbox.md` supplied
-these rules. Its earlier partial report replayed 24 generated traces of an
-earlier revision.
+revision. It is the single assessment Inbox specification; the earlier
+draft and its partial replay report were folded into it and removed.
 
 This unit owns the read projection and one read's lifecycle. The
 [value request rows](./valueRequests.md) own the durable gap, retry time
