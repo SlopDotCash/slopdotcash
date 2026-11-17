@@ -47,13 +47,13 @@ type SendGate = { seenScreeningRevision: int, reportVersion: int, digest: str, s
 type Copy = { ghsa: int, repository: int, author: int, marker: int, createdAtMs: int, digest: str }
 type Forwarding = { phase: ForwardingPhase, failure: Failure, submission: int, reporter: int, repository: int, marker: int,
   caseId: int, revision: int, attempt: int, firstAtMs: int, activeClaim: SendClaim, readyClaims: List[SendClaim],
-  postedRevisions: Set[int], canonical: Copy, duplicateGhsas: List[int], contactsPending: bool,
+  postedRevisions: Set[int], canonical: Copy, bindingCopies: List[Copy], duplicateGhsas: List[int], contactsPending: bool,
   receiptDigest: str, receiptReplyLost: bool, retryWithoutCopy: bool }
 pure val noClaim: SendClaim = { revision: 0, requestId: 0, attempt: 0, atMs: 0, reportVersion: 0, digest: "" }
 pure val noCopy: Copy = { ghsa: 0, repository: 0, author: 0, marker: 0, createdAtMs: 0, digest: "" }
 pure val initial: Forwarding = { phase: Draft, failure: None, submission: 1, reporter: 1, repository: 1, marker: 1,
   caseId: 1, revision: 1, attempt: 0, firstAtMs: 0, activeClaim: noClaim, readyClaims: List(), postedRevisions: Set(),
-  canonical: noCopy, duplicateGhsas: List(), contactsPending: false, receiptDigest: "", receiptReplyLost: false, retryWithoutCopy: false }
+  canonical: noCopy, bindingCopies: List(), duplicateGhsas: List(), contactsPending: false, receiptDigest: "", receiptReplyLost: false, retryWithoutCopy: false }
 pure def grantAllows(f: Forwarding, request: Request): bool = request.id > 0 and request.actor == f.reporter
   and request.session > 0 and request.checkedAtSeconds >= 0 and request.grant.authenticated and request.grant.sealed
   and request.grant.version == 1 and request.grant.credential == ReporterUser and request.grant.submission == f.submission
@@ -162,9 +162,13 @@ then the lowest canonical GHSA lexical rank on a tie. The adapter maps parsed
 GHSA identifiers to a lossless order-preserving positive number and reduces
 creation timestamps to UTC milliseconds. A resend that succeeds includes its
 accepted copy in this comparison. If that optional listing fails, keep the
-accepted copy. Residual observed copies are private duplicate evidence. Their list preserves
-identity; list order has no meaning. Once
-a canonical GHSA is bound, no later observation can replace it.
+accepted copy. The copies that bind the canonical GHSA are retained with it:
+the created copy with the complete listing of a resend, or the complete
+reconciliation listing. The canonical copy is the earliest of them, and the
+private duplicate evidence holds every other one and never the canonical
+copy. Their list preserves identity; list order has no meaning. Once a
+canonical GHSA is bound, no later observation can replace it or its binding
+copies.
 
 ```quint
 type Listing = { complete: bool, submission: int, repository: int, marker: int, sinceMs: int, copies: List[Copy] }
@@ -184,14 +188,14 @@ pure def canRecordCreated(f: Forwarding, claim: SendClaim, accepted: Copy, listi
 pure def recordCreated(f: Forwarding, claim: SendClaim, accepted: Copy, listing: Listing): Forwarding =
   val copies = createdCandidates(f, accepted, listing)
   val chosen = earliestCopy(copies, accepted)
-  { ...f, phase: Submitted, revision: f.revision + 1, canonical: chosen,
+  { ...f, phase: Submitted, revision: f.revision + 1, canonical: chosen, bindingCopies: copies.append(accepted),
     duplicateGhsas: copies.append(accepted).select(copy => copy.ghsa != chosen.ghsa).listMap(copy => copy.ghsa) }
 pure def canReconcile(f: Forwarding, request: Request, listing: Listing, nowMs: int): bool = mayOperate(f, request, ListCopies) and nowMs > 0
 pure def reconcile(f: Forwarding, request: Request, listing: Listing, nowMs: int): Forwarding =
   val observed = exactListing(f, listing)
   val chosen = earliestCopy(listing.copies, noCopy)
   if (observed and chosen.ghsa > 0)
-    { ...f, phase: Submitted, revision: f.revision + 1, canonical: chosen,
+    { ...f, phase: Submitted, revision: f.revision + 1, canonical: chosen, bindingCopies: listing.copies,
       duplicateGhsas: listing.copies.select(copy => copy.ghsa != chosen.ghsa).listMap(copy => copy.ghsa) }
   else if (observed and listing.copies.length() == 0 and nowMs - f.activeClaim.atMs >= 300000)
     { ...f, phase: Draft, revision: f.revision + 1, retryWithoutCopy: true }
@@ -201,7 +205,11 @@ pure def lawUnknownListingCannotReopen(f: Forwarding, request: Request, listing:
 pure def lawEarlyEmptyCannotReopen(f: Forwarding, request: Request, listing: Listing, nowMs: int): bool =
   canReconcile(f, request, listing, nowMs) and listing.copies.length() == 0 and nowMs - f.activeClaim.atMs < 300000
     implies reconcile(f, request, listing, nowMs).phase == Uncertain
-pure def stepCanonicalFixed(before: Forwarding, after: Forwarding): bool = before.canonical.ghsa > 0 implies after.canonical == before.canonical
+pure def stepCanonicalFixed(before: Forwarding, after: Forwarding): bool = before.canonical.ghsa > 0 implies
+  after.canonical == before.canonical and after.bindingCopies == before.bindingCopies
+pure def alwaysCanonicalIsEarliestBindingCopy(f: Forwarding): bool = f.canonical.ghsa > 0 implies
+  f.canonical == earliestCopy(f.bindingCopies, noCopy) and not(f.duplicateGhsas.includes(f.canonical.ghsa))
+    and f.bindingCopies.every(copy => copy.ghsa == f.canonical.ghsa or f.duplicateGhsas.includes(copy.ghsa))
 pure def sometimesSubmitted(f: Forwarding): bool = f.phase == Submitted
 pure def sometimesDuplicates(f: Forwarding): bool = f.duplicateGhsas.length() > 0
 ```

@@ -18,30 +18,35 @@ provider budget. A current technical approver may run another attempt with a
 120 s budget after a failed or unavailable attempt, or after a running one is
 lost (no result for 15 minutes). A result after its budget is unavailable. A
 finished attempt is immutable. Only a complete attempt for the current report
-version is shown; a newer version hides every older result.
+version is shown; a newer version hides every older result. Each attempt
+records the exclusion context it was asked with: Slop's default exclusions
+and the owner's lines ([terms](./terms.md)), advice that nothing here reads.
 
 ```quint
+import terms as T from "./terms"
 import cases as C from "./cases"
 type AttemptState = AttemptRunning | AttemptComplete | AttemptFailed | AttemptUnavailable
 type Mode = Automatic | OwnerRun
-type Attempt = { version: int, mode: Mode, state: AttemptState, startedAt: int, budgetMs: int }
+type Attempt = { version: int, mode: Mode, state: AttemptState, startedAt: int, budgetMs: int, exclusions: T::ExclusionContext }
 type Assessment = { reportVersion: int, qualifiedVersion: int, authority: C::Authority, attempts: int -> Attempt, count: int, shown: int }
-pure val noAttempt: Attempt = { version: 0, mode: Automatic, state: AttemptFailed, startedAt: 0, budgetMs: 0 }
+pure val noAttempt: Attempt = { version: 0, mode: Automatic, state: AttemptFailed, startedAt: 0, budgetMs: 0, exclusions: T::noExclusions }
 pure val initial: Assessment = { reportVersion: 1, qualifiedVersion: 0, authority: C::noAuthority, attempts: Map(), count: 0, shown: 0 }
 pure def latest(a: Assessment): Attempt = a.attempts.getOr(a.count, noAttempt)
 pure def retryable(a: Assessment, nowMs: int): bool = a.count == 0 or latest(a).version != a.reportVersion
   or latest(a).state == AttemptFailed or latest(a).state == AttemptUnavailable
   or (latest(a).state == AttemptRunning and nowMs >= latest(a).startedAt and nowMs - latest(a).startedAt > 900000)
 pure def automaticRan(a: Assessment): bool = a.count > 0 and latest(a).version == a.reportVersion
-pure def canStartAutomatic(a: Assessment, nowMs: int): bool = a.qualifiedVersion == a.reportVersion and nowMs > 0 and not(automaticRan(a))
-pure def runningAttempt(version: int, mode: Mode, startedAt: int, budgetMs: int): Attempt =
-  { version: version, mode: mode, state: AttemptRunning, startedAt: startedAt, budgetMs: budgetMs }
-pure def startAutomatic(a: Assessment, nowMs: int): Assessment =
-  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, Automatic, nowMs, 25000)) }
-pure def canStartOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int): bool = a.qualifiedVersion == a.reportVersion and nowMs > 0
+pure def canStartAutomatic(a: Assessment, nowMs: int, exclusions: T::ExclusionContext): bool = a.qualifiedVersion == a.reportVersion
+  and nowMs > 0 and not(automaticRan(a)) and T::validExclusions(exclusions)
+pure def runningAttempt(version: int, mode: Mode, startedAt: int, budgetMs: int, exclusions: T::ExclusionContext): Attempt =
+  { version: version, mode: mode, state: AttemptRunning, startedAt: startedAt, budgetMs: budgetMs, exclusions: exclusions }
+pure def startAutomatic(a: Assessment, nowMs: int, exclusions: T::ExclusionContext): Assessment =
+  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, Automatic, nowMs, 25000, exclusions)) }
+pure def canStartOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int, exclusions: T::ExclusionContext): bool =
+  a.qualifiedVersion == a.reportVersion and nowMs > 0 and T::validExclusions(exclusions)
   and checkedEpoch == a.authority.epoch and checkedEpoch > 0 and a.authority.technical.includes(by) and by != 1 and retryable(a, nowMs)
-pure def startOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int): Assessment =
-  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, OwnerRun, nowMs, 120000)) }
+pure def startOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int, exclusions: T::ExclusionContext): Assessment =
+  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, OwnerRun, nowMs, 120000, exclusions)) }
 pure def canFinish(a: Assessment, attempt: int, complete: bool, elapsedMs: int): bool = attempt > 0 and attempt <= a.count
   and a.attempts.getOr(attempt, noAttempt).state == AttemptRunning and elapsedMs >= 0
 pure def finish(a: Assessment, attempt: int, complete: bool, elapsedMs: int): Assessment =
@@ -70,6 +75,7 @@ pure def observeAuthority(a: Assessment, snapshot: C::Authority): Assessment = {
 pure def alwaysShownIsCurrent(a: Assessment): bool = a.shown >= 0 and a.shown <= a.count and (a.shown > 0 implies
   a.attempts.getOr(a.shown, noAttempt).version == a.reportVersion and a.attempts.getOr(a.shown, noAttempt).state == AttemptComplete)
 pure def alwaysAttemptsBound(a: Assessment): bool = a.count >= 0 and a.qualifiedVersion <= a.reportVersion
+  and (a.count > 0 implies T::validExclusions(latest(a).exclusions))
 pure def stepAttemptCountAndShownResultKept(before: Assessment, after: Assessment): bool = after.count >= before.count
   and (before.shown > 0 and after.reportVersion == before.reportVersion implies after.shown > 0)
 pure def sometimesShown(a: Assessment): bool = a.shown > 0
@@ -88,6 +94,8 @@ pure val snapshotValues = Set(C::staff)
 pure val attemptValues = Set(1, 2, 3)
 pure val elapsedMsValues = Set(1000, 30000, 130000)
 pure val versionValues = Set(1, 2, 3)
+pure val exclusionsValues = Set({ defaults: T::slopDefaultExclusionCount, owner: List() }, { defaults: T::slopDefaultExclusionCount, owner: List(3) },
+  { defaults: 0, owner: List() })
 pure val weight_startOwnerRun = 6
 pure val weight_finish = 6
 pure val weight_observeQualified = 4

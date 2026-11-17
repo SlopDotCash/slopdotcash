@@ -18,14 +18,15 @@ routing. Maintainer assessment retries follow their separate authorization.
 Credentials absent at screening produce unavailable evidence.
 
 ```quint
+import terms as T from "./terms"
 type Phase = Queued | Running | Legitimate | NeedsInformation | Spam | Unavailable
 type Review = PendingReview | Forward | RequestInformation
 type Screening = { reporter: int, revision: int, version: int, digest: str, phase: Phase, review: Review,
-  startedAt: int, routed: bool, noticeVersions: Set[int], reportDigests: List[str] }
+  startedAt: int, routed: bool, noticeVersions: Set[int], reportDigests: List[str], exclusions: T::ExclusionContext, matchedLine: int }
 type Clock = UnknownClock | ExactClock({ nowMs: int })
 type Claim = { revision: int, version: int, digest: str }
 pure val initial: Screening = { reporter: 1, revision: 1, version: 1, digest: "original", phase: Queued, review: PendingReview,
-  startedAt: 0, routed: false, noticeVersions: Set(), reportDigests: List("original") }
+  startedAt: 0, routed: false, noticeVersions: Set(), reportDigests: List("original"), exclusions: T::noExclusions, matchedLine: 0 }
 pure def qualified(s: Screening): bool = s.review == Forward or (s.review == PendingReview and s.phase == Legitimate)
 pure def recoverable(s: Screening, clock: Clock): bool =
   match clock {
@@ -59,11 +60,15 @@ gate a recommendation. Truncated, malformed, refused and timed-out answers
 are unavailable. A proposal with a supplied earlier case match becomes
 needs information. When prior case summaries informed the request, display
 the bounded generic reason, never free-form model text to the reporter.
+The request carries Slop's default exclusions and the owner's exclusions
+([terms](./terms.md)); the screening records them with the line a valid
+proposal names, and the phase never depends on that line.
 
 ```quint
 type ProviderRoute = Surplus | Absent | OtherRoute
-type Observation = DuplicateEvidence | Unready | Incomplete | Proposal({ phase: Phase, validResponse: bool, matchesPriorCase: bool, suppliedPriorCases: bool })
-type Input = { exactVersionLoaded: bool, duplicateEvidence: bool, route: ProviderRoute }
+type Observation = DuplicateEvidence | Unready | Incomplete
+  | Proposal({ phase: Phase, validResponse: bool, matchesPriorCase: bool, suppliedPriorCases: bool, matchedLine: int })
+type Input = { exactVersionLoaded: bool, duplicateEvidence: bool, route: ProviderRoute, exclusions: T::ExclusionContext }
 pure def mayCall(s: Screening, token: Claim, input: Input): bool =
   owns(s, token) and input.exactVersionLoaded and not(input.duplicateEvidence) and input.route == Surplus
 pure def providerPhase(phase: Phase): bool = phase == Legitimate or phase == NeedsInformation or phase == Spam
@@ -88,8 +93,22 @@ pure def acceptsObservation(s: Screening, token: Claim, input: Input, observatio
   }
 pure def canFinish(s: Screening, token: Claim, input: Input, observation: Observation): bool =
   owns(s, token) and acceptsObservation(s, token, input, observation)
+pure def matchedLineOf(input: Input, observation: Observation): int =
+  match observation {
+    | Proposal(p) => if (p.validResponse and T::namesExclusionLine(input.exclusions, p.matchedLine)) p.matchedLine else 0
+    | _ => 0
+  }
 pure def finish(s: Screening, token: Claim, input: Input, observation: Observation): Screening =
-  { ...s, revision: s.revision + 1, phase: observedPhase(observation) }
+  { ...s, revision: s.revision + 1, phase: observedPhase(observation), exclusions: input.exclusions,
+    matchedLine: matchedLineOf(input, observation) }
+pure def withMatchedLine(observation: Observation, line: int): Observation =
+  match observation {
+    | Proposal(p) => Proposal({ ...p, matchedLine: line })
+    | _ => observation
+  }
+pure def lawExclusionLineIsAdvice(observation: Observation, line: int): bool =
+  observedPhase(withMatchedLine(observation, line)) == observedPhase(observation)
+pure def alwaysMatchedLineInContext(s: Screening): bool = T::namesExclusionLine(s.exclusions, s.matchedLine)
 pure def lawDuplicateNeverCalls(s: Screening, token: Claim, input: Input): bool =
   input.duplicateEvidence implies not(mayCall(s, token, input))
 pure def lawOnlySurplusReceivesLoadedVersion(s: Screening, token: Claim, input: Input): bool =
@@ -97,6 +116,7 @@ pure def lawOnlySurplusReceivesLoadedVersion(s: Screening, token: Claim, input: 
 pure def sometimesLegitimate(s: Screening): bool = s.phase == Legitimate
 pure def sometimesNeedsInformation(s: Screening): bool = s.phase == NeedsInformation
 pure def sometimesUnavailable(s: Screening): bool = s.phase == Unavailable
+pure def sometimesExclusionNamed(s: Screening): bool = s.matchedLine > s.exclusions.defaults
 ```
 
 ### A late result cannot replace human review or a newly saved version
@@ -170,14 +190,17 @@ pure val digestValues = Set("original", "revised", "new")
 pure val tokenValues = Set(2, 3, 4, 5, 6, 7, 8, 9).fold(Set(), (tokens, revision) =>
   tokens.union(Set({ revision: revision, version: 1, digest: "original" },
     { revision: revision, version: 2, digest: "revised" })))
+pure val sampleExclusions: T::ExclusionContext = { defaults: T::slopDefaultExclusionCount, owner: List(3) }
 pure val inputValues = Set(
-  { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus },
-  { exactVersionLoaded: false, duplicateEvidence: false, route: Absent },
-  { exactVersionLoaded: true, duplicateEvidence: true, route: Surplus })
+  { exactVersionLoaded: true, duplicateEvidence: false, route: Surplus, exclusions: sampleExclusions },
+  { exactVersionLoaded: false, duplicateEvidence: false, route: Absent, exclusions: sampleExclusions },
+  { exactVersionLoaded: true, duplicateEvidence: true, route: Surplus, exclusions: sampleExclusions })
+pure val lineValues = Set(0, 3, 11, 12)
 pure val observationValues = Set(DuplicateEvidence, Unready, Incomplete,
-  Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false }),
-  Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: true, suppliedPriorCases: true }),
-  Proposal({ phase: Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: true }))
+  Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 0 }),
+  Proposal({ phase: Legitimate, validResponse: true, matchesPriorCase: true, suppliedPriorCases: true, matchedLine: 11 }),
+  Proposal({ phase: Spam, validResponse: true, matchesPriorCase: false, suppliedPriorCases: true, matchedLine: 3 }),
+  Proposal({ phase: Spam, validResponse: false, matchesPriorCase: false, suppliedPriorCases: false, matchedLine: 12 }))
 pure val evidenceValues = Set(
   { isReporter: true, draftOrFailed: true, noAdvisory: true, caseNeedsInformation: false, exactCaseCas: true,
     allowedCaseState: true, exactObjectStored: true, admitted: true },
