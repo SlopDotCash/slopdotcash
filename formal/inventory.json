@@ -4054,9 +4054,10 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "76d8df6a9a2746447197226c753187f1d3023544e1c1a0c6d13c59b6d5e1ec2a",
+      "sha256": "4fe2dd685d5e1639707c0aa41b894f24818800faa081d4b2b38ad68648777c83",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -4066,15 +4067,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 509, 597, 618, 654, 685, 750,
-        782, 872, 905, 914, 923, 942, 1032, 1228, 1463, 1525, 1533, 1591, 1644,
-        1647, 1840, 1849, 1854, 1861, 1944, 1945, 2092, 2093, 2150, 2176, 2204,
-        2206, 2210, 2244, 2247, 2248, 2251, 2253, 2264, 2291, 2500, 2503, 2752,
-        2872, 2993, 3006, 3017, 3018, 3205, 3206, 3397, 3413, 3425, 3432, 3458,
-        3468, 3472, 3476, 3480, 3535, 3554, 3581, 3598, 3632, 3633, 3635, 3651,
-        3668, 3669, 3670, 3679, 3684, 3864, 4222, 4244, 4253, 4303, 4338, 4344,
-        4351, 4420, 4506, 4664, 4904, 4914, 4916, 4929, 4960, 4962, 4963, 4967,
-        4971, 5027, 5081, 5132, 5135, 5171
+        35, 190, 201, 210, 290, 302, 304, 307, 519, 607, 628, 664, 695, 760,
+        792, 882, 915, 924, 933, 952, 1042, 1238, 1473, 1535, 1543, 1601, 1654,
+        1657, 1850, 1859, 1864, 1871, 1954, 1955, 2121, 2122, 2205, 2238, 2266,
+        2268, 2272, 2282, 2284, 2296, 2306, 2316, 2341, 2344, 2345, 2348, 2350,
+        2375, 2427, 2638, 2641, 2890, 3010, 3131, 3144, 3155, 3156, 3343, 3344,
+        3535, 3551, 3563, 3570, 3596, 3606, 3610, 3614, 3618, 3673, 3692, 3719,
+        3736, 3770, 3771, 3773, 3789, 3806, 3807, 3808, 3817, 3822, 4002, 4360,
+        4382, 4391, 4441, 4476, 4482, 4489, 4558, 4644, 4802, 5057, 5067, 5069,
+        5082, 5113, 5115, 5116, 5120, 5124, 5180, 5234, 5285, 5288, 5324
       ],
       "review": "mapped-abstraction"
     },
@@ -4142,9 +4143,12 @@
     },
     {
       "path": "scripts/historical-discussion-evidence.ts",
-      "sha256": "ff8fe26a58076a2fee4f15c5832969d526dc5a3c552bd13d2d9549271bd8e4b5",
-      "models": ["formal/models/points/historical_discussion_evidence.qnt"],
-      "candidateLines": [9, 146, 147],
+      "sha256": "775b0fecfa0ec23199522eca53b257000ff59e67653037706e598ad72e84c4be",
+      "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
+        "formal/models/points/historical_discussion_evidence.qnt"
+      ],
+      "candidateLines": [9, 148, 149],
       "review": "mapped-abstraction"
     },
     {
@@ -5048,8 +5052,9 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "9fcbc16bd3502021fa4e6c2b5b6fdd24b980242f0c4faa5245ee719a79f9d406",
+      "sha256": "c795ab09e5eb974b1a7f079588c6f64eddd82e513fed25c4c88737bf7d1646f9",
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/value_source_cache.qnt",
@@ -5057,8 +5062,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        67, 78, 125, 126, 127, 128, 130, 131, 198, 199, 200, 202, 203, 742, 762,
-        884, 920, 959, 983
+        69, 80, 127, 128, 129, 130, 132, 133, 200, 201, 202, 204, 205, 773, 793,
+        915, 951, 990, 1014
       ],
       "review": "mapped-abstraction"
     },
@@ -9043,6 +9048,7 @@
       "path": "workers/slopbot/value-evidence.ts",
       "sha256": "95c1c37b45e9bc728e4f5346d1f33487bf742ea6062d28cd6ce3681ec68a4e9b",
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
@@ -14192,6 +14198,23 @@
         "laterFailureDiscardsStagedTest",
         "oldCacheSurvivesFailureTest",
         "partialLoadNotPublishedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/fresh_discussion_evidence.qnt",
+      "sha256": "9c8f20fdb4fe8315135607d9c966f3e8de63a8546c441f3a9331fe5cff000f2d",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "scripts/historical-discussion-evidence.ts",
+        "scripts/value-ingestion.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "completeProbeTest",
+        "keepRequiredTimelinePointTest",
+        "probePreservesFallbackTest",
+        "quotaCheckpointDoesNotDiscoverTest",
+        "untrustedClientUsesRestTest"
       ]
     },
     {
