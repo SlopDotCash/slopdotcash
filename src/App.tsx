@@ -654,7 +654,14 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funded";
 }
 
-type HomeProject = ProjectDefinition & { warning: string | null };
+type HomeProject = ProjectDefinition &
+  Pick<ReturnType<typeof homePoolReward>, "fundingTag" | "warning">;
+
+const fundingTagTone = {
+  Vaulted: "success",
+  Promised: "warning",
+  Configured: "neutral",
+} as const;
 
 function HomeReward({ project }: { project: HomeProject }) {
   const bounty = hasProjectCardBounty(project)
@@ -666,13 +673,32 @@ function HomeReward({ project }: { project: HomeProject }) {
     : pointsOnly
       ? "Points only"
       : project.reward.kind === "monthly-pool"
-        ? project.warning
-          ? formatRewardCapDisplay(
+        ? project.fundingTag === "Vaulted"
+          ? monthlyPoolCapLabel(project)
+          : formatRewardCapDisplay(
               project.reward.monthlyCapDisplay,
               project.rewardAsset,
             )
-          : monthlyPoolCapLabel(project)
         : "Points";
+  if (project.fundingTag) {
+    return (
+      <span className="project-monthly-reward">
+        <span className="project-monthly-amount">
+          <strong>{amount}</strong>{" "}
+          <span className="project-monthly-unit">/mo</span>
+        </span>
+        <StatusBadge
+          className="project-funding-tag"
+          tone={fundingTagTone[project.fundingTag]}
+        >
+          {project.fundingTag}
+        </StatusBadge>
+        {project.warning ? (
+          <span className="project-funding-warning">{project.warning}</span>
+        ) : null}
+      </span>
+    );
+  }
   return (
     <>
       <strong>{amount}</strong>
@@ -684,8 +710,6 @@ function HomeReward({ project }: { project: HomeProject }) {
         </span>
       ) : project.reward.kind === "external-prize-share" ? (
         <span> + external prize</span>
-      ) : !pointsOnly ? (
-        <span>{project.warning ? `/mo · ${project.warning}` : "/mo"}</span>
       ) : null}
     </>
   );
@@ -897,8 +921,12 @@ function HomePage() {
         (project) => !intakePaused(project, mergeIndex?.get(project.id), now),
       )
       .map((project) => {
-        const shown = homePoolReward(project, fundingIndex, now);
-        return { ...shown.project, warning: shown.warning };
+        const {
+          project: shown,
+          fundingTag,
+          warning,
+        } = homePoolReward(project, fundingIndex, now);
+        return { ...shown, fundingTag, warning };
       }),
   );
   const featured = listedProjects.filter(

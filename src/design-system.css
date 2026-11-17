@@ -770,6 +770,23 @@ label {
   text-align: left;
 }
 
+.project-monthly-reward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.project-monthly-amount {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-funding-warning {
+  color: var(--muted);
+}
+
 .project-rows {
   margin: 0;
   padding: 0;
