@@ -32,6 +32,7 @@ const refuse = (key, message) => {
  if((state[key] ?? 0) <= 0) return false;
  state[key] -= 1;
  fs.writeFileSync(path, JSON.stringify(state));
+ process.stdout.write(JSON.stringify(args.includes("--slurp") ? [{ message }] : { message }));
  console.error(message);
  process.exit(1);
 };
@@ -54,6 +55,7 @@ if(args[0] === "api") {
  } else {
   const job = route.match(/actions\\/runs\\/(\\d+)\\/jobs/);
   if(!job) process.exit(7);
+  refuse("jobsRateLimited", "gh: API rate limit exceeded for installation. (HTTP 403)");
   const name = Number(job[1]) === 18 ? "Deploy verified development to staging" : "Deploy trusted production bundle";
   process.stdout.write(JSON.stringify([
    { jobs: [{ name: "Prepare checked browser bundle", conclusion: "success" }] },
@@ -102,6 +104,12 @@ test.skipIf(process.platform === "win32")(
         exit: 1,
       },
       {
+        name: "jobs read waits out a spent quota",
+        ref: "main",
+        jobsRateLimited: 1,
+        queue: ["main"],
+      },
+      {
         name: "server error retried",
         ref: "main",
         serverErrors: 1,
@@ -132,6 +140,7 @@ test.skipIf(process.platform === "win32")(
             failDispatch: scenario.rejected ?? false,
             rateLimited: scenario.rateLimited ?? 0,
             serverErrors: scenario.serverErrors ?? 0,
+            jobsRateLimited: scenario.jobsRateLimited ?? 0,
             queued: [],
           }),
         );
