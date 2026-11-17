@@ -3667,12 +3667,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "a0958646461865675c03c99d9bcb38d68704f6c78d095483ef4abf4e41183bc1",
+      "sha256": "9fefab0e13ed933340b8ecd70275520ae21b78983d8d71108981a883986caec1",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [110, 119, 120, 172, 178, 179, 194],
+      "candidateLines": [114, 123, 124, 176, 182, 183, 198],
       "review": "mapped-abstraction"
     },
     {
@@ -3979,12 +3979,12 @@
     },
     {
       "path": "scripts/evidence-contract.mjs",
-      "sha256": "2e2c7f4897eb9865a76d59bf62e954d02e421409526e686bbdb72ca79b43011f",
+      "sha256": "910f378791f465bd99217b162689acf49dccc3b7d108b1d57938ec1e8d2ad997",
       "models": [
         "formal/models/tooling/evidence_capture.qnt",
         "formal/models/tooling/evidence_transport.qnt"
       ],
-      "candidateLines": [295, 296, 297, 320, 475, 572, 607],
+      "candidateLines": [299, 300, 301, 324, 479, 576, 611],
       "review": "mapped-abstraction"
     },
     {
@@ -4465,12 +4465,13 @@
     },
     {
       "path": "scripts/prepare-site.mjs",
-      "sha256": "bb35b1fed7cfac71ed15e03465ee794a37cff36c56a2bc7cbe3d5b7b5cbfe4ad",
+      "sha256": "2e9c1e6b4858d9341303070c3c79edfceb75054150537f39e8c954f2139acb04",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
-        "formal/models/release/release_publication.qnt"
+        "formal/models/release/release_publication.qnt",
+        "formal/models/tooling/global_skill_publication.qnt"
       ],
-      "candidateLines": [214, 297],
+      "candidateLines": [218, 263, 329],
       "review": "mapped-abstraction"
     },
     {
@@ -5242,13 +5243,14 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "96f280b1161d22cb011fe182f4f433553c6e62a4fc8e7580ab20cd54c2e2797f",
+      "sha256": "fa81ad7419d03b888e5d2cc2e1a0384092a54f569d787f8d8ac6792d7e87d751",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -5261,14 +5263,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        7, 9, 291, 301, 311, 322, 331, 332, 333, 334, 335, 337, 338, 399, 454,
-        455, 456, 459, 482, 548, 579, 616, 657, 678, 752, 939, 954, 968, 978,
-        1016, 1018, 1021, 1085, 1088, 1090, 1094, 1095, 1103, 1122, 1126, 1134,
-        1135, 1142, 1146, 1181, 1225, 1228, 1245, 1246, 1296, 1299, 1302, 1303,
-        1304, 1305, 1309, 1312, 1332, 1334, 1411, 1412, 1417, 1418, 1423, 1461,
-        1462, 1465, 1466, 1469, 1470, 1489, 1490, 1496, 1501, 1503, 1507, 1508,
-        1566, 1576, 1607, 1609, 1634, 1635, 1652, 1653, 1664, 1666, 1679, 1682,
-        1693
+        7, 9, 306, 316, 326, 337, 346, 347, 348, 349, 350, 352, 353, 414, 470,
+        471, 472, 475, 498, 564, 595, 632, 673, 695, 770, 771, 781, 987, 1002,
+        1016, 1026, 1069, 1071, 1074, 1138, 1141, 1143, 1147, 1148, 1156, 1175,
+        1179, 1187, 1188, 1195, 1199, 1234, 1278, 1281, 1298, 1299, 1349, 1352,
+        1355, 1356, 1357, 1358, 1362, 1365, 1385, 1387, 1464, 1465, 1470, 1471,
+        1476, 1514, 1515, 1518, 1519, 1522, 1523, 1542, 1543, 1549, 1554, 1556,
+        1560, 1561, 1600, 1623, 1633, 1664, 1666, 1691, 1692, 1709, 1710, 1721,
+        1723, 1736, 1739, 1750
       ],
       "review": "mapped-abstraction"
     },
@@ -5471,14 +5473,14 @@
     },
     {
       "path": "src/Link.tsx",
-      "sha256": "e9deac09fa0a079b3b1b39b488b8407976252de2aeb09ca8c32b962cb573a835",
+      "sha256": "d924fc4af9ef52ccaae7e0d289d6750c3a43a75c2eeaf72008d6db03c1cb616c",
       "models": [
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_link_dispatch.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_points_disputes.qnt"
       ],
-      "candidateLines": [1, 47, 49, 61, 67, 73, 93, 140],
+      "candidateLines": [1, 51, 53, 65, 77, 83, 106, 153],
       "review": "mapped-abstraction"
     },
     {
@@ -5873,14 +5875,14 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "6e323cd70105be9fc252ac12dd2178827d3acb1f198f0b0bab10833f00ba8a4f",
+      "sha256": "404d1313b3b447ff62f0963973fefddf6671f787f3bc83f786e7398471fcaf90",
       "models": [
         "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        222, 307, 318, 375, 404, 405, 407, 408, 441, 443, 454, 603, 604, 606,
-        607, 614, 663, 665, 764
+        217, 302, 313, 370, 399, 400, 402, 403, 436, 438, 449, 598, 599, 601,
+        602, 609, 658, 660, 759
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -7163,7 +7165,7 @@
     },
     {
       "path": "src/lib/site-routes.ts",
-      "sha256": "524b454ef76dc0ab002ff4c0c154a2a50dd63a72f1011993549ae7910a3999a1",
+      "sha256": "6047f5b9938279639f5cf0abbbf819957934e610a47f409c915c79c3943a7bde",
       "models": ["formal/models/ui/ui_navigation.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -16829,6 +16831,17 @@
       ]
     },
     {
+      "path": "formal/models/tooling/global_skill_publication.qnt",
+      "sha256": "dffdb786e9e5935acd3ed8759c988e7ad83e8e4a054e77e2438368865ba4b403",
+      "sources": ["scripts/prepare-site.mjs"],
+      "scenarios": [
+        "completeSetTest",
+        "interruptedWriteIsIncompleteTest",
+        "invalidSourceDoesNotReplaceTest",
+        "missingRoleCannotPublishIndexTest"
+      ]
+    },
+    {
       "path": "formal/models/tooling/integration_pipeline.qnt",
       "sha256": "2bd1287c7ac3519836c19668e2d00510d125442fa35e65808aa0b0adf7fc1b57",
       "sources": [
@@ -17700,9 +17713,10 @@
     },
     {
       "path": "formal/models/ui/ui_hash_navigation.qnt",
-      "sha256": "efdc999363d0267088eb43013d45e9278cb17c1009ab2a8eae581bd928edf518",
+      "sha256": "819e86cc6d811dc65cf9f6aa8d0665fbce6824c3bdf1f1560611440764261825",
       "sources": ["src/App.tsx", "src/Link.tsx"],
       "scenarios": [
+        "audienceEntryKeepsViewportAndReturnTest",
         "delayedTargetTest",
         "readerStopsObserverTest",
         "restoreReaderPositionTest",
@@ -17735,6 +17749,21 @@
         "diagnosticUsageTest",
         "emptyTest",
         "immutableArchiveTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_home_audience.qnt",
+      "sha256": "aa8c501d3720d04fbe3913424d41f6552737de75798e7929d334d7438d43b1cf",
+      "sources": ["src/App.tsx"],
+      "scenarios": [
+        "defaultContributorTest",
+        "directMaintainerTest",
+        "historyRestoresRoleTest",
+        "invalidFallsBackTest",
+        "newSelectionDiscardsForwardHistoryTest",
+        "roleChangeClearsFailureTest",
+        "roleChangeClearsSuccessTest",
+        "selectedRoleSurvivesReloadTest"
       ]
     },
     {
