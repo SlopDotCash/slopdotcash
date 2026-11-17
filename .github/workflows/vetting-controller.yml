@@ -19,7 +19,7 @@ jobs:
         github.event.workflow_run.head_repository.id == github.event.repository.id &&
         (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 75
     permissions:
       actions: write
       contents: read
@@ -34,17 +34,20 @@ jobs:
         run: |
           set -euo pipefail
           # Every workflow in this repository shares one GITHUB_TOKEN request
-          # quota. When it is spent, wait for its reset (at most 30 minutes in
-          # all) instead of skipping the scan; a 5xx is retried after a short
-          # wait. Any other failure keeps its exit status.
-          wait_budget="${SCAN_DISPATCH_WAIT_BUDGET:-1800}"
+          # quota, which resets hourly. When it is spent, wait for its reset
+          # (at most 65 minutes in all) instead of skipping the scan; a 5xx is
+          # retried after a short wait. Any other failure keeps its exit
+          # status. Output passes on only from a successful call, so an error
+          # body never reaches the parser downstream.
+          wait_budget="${SCAN_DISPATCH_WAIT_BUDGET:-3900}"
           min_wait="${SCAN_DISPATCH_MIN_WAIT:-30}"
           gh_retry() {
-            local attempt=1 status err wait reset now
+            local attempt=1 status out err wait reset now
+            out="$(mktemp)"
             err="$(mktemp)"
             while :; do
-              if "$@" 2>"$err"; then rm -f "$err"; return 0; else status=$?; fi
-              if [ "$attempt" -ge 6 ]; then cat "$err" >&2; rm -f "$err"; return "$status"; fi
+              if "$@" >"$out" 2>"$err"; then cat "$out"; rm -f "$out" "$err"; return 0; else status=$?; fi
+              if [ "$attempt" -ge 6 ]; then cat "$err" >&2; rm -f "$out" "$err"; return "$status"; fi
               if grep -qiE 'rate limit|HTTP 429' "$err"; then
                 reset="$(gh api rate_limit --jq .resources.core.reset 2>/dev/null || echo 0)"
                 now="$(date +%s)"
@@ -53,9 +56,9 @@ jobs:
               elif grep -qE 'HTTP 50[0-9]' "$err"; then
                 wait=$((attempt * min_wait))
               else
-                cat "$err" >&2; rm -f "$err"; return "$status"
+                cat "$err" >&2; rm -f "$out" "$err"; return "$status"
               fi
-              if [ "$wait" -gt "$wait_budget" ]; then cat "$err" >&2; rm -f "$err"; return "$status"; fi
+              if [ "$wait" -gt "$wait_budget" ]; then cat "$err" >&2; rm -f "$out" "$err"; return "$status"; fi
               wait_budget=$((wait_budget - wait))
               echo "GitHub refused a request ($(head -c 200 "$err" | tr '\n' ' ')); retrying in ${wait}s." >&2
               sleep "$wait"
