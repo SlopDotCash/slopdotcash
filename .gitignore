@@ -7,13 +7,16 @@ dist/
 .lemmascript/
 _apalache-out/
 !/vibestack/gen/
-.claude/worktrees/
+/.claude/
+/CLAUDE.md
 /.codex/skills
 /.cursor/skills
 /.droid/skills
 /.factory/skills
 /.gemini/skills
 /.grok/skills
+/.grokbot/skills
+/.muse/skills
 /.t3/skills
 .turbo/
 .cache/
@@ -21,6 +24,11 @@ generated/
 storybook-static/
 .vibe/
 build/
+# A failed exploration's trace, replayed by the next check (SPEC.md, "Exploring the page").
+**/test/__traces__/bombadil/
+test/__traces__/
+.DS_Store
+.claude/worktrees/
 # Cloudflare local state and secrets: never committed.
 .wrangler/
 .dev.vars
@@ -29,6 +37,3 @@ build/
 .env.*
 # Screenshots and traces Vitest keeps of a failed browser test.
 .vitest/
-test/__traces__/
-# A failed exploration's trace, replayed by the next check (SPEC.md, "Exploring the page").
-**/test/__traces__/bombadil/
