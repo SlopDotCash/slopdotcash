@@ -1,0 +1,42 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+import { systemGit } from "@repo/platform/git"
+import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+import { agentClientGate } from "./agentClients.vibe"
+import { validateEvidence } from "./bundle.vibe"
+import { captureEvidence } from "./capture.vibe"
+
+export error EvidenceUsage { message: string }
+
+const usage = [
+  "evidence capture <bundle> <deployment-id> <deploy-log> <out> [root]",
+  "evidence validate <dir>",
+  "evidence agent-clients <records> [root]",
+].join(" | ")
+
+export effect function evidence(args: ReadonlyArray<string>) {
+  const [command, first, second, third, fourth, fifth, ...rest] = args
+  if (command === "capture" && first !== undefined && second !== undefined && third !== undefined && fourth !== undefined && rest.length === 0) {
+    const root = fifth ?? "."
+    provide cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+      const captured = try captureEvidence({ root, bundle: first, deploymentId: second, deployLog: third, out: fourth })
+      try Console.log(`[Slop] production evidence for deployment ${captured.deployment} written to ${fourth} (${captured.artifacts} served artifacts verified at ${captured.capturedAt})`)
+    }
+    return
+  }
+  if (command === "validate" && first !== undefined && second === undefined) {
+    const sourceSha = try Config.String("GITHUB_SHA")
+    const valid = try validateEvidence(first, { sourceSha })
+    try Console.log(`[Slop] evidence bundle ${first} binds ${valid.artifacts} artifacts captured at ${valid.capturedAt}`)
+    return
+  }
+  if (command === "agent-clients" && first !== undefined && third === undefined) {
+    provide systemGit {
+      const gate = try agentClientGate(first, second ?? ".")
+      try Console.log(gate.workflows.length === 0
+        ? "[Slop] no agent-client workflow changed since the served release"
+        : `[Slop] ${gate.records} agent-client records cover ${gate.workflows.join(", ")} since ${gate.base ?? "an unverified release"}`)
+    }
+    return
+  }
+  throw new EvidenceUsage({ message: `usage: ${usage}` })
+}

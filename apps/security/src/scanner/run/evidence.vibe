@@ -1,0 +1,91 @@
+// spec/security/admission.md, "Evidence durability precedes a clean or malicious publication"; spec/security/evidence.md, "Successful admission stays permanent and ordinary evidence waits ninety days"
+import { sha256Hex } from "@repo/platform/crypto"
+import { partBytes } from "../../evidence/layout.ts"
+import { type Method, signedCall } from "./service.vibe"
+
+export interface EvidenceObject {
+  readonly bytes: Uint8Array
+  readonly kind: "trace" | "manifest" | "artifact"
+  readonly label: string
+  readonly contentType: string
+}
+
+export error ScanReportMissing
+
+interface Part {
+  readonly offset: number
+  readonly size: number
+  readonly sha256: string
+}
+
+const Registration = Schema.Struct({ stored: Schema.optionalKey(Schema.Unknown) })
+
+const registrationLimit = 256 * 1024
+const encoder = new TextEncoder()
+
+effect function sent(method: Method, path: string, body: Uint8Array, contentType: string) {
+  const answer = signedCall({ step: "evidence", method, path, body, contentType, timeoutMs: 30_000, limitBytes: registrationLimit }) catch effect () => {
+    return undefined
+  }
+  return answer !== undefined && answer.status >= 200 && answer.status <= 299 ? answer : undefined
+}
+
+effect function storedOf(bytes: Uint8Array) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    return undefined
+  }
+  const registration = Schema.decodeUnknownEffect(Registration)(value) catch effect () => {
+    return undefined
+  }
+  const stored = registration?.stored
+  return new Set(Array.isArray(stored) ? stored.filter((sha) => typeof sha === "string") : [])
+}
+
+export effect function retainEvidence(assessmentId: string, runId: string, objects: ReadonlyArray<EvidenceObject>) {
+  const unique = new Map<string, EvidenceObject>()
+  for (const object of objects) unique.set(try sha256Hex(object.bytes), object)
+  const trace = [...unique].find(([, object]) => object.kind === "trace")
+  if (trace === undefined) throw new ScanReportMissing()
+  const parts = new Map<string, ReadonlyArray<Part>>()
+  for (const [sha256, object] of unique) {
+    if (object.bytes.byteLength <= partBytes) continue
+    const layout: Part[] = []
+    for (let offset = 0; offset < object.bytes.byteLength; offset += partBytes) {
+      const size = Math.min(partBytes, object.bytes.byteLength - offset)
+      layout.push({ offset, size, sha256: try sha256Hex(object.bytes.subarray(offset, offset + size)) })
+    }
+    parts.set(sha256, layout)
+  }
+  const path = `/api/v1/vetting/evidence/${assessmentId}/${runId}`
+  const registration = {
+    traceSha256: trace[0],
+    objects: [...unique].map(([sha256, object]) => {
+      const layout = parts.get(sha256)
+      return {
+        sha256,
+        sizeBytes: object.bytes.byteLength,
+        kind: object.kind,
+        label: object.label.slice(0, 200),
+        contentType: object.contentType,
+        ...(layout === undefined ? {} : { chunks: layout.map((part, index) => ({ index, sha256: part.sha256, sizeBytes: part.size })) }),
+      }
+    }),
+  }
+  const registered = try sent("POST", path, encoder.encode(JSON.stringify(registration)), "application/json")
+  if (registered === undefined) return false
+  const stored = try storedOf(registered.bytes)
+  for (const [sha256, object] of unique) {
+    const layout = parts.get(sha256)
+    if (layout === undefined) {
+      if (!stored.has(sha256) && (try sent("PUT", `${path}/${sha256}`, object.bytes, object.contentType)) === undefined) return false
+      continue
+    }
+    if (!stored.has(sha256)) {
+      for (const [index, part] of layout.entries()) {
+        if ((try sent("PUT", `${path}/${sha256}/chunks/${index}`, object.bytes.subarray(part.offset, part.offset + part.size), "application/octet-stream")) === undefined) return false
+      }
+    }
+    if ((try sent("POST", `${path}/${sha256}/finalize`, encoder.encode("{}"), "application/json")) === undefined) return false
+  }
+  return true
+}

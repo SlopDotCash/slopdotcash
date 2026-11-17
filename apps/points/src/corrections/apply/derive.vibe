@@ -1,0 +1,168 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/points/authorship.md, "Recipient line weights sum additions plus deletions over contributing commits"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import { type CompleteProof, type CorrectionActor, type CorrectionCommit, type CorrectionSource, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
+
+export interface Scope { readonly commit: string; readonly path: string }
+
+export interface DerivedProof {
+  readonly actors: ReadonlyMap<string, CorrectionActor>
+  readonly weights: ReadonlyMap<string, number>
+  readonly scopes: ReadonlyArray<Scope>
+}
+
+export type ProjectOfRepository = (repository: string) => string | undefined
+
+module verified {
+  import { legacyHolder as holder } from "@repo/backend/legacy"
+  /** @throws {never} */
+  export function legacyHolder(repository: string): string | undefined { return holder(repository) }
+}
+import { legacyHolder } from verified
+
+const node = /^[A-Za-z0-9_=-]{4,256}$/u
+export const digestPattern = /^[a-f0-9]{64}$/u
+const sha = /^[a-f0-9]{40}$/u
+const pullPath = /^\/([^/]+\/[^/]+)\/pull\/[1-9][0-9]*$/u
+const botLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u
+const userLogin = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const actorKinds: ReadonlyArray<string> = ["User", "Bot", "Mannequin", "Organization"]
+
+export function correctionFailure(message: string) {
+  return new CorrectionRefused({ message: `Implementation correction: ${message}` })
+}
+
+export effect function check(holds: boolean, message: string) {
+  if (!holds) throw correctionFailure(message)
+}
+
+export function isInstant(value: string | null): value is string {
+  if (value === null) return false
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
+}
+
+function count(value: number | null): boolean {
+  return value !== null && Number.isSafeInteger(value) && value >= 0
+}
+
+export function distinct(values: ReadonlyArray<string>) {
+  return new Set(values).size === values.length
+}
+
+export function sameSet(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  const rightSet = new Set(right)
+  return distinct(left) && distinct(right) && left.length === right.length && left.every((item) => rightSet.has(item))
+}
+
+export function isNodeId(value: string) {
+  return node.test(value)
+}
+
+effect function validActor(value: CorrectionActor | null) {
+  if (value === null) return
+  try check(node.test(value.id) && (value.kind === "Bot" ? botLogin : userLogin).test(value.login) && actorKinds.includes(value.kind), "invalid GitHub actor")
+}
+
+function eligible(value: CorrectionActor | null): value is CorrectionActor {
+  return value !== null && value.kind === "User" && isCreditEligibleCommitAuthor(value)
+}
+
+export effect function sourceRepository(url: string, projectId: string, projectOf: ProjectOfRepository) {
+  const parsed = URL.parse(url)
+  const match = parsed === null ? null : pullPath.exec(parsed.pathname)
+  try check(parsed !== null && parsed.origin === "https://github.com" && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && match !== null, "invalid pull request URL")
+  const repository = match?.[1] ?? ""
+  try check(projectOf(repository) === projectId, "source repository does not belong to the project")
+  return repository.toLowerCase()
+}
+
+effect function validCommit(commit: CorrectionCommit) {
+  const parents = commit.parentShas
+  try check(sha.test(commit.sha) && count(commit.parentCount) &&
+    (parents === undefined || (parents.length === commit.parentCount && distinct(parents) && parents.every((parent) => sha.test(parent) && parent !== commit.sha))) &&
+    (commit.additions === null || count(commit.additions)) && (commit.deletions === null || count(commit.deletions)) &&
+    (commit.firstAcceptedSourceId === null || node.test(commit.firstAcceptedSourceId)), "invalid commit proof")
+  try validActor(commit.author)
+  const files = commit.files
+  if (files === undefined) return
+  try check(distinct(files.map((file) => file.path)) && files.every((file) => file.path !== "" && count(file.additions) && count(file.deletions)), "invalid or duplicate commit file")
+  if (commit.mergeResolution === undefined && commit.additions !== null && commit.deletions !== null) {
+    try check(files.reduce((sum, file) => sum + file.additions, 0) === commit.additions && files.reduce((sum, file) => sum + file.deletions, 0) === commit.deletions, "commit file counts do not reconcile")
+  }
+}
+
+effect function validSource(source: CorrectionSource, candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
+  try check(node.test(source.sourceId) && node.test(source.repositoryNodeId) && sha.test(source.headSha) && count(source.commitCount) &&
+    (source.occurredAt === null || (isInstant(source.occurredAt) && source.occurredAt <= candidate.occurredAt)) &&
+    (try sourceRepository(source.sourceUrl, candidate.projectId, projectOf)) === source.repository.toLowerCase(), "invalid source identity")
+  try validActor(source.author)
+  const censused = source.complete && source.commitCount === source.commits.length
+  if (censused) try check(source.commits.some((commit) => commit.sha === source.headSha), "complete commit census does not reach the source head")
+  try check(distinct(source.commits.map((commit) => commit.sha)), "duplicate source commit")
+  for (const commit of source.commits) try validCommit(commit)
+  return censused
+}
+
+function reviewedOriginalBinding(proof: CompleteProof) {
+  return proof.originalContributor !== undefined || proof.originalContributorParts !== undefined || proof.independentClaimIds !== undefined
+}
+
+export effect function derivePullRequestProof(candidate: ManifestCandidate, projectOf: ProjectOfRepository) {
+  const proof = candidate.proof
+  if (proof.status === "held") return null
+  try check(digestPattern.test(proof.censusDigest), "invalid ownership census digest")
+  if (candidate.kind !== "pull-request" || reviewedOriginalBinding(proof)) return null
+  try check(sameSet(candidate.sourceIds, proof.sources.map((source) => source.sourceId)), "incomplete or duplicate source scope")
+  const sources = new Map(proof.sources.map((source) => [source.sourceId, source] as const))
+  let incomplete = false
+  for (const source of sources.values()) if (!(try validSource(source, candidate, projectOf))) incomplete = true
+  const accepted = sources.get(candidate.sourceId)
+  try check(accepted !== undefined && accepted.sourceUrl === candidate.sourceUrl && accepted.occurredAt === candidate.occurredAt, "completion source does not match the recorded pool")
+  if (incomplete || accepted === undefined) return null
+  const actors = new Map<string, CorrectionActor>()
+  const weights = new Map<string, number>()
+  const scopes: Scope[] = []
+  let unresolved = false
+  for (const commit of accepted.commits) {
+    if (commit.parentCount > 1 || commit.firstAcceptedSourceId !== accepted.sourceId) continue
+    if (commit.retainedCopy !== undefined) {
+      try check(!eligible(commit.author), "linked author must not be overridden")
+      return null
+    }
+    scopes.push({ commit: `${accepted.repositoryNodeId}\u0000${commit.sha}`, path: "*" })
+    const recipient = eligible(commit.author) ? commit.author : eligible(accepted.author) ? accepted.author : null
+    if (recipient === null) {
+      unresolved = true
+      continue
+    }
+    actors.set(recipient.id, recipient)
+    if (commit.additions === null || commit.deletions === null) {
+      unresolved = true
+      continue
+    }
+    weights.set(recipient.id, (weights.get(recipient.id) ?? 0) + commit.additions + commit.deletions)
+  }
+  try check(distinct(scopes.map((scope) => `${scope.commit}\u0000${scope.path}`)), "duplicate implementation claim")
+  if (actors.size === 1 && unresolved && scopes.length > 0) {
+    const resolved = accepted.commits.filter((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === accepted.sourceId &&
+      (eligible(commit.author) || eligible(accepted.author))).length
+    const [sole] = [...actors.keys()]
+    if (resolved === scopes.length && sole !== undefined) return { actors, weights: new Map([[sole, 0]]), scopes } satisfies DerivedProof
+  }
+  return unresolved || actors.size === 0 ? null : { actors, weights, scopes } satisfies DerivedProof
+}
+
+export function projectOfRegistry(projects: ReadonlyArray<unknown>): ProjectOfRepository {
+  const owners = new Map<string, string>()
+  for (const value of projects) {
+    if (typeof value !== "object" || value === null || !("id" in value) || typeof value.id !== "string" || !("repositories" in value) || !Array.isArray(value.repositories)) continue
+    const project = value.id
+    const listed: ReadonlyArray<unknown> = value.repositories
+    for (const repository of listed) {
+      if (typeof repository !== "object" || repository === null) continue
+      const names = [("id" in repository ? repository.id : undefined), ...("aliases" in repository && Array.isArray(repository.aliases) ? repository.aliases : [])]
+      for (const name of names) if (typeof name === "string" && !owners.has(name.toLowerCase())) owners.set(name.toLowerCase(), project)
+    }
+  }
+  return (repository) => owners.get(repository.toLowerCase()) ?? legacyHolder(repository)
+}

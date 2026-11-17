@@ -1,0 +1,57 @@
+// spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type IncompleteAssessments, assessmentsPerPage, incompleteAssessments, maxCursorLength } from "@repo/slopbot/client"
+import { call } from "../../platform/api.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const assessmentsLimitBytes = 128 * 1024
+
+export const assessmentMessages = {
+  unavailable: "Assessment queue unavailable",
+  invalid: "The assessment queue returned an invalid response.",
+  accessChanged: "Assessment queue access changed. Reload Inbox.",
+  privateUnavailable: "The private session could not load. Reload Inbox.",
+} as const
+
+export type AssessmentQueue =
+  | { readonly kind: "suppressed"; readonly currentActor: string | null }
+  | { readonly kind: "refresh"; readonly message: string }
+  | { readonly kind: "retry"; readonly message: string }
+  | { readonly kind: "ready"; readonly queue: IncompleteAssessments }
+
+const recipient = /^[1-9][0-9]{0,19}$/u
+const repository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+
+function instant(value: string): boolean {
+  return Number.isFinite(Date.parse(value))
+}
+
+export function queueValid(queue: IncompleteAssessments): boolean {
+  return recipient.test(queue.recipientGithubId) && queue.items.length <= assessmentsPerPage && (queue.next === null || queue.next.length <= maxCursorLength)
+    && queue.items.every((item) => repository.test(item.repository) && Number.isSafeInteger(item.pullRequest) && item.pullRequest > 0 && instant(item.since) && (item.retryAt === null || instant(item.retryAt)))
+}
+
+function accessRefused(status: number): boolean {
+  return status === 401 || status === 403 || status === 404 || status === 410
+}
+
+export effect function loadAssessmentQueue(actor: string, cursor: string | null) {
+  const session = try Session
+  const browser = try BrowserSession
+  const lifetime = try browser.lifetime()
+  const read = call(incompleteAssessments, { query: cursor === null ? {} : { after: cursor } }, { limitBytes: assessmentsLimitBytes, expectedActor: actor }) catch (failure) => ({ failure })
+  const current = session.current() catch () => undefined
+  if (current === undefined) return { kind: "refresh", message: assessmentMessages.privateUnavailable } satisfies AssessmentQueue
+  if (current?.githubId !== actor) return { kind: "suppressed", currentActor: current?.githubId ?? null } satisfies AssessmentQueue
+  if ("failure" in read) {
+    const failure = read.failure
+    if (failure._tag === "ActorChanged" || (failure._tag === "Refused" && accessRefused(failure.status))) return { kind: "refresh", message: assessmentMessages.accessChanged } satisfies AssessmentQueue
+    return { kind: "retry", message: assessmentMessages.unavailable } satisfies AssessmentQueue
+  }
+  if (!queueValid(read)) return { kind: "retry", message: assessmentMessages.invalid } satisfies AssessmentQueue
+  if (read.recipientGithubId !== actor) return { kind: "refresh", message: assessmentMessages.accessChanged } satisfies AssessmentQueue
+  if (!(try browser.acceptPrivate({ actorId: actorNumber(actor), epoch: lifetime.epoch }, read.items.length, true))) {
+    return { kind: "suppressed", currentActor: current.githubId } satisfies AssessmentQueue
+  }
+  return { kind: "ready", queue: read } satisfies AssessmentQueue
+}

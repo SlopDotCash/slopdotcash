@@ -1,0 +1,281 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Every required check binds the same source and built artifact"
+import { boundedBytes } from "@repo/platform/browser"
+import { isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { bundleSite, pagesBounds, verifyPagesManifest } from "../manifest/pages.vibe"
+import { verifyBundle } from "../manifest/release.vibe"
+import { EvidenceRefused, type Verification, artifactBytesLimits, deployLogName, sealEvidence } from "./bundle.vibe"
+import { pagesDeployment } from "./deployment.vibe"
+import { ipFamily, observedTls, resolvedAddresses } from "./network.ts"
+
+export interface CaptureInput {
+  readonly root: string
+  readonly bundle: string
+  readonly deploymentId: string
+  readonly deployLog: string
+  readonly out: string
+}
+
+export interface LocalArtifact {
+  readonly path: string
+  readonly bytes: Uint8Array
+}
+
+schema BuildManifest {
+  readonly schemaVersion: "1"
+  readonly repository: "SlopDotCash/slopdotcash"
+  readonly revisionStatus: "committed"
+  readonly revision: string
+  readonly generatedAt: string
+}
+
+export const productionHostname = "slop.cash"
+export const productionOrigin = "https://slop.cash"
+
+export const remoteArtifactPaths: ReadonlyArray<string> = [
+  "index.html",
+  "SKILL.md",
+  ".well-known/agent-skills/index.json",
+  ".well-known/agent-skills/slop/SKILL.md",
+  "llms.txt",
+  "skill-manifest.json",
+  "data/leaderboard.json",
+]
+
+const skillPaths: ReadonlySet<string> = new Set(["SKILL.md", ".well-known/agent-skills/index.json", ".well-known/agent-skills/slop/SKILL.md", "skill-manifest.json"])
+
+const requiredSecurityHeaders: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
+  ["content-security-policy", ["default-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "upgrade-insecure-requests"]],
+  ["cross-origin-opener-policy", ["same-origin"]],
+  ["permissions-policy", ["camera=()", "microphone=()", "geolocation=()", "payment=()"]],
+  ["referrer-policy", ["strict-origin-when-cross-origin"]],
+  ["strict-transport-security", ["max-age=31536000", "includesubdomains"]],
+  ["x-content-type-options", ["nosniff"]],
+]
+
+const requestSeconds = 10
+const redirectStatuses = [301, 302, 307, 308] as const
+const revision = /^[0-9a-f]{40}$/u
+const assetReference = /(?:href|src)="(\/assets\/[^"?]+)"/u
+
+function refused(message: string) {
+  return new EvidenceRefused({ message })
+}
+
+export function contentTypeOf(path: string) {
+  if (path === "index.html") return "text/html"
+  if (path === "llms.txt") return "text/plain"
+  if (path.startsWith("data/leaderboard/") && path.endsWith(".part")) return "text/plain"
+  if (path.endsWith(".json")) return "application/json"
+  if (path.endsWith(".md")) return "text/markdown"
+  return undefined
+}
+
+export function securityHeaderIssue(headers: Readonly<Record<string, string | undefined>>) {
+  for (const [name, required] of requiredSecurityHeaders) {
+    const value = headers[name]
+    if (value === undefined || value === "") return `the production response omitted ${name}`
+    const missing = required.find((policy) => !value.toLowerCase().includes(policy.toLowerCase()))
+    if (missing !== undefined) return `the production ${name} omitted the required policy ${missing}`
+  }
+  return undefined
+}
+
+effect function answered(url: string, limit: number, label: string) {
+  const request = HttpClientRequest.get(url, { headers: { accept: "*/*", "accept-encoding": "identity", "cache-control": "no-cache", pragma: "no-cache" } })
+  return timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
+      const response = try HttpClient.execute(request)
+      const bytes = try boundedBytes(response, limit, label)
+      return { status: response.status, headers: response.headers, bytes }
+    }
+  }, Duration.seconds(requestSeconds)) catch effect () => {
+    throw refused(`${label} did not answer within its bounds`)
+  }
+}
+
+export effect function servedArtifacts(origin: string, artifacts: ReadonlyArray<LocalArtifact>, cacheKey: string) {
+  const observed: Array<Verification["remoteArtifacts"][number]> = []
+  for (const artifact of artifacts) {
+    const expected = contentTypeOf(artifact.path)
+    if (expected === undefined) throw refused(`remote artifact ${artifact.path} has no content type contract`)
+    const url = `${origin}/${artifact.path === "index.html" ? "" : artifact.path}?verify=${cacheKey}`
+    const label = `${origin} ${artifact.path}`
+    const answer = try answered(url, artifact.bytes.length, label)
+    if (answer.status !== 200) throw refused(`${label} returned HTTP ${answer.status}`)
+    const contentType = answer.headers["content-type"] ?? ""
+    if ((contentType.split(";")[0] ?? "").trim().toLowerCase() !== expected) throw refused(`${label} returned ${contentType === "" ? "no Content-Type" : contentType}; expected ${expected}`)
+    const declared = answer.headers["content-length"]
+    if (declared !== undefined && (!/^\d+$/u.test(declared) || Number(declared) !== artifact.bytes.length)) throw refused(`${label} length does not match the verified artifact`)
+    const digest = try sha256Hex(answer.bytes)
+    if (answer.bytes.length !== artifact.bytes.length || digest !== (try sha256Hex(artifact.bytes))) throw refused(`${label} does not match the verified artifact`)
+    observed.push({ origin, path: artifact.path, status: 200, bytes: answer.bytes.length, sha256: digest, contentType, cacheControl: answer.headers["cache-control"] ?? null })
+  }
+  return observed
+}
+
+effect function dnsAddresses() {
+  const resolved = tryPromise({ try: () => resolvedAddresses(productionHostname), catch: () => refused("production DNS returned no addresses") })
+  const addresses = try resolved
+  if (addresses.length === 0) throw refused("production DNS returned no addresses")
+  const families: Array<{ readonly address: string; readonly family: 4 | 6 }> = []
+  for (const [index, entry] of addresses.entries()) {
+    const family = ipFamily(entry.address)
+    if ((family !== 4 && family !== 6) || entry.family !== family) throw refused(`DNS address ${index} is not a valid A/AAAA result`)
+    families.push({ address: entry.address, family })
+  }
+  return families
+}
+
+effect function tlsSession() {
+  const observed = timeout(tryPromise({ try: (signal) => observedTls(productionHostname, signal), catch: () => refused("production TLS did not complete a verified handshake") }), Duration.seconds(requestSeconds)) catch effect () => {
+    throw refused("production TLS did not complete a verified handshake within its deadline")
+  }
+  const now = try Clock.currentTimeMillis
+  if (!observed.authorized) throw refused(`the TLS certificate was not authorized: ${observed.authorizationError ?? "unknown"}`)
+  const protocol = observed.protocol
+  if (protocol !== "TLSv1.2" && protocol !== "TLSv1.3") throw refused(`the TLS protocol is not accepted: ${protocol ?? "none"}`)
+  const validTo = Date.parse(observed.validTo ?? "")
+  if (!Number.isFinite(validTo) || validTo <= now) throw refused("the TLS certificate is expired or has no expiry")
+  if (observed.cipher === undefined || observed.validFrom === undefined || observed.validTo === undefined) throw refused("the TLS session omitted its cipher or validity")
+  return {
+    authorized: true as const,
+    protocol,
+    cipher: observed.cipher,
+    ...observed.issuer === undefined ? {} : { issuer: observed.issuer },
+    ...observed.subject === undefined ? {} : { subject: observed.subject },
+    ...observed.subjectAltName === undefined ? {} : { subjectAltName: observed.subjectAltName },
+    validFrom: observed.validFrom,
+    validTo: observed.validTo,
+  }
+}
+
+effect function httpsRedirect(cacheKey: string) {
+  const answer = try answered(`http://${productionHostname}/?verify=${cacheKey}`, 64 * 1024, "the HTTP apex")
+  const status = redirectStatuses.find((code) => code === answer.status)
+  if (status === undefined) throw refused(`the HTTP apex returned ${answer.status} instead of a redirect`)
+  const location = answer.headers.location
+  if (location === undefined) throw refused("the HTTP apex redirect omitted Location")
+  const target = Effect.try(() => new URL(location, `http://${productionHostname}`)) catch () => undefined
+  if (target === undefined) throw refused("the HTTP apex returned an invalid Location")
+  if (target.protocol !== "https:" || target.hostname !== productionHostname || target.port !== "") throw refused(`the HTTP apex redirected outside ${productionOrigin}: ${target.href}`)
+  return { status, location: target.href }
+}
+
+export effect function productionNetwork(cacheKey: string, assetPath: string, index: Uint8Array) {
+  const addresses = try dnsAddresses()
+  const tls = try tlsSession()
+  const redirect = try httpsRedirect(cacheKey)
+  const httpsUrl = `${productionOrigin}/?verify=${cacheKey}`
+  const root = try answered(httpsUrl, index.length, "the production apex")
+  if (root.status !== 200) throw refused(`the production apex returned HTTP ${root.status}`)
+  const headerIssue = securityHeaderIssue(root.headers)
+  if (headerIssue !== undefined) throw refused(headerIssue)
+  const securityHeaders = Object.fromEntries(requiredSecurityHeaders.map(([name]) => [name, root.headers[name] ?? ""]))
+  const assetUrl = `${productionOrigin}${assetPath}?verify=${cacheKey}`
+  const asset = try answered(assetUrl, pagesBounds.fileBytes, "the production asset")
+  if (asset.status !== 200) throw refused(`the production asset returned HTTP ${asset.status}`)
+  const cacheControl = asset.headers["cache-control"] ?? ""
+  const omitted = ["public", "max-age=31536000", "immutable"].find((directive) => !cacheControl.toLowerCase().includes(directive))
+  if (omitted !== undefined) throw refused(`the production asset cache-control omitted ${omitted}`)
+  return {
+    dns: { hostname: productionHostname, addresses },
+    tls,
+    redirect,
+    https: { status: 200 as const, url: httpsUrl },
+    securityHeaders,
+    asset: { url: assetUrl, status: 200 as const, cacheControl },
+  } satisfies Verification["network"]
+}
+
+export effect function buildManifestOf(bytes: Uint8Array) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw refused("skill-manifest.json is not JSON")
+  }
+  const manifest = Schema.decodeUnknownEffect(BuildManifest)(value) catch effect () => {
+    throw refused("skill-manifest.json is not a committed build manifest of SlopDotCash/slopdotcash")
+  }
+  if (!revision.test(manifest.revision)) throw refused("the skill manifest revision is not a full commit SHA")
+  return manifest
+}
+
+export effect function committedBuild(bytes: Uint8Array, sourceSha: string) {
+  const manifest = try buildManifestOf(bytes)
+  if (manifest.revision !== sourceSha) throw refused(`the skill manifest revision ${manifest.revision} does not match the tested revision ${sourceSha}`)
+  return { revision: manifest.revision, revisionStatus: manifest.revisionStatus, generatedAt: manifest.generatedAt }
+}
+
+effect function outsideRepository(root: string, out: string) {
+  const files = try Path.Path
+  const repository = files.resolve(root)
+  const target = files.resolve(out)
+  if (target === repository || target.startsWith(`${repository}${files.sep}`)) throw refused("evidence is never written inside the repository checkout; choose a directory outside it")
+}
+
+effect function deployLog(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch () => undefined
+  const size = Number(info?.size ?? 0)
+  if (info?.type !== "File" || size === 0 || size > (artifactBytesLimits[deployLogName] ?? 0)) throw refused("the deploy log must be a non-empty regular file within its size bound")
+  return fs.readFile(path) catch effect () => {
+    throw refused("the deploy log is unreadable")
+  }
+}
+
+effect function siteArtifacts(site: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const artifacts: LocalArtifact[] = []
+  for (const path of remoteArtifactPaths) {
+    const bytes = fs.readFile(files.join(site, ...path.split("/"))) catch effect () => {
+      throw refused(`the site is incomplete: ${path} is not readable`)
+    }
+    if (bytes.length === 0) throw refused(`the site artifact is empty: ${path}`)
+    artifacts.push({ path, bytes })
+  }
+  return artifacts
+}
+
+function artifactAt(artifacts: ReadonlyArray<LocalArtifact>, path: string) {
+  return artifacts.find((artifact) => artifact.path === path)?.bytes ?? new Uint8Array()
+}
+
+export effect function captureEvidence(input: CaptureInput) {
+  const sourceSha = try Config.String("GITHUB_SHA")
+  if (!revision.test(sourceSha)) throw refused("GITHUB_SHA is not a full commit SHA")
+  try outsideRepository(input.root, input.out)
+  const log = try deployLog(input.deployLog)
+  const verified = try verifyBundle(input.bundle)
+  if (verified.manifest.sourceSha !== sourceSha || verified.manifest.environment !== "production") throw refused("the bundle was not built from this run's source for production")
+  const site = try bundleSite(input.bundle)
+  try verifyPagesManifest(site)
+  const artifacts = try siteArtifacts(site)
+  const index = artifactAt(artifacts, "index.html")
+  const asset = assetReference.exec(new TextDecoder().decode(index))?.[1]
+  if (asset === undefined) throw refused("the built index omitted a hashed /assets reference")
+  const buildManifest = try committedBuild(artifactAt(artifacts, "skill-manifest.json"), sourceSha)
+  const deployment = try pagesDeployment(input.root, "Production", input.deploymentId, sourceSha)
+  const started = try Clock.currentTimeMillis
+  const cacheKey = `${sourceSha}-${started}`
+  const remoteArtifacts = [...try servedArtifacts(deployment.origin, artifacts, cacheKey), ...try servedArtifacts(productionOrigin, artifacts, cacheKey)]
+  const network = try productionNetwork(cacheKey, asset, index)
+  const skill: Array<{ readonly path: string; readonly bytes: number; readonly sha256: string }> = []
+  for (const artifact of artifacts) {
+    if (skillPaths.has(artifact.path)) skill.push({ path: artifact.path, bytes: artifact.bytes.length, sha256: try sha256Hex(artifact.bytes) })
+  }
+  const verification = {
+    schemaVersion: 1,
+    capturedAt: try isoAt(started),
+    environment: "production",
+    origin: productionOrigin,
+    sourceSha,
+    deployment: { id: deployment.id, url: deployment.url, createdOn: deployment.createdOn },
+    buildManifest,
+    deployLog: { bytes: log.length, sha256: try sha256Hex(log) },
+    remoteArtifacts,
+    skill,
+    network,
+  } satisfies Verification
+  const sealed = try sealEvidence(input.out, verification, log)
+  return { ...sealed, deployment: deployment.url, artifacts: remoteArtifacts.length }
+}

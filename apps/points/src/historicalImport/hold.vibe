@@ -1,0 +1,82 @@
+// spec/points/historicalImport.md, "Story: Release historical rescoring only after it reconciles"; spec/points/historicalImport.md, "Each import has its own hold and published rules stay prior until a release"; spec/points/historicalImport.md, "Every source is assessed or explicitly held before reconciliation"; spec/points/historicalImport.md, "Reconciliation binds the exact changes to the current journal and the release follows it"
+import type { Journal } from "../kernels/records/canonical.ts"
+import { batchDigest } from "../kernels/records/ids.vibe"
+import { compareCodeUnits } from "../client/snapshot/checks.vibe"
+import { type Completion, type Event, type Imports, type Reconciliation, Machine, canInvalidate, canRelease, find, held, includesSource, initial, machineOver } from "../../gen/points__historicalImport.effect.vibe"
+
+export error HoldRecordInvalid { id: number; message: string }
+
+export interface ImportRecord {
+  readonly id: number
+  readonly sources: ReadonlyArray<string>
+  readonly completion?: Completion
+  readonly reconciliation?: Reconciliation
+  readonly refused?: true
+  readonly released?: true
+}
+
+export interface Holds {
+  readonly state: Imports
+  readonly sourceNumbers: ReadonlyMap<string, number>
+}
+
+export const reviewedImports: ReadonlyArray<ImportRecord> = []
+
+export effect function importsRun(start: Imports = initial) {
+  const kept = try Ref.make(start)
+  return try machineOver(() => Ref.get(kept), (next) => Ref.set(kept, next))
+}
+
+export function importsLayer(start: Imports = initial) {
+  return Layer.effect(Machine, importsRun(start))
+}
+
+export effect function importsSend(event: Event) {
+  return try (try Machine).send(event)
+}
+
+export effect function importsReceive(input: unknown) {
+  return try (try Machine).receive(input)
+}
+
+export effect function importsState() {
+  return try (try Machine).get()
+}
+
+effect function recorded(run: Machine.Shape, record: ImportRecord, event: Event, message: string) {
+  run.send(event) catch effect () => {
+    throw new HoldRecordInvalid({ id: record.id, message })
+  }
+}
+
+export effect function holdsOf(records: ReadonlyArray<ImportRecord>, currentJournal: string) {
+  const sourceNumbers = new Map([...new Set(records.flatMap((record) => record.sources))].sort(compareCodeUnits).map((source, position) => [source, position + 1] as const))
+  const run = try importsRun()
+  for (const record of records) {
+    try recorded(run, record, { type: "begin", id: record.id, sourceIds: record.sources.map((source) => sourceNumbers.get(source) ?? 0) }, "An import names a new positive identity and distinct accepted sources")
+    if (record.completion !== undefined) try recorded(run, record, { type: "complete", id: record.id, c: record.completion }, "Every source of an import is assessed or explicitly held")
+    if (record.refused === true) try recorded(run, record, { type: "refuse", id: record.id }, "Only a collecting or assessed import is refused")
+    if (record.reconciliation !== undefined) try recorded(run, record, { type: "reconcile", id: record.id, r: record.reconciliation }, "A reconciliation binds checked changes to a journal digest")
+    if (record.released !== true) continue
+    const state = try run.get()
+    if (canRelease(state, record.id, currentJournal)) try run.send({ type: "release", id: record.id, currentJournal })
+    else if (canInvalidate(state, record.id, currentJournal)) try run.send({ type: "invalidate", id: record.id, currentJournal })
+    else throw new HoldRecordInvalid({ id: record.id, message: "Only a reconciled import is released" })
+  }
+  return { state: try run.get(), sourceNumbers } satisfies Holds
+}
+
+export effect function historicalHolds(journal: Journal, records: ReadonlyArray<ImportRecord> = reviewedImports) {
+  return try holdsOf(records, try batchDigest(journal))
+}
+
+export function publicationHeld(holds: Holds) {
+  return holds.state.ids.some((id) => held(holds.state, id))
+}
+
+export function releaseOf(holds: Holds, sourceNodeId: string) {
+  const source = holds.sourceNumbers.get(sourceNodeId)
+  if (source === undefined) return undefined
+  const importId = holds.state.released.find((id) => includesSource(find(holds.state, id), source))
+  return importId === undefined ? undefined : { importId, imported: find(holds.state, importId), source }
+}

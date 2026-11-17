@@ -1,0 +1,174 @@
+// spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/privacy.md, "A scanner evidence grant is redeemed once, and a download needs exactly one grant cookie, a same-origin GET and no range"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { route } from "@repo/platform/route"
+import { sha256Hex } from "@repo/platform/crypto"
+import { evidenceOverview, grantEvidenceDownload, grantEvidenceRead, grantExemption, queueAssessment, revokeExemption, vettingOverview } from "@repo/security/client"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { fetchBoundedBytes } from "../../platform/bounded.vibe"
+import { Session } from "../../session/session.vibe"
+import { adminAction, adminListLimitBytes } from "./admin.vibe"
+import { projectReplyLimitBytes } from "./api.vibe"
+
+export const vettingMessages = {
+  exemptionIncomplete: "Record the reason, owner decision reference and confirmation.",
+  scanReason: "Write a reason for the scan.",
+  evidenceFailed: "Evidence read failed",
+  evidenceLength: "Evidence length differs from the immutable inventory.",
+  evidenceDigest: "Evidence digest differs from the immutable inventory.",
+  accountChanged: "Your account changed. Reload this page.",
+  downloadRequested: "Download requested. Do not execute the file. A failed transfer needs a new grant.",
+  bytesVerified: "Exact bytes verified. Download requested; do not execute the file.",
+  textVerified: "Complete bytes verified. Text is displayed without execution.",
+} as const
+
+export const minimumExemptionReason = 8
+
+const evidenceBase = "/api/v1/operator/vetting-evidence"
+const identityStatuses: ReadonlySet<number> = new Set([401, 403, 404, 410])
+const binaryType = "application/octet-stream"
+
+export error VettingIncomplete { message: string }
+export error EvidenceReadFailed { message: string; identityChanged: boolean }
+
+const GrantRequest = Schema.Struct({
+  projectId: Schema.String,
+  revision: Schema.Number,
+  repository: Schema.optionalKey(Schema.String),
+  reason: Schema.String,
+  decisionReference: Schema.String,
+  confirmation: Schema.Literal(true),
+})
+
+schema RevokeRequest { reason: string; decisionReference: string; confirmation: true }
+
+const ScanRequest = Schema.Struct({ projectId: Schema.String, revision: Schema.Number, reason: Schema.String, repository: Schema.optionalKey(Schema.String) })
+
+const granting = route({ ...grantExemption, request: GrantRequest })
+const revoking = route({ ...revokeExemption, request: RevokeRequest })
+const queueing = route({ ...queueAssessment, request: ScanRequest })
+
+export interface ExemptionDecision {
+  readonly reason: string
+  readonly decisionReference: string
+  readonly confirmed: boolean
+}
+
+export interface ExemptionTarget {
+  readonly projectId: string
+  readonly revision: number
+  readonly repository?: string
+}
+
+export interface ScanTarget {
+  readonly projectId: string
+  readonly revision: number
+  readonly reason: string
+  readonly repository?: string
+}
+
+export interface EvidenceRun {
+  readonly assessmentId: string
+  readonly runId: string
+}
+
+export interface EvidenceObject {
+  readonly sha256: string
+  readonly sizeBytes: number
+  readonly contentType: string
+  readonly streamed: boolean
+}
+
+export type EvidenceRead =
+  | { readonly kind: "download"; readonly href: string; readonly status: string }
+  | { readonly kind: "text"; readonly text: string; readonly status: string }
+  | { readonly kind: "bytes"; readonly bytes: Uint8Array; readonly status: string }
+
+function options(actorGithubId: string) {
+  return { limitBytes: projectReplyLimitBytes, expectedActor: actorGithubId }
+}
+
+effect function decided(decision: ExemptionDecision) {
+  const reason = decision.reason.trim()
+  const decisionReference = decision.decisionReference.trim()
+  if (!decision.confirmed || reason.length < minimumExemptionReason || decisionReference === "") throw new VettingIncomplete({ message: vettingMessages.exemptionIncomplete })
+  return { reason, decisionReference, confirmation: true as const }
+}
+
+export effect function vettingOverviewFor(actorGithubId: string) {
+  return try adminAction(actorGithubId, call(vettingOverview, {}, { limitBytes: adminListLimitBytes, expectedActor: actorGithubId }))
+}
+
+export effect function queueScan(actorGithubId: string, target: ScanTarget) {
+  const reason = target.reason.trim()
+  if (reason === "") throw new VettingIncomplete({ message: vettingMessages.scanReason })
+  const body = { projectId: target.projectId, revision: target.revision, reason, ...(target.repository === undefined ? {} : { repository: target.repository }) }
+  return try adminAction(actorGithubId, call(queueing, { body }, options(actorGithubId)))
+}
+
+export effect function grantAdmissionExemption(actorGithubId: string, target: ExemptionTarget, decision: ExemptionDecision) {
+  const body = { projectId: target.projectId, revision: target.revision, ...(target.repository === undefined ? {} : { repository: target.repository }), ...(try decided(decision)) }
+  return try adminAction(actorGithubId, call(granting, { body }, options(actorGithubId)))
+}
+
+export effect function revokeAdmissionExemption(actorGithubId: string, exemptionId: string, decision: ExemptionDecision) {
+  return try adminAction(actorGithubId, call(revoking, { body: try decided(decision), params: { id: exemptionId } }, options(actorGithubId)))
+}
+
+effect function sameOperator(actorGithubId: string) {
+  const current = (try Session).current() catch () => null
+  if (current?.githubId !== actorGithubId) throw new EvidenceReadFailed({ message: vettingMessages.accountChanged, identityChanged: true })
+}
+
+export effect function evidenceRunsFor(actorGithubId: string, run: EvidenceRun) {
+  const overview = call(evidenceOverview, { query: { assessmentId: run.assessmentId, runId: run.runId } }, { limitBytes: adminListLimitBytes, expectedActor: actorGithubId }) catch effect (failure) => {
+    throw new EvidenceReadFailed({ message: failure.message === "" ? vettingMessages.evidenceFailed : failure.message, identityChanged: failure._tag === "ActorChanged" })
+  }
+  try sameOperator(actorGithubId)
+  return overview
+}
+
+function objectPath(run: EvidenceRun, object: EvidenceObject): string {
+  return `${evidenceBase}/${encodeURIComponent(run.assessmentId)}/${encodeURIComponent(run.runId)}/${object.sha256}`
+}
+
+function grantFailure(failure: CallFailure): EvidenceReadFailed {
+  const status = failure._tag === "Refused" || failure._tag === "InvalidResponse" ? failure.status : 0
+  return new EvidenceReadFailed({ message: failure.message === "" ? vettingMessages.evidenceFailed : failure.message, identityChanged: failure._tag === "ActorChanged" || identityStatuses.has(status) })
+}
+
+effect function readBody(actorGithubId: string, run: EvidenceRun, object: EvidenceObject, grant: string) {
+  const headers = { "x-vetting-read-grant": grant, "x-slop-expected-github-id": actorGithubId }
+  return fetchBoundedBytes(`${objectPath(run, object)}/body`, object.sizeBytes, "Evidence", headers) catch effect (error) => {
+    const refusal = error._tag === "Refused" ? error.status : undefined
+    if (refusal !== undefined) throw new EvidenceReadFailed({ message: `Evidence read failed (${refusal}). Request a new grant.`, identityChanged: identityStatuses.has(refusal) })
+    throw new EvidenceReadFailed({ message: error._tag === "BodyTooLarge" ? vettingMessages.evidenceLength : vettingMessages.evidenceFailed, identityChanged: false })
+  }
+}
+
+effect function verified(actorGithubId: string, run: EvidenceRun, object: EvidenceObject, reason: string) {
+  const params = { assessment: run.assessmentId, run: run.runId, sha: object.sha256 }
+  try sameOperator(actorGithubId)
+  if (object.streamed) {
+    call(grantEvidenceDownload, { body: { reason }, params }, options(actorGithubId)) catch effect (failure) => { throw grantFailure(failure) }
+    try sameOperator(actorGithubId)
+    return { kind: "download", href: `${objectPath(run, object)}/download`, status: vettingMessages.downloadRequested } satisfies EvidenceRead
+  }
+  const granted = call(grantEvidenceRead, { body: { reason }, params }, options(actorGithubId)) catch effect (failure) => { throw grantFailure(failure) }
+  try sameOperator(actorGithubId)
+  const bytes = try readBody(actorGithubId, run, object, granted.grant)
+  if (bytes.byteLength !== object.sizeBytes) throw new EvidenceReadFailed({ message: vettingMessages.evidenceLength, identityChanged: false })
+  if ((try sha256Hex(bytes)) !== object.sha256) throw new EvidenceReadFailed({ message: vettingMessages.evidenceDigest, identityChanged: false })
+  try sameOperator(actorGithubId)
+  if (object.contentType === binaryType) return { kind: "bytes", bytes, status: vettingMessages.bytesVerified } satisfies EvidenceRead
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => {
+    throw new EvidenceReadFailed({ message: vettingMessages.evidenceFailed, identityChanged: false })
+  }
+  return { kind: "text", text, status: vettingMessages.textVerified } satisfies EvidenceRead
+}
+
+export effect function readEvidenceObject(actorGithubId: string, run: EvidenceRun, object: EvidenceObject, reason: string) {
+  return verified(actorGithubId, run, object, reason) catch effect (error) => {
+    if (error._tag === "EvidenceReadFailed" && error.identityChanged) throw error
+    try sameOperator(actorGithubId)
+    throw error
+  }
+}

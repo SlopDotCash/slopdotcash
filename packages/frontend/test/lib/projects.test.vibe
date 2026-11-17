@@ -1,0 +1,554 @@
+import { assert, layer } from "@effect/vitest"
+import { CallerLive } from "@repo/backend/caller"
+import { backend, backendServices } from "@repo/backend/live"
+import type { ExecutionContext } from "@repo/platform/bindings"
+import { noEdgeCache } from "@repo/platform/cache"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { pages } from "@repo/platform/worker"
+import { security, securityBindings } from "@repo/security/live"
+import { createProject, checkProjectSetup, cancelProjectApplication, publishRevision, requireEditorActor, setupList } from "../../src/flows/projects/api.vibe"
+import { discardManifestDraft, restoredManifestDraft, saveManifestDraft, submitManifest } from "../../src/flows/projects/admin.vibe"
+import { ProjectDrafts, draftSaver, legacyProposalDraft, projectDrafts, proposalDraftKey } from "../../src/flows/projects/draftStore.vibe"
+import { lookupRepository, ownedRepositories } from "../../src/flows/projects/github.vibe"
+import { normalizeRepositoryInput } from "../../src/flows/projects/proposal.ts"
+import { grantAdmissionExemption, revokeAdmissionExemption, vettingMessages } from "../../src/flows/projects/vetting.vibe"
+import { Deployment, originsOf } from "../../src/platform/config.vibe"
+import { locks } from "../../src/platform/locks.vibe"
+import { type BrowserStore, LocalStore, SessionStore, storeOver } from "../../src/platform/storage.vibe"
+import { BrowserSession, sessionServices } from "../../src/session/browserSession.vibe"
+
+module world {
+  import { Request as WebRequest, Response as WebResponse } from "miniflare"
+  import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
+  import { type StartedWorker, database, migrate, startWorker, storage } from "@repo/platform/testing"
+  import { githubFake } from "@repo/platform/testing/github"
+  import { internet } from "@repo/platform/testing/internet"
+  import { migrationsDir } from "@repo/platform/testing/paths"
+  import { asFetch } from "@repo/platform/testing/quotes"
+
+  export const site = "https://slop.test"
+  export const stewardId = 41
+  export const adminId = 7
+  export const primaryId = 9001
+  export const otherId = 9003
+  const rpcUrl = "https://rpc.ethereum.test"
+  const address = "203.0.113.71"
+
+  export type Served = (request: Request) => Promise<Response>
+
+  export interface World {
+    readonly fetch: typeof globalThis.fetch
+    readonly db: D1Database
+    readonly evidence: R2Bucket
+    readonly traces: R2Bucket
+    readonly slopbot: Fetcher
+    readonly identity: Fetcher
+    readonly assets: Fetcher
+    readonly readerToken: string
+    readonly rpcUrl: string
+    readonly requests: Array<string>
+    /** @throws {never} */
+    commitOf(name: string): string
+    /** @throws {never} */
+    unexpected(): ReadonlyArray<string>
+    /** @throws {never} */
+    useCookie(token: string): void
+    /** @throws {never} */
+    serve(served: Served): void
+    /** @throws {never} */
+    dispose(): Promise<void>
+  }
+
+  function owner() {
+    return { id: stewardId, node_id: `U_${stewardId}`, login: `member-${stewardId}`, type: "User" }
+  }
+
+  function slopbotAnswer(request: Request): Response {
+    const url = new URL(request.url)
+    const id = Number(url.searchParams.get("repositoryId"))
+    const path = url.searchParams.get("repository") ?? ""
+    const permission = url.searchParams.get("login") === `member-${stewardId}` ? "admin" : "read"
+    return new Response(JSON.stringify({ installation: "installed", installationId: 77, permission, roleName: null, repository: { id, node_id: `R_${id}`, full_name: path, private: false, owner: owner() } }), { headers: { "content-type": "application/json" } })
+  }
+
+  async function rpcAnswer(request: WebRequest) {
+    const body = await request.json() as { readonly id: number; readonly method: string; readonly params: ReadonlyArray<{ readonly data?: string }> }
+    const data = body.params[0]?.data
+    const result = body.method === "eth_chainId" ? "0x1" : body.method === "eth_getCode" ? "0x6080" : data === "0x313ce567" ? `0x${"6".padStart(64, "0")}` : `0x${"20".padStart(64, "0")}${"4".padStart(64, "0")}${"55534443".padEnd(64, "0")}`
+    return new WebResponse(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }), { headers: { "content-type": "application/json" } })
+  }
+
+  /** @throws {never} */
+  export async function startWorld(): Promise<World> {
+    const fake = githubFake()
+    fake.world.addUser({ id: stewardId, login: `member-${stewardId}`, nodeId: `U_${stewardId}` })
+    fake.world.addUser({ id: adminId, login: `member-${adminId}`, nodeId: `U_${adminId}` })
+    fake.world.addUser({ id: 5000, login: "slop-reader" })
+    fake.world.addRepo({ id: primaryId, nodeId: `R_${primaryId}`, owner: `member-${stewardId}`, name: "tool", defaultBranch: "main", license: { spdx: "MIT" } })
+    fake.world.addRepo({ id: otherId, nodeId: `R_${otherId}`, owner: `member-${stewardId}`, name: "other", defaultBranch: "main", license: { spdx: "MIT" } })
+    const net = internet({ github: fake.handler, rpc: { [rpcUrl]: rpcAnswer } })
+    const mf: StartedWorker = startWorker({ d1: { SLOP_DB: "slop-private" }, r2: ["VETTING_EVIDENCE", "PRIVATE_TRACES"] })
+    const failed = (await migrate(mf, "SLOP_DB", migrationsDir)).find((applied) => applied.error !== undefined)
+    if (failed !== undefined) throw new Error(`migration ${failed.file} failed: ${failed.error}`)
+    const requests: Array<string> = []
+    let jar = ""
+    let served: Served | undefined = undefined
+    const internetFetch = asFetch(net.handler)
+    const before = globalThis.fetch
+    globalThis.fetch = internetFetch
+
+    const page = async (input: string | URL | Request, init?: RequestInit) => {
+      const outgoing = new Request(input, init)
+      const url = new URL(outgoing.url)
+      if (url.origin !== site || served === undefined) return new Response(`the page may not reach ${url.host}`, { status: 599 })
+      requests.push(`${outgoing.method} ${url.pathname}`)
+      const headers = new Headers(outgoing.headers)
+      headers.set("cf-connecting-ip", address)
+      if (jar !== "") headers.set("cookie", `__Host-slop_points=${jar}`)
+      if (outgoing.method !== "GET") headers.set("origin", site)
+      const body = outgoing.method === "GET" ? undefined : await outgoing.text()
+      return served(new Request(url.toString(), { method: outgoing.method, headers, ...body === undefined ? {} : { body } }))
+    }
+
+    return {
+      fetch: page as typeof globalThis.fetch,
+      db: await database(mf, "SLOP_DB"),
+      evidence: await storage(mf, "VETTING_EVIDENCE"),
+      traces: await storage(mf, "PRIVATE_TRACES"),
+      slopbot: { fetch: async (request) => slopbotAnswer(request) },
+      identity: { fetch: async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 }) },
+      assets: { fetch: async () => new Response("static asset", { status: 404 }) },
+      readerToken: fake.tokens.user("slop-reader"),
+      rpcUrl,
+      requests,
+      commitOf: (name) => fake.world.repo(`member-${stewardId}/${name}`).branches.get("main") ?? "",
+      unexpected: () => net.unexpected.map((seen) => `${seen.method} ${seen.url}`),
+      useCookie: (token) => {
+        jar = token
+      },
+      serve: (handler) => {
+        served = handler
+      },
+      dispose: async () => {
+        globalThis.fetch = before
+        await mf.dispose()
+      },
+    }
+  }
+}
+import { type World, adminId, otherId, primaryId, site, startWorld, stewardId } from world
+
+service Browser { readonly world: World }
+
+const context: ExecutionContext = { waitUntil: () => undefined }
+const seededAt = "2026-11-01T00:00:00.000Z"
+
+const Started = Layer.effect(Browser, effect {
+  const started = try acquireRelease(promise(() => startWorld()), (opened) => promise(() => opened.dispose()))
+  const env = {
+    SLOP_DB: started.db,
+    ASSETS: started.assets,
+    SLOP_IDENTITY: started.identity,
+    SLOPBOT: started.slopbot,
+    VETTING_EVIDENCE: started.evidence,
+    PRIVATE_TRACES: started.traces,
+    ADMIN_GITHUB_IDS: String(adminId),
+    PROJECT_MODERATOR_GITHUB_IDS: "",
+    SLOP_ENVIRONMENT: "local",
+    SLOP_GITHUB_READ_TOKEN: started.readerToken,
+    REWARD_RPC_ETHEREUM: started.rpcUrl,
+  }
+  const projectsSite = pages({
+    areas: [backend, security],
+    services: (bound: typeof env) => {
+      const base = Layer.mergeAll(d1(bound.SLOP_DB), webCrypto, outbound, noEdgeCache, rolesFrom(bound))
+      const reads = Layer.provide(github({ token: Redacted.make(bound.SLOP_GITHUB_READ_TOKEN), userAgent: "slop-projects-journey" }), outbound)
+      return Layer.provideMerge(Layer.mergeAll(CallerLive, backendServices(bound), securityBindings(bound), reads), base)
+    },
+    assets: "ASSETS",
+  })
+  started.serve((request) => projectsSite.fetch(request, env, context))
+  return { world: started }
+})
+
+const Seeds = Layer.unwrap(effect {
+  const { world } = try Browser
+  return d1(world.db)
+})
+
+const deployment = Layer.succeed(Deployment, {
+  tier: "production",
+  origins: { ...originsOf("production"), site, api: site, browserOrigins: new Set([site]) },
+  pageOrigin: site,
+  localBackendOrigin: undefined,
+  loginHref: (next: string) => Effect.succeed(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`),
+})
+
+const onSite = Layer.effect(HttpClient.HttpClient, effect {
+  const client = try HttpClient.HttpClient
+  return HttpClient.mapRequest(client, (request) => request.url.startsWith("/") ? HttpClientRequest.prependUrl(request, site) : request)
+})
+
+function routedTo(world: World) {
+  return Layer.effect(HttpClient.HttpClient, effect {
+    return HttpClient.transform(try HttpClient.HttpClient, (response) => provideService(response, FetchHttpClient.Fetch, world.fetch))
+  })
+}
+
+function durable(store: BrowserStore): BrowserStore {
+  return { ...store, durable: true }
+}
+
+effect function page(world: World) {
+  const platform = Layer.mergeAll(
+    deployment,
+    Layer.succeed(SessionStore, durable(try storeOver("session", undefined))),
+    Layer.succeed(LocalStore, durable(try storeOver("local", undefined))),
+    locks,
+    webCrypto,
+    Layer.provide(onSite, Layer.provide(routedTo(world), FetchHttpClient.layer)),
+  )
+  return Layer.provideMerge(sessionServices, platform)
+}
+
+function document(local: BrowserStore, session: BrowserStore) {
+  return Layer.provideMerge(projectDrafts, Layer.mergeAll(Layer.succeed(LocalStore, local), Layer.succeed(SessionStore, session), locks, webCrypto))
+}
+
+interface Tabs {
+  readonly local: BrowserStore
+  readonly a: BrowserStore
+  readonly b: BrowserStore
+  readonly c: BrowserStore
+}
+
+const draftPrefix = `slop:project-draft:v3:${encodeURIComponent(proposalDraftKey)}:`
+const firstDraft = JSON.stringify({ proposal: { name: "First tab" }, step: 1, referrer: null })
+const secondDraft = JSON.stringify({ proposal: { name: "Second tab" }, step: 2, referrer: "octo-cat" })
+
+effect function parsed(text: string | null | undefined) {
+  return try orDie(Effect.try((): unknown => JSON.parse(text ?? "null")))
+}
+
+effect function slotRecords(local: BrowserStore) {
+  const records: Array<{ readonly revision: string; readonly value: string }> = []
+  for (const key of (try local.values.keys).filter((name) => name.startsWith(`${draftPrefix}slot:`))) {
+    records.push(try parsed(try local.values.get(key)) as { readonly revision: string; readonly value: string })
+  }
+  return records.sort((left, right) => Number(left.revision) - Number(right.revision))
+}
+
+effect function openProposal() {
+  return try (try ProjectDrafts).open(proposalDraftKey, try legacyProposalDraft())
+}
+
+effect function duplicate(tabs: Tabs, aPointer: string | undefined) {
+  provide document(tabs.local, tabs.b) {
+    const b = try openProposal()
+    const bStart = try b.latest()
+    const bWrote = try b.write(secondDraft)
+    const bPointer = try tabs.b.values.get(`${draftPrefix}tab`)
+    return { bStart, bStored: b.stored, bWrote, forked: bPointer !== undefined && bPointer !== aPointer }
+  }
+}
+
+effect function duplicatedTabs(tabs: Tabs) {
+  provide document(tabs.local, tabs.a) {
+    const a = try openProposal()
+    const legacy = (try parsed(try a.latest())) as { readonly proposal: Readonly<Record<string, string>>; readonly referrer: unknown; readonly step: unknown }
+    const imported = try tabs.local.values.get(`${draftPrefix}imported`)
+    const aWrote = try a.write(firstDraft)
+    const aPointer = try tabs.a.values.get(`${draftPrefix}tab`)
+    try tabs.b.values.set(`${draftPrefix}tab`, aPointer ?? "")
+    const duplicated = try duplicate(tabs, aPointer)
+    const aLatest = try a.latest()
+    return {
+      legacy: [legacy.proposal.name, legacy.proposal.automaticClosure, legacy.proposal.unknown, legacy.referrer, legacy.step],
+      imported,
+      aStored: a.stored,
+      aWrote,
+      aLatest,
+      ...duplicated,
+      records: try slotRecords(tabs.local),
+    }
+  }
+}
+
+effect function resumedTab(tabs: Tabs) {
+  provide document(tabs.local, tabs.c) {
+    const c = try openProposal()
+    const cStart = try c.latest()
+    const cleared = try (try draftSaver(c)).save(null)
+    return { cStart, cleared, cPointer: try tabs.c.values.get(`${draftPrefix}tab`), records: try slotRecords(tabs.local) }
+  }
+}
+
+effect function memoryTab() {
+  provide document(try storeOver("local", undefined), try storeOver("session", undefined)) {
+    const m = try (try ProjectDrafts).open(proposalDraftKey, "kept in memory")
+    return { stored: m.stored, start: try m.latest(), saved: try (try draftSaver(m)).save("changed") }
+  }
+}
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function member(githubId: number) {
+  const token = `projects-journey-session-${githubId}`.padEnd(48, "x")
+  try (try D1).batch([
+    sql`INSERT OR IGNORE INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (${`actor-${githubId}`}, ${String(githubId)}, ${`member-${githubId}`}, ${seededAt}, 1, 5)`,
+    sql`INSERT OR IGNORE INTO points_sessions (token_hash, actor_id, expires_at) VALUES (${try sha256Hex(token)}, ${`actor-${githubId}`}, '2099-01-01T00:00:00.000Z')`,
+  ])
+  return token
+}
+
+const contribution = {
+  approvedScope: "Bug fixes and documented features in the toolkit.",
+  contributionGuide: "Branch from main and keep one change per pull request.",
+  supportedTasks: "Reproduced bugs with a failing test.",
+  requiredTests: "Run the test suite and attach the output.",
+  reviewExpectations: "The failing test fails on the base and passes on the head.",
+  securityContact: "security@example.org",
+  closurePolicy: "Maintainers close duplicates.",
+  maintainerNotes: "",
+}
+
+const usdc = { network: "ethereum", kind: "stablecoin", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", symbol: "USDC", decimals: 6, chainId: "1", cluster: null, verifiedAt: seededAt }
+
+effect function manifest(id: string, name: string, githubId: number) {
+  const { world } = try Browser
+  const commitSha = world.commitOf(name)
+  const repository = `member-${stewardId}/${name}`
+  return {
+    schemaVersion: "1",
+    id,
+    slug: id,
+    name: `Project ${id}`,
+    eyebrow: "Open-source project",
+    headline: "Reproducible research tooling for everyone.",
+    description: "Build and maintain reproducible research tooling.",
+    listingTier: "community",
+    status: "paused",
+    steward: { displayName: `member-${stewardId}`, kind: "individual", github: { actorId: String(stewardId), nodeId: `U_${stewardId}`, login: `member-${stewardId}`, type: "User", profileUrl: `https://github.com/member-${stewardId}` }, website: null },
+    authority: { state: "unverified", reason: "missing-repository-proof", role: "project-steward", repositoryId: String(githubId), repositoryNodeId: `R_${githubId}`, proof: null },
+    terms: {
+      revision: "draft-1",
+      effectiveAt: seededAt,
+      paymentTransfersIp: false,
+      retroactive: false,
+      receiptPolicy: { state: "pending-authority-activation", activatedAt: null, bindings: [] },
+      copyright: { model: "unknown", claimedLegalHolder: null, notice: null, legalCapacity: null, governanceResolution: null },
+      repositoryLicense: { state: "verified", spdx: "MIT", url: `https://github.com/${repository}/blob/${commitSha}/LICENSE`, commitSha, fileSha256: try sha256Hex("MIT license\n") },
+      inbound: { mode: "unknown", termsUrl: null, commitSha: null, fileSha256: null, version: null, acceptance: null },
+      assignment: null,
+      externalPrize: null,
+    },
+    repositories: [{ id: repository, displayName: repository, githubUrl: `https://github.com/${repository}`, description: "Research tooling repository.", integrationBranch: "main" }],
+    skill: { id: `contribute-to-${id}`, publishAtRoot: false, sourcePath: "skills/project-contributor-template", publicPath: `/projects/${id}/skill.md` },
+    reviewSkill: { id: `review-${id}-contributions`, sourcePath: "skills/project-reviewer-template" },
+    rewardAsset: usdc,
+    contribution,
+    reward: { kind: "monthly-pool", currency: "USDC", chain: "ethereum", rewardStartAt: seededAt, cycle: "calendar-month-utc", monthlyCapMinor: "1000000000", monthlyCapDisplay: "$1,000", committedMinor: "0", paymentMode: "disabled", feeBasisPoints: 100, unusedFunds: "rollover-without-cap-increase", fundingState: "pledged" },
+    funding: { mode: "direct-noncustodial", disclosure: "Funds go directly to the project wallet. Slop does not hold or recover funds.", recordsPath: `funding/${id}`, addresses: [] },
+    modelPolicy: { mode: "open-declared", disclosureRequired: true },
+    links: { repository: `https://github.com/${repository}`, issues: `https://github.com/${repository}/issues` },
+  }
+}
+
+effect function seedProject(id: string, name: string, githubId: number) {
+  const text = JSON.stringify(try manifest(id, name, githubId))
+  const digest = try sha256Hex(text)
+  try (try D1).batch([
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${id}, 1, ${text}, ${digest}, 'Seeded', ${String(stewardId)}, ${`member-${stewardId}`}, ${seededAt})`,
+    sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) VALUES (${id}, 'paused', 1, ${text}, ${digest}, ${seededAt}, ${seededAt}, NULL, NULL, NULL)`,
+    sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${`member-${stewardId}/${name}`}, ${id})`,
+  ])
+  return text
+}
+
+effect function seedExemption(projectId: string, githubId: number) {
+  const [row] = try (try D1).all(sql`SELECT manifest_sha256 FROM projects WHERE id = ${projectId}`)
+  try (try D1).run(sql`INSERT INTO vetting_admission_exemptions (id, project_id, revision, manifest_sha256, repository_id, repository_node_id, steward_id, steward_node_id, granted_by_github_id, granted_by_github_login, granted_at, reason, decision_reference, covered_assessment_ids)
+    VALUES (${`vex_${projectId.replaceAll("-", "")}`}, ${projectId}, 1, ${String(row?.manifest_sha256 ?? "")}, ${String(githubId)}, ${`R_${githubId}`}, ${String(stewardId)}, ${`U_${stewardId}`}, ${String(adminId)}, ${`member-${adminId}`}, ${seededAt}, 'Owner-approved admission for the journey.', 'decision-1', '[]')`)
+}
+
+function failureOf(error: { readonly _tag: string; readonly status?: number; readonly error?: string; readonly message?: string }) {
+  return [error._tag, error.status ?? null, error.error ?? null]
+}
+
+layer(Layer.mergeAll(Layer.provideMerge(Seeds, Started), webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Create, publish and check a project as its steward (spec/backend/projects.md, "Creation and stored-application publication record a paused revision 1"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"; spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+    const { world } = try Browser
+    const steward = String(stewardId)
+    const token = try member(stewardId)
+    const id = "journey-tool"
+    world.useCookie(token)
+    provide (try page(world)) {
+      try (try BrowserSession).observe("load")
+      const owned = (try ownedRepositories()).map((entry) => entry.repository)
+      const facts = try lookupRepository(normalizeRepositoryInput("https://github.com/member-41/tool.git"))
+      const badPath = lookupRepository("member-41") catch (error) => error.message
+      try requireEditorActor(steward)
+      const wrongEditor = requireEditorActor("42") catch (error) => error.message
+      const base = try manifest(id, "tool", primaryId)
+      const foreignCreates = world.requests.length
+      const raced = createProject({ manifest: { ...base, slopbot: { automaticClosure: false } }, referrer: null, monthlyAmount: null, expectedActor: "42" }) catch (error) => failureOf(error)
+      const racedSent = world.requests.length - foreignCreates
+      const created = try createProject({ manifest: { ...base, slopbot: { automaticClosure: false } }, referrer: null, monthlyAmount: null, expectedActor: steward })
+      const listed = (try setupList(steward)).projects.map((entry) => [entry.id, entry.revision, entry.status])
+      try seedExemption(id, primaryId)
+      const checked = try checkProjectSetup(id, false, steward)
+      const revised = try publishRevision({ projectId: id, manifest: { ...base, headline: "Better tooling for everyone." }, expectedRevision: 2, note: "  Clearer headline  ", monthlyAmount: null, expectedActor: steward })
+      const stale = publishRevision({ projectId: id, manifest: { ...base, headline: "Stale headline." }, expectedRevision: 2, note: "", monthlyAmount: null, expectedActor: steward }) catch (error) => failureOf(error)
+      const reason = try (try D1).all(sql`SELECT reason FROM project_revisions WHERE project_id = ${id} AND revision = 3`)
+      const application = "app_journey00001"
+      const text = JSON.stringify(try manifest("journey-pending", "other", otherId))
+      try (try D1).run(sql`INSERT INTO project_applications (id, project_id, repository_key, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification) VALUES (${application}, 'journey-pending', ${`member-${stewardId}/other`}, ${text}, ${try sha256Hex(text)}, 'Accepted pull requests with tests.', ${steward}, ${`member-${stewardId}`}, '2026-11-02T00:00:00.000Z', 'pending', 'sent')`)
+      const cancelled = (try cancelProjectApplication(application, steward)).status
+      try same({
+        owned: owned.includes(`member-${stewardId}/tool`),
+        facts: [facts.repository, facts.numericId, facts.defaultBranch],
+        badPath,
+        wrongEditor,
+        raced,
+        racedSent,
+        created: [created.project.revision, created.project.status, created.setup.status],
+        listed,
+        checked: [checked.state, checked.nextAction.kind, checked.activatedRevision, checked.status],
+        revised: [revised.project.revision, revised.changes.presentation],
+        stale,
+        reason,
+        cancelled,
+        unexpected: world.unexpected(),
+      }, {
+        owned: true,
+        facts: [`member-${stewardId}/tool`, String(primaryId), "main"],
+        badPath: "Enter the repository as owner/name first.",
+        wrongEditor: "Your account changed. Review this project with your current account.",
+        raced: ["ActorChanged", null, null],
+        racedSent: 1,
+        created: [1, "paused", "paused"],
+        listed: [[id, 1, "paused"]],
+        checked: ["ready", "none", 2, "active"],
+        revised: [3, ["headline"]],
+        stale: ["Refused", 409, "stale_revision"],
+        reason: [{ reason: "Clearer headline" }],
+        cancelled: "cancelled",
+        unexpected: [],
+      })
+    }
+  })
+
+  it.effect(`A duplicated tab forks its own setup draft slot and a closed slot is resumed (spec/frontend/projectDrafts.md, "Story: Keep a project setup draft per browser document"; spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable")`, () => effect {
+    const local = durable(try storeOver("local", undefined))
+    const tabs = { local, a: durable(try storeOver("session", undefined)), b: durable(try storeOver("session", undefined)), c: durable(try storeOver("session", undefined)) }
+    try local.values.set(proposalDraftKey, JSON.stringify({ name: "Legacy tool", automaticClosure: "true", unknown: "dropped" }))
+    const steps = try duplicatedTabs(tabs)
+    const resumed = try resumedTab(tabs)
+    const memory = try memoryTab()
+    try same({ steps, resumed, memory }, {
+      steps: {
+        legacy: ["Legacy tool", "true", undefined, null, 0],
+        imported: "1",
+        aStored: true,
+        aWrote: true,
+        aLatest: firstDraft,
+        bStart: firstDraft,
+        bStored: true,
+        bWrote: true,
+        forked: true,
+        records: [{ revision: "2", value: firstDraft }, { revision: "4", value: secondDraft }],
+      },
+      resumed: {
+        cStart: secondDraft,
+        cleared: { payload: null, saving: false, failed: false },
+        cPointer: "empty",
+        records: [{ revision: "2", value: firstDraft }],
+      },
+      memory: { stored: false, start: "kept in memory", saved: { payload: "changed", saving: false, failed: true } },
+    })
+  })
+
+  it.effect('An administrator grants and revokes an owner-approved exemption and keeps a manifest draft until its exact text is accepted (spec/security/enforcement.md, "An administrator records an audited exemption only for a current authorized steward"; spec/security/enforcement.md, "Revocation is its own audited record and restores ordinary admission"; spec/frontend/projectDrafts.md, "An administrator\'s manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime")', () => effect {
+    const { world } = try Browser
+    const admin = String(adminId)
+    const steward = String(stewardId)
+    const adminToken = try member(adminId)
+    const stewardToken = try member(stewardId)
+    const id = "journey-other"
+    const seeded = (try parsed(try seedProject(id, "other", otherId))) as Readonly<Record<string, unknown>>
+    const decision = { reason: "Owner approved admission for this repository.", decisionReference: "decision-2026-11", confirmed: true }
+    world.useCookie(stewardToken)
+    provide (try page(world)) {
+      try (try BrowserSession).observe("load")
+      const sentBefore = world.requests.length
+      const notAdmin = grantAdmissionExemption(steward, { projectId: id, revision: 1 }, decision) catch (error) => error._tag
+      const incomplete = grantAdmissionExemption(steward, { projectId: id, revision: 1 }, { ...decision, confirmed: false }) catch (error) => error.message
+      const grantsSent = world.requests.filter((sent, index) => index >= sentBefore && sent === "POST /api/v1/admin/vetting/exemptions").length
+      world.useCookie(adminToken)
+      try (try BrowserSession).observe("changed")
+      const granted = try grantAdmissionExemption(admin, { projectId: id, revision: 1 }, decision)
+      const replayed = try grantAdmissionExemption(admin, { projectId: id, revision: 1 }, decision)
+      const revoked = try revokeAdmissionExemption(admin, granted.exemption.id, decision)
+      const revokedAgain = try revokeAdmissionExemption(admin, granted.exemption.id, decision)
+      const rows = try (try D1).all(sql`SELECT project_id, repository_id, steward_id, granted_by_github_id, reason, decision_reference FROM vetting_admission_exemptions WHERE project_id = ${id}`)
+      const draft = JSON.stringify({ text: "headline edit", reason: "Clearer headline" })
+      const edited = { ...seeded, headline: "An administrator clarified the headline." }
+      const savedDraft = try saveManifestDraft(id, 1, draft)
+      const refused = submitManifest({ projectId: id, revision: 1, manifest: {}, reason: "Clearer headline", draft, actorGithubId: admin }) catch (error) => error._tag
+      const keptAfterRefusal = try restoredManifestDraft(id, 1)
+      const newer = JSON.stringify({ text: "newer edit", reason: "Clearer headline" })
+      try saveManifestDraft(id, 1, newer)
+      const accepted = try submitManifest({ projectId: id, revision: 1, manifest: edited, reason: "Clearer headline", draft, actorGithubId: admin })
+      const keptNewer = try restoredManifestDraft(id, 1)
+      const exact = JSON.stringify({ text: "second edit", reason: "Second headline" })
+      try saveManifestDraft(id, 2, exact)
+      const second = try submitManifest({ projectId: id, revision: 2, manifest: { ...edited, headline: "A second clarified headline." }, reason: "Second headline", draft: exact, actorGithubId: admin })
+      const clearedExact = try restoredManifestDraft(id, 2)
+      const discarded = try discardManifestDraft(id, 1)
+      const afterDiscard = try restoredManifestDraft(id, 1)
+      try same({
+        notAdmin,
+        incomplete,
+        grantsSent,
+        granted: [granted.exemption.kind, granted.exemption.projectId, granted.exemption.revision, granted.exemption.repositoryId, granted.exemption.revokedAt],
+        replayed: [replayed.replayed, replayed.exemption.id === granted.exemption.id],
+        revoked: [revoked.exemption.id === granted.exemption.id, revoked.exemption.revokedAt !== null, revoked.exemption.revokedBy?.githubId],
+        revokedAgain: revokedAgain.replayed,
+        rows,
+        savedDraft,
+        refused,
+        keptAfterRefusal,
+        accepted: accepted.revision,
+        keptNewer,
+        second: second.revision,
+        clearedExact,
+        discarded,
+        afterDiscard,
+      }, {
+        notAdmin: "AdminAccessLoss",
+        incomplete: vettingMessages.exemptionIncomplete,
+        grantsSent: 0,
+        granted: ["owner-approved-admission", id, 1, String(otherId), null],
+        replayed: [true, true],
+        revoked: [true, true, admin],
+        revokedAgain: true,
+        rows: [{ project_id: id, repository_id: String(otherId), steward_id: steward, granted_by_github_id: admin, reason: decision.reason, decision_reference: decision.decisionReference }],
+        savedDraft: true,
+        refused: "Refused",
+        keptAfterRefusal: draft,
+        accepted: 2,
+        keptNewer: newer,
+        second: 3,
+        clearedExact: undefined,
+        discarded: true,
+        afterDiscard: undefined,
+      })
+    }
+  })
+})

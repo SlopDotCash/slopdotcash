@@ -1,0 +1,49 @@
+// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
+import { cloudflare, pinnedWrangler } from "../../release/wrangler/cloudflare.vibe"
+import { controlPlane } from "./account.vibe"
+import { type Report, hostedQualification } from "./hosted.vibe"
+import { RecoveryRefused, modeOf, namesOf, planOf, protectedRun, runIdentity, sourceRevision } from "./plan.vibe"
+
+export error RecoveryFailed { stage: string; report: string }
+
+const usage = "usage: qualify recovery [--mode plan|execute]"
+
+effect function reported(report: Report, workspace: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const directory = files.join((try Config.withDefault(Config.String("RUNNER_TEMP"), workspace)) || workspace, "vetting-recovery-report")
+  try fs.makeDirectory(directory, { recursive: true })
+  const path = files.join(directory, "result.json")
+  try fs.writeFileString(path, `${JSON.stringify(report, null, 2)}\n`)
+  return path
+}
+
+export effect function recovery(args: ReadonlyArray<string>, root = ".") {
+  const mode = modeOf(args)
+  if (mode === undefined) throw new RecoveryRefused({ message: usage })
+  const files = try Path.Path
+  const run = try runIdentity()
+  const names = namesOf(run)
+  const source = try sourceRevision(root)
+  if (mode === "plan") {
+    const plan = planOf(source, names)
+    try Console.log(JSON.stringify(plan, null, 2))
+    return plan
+  }
+  try protectedRun(source, run)
+  const checkout = files.resolve(root)
+  return try scoped(effect {
+    const workspace = try (try FileSystem.FileSystem).makeTempDirectoryScoped({ prefix: `${run}-` })
+    const hosted = { run, source, names, root: checkout, bundle: files.join(checkout, "apps/operations/dist/recovery.js"), workspace }
+    provide controlPlane, cloudflare({ root: checkout, wrangler: pinnedWrangler(checkout) }) {
+      const report = try hostedQualification(hosted)
+      const path = try reported(report, workspace)
+      if (report.success !== true) {
+        try Console.error("Scanner recovery qualification failed. Inspect the safe result and the owned-resource cleanup status; no private bytes or credentials are logged.")
+        throw new RecoveryFailed({ stage: report.failure?.stage ?? "cleanup", report: path })
+      }
+      try Console.log("Hosted harmless recovery qualification passed; safe result recorded. No operational policy is attested.")
+      return report
+    }
+  })
+}

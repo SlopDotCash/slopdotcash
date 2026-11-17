@@ -1,0 +1,65 @@
+// spec/frontend/referralSettings.md, "A loaded account owns the displayed link and the editable draft"; spec/frontend/referralSettings.md, "Exactly one request can act for each active account lifetime"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { pointsMe } from "@repo/backend/client"
+import type { PageRuntime } from "../app/runtime.vibe"
+import { ReferralName, referralLayer, validReferralCode } from "../flows/account/referral.vibe"
+import { call } from "../platform/api.vibe"
+import { BrowserSession } from "../session/browserSession.vibe"
+
+export const memberLimitBytes = 16_384
+
+const memberMount = Layer.effectDiscard(effect {
+  const referral = try ReferralName
+  const browser = try BrowserSession
+  const services = try Effect.context<HttpClient.HttpClient>()
+  const scope = try Scope.Scope
+  let running: Fiber.Fiber<void> | undefined = undefined
+
+  effect function mountMember(actorId: number) {
+    const lifetime = try browser.lifetime()
+    if (actorId === 0 || lifetime.actorId !== actorId) return
+    const member = call(pointsMe, {}, { limitBytes: memberLimitBytes }) catch () => null
+    if (member === null) return
+    const code = member.referralCode
+    if (code !== null && !validReferralCode(code)) return
+    if (!(try browser.acceptPrivate(lifetime, 1, true))) return
+    try referral.mount(String(actorId), code)
+  }
+
+  effect function follow(actorId: number) {
+    const previous = running
+    running = undefined
+    if (previous !== undefined) try Fiber.interrupt(previous)
+    running = fork.in(scope) Effect.provideContext(mountMember(actorId), services)
+  }
+
+  try browser.onAccountChange((actorId) => follow(actorId))
+  try follow((try browser.lifetime()).actorId)
+})
+
+export const referralSection = Layer.provideMerge(memberMount, referralLayer)
+
+export type ReferralRuntime = ReturnType<typeof makeReferralRuntime>
+
+function makeReferralRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(referralSection, Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, ReferralRuntime>()
+
+export function referralRuntime(page: PageRuntime): ReferralRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeReferralRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function editDraft(text: string) {
+  return try (try ReferralName).edit(text)
+}
+
+export effect function saveDraft(text: string) {
+  const referral = try ReferralName
+  try referral.edit(text)
+  return try referral.save()
+}

@@ -1,0 +1,259 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"
+import type { D1Database, QueueMessage } from "@repo/platform/bindings"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, d1, first, sql } from "@repo/platform/d1"
+import { type Parted, type RetentionR2Bucket, bucket, partBytes, partKey, retentionBucket } from "@repo/platform/r2"
+import { CompleteReceipt, Job, encoded, parsed } from "../../backup/codec.vibe"
+import { backupJob } from "../../backup/jobs.vibe"
+import { startDaily } from "../../backup/pages.vibe"
+import { restoreCheck } from "../../backup/restore.vibe"
+import { EvidenceBackups, EvidenceSource, completeKey, copyKey, failed, headOf, immutable, pageKey, recorded } from "../../backup/store.vibe"
+import { SnapshotRows, restoreRows, snapshotRows } from "./snapshot.vibe"
+
+export service RecoveryFixture {
+  readonly run: string
+  readonly restored: RetentionR2Bucket
+  readonly restoredDatabase: D1Database
+}
+
+export error FixtureRefused { issue: string }
+
+schema Marked { qualification: string }
+schema Command { qualification: string; action: "seed" | "verify" | "corrupt" | "empty"; delivery: string }
+schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number }
+schema PhaseRow { result: string }
+schema CyclePhase { phase: string }
+schema ObjectRow { object_key: string; chunks: string; sha256: string; size_bytes: number }
+schema Chunk { index: number; sha256: string; sizeBytes: number }
+
+const Chunks = Schema.Array(Chunk)
+
+const runPattern = /^slop-vet-q-[0-9]+-[0-9]+$/u
+const octets = "application/octet-stream"
+const encoder = new TextEncoder()
+const smallCount = 65
+const snapshotKey = "vetting/qualification-database.json"
+const largeKey = "vetting/qualification-chunks/run/evidence"
+const outsideKey = "contributor-trace-outside-scope"
+const assessment = "vet_qualification_case"
+const largeSize = partBytes + 17
+const completedPages = 3
+
+function smallKey(index: number) {
+  return `vetting/qualification-${String(index).padStart(3, "0")}/run/evidence`
+}
+
+function smallBytes(index: number) {
+  return encoder.encode(`Harmless scanner recovery fixture ${index}.`)
+}
+
+function smallTotal() {
+  let total = 0
+  for (let index = 0; index < smallCount; index++) total += smallBytes(index).length
+  return total
+}
+
+function parted(key: string, sha256: string, chunks: ReadonlyArray<Chunk>, located: (part: string, chunk: Chunk) => string): Parted {
+  const size = chunks.reduce((sum, chunk) => sum + chunk.sizeBytes, 0)
+  return { key, sha256, size, parts: chunks.map((chunk) => ({ key: located(partKey(key, chunk.index, chunk.sha256), chunk), sha256: chunk.sha256, size: chunk.sizeBytes })) }
+}
+
+effect function refuse(issue: string) {
+  throw new FixtureRefused({ issue })
+}
+
+effect function jsonText(value: unknown) {
+  return new TextDecoder().decode(try encoded(value))
+}
+
+effect function phase(name: string) {
+  return (try first(PhaseRow, sql`SELECT result FROM qualification_results WHERE phase = ${name}`))?.result
+}
+
+effect function phaseValue<S extends Schema.Constraint>(schema: S, name: string) {
+  const text = try phase(name)
+  if (text === undefined) return try refuse(`The ${name} result is absent`)
+  return try parsed(schema, name, encoder.encode(text))
+}
+
+effect function recordPhase(name: string, result: unknown) {
+  try (try D1).run(sql`INSERT OR IGNORE INTO qualification_results VALUES(${name}, ${try jsonText(result)})`)
+}
+
+effect function delivered(id: string, action: string) {
+  try (try D1).run(sql`INSERT OR IGNORE INTO qualification_deliveries VALUES(${id}, ${action})`)
+}
+
+effect function seed() {
+  if ((try phase("seed")) !== undefined) return
+  const source = (try EvidenceSource).binding
+  for (let index = 0; index < smallCount; index++) try immutable(source, smallKey(index), smallBytes(index), octets)
+  try immutable(source, outsideKey, encoder.encode("Harmless non-scanner sentinel"), octets)
+  const bytes = new Uint8Array(largeSize).fill(7)
+  const sha = try sha256Hex(bytes)
+  const stored = try bucket(source).putParts(largeKey, bytes, { sha256: sha, contentType: octets })
+  const chunks = stored.parts.map((part, index) => ({ index, sha256: part.sha256, sizeBytes: part.size }))
+  const { run } = try RecoveryFixture
+  const now = try isoAt(try Clock.currentTimeMillis)
+  const policy = try jsonText({ fixture: true, readGrantDurationSeconds: 900, postClosureRetentionSeconds: 7776000, projectId: "qualification-only", revision: 1 })
+  const manifest = try jsonText({ fixture: true, sha256: sha, chunks })
+  try (try D1).batch([
+    sql`INSERT OR IGNORE INTO vetting_assessments(id, state, completed_at) VALUES(${assessment}, 'incomplete', ${now})`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_runs(assessment_id, run_id, trace_sha256, manifest_sha256, manifest, policy, created_at, expires_at) VALUES(${assessment}, ${run}, ${sha}, ${try sha256Hex(manifest)}, ${manifest}, ${policy}, ${now}, '2027-01-23T00:00:00.000Z')`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_objects(assessment_id, run_id, sha256, size_bytes, kind, label, content_type, object_key, chunks) VALUES(${assessment}, ${run}, ${sha}, ${bytes.length}, 'artifact', 'harmless chunk fixture', ${octets}, ${largeKey}, ${try jsonText(chunks)})`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_completions VALUES(${assessment}, ${run}, ${sha}, ${now})`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_case_closures VALUES(${assessment}, ${now}, 'qualification-only', 'Synthetic closed case; not an operational decision')`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_grants VALUES(${"0".repeat(64)}, ${assessment}, ${run}, ${sha}, '91', 'Synthetic consumed grant', ${now}, ${now})`,
+    sql`INSERT OR IGNORE INTO vetting_evidence_audit VALUES('qualification-audit', '91', 'read', ${assessment}, ${run}, ${sha}, 'Synthetic recovery audit', ${now})`,
+  ])
+  const rows = try snapshotRows()
+  const rowsSha = try immutable(source, snapshotKey, rows, octets)
+  const at = try Clock.currentTimeMillis
+  try startDaily(at)
+  try startDaily(at)
+  try recordPhase("seed", {
+    day: (try isoAt(at)).slice(0, 10),
+    fixtureAt: now,
+    snapshotSha256: rowsSha,
+    snapshotBytes: rows.length,
+    objectSha256: sha,
+    objects: smallCount + stored.parts.length + 1,
+  } satisfies SeedResult)
+}
+
+effect function recoveredDatabase(database: D1Database, rows: typeof SnapshotRows.Type) {
+  provide d1(database) {
+    const db = try D1
+    try restoreRows(rows)
+    const digest = try sha256Hex(try snapshotRows())
+    const object = try first(ObjectRow, sql`SELECT object_key, chunks, sha256, size_bytes FROM vetting_evidence_objects WHERE assessment_id = ${assessment}`)
+    const foreignKeys = try db.all(sql`PRAGMA foreign_key_check`)
+    const mutation = try exit(db.run(sql`UPDATE vetting_evidence_runs SET policy = '{}'`))
+    return { digest, object, foreignKeysValid: foreignKeys.length === 0, immutablePolicy: Exit.isFailure(mutation) }
+  }
+}
+
+effect function verify() {
+  if ((try phase("verify")) !== undefined) return
+  const seeded = try phaseValue(SeedResult, "seed")
+  const cycle = try first(CyclePhase, sql`SELECT phase FROM vetting_storage_cycles WHERE day = ${seeded.day}`)
+  if (cycle?.phase !== "complete") return try refuse("Backup is not complete")
+  const source = (try EvidenceSource).binding
+  const backups = (try EvidenceBackups).binding
+  const completion = try recorded(CompleteReceipt, backups, try completeKey(seeded.day))
+  if (completion === undefined) return try refuse("Completion has no digest")
+  const expectedBytes = smallTotal() + largeSize + seeded.snapshotBytes
+  if (completion.value.objects !== seeded.objects || completion.value.pages !== completedPages || completion.value.bytes !== expectedBytes) return try refuse("Backup omitted fixture bytes")
+  try startDaily(millisOf(`${seeded.day}T23:59:59Z`))
+  if ((try recorded(CompleteReceipt, backups, try completeKey(seeded.day)))?.sha256 !== completion.sha256) return try refuse("Replay changed completion")
+  if ((try headOf(backups, try copyKey(seeded.day, outsideKey))) !== undefined) return try refuse("Non-scanner object copied")
+  const { restored, restoredDatabase } = try RecoveryFixture
+  const small = try restoreCheck({ day: seeded.day, sourceKey: smallKey(37), checkId: "small" }, restored)
+  if (small.sha256 !== (try sha256Hex(smallBytes(37)))) return try refuse("Restored bytes differ")
+  const database = try restoreCheck({ day: seeded.day, sourceKey: snapshotKey, checkId: "database" }, restored)
+  if (database.sha256 !== seeded.snapshotSha256) return try refuse("Snapshot identity differs")
+  const snapshot = try bucket(restored).getVerified(database.key, seeded.snapshotSha256, seeded.snapshotBytes)
+  if (snapshot === undefined) return try refuse("Restored snapshot is missing")
+  const recovered = try recoveredDatabase(restoredDatabase, try parsed(SnapshotRows, database.key, snapshot))
+  if (recovered.digest !== seeded.snapshotSha256) return try refuse("Recovered database differs")
+  if ((try sha256Hex(try snapshotRows())) !== seeded.snapshotSha256) return try refuse("Source database changed")
+  if (recovered.object === undefined) return try refuse("Recovered object missing")
+  const object = recovered.object
+  const chunks = try parsed(Chunks, object.object_key, encoder.encode(object.chunks))
+  for (const chunk of chunks) {
+    try restoreCheck({ day: seeded.day, sourceKey: partKey(object.object_key, chunk.index, chunk.sha256), checkId: `parts-${chunk.index}` }, restored)
+  }
+  const restoredWhole = try bucket(restored).getParts(parted(object.object_key, seeded.objectSha256, chunks, (key, chunk) => `restore-checks/parts-${chunk.index}/${key}`), () => Effect.void)
+  const sourceWhole = try bucket(source).getParts(parted(object.object_key, seeded.objectSha256, chunks, (key) => key), () => Effect.void)
+  if (!restoredWhole || !sourceWhole) return try refuse("Chunked evidence differs")
+  if (!recovered.foreignKeysValid) return try refuse("Recovered foreign keys differ")
+  if (!recovered.immutablePolicy) return try refuse("Recovered policy became mutable")
+  try recordPhase("verify", {
+    objects: completion.value.objects,
+    pages: completion.value.pages,
+    bytes: completion.value.bytes,
+    completionSha256: completion.sha256,
+    restoredSha256: small.sha256,
+    recoveredSnapshotSha256: seeded.snapshotSha256,
+    chunkedSha256: seeded.objectSha256,
+    replayUnchanged: true,
+    sourceUnchanged: true,
+    foreignKeysValid: true,
+    immutablePolicy: true,
+  })
+}
+
+effect function refusedRestore(day: string, sourceKey: string, checkId: string) {
+  const { restored } = try RecoveryFixture
+  const outcome = try exit(restoreCheck({ day, sourceKey, checkId }, restored))
+  return Exit.isFailure(outcome) && (try headOf(restored, `restore-checks/${checkId}/${sourceKey}`)) === undefined
+}
+
+effect function corrupt() {
+  if ((try phase("corrupt")) !== undefined) return
+  if ((try phase("verify")) === undefined) return try refuse("Successful recovery required before fault")
+  const seeded = try phaseValue(SeedResult, "seed")
+  const backups = (try EvidenceBackups).binding
+  const source = (try EvidenceSource).binding
+  const original = smallBytes(37)
+  const sha256 = try sha256Hex(original)
+  const key = try copyKey(seeded.day, smallKey(37))
+  try retentionBucket(backups).remove(key)
+  try tryPromise({
+    try: () => backups.put(key, new Uint8Array(original.length), { onlyIf: { etagDoesNotMatch: "*" }, customMetadata: { sha256 }, httpMetadata: { contentType: octets } }),
+    catch: failed("put", key),
+  })
+  if (!(try refusedRestore(seeded.day, smallKey(37), "corrupt"))) return try refuse("Corruption accepted")
+  try retentionBucket(backups).remove(try pageKey(seeded.day, 0))
+  if (!(try refusedRestore(seeded.day, smallKey(38), "incomplete"))) return try refuse("Missing page accepted")
+  if ((try bucket(source).getVerified(smallKey(37), sha256, original.length)) === undefined) return try refuse("Source evidence changed")
+  try recordPhase("corrupt", { changedBytesRefused: true, missingPageRefused: true, sourceUnchanged: true })
+}
+
+effect function emptied(binding: RetentionR2Bucket) {
+  const objects = retentionBucket(binding)
+  for (;;) {
+    const page = try objects.list("", undefined, 100)
+    if (page.objects.length === 0) return
+    for (const object of page.objects) try objects.remove(object.key)
+  }
+}
+
+effect function empty() {
+  try emptied((try EvidenceSource).binding)
+  try emptied((try EvidenceBackups).binding)
+  try emptied((try RecoveryFixture).restored)
+  try recordPhase("empty", { empty: true })
+}
+
+effect function performed(action: Command["action"]) {
+  if (action === "seed") return try seed()
+  if (action === "verify") return try verify()
+  if (action === "corrupt") return try corrupt()
+  try empty()
+}
+
+effect function backupDelivery(message: QueueMessage) {
+  try backupJob(message.body)
+  const job = try Schema.decodeUnknownEffect(Job)(message.body)
+  const action = job.kind === "cleanup" ? "cleanup" : job.kind === "restore" ? "restore" : `backup-page-${job.page}`
+  try delivered(`queue:${message.id}`, action)
+}
+
+export effect function recoveryMessage(message: QueueMessage) {
+  const { run } = try RecoveryFixture
+  if (!runPattern.test(run)) return try refuse("Not a qualification environment")
+  const marked = Schema.decodeUnknownEffect(Marked)(message.body) catch () => undefined
+  if (marked === undefined) return try backupDelivery(message)
+  const command = Schema.decodeUnknownEffect(Command)(message.body) catch effect () => {
+    throw new FixtureRefused({ issue: "Unknown qualification action" })
+  }
+  if (command.qualification !== run) return try refuse("Wrong qualification identity")
+  if (!new RegExp(`^${command.action}-[0-9]+$`, "u").test(command.delivery)) return try refuse("Missing command delivery identity")
+  const completed = performed(command.action) catch effect (error) => {
+    try recordPhase(`failed-${command.action}`, { failed: true, category: error._tag === "FixtureRefused" ? error.issue : error._tag })
+    return false
+  }
+  if (completed !== false) try delivered(`command:${command.delivery}`, command.action)
+}

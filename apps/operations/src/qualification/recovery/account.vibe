@@ -1,0 +1,64 @@
+// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
+import { boundedBytes } from "@repo/platform/browser"
+import { cloudflareApi } from "../../release/wrangler/cloudflare.vibe"
+
+export error ControlRefused { step: string; status: number; codes: ReadonlyArray<number> }
+
+export type Method = "GET" | "POST" | "DELETE"
+
+export service ControlPlane {
+  readonly accountId: string
+  call(step: string, method: Method, path: string, body?: unknown): unknown!ControlRefused
+  find(step: string, path: string): unknown!ControlRefused
+}
+
+schema ApiError { readonly code: number }
+
+schema Envelope {
+  readonly success: boolean
+  readonly result: Schema.Unknown
+  readonly errors?: ReadonlyArray<ApiError>
+}
+
+const accountPattern = /^[a-f0-9]{32}$/u
+const responseLimit = 1024 * 1024
+const apiSeconds = 30
+
+export const controlPlane = Layer.effect(ControlPlane, effect {
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  if (!accountPattern.test(accountId) || Redacted.value(token).trim() === "") throw new ControlRefused({ step: "credentials", status: 0, codes: [] })
+  const base = (Option.getOrUndefined(try Config.option(Config.String("CLOUDFLARE_API_BASE_URL"))) ?? cloudflareApi).replace(/\/+$/u, "")
+  const client = try HttpClient.HttpClient
+
+  effect function exchange(step: string, method: Method, path: string, body: unknown, missing: boolean) {
+    const plain = HttpClientRequest.make(method)(`${base}/accounts/${accountId}/${path}`)
+    const request = HttpClientRequest.setHeaders(body === undefined ? plain : HttpClientRequest.bodyJsonUnsafe(plain, body), {
+      authorization: `Bearer ${Redacted.value(token)}`,
+      accept: "application/json",
+      "cache-control": "no-cache",
+    })
+    const answered = timeout(effect {
+      provide FetchHttpClient.RequestInit = { redirect: "error" } {
+        const response = try client.execute(request)
+        const bytes = try boundedBytes(response, responseLimit, step)
+        return { status: response.status, bytes }
+      }
+    }, Duration.seconds(apiSeconds)) catch effect () => {
+      throw new ControlRefused({ step, status: 0, codes: [] })
+    }
+    if (missing && answered.status === 404) return undefined
+    const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(answered.bytes)) as unknown) catch () => undefined
+    const envelope = Schema.decodeUnknownEffect(Envelope)(value) catch () => undefined
+    if (answered.status < 200 || answered.status > 299 || envelope?.success !== true) {
+      throw new ControlRefused({ step, status: answered.status, codes: (envelope?.errors ?? []).map((error) => error.code).slice(0, 8) })
+    }
+    return envelope.result
+  }
+
+  return {
+    accountId,
+    call: (step: string, method: Method, path: string, body?: unknown) => exchange(step, method, path, body, false),
+    find: (step: string, path: string) => exchange(step, "GET", path, undefined, true),
+  } satisfies ControlPlane.Shape
+})

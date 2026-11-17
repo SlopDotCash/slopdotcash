@@ -1,0 +1,261 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import type { D1Database, R2Bucket } from "@repo/platform/bindings"
+import { sha256Hex, utf8, webCrypto } from "@repo/platform/crypto"
+import { type Statement, d1, first, rows, sql } from "@repo/platform/d1"
+import { type RetentionR2Bucket, partBytes, retentionBucket } from "@repo/platform/r2"
+import { bundle, database, migrate, queue, startWorker, storage } from "@repo/platform/testing"
+import { type Served, serve } from "@repo/platform/testing/chains"
+import { cloudflareApi as cloudflareFake } from "@repo/platform/testing/cloudflare"
+import { migrationsDir, repoRoot } from "@repo/platform/testing/paths"
+import { Response } from "miniflare"
+import { parsed } from "../src/backup/codec.vibe"
+import { protectedWorkflow, qualificationMigrations, qualificationSchema } from "../src/qualification/recovery/plan.vibe"
+import { recovery } from "../src/qualification/recovery/recovery.vibe"
+
+const accountId = "0123456789abcdef0123456789abcdef"
+const run = "slop-vet-q-4242-1"
+const localRun = "slop-vet-q-12345-1"
+const largeSize = partBytes + 17
+
+schema SeedResult { day: string; fixtureAt: string; snapshotSha256: string; snapshotBytes: number; objectSha256: string; objects: number }
+schema ResultRow { result: string }
+schema CountRow { n: number }
+schema CycleRow { phase: string }
+schema GrantRow { consumed_at: string | null }
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function configured<A, E, R>(program: A!E!R, values: Readonly<Record<string, string>>) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown(values)) {
+    return try program
+  }
+}
+
+effect function settled<A, E, R>(program: A!E!R) {
+  const ended = try exit(program)
+  if (Exit.isSuccess(ended)) return "ok"
+  const error = Cause.squash(ended.cause)
+  if (typeof error === "object" && error !== null && "_tag" in error && "message" in error && typeof error.message === "string" && error.message !== "") return `${String(error._tag)}: ${error.message}`
+  return typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : String(error)
+}
+
+effect function onDatabase<A, E, R>(binding: D1Database, program: A!E!R) {
+  provide d1(binding) {
+    return try program
+  }
+}
+
+effect function retention(binding: R2Bucket) {
+  const listing = try Effect.try(() => typeof Reflect.get(binding, "list") === "function" && typeof Reflect.get(binding, "delete") === "function")
+  if (!listing) return try die(new Error("the Miniflare bucket cannot list or delete"))
+  return binding as RetentionR2Bucket
+}
+
+effect function existingWorker(served: Served, name: string) {
+  const target = HttpClientRequest.put(`${served.url}/client/v4/accounts/${accountId}/workers/scripts/${name}`, { headers: { authorization: "Bearer journey" } })
+  const answer = try HttpClient.execute(HttpClientRequest.bodyFormDataRecord(target, { metadata: JSON.stringify({ main_module: "worker.js" }) }))
+  try Effect.try(() => assert.strictEqual(answer.status, 200))
+}
+
+effect function qualificationMigrationsDir(directory: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.writeFileString(files.join(directory, "0000_qualification_schema.sql"), qualificationSchema)
+  for (const name of qualificationMigrations) try fs.copyFile(files.join(migrationsDir, name), files.join(directory, name))
+  return directory
+}
+
+function smallBytes(index: number) {
+  return utf8(`Harmless scanner recovery fixture ${index}.`)
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+  it.effect('Plan recovery qualification by default and refuse anything but a disposable staging run (spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const api = cloudflareFake({ accountId })
+    const served: Served = try acquireRelease(promise(() => serve(api.handler)), (server) => promise(() => server.close()))
+    const runnerTemp = try fs.makeTempDirectoryScoped({ prefix: "slop-recovery-" })
+    const searchPath = try Config.withDefault(Config.String("PATH"), "")
+    const identity = { GITHUB_RUN_ID: "4242", GITHUB_RUN_ATTEMPT: "1", PATH: searchPath, HOME: runnerTemp, TMPDIR: runnerTemp }
+
+    const plan = try configured(recovery([], repoRoot), identity)
+    const explicit = try configured(recovery(["--mode", "plan"], repoRoot), identity)
+    const source = typeof plan === "object" && "source" in plan ? plan.source : ""
+    try Effect.try(() => assert.match(source, /^[a-f0-9]{40}$/u))
+    try same(explicit, plan)
+    try same(plan, {
+      mode: "plan",
+      source,
+      environment: "slop-staging",
+      names: {
+        worker: run,
+        databases: [`${run}-source`, `${run}-restored`],
+        buckets: [`${run}-source`, `${run}-backup`, `${run}-restored`],
+        queues: [`${run}-work`, `${run}-failed`],
+      },
+      resources: { d1: 2, r2: 3, queues: 2, worker: 1 },
+      fixture: "evidence-recovery",
+      publicRoutes: false,
+      scans: false,
+      cleanup: "only exact resources created by this workflow run",
+    })
+    const misused = try settled(configured(recovery(["--execute"], repoRoot), identity))
+
+    const execute = {
+      ...identity,
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REF: "refs/heads/development",
+      GITHUB_REPOSITORY: "SlopDotCash/slopdotcash",
+      GITHUB_WORKFLOW_REF: protectedWorkflow,
+      GITHUB_SHA: source,
+      VETTING_QUALIFICATION_MODE: "execute",
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: "journey-token",
+      CLOUDFLARE_API_BASE_URL: `${served.url}/client/v4`,
+      RUNNER_TEMP: runnerTemp,
+    }
+    const production = try settled(configured(recovery(["--mode", "execute"], repoRoot), { ...execute, SLOP_ENVIRONMENT: "production" }))
+    const unprotected = try settled(configured(recovery(["--mode", "execute"], repoRoot), { ...execute, SLOP_ENVIRONMENT: "staging", GITHUB_REF: "refs/heads/main" }))
+    const firstRun = try settled(configured(recovery(["--mode", "execute"], repoRoot), { ...execute, SLOP_ENVIRONMENT: "staging", GITHUB_RUN_ATTEMPT: "0" }))
+    const untouched = api.calls.length
+
+    try existingWorker(served, run)
+    const before = api.calls.length
+    const adopted = try settled(configured(recovery(["--mode", "execute"], repoRoot), { ...execute, SLOP_ENVIRONMENT: "staging" }))
+    const reportText = try fs.readFileString(files.join(runnerTemp, "vetting-recovery-report", "result.json"))
+    const report = try Effect.try(() => JSON.parse(reportText) as unknown)
+
+    try same({ misused, production, unprotected, firstRun, untouched }, {
+      misused: "RecoveryRefused: usage: qualify recovery [--mode plan|execute]",
+      production: "RecoveryRefused: Recovery qualification executes only in slop-staging; it never touches a production resource",
+      unprotected: "RecoveryRefused: Exact protected development qualification is required",
+      firstRun: "RecoveryRefused: Exact protected development qualification is required",
+      untouched: 0,
+    })
+    try same(adopted, "RecoveryFailed")
+    try same(api.calls.slice(before), [{ method: "GET", path: `/accounts/${accountId}/workers/scripts`, status: 200, lost: false }])
+    try same(report, {
+      source,
+      run,
+      hosted: true,
+      productionTouched: false,
+      scans: false,
+      syntheticScanResults: false,
+      policyAttested: false,
+      results: {},
+      failure: { stage: "prepare-resources", kind: "RecoveryRefused", reason: "Qualification Worker already exists", status: null, cloudflareCodes: [] },
+      fixtureResources: { databases: [], queues: [], buckets: [], worker: false },
+      workerVersion: null,
+      cleanup: { complete: true, failedOperations: 0, unresolvedCreations: [] },
+      success: false,
+      evidence: { recorder: protectedWorkflow, revision: source, kind: "Failed", bound: 0 },
+    })
+  }))
+
+  it.effect('Back up, restore and verify disposable evidence in the qualification Worker (spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const outbound: string[] = []
+    const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "recovery" }))
+    const mf = try acquireRelease(sync(() => startWorker({
+      script,
+      d1: { EVIDENCE_DATABASE: "recovery-source", RESTORED_DB: "recovery-restored" },
+      r2: ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"],
+      vars: { QUALIFICATION_RUN: localRun, EVIDENCE_BACKUP_MODE: "enabled", EVIDENCE_RETENTION_MODE: "off" },
+      queues: { producers: { EVIDENCE_BACKUP_QUEUE: "qualification" }, consumers: { qualification: { maxRetries: 1 } } },
+      outbound: (request) => {
+        outbound.push(request.url)
+        return new Response(null, { status: 503 })
+      },
+    })), (worker) => promise(() => worker.dispose()))
+    const schema = try qualificationMigrationsDir(try fs.makeTempDirectoryScoped({ prefix: "slop-recovery-schema-" }))
+    for (const binding of ["EVIDENCE_DATABASE", "RESTORED_DB"]) {
+      const applied = try promise(() => migrate(mf, binding, schema))
+      try same(applied.filter((file) => file.error !== undefined), [])
+    }
+    const source = try promise(() => database(mf, "EVIDENCE_DATABASE"))
+    const restored = try promise(() => database(mf, "RESTORED_DB"))
+    function evidence<A, E, R>(query: A!E!R) {
+      return onDatabase(source, query)
+    }
+    let deliveries = 0
+
+    effect function send(action: string) {
+      deliveries += 1
+      const delivery = `${action}-${deliveries}`
+      const outcome = try promise(() => queue(mf, "qualification", [{ qualification: localRun, action, delivery }]))
+      const acknowledged = try evidence(first(CountRow, sql`SELECT count(*) AS n FROM qualification_deliveries WHERE id = ${`command:${delivery}`}`))
+      const failed = try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${`failed-${action}`}`))
+      try same({ retried: outcome.retryMessages.length, acknowledged: acknowledged?.n, failed }, { retried: 0, acknowledged: 1, failed: undefined })
+    }
+
+    effect function resultText(phase: string) {
+      return (try evidence(first(ResultRow, sql`SELECT result FROM qualification_results WHERE phase = ${phase}`)))?.result ?? "null"
+    }
+
+    effect function result(phase: string) {
+      const text = try resultText(phase)
+      return try Effect.try(() => JSON.parse(text) as unknown)
+    }
+
+    effect function count(statement: Statement) {
+      return (try evidence(first(CountRow, statement)))?.n ?? 0
+    }
+
+    const publicRoute = (try promise(() => mf.dispatchFetch("https://qualification.invalid/"))).status
+    const stranger = try promise(() => queue(mf, "qualification", [{ qualification: "slop-vet-q-1-1", action: "seed", delivery: "seed-9" }]))
+
+    try send("seed")
+    const seeded = try parsed(SeedResult, "seed", utf8(try resultText("seed")))
+    let cycleComplete = false
+    for (let attempt = 0; attempt < 1200 && !cycleComplete; attempt++) {
+      const cycle = try evidence(first(CycleRow, sql`SELECT phase FROM vetting_storage_cycles WHERE day = ${seeded.day}`))
+      const firstPages = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'backup-page-0'`)
+      cycleComplete = cycle?.phase === "complete" && firstPages >= 2
+      if (!cycleComplete) try sleep("100 millis")
+    }
+
+    try send("verify")
+    const proof = try result("verify")
+    try send("verify")
+    try send("corrupt")
+    const corruption = try result("corrupt")
+    const verifyDeliveries = try count(sql`SELECT count(*) AS n FROM qualification_deliveries WHERE action = 'verify'`)
+    const verifyResults = try count(sql`SELECT count(*) AS n FROM qualification_results WHERE phase = 'verify'`)
+    const grant = try onDatabase(restored, first(GrantRow, sql`SELECT consumed_at FROM vetting_evidence_grants WHERE token_hash = ${"0".repeat(64)}`))
+    const sourceAudit = try evidence(rows(Schema.Struct({ id: Schema.String }), sql`SELECT id FROM vetting_evidence_audit ORDER BY id`))
+
+    try send("empty")
+    const remaining: number[] = []
+    for (const binding of ["EVIDENCE_SOURCE", "EVIDENCE_BACKUPS", "RESTORED"]) {
+      const listing = try retentionBucket(try retention(try promise(() => storage(mf, binding)))).list("", undefined, 100)
+      remaining.push(listing.objects.length)
+    }
+
+    const smallTotal = Array.from({ length: 65 }, (_, index) => smallBytes(index).length).reduce((sum, size) => sum + size, 0)
+    const completion = typeof proof === "object" && proof !== null && "completionSha256" in proof ? proof.completionSha256 : undefined
+    try Effect.try(() => assert.match(String(completion), /^[a-f0-9]{64}$/u))
+    try same({ publicRoute, strangerRetried: stranger.retryMessages.length, cycleComplete, objects: seeded.objects }, { publicRoute: 404, strangerRetried: 1, cycleComplete: true, objects: 68 })
+    try same(proof, {
+      objects: 68,
+      pages: 3,
+      bytes: smallTotal + largeSize + seeded.snapshotBytes,
+      completionSha256: completion,
+      restoredSha256: try sha256Hex(smallBytes(37)),
+      recoveredSnapshotSha256: seeded.snapshotSha256,
+      chunkedSha256: try sha256Hex(new Uint8Array(largeSize).fill(7)),
+      replayUnchanged: true,
+      sourceUnchanged: true,
+      foreignKeysValid: true,
+      immutablePolicy: true,
+    })
+    try same(seeded.objectSha256, try sha256Hex(new Uint8Array(largeSize).fill(7)))
+    try same(corruption, { changedBytesRefused: true, missingPageRefused: true, sourceUnchanged: true })
+    try same({ verifyDeliveries, verifyResults, consumedAt: grant?.consumed_at, sourceAudit: sourceAudit.map((row) => row.id) }, { verifyDeliveries: 2, verifyResults: 1, consumedAt: seeded.fixtureAt, sourceAudit: ["qualification-audit"] })
+    try same({ remaining, outbound }, { remaining: [0, 0, 0], outbound: [] })
+  }))
+})

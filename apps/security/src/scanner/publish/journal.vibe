@@ -1,0 +1,94 @@
+// spec/security/admission.md, "Publication records its intent, sends once, keeps uncertainty and records the result exactly once"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type ScanResult, isScanResult, maxResultBytes, parseResult, resultProblems } from "../../admission/result.ts"
+import { JournalAnswer } from "../../client/admission.vibe"
+import { ServiceAnswerInvalid, decodedAnswer, signedCall, signedJson } from "../run/service.vibe"
+
+export const journalPath = "/api/v1/vetting/journal"
+export const resultsPath = "/api/v1/vetting/results"
+
+export type PublicationOutcome = "accepted" | "rejected" | "unknown"
+
+export interface PublicationIntent {
+  readonly assessmentId: string
+  readonly resultSha256: string
+  readonly origin: string
+  readonly disposition: ScanResult["disposition"]
+}
+
+export interface PublicationReceipt extends PublicationIntent {
+  readonly outcome: PublicationOutcome
+  readonly httpStatus: number | null
+}
+
+export error PublicationMismatch
+export error JournalRefused { operation: string }
+
+const anyField = Schema.optionalKey(Schema.Unknown)
+const IntakeReceipt = Schema.Struct({
+  assessment: Schema.Struct({ id: anyField, revision: anyField, state: anyField, commitSha: anyField, templateSha256: anyField, policyVersion: anyField, resultSha256: anyField }),
+})
+type IntakeReceipt = typeof IntakeReceipt.Type
+
+const rejectedStatuses: ReadonlySet<number> = new Set([400, 401, 403, 404, 413, 422])
+
+effect function journal(payload: Readonly<Record<string, unknown>>) {
+  const value = signedJson({ step: "journal", method: "POST", path: journalPath, body: payload, timeoutMs: 30_000, limitBytes: 4096 }) catch effect () => {
+    throw new JournalRefused({ operation: String(payload.operation) })
+  }
+  return try decodedAnswer("journal", JournalAnswer, value)
+}
+
+export effect function journaled(assessmentId: string) {
+  const answer = try journal({ operation: "has", assessmentId })
+  if (!("present" in answer)) throw new ServiceAnswerInvalid({ step: "journal" })
+  return answer.present
+}
+
+export effect function reserve(intent: PublicationIntent) {
+  try journal({ operation: "reserve", assessmentId: intent.assessmentId, resultSha256: intent.resultSha256, origin: intent.origin, disposition: intent.disposition })
+}
+
+export effect function complete(receipt: PublicationReceipt) {
+  try journal({ operation: "complete", assessmentId: receipt.assessmentId, resultSha256: receipt.resultSha256, origin: receipt.origin, disposition: receipt.disposition, outcome: receipt.outcome, httpStatus: receipt.httpStatus })
+}
+
+export effect function approved(body: string) {
+  const bytes = new TextEncoder().encode(body)
+  const value: unknown = try Effect.try({ try: () => JSON.parse(body), catch: () => new PublicationMismatch() })
+  const parsed = parseResult(value)
+  if (parsed.kind !== "parsed" || !isScanResult(parsed.result) || bytes.byteLength > maxResultBytes || JSON.stringify(parsed.result) !== body || resultProblems(parsed.result).length > 0) throw new PublicationMismatch()
+  return { result: parsed.result, resultSha256: try sha256Hex(bytes) }
+}
+
+function matches(receipt: IntakeReceipt, result: ScanResult, resultSha256: string) {
+  const assessment = receipt.assessment
+  return (
+    assessment.id === result.assessmentId &&
+    assessment.revision === result.revision &&
+    assessment.state === result.disposition &&
+    assessment.commitSha === result.assessed.commitSha &&
+    assessment.templateSha256 === result.assessed.templateSha256 &&
+    assessment.policyVersion === result.policyVersion &&
+    assessment.resultSha256 === resultSha256
+  )
+}
+
+export effect function submit(body: string, result: ScanResult, resultSha256: string) {
+  const answer = signedCall({ step: "publication", method: "POST", path: resultsPath, body: new TextEncoder().encode(body), contentType: "application/json", timeoutMs: 30_000, limitBytes: maxResultBytes }) catch effect () => {
+    return undefined
+  }
+  if (answer === undefined) return { outcome: "unknown", httpStatus: null } satisfies { outcome: PublicationOutcome; httpStatus: number | null }
+  if (answer.status !== 200) return { outcome: rejectedStatuses.has(answer.status) ? "rejected" : "unknown", httpStatus: answer.status } satisfies { outcome: PublicationOutcome; httpStatus: number | null }
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(answer.bytes)) catch effect () => {
+    return ""
+  }
+  const value = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    return undefined
+  }
+  const receipt = Schema.decodeUnknownEffect(IntakeReceipt)(value) catch effect () => {
+    return undefined
+  }
+  const outcome: PublicationOutcome = receipt !== undefined && matches(receipt, result, resultSha256) ? "accepted" : "unknown"
+  return { outcome, httpStatus: answer.status }
+}

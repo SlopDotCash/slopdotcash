@@ -1,0 +1,61 @@
+// spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"
+import { boundedBytes } from "@repo/platform/browser"
+import { signedHeaders } from "@repo/platform/signed"
+
+export service ScanService {
+  readonly origin: string
+  readonly key: Redacted.Redacted<string>
+}
+
+export error ServiceUnavailable { step: string; status: number }
+export error ServiceAnswerInvalid { step: string }
+
+export type Method = "GET" | "POST" | "PUT"
+
+export interface Answer {
+  readonly status: number
+  readonly bytes: Uint8Array
+}
+
+const empty = new Uint8Array()
+
+export function exactOrigin(value: string, allowLoopback: boolean): boolean {
+  if (!URL.canParse(value)) return false
+  const url = new URL(value)
+  return url.origin === value && url.username === "" && url.password === "" && (url.protocol === "https:" || (allowLoopback && url.protocol === "http:" && url.hostname === "127.0.0.1"))
+}
+
+export effect function signedCall(request: { readonly step: string; readonly method: Method; readonly path: string; readonly body?: Uint8Array; readonly contentType?: string; readonly timeoutMs: number; readonly limitBytes: number }) {
+  const service = try ScanService
+  const body = request.body ?? empty
+  const headers = try signedHeaders({ key: service.key, method: request.method, path: request.path, body })
+  const base = HttpClientRequest.make(request.method)(`${service.origin}${request.path}`, { headers: { ...headers, ...(request.contentType === undefined ? {} : { "content-type": request.contentType }) } })
+  const outgoing = request.method === "GET" ? base : HttpClientRequest.bodyUint8Array(base, body, request.contentType ?? "application/octet-stream")
+  const client = try HttpClient.HttpClient
+  const sent = provideService(client.execute(outgoing), FetchHttpClient.RequestInit, { redirect: "manual" })
+  const response = timeoutOrElse(sent, { duration: Duration.millis(request.timeoutMs), orElse: () => Effect.fail(new ServiceUnavailable({ step: request.step, status: 0 })) }) catch effect () => {
+    throw new ServiceUnavailable({ step: request.step, status: 0 })
+  }
+  const bytes = boundedBytes(response, request.limitBytes, request.step) catch effect () => {
+    throw new ServiceUnavailable({ step: request.step, status: response.status })
+  }
+  return { status: response.status, bytes } satisfies Answer
+}
+
+export effect function signedJson(request: { readonly step: string; readonly method: Method; readonly path: string; readonly body?: unknown; readonly timeoutMs: number; readonly limitBytes: number }) {
+  const body = request.body === undefined ? undefined : new TextEncoder().encode(JSON.stringify(request.body))
+  const answer = try signedCall({ step: request.step, method: request.method, path: request.path, timeoutMs: request.timeoutMs, limitBytes: request.limitBytes, ...(body === undefined ? {} : { body, contentType: "application/json" }) })
+  if (answer.status < 200 || answer.status > 299) throw new ServiceUnavailable({ step: request.step, status: answer.status })
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(answer.bytes)) catch effect () => {
+    throw new ServiceAnswerInvalid({ step: request.step })
+  }
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new ServiceAnswerInvalid({ step: request.step }) })
+  return value
+}
+
+export effect function decodedAnswer<S extends Schema.Constraint>(step: string, schema: S, value: unknown) {
+  const decoded = Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw new ServiceAnswerInvalid({ step })
+  }
+  return decoded
+}

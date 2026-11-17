@@ -1,0 +1,357 @@
+// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/buyback.md, "Each evaluation that signs nothing records one outcome, once"; spec/fees/buyback.md, "An EVM order first approves exactly its amount to the pinned bridge"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buybackBinding.md, "Every buyback send is a row of its network's fee journal and shares its lease, nonce floor and native reservation"
+import { RowMismatch, type Statement, sql } from "@repo/platform/d1"
+import { isoAt } from "@repo/platform/clock"
+import { randomId } from "@repo/platform/crypto"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { equalAmounts } from "../../gen/settlement__money.effect.vibe"
+import { type BridgeOrder, type Buyback, type Event, NotAState, apply, decodeEvent } from "../../gen/fees__buyback.effect.vibe"
+import { type BuybackSend, type BuybackSendKind, buybackSendAdmitted, nonceAdmitted, sendNetworkFits } from "../../gen/fees__buybackBinding.effect.vibe"
+import { NotAState as JournalNotAState, leaseHeld, nonceFloor, solanaSequence, txUsed } from "../../gen/fees__conversion.effect.vibe"
+import { type Sender, buybackSigns } from "../../gen/fees__runtime.effect.vibe"
+import { type Instance, type Journal, amountOf, networkNames, revertedText, unitsOf } from "../journal/codec.vibe"
+import { verifiedEvmSend } from "../journal/signedSend.ts"
+import { aggregate as journalAggregate } from "../journal/store.vibe"
+import * as W from "../journal/writes.vibe"
+import type { NativeLimits } from "../runtime/config.vibe"
+import { robinhoodUsdg } from "../runtime/pins.ts"
+import { type IncomeEntry, type Leg, type Ledger, type SendRecord, type Terms, decisionStateName, decodeLedger, legReads, legVersion, reasonText } from "./codec.vibe"
+
+module verified {
+  import { errorText as sanitized } from "../kernels/errorText.ts"
+  import { withinReservation as within } from "../journal/amounts.ts"
+  /** @throws {never} */
+  export function errorText(text: string): string { return sanitized(text) }
+  /** @throws {never} */
+  export function withinReservation(gas: bigint, feePerGas: bigint, maximum: bigint): boolean { return within(gas, feePerGas, maximum) }
+}
+import { errorText, withinReservation } from verified
+
+export error BuybackRefused { event: string; issue: string }
+
+export interface SignedFacts {
+  readonly txId: string
+  readonly rawTx: string
+  readonly nonce: number
+  readonly maximumWei: string
+  readonly intentHash: string
+  readonly limits: NativeLimits
+  readonly purpose: W.Purpose
+  readonly blockhashSlot?: number
+  readonly accountProof?: string
+}
+
+export interface ReceiptFacts { readonly landedTxId: string; readonly actualWei: string; readonly blockHash: string; readonly paid?: string }
+
+export interface Facts {
+  readonly runId?: string
+  readonly wallet?: string
+  readonly token?: string
+  readonly balance?: string
+  readonly summary?: string
+  readonly takeAmount?: string
+  readonly detail?: string
+  readonly signed?: SignedFacts
+  readonly terms?: Terms
+  readonly receipt?: ReceiptFacts
+  readonly blockHash?: string
+}
+
+export interface Loaded { readonly ledger: Ledger; readonly journal: Journal | undefined }
+
+export interface Sent { readonly state: Buyback; readonly leg: Leg }
+
+function named(leg: Leg) {
+  return `buyback leg of ${networkNames[leg.network]}`
+}
+
+function plain(leg: Leg): Aggregate<Loaded, RowMismatch | NotAState, never> {
+  return {
+    name: named(leg),
+    version: sql`SELECT ${legVersion(leg)} AS version`,
+    reads: legReads(leg),
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ ledger: try decodeLedger(leg, rows), journal: undefined }) satisfies Loaded,
+  }
+}
+
+function bound(leg: Leg, instance: Instance): Aggregate<Loaded, RowMismatch | NotAState | JournalNotAState, never> {
+  const fee = journalAggregate(instance, leg.names)
+  const count = fee.reads.length
+  return {
+    name: named(leg),
+    version: sql`SELECT (${fee.version}) || '#' || ${legVersion(leg)} AS version`,
+    reads: [...fee.reads, ...legReads(leg)],
+    decode: effect (rows: ReadonlyArray<Rows>) => ({ journal: try fee.decode(rows.slice(0, count)), ledger: try decodeLedger(leg, rows.slice(count)) }) satisfies Loaded,
+  }
+}
+
+effect function need<T>(value: T | undefined, event: Event, issue: string) {
+  if (value === undefined) throw new BuybackRefused({ event: event.type, issue })
+  return value
+}
+
+effect function refuse(event: Event, issue: string) {
+  throw new BuybackRefused({ event: event.type, issue })
+}
+
+function sendByTx(leg: Leg, ledger: Ledger, tx: number) {
+  return ledger.sends.find((send) => leg.names.number("tx", send.tx) === tx)
+}
+
+effect function runNumber(journal: Journal, runId: string, event: Event) {
+  const found = [...journal.runs].find(([, text]) => text === runId)?.[0]
+  return try need(found, event, "the run holds no lease in this network's fee journal")
+}
+
+effect function admitted(leg: Leg, journal: Journal, kind: BuybackSendKind, request: BridgeOrder, signed: SignedFacts, runId: string, event: Event) {
+  const fee = journal.state
+  const units = try unitsOf(signed.maximumWei, leg.network, "the reserved maximum")
+  const send: BuybackSend = { network: leg.network, kind, runId: try runNumber(journal, runId, event), tx: request.tx, nonce: signed.nonce, maximum: Number(units) }
+  const ok = signed.purpose === "fees" ? buybackSendAdmitted(fee, send)
+    : fee.network === send.network && sendNetworkFits(send) && leaseHeld(fee, send.runId) && !fee.overrun && buybackSigns(fee.runtime, send.network)
+      && send.tx > 0 && !txUsed(fee, send.tx) && nonceAdmitted(fee, send.nonce)
+  if (!ok) return try refuse(event, "the network's fee journal does not admit this buyback send")
+  const held = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
+  if (leg.network !== "Solana" && held.some((entry) => entry.nonce >= signed.nonce)) return try refuse(event, "another buyback send holds this nonce or a later one")
+}
+
+effect function sameTx(leg: Leg, txId: string, tx: number, event: Event) {
+  if (leg.names.number("tx", txId) !== tx) return try refuse(event, "the signed transaction identifier is not the event's transaction")
+}
+
+effect function verifiedBytes(leg: Leg, signed: SignedFacts, wallet: string, event: Event) {
+  if (leg.network === "Solana") return
+  const checked = try tryPromise({ try: () => verifiedEvmSend({ txId: signed.txId, rawTx: signed.rawTx, intentHash: signed.intentHash, wallet: wallet.toLowerCase() }), catch: () => new BuybackRefused({ event: event.type, issue: "the signed bytes cannot be checked" }) })
+  if (checked.kind === "refused") return try refuse(event, checked.issue)
+  if (checked.send.nonce !== signed.nonce) return try refuse(event, "the signed nonce is not the reserved one")
+  if (!withinReservation(checked.send.gas, checked.send.maxFeePerGas, try amountOf(signed.maximumWei, "the reserved maximum"))) return try refuse(event, "the signed worst-case fee exceeds the reserved maximum")
+}
+
+function reservation(leg: Leg, gasId: string, wallet: string, runId: string, signed: SignedFacts, now: string): W.Reservation {
+  return {
+    id: gasId,
+    network: networkNames[leg.network],
+    wallet,
+    nonce: signed.nonce,
+    intentHash: signed.intentHash,
+    runId,
+    maximumWei: signed.maximumWei,
+    perTransactionWei: signed.limits.perTransaction.toString(),
+    perDayWei: signed.limits.perDay.toString(),
+    createdAt: now,
+    blockhashSlot: signed.blockhashSlot ?? null,
+    accountProof: signed.accountProof ?? null,
+    purpose: signed.purpose,
+  }
+}
+
+interface SendRow {
+  readonly kind: "approval" | "bridge"
+  readonly id: string
+  readonly runId: string
+  readonly network: W.NetworkName
+  readonly wallet: string
+  readonly token: string
+  readonly amount: number
+  readonly takeAmount: number
+  readonly quote: string
+  readonly signed: SignedFacts
+  readonly gasId: string
+  readonly now: string
+}
+
+function sendRow(entry: SendRow): Statement {
+  const evm = entry.network !== "solana"
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, quote, approval_tx_id, tx_id, raw_tx, evm_nonce, state, created_at, updated_at, submitted_at, native_gas_id) VALUES (${entry.kind}, ${entry.id}, ${entry.runId}, ${entry.network}, 'live', ${entry.wallet}, ${entry.token}, ${robinhoodUsdg}, ${String(entry.amount)}, 'debridge', ${String(entry.takeAmount)}, ${entry.kind === "bridge" ? String(entry.takeAmount) : null}, ${entry.amount}, ${entry.quote}, ${entry.kind === "approval" ? entry.signed.txId : null}, ${entry.signed.txId}, ${entry.signed.rawTx}, ${evm ? entry.signed.nonce : null}, 'submitted', ${entry.now}, ${entry.now}, ${entry.now}, ${entry.gasId})`
+}
+
+interface Outcome {
+  readonly record: SendRecord
+  readonly terms: Terms
+  readonly network: W.NetworkName
+  readonly outcome: "arrived" | "refunded"
+  readonly token: string
+  readonly amount: string
+  readonly evidenceNetwork: W.NetworkName
+  readonly block: number
+  readonly blockHash: string
+  readonly runId: string
+  readonly now: string
+}
+
+function outcomeRow(entry: Outcome): Statement {
+  return sql`INSERT INTO fee_bridge_outcomes (bridge_id, source_network, order_id, outcome, token, amount, evidence_network, evidence_block, evidence_block_hash, run_id, observed_at) VALUES (${entry.record.id}, ${entry.network}, ${entry.terms.orderId}, ${entry.outcome}, ${entry.token}, ${entry.amount}, ${entry.evidenceNetwork}, ${entry.block}, ${entry.blockHash}, ${entry.runId}, ${entry.now})`
+}
+
+function decisionRow(leg: Leg, next: Buyback, facts: Facts, id: string, runId: string, wallet: string, token: string, reason: string | null, now: string): Statement {
+  const decided = next.decisions[next.decisions.length - 1]
+  const amount = decided?.amount ?? 0
+  const state = decisionStateName[decided?.state ?? "Pending"]
+  const take = decided?.state === "Quoted" ? facts.takeAmount ?? null : null
+  return sql`INSERT INTO fee_conversions (kind, id, run_id, network, mode, fee_wallet, token, target_token, amount_in, route, quote_amount_out, min_amount_out, quote_value_micro, quote, token_balance_before, state, reason, created_at, updated_at) VALUES ('bridge', ${id}, ${runId}, ${networkNames[leg.network]}, ${decided?.live === true ? "live" : "dry_run"}, ${wallet}, ${token}, ${robinhoodUsdg}, ${String(amount)}, 'debridge', ${take}, ${take}, ${amount}, ${facts.summary ?? null}, ${facts.balance ?? null}, ${state}, ${reason}, ${now}, ${now})`
+}
+
+effect function settlement(leg: Leg, record: SendRecord, facts: Facts, event: Event, now: string) {
+  const receipt = try need(facts.receipt, event, "the finalized receipt's evidence is missing")
+  if (receipt.landedTxId !== record.tx) return try refuse(event, "the receipt is not of the journaled send")
+  const ids = record.gas.filter((gas) => gas.state === "signed" && gas.actualWei === null).map((gas) => gas.id)
+  return { receipt, statements: W.settled({ ids, landedTxId: receipt.landedTxId, actualWei: receipt.actualWei, day: now.slice(0, 10), blockHash: receipt.blockHash }) }
+}
+
+effect function writesFor(loaded: Loaded, leg: Leg, event: Event, next: Buyback, facts: Facts) {
+  const { ledger } = loaded
+  const current = ledger.state
+  const network = networkNames[leg.network]
+  const now = try isoAt(current.clock + leg.offset)
+  switch (event.type) {
+    case "selectSource":
+    case "advanceClock":
+    case "publishWorker":
+    case "setReleaseVariable":
+    case "verifyReadiness":
+    case "observeCancelling":
+    case "reportUnfilled":
+    case "closeOrder":
+      return []
+    case "recordIncome": {
+      const text = try need(leg.names.text("receipt", event.key.id), event, "the income key names no owning record")
+      const found = leg.evidence.find((entry) => `${entry.kind}:${entry.text}` === text && entry.kind === event.key.kind)
+      if (found === undefined || event.key.network !== leg.network || !equalAmounts(found.amount, event.incomeAmount) || found.chainTime !== event.chainTime)
+        return try refuse(event, "the income is not a finalized record of the owning journals")
+      return []
+    }
+    case "decide": {
+      if (next.decisions.length === current.decisions.length) return []
+      const decided = next.decisions[next.decisions.length - 1]
+      const reason = decided === undefined || decided.reason === "NoReason" ? null
+        : decided.reason === "NoRouteFound" ? `${errorText(try need(facts.detail, event, "the no-route answer is missing"))}`.slice(0, 500) || "no bridge route"
+        : reasonText[decided.reason]
+      return [decisionRow(leg, next, facts, try randomId(), try need(facts.runId, event, "the run is missing"), try need(facts.wallet, event, "the fee wallet is missing"), try need(facts.token, event, "the input token is missing"), reason, now)]
+    }
+    case "approveOrder":
+    case "order": {
+      const journal = try need(loaded.journal, event, "a buyback send needs its network's fee journal")
+      const signed = try need(facts.signed, event, "the signed send is missing")
+      const runId = try need(facts.runId, event, "the run is missing")
+      const wallet = try need(facts.wallet, event, "the fee wallet is missing")
+      const token = try need(facts.token, event, "the input token is missing")
+      const { request } = event
+      try sameTx(leg, signed.txId, request.tx, event)
+      try verifiedBytes(leg, signed, wallet, event)
+      const approval = event.type === "approveOrder"
+      try admitted(leg, journal, approval ? "BridgeApprovalSend" : "BridgeOrderSend", request, signed, runId, event)
+      const terms = approval ? undefined : try need(facts.terms, event, "the signed order terms are missing")
+      if (terms !== undefined && (leg.names.number("hash", terms.orderId) !== request.orderId || terms.takeAmount !== String(request.takeAmount)))
+        return try refuse(event, "the signed order terms differ from the order")
+      const gasId = `fee-gas-${try randomId()}`
+      return [
+        W.reserve(reservation(leg, gasId, wallet, runId, signed, now)),
+        sendRow({ kind: approval ? "approval" : "bridge", id: try randomId(), runId, network, wallet, token, amount: request.amount, takeAmount: request.takeAmount, quote: terms === undefined ? facts.summary ?? "{}" : JSON.stringify(terms), signed, gasId, now }),
+      ]
+    }
+    case "settleApproval": {
+      const record = try need(sendByTx(leg, ledger, event.receipt.tx), event, "the receipt is of no journaled approval")
+      const settled = try settlement(leg, record, facts, event, now)
+      return [
+        event.receipt.succeeded
+          ? W.finalized({ id: record.id, amountOut: "0", reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now })
+          : W.reverted(record.id, revertedText("Approval", leg.network), settled.receipt.landedTxId, now),
+        ...settled.statements,
+      ]
+    }
+    case "settleOrder": {
+      const record = try need(sendByTx(leg, ledger, event.receipt.tx), event, "the receipt is of no journaled order")
+      const settled = try settlement(leg, record, facts, event, now)
+      if (!event.receipt.succeeded) return [W.reverted(record.id, leg.network === "Solana" ? "bridge order transaction failed on chain" : "bridge order transaction reverted", settled.receipt.landedTxId, now), ...settled.statements]
+      const paid = try need(settled.receipt.paid, event, "the order's finalized debit is missing")
+      if (paid !== record.amountIn) return try refuse(event, "Bridge receipt debit differs from the recorded amount")
+      return [W.finalized({ id: record.id, amountOut: paid, reason: null, landedTxId: settled.receipt.landedTxId, targetBalanceAfter: null, now }), ...settled.statements]
+    }
+    case "loseSend": {
+      const record = try need(sendByTx(leg, ledger, event.tx), event, "the transaction is of no journaled send")
+      return [W.transition(record.id, ["submitted"], "unknown", `broadcast: ${errorText(facts.detail ?? "")}`.slice(0, 500), now)]
+    }
+    case "observeArrival": {
+      const record = try need(ledger.orders.get(event.arrival.order), event, "the arrival names no journaled order")
+      const terms = try need(record.terms, event, "the order lacks its terms")
+      return [outcomeRow({ record, terms, network, outcome: "arrived", token: terms.takeToken, amount: terms.takeAmount, evidenceNetwork: "robinhood", block: event.arrival.height, blockHash: try need(facts.blockHash, event, "the arrival's block hash is missing"), runId: try need(facts.runId, event, "the Robinhood run is missing"), now })]
+    }
+    case "observeRefund": {
+      const record = try need(ledger.orders.get(event.refund.order), event, "the refund names no journaled order")
+      const terms = try need(record.terms, event, "the order lacks its terms")
+      const amount = try need(record.amountOut ?? undefined, event, "the order has no finalized deposit")
+      return [outcomeRow({ record, terms, network, outcome: "refunded", token: record.token, amount, evidenceNetwork: network, block: event.refund.height, blockHash: try need(facts.blockHash, event, "the refund's block hash is missing"), runId: try need(facts.runId, event, "the run is missing"), now })]
+    }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
+  }
+}
+
+function orderText(ledger: Ledger, order: number) {
+  return ledger.orders.get(order)?.terms?.orderId
+}
+
+function observed(leg: Leg, ledger: Ledger, event: Event, next: Buyback): Leg {
+  switch (event.type) {
+    case "selectSource": return { ...leg, network: event.sourceNetwork }
+    case "publishWorker":
+    case "setReleaseVariable":
+    case "verifyReadiness": {
+      const held = { ...leg.held, runtime: next.runtime }
+      return { ...leg, held, ...leg.journal === undefined ? {} : { journal: { ...leg.journal, held: { ...leg.journal.held, runtime: next.runtime } } } }
+    }
+    case "recordIncome": {
+      const text = leg.names.text("receipt", event.key.id)
+      const found = leg.evidence.find((entry) => `${entry.kind}:${entry.text}` === text)
+      return found === undefined ? leg : { ...leg, income: [...leg.income, found] satisfies ReadonlyArray<IncomeEntry> }
+    }
+    case "observeCancelling": {
+      const text = orderText(ledger, event.cancellation.order)
+      return text === undefined ? leg : { ...leg, cancelling: [...leg.cancelling, text] }
+    }
+    case "reportUnfilled": {
+      const text = orderText(ledger, ledger.state.order)
+      return text === undefined ? leg : { ...leg, reported: [...leg.reported, text] }
+    }
+    case "observeArrival": return { ...leg, awaiting: orderText(ledger, event.arrival.order) }
+    case "observeRefund": return { ...leg, awaiting: orderText(ledger, event.refund.order) }
+    case "closeOrder": {
+      const { awaiting: _closed, ...rest } = leg
+      return rest
+    }
+    default: return leg
+  }
+}
+
+effect function decide(loaded: Loaded, leg: Leg, event: Event, by: Sender, facts: Facts) {
+  const next = try apply(loaded.ledger.state, event, by)
+  const writes: ReadonlyArray<Statement> = try writesFor(loaded, leg, event, next, facts)
+  return { value: { state: next, leg: observed(leg, loaded.ledger, event, next) }, writes } satisfies Decision<Sent>
+}
+
+export effect function ledgerOf(leg: Leg) {
+  return (try load(plain(leg))).state.ledger
+}
+
+export interface Floors { readonly evm: number; readonly solana: number; readonly ledger: Ledger }
+
+export effect function sendFloors(leg: Leg, instance: Instance) {
+  const loaded = try load(bound(leg, instance))
+  const journal = loaded.state.journal
+  if (journal === undefined) throw new BuybackRefused({ event: "order", issue: "a buyback send needs its network's fee journal" })
+  const held = journal.foreign.map((entry) => entry.reservation).filter((entry) => entry.state !== "Abandoned" && !entry.settled)
+  return { evm: Math.max(nonceFloor(journal.state), ...held.map((entry) => entry.nonce + 1)), solana: solanaSequence(journal.state), ledger: loaded.state.ledger } satisfies Floors
+}
+
+export effect function send(leg: Leg, event: Event, by: Sender, facts: Facts = {}) {
+  if (event.type === "approveOrder" || event.type === "order") {
+    const instance = try need(leg.journal, event, "a buyback send needs its network's fee journal")
+    return try update(bound(leg, instance), (loaded) => decide(loaded, leg, event, by, facts))
+  }
+  return try update(plain(leg), (loaded) => decide(loaded, leg, event, by, facts))
+}
+
+export effect function receive(leg: Leg, input: unknown, by: Sender, facts: Facts = {}) {
+  return try send(leg, try decodeEvent(input), by, facts)
+}

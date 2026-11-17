@@ -1,0 +1,56 @@
+// spec/slopbot/closure.md, "A decision is recorded once and keeps its scope, verdicts and outcome"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"
+import { millisOf } from "@repo/platform/clock"
+import { rows, sql } from "@repo/platform/d1"
+import { type Closure, type Event, type GateObservation, type ReopenEvidence, type ReviewIdentity, Machine, initial, machineOver } from "../../gen/slopbot__closure.effect.vibe"
+
+export interface ClosureRecord {
+  readonly machine: Machine.Shape
+  readonly sequence: Ref.Ref<number>
+}
+
+schema ReopenRow {
+  readonly action: string
+  readonly detail: string
+  readonly created_at: string
+}
+
+export effect function openClosure(identity: ReviewIdentity) {
+  const held = try Ref.make<Closure>({ ...initial, identity })
+  return { machine: try machineOver(() => Ref.get(held), (next) => Ref.set(held, next)), sequence: try Ref.make(0) } satisfies ClosureRecord
+}
+
+export effect function closureState(record: ClosureRecord) {
+  return try record.machine.get()
+}
+
+export effect function sendClosure(record: ClosureRecord, event: Event) {
+  return try record.machine.send(event)
+}
+
+export effect function receiveClosure(record: ClosureRecord, input: unknown) {
+  return try record.machine.receive(input)
+}
+
+export effect function nextSequence(record: ClosureRecord) {
+  return try Ref.updateAndGet(record.sequence, (sequence) => sequence + 1)
+}
+
+export effect function observeGate(record: ClosureRecord, observation: Omit<GateObservation, "seq">) {
+  return try sendClosure(record, { type: "observe", observation: { ...observation, seq: try nextSequence(record) } })
+}
+
+function reopenOf(identity: ReviewIdentity, row: typeof ReopenRow.Type): ReopenEvidence | undefined {
+  const actor = Number(row.detail)
+  const at = Math.floor(millisOf(row.created_at) / 1000)
+  if (!Number.isSafeInteger(actor) || actor <= 0 || !Number.isSafeInteger(at) || at <= 0) return undefined
+  const role = row.action === "human_reopen" ? "ReopenByMaintainer" : actor === identity.author ? "ReopenByAuthor" : "ReopenByOther"
+  return { itemNode: identity.itemNode, revision: identity.revision, actor, role, at }
+}
+
+export effect function recordedReopens(identity: ReviewIdentity) {
+  const found = try rows(ReopenRow, sql`SELECT action, detail, created_at FROM slopbot_actions WHERE review_key = ${`reopen:${identity.itemNode}:${identity.revision}`} AND action IN ('human_reopen', 'appeal') ORDER BY id`)
+  return found.flatMap((row) => {
+    const reopen = reopenOf(identity, row)
+    return reopen === undefined ? [] : [reopen]
+  })
+}

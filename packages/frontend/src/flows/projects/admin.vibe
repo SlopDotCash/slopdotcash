@@ -1,0 +1,173 @@
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/frontend/projectDrafts.md, "An administrator's manifest draft is cleared only after its exact submitted text was accepted or on discard"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type EnforcementPreview, adminManifest, adminProjects, enforcementDecision, enforcementPreview } from "@repo/backend/client"
+import { type ManifestOutcome, keptManifestDraft } from "../../../gen/frontend__projectDrafts.effect.vibe"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { SessionStore, storageKeys } from "../../platform/storage.vibe"
+import { checkedAdminActionFailure, isAdminActionAccessLoss, requireAdminActionActor } from "../../session/adminAccess.vibe"
+import { projectReplyLimitBytes } from "./api.vibe"
+
+export const adminListLimitBytes = 8_388_608
+
+export const adminMessages = {
+  saved: "Saved.",
+  delisted: "Delisted by an admin",
+  discardFailed: "Could not discard the saved draft. Keep this editor open and try again.",
+  draftUnavailable: "Draft storage unavailable. Keep this editor open until saved.",
+  newerEdits: "Revision saved. Your newer edits are still here; copy them before reloading.",
+  previewMismatch: "The preview did not match this request. Preview again.",
+} as const
+
+export error RecheckedAdminReadFailure { status: number; message: string }
+export error PreviewMismatch { message: string }
+
+export interface ResponsibleAccount { readonly githubLogin: string }
+
+export interface EnforcementRequest {
+  readonly action: string
+  readonly reason: string
+  readonly evidenceReference: string
+  readonly expectedRevision: number
+  readonly expectedSequence: number
+  readonly responsibleAccounts?: ReadonlyArray<ResponsibleAccount | { readonly githubId: string; readonly githubLogin: string }>
+}
+
+export interface EnforcementInput {
+  readonly action: string
+  readonly reason: string
+  readonly evidence: string
+  readonly revision: number
+  readonly nextSequence: number
+  readonly decisionRequired: boolean
+  readonly responsible: string
+}
+
+export interface Reviewed {
+  readonly preview: EnforcementPreview
+  readonly request: EnforcementRequest
+}
+
+export interface ManifestSubmission {
+  readonly projectId: string
+  readonly revision: number
+  readonly manifest: unknown
+  readonly reason: string
+  readonly draft: string
+  readonly actorGithubId: string
+}
+
+export interface ListedProject {
+  readonly id: string
+  readonly revision: number
+  readonly manifest: Readonly<Record<string, unknown>>
+}
+
+function transient(failure: CallFailure): boolean {
+  if (failure._tag === "NetworkError") return true
+  return (failure._tag === "Refused" || failure._tag === "InvalidResponse") && failure.status >= 500
+}
+
+function statusOf(failure: CallFailure): number {
+  return failure._tag === "Refused" || failure._tag === "InvalidResponse" ? failure.status : 0
+}
+
+export effect function adminRead<A, R>(actorGithubId: string, request: A!CallFailure!R) {
+  try requireAdminActionActor(actorGithubId)
+  const value = request catch effect (failure) => {
+    if (isAdminActionAccessLoss(failure)) throw failure
+    try requireAdminActionActor(actorGithubId)
+    if (transient(failure)) throw new RecheckedAdminReadFailure({ status: statusOf(failure), message: failure.message })
+    throw failure
+  }
+  try requireAdminActionActor(actorGithubId)
+  return value
+}
+
+export effect function adminAction<A, R>(actorGithubId: string, request: A!CallFailure!R) {
+  try requireAdminActionActor(actorGithubId)
+  const value = request catch effect (failure) => { throw (try checkedAdminActionFailure(failure, actorGithubId)) }
+  try requireAdminActionActor(actorGithubId)
+  return value
+}
+
+function options(actorGithubId: string) {
+  return { limitBytes: projectReplyLimitBytes, expectedActor: actorGithubId }
+}
+
+export effect function adminProjectList(actorGithubId: string) {
+  return (try adminRead(actorGithubId, call(adminProjects, {}, { limitBytes: adminListLimitBytes, expectedActor: actorGithubId }))).projects
+}
+
+export function manifestDraftKey(projectId: string, revision: number): string {
+  return `${storageKeys.adminProject.key}${projectId}:${revision}`
+}
+
+export effect function restoredManifestDraft(projectId: string, revision: number) {
+  return (try SessionStore).values.get(manifestDraftKey(projectId, revision)) catch () => undefined
+}
+
+export effect function saveManifestDraft(projectId: string, revision: number, draft: string) {
+  const saved = (try SessionStore).values.set(manifestDraftKey(projectId, revision), draft) catch () => false
+  return saved !== false
+}
+
+effect function settleManifestDraft(key: string, submitted: string, outcome: ManifestOutcome, discarded: boolean) {
+  const values = (try SessionStore).values
+  const stored = try values.get(key)
+  if (stored === undefined) return true
+  if (keptManifestDraft(stored === submitted ? 1 : 2, 1, outcome, discarded) !== 0) return true
+  try values.remove(key)
+  return true
+}
+
+export effect function discardManifestDraft(projectId: string, revision: number) {
+  return settleManifestDraft(manifestDraftKey(projectId, revision), "", "ManifestRefused", true) catch () => false
+}
+
+function unanswered(failure: CallFailure): ManifestOutcome {
+  return failure._tag === "NetworkError" ? "ManifestUnanswered" : "ManifestRefused"
+}
+
+export effect function submitManifest(submission: ManifestSubmission) {
+  const key = manifestDraftKey(submission.projectId, submission.revision)
+  const body = { manifest: submission.manifest, expectedRevision: submission.revision, reason: submission.reason }
+  try requireAdminActionActor(submission.actorGithubId)
+  const answer = call(adminManifest, { body, params: { id: submission.projectId } }, options(submission.actorGithubId)) catch effect (failure) => {
+    settleManifestDraft(key, submission.draft, unanswered(failure), false) catch () => false
+    throw (try checkedAdminActionFailure(failure, submission.actorGithubId))
+  }
+  settleManifestDraft(key, submission.draft, "ManifestAccepted", false) catch () => false
+  try requireAdminActionActor(submission.actorGithubId)
+  return answer.project
+}
+
+export effect function delistProject(project: ListedProject, actorGithubId: string) {
+  const body = { manifest: { ...project.manifest, status: "paused", listingTier: "retired" }, expectedRevision: project.revision, reason: adminMessages.delisted }
+  return (try adminAction(actorGithubId, call(adminManifest, { body, params: { id: project.id } }, options(actorGithubId)))).project
+}
+
+export function enforcementRequest(input: EnforcementInput): EnforcementRequest {
+  const named = (input.action === "ban" && input.decisionRequired) || input.action === "reinstate_accounts"
+  return {
+    action: input.action,
+    reason: input.reason.trim(),
+    evidenceReference: input.evidence.trim(),
+    expectedRevision: input.revision,
+    expectedSequence: input.nextSequence,
+    ...(named ? { responsibleAccounts: input.responsible.split(/[\s,]+/u).filter(Boolean).map((githubLogin) => ({ githubLogin })) } : {}),
+  }
+}
+
+export effect function previewEnforcement(projectId: string, actorGithubId: string, request: EnforcementRequest) {
+  const { preview } = try adminAction(actorGithubId, call(enforcementPreview, { body: request, params: { id: projectId } }, options(actorGithubId)))
+  if (preview.projectId !== projectId || preview.action !== request.action || preview.sequence !== request.expectedSequence || preview.revision.before !== request.expectedRevision) {
+    throw new PreviewMismatch({ message: adminMessages.previewMismatch })
+  }
+  const reviewed: EnforcementRequest = request.responsibleAccounts === undefined
+    ? request
+    : { ...request, responsibleAccounts: request.action === "reinstate_accounts" ? preview.accountReinstatements : preview.maintainerBans }
+  return { preview, request: reviewed } satisfies Reviewed
+}
+
+export effect function decideEnforcement(projectId: string, actorGithubId: string, reviewed: Reviewed) {
+  return try adminAction(actorGithubId, call(enforcementDecision, { body: reviewed.request, params: { id: projectId } }, options(actorGithubId)))
+}

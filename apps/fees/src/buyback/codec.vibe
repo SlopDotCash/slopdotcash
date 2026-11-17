@@ -1,0 +1,235 @@
+// spec/fees/buyback.md, "Only finalized income from a named source at or after activation increases the budget"; spec/fees/buyback.md, "A deposit is in transit only from its finalized order receipt; a failed order releases its share"; spec/fees/buyback.md, "An unfilled order stays in transit until fulfillment or refund is proven"; spec/fees/buyback.md, "Cumulative accounting stays within its shares and every journal entry is past and positive"
+import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
+import { millisOf } from "@repo/platform/clock"
+import type { Rows } from "@repo/platform/stored"
+import { type Amount, addAmounts, zero } from "../../gen/settlement__money.effect.vibe"
+import { type BridgeDecision, type BridgeOrder, type BridgeReason, type Buyback, type DecisionState, type IncomeKey, type IncomeKind, approveOrder, closeOrder, decodeState, initial, loseSend, observeArrival, observeCancelling, observeRefund, order, reportUnfilled, settleApproval, settleOrder } from "../../gen/fees__buyback.effect.vibe"
+import type { Network } from "../../gen/fees__runtime.effect.vibe"
+import type { Instance, Names } from "../journal/codec.vibe"
+import { networkNames } from "../journal/codec.vibe"
+import { type NetworkName, inScope } from "../journal/writes.vibe"
+import type { Held } from "../runtime/config.vibe"
+
+module limbs {
+  import type { Amount } from "../../gen/settlement__money.ts"
+  import { toAmount } from "@repo/settlement/kernels/amounts"
+  /** @throws {never} */
+  export function amountOfBig(value: bigint): Amount { return toAmount(value < 0n ? 0n : value) }
+}
+import { amountOfBig } from limbs
+
+export interface IncomeEntry {
+  readonly kind: IncomeKind
+  readonly text: string
+  readonly amount: Amount
+  readonly chainTime: number
+}
+
+export interface Leg {
+  readonly network: Network
+  readonly scope: string
+  readonly offset: number
+  readonly held: Held
+  readonly names: Names
+  readonly journal?: Instance
+  readonly evidence: ReadonlyArray<IncomeEntry>
+  readonly income: ReadonlyArray<IncomeEntry>
+  readonly cancelling: ReadonlyArray<string>
+  readonly reported: ReadonlyArray<string>
+  readonly awaiting?: string
+}
+
+export interface Terms {
+  readonly provider: "debridge"
+  readonly orderId: string
+  readonly takeToken: string
+  readonly takeAmount: string
+  readonly takeChainId: string
+  readonly receiver: string
+  readonly nativeFee: string
+  readonly salt: string
+}
+
+export interface SendRecord {
+  readonly id: string
+  readonly kind: "approval" | "bridge"
+  readonly tx: string
+  readonly rawTx: string
+  readonly nonce: number | null
+  readonly token: string
+  readonly amountIn: string
+  readonly amountOut: string | null
+  readonly state: "submitted" | "unknown" | "finalized" | "failed"
+  readonly terms: Terms | undefined
+  readonly gas: ReadonlyArray<GasRecord>
+}
+
+export interface GasRecord { readonly id: string; readonly nonce: number; readonly tx: string | null; readonly state: string; readonly maximumWei: string; readonly actualWei: string | null; readonly accountProof: string | null }
+
+export interface Ledger {
+  readonly state: Buyback
+  readonly sends: ReadonlyArray<SendRecord>
+  readonly orders: ReadonlyMap<number, SendRecord>
+}
+
+export const reasonText: Readonly<Record<Exclude<BridgeReason, "NoReason" | "NoRouteFound">, string>> = {
+  DayCapReached: "daily value cap reached",
+  BelowMinimum: "below the minimum bridge value",
+  UnsafeValue: "bridge value exceeds safe integer accounting",
+  NativeFeeAbove: "fixed bridge fee above the approved maximum",
+  CostAbove: "bridge cost above the cap",
+}
+
+export const decisionStateName: Readonly<Record<DecisionState, "quoted" | "pending" | "skipped" | "no_route">> = { Quoted: "quoted", Pending: "pending", Skipped: "skipped", NoRoute: "no_route" }
+
+const decisionStates: ReadonlyArray<readonly [string, DecisionState]> = [["quoted", "Quoted"], ["pending", "Pending"], ["skipped", "Skipped"], ["no_route", "NoRoute"]]
+const decimal = /^(0|[1-9][0-9]*)$/u
+const orderIdPattern = /^0x[0-9a-f]{64}$/u
+
+schema SendRow {
+  id: string; kind: string; run_id: string; mode: string; token: string; amount_in: string; quote: string | null
+  tx_id: string | null; raw_tx: string | null; evm_nonce: number | null; state: string; reason: string | null
+  created_at: string; finalized_at: string | null; amount_out: string | null
+}
+schema GasRow { id: string; conversion_id: string; nonce: number; tx_id: string | null; state: string; maximum_wei: string; actual_wei: string | null; solana_account_proof: string | null }
+schema OutcomeRow { bridge_id: string; order_id: string; outcome: "arrived" | "refunded"; amount: string; evidence_block: number }
+schema TermsJson { provider: "debridge"; orderId: string; takeToken: string; takeAmount: string; takeChainId: string; receiver: string; nativeFee: string; salt: string }
+
+type Send = typeof SendRow.Type
+
+export function amountOf(value: bigint): Amount {
+  return amountOfBig(value)
+}
+
+export function legRows(network: NetworkName, scope: string): Statement {
+  return sql`${inScope(network, scope)} AND (kind = 'bridge' OR (kind = 'approval' AND route = 'debridge'))`
+}
+
+export function legReads(leg: Leg): ReadonlyArray<Statement> {
+  const scope = legRows(networkNames[leg.network], leg.scope)
+  return [
+    sql`SELECT id, kind, run_id, mode, token, amount_in, quote, tx_id, raw_tx, evm_nonce, state, reason, created_at, finalized_at, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid`,
+    sql`SELECT id, conversion_id, nonce, tx_id, state, maximum_wei, actual_wei, solana_account_proof FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
+    sql`SELECT bridge_id, order_id, outcome, amount, evidence_block FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid`,
+  ]
+}
+
+export function legVersion(leg: Leg): Statement {
+  const scope = legRows(networkNames[leg.network], leg.scope)
+  return sql`(SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(reason, '') || ':' || coalesce(amount_out, ''), ','), '') FROM (SELECT id, state, reason, amount_out FROM fee_conversions WHERE ${scope} ORDER BY rowid))
+    || '#' || (SELECT count(*) || ':' || coalesce(group_concat(id || ':' || state || ':' || coalesce(actual_wei, ''), ','), '') FROM (SELECT id, state, actual_wei FROM fee_native_gas WHERE conversion_id IN (SELECT id FROM fee_conversions WHERE ${scope}) ORDER BY rowid))
+    || '#' || (SELECT count(*) FROM fee_bridge_outcomes WHERE bridge_id IN (SELECT id FROM fee_conversions WHERE ${scope}))`
+}
+
+effect function whole(text: string | null, label: string) {
+  if (text === null || !decimal.test(text) || !Number.isSafeInteger(Number(text))) throw new RowMismatch({ text: label, issue: `${text ?? "nothing"} is not a whole number the buyback model holds` })
+  return Number(text)
+}
+
+export effect function termsOf(text: string | null, label: string) {
+  const value = try Effect.try({ try: () => JSON.parse(text ?? "null") as unknown, catch: () => new RowMismatch({ text: label, issue: "the order terms are not JSON" }) })
+  const terms = Schema.decodeUnknownEffect(TermsJson)(value) catch effect () => { throw new RowMismatch({ text: label, issue: "the bridge row lacks its recorded order terms" }) }
+  if (!orderIdPattern.test(terms.orderId) || !decimal.test(terms.takeAmount) || terms.takeAmount === "0" || !decimal.test(terms.nativeFee))
+    throw new RowMismatch({ text: label, issue: "the bridge row lacks its recorded order terms" })
+  return terms satisfies Terms
+}
+
+effect function recordedDecision(row: Send, offset: number) {
+  const label = `bridge decision ${row.id}`
+  const state = decisionStates.find(([name]) => name === row.state)?.[1]
+  if (state === undefined) return undefined
+  const reasons = Object.entries(reasonText) as ReadonlyArray<readonly [BridgeReason, string]>
+  const reason: BridgeReason | undefined = state === "Quoted" ? (row.reason === null ? "NoReason" : undefined)
+    : state === "NoRoute" ? (row.reason === null ? undefined : "NoRouteFound")
+    : reasons.find(([key, text]) => text === row.reason && (state === "Pending") === (key === "BelowMinimum"))?.[0]
+  if (reason === undefined) throw new RowMismatch({ text: label, issue: `reason ${row.reason ?? "missing"} does not fit state ${row.state}` })
+  return { state, reason, amount: try whole(row.amount_in, label), live: row.mode === "live", at: millisOf(row.created_at) - offset } satisfies BridgeDecision
+}
+
+function request(orderId: number, tx: number, amount: number, takeAmount: number, solana: boolean, nativeFee: number): BridgeOrder {
+  return { orderId, tx, amount, takeAmount, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee }
+}
+
+export function incomeKey(leg: Leg, entry: IncomeEntry): IncomeKey {
+  return { kind: entry.kind, network: leg.network, id: leg.names.number("receipt", `${entry.kind}:${entry.text}`) }
+}
+
+export effect function decodeLedger(leg: Leg, [sent, reserved, proven]: ReadonlyArray<Rows>) {
+  const names = leg.names
+  const offset = leg.offset
+  const sendRows = try decoded(SendRow, sent ?? [], "buyback sends")
+  const gasRows = try decoded(GasRow, reserved ?? [], "buyback native gas")
+  const outcomes = try decoded(OutcomeRow, proven ?? [], "bridge outcomes")
+  const solana = leg.network === "Solana"
+  const sends: Array<SendRecord> = []
+  const orders = new Map<number, SendRecord>()
+  const decisions: Array<BridgeDecision> = []
+  let state: Buyback = { ...initial, runtime: leg.held.runtime, source: leg.network }
+  const at = (iso: string) => ({ ...state, clock: millisOf(iso) - offset })
+  for (const row of sendRows) {
+    const label = `buyback send ${row.id}`
+    if (row.kind === "bridge" && row.tx_id === null) {
+      const decision = try recordedDecision(row, offset)
+      if (decision !== undefined) decisions.push(decision)
+      continue
+    }
+    if (row.tx_id === null || row.mode !== "live") continue
+    if (row.state !== "submitted" && row.state !== "unknown" && row.state !== "finalized" && row.state !== "failed") throw new RowMismatch({ text: label, issue: `a signed send cannot be ${row.state}` })
+    if (row.raw_tx === null) throw new RowMismatch({ text: label, issue: "a signed send lacks its journaled bytes" })
+    const tx = names.number("tx", row.tx_id)
+    const amount = try whole(row.amount_in, label)
+    const record: SendRecord = {
+      id: row.id,
+      kind: row.kind === "bridge" ? "bridge" : "approval",
+      tx: row.tx_id,
+      rawTx: row.raw_tx,
+      nonce: row.evm_nonce,
+      token: row.token,
+      amountIn: row.amount_in,
+      amountOut: row.amount_out,
+      state: row.state,
+      terms: row.kind === "bridge" ? try termsOf(row.quote, label) : undefined,
+      gas: gasRows.filter((gas) => gas.conversion_id === row.id).map((gas) => ({ id: gas.id, nonce: gas.nonce, tx: gas.tx_id, state: gas.state, maximumWei: gas.maximum_wei, actualWei: gas.actual_wei, accountProof: gas.solana_account_proof })),
+    }
+    sends.push(record)
+    const receipt = { tx, succeeded: row.state === "finalized", finalized: true }
+    if (record.terms === undefined) {
+      state = approveOrder(at(row.created_at), request(0, tx, amount, 0, solana, 0), "Worker")
+      if (row.state === "unknown") state = loseSend(state, tx, "Worker")
+      if (row.state === "finalized" || row.state === "failed") state = settleApproval(state, receipt, "Worker")
+      continue
+    }
+    const terms = record.terms
+    const orderId = names.number("hash", terms.orderId)
+    orders.set(orderId, record)
+    const nativeFee = solana ? try whole(terms.nativeFee, label) : 0
+    state = order(at(row.created_at), request(orderId, tx, amount, try whole(terms.takeAmount, label), solana, nativeFee), "Worker")
+    if (row.state === "unknown") state = loseSend(state, tx, "Worker")
+    if (row.state === "failed") state = settleOrder(state, receipt, "Worker")
+    if (row.state !== "finalized") continue
+    state = settleOrder(at(row.finalized_at ?? row.created_at), receipt, "Worker")
+    const outcome = outcomes.find((entry) => entry.bridge_id === row.id)
+    if (outcome === undefined) {
+      if (leg.cancelling.includes(terms.orderId)) state = observeCancelling(state, { order: orderId, height: 1, finalized: true }, "Worker")
+      if (leg.reported.includes(terms.orderId)) state = reportUnfilled(state, "Worker")
+      continue
+    }
+    if (outcome.order_id !== terms.orderId) throw new RowMismatch({ text: label, issue: "the outcome names another order" })
+    const height = outcome.evidence_block
+    state = outcome.outcome === "arrived"
+      ? observeArrival(state, { order: orderId, amount: try whole(outcome.amount, label), receiver: "fees", height, finalized: true }, "Worker")
+      : observeRefund(state, { order: orderId, amount, beneficiary: "fees", height, finalized: true }, "Worker")
+    if (leg.awaiting !== terms.orderId) state = closeOrder(state, "Worker")
+  }
+  const clock = (try Clock.currentTimeMillis) - offset
+  const income = leg.income.reduce((total: Amount, entry) => addAmounts(total, entry.amount), zero)
+  const ledger = try decodeState({
+    ...state,
+    clock,
+    income,
+    sources: leg.income.map((entry) => incomeKey(leg, entry)),
+    incomeTimes: leg.income.map((entry) => entry.chainTime),
+    decisions,
+  } satisfies Buyback)
+  return { state: ledger, sends, orders } satisfies Ledger
+}

@@ -3,10 +3,10 @@ import { isoAt, millisOf } from "@repo/platform/clock"
 import { utf8 } from "@repo/platform/crypto"
 import { D1, type Statement, rows, sql } from "@repo/platform/d1"
 import type { Copy, Event, Failure, Forwarding, ForwardingPhase, SendClaim } from "../../gen/security__forwarding.ts"
-import { apply, canExpireVerification, canMarkInterrupted, decodeState, mayAbandon, noClaim, noCopy } from "../../gen/security__forwarding.effect.vibe"
+import { apply, canClaimSend, canExpireVerification, canMarkInterrupted, canReadReceipt, canReconcile, canRecordCreated, decodeState, mayAbandon, noClaim, noCopy, readReceipt, reconcile, recordCreated } from "../../gen/security__forwarding.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
 import { type SubmissionRow, reportVersions, submission } from "../intake/rows.vibe"
-import { type AdvisoryFacts, type FailureCode, ghsaRank } from "./advisories.vibe"
+import { type AdvisoryFacts, type FailureCode, ghsaOfRank, ghsaRank } from "./advisories.vibe"
 
 export schema HistoryRow { revision: number; kind: string; detail: string | null; at: string }
 
@@ -78,13 +78,18 @@ function detailOf(entry: HistoryRow | undefined): Readonly<Record<string, unknow
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {}
 }
 
+function positive(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0
+}
+
 function claimOf(row: SubmissionRow, sent: HistoryRow | undefined, digests: ReadonlyArray<string>): SendClaim {
   if (sent === undefined) return noClaim
-  const version = detailOf(sent).reportVersion
-  const reportVersion = typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : 0
+  const detail = detailOf(sent)
+  const reportVersion = positive(detail.reportVersion)
+  const requestId = positive(detail.requestId)
   return {
     revision: sent.revision,
-    requestId: sent.revision,
+    requestId: requestId > 0 ? requestId : sent.revision,
     attempt: row.attempt,
     atMs: millisOf(row.attempt_started_at ?? sent.at),
     reportVersion,
@@ -178,8 +183,8 @@ export effect function stepped(current: Loaded, event: Event, ledger: Ref.Ref<Vo
   return next
 }
 
-export function claimTransition(actorGithubId: string, attempt: number, reportVersion: number, at: string, guard: Statement): Transition {
-  return { state: "submitting", set: { attempt, attempt_started_at: at }, kind: "send", detail: { attempt, reportVersion }, actorGithubId, at, guard }
+export function claimTransition(actorGithubId: string, claim: { readonly attempt: number; readonly reportVersion: number; readonly requestId: number }, at: string, guard: Statement): Transition {
+  return { state: "submitting", set: { attempt: claim.attempt, attempt_started_at: at }, kind: "send", detail: claim, actorGithubId, at, guard }
 }
 
 export function linkedTransition(caseId: string, facts: AdvisoryFacts, projectId: string, reporterGithubId: string, at: string): Transition {
@@ -209,6 +214,34 @@ export function failedTransition(code: FailureCode, kind: string, at: string): T
   return { state: "failed", set: { failure_code: code }, kind, detail: { code }, actorGithubId: null, at }
 }
 
+export function receiptTransition(row: SubmissionRow, before: Forwarding, next: Forwarding, found: boolean, facts: AdvisoryFacts | undefined, at: string): Transition | undefined {
+  if (next.revision === before.revision) return undefined
+  if (next.phase === "ReceiptVerified" && facts !== undefined && row.case_id !== null) return linkedTransition(row.case_id, facts, row.project_id, row.reporter_github_id, at)
+  if (!found) return stayTransition(row, "verify-inconclusive", null, at)
+  if (next.phase === "Failed" && next.failure === "Terminal") return failedTransition("author-mismatch", "verify-failed", at)
+  if (next.phase === "Failed" && next.failure === "ReceiptMismatch") return failedTransition("invalid", "verify-failed", at)
+  if (next.phase === "Failed" && next.failure === "AlreadyRecorded") return failedTransition("already-recorded", "verify-failed", at)
+  return stayTransition(row, "contacts-unavailable", null, at)
+}
+
+export function reconcileTransition(row: SubmissionRow, next: Forwarding, complete: boolean, chosen: AdvisoryFacts | undefined, duplicates: ReadonlyArray<string>, actorGithubId: string, at: string): Transition {
+  if (next.phase === "Submitted" && chosen !== undefined) return boundTransition(chosen, duplicates, "reconcile-matched", actorGithubId, at)
+  if (next.phase === "Draft") return { state: "draft", kind: "reconcile-empty", actorGithubId, at }
+  return stayTransition(row, complete ? "reconcile-too-early" : "reconcile-inconclusive", actorGithubId, at)
+}
+
+export function postResultTransition(result: "CopyUnknown" | "ThrottledNoCopy" | "DefiniteRetryable" | "DefiniteTerminal", code: FailureCode, retryAfterSeconds: number | null, at: string): Transition {
+  if (result === "ThrottledNoCopy") return { state: "draft", kind: "rate-limited", detail: { retryAfterSeconds }, actorGithubId: null, at }
+  if (result === "CopyUnknown") return { state: "uncertain", kind: "uncertain", actorGithubId: null, at }
+  return failedTransition(code, "rejected", at)
+}
+
+export effect function claimed(current: Loaded, event: Extract<Event, { readonly type: "claimSend" }>, guard: Statement, actorGithubId: string, ledger: Ref.Ref<Volatile>) {
+  const allowed = event.gate.wonClaim && canClaimSend(current.state, event.request, { ...event.gate, wonClaim: true }, event.startedAtMs)
+  const won = allowed && try written(current.row, claimTransition(actorGithubId, { attempt: current.row.attempt + 1, reportVersion: event.gate.reportVersion, requestId: event.request.id }, try isoAt(event.startedAtMs), guard))
+  return try stepped(current, { ...event, gate: { ...event.gate, wonClaim: won } }, ledger)
+}
+
 export function stayTransition(row: SubmissionRow, kind: string, actorGithubId: string | null, at: string): Transition {
   return { state: row.state, kind, actorGithubId, at }
 }
@@ -232,4 +265,43 @@ export effect function settled(current: Loaded, ledger: Ref.Ref<Volatile>) {
     return undefined
   }
   return current
+}
+
+export interface Shell {
+  readonly factsOf: (copy: Copy) => AdvisoryFacts
+  readonly code: FailureCode
+  readonly retryAfterSeconds: number | null
+  readonly actorGithubId: string
+  readonly claimGuard: Statement
+}
+
+export effect function forwarded(current: Loaded, event: Event, shell: Shell, ledger: Ref.Ref<Volatile>) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  const f = current.state
+  switch (event.type) {
+    case "claimSend": return try claimed(current, event, shell.claimGuard, shell.actorGithubId, ledger)
+    case "recordClaimRead": return try stepped(current, event, ledger)
+    case "startPost": return try stepped(current, event, ledger)
+    case "loseReceiptReply": return try stepped(current, event, ledger)
+    case "markInterrupted": return try stepped(current, event, ledger, { state: "uncertain", kind: "interrupted", actorGithubId: null, at })
+    case "expireVerification": return try stepped(current, event, ledger, failedTransition("unverifiable", "verify-expired", at))
+    case "recordPostResult": return try stepped(current, event, ledger, postResultTransition(event.result, shell.code, shell.retryAfterSeconds, at))
+    case "holdLateCopy": return try stepped(current, event, ledger, postResultTransition("CopyUnknown", shell.code, null, at))
+    case "recordCreated": {
+      if (!canRecordCreated(f, event.claim, event.accepted, event.listing)) return try stepped(current, event, ledger)
+      const next = recordCreated(f, event.claim, event.accepted, event.listing)
+      return try stepped(current, event, ledger, boundTransition(shell.factsOf(next.canonical), next.duplicateGhsas.map(ghsaOfRank), "created", null, at))
+    }
+    case "reconcile": {
+      if (!canReconcile(f, event.request, event.listing, event.nowMs)) return try stepped(current, event, ledger)
+      const next = reconcile(f, event.request, event.listing, event.nowMs)
+      const chosen = next.canonical.ghsa > 0 ? shell.factsOf(next.canonical) : undefined
+      return try stepped(current, event, ledger, reconcileTransition(current.row, next, event.listing.complete, chosen, next.duplicateGhsas.map(ghsaOfRank), shell.actorGithubId, at))
+    }
+    case "readReceipt": {
+      if (!canReadReceipt(f, event.request, event.advisoryRead)) return try stepped(current, event, ledger)
+      const next = readReceipt(f, event.request, event.advisoryRead)
+      return try stepped(current, event, ledger, receiptTransition(current.row, f, next, event.advisoryRead.status === "Found", shell.factsOf(event.advisoryRead.facts), at))
+    }
+  }
 }

@@ -1,0 +1,346 @@
+import { assert, layer } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { gitBytes, systemGit } from "@repo/platform/git"
+import type { Handler } from "@repo/platform/testing"
+import { cloudflareApi } from "@repo/platform/testing/cloudflare"
+import { asFetch, parsedJson } from "@repo/platform/testing/quotes"
+import { Response } from "miniflare"
+import { AgentClientsRefused, agentClientGate, requiredClients } from "../src/release/evidence/agentClients.vibe"
+import { EvidenceRefused, type Verification, sealEvidence, validateEvidence } from "../src/release/evidence/bundle.vibe"
+import { captureEvidence, committedBuild, servedArtifacts } from "../src/release/evidence/capture.vibe"
+import { rpc } from "../src/release/rpc/command.vibe"
+import { RotationRefused } from "../src/release/rpc/qualify.vibe"
+import { cloudflare } from "../src/release/wrangler/cloudflare.vibe"
+
+const sourceSha = "1f0c6a2b3d4e5f60718293a4b5c6d7e8f9012345"
+const otherSha = "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a291807"
+const accountId = "0123456789abcdef0123456789abcdef"
+const expectedVersion = "0f0e0d0c-0b0a-4908-8706-050403020100"
+const candidateRpc = "https://candidate-rpc.test/v1/journey"
+const referenceRpc = "https://rpc.mainnet.chain.robinhood.com"
+const finalizedHash = `0x${"a".repeat(64)}`
+const forkedHash = `0x${"b".repeat(64)}`
+
+schema RpcCall {
+  readonly id: number | string | null
+  readonly method: string
+  readonly params: ReadonlyArray<string | number | boolean>
+}
+
+interface Chain {
+  readonly chainId: string
+  readonly finalized: { readonly number: string; readonly hash: string }
+  readonly blocks: Readonly<Record<string, string>>
+}
+
+function described(error: unknown) {
+  if (error instanceof EvidenceRefused || error instanceof AgentClientsRefused || error instanceof RotationRefused) return error.message
+  return error instanceof Error ? error.name : String(error)
+}
+
+effect function settled<A, E, R>(program: A!E!R) {
+  const ended = try exit(program)
+  return Exit.isSuccess(ended) ? "ok" : described(Cause.squash(ended.cause))
+}
+
+effect function routed<A, E, R>(program: A!E!R, fetch: typeof globalThis.fetch) {
+  provide FetchHttpClient.Fetch = fetch {
+    return try program
+  }
+}
+
+effect function configured<A, E, R>(program: A!E!R, values: Readonly<Record<string, string>>) {
+  provide ConfigProvider.layer(ConfigProvider.fromUnknown(values)) {
+    return try program
+  }
+}
+
+effect function written(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  try fs.makeDirectory(files.dirname(path), { recursive: true })
+  try fs.writeFileString(path, text)
+}
+
+effect function git(directory: string, args: ReadonlyArray<string>) {
+  const bytes = try gitBytes({ args: ["-C", directory, "-c", "user.name=Slop release", "-c", "user.email=release@slop.invalid", "-c", "commit.gpgsign=false", ...args], limit: 1024 * 1024, seconds: 60 }, `git ${args[0]} failed`)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function committed(repository: string, path: string, text: string, message: string) {
+  const files = try Path.Path
+  try written(files.join(repository, path), text)
+  try git(repository, ["add", "-A"])
+  try git(repository, ["commit", "-q", "-m", message])
+  return try git(repository, ["rev-parse", "HEAD"])
+}
+
+function buildManifest(revision: string) {
+  return `${JSON.stringify({ schemaVersion: "1", repository: "SlopDotCash/slopdotcash", revisionStatus: "committed", revision, generatedAt: "2026-11-17T00:00:00.000Z" })}\n`
+}
+
+function verification(sha: string, log: { readonly bytes: number; readonly sha256: string }): Verification {
+  return {
+    schemaVersion: 1,
+    capturedAt: "2026-11-17T08:00:00.000Z",
+    environment: "production",
+    origin: "https://slop.cash",
+    sourceSha: sha,
+    deployment: { id: "6a1f2b3c-4d5e-4f60-8172-93a4b5c6d7e8", url: "https://6a1f2b3c.slop-cash.pages.dev/", createdOn: "2026-11-17T07:58:00.000000Z" },
+    buildManifest: { revision: sha, revisionStatus: "committed", generatedAt: "2026-11-17T07:50:00.000Z" },
+    deployLog: log,
+    remoteArtifacts: [{ origin: "https://slop.cash", path: "index.html", status: 200, bytes: 39, sha256: "c".repeat(64), contentType: "text/html; charset=utf-8", cacheControl: null }],
+    skill: [{ path: "skill-manifest.json", bytes: 150, sha256: "d".repeat(64) }],
+    network: {
+      dns: { hostname: "slop.cash", addresses: [{ address: "104.21.0.1", family: 4 }] },
+      tls: { authorized: true, protocol: "TLSv1.3", cipher: "TLS_AES_256_GCM_SHA384", subject: "slop.cash", validFrom: "Nov  1 00:00:00 2026 GMT", validTo: "Jan 30 23:59:59 2027 GMT" },
+      redirect: { status: 301, location: "https://slop.cash/?verify=journey" },
+      https: { status: 200, url: "https://slop.cash/?verify=journey" },
+      securityHeaders: { "x-content-type-options": "nosniff" },
+      asset: { url: "https://slop.cash/assets/index-abc.js?verify=journey", status: 200, cacheControl: "public, max-age=31536000, immutable" },
+    },
+  }
+}
+
+function siteHost(files: ReadonlyMap<string, { readonly bytes: Uint8Array; readonly type: string }>): Handler {
+  return (request) => {
+    const url = new URL(request.url)
+    const path = url.pathname === "/" ? "index.html" : url.pathname.slice(1)
+    const file = files.get(path)
+    if (file === undefined) return new Response("not found", { status: 404 })
+    return new Response(file.bytes, { status: 200, headers: { "content-type": file.type, "content-length": String(file.bytes.length) } })
+  }
+}
+
+function chainHost(chain: Chain, calls: string[]): Handler {
+  return async (request) => {
+    const call = Option.getOrUndefined(Schema.decodeUnknownOption(RpcCall)(parsedJson(await request.text())))
+    if (call === undefined) return new Response("not JSON-RPC", { status: 400 })
+    calls.push(`${new URL(request.url).host} ${call.method}`)
+    const [tag] = call.params
+    const result = call.method === "eth_chainId" ? chain.chainId
+      : tag === "finalized" ? chain.finalized
+      : typeof tag === "string" && chain.blocks[tag] !== undefined ? { number: tag, hash: chain.blocks[tag] }
+      : null
+    return Response.json({ jsonrpc: "2.0", id: call.id, result })
+  }
+}
+
+function agentRecord(workflow: string, client: string, sha: string) {
+  return { workflow, client, clientVersion: "1.4.2", provider: "anthropic", model: "claude-opus-4-5", sourceSha: sha, result: { outcome: "pass" }, evidence: `https://github.com/SlopDotCash/slopdotcash/actions/runs/7#${workflow}-${client}` }
+}
+
+function agentRecords(sha: string, records: ReadonlyArray<unknown>) {
+  return `${JSON.stringify({ schemaVersion: 1, recordedBy: "release-operator", records })}\n`
+}
+
+function everyRecord(sha: string) {
+  return ["slop-skill", "contributor-skill"].flatMap((workflow) => requiredClients.map((client) => agentRecord(workflow, client, sha)))
+}
+
+layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer, systemGit), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('Retain verification evidence of the published source outside the repository (spec/operations/release.md, "Story: Publish under the shared environment lock only while the tested source may still be deployed"; spec/operations/release.md, "Served bytes are verified against the deployment\'s own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-evidence-" })
+    const out = files.join(directory, "evidence", "production")
+    const log = new TextEncoder().encode("[Slop] published and verified 1f0c6a2b as deployment 6a1f2b3c\n")
+    const logRecord = { bytes: log.length, sha256: try sha256Hex(log) }
+    const sealed = try settled(sealEvidence(out, verification(sourceSha, logRecord), log))
+    const valid = try settled(validateEvidence(out, { sourceSha }))
+    const otherSource = try settled(validateEvidence(out, { sourceSha: otherSha }))
+    const mixed = try settled(sealEvidence(files.join(directory, "evidence", "mixed"), { ...verification(sourceSha, logRecord), buildManifest: { revision: otherSha, revisionStatus: "committed", generatedAt: "2026-11-17T07:50:00.000Z" } }, log))
+    const staged = (try fs.readDirectory(files.join(directory, "evidence"))).sort()
+    try fs.remove(files.join(out, "deploy.log"))
+    const partial = try settled(validateEvidence(out, { sourceSha }))
+    const resealed = try settled(sealEvidence(out, verification(sourceSha, logRecord), log))
+    const afterReseal = (try fs.readDirectory(files.join(directory, "evidence"))).sort()
+    try fs.writeFileString(files.join(out, "deploy.log"), "[Slop] a different log of equal purpose\n")
+    const tamperedLog = try settled(validateEvidence(out, { sourceSha }))
+    try settled(sealEvidence(out, verification(sourceSha, logRecord), log))
+    const loose = new TextEncoder().encode(`${JSON.stringify({ ...verification(sourceSha, logRecord), reviewer: "anyone" }, null, 2)}\n`)
+    const manifest = parsedJson(try fs.readFileString(files.join(out, "manifest.json")))
+    const looseManifest = { ...(typeof manifest === "object" && manifest !== null ? manifest : {}), artifacts: [{ name: "deploy.log", ...logRecord }, { name: "site-verification.json", bytes: loose.length, sha256: try sha256Hex(loose) }] }
+    try fs.writeFile(files.join(out, "site-verification.json"), loose)
+    try fs.writeFileString(files.join(out, "manifest.json"), `${JSON.stringify(looseManifest, null, 2)}\n`)
+    const extraKey = try settled(validateEvidence(out, { sourceSha }))
+    try settled(sealEvidence(out, verification(sourceSha, logRecord), log))
+    try fs.writeFileString(files.join(out, "notes.txt"), "an unbound artifact\n")
+    const extraFile = try settled(validateEvidence(out, { sourceSha }))
+
+    const checkout = files.join(directory, "checkout")
+    try fs.makeDirectory(checkout, { recursive: true })
+    const capture = captureEvidence({ root: checkout, bundle: files.join(directory, "bundle"), deploymentId: "6a1f2b3c-4d5e-4f60-8172-93a4b5c6d7e8", deployLog: files.join(directory, "deploy.log"), out: files.join(checkout, "evidence") })
+    const inside = try settled(configured(Effect.provide(capture, cloudflare({ root: checkout, wrangler: "wrangler" })), { GITHUB_SHA: sourceSha, CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: "journey-token" }))
+
+    const encoder = new TextEncoder()
+    const index = encoder.encode("<!doctype html><title>slop.cash</title>\n")
+    const skill = encoder.encode("# Slop\n")
+    const local = [{ path: "index.html", bytes: index }, { path: "SKILL.md", bytes: skill }]
+    const hosted = new Map([["index.html", { bytes: index, type: "text/html; charset=utf-8" }], ["SKILL.md", { bytes: skill, type: "text/markdown" }]])
+    const honest = try routed(servedArtifacts("https://slop.cash", local, `${sourceSha}-1`), asFetch(siteHost(hosted)))
+    const altered = new Map(hosted)
+    altered.set("SKILL.md", { bytes: encoder.encode("# Slap\n"), type: "text/markdown" })
+    const tamperedSite = try settled(routed(servedArtifacts("https://slop.cash", local, `${sourceSha}-2`), asFetch(siteHost(altered))))
+    const retyped = new Map(hosted)
+    retyped.set("SKILL.md", { bytes: skill, type: "application/octet-stream" })
+    const wrongType = try settled(routed(servedArtifacts("https://slop.cash", local, `${sourceSha}-3`), asFetch(siteHost(retyped))))
+    const staleBuild = try settled(committedBuild(encoder.encode(buildManifest(otherSha)), sourceSha))
+    const currentBuild = try committedBuild(encoder.encode(buildManifest(sourceSha)), sourceSha)
+
+    try Effect.try(() => assert.deepStrictEqual({
+      sealed, valid, otherSource, mixed, staged, partial, resealed, afterReseal, tamperedLog, extraKey, extraFile, inside,
+      honest: honest.map((entry) => ({ path: entry.path, status: entry.status, bytes: entry.bytes, contentType: entry.contentType })),
+      tamperedSite, wrongType, staleBuild, currentBuild: currentBuild.revision,
+    }, {
+      sealed: "ok",
+      valid: "ok",
+      otherSource: "the evidence manifest does not describe the tested source",
+      mixed: "the evidence artifacts do not describe one capture of the tested source",
+      staged: ["production"],
+      partial: "the evidence bundle must contain exactly: deploy.log, manifest.json, site-verification.json",
+      resealed: "ok",
+      afterReseal: ["production"],
+      tamperedLog: "evidence artifact deploy.log does not match its digest",
+      extraKey: "the site verification does not match its schema",
+      extraFile: "the evidence bundle must contain exactly: deploy.log, manifest.json, site-verification.json",
+      inside: "evidence is never written inside the repository checkout; choose a directory outside it",
+      honest: [
+        { path: "index.html", status: 200, bytes: index.length, contentType: "text/html; charset=utf-8" },
+        { path: "SKILL.md", status: 200, bytes: skill.length, contentType: "text/markdown" },
+      ],
+      tamperedSite: "https://slop.cash SKILL.md does not match the verified artifact",
+      wrongType: "https://slop.cash SKILL.md returned application/octet-stream; expected text/markdown",
+      staleBuild: `the skill manifest revision ${otherSha} does not match the tested revision ${sourceSha}`,
+      currentBuild: sourceSha,
+    }))
+  }))
+
+  it.effect('Refuse release when an affected workflow lacks a recorded agent-client result (spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-agent-clients-" })
+    const repository = files.join(directory, "repository")
+    try fs.makeDirectory(repository, { recursive: true })
+    try git(repository, ["init", "-q", "-b", "main"])
+    const released = try committed(repository, "README.md", "slop.cash\n", "Released source")
+    const head = try committed(repository, "skills/slop/SKILL.md", "# Slop\nUse the reviewed workflow.\n", "Change the Slop skill")
+    const unrelated = try committed(repository, "README.md", "slop.cash, the release\n", "Change only the readme")
+    const served: { revision: string | undefined } = { revision: released }
+    const site: Handler = (request) => {
+      if (request.url !== "https://slop.cash/skill-manifest.json") return new Response("no fake answers this", { status: 599 })
+      return served.revision === undefined ? new Response("unavailable", { status: 503 }) : new Response(buildManifest(served.revision), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    const records = files.join(directory, "agent-clients.json")
+    const gate = (sha: string) => settled(routed(configured(agentClientGate(records, repository), { GITHUB_SHA: sha }), asFetch(site)))
+
+    try written(records, agentRecords(head, everyRecord(head)))
+    const complete = try gate(head)
+    try written(records, agentRecords(head, everyRecord(head).filter((record) => !(record.workflow === "contributor-skill" && record.client === "muse"))))
+    const missingClient = try gate(head)
+    const { model: _model, ...modelless } = agentRecord("slop-skill", "grok", head)
+    try written(records, agentRecords(head, [...everyRecord(head).filter((record) => !(record.workflow === "slop-skill" && record.client === "grok")), modelless]))
+    const missingModel = try gate(head)
+    const { clientVersion: _version, ...versionless } = agentRecord("slop-skill", "openclaw", head)
+    try written(records, agentRecords(head, [...everyRecord(head).filter((record) => !(record.workflow === "slop-skill" && record.client === "openclaw")), versionless]))
+    const missingVersion = try gate(head)
+    try written(records, agentRecords(head, [...everyRecord(head).filter((record) => !(record.workflow === "slop-skill" && record.client === "codex")), { ...agentRecord("slop-skill", "codex", head), provider: "unknown" }]))
+    const placeholderProvider = try gate(head)
+    try written(records, agentRecords(head, [...everyRecord(head).filter((record) => record.client !== "hermes-agent"), ...["slop-skill", "contributor-skill"].map((workflow) => ({ ...agentRecord(workflow, "hermes-agent", head), result: { outcome: "fail", reason: "the client could not install the skill" } }))]))
+    const failed = try gate(head)
+    try written(records, agentRecords(released, everyRecord(released)))
+    const staleSource = try gate(head)
+    try fs.remove(records)
+    served.revision = head
+    const nothingChanged = try gate(unrelated)
+    served.revision = undefined
+    const unverifiedRelease = try gate(unrelated)
+
+    try Effect.try(() => assert.deepStrictEqual({ complete, missingClient, missingModel, missingVersion, placeholderProvider, failed, staleSource: staleSource.split(": ")[0], nothingChanged, unverifiedRelease }, {
+      complete: "ok",
+      missingClient: `release refused: the affected agent-client workflows lack passing records for ${head}: contributor-skill has no recorded result for muse`,
+      missingModel: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
+      missingVersion: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
+      placeholderProvider: "the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key",
+      failed: `release refused: the affected agent-client workflows lack passing records for ${head}: hermes-agent 1.4.2 (anthropic / claude-opus-4-5) failed slop-skill: the client could not install the skill; hermes-agent 1.4.2 (anthropic / claude-opus-4-5) failed contributor-skill: the client could not install the skill`,
+      staleSource: "release refused",
+      nothingChanged: "ok",
+      unverifiedRelease: "the agent-client records must be a non-empty regular file within 1 MiB",
+    }))
+  }))
+
+  it.effect('Rotate the fee-converter RPC only to a qualified Robinhood endpoint (spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker")', () => scoped(effect {
+    const fs = try FileSystem.FileSystem
+    const files = try Path.Path
+    const directory = try fs.makeTempDirectoryScoped({ prefix: "slop-rpc-rotation-" })
+    const api = cloudflareApi({ accountId })
+    const calls: string[] = []
+    const searchPath = try Config.withDefault(Config.String("PATH"), "")
+    const environment = {
+      GITHUB_SHA: sourceSha,
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      SLOP_FEE_CONVERTER_RELEASE: "enabled",
+      SLOP_ROBINHOOD_RPC_EXPECTED_VERSION: expectedVersion,
+      SLOP_ROBINHOOD_RPC_REPLACEMENT: candidateRpc,
+      GITHUB_STEP_SUMMARY: files.join(directory, "summary.md"),
+      RUNNER_TEMP: directory,
+      CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: "journey-token",
+      CLOUDFLARE_API_BASE_URL: "https://cloudflare.test/client/v4",
+      HOME: directory,
+      TMPDIR: directory,
+      PATH: searchPath,
+    }
+    const network = (candidate: Chain, reference: Chain): Handler => {
+      const candidateHost = chainHost(candidate, calls)
+      const referenceHost = chainHost(reference, calls)
+      return (request) => {
+        const url = new URL(request.url)
+        if (url.host === "cloudflare.test") return api.handler(request)
+        if (url.href === candidateRpc) return candidateHost(request)
+        if (url.origin === referenceRpc) return referenceHost(request)
+        return new Response(`no fake answers ${url.host}`, { status: 599 })
+      }
+    }
+    const robinhood: Chain = { chainId: "0x1237", finalized: { number: "0x10", hash: finalizedHash }, blocks: { "0x10": finalizedHash } }
+    const base: Chain = { chainId: "0x2105", finalized: { number: "0x10", hash: finalizedHash }, blocks: {} }
+    const forked: Chain = { chainId: "0x1237", finalized: { number: "0x12", hash: forkedHash }, blocks: { "0x10": forkedHash } }
+    const rotate = (values: Readonly<Record<string, string>>, candidate: Chain, reference: Chain) => {
+      calls.length = 0
+      const before = api.calls.length
+      return effect {
+        const outcome = try settled(routed(configured(rpc(["rotate-robinhood", directory]), values), asFetch(network(candidate, reference))))
+        return { outcome, rpc: [...calls], cloudflare: api.calls.slice(before).map((call) => `${call.method} ${call.path}`).sort() }
+      }
+    }
+
+    const wrongChain = try rotate(environment, base, robinhood)
+    const insecure = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: "http://candidate-rpc.test/v1/journey" }, robinhood, robinhood)
+    const reference = try rotate({ ...environment, SLOP_ROBINHOOD_RPC_REPLACEMENT: `${referenceRpc}/` }, robinhood, robinhood)
+    const untrusted = try rotate({ ...environment, GITHUB_REF: "refs/heads/development" }, robinhood, robinhood)
+    const disabled = try rotate({ ...environment, SLOP_FEE_CONVERTER_RELEASE: "" }, robinhood, robinhood)
+    const contradicted = try rotate(environment, robinhood, forked)
+    const qualified = try rotate(environment, robinhood, robinhood)
+    const worker = `/accounts/${accountId}/workers/scripts/slop-fee-converter`
+
+    try Effect.try(() => assert.deepStrictEqual({ wrongChain, insecure, reference, untrusted, disabled, contradicted, qualified }, {
+      wrongChain: { outcome: "The candidate RPC does not serve Robinhood Chain 4663.", rpc: ["candidate-rpc.test eth_chainId"], cloudflare: [] },
+      insecure: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
+      reference: { outcome: "The candidate must use TLS and be independent of the public reference.", rpc: [], cloudflare: [] },
+      untrusted: { outcome: "The fee-converter release requires trusted main and verified TLS.", rpc: [], cloudflare: [] },
+      disabled: { outcome: "Use manual main rotation with the expected active version and the fee-converter release enabled.", rpc: [], cloudflare: [] },
+      contradicted: {
+        outcome: "The independent Robinhood RPC did not verify the candidate block.",
+        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
+        cloudflare: [],
+      },
+      qualified: {
+        outcome: "Fee-converter deployment or upload history is unavailable.",
+        rpc: ["candidate-rpc.test eth_chainId", "candidate-rpc.test eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_chainId", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber", "rpc.mainnet.chain.robinhood.com eth_getBlockByNumber"],
+        cloudflare: [`GET ${worker}/deployments`, `GET ${worker}/versions`],
+      },
+    }))
+  }))
+})

@@ -3,7 +3,8 @@ import { ConstraintViolation, D1, type Statement, sql } from "@repo/platform/d1"
 import type { Json } from "@repo/ports/backend"
 import type { Disclosure, Event, Recognition, Remediation, Stage } from "../../gen/security__remediation.ts"
 import { NotAState, Rejected, apply, decodeState, initial } from "../../gen/security__remediation.effect.vibe"
-import { type EventRow, detailOf } from "../cases/rows.vibe"
+import type { PrivateCase } from "../../gen/security__cases.ts"
+import { type CaseRecord, type EventRow, detailOf } from "../cases/rows.vibe"
 import { type Observed, type Refusal, accessLog, caseNotices, notAllowed, refused } from "../cases/store.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -77,11 +78,11 @@ function folded(r: Remediation, event: EventRow, digests: Map<string, number>): 
   }
 }
 
-export effect function journalOf(observed: Observed) {
+export effect function journalOf(record: CaseRecord, model: PrivateCase) {
   const digests = new Map<string, number>()
-  let state: Remediation = { ...initial, privateCase: observed.model }
-  for (const event of observed.record.events) state = folded(state, event, digests)
-  const approval = observed.record.events.filter((event) => event.kind === "disclosure").at(-1)
+  let state: Remediation = { ...initial, privateCase: model }
+  for (const event of record.events) state = folded(state, event, digests)
+  const approval = record.events.filter((event) => event.kind === "disclosure").at(-1)
   const decoded = decodeState(state) catch effect (error) => {
     if (error instanceof NotAState) return undefined
     throw error

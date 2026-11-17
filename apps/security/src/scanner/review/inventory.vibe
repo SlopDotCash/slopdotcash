@@ -1,0 +1,60 @@
+// spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"; spec/security/admission.md, "Synthesis decides the repository result and confirmed malice needs trusted evidence"
+import type { RepositoryInspection } from "../inspect/model.ts"
+import { reviewScan } from "../providers/route.vibe"
+import { type ScannerEvidence, type ScannerProfile, retryableFailure } from "../providers/review.ts"
+import { MAX_CALL_ATTEMPTS, type PlannedCall, callTimeoutMs, combine, failedReview, labelFailure, passOf, planReview, synthesisCall, withEarlierAttempts } from "./batches.ts"
+
+export interface ReviewOptions {
+  readonly batchTokens?: number
+  readonly concurrency?: number
+  readonly retryDelayMs?: number
+}
+
+interface Called {
+  readonly evidence: ScannerEvidence
+  readonly attempts: number
+}
+
+effect function called(call: PlannedCall, profile: ScannerProfile, synthesis: boolean, retryDelayMs: number) {
+  const earlier: ScannerEvidence[] = []
+  while (true) {
+    const attempt = try reviewScan({ evidence: call.evidence, inputSha256: call.inputSha256, profile, synthesis, timeoutMs: callTimeoutMs(call.estimatedTokens) })
+    if (attempt.review.status !== "completed" && retryableFailure(attempt.failure) && earlier.length + 1 < MAX_CALL_ATTEMPTS) {
+      earlier.push(attempt)
+      try Effect.sleep(Duration.millis(retryDelayMs * earlier.length))
+      continue
+    }
+    return { evidence: withEarlierAttempts(attempt, earlier), attempts: earlier.length + 1 } satisfies Called
+  }
+}
+
+export effect function reviewInventory(inspection: RepositoryInspection, profile: ScannerProfile, options: ReviewOptions = {}) {
+  const plan = try orDie(Effect.try(() => planReview(inspection, options.batchTokens)))
+  const retryDelayMs = options.retryDelayMs ?? 2_000
+  if (plan.mode === "single") {
+    const evidence = try reviewScan({ evidence: plan.call.evidence, inputSha256: plan.call.inputSha256, profile, synthesis: false, timeoutMs: callTimeoutMs(plan.call.estimatedTokens) })
+    return { plan, evidence }
+  }
+  const failed = try Ref.make(false)
+  const outcomes = try Effect.forEach(plan.batches, (batch) => effect {
+    if (try Ref.get(failed)) return undefined
+    const outcome = try called(batch, profile, false, retryDelayMs)
+    if (outcome.evidence.review.status !== "completed") try Ref.set(failed, true)
+    return outcome
+  }, { concurrency: Math.max(1, Math.min(options.concurrency ?? 4, 16)) })
+  const batchPasses = outcomes.flatMap((outcome, index) => {
+    const batch = plan.batches[index]
+    return outcome === undefined || batch === undefined ? [] : [passOf("batch", index + 1, batch, outcome.evidence, outcome.attempts)]
+  })
+  const firstFailure = outcomes.findIndex((outcome) => outcome !== undefined && outcome.evidence.review.status !== "completed")
+  const failedOutcome = outcomes[firstFailure]
+  if (failedOutcome !== undefined) {
+    return { plan, evidence: failedReview(labelFailure(failedOutcome.evidence, `batch-${firstFailure + 1}-of-${plan.batches.length}`), inspection.inventorySha256, batchPasses) }
+  }
+  const results = outcomes.flatMap((outcome) => (outcome === undefined ? [] : [outcome.evidence]))
+  const synthesis = try orDie(Effect.try(() => synthesisCall(inspection, plan.batches, results, plan.batchTokens, plan.sameBytesOutsideBatches)))
+  const final = try called(synthesis, profile, true, retryDelayMs)
+  const passes = [...batchPasses, passOf("synthesis", plan.batches.length + 1, synthesis, final.evidence, final.attempts)]
+  if (final.evidence.review.status !== "completed") return { plan, evidence: failedReview(labelFailure(final.evidence, "synthesis"), inspection.inventorySha256, passes) }
+  return { plan, evidence: combine(inspection.inventorySha256, results, final.evidence, passes) }
+}

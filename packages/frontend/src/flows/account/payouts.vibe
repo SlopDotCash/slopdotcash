@@ -1,0 +1,81 @@
+// spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/projections.md, "Award, funding and settlement status are independent facts"; spec/settlement/publicRecords.md, "Disclosed direct transfers are paged and never counted as vault payments"
+import { type DirectTransfer, PaymentsAccount, directHistoryHeader } from "@repo/settlement/client"
+import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
+import { fetchedJson, loadDirectTransfers, paymentsLimitBytes, paymentsTimeoutMs } from "../../reads/payments.vibe"
+import type { ReadFailure } from "../../reads/resource.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const payoutMessages = {
+  unavailable: "Payments could not load. Retry.",
+  invalid: "Invalid payment account response.",
+  accountChanged: "Your account changed. Reload your payouts before continuing.",
+  walletChanged: "Your wallet changed. Refresh and confirm the current address.",
+  privateUnavailable: "Could not load your payouts.",
+} as const
+
+export type PayoutsRead =
+  | { readonly kind: "signedOut" }
+  | { readonly kind: "failed"; readonly message: string; readonly accountChanged: boolean }
+  | { readonly kind: "ready"; readonly account: PaymentsAccount }
+
+const numericId = /^\d+$/u
+
+function decimals(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && value <= 36
+}
+
+function units(...values: ReadonlyArray<string>): boolean {
+  return values.every((value) => parseBaseUnits(value) !== undefined)
+}
+
+export function accountValid(account: PaymentsAccount): boolean {
+  return numericId.test(account.githubUserId)
+    && account.payments.every((payment) => decimals(payment.assetDecimals) && units(payment.grossBase, payment.feeBase, payment.netBase))
+    && account.monthlyAwards.every((award) => decimals(award.assetDecimals) && units(award.grossBase, award.feeBase, award.netBase))
+    && account.balances.every((balance) => decimals(balance.assetDecimals) && units(balance.netBase))
+}
+
+function failedWith(failure: ReadFailure): PayoutsRead {
+  if (failure._tag === "ActorChanged") return { kind: "failed", message: payoutMessages.accountChanged, accountChanged: true }
+  if (failure._tag === "Refused" && failure.status === 409) return { kind: "failed", message: payoutMessages.walletChanged, accountChanged: false }
+  if (failure._tag === "Unreadable") return { kind: "failed", message: failure.message, accountChanged: false }
+  return { kind: "failed", message: payoutMessages.unavailable, accountChanged: false }
+}
+
+function signedOutBy(failure: ReadFailure): boolean {
+  return failure._tag === "Refused" && failure.status === 401
+}
+
+effect function directHistory(account: PaymentsAccount, walletsOnly: boolean) {
+  if (walletsOnly || account.directTransfersPaged !== true) return account.directTransfers
+  const transfers: ReadonlyArray<DirectTransfer> = try loadDirectTransfers({ kind: "actor", githubUserId: account.githubUserId })
+  return transfers
+}
+
+export effect function loadPayouts(walletsOnly: boolean) {
+  const session = try Session
+  const browser = try BrowserSession
+  const before = session.current() catch () => undefined
+  if (before === null) return { kind: "signedOut" } satisfies PayoutsRead
+  const lifetime = try browser.lifetime()
+  const headers: Readonly<Record<string, string>> = { [directHistoryHeader]: "paged", ...before === undefined ? {} : { "x-slop-expected-github-id": before.githubId } }
+  const read = effect {
+    const account = try fetchedJson(PaymentsAccount, "/api/v1/payments/me", headers, paymentsLimitBytes, paymentsTimeoutMs)
+    if (!accountValid(account)) return { kind: "failed", message: payoutMessages.invalid, accountChanged: false } satisfies PayoutsRead
+    return { kind: "ready", account: { ...account, directTransfers: try directHistory(account, walletsOnly) } } satisfies PayoutsRead
+  }
+  const answered: PayoutsRead = read catch (failure) => signedOutBy(failure) ? { kind: "signedOut" } satisfies PayoutsRead : failedWith(failure)
+  if (answered.kind !== "ready") return answered
+  const after = session.current() catch () => undefined
+  if (after === undefined) return { kind: "failed", message: payoutMessages.privateUnavailable, accountChanged: false } satisfies PayoutsRead
+  if (after === null) return { kind: "signedOut" } satisfies PayoutsRead
+  if (after.githubId !== answered.account.githubUserId || (before !== undefined && after.githubId !== before.githubId)) {
+    return { kind: "failed", message: payoutMessages.accountChanged, accountChanged: true } satisfies PayoutsRead
+  }
+  const rows = answered.account.payments.length + answered.account.monthlyAwards.length + answered.account.balances.length + answered.account.directTransfers.length
+  if (!(try browser.acceptPrivate({ actorId: actorNumber(answered.account.githubUserId), epoch: lifetime.epoch }, rows, true))) {
+    return { kind: "failed", message: payoutMessages.accountChanged, accountChanged: true } satisfies PayoutsRead
+  }
+  return answered
+}

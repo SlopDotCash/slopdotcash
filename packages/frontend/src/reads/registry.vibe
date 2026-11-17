@@ -1,0 +1,150 @@
+// spec/frontend/registry.md, "A failed live registry read installs the last published registry labelled stale with its sync time, and both failing shows the error"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"
+import { millisOf } from "@repo/platform/clock"
+import { parseBaseUnits } from "@repo/settlement/kernels/amounts"
+import { type PublishedRead, type RegistryFreshness, bootRegistry } from "../../gen/frontend__registry.effect.vibe"
+import { fetchBounded } from "../platform/bounded.vibe"
+import { Unreadable } from "./resource.vibe"
+
+export const registryLimitBytes = 4 * 1024 * 1024
+export const liveRegistryPath = "/api/v1/projects"
+export const publishedRegistryPath = "/data/project-registry.json"
+export const registryUnavailable = "Project data could not load."
+
+export type RegistryProject = Readonly<Record<string, unknown>>
+
+export interface RegistryBoot {
+  readonly freshness: RegistryFreshness
+  readonly projects: ReadonlyArray<RegistryProject>
+  readonly error: string | undefined
+}
+
+const Project = Schema.Record(Schema.String, Schema.Unknown)
+
+schema Restriction { readonly projectId: string }
+
+const LiveRegistry = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  projects: Schema.Array(Project),
+  restrictions: Schema.optional(Schema.NullOr(Schema.Array(Restriction))),
+})
+
+const PublishedRegistry = Schema.Struct({ schemaVersion: Schema.Literal("1"), syncedAt: Schema.String, projects: Schema.Array(Project) })
+
+const unexpected = "The project registry returned an unexpected response."
+const unpublished = "The published project registry is not valid."
+
+function restricted(project: RegistryProject, ids: ReadonlySet<string>): RegistryProject {
+  return typeof project.id === "string" && ids.has(project.id) ? { ...project, status: "paused", listingTier: "retired" } : project
+}
+
+export effect function liveRegistry() {
+  const body = try fetchBounded(liveRegistryPath, registryLimitBytes, "The project registry")
+  const read = Schema.decodeUnknownEffect(LiveRegistry)(body) catch effect () => { throw new Unreadable({ message: unexpected }) }
+  const ids = new Set((read.restrictions ?? []).map((entry) => entry.projectId))
+  return read.projects.map((project) => restricted(project, ids))
+}
+
+export effect function publishedRegistry() {
+  const body = try fetchBounded(publishedRegistryPath, registryLimitBytes, "The published project registry")
+  const read = Schema.decodeUnknownEffect(PublishedRegistry)(body) catch effect () => { throw new Unreadable({ message: unpublished }) }
+  if (!Number.isFinite(millisOf(read.syncedAt))) throw new Unreadable({ message: unpublished })
+  return read
+}
+
+export effect function bootedRegistry() {
+  const live = liveRegistry() catch () => undefined
+  if (live !== undefined) return { freshness: bootRegistry(true, { tag: "PublishedUnavailable" }), projects: live, error: undefined } satisfies RegistryBoot
+  const published = publishedRegistry() catch () => undefined
+  const read: PublishedRead = published === undefined ? { tag: "PublishedUnavailable" } : { tag: "PublishedRegistry", syncedAt: published.syncedAt, projectCount: published.projects.length }
+  const freshness = bootRegistry(false, read)
+  if (freshness.tag === "RegistryFailed" || published === undefined) return { freshness, projects: [], error: registryUnavailable } satisfies RegistryBoot
+  return { freshness, projects: published.projects, error: undefined } satisfies RegistryBoot
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function repositoriesOf(project: RegistryProject): ReadonlyArray<RegistryProject> {
+  const listed = project.repositories
+  return Array.isArray(listed) ? listed.filter((entry): entry is RegistryProject => typeof entry === "object" && entry !== null && !Array.isArray(entry)) : []
+}
+
+function namesOf(repository: RegistryProject): ReadonlyArray<string> {
+  const aliases = Array.isArray(repository.aliases) ? repository.aliases.filter((alias): alias is string => typeof alias === "string") : []
+  const id = text(repository.id)
+  return (id === undefined ? aliases : [id, ...aliases]).map((name) => name.toLowerCase())
+}
+
+function minorOf(value: unknown): bigint {
+  return typeof value === "string" && /^(?:0|[1-9][0-9]*)$/u.test(value) ? parseBaseUnits(value) ?? 0n : 0n
+}
+
+function rewardOf(project: RegistryProject): RegistryProject {
+  const reward = project.reward
+  return typeof reward === "object" && reward !== null && !Array.isArray(reward) ? reward as RegistryProject : {}
+}
+
+function publishesAtRoot(project: RegistryProject): number {
+  const skill = project.skill
+  return typeof skill === "object" && skill !== null && !Array.isArray(skill) && (skill as RegistryProject).publishAtRoot === true ? 1 : 0
+}
+
+function descending(left: bigint, right: bigint): number {
+  return left === right ? 0 : left > right ? -1 : 1
+}
+
+function registryOrder(left: RegistryProject, right: RegistryProject): number {
+  return descending(minorOf(rewardOf(left).committedMinor), minorOf(rewardOf(right).committedMinor))
+    || descending(minorOf(rewardOf(left).monthlyCapMinor), minorOf(rewardOf(right).monthlyCapMinor))
+    || publishesAtRoot(right) - publishesAtRoot(left)
+    || (text(left.id) ?? "").localeCompare(text(right.id) ?? "")
+}
+
+export function historicalProjects(boot: RegistryBoot): ReadonlyArray<RegistryProject> {
+  return [...boot.projects].sort(registryOrder)
+}
+
+export function listedProjects(boot: RegistryBoot): ReadonlyArray<RegistryProject> {
+  return historicalProjects(boot).filter((project) => project.listingTier !== "retired")
+}
+
+export function findProject(boot: RegistryBoot, value: string): RegistryProject | undefined {
+  const wanted = value.trim().toLowerCase()
+  const listed = listedProjects(boot)
+  return listed.find((project) => project.id === wanted) ?? listed.find((project) => text(project.slug)?.toLowerCase() === wanted)
+}
+
+export function findHistoricalProject(boot: RegistryBoot, projectId: string): RegistryProject | undefined {
+  return historicalProjects(boot).find((project) => project.id === projectId)
+}
+
+export function findProjectByRepositoryId(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+  const wanted = repositoryId.toLowerCase()
+  return listedProjects(boot).find((project) => repositoriesOf(project).some((repository) => namesOf(repository).includes(wanted)))
+}
+
+export function findRepository(boot: RegistryBoot, repositoryId: string): RegistryProject | undefined {
+  const wanted = repositoryId.toLowerCase()
+  return repositoriesOf(findProjectByRepositoryId(boot, repositoryId) ?? {}).find((repository) => text(repository.id)?.toLowerCase() === wanted)
+}
+
+export service Registry {
+  readonly changes: Stream.Stream<RegistryBoot | undefined>
+  current(): (RegistryBoot | undefined)!!
+  load(): RegistryBoot!!HttpClient.HttpClient
+}
+
+export const registryLayer = Layer.effect(Registry, effect {
+  const shown = try SubscriptionRef.make<RegistryBoot | undefined>(undefined)
+  const lock = try Semaphore.make(1)
+  return {
+    changes: SubscriptionRef.changes(shown),
+    current: () => SubscriptionRef.get(shown),
+    load: () => Semaphore.withPermit(lock, effect {
+      const boot = try bootedRegistry()
+      try SubscriptionRef.set(shown, boot)
+      return boot
+    }),
+  }
+})

@@ -1,0 +1,48 @@
+// spec/slopbot/closure.md, "Only the author's own authenticated run for the exact PR supplies participation authority"; spec/contributor/openedRun.md, "One invocation validates the PR, reuses its own run and records one exact event"
+import type { ReadFailure } from "@repo/ports/backend"
+import { RunEvidence } from "@repo/ports/contributor"
+import { type Membership, type ParticipationEvidence, type ReviewIdentity, participationAuthority } from "../../gen/slopbot__closure.effect.vibe"
+import type { Exemption } from "../../gen/slopbot__routing.effect.vibe"
+import type { ReviewContext, ReviewTarget } from "../context/load.vibe"
+import { exemptionOf, marker } from "../routing/facts.vibe"
+
+export service Memberships {
+  status(githubId: string): Membership!ReadFailure
+}
+
+export function identityFor(target: ReviewTarget, context: ReviewContext): ReviewIdentity {
+  return {
+    project: 1,
+    repository: target.repositoryId,
+    kind: target.itemKind === "pull_request" ? "PullRequest" : "Issue",
+    itemNode: context.issue.node_id,
+    revision: context.revision,
+    contentDigest: context.contentDigest,
+    author: context.issue.user.id,
+  }
+}
+
+export effect function participationOf(target: ReviewTarget, context: ReviewContext, identity: ReviewIdentity, exemption: Exemption) {
+  const author = context.issue.user.id
+  const copiedMarker = (context.issue.body ?? "").includes(marker)
+  const unread: ParticipationEvidence = { member: author, membership: "MemberUnknown", events: [], copiedMarker }
+  if (identity.kind !== "PullRequest" || exemption !== "NotExempt" || !Number.isSafeInteger(author) || author <= 0) return unread
+  const membership = try (try Memberships).status(String(author))
+  if (membership !== "MemberActive") return { ...unread, membership }
+  const recorded = try (try RunEvidence).prOpened({
+    repositoryId: String(target.repositoryId),
+    repositoryFullName: context.repository.full_name,
+    projectId: target.projectId,
+    pullRequestNodeId: identity.itemNode,
+    authorGithubId: String(author),
+  })
+  const events = recorded ? [{ actor: author, sessionActor: author, project: identity.project, repository: identity.repository, prNode: identity.itemNode }] : []
+  return { ...unread, membership, events } satisfies ParticipationEvidence
+}
+
+export effect function closureEligibility(target: ReviewTarget, context: ReviewContext) {
+  if (target.securityOnly) return false
+  const identity = identityFor(target, context)
+  const exemption = try exemptionOf(target.repositoryId, context.repository.owner, context.issue.user)
+  return exemption === "NotExempt" && participationAuthority(try participationOf(target, context, identity, exemption), identity)
+}

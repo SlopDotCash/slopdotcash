@@ -1,0 +1,93 @@
+// spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"; spec/operations/releaseCoverage.md, "Pull requests select affected work and nightly verification always runs in full"
+import { boundedBytes } from "@repo/platform/browser"
+import { affectedOf, changedFiles } from "../coverage/scope.vibe"
+import { isAncestor } from "../run/heads.vibe"
+import { buildManifestOf, productionOrigin } from "./capture.vibe"
+import { AgentClientRecords, AgentWorkflow } from "./records.schema.vibe"
+
+export error AgentClientsRefused { message: string }
+
+export type Workflow = typeof AgentWorkflow.Type
+export type Records = typeof AgentClientRecords.Type
+
+export const requiredClients: ReadonlyArray<string> = ["claude-code", "codex", "chatgpt", "hermes-agent", "openclaw", "muse", "grok", "elizaos"]
+
+export const allWorkflows: ReadonlyArray<Workflow> = ["slop-skill", "contributor-skill"]
+
+const recordsBytesLimit = 1024 * 1024
+const manifestBytesLimit = 1024 * 1024
+const revision = /^[0-9a-f]{40}$/u
+
+function refused(message: string) {
+  return new AgentClientsRefused({ message })
+}
+
+function clientKey(client: string) {
+  return client.toLowerCase().replaceAll(/[^a-z0-9]/gu, "")
+}
+
+export function affectedWorkflows(files: ReadonlyArray<string>): ReadonlyArray<Workflow> {
+  const affected = affectedOf(files)
+  return allWorkflows.filter((workflow) => workflow === "slop-skill" ? affected.rootSkill : affected.installer)
+}
+
+export function agentClientIssues(records: Records, workflows: ReadonlyArray<Workflow>, sourceSha: string) {
+  const issues: string[] = []
+  for (const workflow of workflows) {
+    const recorded = records.records.filter((record) => record.workflow === workflow)
+    for (const record of recorded) {
+      if (record.sourceSha !== sourceSha) issues.push(`${record.client} ${record.clientVersion} recorded ${workflow} against ${record.sourceSha}, not ${sourceSha}`)
+      else if (record.result.outcome === "fail") issues.push(`${record.client} ${record.clientVersion} (${record.provider} / ${record.model}) failed ${workflow}: ${record.result.reason}`)
+    }
+    for (const client of requiredClients) {
+      if (!recorded.some((record) => clientKey(record.client) === clientKey(client))) issues.push(`${workflow} has no recorded result for ${client}`)
+    }
+  }
+  return issues
+}
+
+effect function readRecords(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch () => undefined
+  const size = Number(info?.size ?? 0)
+  if (info?.type !== "File" || size === 0 || size > recordsBytesLimit) throw refused("the agent-client records must be a non-empty regular file within 1 MiB")
+  const text = fs.readFileString(path) catch effect () => {
+    throw refused("the agent-client records are unreadable")
+  }
+  const value = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => refused("the agent-client records are not JSON") })
+  return Schema.decodeUnknownEffect(AgentClientRecords)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw refused("the agent-client records do not match their schema: every record names its workflow, exact client, client version, provider, model, source SHA, result and evidence, with no other key")
+  }
+}
+
+effect function servedRevision() {
+  const request = HttpClientRequest.get(`${productionOrigin}/skill-manifest.json`, { headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" } })
+  const answered = timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
+      const response = try HttpClient.execute(request)
+      if (response.status !== 200) return undefined
+      return try boundedBytes(response, manifestBytesLimit, "the served skill manifest")
+    }
+  }, Duration.seconds(30)) catch () => undefined
+  if (answered === undefined) return undefined
+  const manifest = buildManifestOf(answered) catch () => undefined
+  return manifest?.revision
+}
+
+export effect function releasedWorkflows(root: string, sourceSha: string) {
+  const released = try servedRevision()
+  if (released === undefined || !(try isAncestor(root, released, sourceSha))) return { base: undefined, workflows: allWorkflows }
+  if (released === sourceSha) return { base: released, workflows: [] satisfies ReadonlyArray<Workflow> }
+  return { base: released, workflows: affectedWorkflows(try changedFiles(root, released, sourceSha)) }
+}
+
+export effect function agentClientGate(recordsPath: string, root: string) {
+  const sourceSha = try Config.String("GITHUB_SHA")
+  if (!revision.test(sourceSha)) throw refused("GITHUB_SHA is not a full commit SHA")
+  const { base, workflows } = try releasedWorkflows(root, sourceSha)
+  if (workflows.length === 0) return { base, workflows, records: 0 }
+  const records = try readRecords(recordsPath)
+  const issues = agentClientIssues(records, workflows, sourceSha)
+  if (issues.length > 0) throw refused(`release refused: the affected agent-client workflows lack passing records for ${sourceSha}: ${issues.join("; ")}`)
+  return { base, workflows, records: records.records.length }
+}

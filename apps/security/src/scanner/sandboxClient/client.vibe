@@ -1,0 +1,151 @@
+// spec/security/admission.md, "Risky artifacts run in an isolated sandbox without network or secrets"; spec/security/sandbox.md, "Story: Execute one verified artifact in isolation and always destroy the sandbox"
+import * as Base64 from "effect/encoding/Base64"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import type { Execution } from "../../admission/result.ts"
+import { type Interpreter, IsolatedArtifact } from "../../sandbox/run.vibe"
+import { withExecutionEvidence } from "../inspect/inspection.ts"
+import type { RepositoryInspection, ScanInputFile, VettingArtifact } from "../inspect/model.ts"
+import { ServiceAnswerInvalid, ServiceUnavailable, signedCall } from "../run/service.vibe"
+
+export const sandboxPath = "/api/v1/vetting/sandbox"
+const artifactLimit = 2 * 1024 * 1024
+const evidenceLimit = 180 * 1024
+const outputLimit = 65536
+const runIdPattern = /^[a-f0-9-]{36}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const shaPattern = /^[a-f0-9]{40}$/u
+
+export error ArtifactOutsideLimit
+export error ExecutionIdentityMissing
+export error ExecutionImageChanged
+
+export interface IsolatedRun {
+  readonly evidence: IsolatedArtifact
+  readonly bytes: Uint8Array
+}
+
+function base64Bytes(text: string) {
+  return Result.getOrUndefined(Base64.decode(text))
+}
+
+function boundedOutput(text: string) {
+  const bytes = base64Bytes(text)
+  return bytes !== undefined && bytes.length <= outputLimit && Base64.encode(bytes) === text
+}
+
+function validEvidence(evidence: IsolatedArtifact, artifactSha256: string, interpreter: Interpreter) {
+  const started = Date.parse(evidence.startedAt)
+  const completed = Date.parse(evidence.completedAt)
+  return (
+    runIdPattern.test(evidence.runId) &&
+    Number.isFinite(started) &&
+    Number.isFinite(completed) &&
+    completed >= started &&
+    (evidence.imageSha256 === null || digestPattern.test(evidence.imageSha256)) &&
+    (evidence.sourceSha === null || shaPattern.test(evidence.sourceSha)) &&
+    evidence.artifactSha256 === artifactSha256 &&
+    evidence.interpreter === interpreter &&
+    !evidence.internetEnabled &&
+    Number.isSafeInteger(evidence.exitCode) &&
+    evidence.outputComplete === (evidence.status === "exited") &&
+    boundedOutput(evidence.stdoutBase64) &&
+    boundedOutput(evidence.stderrBase64)
+  )
+}
+
+export effect function runIsolatedArtifact(bytes: Uint8Array, interpreter: Interpreter) {
+  if (bytes.length === 0 || bytes.length > artifactLimit) throw new ArtifactOutsideLimit()
+  const artifactSha256 = try sha256Hex(bytes)
+  const body = new TextEncoder().encode(JSON.stringify({ artifactBase64: Base64.encode(bytes), artifactSha256, interpreter }))
+  const answer = try signedCall({ step: "isolated-execution", method: "POST", path: sandboxPath, body, contentType: "application/json", timeoutMs: 120_000, limitBytes: evidenceLimit })
+  if (answer.status !== 200) throw new ServiceUnavailable({ step: "isolated-execution", status: answer.status })
+  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(answer.bytes)) catch effect () => {
+    throw new ServiceAnswerInvalid({ step: "isolated-execution" })
+  }
+  const value: unknown = try Effect.try({ try: () => JSON.parse(text), catch: () => new ServiceAnswerInvalid({ step: "isolated-execution" }) })
+  const evidence = Schema.decodeUnknownEffect(IsolatedArtifact)(value, { onExcessProperty: "error" }) catch effect () => {
+    throw new ServiceAnswerInvalid({ step: "isolated-execution" })
+  }
+  if (!validEvidence(evidence, artifactSha256, interpreter)) throw new ServiceAnswerInvalid({ step: "isolated-execution" })
+  return { evidence, bytes: answer.bytes } satisfies IsolatedRun
+}
+
+export function linuxExecutable(bytes: Uint8Array | undefined): boolean {
+  return bytes !== undefined && bytes.length >= 20 && bytes.length <= artifactLimit && bytes[0] === 0x7f && bytes[1] === 0x45 && bytes[2] === 0x4c && bytes[3] === 0x46 && bytes[4] === 2 && bytes[5] === 1 && bytes[18] === 0x3e && bytes[19] === 0
+}
+
+function utf8(text: string) {
+  const bytes = base64Bytes(text)
+  if (bytes === undefined) return undefined
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+  } catch {
+    return undefined
+  }
+}
+
+interface RunWindow {
+  readonly imageSha256: string
+  readonly startedAt: string
+  readonly completedAt: string
+}
+
+export interface IsolatedInspection {
+  readonly inspection: RepositoryInspection
+  readonly execution: Execution | null
+  readonly reports: ReadonlyArray<Uint8Array>
+  readonly executed: number
+  readonly uncovered: number
+}
+
+export effect function inspectIsolatedArtifacts(files: ReadonlyArray<ScanInputFile>, inspection: RepositoryInspection) {
+  const byDigest = new Map<string, Uint8Array>()
+  for (const file of files) byDigest.set(try sha256Hex(file.bytes), file.bytes)
+  const gaps = new Map<string, number>()
+  const gap = (reason: string) => gaps.set(reason, (gaps.get(reason) ?? 0) + 1)
+  const reports: Uint8Array[] = []
+  const added: { readonly id: string; readonly text: string }[] = []
+  const artifacts: VettingArtifact[] = []
+  const windows: RunWindow[] = []
+  let executed = 0
+  let uncovered = 0
+  for (const artifact of inspection.artifacts) {
+    if (artifact.analysis !== "pending" || artifact.state !== "quarantined") {
+      artifacts.push(artifact)
+      continue
+    }
+    const bytes = byDigest.get(artifact.sha256)
+    if (!linuxExecutable(bytes) || bytes === undefined) {
+      gap("Isolated analysis does not yet support these artifacts")
+      uncovered += 1
+      artifacts.push(artifact)
+      continue
+    }
+    const run = try runIsolatedArtifact(bytes, "binary")
+    const evidence = run.evidence
+    if (evidence.imageSha256 === null || evidence.sourceSha === null) throw new ExecutionIdentityMissing()
+    const [opened] = windows
+    if (opened !== undefined && opened.imageSha256 !== evidence.imageSha256) throw new ExecutionImageChanged()
+    windows.push({ imageSha256: evidence.imageSha256, startedAt: evidence.startedAt, completedAt: evidence.completedAt })
+    artifacts.push({ ...artifact, requestedExecution: true })
+    reports.push(run.bytes)
+    executed += 1
+    if (!evidence.outputComplete || evidence.exitCode !== 0) {
+      gap("Isolated execution was incomplete")
+      uncovered += 1
+    }
+    const stdout = utf8(evidence.stdoutBase64)
+    const stderr = utf8(evidence.stderrBase64)
+    if (stdout === undefined || stderr === undefined) {
+      gap("Isolated output was not UTF-8")
+      continue
+    }
+    added.push({ id: `execution:${evidence.runId}`, text: JSON.stringify({ ...evidence, stdout, stderr }) })
+  }
+  const [first] = windows
+  const last = windows.at(-1)
+  const execution: Execution | null = first === undefined || last === undefined ? null : { isolation: "sandbox", imageSha256: first.imageSha256, runId: `execution-${try randomId()}`, reason: "Inspect acquired native artifacts in disposable sandboxes", startedAt: first.startedAt, completedAt: last.completedAt, secretsProvided: false, egress: "default-deny" }
+  const partial = gaps.size === 0 ? inspection.coverage : { ...inspection.coverage, downloads: { ...inspection.coverage.downloads, state: "partial" as const } }
+  const extended = withExecutionEvidence({ ...inspection, coverage: partial }, added, [...gaps].map(([reason, count]) => `${reason}: ${count} artifact records`))
+  return { inspection: { ...extended, artifacts }, execution, reports, executed, uncovered } satisfies IsolatedInspection
+}

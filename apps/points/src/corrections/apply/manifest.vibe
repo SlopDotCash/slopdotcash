@@ -1,0 +1,151 @@
+// spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Only exact manifest and receipt from an uninterrupted pass allow reconciliation"
+import { sha256Hex } from "@repo/platform/crypto"
+import { correctionRule, digestOf } from "../collect/inventory.vibe"
+import { assertCorrectionRegistry } from "../collect/registry.vibe"
+
+export error CorrectionRefused { message: string }
+
+export schema CorrectionActor { readonly id: string; readonly login: string; readonly kind: string }
+export schema CorrectionFile { readonly path: string; readonly additions: number; readonly deletions: number }
+export schema CorrectionCommit {
+  readonly sha: string
+  readonly parentCount: number
+  readonly mergeResolution?: Schema.Unknown
+  readonly parentShas?: ReadonlyArray<string>
+  readonly author: CorrectionActor | null
+  readonly additions: number | null
+  readonly deletions: number | null
+  readonly firstAcceptedSourceId: string | null
+  readonly files?: ReadonlyArray<CorrectionFile>
+  readonly retainedCopy?: Schema.Unknown
+}
+export schema CorrectionSource {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly headSha: string
+  readonly occurredAt: string | null
+  readonly author: CorrectionActor | null
+  readonly complete: boolean
+  readonly commitCount: number
+  readonly commits: ReadonlyArray<CorrectionCommit>
+}
+export schema HeldProof { readonly status: "held" }
+export schema CompleteProof {
+  readonly status: "complete"
+  readonly censusDigest: string
+  readonly sources: ReadonlyArray<CorrectionSource>
+  readonly originalContributor?: Schema.Unknown
+  readonly originalContributorParts?: Schema.Unknown
+  readonly independentClaimIds?: Schema.Unknown
+  readonly decisionDigest?: string
+  readonly expectedClaimIds?: ReadonlyArray<string>
+  readonly claims?: Schema.Unknown
+}
+export schema ExpectedPredecessor { readonly key: string; readonly revisionId: string }
+export schema ManifestCandidate {
+  readonly id: string
+  readonly kind: "pull-request" | "work-unit"
+  readonly projectId: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly occurredAt: string
+  readonly workUnitId: string
+  readonly sourceIds: ReadonlyArray<string>
+  readonly expectedPredecessors: ReadonlyArray<ExpectedPredecessor>
+  readonly proof: HeldProof | CompleteProof
+}
+export schema CorrectionManifest {
+  readonly schemaVersion: "1"
+  readonly rule: "historical-implementation-allocation-v1"
+  readonly generatedAt: string
+  readonly baseline: { readonly revisionCount: number; readonly revisionIdsDigest: string }
+  readonly candidates: ReadonlyArray<ManifestCandidate>
+}
+schema CollectionReceipt {
+  readonly schemaVersion: string
+  readonly manifestDigest: string
+  readonly through: string
+  readonly projects?: ReadonlyArray<string>
+  readonly totalPositivePools: number
+  readonly completeProofs: number
+  readonly heldProofs: number
+  readonly ownershipComplete: boolean
+  readonly registryDigest: string
+}
+
+export interface Collection {
+  readonly manifest: CorrectionManifest
+  readonly receipt: CollectionReceipt
+  readonly manifestDigest: string
+  readonly chunkDigest: string
+}
+
+const maximumCollectionBytes = 256 * 1024 * 1024
+const receiptSchema = "slop-implementation-correction-collection-v1"
+const unauthorized = "Collection receipt or current registry does not authorize this correction"
+
+export function refused(message: string) {
+  return new CorrectionRefused({ message })
+}
+
+effect function boundedText(path: string) {
+  const fs = try FileSystem.FileSystem
+  const info = fs.stat(path) catch effect () => {
+    throw refused(`${path} is unavailable`)
+  }
+  if (Number(info.size) > maximumCollectionBytes) throw refused(`${path} exceeds its size limit`)
+  const text = fs.readFileString(path) catch effect () => {
+    throw refused(`${path} is unavailable`)
+  }
+  return text
+}
+
+effect function parsed(text: string, path: string) {
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw refused(`${path} is not JSON`)
+  }
+  return value
+}
+
+export effect function collectionOf(manifestText: string, receiptText: string) {
+  const raw = try parsed(manifestText, "manifest.json")
+  const manifest = Schema.decodeUnknownEffect(CorrectionManifest)(raw) catch effect () => {
+    throw refused("Implementation correction: invalid manifest or recording time")
+  }
+  const receipt = Schema.decodeUnknownEffect(CollectionReceipt)(try parsed(receiptText, "collection-receipt.json")) catch effect () => {
+    throw refused(unauthorized)
+  }
+  const bytes = manifestText.endsWith("\n") ? manifestText.slice(0, -1) : manifestText
+  return { manifest, receipt, manifestDigest: try digestOf(raw), chunkDigest: try sha256Hex(bytes) } satisfies Collection
+}
+
+export effect function readCollection(manifestPath: string) {
+  const files = try Path.Path
+  const receiptPath = files.join(files.dirname(manifestPath), "collection-receipt.json")
+  return try collectionOf(try boundedText(manifestPath), try boundedText(receiptPath))
+}
+
+export effect function verifyCollection(collection: Collection, registry: unknown, apply: boolean) {
+  const { manifest, receipt, manifestDigest } = collection
+  const complete = manifest.candidates.filter((candidate) => candidate.proof.status === "complete").length
+  const projects = receipt.projects
+  if (receipt.schemaVersion !== receiptSchema || receipt.manifestDigest !== manifestDigest || receipt.through !== manifest.generatedAt ||
+    (projects !== undefined && manifest.candidates.some((candidate) => !projects.includes(candidate.projectId))) ||
+    receipt.totalPositivePools !== manifest.candidates.length || receipt.completeProofs !== complete ||
+    receipt.heldProofs !== manifest.candidates.length - complete || (!receipt.ownershipComplete && (apply || complete > 0)) ||
+    manifest.rule !== correctionRule) {
+    throw refused(unauthorized)
+  }
+  try assertCorrectionRegistry(receipt.registryDigest, manifest.generatedAt, projects, registry)
+}
+
+export function correctionScopes(collection: Collection) {
+  const scopes = new Map<string, { readonly projectId: string; readonly period: string }>()
+  for (const candidate of collection.manifest.candidates) {
+    const scope = { projectId: candidate.projectId, period: candidate.occurredAt.slice(0, 7) }
+    scopes.set(JSON.stringify([scope.projectId, scope.period]), scope)
+  }
+  return [...scopes.values()]
+}

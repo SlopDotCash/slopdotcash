@@ -1591,6 +1591,7 @@ test("bounded monthly commitment: signed root, cap, one period, opt-out, proofs 
         month: pda(seed("month"), key(project), periodSeed(n)),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions(pre)
       .signers([stranger])
@@ -2485,6 +2486,7 @@ const monthlyAdmission = (stranger, period, n) =>
         month: monthAt(n),
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions([
         Ed25519Program.createInstructionWithPrivateKey({

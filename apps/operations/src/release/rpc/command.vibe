@@ -1,0 +1,31 @@
+// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+import { qualifyRobinhood } from "./qualify.vibe"
+import { type Rotation, inheritedMessage, rotateFeeConverterRpc } from "./rotate.vibe"
+
+export error RpcUsage { message: string }
+
+const usage = "rpc inherit [root] | rpc rotate-robinhood [root]"
+
+export effect function rpcRotation<A, E, R>(rotation: Rotation<A, E, R>) {
+  provide cloudflare({ root: rotation.root, wrangler: pinnedWrangler(rotation.root) }) {
+    return try rotateFeeConverterRpc(rotation)
+  }
+}
+
+export effect function rpc(args: ReadonlyArray<string>) {
+  const [command, root = ".", ...rest] = args
+  if (rest.length > 0 || (command !== "inherit" && command !== "rotate-robinhood")) throw new RpcUsage({ message: `usage: ${usage}` })
+  if (command === "inherit") {
+    provide cloudflare({ root, wrangler: pinnedWrangler(root) }) {
+      try Console.log(try inheritedMessage())
+    }
+    return
+  }
+  const candidate = try Config.withDefault(Config.Redacted("SLOP_ROBINHOOD_RPC_REPLACEMENT"), Redacted.make(""))
+  const qualify = effect {
+    const observed = try qualifyRobinhood(candidate)
+    try Console.log(JSON.stringify({ event: "robinhood_rpc_candidate_verified", ...observed }))
+  }
+  try rpcRotation({ root, kind: "robinhood", secrets: { RPC_URL_ROBINHOOD: candidate }, qualify })
+}

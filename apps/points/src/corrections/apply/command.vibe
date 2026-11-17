@@ -1,0 +1,197 @@
+// spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { D1 } from "@repo/platform/d1"
+import { d1Http } from "@repo/platform/d1Http"
+import { gitBytes } from "@repo/platform/git"
+import { github } from "@repo/platform/github"
+import { type Journal, journalText } from "../../kernels/records/canonical.ts"
+import { batchDigest } from "../../kernels/records/ids.vibe"
+import { participationBans } from "../../collect/feeds/bans.vibe"
+import { actionsToken } from "../../ingestion/token.vibe"
+import { protectionEvidence } from "../../publication/protection.vibe"
+import { publishedJournal, publishedRegistry } from "../collect/published.vibe"
+import { type Collection, correctionScopes, readCollection, refused, verifyCollection } from "./manifest.vibe"
+import { type Mode, type Planned, planCorrections, recordCorrection } from "./apply.vibe"
+import { digestPattern, projectOfRegistry } from "./derive.vibe"
+
+export error CorrectionStopped { message: string }
+
+type Phase =
+  | "trusted invocation"
+  | "collection and registry verification"
+  | "public Points read"
+  | "private financial protection read"
+  | "participation restrictions read"
+  | "allocation validation"
+  | "preview or receipt generation"
+  | "protected import and readback"
+
+interface ApplyArguments {
+  readonly manifestPath: string
+  readonly output: string
+  readonly mode: Mode
+  readonly reviewedDigest: string
+}
+
+const usage = "Usage: corrections apply MANIFEST OUTPUT_DIRECTORY preview|apply [--reviewed-sha256 <manifest digest reviewed by the repository owner>]"
+const productionDatabase = "1b453124-2709-45af-8389-151a8105c461"
+const headPattern = /^[a-f0-9]{40}$/u
+const statuses: ReadonlyArray<string> = ["applied", "unchanged", "held", "retained", "already-applied"]
+
+effect function during<A, E, R>(phase: Phase, step: A!E!R) {
+  const done = step catch effect () => {
+    throw new CorrectionStopped({ message: `Historical Points correction stopped during ${phase}.` })
+  }
+  return done
+}
+
+effect function parsedArguments(args: ReadonlyArray<string>) {
+  const [manifestPath, output, mode, flag, reviewed, ...rest] = args
+  if (manifestPath === undefined || output === undefined || (mode !== "preview" && mode !== "apply") || rest.length > 0) throw refused(usage)
+  if (flag === undefined && reviewed === undefined && mode === "preview") return { manifestPath, output, mode, reviewedDigest: "" } satisfies ApplyArguments
+  if (flag !== "--reviewed-sha256" || reviewed === undefined || !digestPattern.test(reviewed)) throw refused(usage)
+  return { manifestPath, output, mode, reviewedDigest: reviewed } satisfies ApplyArguments
+}
+
+effect function environment(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+effect function gitLine(args: ReadonlyArray<string>, refusal: string) {
+  const bytes = try gitBytes({ args, limit: 64 * 1024, seconds: 60 }, refusal)
+  return new TextDecoder().decode(bytes).trim()
+}
+
+effect function trustedInvocation() {
+  const head = try environment("GITHUB_SHA")
+  if ((try environment("GITHUB_ACTIONS")) !== "true" || (try environment("GITHUB_EVENT_NAME")) !== "workflow_dispatch" ||
+    (try environment("GITHUB_REF")) !== "refs/heads/main" || !headPattern.test(head)) {
+    throw refused("Historical corrections require the reviewed manual main workflow")
+  }
+  const checkout = try gitLine(["rev-parse", "HEAD"], "Historical correction source is no longer the exact main head")
+  return { head, checkout }
+}
+
+effect function verifyMain(invocation: { readonly head: string; readonly checkout: string }) {
+  const [mainHead = ""] = (try gitLine(["ls-remote", "origin", "refs/heads/main"], "Historical correction source is no longer the exact main head")).split(/\s/u)
+  if (invocation.checkout !== invocation.head || mainHead !== invocation.checkout) throw refused("Historical correction source is no longer the exact main head")
+}
+
+function retainedActors(collection: Collection) {
+  const actors = new Set<string>()
+  for (const candidate of collection.manifest.candidates) {
+    if (candidate.proof.status !== "complete") continue
+    for (const source of candidate.proof.sources) {
+      if (source.author?.kind === "User") actors.add(source.author.id)
+      for (const commit of source.commits) if (commit.author?.kind === "User") actors.add(commit.author.id)
+    }
+  }
+  return actors
+}
+
+effect function banDigest(bans: ReadonlyMap<string, string>) {
+  return try sha256Hex(JSON.stringify([...bans].sort(([left], [right]) => left.localeCompare(right))))
+}
+
+effect function writeText(path: string, text: string) {
+  const fs = try FileSystem.FileSystem
+  try orDie(fs.writeFileString(path, text))
+}
+
+function reportOf(planned: Planned, before: { readonly journal: Journal; readonly digest: string }, after: string, checkout: string, mode: Mode, candidates: number) {
+  return {
+    schemaVersion: "1",
+    workflowSha: checkout,
+    manifestDigest: planned.manifestDigest,
+    beforeDigest: before.digest,
+    afterDigest: after,
+    beforeRevisions: before.journal.revisions.length,
+    afterRevisions: planned.journal.revisions.length,
+    candidates,
+    dispositions: Object.fromEntries(statuses.map((status) => [status, planned.dispositions.filter((entry) => entry.status === status).length])),
+    mode,
+    noChanges: planned.journal === before.journal,
+    recorded: false,
+  }
+}
+
+effect function protectionRead<E>(database: Layer.Layer<D1, E, HttpClient.HttpClient>, collection: Collection) {
+  provide database {
+    return try protectionEvidence(correctionScopes(collection))
+  }
+}
+
+effect function bansRead(token: Redacted.Redacted<string>, actors: ReadonlySet<string>) {
+  provide github({ token, userAgent: "slopbot" }) {
+    return try participationBans(actors)
+  }
+}
+
+effect function imported<E, AE, AR>(database: Layer.Layer<D1, E, HttpClient.HttpClient>, journal: Journal, authority: void!AE!AR) {
+  provide database {
+    return try recordCorrection(journal, { verifyAuthority: () => authority, loadPublic: publishedJournal, wait: waitFor })
+  }
+}
+
+effect function waitFor(millis: number) {
+  try sleep(Duration.millis(millis))
+}
+
+export effect function applyCorrections(args: ReadonlyArray<string>) {
+  const parsed = try during("trusted invocation", parsedArguments(args))
+  const invocation = try during("trusted invocation", effect {
+    const found = try trustedInvocation()
+    try verifyMain(found)
+    return found
+  })
+  const verified = try during("collection and registry verification", effect {
+    const collection = try readCollection(parsed.manifestPath)
+    const registry = try publishedRegistry()
+    try verifyCollection(collection, registry, parsed.mode === "apply")
+    return { collection, registry }
+  })
+  const { collection } = verified
+  const journal = try during("public Points read", publishedJournal())
+  const accountId = try during("private financial protection read", Config.String("CLOUDFLARE_ACCOUNT_ID"))
+  const apiToken = try during("private financial protection read", Config.Redacted("CLOUDFLARE_API_TOKEN"))
+  const database = d1Http({ accountId, databaseId: productionDatabase, token: apiToken })
+  const protection = try during("private financial protection read", protectionRead(database, collection))
+  const actors = retainedActors(collection)
+  const token = try during("participation restrictions read", actionsToken())
+  const readBans = () => bansRead(token, actors)
+  const bans = try during("participation restrictions read", readBans())
+  const recordedAt = try isoNow()
+  const planned = try during("allocation validation", planCorrections({
+    journal,
+    collection,
+    protection,
+    bans,
+    recordedAt,
+    mode: parsed.mode,
+    reviewedDigest: parsed.reviewedDigest,
+    projectOf: projectOfRegistry(verified.registry.projects),
+  }))
+  const before = { journal, digest: try batchDigest(journal) }
+  const report = reportOf(planned, before, try batchDigest(planned.journal), invocation.checkout, parsed.mode, collection.manifest.candidates.length)
+  const files = try Path.Path
+  try during("preview or receipt generation", effect {
+    const fs = try FileSystem.FileSystem
+    try orDie(fs.makeDirectory(parsed.output, { recursive: true }))
+    try writeText(files.join(parsed.output, "before-journal.json"), `${journalText(journal)}\n`)
+    try writeText(files.join(parsed.output, "journal.json"), `${journalText(planned.journal)}\n`)
+    try writeText(files.join(parsed.output, "report.json"), `${JSON.stringify(report, null, 2)}\n`)
+  })
+  const recorded = parsed.mode === "apply" && !report.noChanges
+  if (recorded) {
+    const expectedBans = try banDigest(bans)
+    try during("protected import and readback", imported(database, planned.journal, effect {
+      try verifyMain(invocation)
+      try verifyCollection(collection, try publishedRegistry(), true)
+      if ((try banDigest(try readBans())) !== expectedBans) throw refused("Account restrictions changed after correction planning")
+    }))
+  }
+  const final = { ...report, recorded }
+  try writeText(files.join(parsed.output, "report.json"), `${JSON.stringify(final, null, 2)}\n`)
+  try Console.log(JSON.stringify(final))
+}

@@ -1,0 +1,257 @@
+// spec/security/admission.md, "An assessment is bound to its queued revision, commit and template"; spec/security/admission.md, "Acquisition binds one shallow fetch of the exact commit"; spec/security/admission.md, "Each attempt starts from nothing and a service failure leaves the assessment pending"
+import { boundedBytes } from "@repo/platform/browser"
+import { sha256Hex } from "@repo/platform/crypto"
+import type { FetchOutcome } from "../../../gen/security__admission.effect.vibe"
+import { type QueuedScan, ScanQueue } from "../../client/admission.vibe"
+import { AcquisitionFailed, AcquisitionRefused, acquireRepository } from "../acquire/git.vibe"
+import { ScanService, decodedAnswer, signedJson } from "./service.vibe"
+
+export const queuePath = "/api/v1/vetting/requests"
+const pinnedLimit = 1024 * 1024
+const templateLimit = 32 * 1024 * 1024
+const digestPattern = /^[0-9a-f]{64}$/u
+const commitPattern = /^[0-9a-f]{40}$/u
+const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+
+export interface Assignment {
+  readonly assessmentId: string
+  readonly projectId: string
+  readonly revision: number
+  readonly manifestSha256: string
+  readonly commitSha: string
+  readonly templateSha256: string
+  readonly repository: string
+  readonly requestedAt: string
+}
+
+export error QueueInvalid
+export error AssessmentNotPending
+export error PinUnavailable { reason: string }
+export error QueuedRefusal { reason: string; fetched: FetchOutcome; repository: string }
+
+export service ScanAcquisition {
+  readonly githubToken: Redacted.Redacted<string> | undefined
+  readonly testRemote: ((repository: string) => string) | undefined
+}
+
+const Revision = Schema.Struct({ projectId: Schema.String, revision: Schema.Number, manifestSha256: Schema.String, manifestText: Schema.String })
+const Listed = Schema.Struct({ id: Schema.String, githubUrl: Schema.String, aliases: Schema.optionalKey(Schema.Array(Schema.String)), githubId: Schema.optionalKey(Schema.String), nodeId: Schema.optionalKey(Schema.String) })
+const Manifest = Schema.Struct({
+  id: Schema.String,
+  repositories: Schema.NonEmptyArray(Listed),
+  authority: Schema.optionalKey(Schema.Struct({ repositoryId: Schema.optionalKey(Schema.String), repositoryNodeId: Schema.optionalKey(Schema.String) })),
+})
+const GitHubRepository = Schema.Struct({ id: Schema.Number, node_id: Schema.String, full_name: Schema.String, private: Schema.Boolean })
+const TemplateFile = Schema.Struct({ path: Schema.String, sha256: Schema.String })
+const TemplateGroup = Schema.Struct({ sourcePath: Schema.String, files: Schema.Array(TemplateFile) })
+const TemplateIndex = Schema.Struct({
+  schemaVersion: Schema.String,
+  templateSha256: Schema.String,
+  revisionStatus: Schema.String,
+  commit: Schema.String,
+  repository: Schema.String,
+  contributor: TemplateGroup,
+  reviewer: TemplateGroup,
+  renderer: Schema.Struct({ revisionStatus: Schema.String, sources: Schema.Array(TemplateFile) }),
+  acceptedRevisions: Schema.Array(Schema.Unknown),
+})
+const SourceGaps = Schema.Struct({ visibilityGaps: Schema.Array(Schema.String) })
+
+type ManifestShape = typeof Manifest.Type
+type ListedShape = typeof Listed.Type
+
+function safePath(value: string) {
+  return value.length <= 1024 && !value.includes("\\") && value.split("/").every((part) => /^[A-Za-z0-9_.-]+$/u.test(part) && part !== "." && part !== "..")
+}
+
+function validAssignment(row: QueuedScan, origin: string, seen: ReadonlySet<string>) {
+  return (
+    /^vet_[a-f0-9]{32}$/u.test(row.assessmentId) &&
+    !seen.has(row.assessmentId) &&
+    /^[a-z0-9][a-z0-9-]{0,47}$/u.test(row.projectId) &&
+    Number.isSafeInteger(row.revision) &&
+    row.revision >= 1 &&
+    row.repository.length <= 201 &&
+    repositoryPattern.test(row.repository) &&
+    digestPattern.test(row.manifestSha256) &&
+    digestPattern.test(row.templateSha256) &&
+    commitPattern.test(row.commitSha) &&
+    row.manifestUrl === `${origin}/api/v1/project-revisions/${row.projectId}/${row.revision}` &&
+    row.templateIndexUrl === `${origin}/skill-templates/index.json`
+  )
+}
+
+export effect function readPendingAssessments() {
+  const { origin } = try ScanService
+  const value = try signedJson({ step: "queue", method: "GET", path: queuePath, timeoutMs: 15_000, limitBytes: pinnedLimit })
+  const queue = Schema.decodeUnknownEffect(ScanQueue)(value) catch effect () => {
+    throw new QueueInvalid()
+  }
+  if (queue.assessments.length > 100) throw new QueueInvalid()
+  const seen = new Set<string>()
+  const assignments: Assignment[] = []
+  for (const row of queue.assessments) {
+    if (!validAssignment(row, origin, seen)) throw new QueueInvalid()
+    seen.add(row.assessmentId)
+    assignments.push({ assessmentId: row.assessmentId, projectId: row.projectId, revision: row.revision, manifestSha256: row.manifestSha256, commitSha: row.commitSha, templateSha256: row.templateSha256, repository: row.repository, requestedAt: row.requestedAt })
+  }
+  return assignments
+}
+
+effect function pinned(url: string, headers: Readonly<Record<string, string>> = {}) {
+  const client = try HttpClient.HttpClient
+  const request = HttpClientRequest.get(url, { headers })
+  const sent = provideService(client.execute(request), FetchHttpClient.RequestInit, { redirect: "manual" })
+  const response = timeoutOrElse(sent, { duration: Duration.seconds(15), orElse: () => Effect.fail(new PinUnavailable({ reason: "Pinned input unavailable" })) }) catch effect () => {
+    throw new PinUnavailable({ reason: "Pinned input unavailable" })
+  }
+  return response
+}
+
+effect function pinnedBytes(response: HttpClientResponse.HttpClientResponse) {
+  if (response.status !== 200) throw new PinUnavailable({ reason: "Pinned input unavailable" })
+  const bytes = boundedBytes(response, pinnedLimit, "pinned input") catch effect () => {
+    throw new PinUnavailable({ reason: "Pinned input unavailable" })
+  }
+  return bytes
+}
+
+effect function pinnedJson<S extends Schema.Constraint>(bytes: Uint8Array, schema: S, reason: string) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw new PinUnavailable({ reason })
+  }
+  const decoded = Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw new PinUnavailable({ reason })
+  }
+  return decoded
+}
+
+function listedRepository(manifest: ManifestShape, wanted: string) {
+  const lower = wanted.toLowerCase()
+  const byId = manifest.repositories.findIndex((repository) => repository.id.toLowerCase() === lower)
+  const index = byId >= 0 ? byId : manifest.repositories.findIndex((repository) => (repository.aliases ?? []).some((alias) => alias.toLowerCase() === lower))
+  const repository = manifest.repositories[index]
+  return repository === undefined ? undefined : { index, repository }
+}
+
+function identityOf(manifest: ManifestShape, found: { readonly index: number; readonly repository: ListedShape }) {
+  const githubId = found.index === 0 ? manifest.authority?.repositoryId : found.repository.githubId
+  const nodeId = found.index === 0 ? manifest.authority?.repositoryNodeId : found.repository.nodeId
+  return githubId !== undefined && githubId !== "" && nodeId !== undefined && nodeId !== "" ? { githubId, nodeId } : undefined
+}
+
+function currentPathOf(githubUrl: string) {
+  return URL.canParse(githubUrl) ? new URL(githubUrl).pathname.replace(/^\/|\/$/gu, "") : ""
+}
+
+function githubHeaders(token: Redacted.Redacted<string> | undefined): Record<string, string> {
+  const base = { accept: "application/vnd.github+json", "user-agent": "slop-vetting-acquisition", "x-github-api-version": "2022-11-28" }
+  return token === undefined ? base : { ...base, authorization: `Bearer ${Redacted.value(token)}` }
+}
+
+function templateFiles(files: ReadonlyArray<{ readonly path: string; readonly sha256: string }>) {
+  const seen = new Set<string>()
+  if (files.length === 0 || files.length > 64) return undefined
+  for (const file of files) {
+    if (!safePath(file.path) || !digestPattern.test(file.sha256) || seen.has(file.path)) return undefined
+    seen.add(file.path)
+  }
+  return files.map((file) => ({ path: file.path, sha256: file.sha256 }))
+}
+
+export interface QueuedInputs {
+  readonly directory: string
+  readonly assignment: Assignment
+  readonly repository: string
+  readonly entries: number
+  readonly sourceInventorySha256: string
+}
+
+export effect function acquireQueued(assessmentId: string, workDirectory: string) {
+  const { origin } = try ScanService
+  const settings = try ScanAcquisition
+  const queued = (try readPendingAssessments()).find((item) => item.assessmentId === assessmentId)
+  if (queued === undefined) throw new AssessmentNotPending()
+  const revision = try pinnedJson(try pinnedBytes(try pinned(`${origin}/api/v1/project-revisions/${queued.projectId}/${queued.revision}`)), Revision, "Manifest pin mismatch")
+  if (revision.projectId !== queued.projectId || revision.revision !== queued.revision || revision.manifestSha256 !== queued.manifestSha256 || (try sha256Hex(revision.manifestText)) !== queued.manifestSha256) throw new PinUnavailable({ reason: "Manifest pin mismatch" })
+  const manifest = try pinnedJson(new TextEncoder().encode(revision.manifestText), Manifest, "Manifest pin mismatch")
+  if (manifest.id !== queued.projectId) throw new PinUnavailable({ reason: "Manifest project mismatch" })
+  const found = listedRepository(manifest, queued.repository)
+  const repository = found?.repository.id ?? queued.repository
+  if (found === undefined) throw new QueuedRefusal({ reason: "Unsupported repository inventory", fetched: "FetchPathRefused", repository })
+  const identity = identityOf(manifest, found)
+  if (identity === undefined) throw new QueuedRefusal({ reason: "Immutable repository identity mismatch", fetched: "FetchIdentityMismatch", repository })
+  const currentPath = currentPathOf(found.repository.githubUrl)
+  const identityResponse = try pinned(`https://api.github.com/repos/${currentPath}`, githubHeaders(settings.githubToken))
+  if (identityResponse.status === 404) throw new QueuedRefusal({ reason: "Repository not found on GitHub", fetched: "FetchMissing", repository })
+  if (identityResponse.status >= 300 && identityResponse.status < 400) throw new QueuedRefusal({ reason: "Repository moved on GitHub", fetched: "FetchMoved", repository })
+  const github = try pinnedJson(try pinnedBytes(identityResponse), GitHubRepository, "Repository identity unavailable")
+  if (!Number.isSafeInteger(github.id) || String(github.id) !== identity.githubId || github.node_id !== identity.nodeId || github.full_name.toLowerCase() !== currentPath.toLowerCase() || github.private) {
+    throw new QueuedRefusal({ reason: "Immutable repository identity mismatch", fetched: "FetchIdentityMismatch", repository })
+  }
+  const index = try pinnedJson(try pinnedBytes(try pinned(`${origin}/skill-templates/index.json`)), TemplateIndex, "Template pin is stale or uncommitted")
+  if (index.schemaVersion !== "1" || index.templateSha256 !== queued.templateSha256 || index.revisionStatus !== "committed" || index.renderer.revisionStatus !== "committed" || !commitPattern.test(index.commit) || !repositoryPattern.test(index.repository) || !safePath(index.repository)) {
+    throw new QueuedRefusal({ reason: "Template pin is stale or uncommitted", fetched: "FetchStaleTemplate", repository })
+  }
+  const contributorFiles = templateFiles(index.contributor.files)
+  const reviewerFiles = templateFiles(index.reviewer.files)
+  const rendererSources = templateFiles(index.renderer.sources)
+  if (contributorFiles === undefined || reviewerFiles === undefined || rendererSources === undefined || !safePath(index.contributor.sourcePath) || !safePath(index.reviewer.sourcePath)) throw new PinUnavailable({ reason: "Invalid template file inventory" })
+  if (index.acceptedRevisions.length > 64 || index.acceptedRevisions.some((value) => typeof value !== "string" || value.length > 128)) throw new PinUnavailable({ reason: "Invalid accepted template revisions" })
+  const contributor = { sourcePath: index.contributor.sourcePath, files: contributorFiles }
+  const reviewer = { sourcePath: index.reviewer.sourcePath, files: reviewerFiles }
+  const templateInputs = { contributor, reviewer, rendererSources, acceptedRevisions: index.acceptedRevisions }
+  if ((try sha256Hex(JSON.stringify(templateInputs))) !== queued.templateSha256) throw new QueuedRefusal({ reason: "Template input digest mismatch", fetched: "FetchStaleTemplate", repository })
+  const acquired = acquireRepository({ repository: currentPath, commitSha: queued.commitSha, directory: workDirectory, ...(settings.testRemote === undefined ? {} : { testRemote: settings.testRemote(currentPath) }) }) catch effect (error) => match (error) {
+    when AcquisitionRefused: throw new QueuedRefusal({ reason: error.reason, fetched: "FetchPathRefused", repository });
+    when AcquisitionFailed: throw new PinUnavailable({ reason: "Source acquisition failed" });
+    default: throw new PinUnavailable({ reason: "Source acquisition failed" });
+  }
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  return try onExit(effect {
+    const sourceBytes = try fs.readFile(path.join(acquired.directory, "inventory.json"))
+    if ((try sha256Hex(sourceBytes)) !== acquired.inventorySha256) throw new PinUnavailable({ reason: "Source inventory changed" })
+    const source = try pinnedJson(sourceBytes, SourceGaps, "Invalid source coverage")
+    const inputs: { readonly path: string; readonly sha256: string; readonly state: "quarantined" }[] = []
+    const inputDigests = new Map<string, string>()
+    const sources = [
+      ...[contributor, reviewer].flatMap((group) => group.files.map((file) => ({ ...file, path: `${group.sourcePath}/${file.path}`, url: `${origin}/skill-templates/${group.sourcePath}/${file.path}` }))),
+      ...rendererSources.map((file) => ({ ...file, url: `https://raw.githubusercontent.com/${index.repository}/${index.commit}/${file.path}` })),
+    ]
+    let templateBytes = 0
+    for (const item of sources) {
+      const content = try pinnedBytes(try pinned(item.url))
+      templateBytes += content.byteLength
+      if (templateBytes > templateLimit) throw new QueuedRefusal({ reason: "Template acquisition size limit", fetched: "FetchPathRefused", repository })
+      if ((try sha256Hex(content)) !== item.sha256) throw new PinUnavailable({ reason: "Template file bytes changed" })
+      const objectPath = path.join(acquired.directory, "objects", item.sha256)
+      if (try fs.exists(objectPath)) {
+        if ((try sha256Hex(try fs.readFile(objectPath))) !== item.sha256) throw new PinUnavailable({ reason: "Template file bytes changed" })
+      } else try fs.writeFile(objectPath, content, { flag: "wx", mode: 0o400 })
+      const existing = inputDigests.get(item.path)
+      if (existing !== undefined && existing !== item.sha256) throw new PinUnavailable({ reason: "Conflicting template input digests" })
+      if (existing === undefined) {
+        inputDigests.set(item.path, item.sha256)
+        inputs.push({ path: item.path, sha256: item.sha256, state: "quarantined" })
+      }
+    }
+    const { repository: _queuedRepository, requestedAt: _requestedAt, ...assessment } = queued
+    const bundle = new TextEncoder().encode(JSON.stringify({
+      schema: "slop-queued-inputs-v1",
+      assessment,
+      repository,
+      sourceInventorySha256: acquired.inventorySha256,
+      repositoryIdentity: { id: String(github.id), nodeId: github.node_id, fullName: github.full_name },
+      manifestText: revision.manifestText,
+      templateInputs,
+      inputs,
+      state: "quarantined",
+      visibilityGaps: [...new Set([...source.visibilityGaps.filter((gap) => gap !== "skill-template-inputs-not-acquired"), "rendered-skills-and-execution-dependencies-not-acquired", "secure-runtime-and-model-review-not-performed"])].sort(),
+    }))
+    try fs.writeFile(path.join(acquired.directory, "queued-inputs.json"), bundle, { flag: "wx", mode: 0o400 })
+    return { directory: acquired.directory, assignment: queued, repository, entries: acquired.entries, sourceInventorySha256: acquired.inventorySha256 } satisfies QueuedInputs
+  }, effect (exit) => {
+    if (Exit.isFailure(exit)) fs.remove(acquired.directory, { recursive: true, force: true }) catch () => undefined
+  })
+}

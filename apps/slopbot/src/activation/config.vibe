@@ -1,0 +1,99 @@
+// spec/slopbot/closureActivation.md, "Only a reviewed production release switches closure on, with a qualified category, and any later release may switch it off"; spec/slopbot/closureActivation.md, "Each closable category needs its own reviewed real cases and counterexamples, recorded by the decided qualifier"; spec/slopbot/closureActivation.md, "Objective low-quality closure also needs a qualified verifier profile, which launch keeps unset"
+import { ConfigInvalid, jsonVar } from "@repo/platform/config"
+import type { Category } from "../../gen/slopbot__categories.effect.vibe"
+import type { ActivationView } from "../../gen/slopbot__closure.effect.vibe"
+import { type Activation, type Event, type OwnerDecision, type QualificationReview, type QualityTrust, type ReleaseEvidence, type VerifierReview, Machine, canActivate, canDeactivate, initial, machineOver, qualified } from "../../gen/slopbot__closureActivation.effect.vibe"
+
+export interface ActivationVars {
+  readonly SLOPBOT_CLOSURE_ENABLED?: string
+  readonly SLOPBOT_RELEASE?: string
+  readonly SLOPBOT_QUALITY_VERIFIER_KEY?: string
+  readonly SLOPBOT_QUALITY_PROFILE_SHA256?: string
+}
+
+export interface Qualifying {
+  readonly by: number
+  readonly review: QualificationReview
+}
+
+export interface VerifierQualifying {
+  readonly by: number
+  readonly verifier: VerifierReview
+}
+
+export interface ReviewedRecords {
+  readonly decisions: ReadonlyArray<OwnerDecision>
+  readonly qualifications: ReadonlyArray<Qualifying>
+  readonly verifiers: ReadonlyArray<VerifierQualifying>
+}
+
+export service ClosureActivation {
+  readonly activation: Activation
+  readonly trust: QualityTrust
+}
+
+schema ReleaseVar {
+  readonly sequence: number
+  readonly branch: "main" | "other"
+  readonly workflow: "production-release" | "other"
+  readonly reviewedPullRequest: number
+  readonly sourceSha: string
+}
+
+export const reviewedRecords: ReviewedRecords = { decisions: [], qualifications: [], verifiers: [] }
+
+export effect function releaseOf(vars: ActivationVars) {
+  const text = vars.SLOPBOT_RELEASE
+  if (text === undefined || text.trim() === "") return undefined
+  const release = try jsonVar("SLOPBOT_RELEASE", text, ReleaseVar)
+  if (!Number.isSafeInteger(release.sequence) || !Number.isSafeInteger(release.reviewedPullRequest)) throw new ConfigInvalid({ name: "SLOPBOT_RELEASE", issue: "sequence and reviewedPullRequest must be whole numbers" })
+  return {
+    sequence: release.sequence,
+    branch: release.branch === "main" ? "MainBranch" : "OtherBranch",
+    workflow: release.workflow === "production-release" ? "ProductionRelease" : "OtherWorkflow",
+    reviewedPullRequest: release.reviewedPullRequest,
+    sourceSha: release.sourceSha,
+    closureEnabled: vars.SLOPBOT_CLOSURE_ENABLED === "true",
+  } satisfies ReleaseEvidence
+}
+
+export effect function activationLedger(start: Activation = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function recorded(ledger: Machine.Shape, event: Event, by: number) {
+  ledger.send(event, by) catch effect () => {
+    throw new ConfigInvalid({ name: "closure activation records", issue: `the reviewed ${event.type} record is refused by the closure activation rules` })
+  }
+}
+
+export effect function applyRelease(ledger: Machine.Shape, release: ReleaseEvidence) {
+  const current = try ledger.get()
+  if (canActivate(current, release)) return try ledger.send({ type: "activate", release }, 0)
+  if (canDeactivate(current, release)) return try ledger.send({ type: "deactivate", release }, 0)
+  return current
+}
+
+export effect function activationFrom(records: ReviewedRecords, release: ReleaseEvidence | undefined) {
+  const ledger = try activationLedger()
+  for (const decision of records.decisions) try recorded(ledger, { type: "recordDecision", decision }, decision.actor)
+  for (const { by, review } of records.qualifications) try recorded(ledger, { type: "qualify", review }, by)
+  for (const { by, verifier } of records.verifiers) try recorded(ledger, { type: "qualifyVerifier", verifier }, by)
+  if (release === undefined) return try ledger.get()
+  return try applyRelease(ledger, release)
+}
+
+export function closureActivation(vars: ActivationVars) {
+  return Layer.effect(ClosureActivation, effect {
+    return {
+      activation: try activationFrom(reviewedRecords, try releaseOf(vars)),
+      trust: { verifierKey: vars.SLOPBOT_QUALITY_VERIFIER_KEY ?? "", profile: vars.SLOPBOT_QUALITY_PROFILE_SHA256 ?? "" },
+    }
+  })
+}
+
+export function activationView(activation: Activation, category: Category, verifierQualified: boolean): ActivationView {
+  return { enabled: activation.enabled, category, categoryQualified: qualified(activation, category), verifierQualified }
+}
+

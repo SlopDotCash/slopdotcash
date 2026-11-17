@@ -1,0 +1,136 @@
+// spec/points/publication.md, "An admissible candidate preserves every public record in exact order"; spec/points/profiles.md, "A missing issue history is recorded as a coverage gap, never as zero"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/frontend/requests.md, "Only the current request may publish its validated result"
+import { type LookedUpMember, type Person, pointsMember, pointsPeople } from "@repo/backend/client"
+import { millisOf } from "@repo/platform/clock"
+import { PointsSummary, type ProfileIndex, assembleProjection, maxShardBytes, profileIndexOf, shardCount, shardPath } from "@repo/points/client"
+import { call } from "../platform/api.vibe"
+import { fetchBounded, fetchBoundedBytes } from "../platform/bounded.vibe"
+import { Unreadable, resource } from "./resource.vibe"
+
+export const summaryPath = "/data/points-summary.json"
+export const summaryLimitBytes = 4_194_304
+export const journalIndexPath = "/data/points.json"
+export const journalIndexLimitBytes = 24 * 1024 * 1024
+export const profilesPath = "/data/profiles.json"
+export const profilesLimitBytes = 8 * 1024 * 1024
+export const memberLimitBytes = 16_384
+export const peopleLimitBytes = 24 * 1024 * 1024
+export const peoplePageSize = 25
+
+export const pointsMessages = {
+  summaryInvalid: "Points summary could not be verified",
+  journalInvalid: "Invalid points index",
+  pathInvalid: "Invalid points path",
+  shardUnreadable: "Points shard unavailable",
+  profilesInvalid: "Invalid profile census",
+  peopleInvalid: "Invalid community page",
+  memberInvalid: "Invalid community member",
+} as const
+
+const digest = /^[a-f0-9]{64}$/u
+const actorId = /^[A-Za-z0-9_=-]{4,256}$/u
+const login = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+
+schema ShardEntry { readonly path: string }
+schema IndexShards { readonly shards: ReadonlyArray<ShardEntry> }
+
+function counted(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function summaryValid(summary: PointsSummary): boolean {
+  if (!Number.isFinite(millisOf(summary.generatedAt)) || !digest.test(summary.indexDigest) || !counted(summary.totals.contributors) || !counted(summary.totals.points)
+    || summary.contributors.length !== summary.totals.contributors) return false
+  let previous = Number.POSITIVE_INFINITY
+  const ids = new Set<string>()
+  for (const contributor of summary.contributors) {
+    if (contributor.actor.id === "" || contributor.actor.login === "" || !counted(contributor.total) || contributor.total === 0 || contributor.total > previous || ids.has(contributor.actor.id)) return false
+    previous = contributor.total
+    ids.add(contributor.actor.id)
+  }
+  return summary.contributors.reduce((sum, contributor) => sum + contributor.total, 0) === summary.totals.points
+}
+
+export effect function loadPointsSummary() {
+  const body = try fetchBounded(summaryPath, summaryLimitBytes, "points summary")
+  const summary = Schema.decodeUnknownEffect(PointsSummary)(body) catch effect () => { throw new Unreadable({ message: pointsMessages.summaryInvalid }) }
+  if (!summaryValid(summary)) throw new Unreadable({ message: pointsMessages.summaryInvalid })
+  return summary
+}
+
+export effect function pointsSummaryReads() {
+  return try resource((_key: string) => loadPointsSummary(), (summary: PointsSummary) => summary.contributors.length)
+}
+
+effect function utf8Text(bytes: Uint8Array, message: string) {
+  return Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch effect () => { throw new Unreadable({ message }) }
+}
+
+effect function shardText(path: string, position: number) {
+  if (path !== shardPath(position)) throw new Unreadable({ message: pointsMessages.pathInvalid })
+  return try utf8Text(try fetchBoundedBytes(path, maxShardBytes, "points history"), pointsMessages.shardUnreadable)
+}
+
+export effect function loadPointsJournal() {
+  const indexText = try utf8Text(try fetchBoundedBytes(journalIndexPath, journalIndexLimitBytes, "points", { accept: "application/json" }), pointsMessages.journalInvalid)
+  const parsed: unknown = Effect.try(() => JSON.parse(indexText) as unknown) catch effect () => { throw new Unreadable({ message: pointsMessages.journalInvalid }) }
+  const index = Schema.decodeUnknownEffect(IndexShards)(parsed) catch effect () => { throw new Unreadable({ message: pointsMessages.journalInvalid }) }
+  if (index.shards.length !== shardCount) throw new Unreadable({ message: pointsMessages.journalInvalid })
+  const parts = try Effect.forEach(index.shards, (shard, position) => shardText(shard.path, position), { concurrency: "unbounded" })
+  return assembleProjection(indexText, parts) catch effect (error) => { throw new Unreadable({ message: error.message }) }
+}
+
+export effect function pointsJournalReads() {
+  return try resource((_key: string) => loadPointsJournal(), (journal: { readonly revisions: ReadonlyArray<unknown> }) => journal.revisions.length)
+}
+
+export effect function loadProfiles() {
+  const body = try fetchBounded(profilesPath, profilesLimitBytes, "profiles")
+  const index: ProfileIndex = profileIndexOf(body) catch effect () => { throw new Unreadable({ message: pointsMessages.profilesInvalid }) }
+  return index
+}
+
+export effect function profileReads() {
+  return try resource((_key: string) => loadProfiles(), (index: ProfileIndex) => index.people.length)
+}
+
+export type MemberLookup = { readonly kind: "absent" } | { readonly kind: "member"; readonly member: LookedUpMember }
+
+function memberValid(member: LookedUpMember): boolean {
+  return actorId.test(member.actor.id) && login.test(member.actor.login) && [0, 5].includes(member.welcome) && [0, 10].includes(member.socialPoints)
+}
+
+export effect function lookUpMember(name: string) {
+  const found = call(pointsMember, { query: { login: name } }, { limitBytes: memberLimitBytes }) catch effect (failure) => {
+    if (failure._tag === "Refused" && failure.status === 404) return null
+    throw failure
+  }
+  if (found === null) return { kind: "absent" } satisfies MemberLookup
+  if (!memberValid(found)) throw new Unreadable({ message: pointsMessages.memberInvalid })
+  return { kind: "member", member: found } satisfies MemberLookup
+}
+
+export effect function memberReads() {
+  return try resource((name: string) => lookUpMember(name), (lookup: MemberLookup) => lookup.kind === "member" ? 1 : 0)
+}
+
+function personValid(person: Person): boolean {
+  return actorId.test(person.actor.id) && login.test(person.actor.login) && [0, 5].includes(person.welcome) && [0, 10].includes(person.socialPoints)
+}
+
+export effect function loadPeople() {
+  const people: Person[] = []
+  let cursor = ""
+  while (true) {
+    const page = try call(pointsPeople, { query: { after: cursor } }, { limitBytes: peopleLimitBytes })
+    if (page.people.length > peoplePageSize || (page.next !== null && (!actorId.test(page.next) || page.next <= cursor)) || !page.people.every(personValid)) {
+      throw new Unreadable({ message: pointsMessages.peopleInvalid })
+    }
+    people.push(...page.people)
+    if (page.next === null) return people
+    cursor = page.next
+  }
+}
+
+export effect function peopleReads() {
+  return try resource((_key: string) => loadPeople(), (people: ReadonlyArray<Person>) => people.length)
+}

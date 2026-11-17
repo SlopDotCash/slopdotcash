@@ -1,0 +1,51 @@
+// spec/security/admission.md, "The primary review decides and an ambiguous or high-risk finding needs the specialist"; spec/security/admission.md, "Every reviewed batch covers the next unreviewed inventory entries"
+import { randomId } from "@repo/platform/crypto"
+import { Provider, type ProviderFailure, type Route } from "@repo/platform/providers"
+import { type ScannerEvidence, type ScannerProfile, type Transport, failedReply, preparedBundle, profileApproved, promptOf, reviewedReply, startedEvidence } from "./review.ts"
+
+export error UnapprovedProfile
+export error InvalidEvidenceBundle
+
+export interface ReviewRequest {
+  readonly evidence: string
+  readonly inputSha256: string
+  readonly profile: ScannerProfile
+  readonly synthesis: boolean
+  readonly timeoutMs: number
+}
+
+const routes: Readonly<Record<Transport, Route>> = { "anthropic-messages": "surplus-anthropic", "openai-responses": "surplus-openai" }
+
+export const maxReplyBytes = 1024 * 1024
+
+function failureOf(error: ProviderFailure) {
+  return error.category === "Timeout" ? "timeout" : error.reason
+}
+
+function receiptReply(error: ProviderFailure) {
+  const receipt = error.receipt
+  if (receipt.model === null || receipt.usage === null || receipt.responseId === null || receipt.responseSha256 === null) return undefined
+  return { model: receipt.model, usage: receipt.usage, responseId: receipt.responseId, responseSha256: receipt.responseSha256 }
+}
+
+export effect function reviewScan(request: ReviewRequest) {
+  if (!profileApproved(request.profile)) throw new UnapprovedProfile()
+  const bundle = preparedBundle(request.evidence, request.inputSha256)
+  if (bundle === undefined) throw new InvalidEvidenceBundle()
+  const runId = try randomId()
+  const started = startedEvidence({ profile: request.profile, inputSha256: request.inputSha256, runId, synthesis: request.synthesis, gaps: bundle.visibilityGaps })
+  const provider = try Provider
+  const outcome = provider.complete({
+    route: routes[request.profile.transport],
+    model: request.profile.model,
+    system: promptOf(request.synthesis),
+    messages: [{ role: "user", content: request.evidence }],
+    maxTokens: request.profile.maxOutputTokens,
+    timeoutMs: request.timeoutMs,
+    accept: "exact",
+  }) catch effect (error) => {
+    return failedReply(started, request.profile, receiptReply(error), failureOf(error))
+  }
+  if ("review" in outcome) return outcome satisfies ScannerEvidence
+  return reviewedReply(started, request.profile, bundle, outcome) satisfies ScannerEvidence
+}

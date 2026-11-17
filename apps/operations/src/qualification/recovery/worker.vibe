@@ -1,0 +1,28 @@
+// spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"; spec/operations/backup.md, "One cycle copies an ordered verified prefix and completes one manifest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import type { RetentionR2Bucket } from "@repo/platform/r2"
+import { worker } from "@repo/platform/worker"
+import { backupQueue, backupSettings, evidenceBuckets } from "../../backup/store.vibe"
+import type { Env as BackupEnv } from "../../workers/backup.vibe"
+import { RecoveryFixture, recoveryMessage } from "./fixture.vibe"
+
+export interface Env extends BackupEnv {
+  readonly RESTORED: RetentionR2Bucket
+  readonly RESTORED_DB: D1Database
+  readonly QUALIFICATION_RUN: string
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(
+    d1(env.EVIDENCE_DATABASE),
+    webCrypto,
+    evidenceBuckets(env.EVIDENCE_SOURCE, env.EVIDENCE_BACKUPS),
+    backupQueue(env.EVIDENCE_BACKUP_QUEUE),
+    backupSettings(env),
+    Layer.succeed(RecoveryFixture, { run: env.QUALIFICATION_RUN, restored: env.RESTORED, restoredDatabase: env.RESTORED_DB }),
+  ),
+  routes: Layer.empty,
+  queue: (message) => recoveryMessage(message),
+})

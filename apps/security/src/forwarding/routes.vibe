@@ -4,7 +4,7 @@ import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
 import type { AdvisoryRead, Copy, Listing, Request, SendClaim, SendGate } from "../../gen/security__forwarding.ts"
-import { canClaimSend, canReadReceipt, canReconcile, readReceipt, reconcile, recordCreated } from "../../gen/security__forwarding.effect.vibe"
+import { canClaimSend, canReadReceipt, canReconcile, readReceipt } from "../../gen/security__forwarding.effect.vibe"
 import { qualified } from "../../gen/security__screening.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
 import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding } from "../client/forwarding.vibe"
@@ -14,9 +14,9 @@ import { parseReport } from "../intake/report.vibe"
 import { type StoredIntake, type SubmissionRow, decorated, reportVersions, screeningOf, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber, reportBytes } from "../privacy/reads.vibe"
 import { ReportingPrograms } from "../receipt/program.vibe"
-import { type AdvisoryFacts, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaRank, markerLine, sameRepository } from "./advisories.vibe"
+import { type AdvisoryFacts, type FailureCode, type MarkerListing, type PostOutcome, createReport, findByMarker, getAdvisory, ghsaRank, markerLine, sameRepository } from "./advisories.vibe"
 import { IntakeApp, type IntakeAppConfig, type ReporterGrant, beginAuthorization, clearGrantCookie, completeAuthorization, readGrant } from "./grant.vibe"
-import { type Loaded, type Transition, type Volatile, boundTransition, claimTransition, copyOf, failedTransition, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stayTransition, stepped, written } from "./store.vibe"
+import { type Loaded, type Shell, type Volatile, claimed, copyOf, forwarded, linkedTransition, loaded, noVolatile, phaseOf, reloaded, settled, stepped, written } from "./store.vibe"
 
 interface Row {
   readonly status: number
@@ -201,25 +201,19 @@ effect function verified(app: IntakeAppConfig, forwarding: Loaded, grant: Report
     }
     const decided = try alreadyRecorded(forwarding, ledger)
     if (decided !== undefined) return decided
-    return try recorded(forwarding, request, { ...read, competingCase: true }, ledger, at)
+    return try recorded(forwarding, request, { ...read, competingCase: true }, ledger)
   }
-  return try recorded(forwarding, request, read, ledger, at)
+  return try recorded(forwarding, request, read, ledger)
 }
 
-effect function recorded(forwarding: Loaded, request: Request, read: AdvisoryRead, ledger: Ref.Ref<Volatile>, at: string) {
-  const row = forwarding.row
+effect function recorded(forwarding: Loaded, request: Request, read: AdvisoryRead, ledger: Ref.Ref<Volatile>) {
   const next = readReceipt(forwarding.state, request, read)
-  const transition: Transition = read.status !== "Found" ? stayTransition(row, "verify-inconclusive", null, at)
-    : next.phase === "Failed" && next.failure === "Terminal" ? failedTransition("author-mismatch", "verify-failed", at)
-    : next.phase === "Failed" && next.failure === "ReceiptMismatch" ? failedTransition("invalid", "verify-failed", at)
-    : next.phase === "Failed" && next.failure === "AlreadyRecorded" ? failedTransition("already-recorded", "verify-failed", at)
-    : stayTransition(row, "contacts-unavailable", null, at)
-  stepped(forwarding, { type: "readReceipt", request, advisoryRead: read }, ledger, transition) catch effect (error) => {
+  forwarded(forwarding, { type: "readReceipt", request, advisoryRead: read }, shellFor(forwarding.row, []), ledger) catch effect (error) => {
     if (error._tag === "Stale") throw refused(stale)
     throw error
   }
   if (next.failure === "AlreadyRecorded") throw refused(reconcileRows.advisoryAlreadyRecordedThisAdvisoryAlreadyHas)
-  return { status: next.phase === "Failed" ? 200 : 202, row: (try reloaded(forwarding, ledger)).row }
+  return { status: next.phase === "Failed" ? 200 : 202, row: (try reloaded(forwarding, ledger)).row } satisfies Outcome
 }
 
 effect function storedReport(row: SubmissionRow, stored: StoredIntake) {
@@ -233,56 +227,56 @@ function factsByRank(all: ReadonlyArray<AdvisoryFacts>, rank: number) {
   return all.find((facts) => ghsaRank(facts.ghsa) === rank)
 }
 
-effect function created(app: IntakeAppConfig, forwarding: Loaded, claim: SendClaim, accepted: AdvisoryFacts, grant: ReporterGrant, ledger: Ref.Ref<Volatile>, at: string) {
+function shellFor(row: SubmissionRow, all: ReadonlyArray<AdvisoryFacts>, code: FailureCode = "invalid", retryAfterSeconds: number | null = null): Shell {
+  return {
+    factsOf: (copy) => factsByRank(all, copy.ghsa) ?? { ghsa: "", repository: row.repository, authorId: null, privateReport: false, state: "unknown", createdAt: "", markerFound: false, evidenceDigest: "" },
+    code,
+    retryAfterSeconds,
+    actorGithubId: row.reporter_github_id,
+    claimGuard: sql`0`,
+  }
+}
+
+effect function created(app: IntakeAppConfig, forwarding: Loaded, claim: SendClaim, accepted: AdvisoryFacts, grant: ReporterGrant, ledger: Ref.Ref<Volatile>) {
   const f = forwarding.state
   const sinceMs = f.firstAtMs - reconcileWindowMs
   const listed: MarkerListing = f.attempt > 1 ? try findByMarker(app, grant, forwarding.row.repository, markerLine(forwarding.row.marker), sinceMs) : { kind: "complete", matches: [] }
   const matches = listed.kind === "complete" ? listed.matches : []
-  const acceptedCopy = factsCopy(forwarding.row, accepted)
   const listing: Listing = { complete: listed.kind === "complete", submission: 1, repository: 1, marker: 1, sinceMs, copies: matches.map((facts) => factsCopy(forwarding.row, facts)) }
-  const preview = recordCreated(f, claim, acceptedCopy, listing)
-  const all = [accepted, ...matches]
-  const chosen = factsByRank(all, preview.canonical.ghsa) ?? accepted
-  const duplicates = preview.duplicateGhsas.flatMap((rank) => factsByRank(all, rank)?.ghsa ?? [])
-  return stepped(forwarding, { type: "recordCreated", claim, accepted: acceptedCopy, listing }, ledger, boundTransition(chosen, duplicates, "created", null, at)) catch effect (error) => {
+  const event = { type: "recordCreated" as const, claim, accepted: factsCopy(forwarding.row, accepted), listing }
+  return forwarded(forwarding, event, shellFor(forwarding.row, [accepted, ...matches]), ledger) catch effect (error) => {
     if (error instanceof ConstraintViolation) return undefined
     throw error
   }
 }
 
-function toUncertain(at: string): Transition {
-  return { state: "uncertain", kind: "uncertain", actorGithubId: null, at }
+effect function unknownCopy(latest: Loaded, claim: SendClaim, ledger: Ref.Ref<Volatile>) {
+  try forwarded(latest, { type: "recordPostResult", claim, result: "CopyUnknown" }, shellFor(latest.row, []), ledger)
+  return { status: 202, row: (try reloaded(latest, ledger)).row } satisfies Outcome
 }
 
 effect function posted(app: IntakeAppConfig, sending: Loaded, claim: SendClaim, grant: ReporterGrant, nowSeconds: number, ledger: Ref.Ref<Volatile>, result: PostOutcome) {
-  const at = try isoAt(try Clock.currentTimeMillis)
   const latest = try reloaded(sending, ledger)
   const owns = latest.state.phase === "Submitting" && latest.state.revision === claim.revision
   if (!owns) {
     if (result.kind === "created" && latest.state.phase === "Submitting") {
-      stepped(latest, { type: "holdLateCopy", claim, seenRevision: latest.state.revision, accepted: factsCopy(latest.row, result.facts) }, ledger, toUncertain(at)) catch effect (error) => {
+      forwarded(latest, { type: "holdLateCopy", claim, seenRevision: latest.state.revision, accepted: factsCopy(latest.row, result.facts) }, shellFor(latest.row, [result.facts]), ledger) catch effect (error) => {
         if (error._tag !== "Stale" && error._tag !== "Rejected") throw error
       }
     }
-    return { status: 202, row: (try reloaded(latest, ledger)).row }
+    return { status: 202, row: (try reloaded(latest, ledger)).row } satisfies Outcome
   }
   if (result.kind === "rejected") {
-    try stepped(latest, { type: "recordPostResult", claim, result: "DefiniteRetryable" }, ledger, failedTransition(result.code, "rejected", at))
-    return { status: 200, row: (try reloaded(latest, ledger)).row }
+    try forwarded(latest, { type: "recordPostResult", claim, result: "DefiniteRetryable" }, shellFor(latest.row, [], result.code), ledger)
+    return { status: 200, row: (try reloaded(latest, ledger)).row } satisfies Outcome
   }
   if (result.kind === "rate-limited") {
-    try stepped(latest, { type: "recordPostResult", claim, result: "ThrottledNoCopy" }, ledger, { state: "draft", kind: "rate-limited", detail: { retryAfterSeconds: result.retryAfterSeconds }, actorGithubId: null, at })
-    return { status: 200, row: (try reloaded(latest, ledger)).row, extra: { rateLimited: { retryAfterSeconds: result.retryAfterSeconds } } }
+    try forwarded(latest, { type: "recordPostResult", claim, result: "ThrottledNoCopy" }, shellFor(latest.row, [], "invalid", result.retryAfterSeconds), ledger)
+    return { status: 200, row: (try reloaded(latest, ledger)).row, extra: { rateLimited: { retryAfterSeconds: result.retryAfterSeconds } } } satisfies Outcome
   }
-  if (result.kind === "uncertain") {
-    try stepped(latest, { type: "recordPostResult", claim, result: "CopyUnknown" }, ledger, toUncertain(at))
-    return { status: 202, row: (try reloaded(latest, ledger)).row }
-  }
-  const bound = try created(app, latest, claim, result.facts, grant, ledger, at)
-  if (bound === undefined) {
-    try stepped(latest, { type: "recordPostResult", claim, result: "CopyUnknown" }, ledger, toUncertain(at))
-    return { status: 202, row: (try reloaded(latest, ledger)).row }
-  }
+  if (result.kind === "uncertain") return try unknownCopy(latest, claim, ledger)
+  const bound = try created(app, latest, claim, result.facts, grant, ledger)
+  if (bound === undefined) return try unknownCopy(latest, claim, ledger)
   return try verified(app, try reloaded(latest, ledger), grant, nowSeconds, ledger)
 }
 
@@ -331,20 +325,16 @@ effect function sendSubmission(actor: Actor, id: string) {
   const request = requestOf(row, grant, nowSeconds)
   const gate: SendGate = { seenScreeningRevision: stored.revision, reportVersion: stored.report_version, digest: digests[stored.report_version - 1] ?? "", screening, bytesVerified: true, intakeCurrent: true, reportingReady, allowedToParticipate: true, wonClaim: true }
   if (!canClaimSend(forwarding.state, request, gate, nowMs)) throw refused(stale)
-  const at = try isoAt(nowMs)
   const unbanned = try (try ReportingPrograms).unbanned(actor.githubId)
-  const won = written(row, claimTransition(actor.githubId, row.attempt + 1, stored.report_version, at, sql`(${unbanned}) AND ${qualifiedAt(row.id, stored)}`)) catch effect (error) => {
+  const claimedState = claimed(forwarding, { type: "claimSend", request, gate, startedAtMs: nowMs }, sql`(${unbanned}) AND ${qualifiedAt(row.id, stored)}`, actor.githubId, ledger) catch effect (error) => {
     if (error instanceof ConstraintViolation) throw refused(sendRows.submissionInFlightAnotherSubmissionForThis)
-    throw error
-  }
-  const claimedState = stepped(forwarding, { type: "claimSend", request, gate: { ...gate, wonClaim: won }, startedAtMs: nowMs }, ledger) catch effect (error) => {
     if (error._tag === "Rejected") throw try lostClaim(actor.githubId)
     throw error
   }
   const readback = try submission(row.id)
   if (readback === undefined) throw refused(stale)
   const claiming: Loaded = { ...forwarding, row: readback, state: claimedState }
-  const readyState = stepped(claiming, { type: "recordClaimRead", readback: { requestId: request.id, changedOne: won, rowPresent: true, observedRevision: readback.revision, observedPhase: phaseOf(readback.state) } }, ledger) catch effect (error) => {
+  const readyState = stepped(claiming, { type: "recordClaimRead", readback: { requestId: request.id, changedOne: true, rowPresent: true, observedRevision: readback.revision, observedPhase: phaseOf(readback.state) } }, ledger) catch effect (error) => {
     if (error._tag === "Rejected") throw refused(stale)
     throw error
   }
@@ -374,14 +364,7 @@ effect function reconcileSubmission(actor: Actor, id: string) {
   const matches = listed.kind === "complete" ? listed.matches : []
   const listing: Listing = { complete: listed.kind === "complete", submission: 1, repository: 1, marker: 1, sinceMs, copies: matches.map((facts) => factsCopy(row, facts)) }
   if (!canReconcile(forwarding.state, request, listing, nowMs)) throw refused(stale)
-  const next = reconcile(forwarding.state, request, listing, nowMs)
-  const at = try isoAt(nowMs)
-  const chosen = factsByRank(matches, next.canonical.ghsa)
-  if (next.phase === "Submitted" && chosen === undefined) return try die(new Error("The chosen copy is not in the listing"))
-  const transition: Transition = next.phase === "Submitted" && chosen !== undefined ? boundTransition(chosen, next.duplicateGhsas.flatMap((rank) => factsByRank(matches, rank)?.ghsa ?? []), "reconcile-matched", actor.githubId, at)
-    : next.phase === "Draft" ? { state: "draft", kind: "reconcile-empty", actorGithubId: actor.githubId, at }
-    : stayTransition(row, listed.kind === "complete" ? "reconcile-too-early" : "reconcile-inconclusive", actor.githubId, at)
-  stepped(forwarding, { type: "reconcile", request, listing, nowMs }, ledger, transition) catch effect (error) => {
+  const next = forwarded(forwarding, { type: "reconcile", request, listing, nowMs }, { ...shellFor(row, matches), actorGithubId: actor.githubId }, ledger) catch effect (error) => {
     if (error._tag === "Stale") throw refused(stale)
     throw error
   }

@@ -1,0 +1,231 @@
+// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { RotationRefused } from "./qualify.vibe"
+
+schema Labelled {
+  readonly id: string
+  readonly number: number
+  readonly annotations?: Record<string, string>
+}
+
+schema Script { readonly etag?: string }
+
+const Raw = Schema.Record(Schema.String, Schema.Unknown)
+
+const Resources = Schema.Struct({
+  bindings: Schema.optionalKey(Schema.Array(Raw)),
+  script: Schema.optionalKey(Script),
+  script_runtime: Schema.optionalKey(Raw),
+})
+
+const Version = Schema.Struct({
+  id: Schema.String,
+  number: Schema.Number,
+  annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  resources: Schema.optionalKey(Resources),
+})
+
+type Version = typeof Version.Type
+
+schema Split {
+  readonly version_id: string
+  readonly percentage: number
+}
+
+schema Deployment {
+  readonly id: string
+  readonly annotations?: Record<string, string>
+  readonly versions: ReadonlyArray<Split>
+}
+
+schema Deployments { readonly deployments: ReadonlyArray<Deployment> }
+
+schema Versions { readonly items: ReadonlyArray<Labelled> }
+
+schema QueryResult {
+  readonly success: boolean
+  readonly results: ReadonlyArray<Raw>
+}
+
+export type WorkerVersion = Version
+export type RotationKind = "robinhood" | "solana"
+
+export interface WorkerState {
+  readonly active: Deployment
+  readonly latest: Labelled
+}
+
+export const feeConverterWorker = "slop-fee-converter"
+
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const labels: { readonly [K in RotationKind]: string } = { robinhood: "; Robinhood RPC rotation from ", solana: "; Solana RPC rotation from " }
+const changedSecrets: { readonly [K in RotationKind]: ReadonlyArray<string> } = { robinhood: [], solana: ["RPC_URL_SOLANA", "SOLANA_RECOVERY_RPC_URL"] }
+
+export const unresolvedFeeWork = `SELECT
+  (SELECT COUNT(*) FROM fee_conversions
+    WHERE mode = 'live' AND (state IN ('submitted', 'unknown')
+      OR (approval_tx_id IS NOT NULL AND raw_tx IS NULL AND tx_id IS NULL))) AS openSends,
+  (SELECT COUNT(*) FROM fee_conversions c
+    WHERE c.mode = 'live' AND c.kind = 'bridge' AND c.state = 'finalized'
+      AND NOT EXISTS (SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id = c.id)) AS openBridgeOrders,
+  (SELECT COUNT(*) FROM fee_native_gas
+    WHERE network = 'robinhood' AND state = 'signed' AND actual_wei IS NULL) AS openRobinhoodGas`
+
+export const unresolvedSolanaWork = `SELECT
+  (SELECT COUNT(*) FROM fee_conversions c WHERE c.network='solana' AND c.mode='live'
+    AND (c.state IN ('submitted','unknown') OR
+      (c.kind='bridge' AND c.state='finalized' AND NOT EXISTS(SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id=c.id)))) AS openSends,
+  (SELECT COUNT(*) FROM fee_native_gas WHERE network='solana'
+    AND (state='reserved' OR (state='signed' AND actual_wei IS NULL))) AS openGas,
+  (SELECT COUNT(*) FROM fee_converter_locks WHERE network='solana' AND expires_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now')) AS activeLocks`
+
+const journalColumns: { readonly [K in RotationKind]: ReadonlyArray<string> } = { robinhood: ["openSends", "openBridgeOrders", "openRobinhoodGas"], solana: ["openSends", "openGas", "activeLocks"] }
+
+function refused(message: string) {
+  return new RotationRefused({ message })
+}
+
+export function releaseDescription(sha: string) {
+  return `slop.cash release ${sha}`
+}
+
+export effect function lineage(annotations: Readonly<Record<string, string>> | undefined, kind: RotationKind) {
+  const label = labels[kind]
+  const message = annotations?.["workers/message"] ?? ""
+  if (!message.includes(label)) return ""
+  const found = message.slice(message.lastIndexOf(label) + label.length).split(";")[0] ?? ""
+  if (!uuid.test(found)) throw refused("Invalid retained RPC rotation marker.")
+  return found
+}
+
+export effect function inheritedSuffix(annotations: Readonly<Record<string, string>> | undefined) {
+  let suffix = ""
+  for (const kind of ["robinhood", "solana"] as const) {
+    const found = try lineage(annotations, kind)
+    if (found !== "") suffix += `${labels[kind]}${found}`
+  }
+  return suffix
+}
+
+export effect function rotationMessage(sha: string, before: Version, kind: RotationKind) {
+  const retained: RotationKind = kind === "solana" ? "robinhood" : "solana"
+  const kept = try lineage(before.annotations, retained)
+  return `${releaseDescription(sha)}${kept === "" ? "" : `${labels[retained]}${kept}`}${labels[kind]}${before.id}`
+}
+
+effect function readWorker<S extends Schema.Top>(schema: S, path: string) {
+  const cloudflare = try Cloudflare
+  const answer = cloudflare.read("fee-converter metadata", `/workers/scripts/${feeConverterWorker}/${path}`) catch effect () => {
+    throw refused("Fee-converter version metadata is unavailable.")
+  }
+  return Schema.decodeUnknownEffect(schema)(answer) catch effect () => {
+    throw refused("Fee-converter version metadata is unavailable.")
+  }
+}
+
+export effect function workerState() {
+  const [{ deployments }, { items }] = try.all [readWorker(Deployments, "deployments"), readWorker(Versions, "versions")]
+  const [active] = deployments
+  const valid = active !== undefined && uuid.test(active.id) && active.versions.length > 0
+    && active.versions.every((entry) => uuid.test(entry.version_id) && Number.isFinite(entry.percentage))
+    && items.length > 0 && items.every((entry) => uuid.test(entry.id) && Number.isSafeInteger(entry.number) && entry.number > 0)
+  const latest = items.reduce<Labelled | undefined>((best, entry) => best === undefined || entry.number > best.number ? entry : best, undefined)
+  if (!valid || active === undefined || latest === undefined) throw refused("Fee-converter deployment or upload history is unavailable.")
+  return { active, latest } satisfies WorkerState
+}
+
+export effect function inspectVersion(id: string) {
+  const version = try readWorker(Version, `versions/${id}`)
+  if (version.id !== id) throw refused("Fee-converter version metadata returned a different ID.")
+  return version
+}
+
+export function onRotationBase(state: WorkerState, expected: string, latest: string = expected, deploymentId?: string) {
+  const [only, ...others] = state.active.versions
+  return only !== undefined && others.length === 0 && only.version_id === expected && only.percentage === 100
+    && state.latest.id === latest && (deploymentId === undefined || state.active.id === deploymentId)
+}
+
+export effect function requireRotationBase(state: WorkerState, expected: string, latest: string = expected, deploymentId?: string) {
+  if (!onRotationBase(state, expected, latest, deploymentId)) throw refused("The pinned fee-converter deployment or latest upload changed.")
+}
+
+function textOf(binding: Readonly<Record<string, unknown>>, key: string) {
+  const value = binding[key]
+  return typeof value === "string" ? value : undefined
+}
+
+export function bindingOf(version: Version, name: string) {
+  return version.resources?.bindings?.find((binding) => binding.name === name)
+}
+
+export function secretNamesOf(version: Version) {
+  return (version.resources?.bindings ?? []).filter((binding) => binding.type === "secret_text").map((binding) => textOf(binding, "name") ?? "")
+}
+
+export effect function normalizedBindings(version: Version, kind: RotationKind | undefined) {
+  const bindings = version.resources?.bindings
+  const has = (name: string, type: string, text?: string) => (bindings ?? []).some((binding) => binding.name === name && binding.type === type && (text === undefined || binding.text === text))
+  const shaped = bindings !== undefined && bindings.every((binding) => typeof binding.name === "string" && typeof binding.type === "string")
+    && new Set(bindings.map((binding) => binding.name)).size === bindings.length
+  if (!shaped || !has("RPC_URL_ROBINHOOD", "secret_text") || !has("FEE_DB", "d1") || !has("FEE_CONVERTER_MODE", "plain_text", "live") || !has("BUYBACK_MODE", "plain_text", "live")) {
+    throw refused("The active fee-converter binding inventory did not match the live program.")
+  }
+  const changed = kind === undefined ? [] : changedSecrets[kind]
+  return bindings
+    .filter((binding) => !changed.includes(textOf(binding, "name") ?? ""))
+    .map((binding) => (textOf(binding, "type") ?? "").startsWith("secret_") ? { name: binding.name, type: binding.type } : binding)
+    .sort((left, right) => (textOf(left, "name") ?? "").localeCompare(textOf(right, "name") ?? ""))
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, stable(entry)]))
+  }
+  return value
+}
+
+effect function same(left: unknown, right: unknown) {
+  return try orDie(Effect.try(() => JSON.stringify(stable(left)) === JSON.stringify(stable(right))))
+}
+
+export effect function requireSameWorker(before: Version, after: Version, sha: string, kind: RotationKind) {
+  const retained: RotationKind = kind === "solana" ? "robinhood" : "solana"
+  const original = before.resources
+  const uploaded = after.resources
+  const etag = original?.script?.etag ?? ""
+  const consecutive = Number.isSafeInteger(before.number) && before.number > 0 && Number.isSafeInteger(after.number) && after.number === before.number + 1
+  if (!consecutive) throw refused("The candidate is not the immediate successor of the pinned fee-converter version.")
+  const tagged = after.annotations?.["workers/tag"] === sha && (try lineage(after.annotations, kind)) === before.id
+    && (try lineage(after.annotations, retained)) === (try lineage(before.annotations, retained))
+  const rotated = changedSecrets[kind].every((name) => (uploaded?.bindings ?? []).some((binding) => binding.name === name && binding.type === "secret_text"))
+  const code = etag !== "" && etag === uploaded?.script?.etag && original?.script_runtime !== undefined && (try same(original.script_runtime, uploaded.script_runtime))
+  const bound = try same(try normalizedBindings(before, kind), try normalizedBindings(after, kind))
+  if (!tagged || !rotated || !code || !bound) throw refused("The uploaded fee-converter code, runtime or bindings differ from the pinned version.")
+}
+
+export effect function requireQuietJournal(version: Version, databaseId: string, kind: RotationKind) {
+  const database = bindingOf(version, "FEE_DB")
+  const bound = database === undefined ? undefined : textOf(database, "database_id") ?? textOf(database, "id")
+  if (!uuid.test(databaseId) || database?.type !== "d1" || bound !== databaseId) throw refused("The active fee-converter D1 binding differs from the reviewed database.")
+  const cloudflare = try Cloudflare
+  const unverified = kind === "solana" ? "Could not verify the Solana fee journal." : "Could not verify the bound fee-converter journal."
+  const answer = cloudflare.write("fee-converter journal", "POST", `/d1/database/${databaseId}/query`, { sql: kind === "solana" ? unresolvedSolanaWork : unresolvedFeeWork }) catch effect () => {
+    throw refused(unverified)
+  }
+  const results = Schema.decodeUnknownEffect(Schema.Array(QueryResult))(answer) catch effect () => {
+    throw refused(unverified)
+  }
+  const [result, ...others] = results
+  const [row, ...more] = result?.results ?? []
+  const counts = journalColumns[kind].map((column) => row?.[column])
+  if (result === undefined || others.length > 0 || !result.success || row === undefined || more.length > 0 || !counts.every((count) => typeof count === "number" && Number.isSafeInteger(count) && count >= 0)) {
+    throw refused(unverified)
+  }
+  if (!counts.every((count) => count === 0)) {
+    throw refused(kind === "solana"
+      ? "Solana has unresolved fee sends, gas reservations or an active lease. Reconcile before changing RPC bindings."
+      : "The fee-converter journal has unresolved sends, bridge orders or Robinhood gas. Review recovery before rotating.")
+  }
+}

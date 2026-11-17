@@ -1,0 +1,523 @@
+// spec/points/corrections.md, "Story: Reassign the existing pool while preserving funded history"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/journal.md, "A reallocation keeps the unit's whole value and changes only its recipients"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+import { millisOf } from "@repo/platform/clock"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { type Award, type Journal, type Revision as Row, coverageText, journalText, revisionText } from "../../kernels/records/canonical.ts"
+import { batchDigest, pointKey } from "../../kernels/records/ids.vibe"
+import { instantOf } from "../../kernels/records/instants.ts"
+import { type Store, advanceTo, command, finish, jointUnit, openStore, ownUnit, unitNameOf } from "../../journal/ledger.vibe"
+import { appended, commit as commitRows, decisionSourceOf, flush, rowsOf, sameAward, sendAll } from "../../journal/rows.vibe"
+import { octoberOriginalContributorDecision } from "../../journal/snapshot.vibe"
+import { compareCodeUnits } from "../../client/snapshot/checks.vibe"
+import { importStatements } from "../../publication/import.vibe"
+import { hasBaselinePrefix } from "../collect/inventory.vibe"
+import { type Correction, type CorrectionPhase, type Event, type Manifest, Machine, canCommit, emptyManifest, initial, machineOver } from "../../../gen/points__corrections.effect.vibe"
+import type { Actor as Sender, JournalEntry } from "../../../gen/points__corrections.ts"
+import type { FreezeEvidence } from "../../../gen/points__periods.ts"
+import { freezes, periodOf } from "../../../gen/points__periods.effect.vibe"
+import { allocatePoints, canWriteAllocation } from "../../../gen/points__allocation.effect.vibe"
+import type { PointShare, Recipient } from "../../../gen/points__allocation.ts"
+import { type Collection, type ManifestCandidate, CorrectionRefused } from "./manifest.vibe"
+import { type DerivedProof, type ProjectOfRepository, check, correctionFailure, derivePullRequestProof, digestPattern, distinct, isInstant, isNodeId, sameSet, sourceRepository } from "./derive.vibe"
+
+module verified {
+  import { ambiguousPlans as ambiguous, connectedLabels as connected } from "./proofs.ts"
+  /** @throws {never} */
+  export function ambiguousPlans(plans: number, owners: ReadonlyArray<number>, commits: ReadonlyArray<number>, paths: ReadonlyArray<number>): boolean[] { return ambiguous(plans, owners, commits, paths) }
+  /** @throws {never} */
+  export function connectedLabels(candidates: number, members: ReadonlyArray<number>, sources: ReadonlyArray<number>, sourceCount: number): number[] { return connected(candidates, members, sources, sourceCount) }
+}
+import { ambiguousPlans, connectedLabels } from verified
+
+export type Disposition = "applied" | "unchanged" | "held" | "retained" | "already-applied"
+export type Mode = "preview" | "apply"
+
+export interface PlanInput {
+  readonly journal: Journal
+  readonly collection: Collection
+  readonly protection: ReadonlyArray<FreezeEvidence>
+  readonly bans: ReadonlyMap<string, string>
+  readonly recordedAt: string
+  readonly mode: Mode
+  readonly reviewedDigest: string
+  readonly projectOf: ProjectOfRepository
+}
+
+export interface Planned {
+  readonly journal: Journal
+  readonly manifestDigest: string
+  readonly dispositions: ReadonlyArray<{ readonly candidateId: string; readonly status: Disposition }>
+  readonly phases: ReadonlyArray<CorrectionPhase>
+}
+
+interface Plan {
+  readonly index: number
+  readonly candidate: ManifestCandidate
+  readonly key: string
+  readonly previous: ReadonlyArray<Row>
+  readonly current: ReadonlyArray<Row>
+  readonly proof: DerivedProof | null
+  readonly total: number
+  readonly recipients: ReadonlyArray<{ readonly id: string; readonly login: string; readonly lines: number }>
+  readonly replacements: ReadonlyArray<Award>
+  readonly changed: ReadonlyArray<Award>
+  readonly participationHeld: boolean
+  readonly protectedMonth: FreezeEvidence | undefined
+  readonly eligible: boolean
+}
+
+const trusted: Sender = "TrustedWorkflow"
+const owner: Sender = "Owner"
+const reallocationReason = "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved."
+const notVerified = "Historical correction import was not verified; retain the run for reconciliation"
+const importAttempts = 3
+const importWaitMs = 30_000
+
+schema BatchReceipt { digest: string; revision_count: number; staged: number }
+
+export effect function correctionRun(start: Correction = initial) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export function correctionLayer(start: Correction = initial) {
+  return Layer.effect(Machine, correctionRun(start))
+}
+
+export effect function correctionSend(event: Event, by: Sender) {
+  return try (try Machine).send(event, by)
+}
+
+export effect function correctionReceive(input: unknown, by: Sender) {
+  return try (try Machine).receive(input, by)
+}
+
+export effect function correctionState() {
+  return try (try Machine).get()
+}
+
+function latestOf(revisions: ReadonlyArray<Row>) {
+  const latest = new Map<string, Row>()
+  for (const revision of revisions) latest.set(revision.award.key, revision)
+  return latest
+}
+
+function poolKey(projectId: string, sourceId: string, workUnitId: string | null) {
+  return JSON.stringify([projectId, sourceId, workUnitId])
+}
+
+effect function poolsOf(latest: ReadonlyMap<string, Row>) {
+  const pools = new Map<string, Row[]>()
+  for (const revision of latest.values()) {
+    const award = revision.award
+    if (award.category !== "merged-pull-request") continue
+    const own = (try unitNameOf(award)).startsWith("pr")
+    const key = poolKey(award.projectId, award.sourceId, own ? null : award.workUnitId)
+    pools.set(key, [...(pools.get(key) ?? []), revision])
+  }
+  return pools
+}
+
+function monthOf(at: string) {
+  return at.slice(0, 7)
+}
+
+function interned(values: Iterable<string>) {
+  return new Map([...new Set(values)].sort(compareCodeUnits).map((value, position) => [value, position + 1] as const))
+}
+
+function sharesOf(revisions: ReadonlyArray<Row>, actors: ReadonlyMap<string, number>): PointShare[] {
+  return revisions.map((revision) => ({ actor: actors.get(revision.award.actor.id) ?? 0, points: revision.award.amount }))
+}
+
+function sameRows(left: ReadonlyArray<Row>, right: ReadonlyArray<Row>) {
+  return sameSet(left.map((row) => row.id), right.map((row) => row.id))
+}
+
+effect function eligibilityOf(protection: ReadonlyArray<FreezeEvidence>, candidates: ReadonlyArray<ManifestCandidate>) {
+  const expected = new Set(candidates.map((candidate) => JSON.stringify([candidate.projectId, monthOf(candidate.occurredAt)])))
+  const found = new Map<string, FreezeEvidence>()
+  for (const evidence of protection) {
+    const period = candidates.find((candidate) => candidate.projectId === evidence.project && periodOf(instantOf(candidate.occurredAt) ?? -1) === evidence.period)
+    const key = period === undefined ? "" : JSON.stringify([evidence.project, monthOf(period.occurredAt)])
+    if (!expected.has(key) || found.has(key)) throw new CorrectionRefused({ message: "Unexpected private eligibility scope" })
+    found.set(key, evidence)
+  }
+  if (found.size !== expected.size) throw new CorrectionRefused({ message: "Missing private eligibility scope" })
+  return found
+}
+
+effect function bannedAtOf(bans: ReadonlyMap<string, string>) {
+  const bannedAt = new Map<string, number>()
+  for (const [actor, at] of bans) {
+    try check(isNodeId(actor) && isInstant(at), "invalid participation ban identity or date")
+    bannedAt.set(actor, millisOf(at))
+  }
+  return bannedAt
+}
+
+effect function replacementsOf(candidate: ManifestCandidate, previous: ReadonlyArray<Row>, recipients: Plan["recipients"], total: number) {
+  const ordered = interned(recipients.map((recipient) => recipient.id))
+  const allocation: Recipient[] = recipients.map((recipient) => ({ actor: ordered.get(recipient.id) ?? 0, lines: recipient.lines }))
+  if (!canWriteAllocation(total, allocation, true, false)) return []
+  const shares = allocatePoints(total, allocation)
+  const [template] = previous
+  if (template === undefined) return []
+  const replacements: Award[] = []
+  for (const [position, recipient] of recipients.entries()) {
+    const amount = shares[position]?.points ?? 0
+    const key = try pointKey({ projectId: candidate.projectId, actorId: recipient.id, category: "merged-pull-request", sourceId: candidate.sourceId, ...(candidate.kind === "work-unit" ? { workUnitId: candidate.workUnitId } : {}) })
+    const before = previous.find((revision) => revision.award.key === key)?.award
+    if (amount === 0 && before === undefined) continue
+    replacements.push({ ...(before ?? template.award), key, actor: before?.actor ?? { id: recipient.id, login: recipient.login }, amount })
+  }
+  for (const { award } of previous) if (!replacements.some((replacement) => replacement.key === award.key)) replacements.push({ ...award, amount: 0 })
+  return replacements
+}
+
+effect function planOf(index: number, candidate: ManifestCandidate, input: PlanInput, pools: { baseline: Map<string, Row[]>; current: Map<string, Row[]> }, eligibility: ReadonlyMap<string, FreezeEvidence>, bannedAt: ReadonlyMap<string, number>) {
+  const { manifest } = input.collection
+  try check(isNodeId(candidate.id) && isNodeId(candidate.sourceId) && isInstant(candidate.occurredAt) && candidate.occurredAt <= manifest.generatedAt &&
+    candidate.workUnitId !== "" && distinct(candidate.sourceIds) && candidate.sourceIds.includes(candidate.sourceId) && candidate.sourceIds.every(isNodeId), "invalid candidate identity")
+  try sourceRepository(candidate.sourceUrl, candidate.projectId, input.projectOf)
+  if (candidate.kind === "work-unit") try check(/^wu_[a-f0-9]{64}$/u.test(candidate.workUnitId), "invalid grouped unit ID")
+  const key = poolKey(candidate.projectId, candidate.sourceId, candidate.kind === "work-unit" ? candidate.workUnitId : null)
+  const previous = pools.baseline.get(key) ?? []
+  try check(previous.length > 0, "candidate has no recorded pool")
+  try check(sameSet(previous.map((revision) => `${revision.award.key}\u0000${revision.id}`), candidate.expectedPredecessors.map((entry) => `${entry.key}\u0000${entry.revisionId}`)) &&
+    previous.every(({ award }) => award.occurredAt === candidate.occurredAt && award.sourceUrl === candidate.sourceUrl && award.workUnitId === candidate.workUnitId), "pool predecessors or immutable identity differ")
+  const appliedOctober = previous.some((revision) => revision.decision?.reason === octoberOriginalContributorDecision)
+  const proof = appliedOctober ? null : try derivePullRequestProof(candidate, input.projectOf)
+  const complete = candidate.proof
+  if (candidate.kind === "work-unit" && complete.status === "complete") {
+    try check(previous.every((revision) => revision.decision?.sourceId === `value:${complete.decisionDigest ?? ""}`), "grouped proof does not match retained valuation provenance")
+  }
+  const total = previous.reduce((sum, revision) => sum + revision.award.amount, 0)
+  try check(Number.isSafeInteger(total), "pool total overflows")
+  const recipients = proof === null ? [] : [...proof.actors.values()].map((actor) => ({ id: actor.id, login: actor.login, lines: proof.weights.get(actor.id) ?? 0 }))
+  const replacements = proof !== null && total > 0 ? try replacementsOf(candidate, previous, recipients, total) : []
+  const baseline = latestOf(previous)
+  const changed = replacements.filter((award) => {
+    const before = baseline.get(award.key)?.award
+    return before === undefined || !sameAward(award, before)
+  })
+  const occurred = millisOf(candidate.occurredAt)
+  const participationHeld = replacements.some((award) => {
+    const at = bannedAt.get(award.actor.id)
+    return award.amount > 0 && at !== undefined && occurred >= at
+  })
+  const evidence = eligibility.get(JSON.stringify([candidate.projectId, monthOf(candidate.occurredAt)]))
+  const protectedMonth = evidence !== undefined && freezes(evidence) ? evidence : undefined
+  return { index, candidate, key, previous, current: pools.current.get(key) ?? [], proof, total, recipients, replacements, changed, participationHeld, protectedMonth, eligible: protectedMonth === undefined } satisfies Plan
+}
+
+effect function checkSelection(plans: ReadonlyArray<Plan>, baseline: ReadonlyMap<string, Row>) {
+  const keys = plans.flatMap((plan) => plan.previous.map((revision) => revision.award.key))
+  try check(distinct(keys), "a pool is selected more than once")
+  const selected = new Set(keys)
+  const sources = new Set(plans.flatMap((plan) => plan.candidate.sourceIds.map((id) => JSON.stringify([plan.candidate.projectId, id]))))
+  for (const revision of baseline.values()) {
+    try check(!(revision.award.category === "merged-pull-request" && revision.award.amount > 0 && sources.has(JSON.stringify([revision.award.projectId, revision.award.sourceId])) && !selected.has(revision.award.key)), "source scope omits a recorded implementation pool")
+  }
+  const identities = new Map<string, string>()
+  const parents = new Map<string, string>()
+  for (const plan of plans) {
+    const proof = plan.candidate.proof
+    if (proof.status !== "complete") continue
+    for (const source of proof.sources) {
+      for (const commit of source.commits) {
+        const key = `${source.repositoryNodeId}\u0000${commit.sha}`
+        const identity = JSON.stringify([commit.parentCount, commit.author?.id ?? null, commit.author?.kind ?? null, commit.additions, commit.deletions])
+        try check((identities.get(key) ?? identity) === identity, "immutable commit evidence conflicts")
+        identities.set(key, identity)
+        if (commit.parentShas === undefined) continue
+        const listed = JSON.stringify(commit.parentShas)
+        try check((parents.get(key) ?? listed) === listed, "immutable commit parent evidence conflicts")
+        parents.set(key, listed)
+      }
+    }
+  }
+}
+
+function ambiguityOf(plans: ReadonlyArray<Plan>) {
+  const commits = interned(plans.flatMap((plan) => plan.proof?.scopes.map((scope) => scope.commit) ?? []))
+  const paths = interned(plans.flatMap((plan) => plan.proof?.scopes.map((scope) => scope.path).filter((path) => path !== "*") ?? []))
+  const owners: number[] = []
+  const commitIds: number[] = []
+  const pathIds: number[] = []
+  for (const plan of plans) {
+    for (const scope of plan.proof?.scopes ?? []) {
+      owners.push(plan.index)
+      commitIds.push(commits.get(scope.commit) ?? 0)
+      pathIds.push(scope.path === "*" ? -1 : paths.get(scope.path) ?? 0)
+    }
+  }
+  return ambiguousPlans(plans.length, owners, commitIds, pathIds)
+}
+
+function componentsOf(plans: ReadonlyArray<Plan>) {
+  const sources = interned(plans.flatMap((plan) => plan.candidate.sourceIds.map((id) => JSON.stringify([plan.candidate.projectId, id]))))
+  const members: number[] = []
+  const memberSources: number[] = []
+  for (const plan of plans) {
+    for (const id of plan.candidate.sourceIds) {
+      members.push(plan.index)
+      memberSources.push((sources.get(JSON.stringify([plan.candidate.projectId, id])) ?? 1) - 1)
+    }
+  }
+  const labels = connectedLabels(plans.length, members, memberSources, sources.size)
+  const components = new Map<number, Plan[]>()
+  for (const plan of plans) {
+    const label = labels[plan.index] ?? plan.index
+    components.set(label, [...(components.get(label) ?? []), plan])
+  }
+  return [...components.values()]
+}
+
+effect function startOf(plan: Plan, collection: Collection, source: number, applied: boolean) {
+  const actors = interned([...plan.previous, ...plan.current].map((revision) => revision.award.actor.id))
+  const occurredAt = instantOf(plan.candidate.occurredAt) ?? -1
+  const entry = (shares: PointShare[]): JournalEntry => ({ source, occurredAt, shares, revoked: false })
+  const history = [entry(sharesOf(plan.previous, actors))]
+  const currentTotal = plan.current.reduce((sum, revision) => sum + revision.award.amount, 0)
+  if (!sameRows(plan.previous, plan.current)) {
+    history.push(currentTotal === plan.total ? entry(sharesOf(plan.current, actors)) : { source, occurredAt, shares: [], revoked: true })
+  }
+  const digest = collection.manifestDigest
+  return {
+    ...initial,
+    project: plan.candidate.projectId,
+    source,
+    occurredAt,
+    pool: plan.total,
+    history,
+    staged: emptyManifest,
+    applied: applied ? [digest] : [],
+    packet: applied
+      ? { digest, expected: [digest], staged: [{ index: 0, digest }], assembled: true, reviewedDigest: digest }
+      : { digest, expected: [digest], staged: [], assembled: false, reviewedDigest: "" },
+  } satisfies Correction
+}
+
+effect function opened(plan: Plan, input: PlanInput, applied: boolean) {
+  const run = try correctionRun(try startOf(plan, input.collection, plan.index + 1, applied))
+  if (!applied) {
+    run.send({ type: "stageChunk", index: 0, digest: input.collection.chunkDigest }, trusted) catch effect () => {
+      throw new CorrectionRefused({ message: "Collection receipt or current registry does not authorize this correction" })
+    }
+    try run.send({ type: "assemble" }, trusted)
+    if (input.mode === "apply") {
+      run.send({ type: "reviewPacket", digest: input.reviewedDigest }, owner) catch effect () => {
+        throw new CorrectionRefused({ message: "The reviewed manifest digest is missing" })
+      }
+    }
+  }
+  if (plan.protectedMonth !== undefined) try run.send({ type: "protect", f: plan.protectedMonth }, trusted)
+  return run
+}
+
+function machineManifest(plan: Plan, input: PlanInput, connected: boolean): Manifest {
+  const ordered = interned(plan.recipients.map((recipient) => recipient.id))
+  return {
+    digest: input.collection.manifestDigest,
+    source: plan.index + 1,
+    predecessor: 1,
+    connectedProof: connected,
+    recipients: plan.recipients.map((recipient) => ({ actor: ordered.get(recipient.id) ?? 0, lines: recipient.lines })),
+    kind: "OrdinaryReallocation",
+    work: [],
+  }
+}
+
+effect function replayed(plans: ReadonlyArray<Plan>, input: PlanInput, prior: ReadonlyArray<Row>) {
+  const expected = new Map(plans.flatMap((plan) => plan.changed).map((award) => [award.key, award] as const))
+  try check(prior.every((revision) => {
+    const award = expected.get(revision.award.key)
+    return award !== undefined && sameAward(award, revision.award)
+  }), "recorded manifest application differs")
+  const applied = new Set(prior.map((revision) => revision.award.key))
+  try check(plans.every((plan) => !plan.changed.some((award) => applied.has(award.key)) || plan.changed.every((award) => applied.has(award.key))), "partial recorded pool correction")
+  const dispositions: { candidateId: string; status: Disposition }[] = []
+  const phases: CorrectionPhase[] = []
+  for (const plan of plans) {
+    const recorded = plan.changed.some((award) => applied.has(award.key))
+    const phase = recorded ? (try (try opened(plan, input, true)).send({ type: "prepare", manifest: machineManifest(plan, input, plan.proof !== null) }, trusted)).phase : "Open"
+    phases.push(phase)
+    dispositions.push({ candidateId: plan.candidate.id, status: phase === "Replayed" ? "already-applied" : "retained" })
+  }
+  return { journal: input.journal, manifestDigest: input.collection.manifestDigest, dispositions, phases } satisfies Planned
+}
+
+effect function appendComponent(store: Store, component: ReadonlyArray<Plan>, input: PlanInput, buffer: Row[]) {
+  const staged: Row[] = []
+  for (const plan of component) {
+    if (plan.changed.length === 0) continue
+    const { candidate } = plan
+    const unit = candidate.kind === "work-unit" ? jointUnit(candidate.projectId, candidate.workUnitId) : ownUnit(candidate.projectId, candidate.sourceId)
+    const recorded = store.units.get(unit)
+    if (recorded === undefined || !sameSet([...recorded.keys], plan.previous.map((revision) => revision.award.key))) return false
+    const templates = new Map(plan.replacements.map((award) => [award.actor.id, award] as const))
+    const opened = try command(store, { awards: [...templates.values()], units: [unit], sources: [candidate.sourceId] })
+    const unitId = opened.names.units.get(unit)
+    if (unitId === undefined || [...templates.values()].some((award) => opened.names.opaque.has(award.key))) return false
+    const actors = new Map([...opened.names.actorIds].map(([id, actor]) => [actor, id] as const))
+    const recipients = plan.recipients.map((recipient) => ({ actor: actors.get(recipient.id) ?? 0, lines: recipient.lines })).sort((left, right) => left.actor - right.actor)
+    const refused = try sendAll(opened, [{ type: "reallocateUnit", project: candidate.projectId, unit: unitId, recipients, completeLines: true, reason: reallocationReason, digest: input.collection.manifestDigest }])
+    if (refused !== "") return false
+    const valueSource = [...plan.previous].sort((left, right) => right.recordedAt.localeCompare(left.recordedAt)).find((revision) => revision.decision?.sourceId.startsWith("value:") === true)?.decision?.sourceId
+    const provenance = {
+      recordedAt: input.recordedAt,
+      sourceDigest: input.collection.manifestDigest,
+      effectiveAt: input.recordedAt,
+      decisionSourceId: decisionSourceOf([valueSource, ...plan.previous.map((revision) => revision.decision?.sourceId), candidate.sourceId]),
+    }
+    const written: Row[] = []
+    for (const revision of try appended(opened)) written.push(...(try rowsOf(store, opened, revision, templates, provenance)))
+    const planned = new Map(plan.changed.map((award) => [award.key, award] as const))
+    if (written.length !== planned.size || written.some((row) => {
+      const award = planned.get(row.award.key)
+      return award === undefined || !sameAward(award, row.award)
+    })) return false
+    staged.push(...written)
+  }
+  try commitRows(store, buffer, staged)
+  return true
+}
+
+export effect function planCorrections(input: PlanInput) {
+  const { journal, collection, recordedAt } = input
+  const { manifest } = collection
+  const bannedAt = try bannedAtOf(input.bans)
+  try check(isInstant(manifest.generatedAt) && isInstant(recordedAt) && recordedAt >= manifest.generatedAt && recordedAt >= journal.generatedAt &&
+    Number.isSafeInteger(manifest.baseline.revisionCount) && manifest.baseline.revisionCount >= 0 && manifest.baseline.revisionCount <= journal.revisions.length &&
+    digestPattern.test(manifest.baseline.revisionIdsDigest), "invalid manifest or recording time")
+  try check(try hasBaselinePrefix(journal, manifest.baseline), "baseline is not the current journal prefix")
+  try check(distinct(manifest.candidates.map((candidate) => candidate.id)), "private eligibility must cover every candidate exactly once")
+  const eligibility = try eligibilityOf(input.protection, manifest.candidates)
+  const baselineLatest = latestOf(journal.revisions.slice(0, manifest.baseline.revisionCount))
+  const currentLatest = latestOf(journal.revisions)
+  const pools = { baseline: try poolsOf(baselineLatest), current: try poolsOf(currentLatest) }
+  const plans: Plan[] = []
+  for (const [index, candidate] of manifest.candidates.entries()) plans.push(try planOf(index, candidate, input, pools, eligibility, bannedAt))
+  try checkSelection(plans, baselineLatest)
+  const prior = journal.revisions.filter((revision) => revision.sourceDigest === collection.manifestDigest)
+  if (prior.length > 0) return try replayed(plans, input, prior)
+  const ambiguous = ambiguityOf(plans)
+  const currentPositive = new Map<string, Row[]>()
+  for (const revision of currentLatest.values()) {
+    const award = revision.award
+    if (award.category !== "merged-pull-request" || award.amount <= 0) continue
+    const key = JSON.stringify([award.projectId, award.sourceId])
+    currentPositive.set(key, [...(currentPositive.get(key) ?? []), revision])
+  }
+  const status = new Map<number, Disposition>()
+  const phases = new Map<number, CorrectionPhase>()
+  const runs = new Map<number, Machine.Shape>()
+  const ready: Plan[][] = []
+  for (const component of componentsOf(plans)) {
+    const retained = component.some((plan) => !plan.eligible)
+    const complete = component.every((plan) => plan.proof !== null && ambiguous[plan.index] !== true)
+    const banned = component.filter((plan) => plan.participationHeld)
+    for (const plan of component) {
+      const run = try opened(plan, input, false)
+      const connected = complete && banned.every((other) => other === plan)
+      phases.set(plan.index, (try run.send({ type: "prepare", manifest: machineManifest(plan, input, connected) }, trusted)).phase)
+      runs.set(plan.index, run)
+    }
+    const decided: Disposition | undefined = retained ? "retained" : !complete || banned.length > 0 ? "held" : component.every((plan) => plan.changed.length === 0) ? "unchanged" : undefined
+    if (decided === "held" && input.mode === "apply") {
+      for (const plan of banned) {
+        const run = runs.get(plan.index)
+        if (run !== undefined && canCommit(try run.get(), true, trusted)) phases.set(plan.index, (try run.send({ type: "commit", recipientBanned: true }, trusted)).phase)
+      }
+    }
+    if (decided !== undefined) {
+      for (const plan of component) status.set(plan.index, decided)
+      continue
+    }
+    const sources = new Set(component.flatMap((plan) => plan.candidate.sourceIds.map((id) => JSON.stringify([plan.candidate.projectId, id]))))
+    const keys = new Set(component.flatMap((plan) => plan.previous.map((revision) => revision.award.key)))
+    for (const source of sources) try check((currentPositive.get(source) ?? []).every((revision) => keys.has(revision.award.key)), "current source scope adds an unselected implementation pool")
+    if (component.some((plan) => phases.get(plan.index) === "Stale")) throw correctionFailure("selected predecessors changed after the baseline")
+    ready.push(component)
+  }
+  const store = try openStore(`${journalText(journal)}\n`, null, input.protection)
+  try advanceTo(store, recordedAt)
+  const buffer: Row[] = []
+  for (const component of ready) {
+    const committable: boolean[] = []
+    for (const plan of component) {
+      const run = runs.get(plan.index)
+      committable.push(phases.get(plan.index) === "Prepared" && run !== undefined && (input.mode === "preview" || plan.changed.length === 0 || canCommit(try run.get(), false, trusted)))
+    }
+    const written = committable.every((value) => value) && (try appendComponent(store, component, input, buffer))
+    for (const plan of component) {
+      if (!written) {
+        status.set(plan.index, "held")
+        continue
+      }
+      status.set(plan.index, plan.changed.length > 0 ? "applied" : "unchanged")
+      const run = runs.get(plan.index)
+      if (input.mode === "apply" && plan.changed.length > 0 && run !== undefined) phases.set(plan.index, (try run.send({ type: "commit", recipientBanned: false }, trusted)).phase)
+    }
+  }
+  const next = buffer.length === 0 ? journal : (try finishStore(store, buffer, recordedAt))
+  return {
+    journal: next,
+    manifestDigest: collection.manifestDigest,
+    dispositions: plans.map((plan) => ({ candidateId: plan.candidate.id, status: status.get(plan.index) ?? "held" })),
+    phases: plans.map((plan) => phases.get(plan.index) ?? "Open"),
+  } satisfies Planned
+}
+
+effect function finishStore(store: Store, buffer: ReadonlyArray<Row>, recordedAt: string) {
+  flush(store, buffer)
+  return (try finish(store, recordedAt)).journal
+}
+
+export function isExtension(expected: Journal, actual: Journal) {
+  const covered = new Set(actual.coverage.map(coverageText))
+  return actual.revisions.length >= expected.revisions.length &&
+    expected.revisions.every((revision, position) => {
+      const found = actual.revisions[position]
+      return found !== undefined && revisionText(found) === revisionText(revision)
+    }) &&
+    expected.coverage.every((entry) => covered.has(coverageText(entry)))
+}
+
+export effect function batchRecorded(digest: string, revisionCount: number) {
+  const found = try rows(BatchReceipt, sql`SELECT digest, revision_count, (SELECT COUNT(*) FROM points_staging WHERE batch_id=${digest}) AS staged FROM points_batches WHERE digest=${digest}`)
+  if (found.length === 0) return false
+  const [row] = found
+  if (found.length !== 1 || row === undefined || row.digest !== digest || row.revision_count !== revisionCount || row.staged !== 0) {
+    throw new CorrectionRefused({ message: "Points batch receipt does not reconcile" })
+  }
+  return true
+}
+
+export interface RecordIo<VE, VR, LE, LR> {
+  readonly verifyAuthority: () => void!VE!VR
+  readonly loadPublic: () => (Journal | null)!LE!LR
+  readonly wait: (millis: number) => void!!
+}
+
+effect function importBatch(digest: string, journal: Journal) {
+  const database = try D1
+  for (const statement of importStatements(digest, journal)) try database.run(statement)
+}
+
+export effect function recordCorrection<VE, VR, LE, LR>(expected: Journal, io: RecordIo<VE, VR, LE, LR>) {
+  const digest = try batchDigest(expected)
+  const revisions = expected.revisions.length
+  for (let attempt = 0; attempt < importAttempts; attempt++) {
+    if (!(try batchRecorded(digest, revisions))) {
+      try io.verifyAuthority()
+      importBatch(digest, expected) catch () => undefined
+    }
+    if (try batchRecorded(digest, revisions)) {
+      const actual = try io.loadPublic()
+      if (actual !== null && isExtension(expected, actual)) return digest
+    }
+    if (attempt < importAttempts - 1) try io.wait(importWaitMs)
+  }
+  throw new CorrectionRefused({ message: notVerified })
+}

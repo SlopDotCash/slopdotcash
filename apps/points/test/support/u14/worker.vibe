@@ -1,0 +1,79 @@
+// spec/points/corrections.md, "The atomic import rechecks current protection, bans and the captured predecessor"; spec/points/corrections.md, "Preparation is the plan: it captures the current predecessor and never appends an allocation"; spec/points/periods.md, "Direct transfers, owner allocation changes and unmapped legacy obligations also freeze their project-months"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1, first, rows, sql } from "@repo/platform/d1"
+import { handle, outbound } from "@repo/platform/http"
+import { type RoleVars, rolesFrom } from "@repo/platform/roles"
+import { route } from "@repo/platform/route"
+import { worker } from "@repo/platform/worker"
+import { CallerLive } from "@repo/backend/caller"
+import { type AccountVars, accountSettings } from "@repo/backend/points"
+import { journalText } from "../../../src/kernels/records/canonical.ts"
+import { journalFile } from "../../../src/kernels/records/ids.vibe"
+import { importJournal } from "../../../src/publication/import.vibe"
+import { protectionEvidence } from "../../../src/publication/protection.vibe"
+import { CorrectionRefused, collectionOf, correctionScopes, verifyCollection } from "../../../src/corrections/apply/manifest.vibe"
+import { planCorrections, recordCorrection } from "../../../src/corrections/apply/apply.vibe"
+import { projectOfRegistry } from "../../../src/corrections/apply/derive.vibe"
+
+interface Env extends RoleVars, AccountVars {
+  readonly SLOP_DB: D1Database
+}
+
+schema Ban { actor: string; at: string }
+schema SeedRequest { journal: string }
+schema SeedAnswer { attempt: number }
+schema PlanRequest { journal: string; manifest: string; receipt: string; registry: string; bans: ReadonlyArray<Ban>; recordedAt: string; mode: "preview" | "apply"; reviewed: string }
+schema Disposition { candidateId: string; status: string }
+schema PlanAnswer { dispositions: ReadonlyArray<Disposition>; phases: ReadonlyArray<string>; journal: string }
+schema RecordRequest { journal: string }
+schema RecordAnswer { outcome: string; message: string }
+schema LatestBatch { generated_at: string; coverage: string }
+schema Payload { payload: string }
+
+const seedRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/seed", access: "public", limitKib: 256, request: SeedRequest, answer: SeedAnswer, rejected: "rejected", cache: "no-store" })
+const planRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/plan", access: "public", limitKib: 512, request: PlanRequest, answer: PlanAnswer, rejected: "rejected", cache: "no-store" })
+const recordRoute = route({ method: "POST", path: "/api/v1/test/points/corrections/record", access: "public", limitKib: 256, request: RecordRequest, answer: RecordAnswer, rejected: "rejected", cache: "no-store" })
+
+effect function seeded(text: string) {
+  const imported = try importJournal(try journalFile(text), { wait: () => Effect.void })
+  return { attempt: imported.attempt }
+}
+
+effect function planned(request: PlanRequest) {
+  const collection = try collectionOf(request.manifest, request.receipt)
+  const registry: unknown = try Effect.try(() => JSON.parse(request.registry) as unknown)
+  try verifyCollection(collection, registry, request.mode === "apply")
+  const projects: ReadonlyArray<unknown> = typeof registry === "object" && registry !== null && "projects" in registry && Array.isArray(registry.projects) ? registry.projects : []
+  const result = try planCorrections({
+    journal: try journalFile(request.journal),
+    collection,
+    protection: try protectionEvidence(correctionScopes(collection)),
+    bans: new Map(request.bans.map((ban) => [ban.actor, ban.at] as const)),
+    recordedAt: request.recordedAt,
+    mode: request.mode,
+    reviewedDigest: request.reviewed,
+    projectOf: projectOfRegistry(projects),
+  })
+  return { dispositions: result.dispositions, phases: result.phases, journal: `${journalText(result.journal)}\n` }
+}
+
+effect function publicJournal() {
+  const batch = try first(LatestBatch, sql`SELECT generated_at, coverage FROM points_batches ORDER BY revision_count DESC, generated_at DESC, digest DESC LIMIT 1`)
+  if (batch === undefined) return null
+  const payloads = try rows(Payload, sql`SELECT payload FROM points_revisions ORDER BY rowid`)
+  const revisions = payloads.map((row) => row.payload).join(",")
+  return try journalFile(`{"schemaVersion":"1","ruleVersion":"slop-points-v1","generatedAt":${JSON.stringify(batch.generated_at)},"coverage":${batch.coverage},"revisions":[${revisions}]}\n`)
+}
+
+effect function recorded(text: string) {
+  const outcome = recordCorrection(try journalFile(text), { verifyAuthority: () => Effect.void, loadPublic: publicJournal, wait: () => Effect.void }) catch effect (error) => {
+    return error instanceof CorrectionRefused ? { outcome: "refused", message: error.message } : { outcome: "failed", message: String(error) }
+  }
+  return typeof outcome === "string" ? { outcome: "recorded", message: outcome } : outcome
+}
+
+export default worker({
+  services: (env: Env) => Layer.provideMerge(Layer.mergeAll(CallerLive, accountSettings(env)), Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, rolesFrom(env))),
+  routes: Layer.mergeAll(handle(seedRoute, (input) => seeded(input.body.journal)), handle(planRoute, (input) => planned(input.body)), handle(recordRoute, (input) => recorded(input.body.journal))),
+})

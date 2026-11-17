@@ -1,0 +1,72 @@
+// spec/points/corrections.md, "A historical source retains its original carrier and every successor"; spec/points/authorship.md, "Only accepted unique non-merge commits contribute line weight"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { isCreditEligibleCommitAuthor } from "../../kernels/scoring/lines.ts"
+import type { Actor } from "../../score/facts.vibe"
+import { type CollectedEvidence, type ProvedCandidates, type SourceRead, repositoryIdOf } from "../collect/collect.vibe"
+import type { CorrectionCandidate } from "../collect/inventory.vibe"
+import type { CorrectionActor, CorrectionSource } from "./manifest.vibe"
+
+const groupedProofUnavailable = "grouped-retained-decision-unavailable"
+const retainedEvidenceUnavailable = "retained-source-evidence-unavailable"
+const octoberProofUnavailable = "october-original-contributor-proof-unavailable"
+const outcomeMissing = "Complete source outcome missing"
+
+function actorOf(actor: Actor | null): CorrectionActor | null {
+  return actor === null ? null : { id: actor.id, login: actor.login, kind: actor.kind }
+}
+
+effect function ordinarySource(read: SourceRead, owners: ReadonlyMap<string, string>) {
+  const outcome = read.outcome
+  const commits = outcome.commits
+  if (outcome.headRefOid === "" || commits === null) return undefined
+  const repository = repositoryIdOf(outcome.url)
+  return {
+    repository,
+    repositoryNodeId: read.repositoryNodeId,
+    sourceId: outcome.id,
+    sourceUrl: outcome.url,
+    headSha: outcome.headRefOid,
+    occurredAt: try isoAt(millisOf(outcome.mergedAt)),
+    author: actorOf(outcome.author),
+    complete: true,
+    commitCount: commits.length,
+    commits: commits.map((commit) => ({
+      sha: commit.oid,
+      parentCount: commit.parentCount,
+      author: actorOf(commit.author),
+      additions: commit.additions,
+      deletions: commit.deletions,
+      firstAcceptedSourceId: owners.get(`${repository.toLowerCase()}\u0000${commit.oid}`) ?? null,
+    })),
+  } satisfies CorrectionSource
+}
+
+function unlinked(source: CorrectionSource) {
+  return source.commits.some((commit) => commit.parentCount <= 1 && commit.firstAcceptedSourceId === source.sourceId &&
+    !(commit.author !== null && commit.author.kind === "User" && isCreditEligibleCommitAuthor(commit.author)))
+}
+
+export effect function proveCandidates(evidence: CollectedEvidence) {
+  const limitations = new Map(evidence.limitations)
+  const selected = new Set(evidence.selected.map((pool) => pool.candidate.id))
+  const october = evidence.options.octoberOriginalCredit === true
+  const candidates: CorrectionCandidate[] = []
+  for (const { candidate } of evidence.pools) {
+    const read = evidence.reads.get(candidate.sourceId)
+    if (!selected.has(candidate.id) || limitations.has(candidate.id) || !evidence.ownershipComplete || read === undefined) {
+      candidates.push(candidate)
+      continue
+    }
+    const reason = candidate.kind === "work-unit" ? groupedProofUnavailable : october && candidate.occurredAt.startsWith("2026-10-") ? octoberProofUnavailable : undefined
+    const source = reason === undefined ? try ordinarySource(read, evidence.owners) : undefined
+    const held = reason ?? (source === undefined ? outcomeMissing : unlinked(source) ? retainedEvidenceUnavailable : undefined)
+    if (held !== undefined || source === undefined) {
+      limitations.set(candidate.id, held ?? outcomeMissing)
+      candidates.push(candidate)
+      continue
+    }
+    const proof = { status: "complete" as const, censusDigest: evidence.censusDigest, sources: [source] }
+    candidates.push({ ...candidate, sourceIds: [source.sourceId], proof })
+  }
+  return { candidates, limitations } satisfies ProvedCandidates
+}

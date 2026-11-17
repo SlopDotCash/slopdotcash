@@ -1,0 +1,298 @@
+// spec/slopbot/closureActivation.md, "An objective-quality receipt counts only when signed by the configured verifier key under the approved profile, bound to the exact subject and unexpired"; spec/slopbot/closureActivation.md, "Objective closure also needs the qualified profile, a shadow proposal under the current key and the 1 November 2026 effective time"
+import * as Base64 from "effect/encoding/Base64"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { ed25519Verify, sha256Hex, utf8 } from "@repo/platform/crypto"
+import { D1, rows, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { type Activation, type QualityReceipt, type QualityShadow, type QualitySubject, type QualityTrust, type ReceiptKind, objectiveCloseQualified, qualityWindowSeconds, receiptCounts } from "../../gen/slopbot__closureActivation.effect.vibe"
+import { comparisonFileLimit } from "../../gen/slopbot__review.effect.vibe"
+import type { ReviewContext, ReviewTarget } from "../context/load.vibe"
+import type { VerifiedDefect } from "../publish/comment.vibe"
+import type { Verdict } from "../review/verdict.vibe"
+
+export const qualityMarker = "<!-- slopbot:quality-evidence:v1 -->"
+
+export interface CountedReceipt {
+  readonly defect: VerifiedDefect
+  readonly receipt: QualityReceipt
+}
+
+export interface ShadowProposal {
+  readonly reviewKey: string
+  readonly repositoryId: number
+  readonly itemNodeId: string
+  readonly revision: string
+  readonly policyDigest: string
+  readonly profile: string
+  readonly verifierKey: string
+  readonly defectId: string
+}
+
+type Fields = Readonly<Record<string, unknown>>
+type Proven = { readonly description: string; readonly sourceUrl: string } | undefined
+
+schema CommentBody { readonly body: string | null }
+schema GitCommit { readonly sha: string }
+schema ContentsFile { readonly type: string; readonly content?: string; readonly encoding?: string }
+schema ShadowRow { readonly repository_id: number; readonly profile_sha256: string; readonly verifier_key: string }
+
+const comments = Schema.Array(CommentBody)
+const artifactLimitBytes = 120_000
+const contentsLimitBytes = 2 * 1024 * 1024
+const exactUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+const kinds: Readonly<Record<string, Exclude<ReceiptKind, "UnsupportedKind">>> = {
+  removed_behavior: "RemovedBehavior",
+  reproduced_regression: "ReproducedRegression",
+  contradicted_claim: "ContradictedClaim",
+}
+
+function record(value: unknown): Fields | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Fields : undefined
+}
+
+function text(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length >= 8
+}
+
+function digest(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value)
+}
+
+function commitSha(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{40}$/u.test(value)
+}
+
+function safePath(path: unknown): path is string {
+  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\\") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
+}
+
+function scalar(value: unknown) {
+  return value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))
+}
+
+function exactTime(value: unknown) {
+  if (typeof value !== "string" || !exactUtc.test(value)) return undefined
+  const millis = millisOf(value)
+  return Number.isFinite(millis) && new Date(millis).toISOString() === value ? millis : undefined
+}
+
+function base64Bytes(value: string, length: number) {
+  const bytes = Result.getOrUndefined(Base64.decode(value))
+  return bytes !== undefined && bytes.length === length ? bytes : undefined
+}
+
+function encodedPath(path: string) {
+  return path.split("/").map(encodeURIComponent).join("/")
+}
+
+function permalink(context: ReviewContext, path: string, ref: string) {
+  const [owner = "", repo = ""] = context.repository.full_name.split("/")
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/blob/${ref}/${encodedPath(path)}`
+}
+
+effect function jsonOf(value: string) {
+  const parsed = Effect.try(() => ({ value: JSON.parse(value) as unknown })) catch () => undefined
+  return parsed?.value
+}
+
+effect function artifact(repositoryId: number, path: string, ref: string) {
+  const github = try GitHub
+  const found = github.json(`/repositories/${repositoryId}/contents/${encodedPath(path)}?ref=${ref}`, ContentsFile, { limitBytes: contentsLimitBytes }) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  if (found === undefined) {
+    const commit = try github.json(`/repositories/${repositoryId}/git/commits/${ref}`, GitCommit)
+    return commit.sha === ref ? { kind: "absent" as const } : { kind: "unproven" as const }
+  }
+  const bytes = found.type === "file" && found.encoding === "base64" && found.content !== undefined ? Result.getOrUndefined(Base64.decode(found.content.replace(/\s+/gu, ""))) : undefined
+  if (bytes === undefined || bytes.length > artifactLimitBytes) return { kind: "unproven" as const }
+  return { kind: "file" as const, text: new TextDecoder().decode(bytes) }
+}
+
+effect function removedBehavior(context: ReviewContext, subject: QualitySubject, proof: Fields) {
+  const path = proof.path
+  const removed = proof.removedLines
+  if (!safePath(path) || !text(proof.requiredBehavior) || !text(removed) || proof.scopeChangeApproved !== false || proof.behaviorAbsent !== true || !digest(proof.baselineSha256)) return undefined
+  const baseline = try artifact(context.repository.id, path, subject.baseSha)
+  if (baseline.kind !== "file" || (try sha256Hex(baseline.text)) !== proof.baselineSha256 || !baseline.text.includes(removed)) return undefined
+  const candidate = try artifact(context.repository.id, path, subject.headSha)
+  if (candidate.kind === "unproven") return undefined
+  if (candidate.kind === "absent" ? proof.candidateSha256 !== null : !digest(proof.candidateSha256) || (try sha256Hex(candidate.text)) !== proof.candidateSha256 || candidate.text.includes(removed)) return undefined
+  return { sourceUrl: permalink(context, path, subject.baseSha), description: `Required behavior removed: ${proof.requiredBehavior}. Source: ${path}.` }
+}
+
+function reproducedRegression(context: ReviewContext, subject: QualitySubject, proof: Fields): Proven {
+  const baseline = record(proof.baseline)
+  const candidate = record(proof.candidate)
+  if (!text(proof.command) || !digest(proof.environmentSha256) || !digest(proof.harnessSha256) || proof.workflowUnchanged !== true || proof.patchCaused !== true || proof.externalFailure !== false) return undefined
+  if (baseline === undefined || candidate === undefined) return undefined
+  const exit = candidate.exitCode
+  const matched = baseline.sourceSha === subject.baseSha && candidate.sourceSha === subject.headSha && baseline.exitCode === 0 &&
+    typeof exit === "number" && Number.isSafeInteger(exit) && exit > 0 && exit < 126 &&
+    digest(baseline.reportSha256) && digest(candidate.reportSha256) && baseline.reportSha256 !== candidate.reportSha256 &&
+    baseline.harnessSha256 === proof.harnessSha256 && candidate.harnessSha256 === proof.harnessSha256 &&
+    baseline.environmentSha256 === proof.environmentSha256 && candidate.environmentSha256 === proof.environmentSha256
+  if (!matched) return undefined
+  const [owner = "", repo = ""] = context.repository.full_name.split("/")
+  return {
+    sourceUrl: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commit/${subject.headSha}`,
+    description: `Reproduced regression: ${proof.command}. Baseline exit 0; candidate exit ${exit}. Environment ${proof.environmentSha256}; harness ${proof.harnessSha256}; reports ${baseline.reportSha256}, ${candidate.reportSha256}.`,
+  }
+}
+
+function pointed(document: unknown, pointer: string) {
+  let actual: unknown = document
+  for (const part of pointer.slice(1).split("/")) {
+    const key = part.replaceAll("~1", "/").replaceAll("~0", "~")
+    const holder = typeof actual === "object" && actual !== null ? actual as Fields : undefined
+    if (holder === undefined || !Object.hasOwn(holder, key)) return { found: false, value: undefined }
+    actual = holder[key]
+  }
+  return { found: true, value: actual }
+}
+
+effect function contradictedClaim(context: ReviewContext, evidence: unknown, proof: Fields) {
+  const { claim, path, commit, pointer } = proof
+  if (!text(claim) || !context.itemText.includes(claim) || claim !== evidence || !safePath(path) || !commitSha(commit) || !digest(proof.sha256)) return undefined
+  if (typeof pointer !== "string" || !pointer.startsWith("/") || !scalar(proof.claimed) || !scalar(proof.observed) || proof.claimed === proof.observed) return undefined
+  const sourceUrl = permalink(context, path, commit)
+  if (!context.itemText.includes(sourceUrl)) return undefined
+  const read = try artifact(context.repository.id, path, commit)
+  if (read.kind !== "file" || (try sha256Hex(read.text)) !== proof.sha256) return undefined
+  const parsed = try jsonOf(read.text)
+  const found = pointed(parsed, pointer)
+  if (!found.found || found.value !== proof.observed) return undefined
+  return { sourceUrl, description: `Claim contradicted by cited artifact at ${pointer}: claimed ${JSON.stringify(proof.claimed)}, recorded ${JSON.stringify(proof.observed)}.` }
+}
+
+effect function proven(context: ReviewContext, subject: QualitySubject, kind: ReceiptKind, receipt: Fields) {
+  const proof = record(receipt.proof)
+  if (proof === undefined) return undefined
+  if (kind === "RemovedBehavior") return try removedBehavior(context, subject, proof)
+  if (kind === "ReproducedRegression") return reproducedRegression(context, subject, proof)
+  if (kind === "ContradictedClaim") return try contradictedClaim(context, receipt.evidence, proof)
+  return undefined
+}
+
+export function qualitySubject(target: ReviewTarget, context: ReviewContext): QualitySubject | undefined {
+  const { pull } = context
+  if (pull === undefined || pull.changed_files >= comparisonFileLimit || pull.base.sha !== context.baseSha || context.mergeBaseSha !== context.baseSha || context.targetRef !== context.repository.default_branch) return undefined
+  return { repository: target.repositoryId, itemNode: context.issue.node_id, headSha: context.revision, baseSha: pull.base.sha, policyDigest: context.policyDigest, itemDigest: context.contentDigest }
+}
+
+effect function verifiedReceipt(envelopeText: string, trust: QualityTrust, subject: QualitySubject, context: ReviewContext, nowMillis: number) {
+  const envelope = record(try jsonOf(envelopeText))
+  const payload = envelope?.payload
+  const signature = envelope?.signature
+  if (typeof payload !== "string" || typeof signature !== "string") return undefined
+  const key = base64Bytes(trust.verifierKey, 32)
+  const signed = base64Bytes(signature, 64)
+  const signatureValid = key !== undefined && signed !== undefined && (try ed25519Verify(key, utf8(`${qualityMarker}\n${payload}`), signed))
+  const receipt = signatureValid ? record(try jsonOf(payload)) : undefined
+  if (receipt === undefined) return undefined
+  const verifiedMillis = exactTime(receipt.verifiedAt)
+  const expiresMillis = exactTime(receipt.expiresAt)
+  if (verifiedMillis === undefined || expiresMillis === undefined || expiresMillis - verifiedMillis > qualityWindowSeconds * 1000) return undefined
+  const rule = record(receipt.rule)
+  const quote = rule?.quote
+  const source = rule?.source
+  const ruleInGuidance = typeof source === "string" && text(quote) && context.policy.some((file) => !file.truncated && file.path === source && file.text.includes(quote))
+  const kind = typeof receipt.kind === "string" ? kinds[receipt.kind] ?? "UnsupportedKind" : "UnsupportedKind"
+  const facts: QualityReceipt = {
+    commentAuthor: 0,
+    markerExact: true,
+    payloadChars: payload.length,
+    signedBy: trust.verifierKey,
+    signatureValid,
+    receiptVersion: receipt.version === 1 ? 1 : 0,
+    verifiedStatus: receipt.status === "verified",
+    approvedVm: receipt.isolation === "approved-vm",
+    visibilityGaps: Array.isArray(receipt.visibilityGaps) ? receipt.visibilityGaps.length : 1,
+    receiptProfile: digest(receipt.profileSha256) ? receipt.profileSha256 : "",
+    subject: {
+      repository: typeof receipt.repositoryId === "number" && Number.isSafeInteger(receipt.repositoryId) ? receipt.repositoryId : 0,
+      itemNode: typeof receipt.nodeId === "string" ? receipt.nodeId : "",
+      headSha: commitSha(receipt.headSha) ? receipt.headSha : "",
+      baseSha: commitSha(receipt.baseSha) ? receipt.baseSha : "",
+      policyDigest: typeof receipt.policyDigest === "string" ? receipt.policyDigest : "",
+      itemDigest: typeof receipt.itemDigest === "string" ? receipt.itemDigest : "",
+    },
+    verifiedAt: Math.ceil(verifiedMillis / 1000),
+    expiresAt: Math.floor(expiresMillis / 1000),
+    ruleInGuidance,
+    evidenceInItem: text(receipt.evidence) && context.itemText.includes(receipt.evidence) && text(receipt.repair),
+    receiptKind: kind,
+    predicateHolds: true,
+  }
+  const now = Math.floor(nowMillis / 1000)
+  if (!digest(trust.profile) || !receiptCounts(facts, trust, subject, now)) return undefined
+  const checked: Proven = proven(context, subject, kind, receipt) catch () => undefined
+  const counted = { ...facts, predicateHolds: checked !== undefined }
+  if (checked === undefined || !receiptCounts(counted, trust, subject, now) || kind === "UnsupportedKind" || typeof source !== "string" || !text(quote)) return undefined
+  const defect: VerifiedDefect = {
+    id: try sha256Hex(payload),
+    kind: receipt.kind as VerifiedDefect["kind"],
+    profile: counted.receiptProfile,
+    expiresAt: new Date(expiresMillis).toISOString(),
+    rule: { source, quote },
+    evidence: receipt.evidence as string,
+    repair: receipt.repair as string,
+    description: checked.description,
+    sourceUrl: checked.sourceUrl,
+  }
+  return { defect, receipt: counted } satisfies CountedReceipt
+}
+
+effect function receiptComments(target: ReviewTarget, commentId: number | undefined) {
+  const github = try GitHub
+  const listed = [...(try github.json(`/repositories/${target.repositoryId}/issues/${target.number}/comments?per_page=100`, comments))]
+  if (commentId === undefined) return listed
+  const direct = github.json(`/repositories/${target.repositoryId}/issues/comments/${commentId}`, CommentBody) catch effect (error) => {
+    if (error._tag === "NotFound") return undefined
+    throw error
+  }
+  return direct === undefined ? listed : [...listed, direct]
+}
+
+export effect function countedReceipts(target: ReviewTarget, context: ReviewContext, trust: QualityTrust, commentId: number | undefined) {
+  const subject = qualitySubject(target, context)
+  if (trust.verifierKey === "" || trust.profile === "" || subject === undefined) return []
+  const found = receiptComments(target, commentId) catch () => []
+  const nowMillis = try Clock.currentTimeMillis
+  const counted: CountedReceipt[] = []
+  for (const comment of found) {
+    const body = comment.body ?? ""
+    if (!body.startsWith(`${qualityMarker}\n`)) continue
+    const verified = try verifiedReceipt(body.slice(qualityMarker.length + 1), trust, subject, context, nowMillis)
+    if (verified !== undefined && !counted.some((each) => each.defect.id === verified.defect.id)) counted.push(verified)
+  }
+  return counted
+}
+
+export effect function qualityEvidence(target: ReviewTarget, context: ReviewContext, trust: QualityTrust, commentId: number | undefined) {
+  return (try countedReceipts(target, context, trust, commentId)).map((counted) => counted.defect)
+}
+
+export function citedReceipt(verdict: Verdict, receipts: ReadonlyArray<CountedReceipt>, nowMillis: number) {
+  const cited = receipts.find((counted) => counted.defect.id === verdict.objective_defect)
+  if (cited === undefined || millisOf(cited.defect.expiresAt) <= nowMillis || !verdict.evidence.includes(cited.defect.evidence)) return undefined
+  return verdict.rule_refs.some((ref) => ref.source === cited.defect.rule.source && ref.quote === cited.defect.rule.quote) ? cited : undefined
+}
+
+export effect function shadowsFor(repositoryId: number, profile: string, verifierKey: string) {
+  const found = try rows(ShadowRow, sql`SELECT repository_id, profile_sha256, verifier_key FROM slopbot_quality_shadow WHERE repository_id = ${repositoryId} AND profile_sha256 = ${profile} AND verifier_key = ${verifierKey} LIMIT 1`)
+  return found.map((row) => ({ repository: row.repository_id, profile: row.profile_sha256, verifierKey: row.verifier_key }) satisfies QualityShadow)
+}
+
+export effect function recordShadow(proposal: ShadowProposal) {
+  try (try D1).run(sql`INSERT OR IGNORE INTO slopbot_quality_shadow (review_key, repository_id, item_node_id, revision, policy_digest, profile_sha256, verifier_key, defect_id, created_at)
+    VALUES (${proposal.reviewKey}, ${proposal.repositoryId}, ${proposal.itemNodeId}, ${proposal.revision}, ${proposal.policyDigest}, ${proposal.profile}, ${proposal.verifierKey}, ${proposal.defectId}, ${try isoNow()})`)
+}
+
+export effect function verifierQualified(counted: CountedReceipt, activation: Activation, trust: QualityTrust, subject: QualitySubject) {
+  const now = Math.floor((try Clock.currentTimeMillis) / 1000)
+  const shadows = try shadowsFor(counted.receipt.subject.repository, counted.receipt.receiptProfile, trust.verifierKey)
+  return receiptCounts(counted.receipt, trust, subject, now) && objectiveCloseQualified(counted.receipt, activation, trust, now, shadows)
+}
+

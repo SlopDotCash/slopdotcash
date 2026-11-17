@@ -1,6 +1,5 @@
 // spec/frontend/projectDrafts.md, "A project setup draft belongs to one live document slot that a duplicated tab cannot take"; spec/frontend/projectDrafts.md, "Each saved setup draft has a strictly greater revision than the record it replaces"; spec/frontend/projectDrafts.md, "The legacy setup draft is imported once and the store falls back to memory when storage or locks are unavailable"
 import * as KeyValueStore from "effect/persistence/KeyValueStore"
-import { randomId } from "@repo/platform/crypto"
 import { type Pointer, type SetupStore, initial, newestRevision, openingValue, sourceFor } from "../../../gen/frontend__projectDrafts.effect.vibe"
 import { Locks } from "../../platform/locks.vibe"
 import { LocalStore, SessionStore, storageKeys } from "../../platform/storage.vibe"
@@ -131,7 +130,7 @@ export effect function legacyUpdateDraft(projectId: string) {
 }
 
 export service ProjectDrafts {
-  open(key: string, legacy: (string | null)!!): DraftHandle!!
+  open(key: string, legacy: string | null): DraftHandle!!
 }
 
 export const projectDrafts = Layer.effect(ProjectDrafts, effect {
@@ -174,7 +173,7 @@ export const projectDrafts = Layer.effect(ProjectDrafts, effect {
       try session.values.set(names.pointer, resumed)
       return try slotHandle(names, resumed, start)
     }
-    const fresh = `${names.slots}${try provideService(randomId(), Experimental.Crypto.Crypto, crypto)}`
+    const fresh = `${names.slots}${try orDie(crypto.randomUUIDv4())}`
     if (!(try locks.claim(fresh))) return try memoryOnly(start)
     if (start !== null) {
       try local.values.set(fresh, JSON.stringify({ revision: String(newestRevision(model) + 1), value: start }))
@@ -184,8 +183,7 @@ export const projectDrafts = Layer.effect(ProjectDrafts, effect {
     return try slotHandle(names, fresh, start)
   }
 
-  effect function openStore(key: string, legacyRead: (string | null)!!) {
-    const legacy = try legacyRead
+  effect function openStore(key: string, legacy: string | null) {
     if (!local.durable || !session.durable) return try memoryOnly(legacy)
     const names = namesOf(key)
     const chosen = try Ref.make(legacy)
@@ -194,7 +192,7 @@ export const projectDrafts = Layer.effect(ProjectDrafts, effect {
   }
 
   return {
-    open: (key: string, legacy: (string | null)!!) => Semaphore.withPermit(opening, effect {
+    open: (key: string, legacy: string | null) => Semaphore.withPermit(opening, effect {
       const found = opened.get(key)
       if (found !== undefined) return found
       const handle = try openStore(key, legacy)

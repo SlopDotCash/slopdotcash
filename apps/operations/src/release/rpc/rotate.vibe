@@ -1,0 +1,163 @@
+// spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+import { gitBytes } from "@repo/platform/git"
+import { preflightPasses } from "../../../gen/fees__runtime.effect.vibe"
+import { readReviewed } from "../publish/config.vibe"
+import { type SecretValues, configsFor, feeSettingsOf, withSecretsFile } from "../publish/order.vibe"
+import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { RotationRefused } from "./qualify.vibe"
+import {
+  type RotationKind,
+  type WorkerVersion,
+  feeConverterWorker,
+  inheritedSuffix,
+  inspectVersion,
+  normalizedBindings,
+  onRotationBase,
+  releaseDescription,
+  requireQuietJournal,
+  requireRotationBase,
+  requireSameWorker,
+  rotationMessage,
+  secretNamesOf,
+  bindingOf,
+  workerState,
+} from "./worker.vibe"
+
+export interface Rotation<A, E, R> {
+  readonly root: string
+  readonly kind: RotationKind
+  readonly secrets: SecretValues
+  readonly qualify: A!E!R
+}
+
+const sourceSha = /^[a-f0-9]{40}$/u
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u
+const canonicalRepository = "https://github.com/SlopDotCash/slopdotcash.git"
+const expectedVersions: { readonly [K in RotationKind]: string } = { robinhood: "SLOP_ROBINHOOD_RPC_EXPECTED_VERSION", solana: "SLOP_SOLANA_RPC_EXPECTED_VERSION" }
+const titles: { readonly [K in RotationKind]: string } = { robinhood: "Robinhood RPC", solana: "Solana public-pair" }
+
+function refused(message: string) {
+  return new RotationRefused({ message })
+}
+
+effect function text(name: string) {
+  return try Config.withDefault(Config.String(name), "")
+}
+
+export effect function trustedMain() {
+  const sha = try text("GITHUB_SHA")
+  if (!sourceSha.test(sha) || (try text("GITHUB_REF")) !== "refs/heads/main" || (try text("NODE_TLS_REJECT_UNAUTHORIZED")) === "0") {
+    throw refused("The fee-converter release requires trusted main and verified TLS.")
+  }
+  return sha
+}
+
+effect function requireLiveMain(root: string, sha: string) {
+  const bytes = gitBytes({ args: ["-C", root, "ls-remote", "--exit-code", "--refs", canonicalRepository, "refs/heads/main"], limit: 4096, seconds: 20 }, "main is unreadable") catch effect () => {
+    throw refused("Main advanced before the fee-converter rotation.")
+  }
+  if (new TextDecoder().decode(bytes).trim() !== `${sha}\trefs/heads/main`) throw refused("Main advanced before the fee-converter rotation.")
+}
+
+export effect function inheritedMessage() {
+  const sha = try trustedMain()
+  const state = try workerState()
+  const latest = try inspectVersion(state.latest.id)
+  const latestSuffix = try inheritedSuffix(latest.annotations)
+  const suffixes = new Set<string>()
+  for (const split of state.active.versions) {
+    const active = try inspectVersion(split.version_id)
+    const suffix = try inheritedSuffix(active.annotations)
+    if (latest.id !== active.id && latestSuffix !== suffix) throw refused("The latest fee-converter upload has a different Robinhood RPC rotation. Reconcile it before publishing.")
+    suffixes.add(suffix)
+  }
+  const [suffix, ...others] = [...suffixes]
+  if (suffix === undefined || others.length > 0) throw refused("Active fee-converter versions have different RPC rotations.")
+  return `${releaseDescription(sha)}${suffix}`
+}
+
+effect function reviewedConverter(root: string, before: WorkerVersion, kind: RotationKind) {
+  const found = configsFor(try readReviewed(root), "FeeConverter", "Production")
+  const [reviewed, ...others] = typeof found === "string" ? [] : found
+  if (reviewed === undefined || others.length > 0) throw refused("The reviewed production buyback configuration is unavailable.")
+  const settings = feeSettingsOf(reviewed, secretNamesOf(before)) catch effect () => {
+    throw refused("The reviewed production buyback configuration is unavailable.")
+  }
+  const live = kind === "solana" || (settings.converterMode === "Live" && settings.buybackMode === "Live" && settings.networks.includes("Robinhood"))
+  if (!live || !preflightPasses("Production", { ...settings, source: 1 })) throw refused("The reviewed production buyback configuration is unavailable.")
+  const database = (reviewed.file.d1_databases ?? []).find((entry) => entry.binding === "FEE_DB")?.database_id ?? ""
+  if (kind === "solana") {
+    const networks = (reviewed.file.vars?.FEE_CONVERTER_NETWORKS ?? "").split(",").map((name) => name.trim()).filter((name) => name !== "")
+    const enabled = bindingOf(before, "FEE_CONVERTER_NETWORKS")
+    if (networks.includes("solana") || enabled?.type !== "plain_text" || enabled.text !== networks.join(",")) throw refused("Solana must remain disabled while its RPC bindings are qualified.")
+    if (bindingOf(before, "FEE_WALLET_KEY_SOLANA")?.type !== "secret_text") throw refused("The existing Solana fee key is unavailable.")
+  }
+  return database
+}
+
+effect function rotationInputs(kind: RotationKind) {
+  const sha = try trustedMain()
+  const expected = try text(expectedVersions[kind])
+  if ((try text("GITHUB_EVENT_NAME")) !== "workflow_dispatch" || (try text("SLOP_FEE_CONVERTER_RELEASE")) !== "enabled" || !uuid.test(expected)) {
+    throw refused("Use manual main rotation with the expected active version and the fee-converter release enabled.")
+  }
+  const summary = try text("GITHUB_STEP_SUMMARY")
+  const runnerTemp = try text("RUNNER_TEMP")
+  const files = try Path.Path
+  if (!files.isAbsolute(summary) || !files.isAbsolute(runnerTemp)) throw refused("The protected release runner and summary paths are unavailable.")
+  return { sha, expected, summary, runnerTemp }
+}
+
+export effect function rotateFeeConverterRpc<A, E, R>(rotation: Rotation<A, E, R>) {
+  const { kind, root } = rotation
+  const inputs = try rotationInputs(kind)
+  const { sha, expected } = inputs
+  const description = releaseDescription(sha)
+  try rotation.qualify
+  const state = try workerState()
+  try requireRotationBase(state, expected)
+  const before = try inspectVersion(expected)
+  if (before.annotations?.["workers/tag"] !== sha || state.active.annotations?.["workers/message"] !== description) throw refused("First publish this main revision without a rotation input.")
+  try normalizedBindings(before, undefined)
+  const database = try reviewedConverter(root, before, kind)
+  try requireQuietJournal(before, database, kind)
+  const cloudflare = try Cloudflare
+  const fs = try FileSystem.FileSystem
+  const files = try Path.Path
+  const candidate = try scoped(effect {
+    const workspace = fs.makeTempDirectoryScoped({ directory: inputs.runnerTemp, prefix: "slop-fee-rpc-" }) catch effect () => {
+      throw refused("The protected release runner and summary paths are unavailable.")
+    }
+    const promotion = files.join(workspace, "wrangler.json")
+    fs.writeFileString(promotion, JSON.stringify({ name: feeConverterWorker }), { mode: 0o600, flag: "wx" }) catch effect () => {
+      throw refused("The fee-converter promotion configuration could not be written.")
+    }
+    try requireRotationBase(try workerState(), expected, expected, state.active.id)
+    try requireLiveMain(root, sha)
+    const message = try rotationMessage(sha, before, kind)
+    try withSecretsFile(workspace, "fee-converter-rotation", rotation.secrets, (path) => cloudflare.wrangler("fee-converter rotation upload", {
+      args: ["versions", "secret", "bulk", path, "--name", feeConverterWorker, "--config", promotion, `--tag=${sha}`, `--message=${message}`],
+    }))
+    const uploaded = (try workerState()).latest
+    if (!uuid.test(uploaded.id) || uploaded.id === expected) throw refused("Could not bind a candidate fee-converter version.")
+    try Console.log(JSON.stringify({ event: `${kind}_rpc_version_uploaded`, source: sha, previousVersion: expected, candidate: uploaded.id }))
+    try requireSameWorker(before, try inspectVersion(uploaded.id), sha, kind)
+    try requireQuietJournal(before, database, kind)
+    try requireRotationBase(try workerState(), expected, uploaded.id, state.active.id)
+    try requireLiveMain(root, sha)
+    try cloudflare.wrangler("fee-converter rotation deploy", {
+      args: ["versions", "deploy", "--config", promotion, "--name", feeConverterWorker, `--version-id=${uploaded.id}`, "--percentage=100", `--message=${description}`, "--yes"],
+    })
+    return uploaded.id
+  })
+  const deployed = try workerState()
+  const immutable = try inspectVersion(candidate)
+  if (!onRotationBase(deployed, candidate) || deployed.active.annotations?.["workers/message"] !== description) throw refused("The active deployment source tag could not be verified after rotation.")
+  try requireSameWorker(before, immutable, sha, kind)
+  const summary = `Fee converter ${titles[kind]} rotation from ${expected} to ${candidate} at 100% on ${sha}.\n`
+  fs.writeFileString(inputs.summary, summary, { flag: "a" }) catch effect () => {
+    throw refused("The protected release runner and summary paths are unavailable.")
+  }
+  try Console.log(summary.trim())
+  return candidate
+}

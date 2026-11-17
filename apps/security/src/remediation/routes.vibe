@@ -131,7 +131,7 @@ effect function recognitionPlan(input: CaseActionInput, journal: Journal) {
 
 export effect function remediationAct(action: string, input: CaseActionInput) {
   if (!remediationKinds.includes(action)) return undefined
-  const journal = try journalOf(input.observed)
+  const journal = try journalOf(input.observed.record, input.observed.model)
   if (journal === undefined) throw notAllowed(action)
   const recorded = action === "remediation" ? try remediationPlan(input, journal)
     : action === "disclosure" ? try disclosurePlan(input, journal)
@@ -141,7 +141,7 @@ export effect function remediationAct(action: string, input: CaseActionInput) {
 }
 
 export effect function remediationContribution(observed: Observed, viewerGithubId: string) {
-  const journal = try journalOf(observed)
+  const journal = try journalOf(observed.record, observed.model)
   return { allowed: remediationAllowed(observed, journal, githubNumber(viewerGithubId)), view: {} } satisfies ExtraActions
 }
 

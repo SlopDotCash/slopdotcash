@@ -1,0 +1,40 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"
+import { pagesDeployment } from "../evidence/deployment.vibe"
+import { cloudflare, pinnedWrangler } from "../wrangler/cloudflare.vibe"
+import { stagingBackend, stagingRoot } from "./probes.vibe"
+import { StagingRefused } from "./request.vibe"
+
+export error StagingUsage { message: string }
+
+const usage = "staging accept <deployment-id> [root]"
+const revision = /^[0-9a-f]{40}$/u
+
+effect function summarized(text: string) {
+  const path = try Config.withDefault(Config.String("GITHUB_STEP_SUMMARY"), "")
+  if (path === "") return
+  const fs = try FileSystem.FileSystem
+  fs.writeFileString(path, text, { flag: "a" }) catch effect () => {
+    throw new StagingRefused({ message: "the step summary could not be written" })
+  }
+}
+
+export effect function stagingAcceptance(root: string, deploymentId: string) {
+  const sourceSha = try Config.String("GITHUB_SHA")
+  if (!revision.test(sourceSha)) throw new StagingRefused({ message: "GITHUB_SHA is not a full commit SHA" })
+  const clientId = try Config.withDefault(Config.String("GITHUB_APP_CLIENT_ID"), "")
+  const deployment = try pagesDeployment(root, "Staging", deploymentId, sourceSha)
+  for (const origin of [deployment.origin, deployment.canonical]) try stagingRoot(origin)
+  try stagingBackend(clientId)
+  try summarized(`Staging commit: ${sourceSha}\n\nDeployment: ${deployment.url}\n\nVerified domain: ${deployment.canonical}\n`)
+  return deployment
+}
+
+export effect function staging(args: ReadonlyArray<string>) {
+  const [command, deploymentId, root, ...rest] = args
+  if (command !== "accept" || deploymentId === undefined || rest.length > 0) throw new StagingUsage({ message: `usage: ${usage}` })
+  const checkout = root ?? "."
+  provide cloudflare({ root: checkout, wrangler: pinnedWrangler(checkout) }) {
+    const deployment = try stagingAcceptance(checkout, deploymentId)
+    try Console.log(`Staging ${deployment.url} and ${deployment.canonical}: roots, OAuth persistence, callback routing, browser isolation, anonymous account and write authentication verified. Interactive login acceptance is separate.`)
+  }
+}

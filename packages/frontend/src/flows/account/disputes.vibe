@@ -1,0 +1,75 @@
+// spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { type DisputeAnswer, type DisputeView, answerDispute, disputeKeyPattern, fileDispute, pointsDispute, pointsDisputes } from "@repo/points/client"
+import { type CallFailure, call } from "../../platform/api.vibe"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { Session, actorNumber } from "../../session/session.vibe"
+
+export const disputesLimitBytes = 512 * 1024
+
+export const disputeMessages = {
+  unavailable: "Points review unavailable. Retry.",
+  privateUnavailable: "The private session could not load. Reload Inbox.",
+  accountChanged: "The account changed. Reload Inbox.",
+} as const
+
+export type DisputeOutcome<A> =
+  | { readonly kind: "done"; readonly value: A }
+  | { readonly kind: "failed"; readonly message: string; readonly accessRefused: boolean }
+  | { readonly kind: "accountChanged"; readonly currentActor: string | null; readonly message: string }
+
+const cursorPattern = /^(0|[1-9][0-9]*)$/u
+
+function accessRefusal(failure: CallFailure): boolean {
+  if (failure._tag === "ActorChanged") return true
+  if (failure._tag !== "Refused") return false
+  return [401, 403, 404, 410].includes(failure.status) || (failure.status === 409 && failure.error === "account_changed")
+}
+
+function messageOf(failure: CallFailure): string {
+  return failure._tag === "Refused" && failure.message !== "" && !failure.message.startsWith("The request failed with HTTP") ? failure.message : disputeMessages.unavailable
+}
+
+effect function settled<A>(actor: string, sent: A!CallFailure!HttpClient.HttpClient, rows: (value: A) => number) {
+  const session = try Session
+  const browser = try BrowserSession
+  const lifetime = try browser.lifetime()
+  const answered = Effect.map(sent, (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
+  const current = session.current() catch () => undefined
+  if (current === undefined) return { kind: "failed", message: disputeMessages.privateUnavailable, accessRefused: true } satisfies DisputeOutcome<A>
+  if (current?.githubId !== actor) return { kind: "accountChanged", currentActor: current?.githubId ?? null, message: disputeMessages.accountChanged } satisfies DisputeOutcome<A>
+  if (!answered.ok) return { kind: "failed", message: messageOf(answered.failure), accessRefused: accessRefusal(answered.failure) } satisfies DisputeOutcome<A>
+  const value = answered.value
+  if (!(try browser.acceptPrivate({ actorId: actorNumber(actor), epoch: lifetime.epoch }, rows(value), true))) {
+    return { kind: "accountChanged", currentActor: current.githubId, message: disputeMessages.accountChanged } satisfies DisputeOutcome<A>
+  }
+  return { kind: "done", value } satisfies DisputeOutcome<A>
+}
+
+function options(actor: string) {
+  return { limitBytes: disputesLimitBytes, expectedActor: actor }
+}
+
+export effect function listDisputes(actor: string, before: string | null) {
+  const query: Readonly<Record<string, string>> = before !== null && cursorPattern.test(before) ? { before } : {}
+  return try settled(actor, call(pointsDisputes, { query }, options(actor)), (page) => page.awards.length)
+}
+
+export effect function readDispute(actor: string, key: string) {
+  if (!disputeKeyPattern.test(key)) return { kind: "failed", message: disputeMessages.unavailable, accessRefused: true } satisfies DisputeOutcome<never>
+  return try settled(actor, call(pointsDispute, { params: { key } }, options(actor)), () => 1)
+}
+
+export effect function openDispute(actor: string, revisionId: string, reason: string) {
+  return try settled(actor, call(fileDispute, { body: { revisionId, reason } }, options(actor)), (_view: DisputeView) => 1)
+}
+
+export effect function decideDispute(actor: string, key: string, answer: DisputeAnswer) {
+  if (!disputeKeyPattern.test(key)) return { kind: "failed", message: disputeMessages.unavailable, accessRefused: true } satisfies DisputeOutcome<never>
+  return try settled(actor, call(answerDispute, { params: { key }, body: answer }, options(actor)), (_view: DisputeView) => 1)
+}
+
+export function disputeStateLabel(view: Pick<DisputeView, "resolution" | "state">): string {
+  if (view.resolution === "upheld") return "Dispute upheld"
+  if (view.resolution === "denied") return "Dispute denied"
+  return view.state === "review" ? "Moderator review" : "Slopbot review"
+}

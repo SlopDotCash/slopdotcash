@@ -74,10 +74,12 @@ export effect function runIdentity() {
 }
 
 export effect function sourceRevision(root: string) {
-  const bytes = try Effect.provide(gitBytes({ args: ["-C", root, "rev-parse", "HEAD"], limit: 1024, seconds: 30 }, "The source revision is unreadable"), systemGit)
-  const sha = new TextDecoder().decode(bytes).trim()
-  if (!revision.test(sha)) throw new RecoveryRefused({ message: "The source revision is not a full commit SHA" })
-  return sha
+  provide systemGit {
+    const bytes = try gitBytes({ args: ["-C", root, "rev-parse", "HEAD"], limit: 1024, seconds: 30 }, "The source revision is unreadable")
+    const sha = new TextDecoder().decode(bytes).trim()
+    if (!revision.test(sha)) throw new RecoveryRefused({ message: "The source revision is not a full commit SHA" })
+    return sha
+  }
 }
 
 export function planOf(source: string, names: Names) {

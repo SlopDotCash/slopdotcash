@@ -1,7 +1,7 @@
 // spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/governance.md, "A verification result records its recorder, revision, kind and bound, and a different maintainer reviews it"
 import { randomId, sha256Hex } from "@repo/platform/crypto"
 import { byteOrder, canonicalJson } from "../manifest/inventory.vibe"
-import { EvidenceManifest, SiteVerification } from "./records.schema.vibe"
+import { EvidenceArtifact, EvidenceManifest, SiteVerification } from "./records.schema.vibe"
 
 export error EvidenceRefused { message: string }
 
@@ -101,10 +101,11 @@ effect function staged(staging: string, verification: Verification, log: Uint8Ar
   const files = try Path.Path
   const encoder = new TextEncoder()
   const verificationBytes = encoder.encode(canonicalJson(verification))
-  const artifacts = [
+  const artifacts: Array<typeof EvidenceArtifact.Type> = [
     { name: deployLogName, bytes: log.length, sha256: try sha256Hex(log) },
     { name: verificationName, bytes: verificationBytes.length, sha256: try sha256Hex(verificationBytes) },
-  ].sort((left, right) => byteOrder(left.name, right.name))
+  ]
+  artifacts.sort((left, right) => byteOrder(left.name, right.name))
   const manifest = { schemaVersion: 1, capturedAt: verification.capturedAt, environment: verification.environment, sourceSha: verification.sourceSha, artifacts } satisfies typeof EvidenceManifest.Type
   try written(files.join(staging, deployLogName), log)
   try written(files.join(staging, verificationName), verificationBytes)

@@ -1,0 +1,112 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/operations/release.md, "Production publishes only the current main head; staging publishes a checked ancestor and never rolls back"
+import { StagingRefused, acceptanceRequest } from "./request.vibe"
+
+schema Flow {
+  readonly authorizationUrl: string
+  readonly flowId: string
+  readonly pollCapability: string
+}
+
+schema Poll { readonly status: string }
+
+schema Refusal { readonly error: string }
+
+export const stagingSite = "https://staging.slop.cash"
+export const stagingIdentity = "https://identity-staging.slop.cash"
+
+const productionSite = "https://slop.cash"
+const audience = "slop-points-web"
+const rootAttempts = 6
+const rootTotalMillis = 30_000
+const rootAttemptMillis = 5_000
+const rootRetryMillis = 1_000
+const rootHeaders = ["content-security-policy", "strict-transport-security", "x-content-type-options"]
+const transient: ReadonlySet<number> = new Set([429, 500, 502, 503, 504])
+
+function refused(message: string) {
+  return new StagingRefused({ message })
+}
+
+function posted(origin: string, path: string, body: unknown, browserOrigin: string = stagingSite) {
+  return HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(`${origin}${path}`, { headers: { origin: browserOrigin } }), body)
+}
+
+effect function decoded<S extends Schema.Top>(schema: S, bytes: Uint8Array, message: string) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch effect () => {
+    throw refused(message)
+  }
+  return Schema.decodeUnknownEffect(schema)(value) catch effect () => {
+    throw refused(message)
+  }
+}
+
+effect function jsonNull(bytes: Uint8Array) {
+  const value = Effect.try(() => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) catch () => undefined
+  return value === null
+}
+
+effect function rootOnce(origin: string, millis: number) {
+  const request = HttpClientRequest.get(origin, { headers: { "cache-control": "no-cache" } })
+  return timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
+      const response = try HttpClient.execute(request)
+      return { status: response.status, headers: response.headers }
+    }
+  }, Duration.millis(millis)) catch () => undefined
+}
+
+export effect function stagingRoot(origin: string) {
+  const deadline = (try Clock.currentTimeMillis) + rootTotalMillis
+  let last = "no attempt"
+  for (let attempt = 1; attempt <= rootAttempts; attempt += 1) {
+    const remaining = deadline - (try Clock.currentTimeMillis)
+    if (remaining <= 0) break
+    const answered = try rootOnce(origin, Math.max(1, Math.min(rootAttemptMillis, remaining)))
+    if (answered?.status === 200) {
+      const missing = rootHeaders.find((header) => answered.headers[header] === undefined)
+      if (missing !== undefined) throw refused(`Staging root ${origin} omitted ${missing}`)
+      return
+    }
+    last = answered === undefined ? "transport failed" : `HTTP ${answered.status}`
+    if (answered !== undefined && !transient.has(answered.status)) throw refused(`Staging root ${origin} returned HTTP ${answered.status}`)
+    if (attempt < rootAttempts && deadline - (try Clock.currentTimeMillis) > rootRetryMillis) try sleep(Duration.millis(rootRetryMillis))
+  }
+  throw refused(`Staging root ${origin} did not become available within its retry bound (${last})`)
+}
+
+effect function checkedFlow() {
+  const start = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/start", { audience }))
+  if (start.status !== 201 || start.headers["access-control-allow-origin"] !== stagingSite) throw refused(`Staging identity start failed: ${start.status}`)
+  const flow = try decoded(Flow, start.bytes, "Staging identity start returned an unexpected flow")
+  const authorization = Effect.try(() => new URL(flow.authorizationUrl)) catch () => undefined
+  if (authorization === undefined || authorization.origin !== stagingIdentity || authorization.pathname !== "/v1/oauth/authorize") throw refused("Staging identity returned a different authority")
+  return { flow, authorization: authorization.href }
+}
+
+effect function checkedAuthorization(url: string, clientId: string) {
+  const authorize = try acceptanceRequest(HttpClientRequest.get(url))
+  if (authorize.status !== 302) throw refused("Staging authorization redirect failed")
+  const github = Effect.try(() => new URL(authorize.headers.location ?? "")) catch () => undefined
+  if (github === undefined || github.origin !== "https://github.com" || github.pathname !== "/login/oauth/authorize"
+    || github.searchParams.get("redirect_uri") !== `${stagingIdentity}/v1/oauth/callback` || github.searchParams.get("client_id") !== clientId) {
+    throw refused("Staging OAuth application or callback mismatch")
+  }
+}
+
+export effect function stagingBackend(clientId: string) {
+  if (clientId.trim() === "") throw refused("GITHUB_APP_CLIENT_ID is required to check the staging OAuth application")
+  const { flow, authorization } = try checkedFlow()
+  try checkedAuthorization(authorization, clientId)
+  const poll = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/poll", { audience, flowId: flow.flowId, pollCapability: flow.pollCapability }))
+  const pending = poll.status === 202 ? (try decoded(Poll, poll.bytes, "Staging did not persist and read its OAuth flow")).status : ""
+  if (pending !== "pending") throw refused("Staging did not persist and read its OAuth flow")
+  const forbidden = try acceptanceRequest(posted(stagingIdentity, "/v1/oauth/start", { audience }, productionSite))
+  if (forbidden.status !== 403) throw refused("Staging accepted the production browser origin")
+  const me = try acceptanceRequest(HttpClientRequest.get(`${stagingSite}/api/v1/points/me`))
+  if (me.status !== 200 || !(try jsonNull(me.bytes))) throw refused("Staging anonymous account state is invalid")
+  const payments = try acceptanceRequest(HttpClientRequest.get(`${stagingSite}/api/v1/payments/me`))
+  const paymentsRefusal = payments.status === 401 ? (try decoded(Refusal, payments.bytes, `Staging payment authentication is unavailable: ${payments.status}`)).error : ""
+  if (paymentsRefusal !== "not_signed_in") throw refused(`Staging payment authentication is unavailable: ${payments.status}`)
+  const write = try acceptanceRequest(posted(stagingSite, "/api/v1/points/visibility", { public: true }))
+  if (write.status !== 401) throw refused("Staging accepted an unauthenticated account write")
+}

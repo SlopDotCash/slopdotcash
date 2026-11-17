@@ -1,0 +1,46 @@
+// spec/operations/release.md, "Served bytes are verified against the deployment's own source"
+import { boundedBytes } from "@repo/platform/browser"
+
+export error StagingRefused { message: string }
+
+export interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string | undefined>>
+  readonly bytes: Uint8Array
+}
+
+const attempts = 3
+const totalMillis = 30_000
+const attemptMillis = 10_000
+const retryDelayMillis = 250
+const bodyLimit = 64 * 1024
+const transient: ReadonlySet<number> = new Set([429, 500, 502, 503, 504])
+
+effect function attempt(request: HttpClientRequest.HttpClientRequest, millis: number) {
+  const answered = timeout(effect {
+    provide FetchHttpClient.RequestInit = { redirect: "manual", cache: "no-store" } {
+      const response = try HttpClient.execute(request)
+      const bytes = try boundedBytes(response, bodyLimit, "the staging acceptance answer")
+      return { status: response.status, headers: response.headers, bytes } satisfies Answer
+    }
+  }, Duration.millis(millis)) catch effect (error) => {
+    if (error._tag === "BodyTooLarge") throw new StagingRefused({ message: `${request.url} answered more than ${bodyLimit} bytes` })
+    return undefined
+  }
+  return answered
+}
+
+export effect function acceptanceRequest(request: HttpClientRequest.HttpClientRequest) {
+  const deadline = (try Clock.currentTimeMillis) + totalMillis
+  let last = "no attempt"
+  for (let index = 0; index < attempts; index += 1) {
+    const remaining = deadline - (try Clock.currentTimeMillis)
+    if (remaining <= 0) break
+    const answered = try attempt(request, Math.max(1, Math.min(remaining, attemptMillis)))
+    if (answered !== undefined && !transient.has(answered.status)) return answered
+    last = answered === undefined ? "transport failed" : `HTTP ${answered.status}`
+    const delay = retryDelayMillis * (index + 1)
+    if (index < attempts - 1 && deadline - (try Clock.currentTimeMillis) > delay) try sleep(Duration.millis(delay))
+  }
+  throw new StagingRefused({ message: `the staging acceptance request exhausted its retry bound (${last})` })
+}
