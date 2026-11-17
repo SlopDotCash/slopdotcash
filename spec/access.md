@@ -43,10 +43,10 @@ Project reinstatement never changes an account ban.
 import appeals as AP from "./slopbot/appeals"
 import categories as F from "./slopbot/categories"
 type Ban = { enforcement: int, project: int, target: int, decidedBy: int }
-type Identification = { enforcement: int, target: int, by: int }
+type Identification = { enforcement: int, target: int, moderator: int }
 type Release = { decision: int, enforcement: int, target: int, decidedBy: int }
 type AppealStatus = AppealOpen | AppealDenied | AppealGranted
-type Appeal = { id: int, enforcement: int, target: int, status: AppealStatus, decidedBy: int, lifecycle: AP::Appeal }
+type BanAppeal = { id: int, enforcement: int, target: int, status: AppealStatus, decidedBy: int, lifecycle: AP::Appeal }
 type ProjectState = ProjectClear | ProjectBanned
 type EnforcementRole = VettingRole | ModeratorRole
 type EnforcementAction = BanAction | ReinstateAction
@@ -54,7 +54,7 @@ type Enforcement = { id: int, project: int, sequence: int, kind: EnforcementActi
   stateAfter: ProjectState, decidedBy: int }
 type Award = { id: int, recipient: int, funded: bool, paid: bool }
 type Access = { enforcements: List[Enforcement], identified: List[Identification], bans: List[Ban], releases: List[Release],
-  appeals: List[Appeal], awards: List[Award], decisions: List[int], lastAppeal: int }
+  appeals: List[BanAppeal], awards: List[Award], decisions: List[int], lastAppeal: int }
 pure val moderators: List[int] = List(18633264, 202660855)
 pure val vettingService = -1
 pure val allocationService = -2
@@ -119,7 +119,7 @@ pure def canIdentify(a: Access, by: int, enforcement: int, target: int): bool =
   isModerator(by) and p.id > 0 and p.decidedBy == by and target > 0 and target != by
     and not(a.identified.some(i => i.enforcement == enforcement and i.target == target))
 pure def identify(a: Access, by: int, enforcement: int, target: int): Access =
-  { ...a, identified: a.identified.append({ enforcement: enforcement, target: target, by: by }) }
+  { ...a, identified: a.identified.append({ enforcement: enforcement, target: target, moderator: by }) }
 pure def canBan(a: Access, by: int, enforcement: int, target: int): bool =
   val p = projectDecision(a, enforcement)
   isModerator(by) and p.id > 0 and p.decidedBy == by and target > 0 and target != by
@@ -133,9 +133,9 @@ pure def alwaysBansDecidedOnConfirmedMalice(a: Access): bool = a.bans.every(b =>
   projectDecision(a, b.enforcement).project == b.project and projectDecision(a, b.enforcement).decidedBy == b.decidedBy
     and isModerator(b.decidedBy) and b.target != b.decidedBy
     and a.bans.select(o => o.enforcement == b.enforcement and o.target == b.target).length() == 1
-    and a.identified.some(i => i.enforcement == b.enforcement and i.target == b.target and i.by == b.decidedBy))
+    and a.identified.some(i => i.enforcement == b.enforcement and i.target == b.target and i.moderator == b.decidedBy))
 pure def alwaysIdentificationsDecided(a: Access): bool = a.identified.every(i =>
-  projectDecision(a, i.enforcement).decidedBy == i.by and isModerator(i.by) and i.target > 0 and i.target != i.by)
+  projectDecision(a, i.enforcement).decidedBy == i.moderator and isModerator(i.moderator) and i.target > 0 and i.target != i.moderator)
 pure def stepBanRecordsPermanent(before: Access, after: Access): bool =
   before.bans.every(b => after.bans.includes(b)) and before.releases.every(r => after.releases.includes(r))
     and before.identified.every(i => after.identified.includes(i))
@@ -215,8 +215,8 @@ pure def appeal(a: Access, by: int, enforcement: int): Access =
   { ...a, lastAppeal: a.lastAppeal + 1,
     appeals: a.appeals.append({ id: a.lastAppeal + 1, enforcement: enforcement, target: by, status: AppealOpen, decidedBy: 0,
       lifecycle: AP::open(AP::initial, by, banSubject(by)) }) }
-pure val absentAppeal: Appeal = { id: 0, enforcement: 0, target: 0, status: AppealDenied, decidedBy: 0, lifecycle: AP::initial }
-pure def appealById(a: Access, appealId: int): Appeal = a.appeals.select(p => p.id == appealId).nthOr(0, absentAppeal)
+pure val absentAppeal: BanAppeal = { id: 0, enforcement: 0, target: 0, status: AppealDenied, decidedBy: 0, lifecycle: AP::initial }
+pure def appealById(a: Access, appealId: int): BanAppeal = a.appeals.select(p => p.id == appealId).nthOr(0, absentAppeal)
 pure def triaged(l: AP::Appeal, uphold: bool, confidenceHundredths: int): AP::Appeal =
   AP::escalateByCriteria(AP::observeBan(AP::draft(l, uphold, confidenceHundredths), AP::Banned))
 pure def canTriageAppeal(a: Access, by: int, appealId: int, uphold: bool, confidenceHundredths: int): bool =

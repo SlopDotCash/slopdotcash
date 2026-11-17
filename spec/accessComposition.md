@@ -132,11 +132,11 @@ analysis of an existing case and Slopbot's triage of its appeal continue.
 
 ```quint
 type CaseAction = AnalyzeCase | TriageCaseAppeal | NewReport | CheckReceipt | NewAward
-pure def caseActionOpen(restriction: E::Restriction, action: CaseAction): bool =
-  restriction == E::Clear or action == AnalyzeCase or action == TriageCaseAppeal
-pure def lawRestrictionClosesNewCaseWork(restriction: E::Restriction, action: CaseAction): bool =
-  (restriction != E::Clear and (action == NewReport or action == CheckReceipt or action == NewAward))
-    implies not(caseActionOpen(restriction, action))
+pure def caseActionOpen(restriction: E::Restriction, work: CaseAction): bool =
+  restriction == E::Clear or work == AnalyzeCase or work == TriageCaseAppeal
+pure def lawRestrictionClosesNewCaseWork(restriction: E::Restriction, work: CaseAction): bool =
+  (restriction != E::Clear and (work == NewReport or work == CheckReceipt or work == NewAward))
+    implies not(caseActionOpen(restriction, work))
 pure def lawExistingCasesContinue(restriction: E::Restriction): bool =
   caseActionOpen(restriction, AnalyzeCase) and caseActionOpen(restriction, TriageCaseAppeal)
 ```
@@ -166,7 +166,7 @@ pure val confidenceHundredthsValues = Set(95)
 pure val actorValues = Set(7)
 pure val atValues = Set(1, 2, 3)
 pure val restrictionValues = Set(E::Clear, E::FlagQuarantine, E::ModeratorQuarantine, E::ServiceBan, E::ModeratorBan)
-pure val actionValues = Set(AnalyzeCase, TriageCaseAppeal, NewReport, CheckReceipt, NewAward)
+pure val workValues = Set(AnalyzeCase, TriageCaseAppeal, NewReport, CheckReceipt, NewAward)
 pure val vValues = Set({ actor: 7, at: 1 }, { actor: 7, at: 2 })
 pure val weight_begin = 4
 pure val weight_commit = 4
