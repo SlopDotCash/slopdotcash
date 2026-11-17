@@ -164,7 +164,8 @@ pure def decideAppeal(b: Bounty, id: int, by: int, checkedEpoch: int, uphold: bo
 Every hold belongs to a known case and records that case's root cause. A
 case holds exactly when it has a committed award or a pending related-party
 proposal. A vault hold records the snapshot that funded it. Restriction or a
-ban blocks new holds and leaves existing ones unchanged.
+ban blocks new holds and leaves existing ones unchanged; settling a vault
+hold's payout is not a new hold.
 
 ```quint
 pure def holdMatches(b: Bounty, h: Hold): bool = known(h.caseId) and h.rootCause > 0 and h.rootCause == caseOf(b, h.caseId).rootCause
@@ -183,7 +184,7 @@ pure def alwaysOneHoldPerRootCause(b: Bounty): bool =
 pure def alwaysFullAwardBindsNoVault(b: Bounty): bool = b.holds.every(h => h.kind == VaultHold or h.kind == DirectHold implies
   caseOf(b, h.caseId).terms.split == T::StandardSplit)
 pure def stepHoldsNeedClearance(before: Bounty, after: Bounty): bool = after.holds.every(h => before.holds.includes(h)
-  or (not(caseOf(before, h.caseId).authority.programRestricted) and rootCauseFree(before, h.caseId) and firstQualifying(before, h.caseId)))
+  or before.holds.includes({ ...h, settledReceipt: 0 }) or (not(caseOf(before, h.caseId).authority.programRestricted) and rootCauseFree(before, h.caseId) and firstQualifying(before, h.caseId)))
 pure def sometimesSecondReportBlocked(b: Bounty): bool = C::committed(caseOf(b, 1)) and caseOf(b, 2).receipt == C::Confirmed
   and caseOf(b, 2).rootCause == caseOf(b, 1).rootCause and caseOf(b, 2).award == C::Pending
 pure def sometimesVaultHold(b: Bounty): bool = b.holds.some(h => h.kind == VaultHold)
