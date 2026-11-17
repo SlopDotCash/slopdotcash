@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "909fc0ae1abc12f4855206dff0a8aa127582ec3ed1eeca72d793d0ff6db3ac78",
+  "inventorySha256": "e854c48d675bd1f5ddbfec27c48ef1afbe83e30aa63510d00242a547bbfc70c3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2096,12 +2096,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 236,
+      "line": 242,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2115,7 +2116,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 474,
+      "line": 484,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2129,6 +2130,7 @@
       ],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2150,12 +2152,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3649,
+      "line": 3787,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2169,12 +2172,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4253,
+      "line": 4391,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2369,13 +2373,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 437,
+      "line": 440,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2390,13 +2396,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 446,
+      "line": 449,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -3321,7 +3329,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 33,
+      "line": 35,
       "name": "state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -3335,7 +3343,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 59,
+      "line": 61,
       "name": "MonthlyAwardState",
       "kind": "string-union",
       "values": [

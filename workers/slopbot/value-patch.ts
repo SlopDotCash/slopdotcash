@@ -186,12 +186,16 @@ export function addedValuePatchRecovery(
               text.replace(/\n(?=[\s\S])/gu, "\n+").replace(/\n$/u, "") +
               (text.endsWith("\n") ? "" : "\n\\ No newline at end of file");
         patches.set(key, {
-          patch: client.internText?.(patch) ?? patch,
+          patch,
           additions: lineCount,
         });
       }
       const recovered = patches.get(key);
-      if (recovered?.additions === file.additions) file.patch = recovered.patch;
+      if (recovered?.additions === file.additions) {
+        recovered.patch =
+          client.internText?.(recovered.patch) ?? recovered.patch;
+        file.patch = recovered.patch;
+      }
     }
   };
 }
