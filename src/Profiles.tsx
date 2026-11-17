@@ -1,4 +1,6 @@
+import { ExternalLink, RotateCcw } from "lucide-react";
 import { Fragment, type ReactNode, useCallback, useState } from "react";
+import { ChainIcon } from "./ChainIcon";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { CycleIndex } from "./lib/cycle-index";
@@ -16,7 +18,6 @@ import {
 } from "./lib/profiles";
 import { findProject } from "./lib/projects.mjs";
 import { isUsdMicroAsset } from "./lib/received-totals";
-import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
 import {
   type PublicResourceState,
@@ -29,12 +30,15 @@ import {
   ContributorIdentity,
   cycleContributorStateLabel,
   cycleLifecycleLabel,
+  cycleLifecycleTone,
   ExternalLinkAnchor,
   formatCycleMonth,
   formatDate,
   formatMicroUsdc,
   formatPercent,
   formatPointsFromThirds,
+  Spinner,
+  StatusBadge,
 } from "./Presentation";
 
 async function loadProfiles(signal: AbortSignal) {
@@ -142,29 +146,33 @@ export function ProfileActivity({
       {awards ? <ActivityChart awards={awards} /> : null}
       {state.status === "ready" && state.refreshError ? (
         <p role="status">
-          Profile records may be outdated.{" "}
+          <StatusBadge tone="warning">Stale</StatusBadge>{" "}
           <button
-            className="button secondary-button button-small"
+            className="text-button"
             type="button"
+            aria-label="Retry profile"
+            title="Retry profile"
             onClick={retry}
           >
-            Retry profile
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : null}
       {state.status === "error" ? (
         <p role="status">
-          PR counts are unavailable.{" "}
+          PRs unavailable{" "}
           <button
-            className="button secondary-button button-small"
+            className="text-button"
             type="button"
+            aria-label="Retry profile"
+            title="Retry profile"
             onClick={retry}
           >
-            Retry profile
+            <RotateCcw aria-hidden="true" size={15} />
           </button>
         </p>
       ) : state.status === "loading" ? (
-        <p role="status">Loading PR history…</p>
+        <Spinner label="Loading PR history" />
       ) : counts ? (
         <PullRequestBar counts={counts} login={p?.login ?? login} />
       ) : null}
@@ -177,7 +185,7 @@ export function ProfileActivity({
 const PR_SEGMENTS = [
   ["merged", "Merged", "is:merged"],
   ["open", "Open", "is:open"],
-  ["closed", "Closed without merging", "is:closed is:unmerged"],
+  ["closed", "Closed", "is:closed is:unmerged"],
 ] as const;
 
 function PullRequestBar({
@@ -193,12 +201,9 @@ function PullRequestBar({
     <section className="profile-card" aria-label="Pull requests">
       <div className="profile-card-heading">
         <h2>Pull requests</h2>
-        <span>
-          {total.toLocaleString()} total
-          {decided > 0
-            ? ` · ${Math.round((counts.merged * 100) / decided)}% merged`
-            : ""}
-        </span>
+        {decided > 0 ? (
+          <span>{Math.round((counts.merged * 100) / decided)}% merged</span>
+        ) : null}
       </div>
       {total > 0 ? (
         <div className="pr-bar" aria-hidden="true">
@@ -218,8 +223,7 @@ function PullRequestBar({
           <li key={key}>
             <span className={`pr-dot pr-bar-${key}`} aria-hidden="true" />
             <a href={contributorPullSearchUrl(login, query)}>
-              <strong>{counts[key].toLocaleString()}</strong> PRs{" "}
-              {label.toLowerCase()}
+              <strong>{counts[key].toLocaleString()}</strong> {label}
             </a>
           </li>
         ))}
@@ -241,7 +245,7 @@ function ActivityChart({ awards }: { awards: PointsMember["awards"] }) {
       className="activity-chart"
       aria-label={`Points per day, last ${ACTIVITY_DAYS} days`}
     >
-      <figcaption>Daily activity · last {ACTIVITY_DAYS} days</figcaption>
+      <figcaption>{ACTIVITY_DAYS} days</figcaption>
       <div className="activity-bars" aria-hidden="true">
         {days.map((entry) => (
           <span
@@ -322,11 +326,14 @@ function ProfilePaymentHistory({
           }
           detail={
             <>
-              Archived cycle · {cycleLifecycleLabel(cycle)} ·{" "}
+              <StatusBadge>Cycle</StatusBadge>{" "}
+              <StatusBadge tone={cycleLifecycleTone(cycle)}>
+                {cycleLifecycleLabel(cycle)}
+              </StatusBadge>{" "}
               {formatPointsFromThirds(
                 contributor.scoreThirds ?? contributor.score * 3,
               )}{" "}
-              points
+              pts
             </>
           }
           amount={
@@ -334,7 +341,7 @@ function ProfilePaymentHistory({
               <strong>
                 {cycle.kind === "external-prize-share"
                   ? contributor.sharePartsPerMillion === null
-                    ? "Share not recorded"
+                    ? "—"
                     : `${formatPercent(contributor.sharePartsPerMillion)} share`
                   : `${formatMicroUsdc(
                       contributor.state === "paid"
@@ -362,26 +369,35 @@ function ProfilePaymentHistory({
             name={findProject(payment.projectId)?.name ?? payment.projectId}
             detail={
               <>
-                Direct transfer · {NETWORK_NAMES[payment.chain]}
-                {network?.testnet ? " testnet" : ""} · Work month:{" "}
-                {formatCycleMonth(payment.contributionMonth)} · Paid{" "}
+                <StatusBadge>Direct</StatusBadge>{" "}
+                <ChainIcon chain={payment.chain} />
+                {network?.testnet ? (
+                  <>
+                    {" "}
+                    <StatusBadge>testnet</StatusBadge>
+                  </>
+                ) : null}{" "}
+                · {formatCycleMonth(payment.contributionMonth)} ·{" "}
                 {formatDate(payment.blockTime)}
               </>
             }
             amount={
               <>
                 <strong>{formatMicroUsdc(payment.amountMicro)} USDC</strong>
-                <small>Paid directly</small>
+                <StatusBadge tone="success">Paid</StatusBadge>
               </>
             }
             action={
               href ? (
-                <ExternalLinkAnchor href={href}>
-                  View transaction
+                <ExternalLinkAnchor href={href} label="Transaction">
+                  <ExternalLink aria-hidden="true" size={16} />
                 </ExternalLinkAnchor>
               ) : (
-                <Link href={`/projects/${payment.projectId}/funding`}>
-                  Funding record
+                <Link
+                  href={`/projects/${payment.projectId}/funding`}
+                  ariaLabel="Funding record"
+                >
+                  <ExternalLink aria-hidden="true" size={16} />
                 </Link>
               )
             }
@@ -401,6 +417,8 @@ function ProfilePaymentHistory({
       right.sortAt.localeCompare(left.sortAt) ||
       left.id.localeCompare(right.id),
   );
+  const failed =
+    directState.status === "error" || vaultState.status === "error";
   return (
     <section
       className="profile-card profile-payments"
@@ -410,39 +428,39 @@ function ProfilePaymentHistory({
         <h2>Awards and payments</h2>
       </div>
       <p className="profile-payments-summary">
-        Money received (all time):{" "}
         <strong>
-          {total !== null
-            ? dollars(total)
-            : scope &&
-                directState.status !== "error" &&
-                vaultState.status !== "error"
-              ? "Loading…"
-              : "Unavailable"}
+          {total !== null ? (
+            dollars(total)
+          ) : scope && !failed ? (
+            <Spinner label="Loading" />
+          ) : (
+            <span role="img" aria-label="Unavailable" title="Unavailable">
+              —
+            </span>
+          )}
         </strong>
+        Received
       </p>
       <div className="profile-payment-notices">
-        {!scope ? (
-          <p role="status">Payment identity unavailable.</p>
-        ) : directState.status === "error" ? (
+        {!scope ? null : failed ? (
           <p role="status">
-            Direct payment records unavailable.{" "}
-            <button className="text-button" type="button" onClick={retryDirect}>
-              Retry payment records
+            Some payments unavailable{" "}
+            <button
+              className="text-button"
+              type="button"
+              aria-label="Retry payment records"
+              title="Retry payment records"
+              onClick={() => {
+                if (directState.status === "error") retryDirect();
+                if (vaultState.status === "error") retryVault();
+              }}
+            >
+              <RotateCcw aria-hidden="true" size={15} />
             </button>
           </p>
-        ) : directState.status === "loading" ? (
-          <p role="status">Loading direct payments…</p>
-        ) : null}
-        {!scope ? null : vaultState.status === "error" ? (
-          <p role="status">
-            Project payment records unavailable.{" "}
-            <button className="text-button" type="button" onClick={retryVault}>
-              Retry project payments
-            </button>
-          </p>
-        ) : vaultState.status === "loading" ? (
-          <p role="status">Loading project payments…</p>
+        ) : directState.status === "loading" ||
+          vaultState.status === "loading" ? (
+          <Spinner label="Loading payments" />
         ) : null}
       </div>
       {entries.length > 0 ? (
@@ -452,7 +470,7 @@ function ProfilePaymentHistory({
           ))}
         </ul>
       ) : directState.status === "ready" && vaultState.status === "ready" ? (
-        <p>No awards or payments recorded.</p>
+        <p>None yet</p>
       ) : null}
       {entries.length > 5 ? (
         <button
@@ -461,9 +479,7 @@ function ProfilePaymentHistory({
           aria-expanded={showAll}
           onClick={() => setShowAll(!showAll)}
         >
-          {showAll
-            ? "Show recent records"
-            : `Show all ${entries.length} records`}
+          {showAll ? "Show less" : `Show all (${entries.length})`}
         </button>
       ) : null}
     </section>

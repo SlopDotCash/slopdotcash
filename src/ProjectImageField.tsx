@@ -10,12 +10,10 @@ import { Avatar } from "./Presentation";
 export function ProjectImageField({
   value,
   onChange,
-  compact = false,
   ownerLogin,
 }: {
   value: string;
   onChange: (value: string) => void;
-  compact?: boolean;
   ownerLogin?: string;
 }) {
   const [error, setError] = useState("");
@@ -85,10 +83,10 @@ export function ProjectImageField({
   const input = (
     <input
       id="project-image"
-      className={compact ? "project-image-input" : undefined}
+      aria-label="Project image (optional)"
+      className="project-image-input"
       type="file"
       accept="image/png,image/jpeg,image/webp"
-      aria-describedby={compact ? undefined : "project-image-help"}
       disabled={busy}
       onChange={(event) => {
         const file = event.currentTarget.files?.[0];
@@ -97,62 +95,43 @@ export function ProjectImageField({
       }}
     />
   );
-  if (compact)
-    return (
-      <div className="project-image-field-compact">
-        <label className="project-image-upload" htmlFor="project-image">
-          {value ? (
-            <img src={value} alt="" width={64} height={64} />
-          ) : ownerLogin ? (
-            <Avatar
-              actor={{
-                login: ownerLogin,
-                avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(ownerLogin)}?size=128`,
-              }}
-            />
-          ) : (
-            <ImagePlus
-              aria-hidden="true"
-              className="project-image-placeholder"
-            />
-          )}
-          <span className="visually-hidden">Project image (optional)</span>
-          {input}
-        </label>
-        {value ? (
-          <button
-            type="button"
-            className="text-button project-image-remove"
-            disabled={busy}
-            onClick={() => onChange("")}
-          >
-            <X aria-hidden="true" />
-            <span className="visually-hidden">Remove image</span>
-          </button>
-        ) : null}
-        {busy ? <p role="status">Preparing image…</p> : null}
-        {error ? <p role="alert">{error}</p> : null}
-      </div>
-    );
   return (
-    <div className="project-image-field">
-      <label htmlFor="project-image">Project image (optional)</label>
-      <p id="project-image-help">
-        Shown on cards and your project page. Without an image, your GitHub
-        owner avatar is used.
-      </p>
-      {value ? (
-        <img src={value} alt="Project avatar preview" width={80} height={80} />
-      ) : null}
-      {input}
+    <div className="project-image-field-compact">
+      <label
+        className="project-image-upload"
+        htmlFor="project-image"
+        title="Project image"
+      >
+        {value ? (
+          <img
+            src={value}
+            alt="Project avatar preview"
+            width={64}
+            height={64}
+          />
+        ) : ownerLogin ? (
+          <Avatar
+            actor={{
+              login: ownerLogin,
+              avatarUrl: `https://avatars.githubusercontent.com/${encodeURIComponent(ownerLogin)}?size=128`,
+            }}
+          />
+        ) : (
+          <ImagePlus aria-hidden="true" className="project-image-placeholder" />
+        )}
+        <span className="visually-hidden">Project image (optional)</span>
+        {input}
+      </label>
       {value ? (
         <button
           type="button"
-          className="button secondary-button"
+          className="text-button project-image-remove"
           disabled={busy}
           onClick={() => onChange("")}
+          title="Remove image"
         >
-          Remove image
+          <X aria-hidden="true" />
+          <span className="visually-hidden">Remove image</span>
         </button>
       ) : null}
       {busy ? <p role="status">Preparing image…</p> : null}

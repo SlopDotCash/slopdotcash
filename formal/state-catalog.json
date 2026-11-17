@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "5b02579853d4325bbd477a7626a4b05394d7ec915d1552010715dd46e98b67b7",
+  "inventorySha256": "a7e87e06d1a7c4da9635ff273a1cf6eb2b71e26a9619977dcaf12d7a0eb1f67b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 610,
+      "line": 631,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -148,7 +148,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2633,
+      "line": 2655,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -184,7 +184,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2837,
+      "line": 2859,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2311,12 +2311,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 236,
+      "line": 242,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2330,7 +2331,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 460,
+      "line": 484,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2344,6 +2345,7 @@
       ],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2365,12 +2367,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3635,
+      "line": 3787,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2384,12 +2387,13 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4239,
+      "line": 4391,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -2584,13 +2588,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 437,
+      "line": 440,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2605,13 +2611,15 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 446,
+      "line": 449,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2620,7 +2628,7 @@
     },
     {
       "path": "src/Admin.tsx",
-      "line": 1257,
+      "line": 1275,
       "name": "status",
       "kind": "string-union",
       "values": ["not_converted", "usdc"],
@@ -2637,7 +2645,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 137,
+      "line": 146,
       "name": "useState",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -2651,7 +2659,7 @@
     },
     {
       "path": "src/AdminProjectEnforcement.tsx",
-      "line": 174,
+      "line": 183,
       "name": "mode",
       "kind": "string-union",
       "values": ["enforcement", "enforcement-preview"],
@@ -2665,7 +2673,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 461,
+      "line": 490,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2676,6 +2684,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2692,7 +2701,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1078,
+      "line": 1144,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2703,6 +2712,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2719,7 +2729,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 24,
+      "line": 27,
       "name": "state",
       "kind": "string-union",
       "values": ["expired", "queued", "sending", "sent", "unknown"],
@@ -2741,7 +2751,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 37,
+      "line": 40,
       "name": "availability",
       "kind": "string-union",
       "values": ["unavailable", "unverified"],
@@ -2757,7 +2767,7 @@
     },
     {
       "path": "src/InboxEmail.tsx",
-      "line": 40,
+      "line": 43,
       "name": "status",
       "kind": "string-union",
       "values": ["loading", "signed-out"],
@@ -2788,7 +2798,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 220,
+      "line": 227,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2807,7 +2817,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 544,
+      "line": 558,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2826,7 +2836,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1492,
+      "line": 1487,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2922,7 +2932,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1063,
+      "line": 1062,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2947,7 +2957,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1545,
+      "line": 1544,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2972,7 +2982,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2438,
+      "line": 2496,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2997,7 +3007,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2443,
+      "line": 2501,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -3022,7 +3032,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2450,
+      "line": 2508,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -3047,7 +3057,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 266,
+      "line": 368,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -3075,7 +3085,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 982,
+      "line": 1066,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3103,7 +3113,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 997,
+      "line": 1081,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -3131,7 +3141,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 999,
+      "line": 1083,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -3159,7 +3169,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1015,
+      "line": 1099,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -3187,7 +3197,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1054,
+      "line": 1138,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3243,7 +3253,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1377,
+      "line": 1500,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3271,7 +3281,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1652,
+      "line": 1742,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -3323,6 +3333,25 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["finalized"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/VettingEvidence.tsx",
+      "line": 383,
+      "name": "useState",
+      "kind": "string-union",
+      "values": ["", "downloading", "verified-download", "verified-text"],
+      "models": [
+        "formal/models/ui/ui_artifacts.qnt",
+        "formal/models/ui/ui_vetting_inventory.qnt",
+        "formal/models/ui/ui_vetting_reader.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "",
+        "downloading",
+        "verified-download",
+        "verified-text"
+      ],
       "review": "candidate-only"
     },
     {
@@ -3522,7 +3551,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 33,
+      "line": 35,
       "name": "state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -3536,7 +3565,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 59,
+      "line": 61,
       "name": "MonthlyAwardState",
       "kind": "string-union",
       "values": [
@@ -3722,7 +3751,6 @@
       "lexicallyUnmentionedValues": [
         "action_required",
         "ready",
-        "restricted",
         "retry",
         "waiting"
       ],
@@ -4422,7 +4450,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "line": 48,
+      "line": 54,
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],

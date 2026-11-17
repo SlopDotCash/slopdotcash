@@ -54,7 +54,7 @@ import {
   collectTargetRepositories,
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
-import { GitHubClient } from "../workers/slopbot/github";
+import { GitHubClient, GitHubError } from "../workers/slopbot/github";
 import { sameRepositoryCommitHints } from "../workers/slopbot/value-commit-hints";
 import {
   collectValueEvidence,
@@ -97,6 +97,7 @@ import {
   parseActor,
   parseSearchReference,
   resolveGitHubToken,
+  SourceNodeUnavailableError,
 } from "./generate-leaderboard";
 import { loadPublishedPoints } from "./generate-points";
 import {
@@ -373,6 +374,7 @@ export async function immutableBytes(path: string, bytes: Uint8Array) {
 export class CorrectionEvidenceCache {
   requests = 0;
   allowRequests = true;
+  acceptedObjectUrl: string | null = null;
   cacheHits = 0;
   reportedGraphqlCost = 0;
   private interruption: CollectionInterruption | null = null;
@@ -564,20 +566,30 @@ export class CorrectionEvidenceCache {
           graphqlRequest.variables ?? {},
         )
       : null;
+    const unavailableAcceptedObject =
+      method === "GET" &&
+      url.href === this.acceptedObjectUrl &&
+      (response.status === 404 || response.status === 422);
     if (
-      response.ok &&
-      validJson &&
-      completeGraphql &&
-      (!parsed?.errors ||
-        recoverableStatistics ||
-        (graphqlRequest &&
-          isConfirmedMissingPublicReference(
-            graphqlRequest.query,
-            graphqlRequest.variables ?? {},
-            parsed,
-          ))) &&
-      (graphqlRequest?.query !== historicalDiscussionQuery ||
-        historicalDiscussionHasRateLimit(parsed?.data))
+      unavailableAcceptedObject ||
+      (response.ok &&
+        validJson &&
+        completeGraphql &&
+        (!parsed?.errors ||
+          recoverableStatistics ||
+          (graphqlRequest &&
+            (isConfirmedMissingPublicReference(
+              graphqlRequest.query,
+              graphqlRequest.variables ?? {},
+              parsed,
+            ) ||
+              confirmedMissingMetadata(
+                graphqlRequest.query,
+                graphqlRequest.variables ?? {},
+                parsed,
+              )))) &&
+        (graphqlRequest?.query !== historicalDiscussionQuery ||
+          historicalDiscussionHasRateLimit(parsed?.data)))
     ) {
       await atomicJson(path, {
         status: response.status,
@@ -656,10 +668,21 @@ function cachedExecutor(
             );
           throw new Error("Cached census is missing raw request evidence");
         }
-        return client.execute(
-          query,
-          variables as Parameters<typeof client.execute>[1],
-        );
+        try {
+          return await client.execute(
+            query,
+            variables as Parameters<typeof client.execute>[1],
+          );
+        } catch (error) {
+          if (
+            query !== METADATA ||
+            !(error instanceof SourceNodeUnavailableError) ||
+            !(await readJson<CachedResponse>(requestPath(query, variables)))
+          )
+            throw error;
+          // The exact positional NOT_FOUND response was retained by the cache.
+          return execute(query, variables);
+        }
       }
       candidateVariables = narrower;
     }
@@ -680,11 +703,8 @@ function cachedExecutor(
       value.data &&
         (!value.errors ||
           statisticsFailure ||
-          isConfirmedMissingPublicReference(
-            query,
-            candidateVariables,
-            value,
-          )) &&
+          isConfirmedMissingPublicReference(query, candidateVariables, value) ||
+          confirmedMissingMetadata(query, candidateVariables, value)) &&
         (query !== historicalDiscussionQuery ||
           historicalDiscussionHasRateLimit(value.data)),
       "Cached GraphQL response is incomplete",
@@ -706,6 +726,54 @@ const ACTOR = `fragment CorrectionActor on Actor { __typename login avatarUrl ur
 const METADATA = `query CorrectionMetadata($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest {id number title url body createdAt updatedAt mergedAt state author{...CorrectionActor} additions deletions baseRefName baseRefOid headRefOid repository{id nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{commit{id oid parents{totalCount} author{user{...CorrectionActor}}}}}}} rateLimit{cost limit remaining resetAt}} ${ACTOR}`;
 const PREFLIGHT = `query CorrectionRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id nameWithOwner isPrivate createdAt} rateLimit{cost limit remaining resetAt}}`;
 
+function confirmedMissingMetadata(
+  query: string,
+  variables: Record<string, unknown>,
+  value: unknown,
+): boolean {
+  if (query !== METADATA) return false;
+  const ids = variables.ids;
+  const envelope = value as {
+    data?: { nodes?: ({ id?: string } | null)[] };
+    errors?: { type?: string; path?: unknown[] }[];
+  } | null;
+  const nodes = envelope?.data?.nodes;
+  const errors = envelope?.errors;
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    !ids.every((id) => typeof id === "string") ||
+    !Array.isArray(nodes) ||
+    nodes.length !== ids.length ||
+    !historicalDiscussionHasRateLimit(envelope?.data) ||
+    !Array.isArray(errors) ||
+    !errors.length
+  )
+    return false;
+  const missing = new Set<number>();
+  for (const error of errors) {
+    const path = error?.path;
+    const index = path?.[1];
+    if (
+      error?.type !== "NOT_FOUND" ||
+      !Array.isArray(path) ||
+      path.length !== 2 ||
+      path[0] !== "nodes" ||
+      typeof index !== "number" ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= ids.length ||
+      nodes[index] !== null ||
+      missing.has(index)
+    )
+      return false;
+    missing.add(index);
+  }
+  return nodes.every((node, index) =>
+    node === null ? missing.has(index) : node?.id === ids[index],
+  );
+}
+
 interface RepositoryMetadata {
   id: string;
   nameWithOwner: string;
@@ -724,6 +792,7 @@ interface SourceMetadata {
 interface SourceRead {
   outcome: MergedPullRequestOutcome;
   repositoryNodeId: string;
+  mergeCommit?: SourceMetadata["mergeCommit"];
 }
 
 /** REST aggregate counters do not depend on the separate file-pagination cap. */
@@ -833,10 +902,10 @@ async function readSources(
   sources: readonly PointsImplementationCorrectionCandidate[],
   repository: TargetRepository,
   github: Pick<GitHubClient, "get">,
+  loader = historicalCommitLineLoader(client, repository, github),
 ): Promise<{ complete: Map<string, SourceRead>; held: Map<string, string> }> {
   const complete = new Map<string, SourceRead>(),
     held = new Map<string, string>();
-  const loader = historicalCommitLineLoader(client, repository, github);
   for (let offset = 0; offset < sources.length; offset += 20) {
     const batch = [
       ...new Map(
@@ -857,15 +926,16 @@ async function readSources(
         Awaited<ReturnType<typeof completeOutcomeCommits>>
       >;
       repositoryNodeId: string;
+      mergeCommit: SourceMetadata["mergeCommit"];
     }[] = [];
     for (const [index, candidate] of batch.entries()) {
       const node = data.nodes[index] as unknown as SourceMetadata | null;
-      if (!node) {
+      if (node === null) {
         held.set(candidate.sourceId, "source-unavailable");
         continue;
       }
       requireThat(
-        node.id === candidate.sourceId,
+        node?.id === candidate.sourceId,
         "Metadata source identity changed",
       );
       const live = node.repository;
@@ -907,6 +977,7 @@ async function readSources(
         outcome: reference.outcome,
         identities,
         repositoryNodeId: live.id,
+        mergeCommit: node.mergeCommit,
       });
     }
     if (!staged.length) continue;
@@ -928,6 +999,7 @@ async function readSources(
       complete.set(item.candidate.sourceId, {
         outcome: item.outcome,
         repositoryNodeId: item.repositoryNodeId,
+        mergeCommit: item.mergeCommit,
       });
     }
   }
@@ -4245,6 +4317,159 @@ interface CensusPart {
   digest: string;
 }
 
+type AcceptedObject =
+  | { sha: string; treeSha: string; parents: string[] }
+  | { sha: string; unavailable: 404 | 422 }
+  | { sha: null; unavailable: "merge-identity" };
+
+async function readCensusAcceptedObject(
+  github: Pick<GitHubClient, "request">,
+  cache: CorrectionEvidenceCache,
+  repository: TargetRepository,
+  oid: string,
+): Promise<AcceptedObject> {
+  const path = `/repos/${repository.owner}/${repository.name}/git/commits/${oid}`;
+  const previousUrl = cache.acceptedObjectUrl;
+  cache.acceptedObjectUrl = `https://api.github.com${path}`;
+  try {
+    const { status, data: object } = await github.request<{
+      sha: string;
+      tree: { sha: string };
+      parents: { sha: string }[];
+    }>("GET", path);
+    if (status === 404) return { sha: oid, unavailable: 404 };
+    const sha = /^[a-f0-9]{40}$/u;
+    requireThat(
+      status === 200 &&
+        object?.sha === oid &&
+        sha.test(object.tree?.sha ?? "") &&
+        Array.isArray(object.parents) &&
+        object.parents.every((parent) => sha.test(parent?.sha ?? "")) &&
+        new Set(object.parents.map((parent) => parent.sha)).size ===
+          object.parents.length,
+      "Baseline census accepted object differs from the linked merge commit",
+    );
+    return {
+      sha: oid,
+      treeSha: object.tree.sha,
+      parents: object.parents.map((parent) => parent.sha),
+    };
+  } catch (error) {
+    if (error instanceof GitHubError && error.status === 422)
+      return { sha: oid, unavailable: 422 };
+    throw error;
+  } finally {
+    cache.acceptedObjectUrl = previousUrl;
+  }
+}
+
+type CensusSupplementSource = Pick<
+  PointsImplementationCorrectionCandidate,
+  "sourceId" | "sourceUrl" | "occurredAt"
+> &
+  (
+    | { status: "source-unavailable" }
+    | {
+        status: "verified";
+        outcome: MergedPullRequestOutcome;
+        acceptedObject: AcceptedObject | null;
+      }
+  );
+
+async function readBaselineCensusSupplement(
+  executor: GraphqlExecutor,
+  github: Pick<GitHubClient, "get" | "request">,
+  cache: CorrectionEvidenceCache,
+  plan: RepositoryPlan,
+  through: string,
+  candidates: readonly PointsImplementationCorrectionCandidate[],
+  loader: OutcomeCommitLineLoader,
+) {
+  const supplementPath = resolve(
+    cache.directory,
+    "census",
+    digest(plan.repository.id),
+    "baseline-supplement.json",
+  );
+  const saved = await readJson<{ digest: string }>(supplementPath);
+  const allowRequests = cache.allowRequests;
+  cache.allowRequests = !saved;
+  try {
+    const loaded = await readSources(
+      executor,
+      candidates,
+      plan.repository,
+      github,
+      loader,
+    );
+    const sources: CensusSupplementSource[] = [];
+    const sha = /^[a-f0-9]{40}$/u;
+    for (const { sourceId, sourceUrl, occurredAt } of candidates) {
+      const read = loaded.complete.get(sourceId);
+      if (!read) {
+        requireThat(
+          loaded.held.get(sourceId) === "source-unavailable",
+          "Baseline census source differs from the recorded accepted pool",
+        );
+        sources.push({
+          sourceId,
+          sourceUrl,
+          occurredAt,
+          status: "source-unavailable",
+        });
+        continue;
+      }
+      const { outcome, mergeCommit } = read;
+      const commits = outcome.commits ?? [];
+      requireThat(
+        read.repositoryNodeId === plan.nodeId &&
+          Number.isSafeInteger(outcome.number) &&
+          outcome.number > 0 &&
+          new URL(outcome.url).pathname.endsWith(`/pull/${outcome.number}`) &&
+          commits.some((commit) => commit.oid === outcome.headRefOid) &&
+          (mergeCommit === null || sha.test(mergeCommit?.oid ?? "")),
+        "Baseline census source lacks complete immutable identity or commit evidence",
+      );
+      let acceptedObject: AcceptedObject | null =
+        mergeCommit === null
+          ? { sha: null, unavailable: "merge-identity" }
+          : null;
+      if (
+        mergeCommit &&
+        !commits.some((commit) => commit.oid === mergeCommit.oid)
+      ) {
+        acceptedObject = await readCensusAcceptedObject(
+          github,
+          cache,
+          plan.repository,
+          mergeCommit.oid,
+        );
+      }
+      sources.push({
+        sourceId,
+        sourceUrl,
+        occurredAt,
+        status: "verified",
+        outcome,
+        acceptedObject,
+      });
+    }
+    const payload = { repositoryNodeId: plan.nodeId, through, sources };
+    const supplement = { ...payload, digest: digest(encode(payload)) };
+    if (saved) {
+      requireThat(
+        encode(saved) === encode(supplement),
+        "Cached baseline census supplement differs from reconstructed raw evidence",
+      );
+    } else {
+      await atomicJson(supplementPath, supplement);
+    }
+    return supplement;
+  } finally {
+    cache.allowRequests = allowRequests;
+  }
+}
+
 export async function collectImplementationCorrections(
   options: CollectionOptions,
   dependencies: CollectionDependencies = {},
@@ -4466,12 +4691,14 @@ async function collectWithEvidenceCache(
   const allOutcomes: MergedPullRequestOutcome[] = [];
   const missingMonths: string[] = [];
   const partDigests: string[] = [];
+  const loaders = new Map<string, OutcomeCommitLineLoader>();
   for (const plan of campaign.repositories) {
     const loader = historicalCommitLineLoader(
       executor,
       plan.repository,
       github,
     );
+    loaders.set(plan.repository.id, loader);
     for (const interval of plan.months) {
       const partPath = resolve(
         directory,
@@ -4551,13 +4778,107 @@ async function collectWithEvidenceCache(
       allOutcomes.push(...part.outcomes);
     }
   }
+  const seen = new Set(allOutcomes.map((outcome) => outcome.id));
   requireThat(
-    new Set(allOutcomes.map((o) => o.id)).size === allOutcomes.length,
+    seen.size === allOutcomes.length,
     "Monthly census repeats a source",
   );
   const ownershipComplete = missingMonths.length === 0;
+  const supplementDigests: string[] = [];
+  const acceptedObjectShas = new Map<string, string>();
+  const unavailableObjectSources = new Map<string, MergedPullRequestOutcome>();
+  const precedes = (
+    left: MergedPullRequestOutcome,
+    right: MergedPullRequestOutcome,
+  ) =>
+    Date.parse(left.mergedAt) < Date.parse(right.mergedAt) ||
+    (Date.parse(left.mergedAt) === Date.parse(right.mergedAt) &&
+      left.id < right.id);
+  if (ownershipComplete) {
+    for (const plan of campaign.repositories) {
+      const targets = new Map<
+        string,
+        PointsImplementationCorrectionCandidate
+      >();
+      for (const { candidate } of pools) {
+        if (
+          seen.has(candidate.sourceId) ||
+          candidate.occurredAt >= campaign.through ||
+          repositoryIdFromUrl(candidate.sourceUrl).toLowerCase() !==
+            plan.repository.id.toLowerCase()
+        )
+          continue;
+        const known = targets.get(candidate.sourceId);
+        requireThat(
+          candidate.projectId === plan.repository.projectId &&
+            Date.parse(candidate.occurredAt) >=
+              Date.parse(plan.months[0].from) &&
+            (!known ||
+              (known.occurredAt === candidate.occurredAt &&
+                known.sourceUrl === candidate.sourceUrl)),
+          "Baseline census candidate identity differs within repository scope",
+        );
+        targets.set(candidate.sourceId, candidate);
+      }
+      if (!targets.size) continue;
+      const loader = loaders.get(plan.repository.id);
+      requireThat(loader, "Baseline census statistics loader is unavailable");
+      const supplement = await readBaselineCensusSupplement(
+        executor,
+        github,
+        cache,
+        plan,
+        campaign.through,
+        [...targets.values()].sort((a, b) =>
+          a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0,
+        ),
+        loader,
+      );
+      supplementDigests.push(supplement.digest);
+      for (const source of supplement.sources) {
+        if (source.status === "source-unavailable") {
+          limitations.set(source.sourceId, source.status);
+          continue;
+        }
+        seen.add(source.sourceId);
+        allOutcomes.push(source.outcome);
+        // An exact distinct one-parent accepted object can fence later
+        // duplicates without adding a submitted commit or a recipient weight.
+        const object = source.acceptedObject;
+        if (!object) continue;
+        if ("unavailable" in object) {
+          if (object.sha === null) {
+            limitations.set(
+              source.sourceId,
+              "accepted-merge-identity-unavailable",
+            );
+            continue;
+          }
+          limitations.set(source.sourceId, "accepted-object-unavailable");
+          const key = `${plan.repository.id.toLowerCase()}\0${object.sha}`;
+          const earlier = unavailableObjectSources.get(key);
+          if (!earlier || precedes(source.outcome, earlier))
+            unavailableObjectSources.set(key, source.outcome);
+        } else if (object.parents.length === 1) {
+          acceptedObjectShas.set(source.sourceId, object.sha);
+        }
+      }
+    }
+  }
+  loaders.clear();
+  const ownershipOutcomes = acceptedObjectShas.size
+    ? allOutcomes.map((outcome) => {
+        const oid = acceptedObjectShas.get(outcome.id);
+        return oid
+          ? {
+              ...outcome,
+              commits: [...(outcome.commits ?? []), { oid, author: null }],
+            }
+          : outcome;
+      })
+    : allOutcomes;
   const owners = ownershipComplete
-    ? commitCreditOwners(allOutcomes)
+    ? commitCreditOwners(ownershipOutcomes)
     : new Map<string, string>();
   const mirroredOctober =
     octoberOriginalCredit && ownershipComplete
@@ -4572,6 +4893,7 @@ async function collectWithEvidenceCache(
       })),
       through: campaign.through,
       partDigests,
+      ...(supplementDigests.length ? { supplementDigests } : {}),
     }),
   );
   const selectedMonth =
@@ -4595,6 +4917,15 @@ async function collectWithEvidenceCache(
   const outcomesById = new Map(
     allOutcomes.map((outcome) => [outcome.id, outcome]),
   );
+  const unresolvedOwnership = (repository: string, sha: string, id: string) => {
+    const key = `${repository.toLowerCase()}\0${sha}`;
+    const unavailable = unavailableObjectSources.get(key);
+    if (!unavailable) return false;
+    const owner = outcomesById.get(owners.get(key) ?? "");
+    if (owner && precedes(owner, unavailable)) return false;
+    const source = outcomesById.get(id);
+    return !source || precedes(unavailable, source);
+  };
   const reads = new Map<string, SourceRead>();
   for (const plan of campaign.repositories) {
     const targets = selected
@@ -4609,6 +4940,13 @@ async function collectWithEvidenceCache(
       // complete immutable commit list. Reuse those raw-verified observations
       // rather than repeating the same metadata and statistics requests.
       for (const candidate of targets) {
+        if (
+          limitations.get(candidate.sourceId) ===
+            "accepted-object-unavailable" ||
+          limitations.get(candidate.sourceId) ===
+            "accepted-merge-identity-unavailable"
+        )
+          continue;
         const outcome = outcomesById.get(candidate.sourceId);
         if (!outcome) {
           limitations.set(candidate.sourceId, "source-unavailable");
@@ -4657,6 +4995,21 @@ async function collectWithEvidenceCache(
             ),
           "Complete census source identity or commit evidence is invalid",
         );
+        if (
+          candidate.kind === "pull-request" &&
+          outcome.commits.some(
+            (commit) =>
+              (commit.parentCount ?? 2) <= 1 &&
+              unresolvedOwnership(
+                plan.repository.id,
+                commit.oid,
+                candidate.sourceId,
+              ),
+          )
+        ) {
+          limitations.set(candidate.id, "earlier-accepted-object-unavailable");
+          continue;
+        }
         reads.set(candidate.sourceId, {
           outcome,
           repositoryNodeId: plan.nodeId,
@@ -4823,6 +5176,23 @@ async function collectWithEvidenceCache(
         requireThat(
           selectedClaims.length === unit.claimIds.length,
           "Grouped claim scope is incomplete",
+        );
+        requireThat(
+          selectedClaims.every((claim) => {
+            const id =
+              claim.retainedCopy?.acceptancePullRequestId ??
+              claim.creditPullRequestId;
+            const source = sources.find((item) => item.sourceId === id);
+            return (
+              !source ||
+              !unresolvedOwnership(
+                source.repository,
+                claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
+                id,
+              )
+            );
+          }),
+          "earlier-accepted-object-unavailable",
         );
         const claims = firstAcceptedCorrectionClaims(
           selectedClaims.map((claim) => ({
@@ -5164,6 +5534,7 @@ async function collectWithEvidenceCache(
     ownershipComplete,
     initialSearchPageSize,
     missingMonths,
+    ...(supplementDigests.length ? { supplementDigests } : {}),
     totalPositivePools: pools.length,
     selectedPools: selected.length,
     completeProofs: pools.filter((p) => p.candidate.proof.status === "complete")

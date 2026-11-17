@@ -7,7 +7,16 @@
  * project and its maintainer, or reinstate it (PRD sections 2 and 8).
  */
 
-import { CircleAlert, ExternalLink, History, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  CircleAlert,
+  ExternalLink,
+  History,
+  Info,
+  LoaderCircle,
+  Lock,
+  ShieldCheck,
+} from "lucide-react";
 import {
   type FormEvent,
   Fragment,
@@ -40,7 +49,7 @@ const ACTION_LABELS: Record<EnforcementAction, string> = {
 };
 
 const RESULT_LABELS: Record<EnforcementPreview["result"], string> = {
-  revision_appended: "Appends the matching revision",
+  revision_appended: "Revision appended",
   revision_pending: "Revision pending",
   no_revision_needed: "No revision needed",
 };
@@ -261,9 +270,7 @@ export function ProjectEnforcementPanel({
       await requireAdminActionActor(actorId);
       if (!mounted.current || currentRequestKey.current !== submitted.sourceKey)
         return;
-      onDone(
-        `${actionLabel(submitted.preview.action, submitted.preview.maintainerBans.length > 0)} recorded for ${submitted.preview.projectName}.`,
-      );
+      onDone("Recorded.");
     } catch (caught) {
       if (!mounted.current) return;
       const failure = await checkedAdminActionFailure(caught, actorId);
@@ -324,86 +331,117 @@ export function ProjectEnforcementPanel({
         ) : null}
         {enforcement.restrictedBy.length > 0 ? (
           <div>
-            <dt>Restricted by · cannot decide appeal</dt>
+            <dt>
+              Restricted by{" "}
+              <span
+                aria-label="Cannot decide the appeal"
+                role="img"
+                title="Cannot decide the appeal"
+              >
+                <Info aria-hidden="true" />
+              </span>
+            </dt>
             <dd>{maintainerList(enforcement.restrictedBy)}</dd>
           </div>
         ) : null}
       </dl>
       {enforcement.decisionRequired ? (
-        <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Confirmed malicious result.
-          Reinstatement requires the owner's appeal, a fresh clean scan and a
-          moderator decision.
+        <p role="status">
+          <StatusBadge icon={<CircleAlert />} tone="danger">
+            Confirmed malicious
+          </StatusBadge>{" "}
+          {["Appeal", "Clean scan", "Moderator"].map((step) => (
+            <Fragment key={step}>
+              <StatusBadge title="Required for reinstatement">
+                {step}
+              </StatusBadge>{" "}
+            </Fragment>
+          ))}
         </p>
       ) : null}
       {enforcement.revisionPending ? (
-        <p className="form-error" role="status">
-          <CircleAlert aria-hidden="true" /> Restriction active; revision{" "}
-          {project.revision} is still {project.status} and{" "}
-          {project.manifest.listingTier}. Delist to pause and retire it.
+        <p role="status">
+          <StatusBadge
+            icon={<CircleAlert />}
+            title={`Revision ${project.revision} is still ${project.status}, ${project.manifest.listingTier}. Delist to retire it.`}
+            tone="warning"
+          >
+            Revision pending
+          </StatusBadge>
         </p>
       ) : null}
       {enforcement.records.length > 0 ? (
         <section className="admin-subsection">
           <h4 className="admin-subsection-heading">
-            <History aria-hidden="true" /> Enforcement history ·{" "}
-            {enforcement.records.length}
+            <History aria-hidden="true" /> History{" "}
+            <StatusBadge>{enforcement.records.length}</StatusBadge>
           </h4>
           <ol className="admin-enforcement-history">
             {enforcement.records.map((record) => (
               <li key={record.id}>
-                <strong>
+                <StatusBadge>
                   {actionLabel(record.action, Boolean(record.maintainerBans))}
-                </strong>{" "}
-                by{" "}
-                {record.actor
-                  ? `@${record.actor.githubLogin}`
-                  : "the signed security vetting service"}{" "}
-                ({record.actorRole}, {record.decisionSource}) on{" "}
-                {formatDateTime(record.createdAt)}. Revision{" "}
-                {record.beforeRevision}
-                {record.afterRevision === null
-                  ? ""
-                  : ` → ${record.afterRevision}`}
-                : {RESULT_LABELS[record.result]}.
-                <br />
-                Reason: {record.reason}
-                <br />
-                Evidence:{" "}
+                </StatusBadge>{" "}
+                <StatusBadge
+                  icon={record.actor ? undefined : <Bot />}
+                  title={`${record.actorRole}, ${record.decisionSource}`}
+                >
+                  {record.actor ? `@${record.actor.githubLogin}` : "Scanner"}
+                </StatusBadge>{" "}
+                <time dateTime={record.createdAt}>
+                  {formatDateTime(record.createdAt)}
+                </time>{" "}
+                <span title={RESULT_LABELS[record.result]}>
+                  rev {record.beforeRevision}
+                  {record.afterRevision === null
+                    ? ""
+                    : `→${record.afterRevision}`}
+                </span>{" "}
                 {/^https?:\/\//iu.test(record.evidenceReference) ? (
                   <a
+                    aria-label="Evidence"
                     href={record.evidenceReference}
                     target="_blank"
                     rel="noreferrer"
+                    title="Evidence"
                   >
-                    {record.evidenceReference}{" "}
                     <ExternalLink aria-hidden="true" />
                   </a>
                 ) : (
-                  record.evidenceReference
+                  <code title="Evidence">{record.evidenceReference}</code>
                 )}
-                {record.maintainerBans ? (
-                  <>
-                    <br />
-                    Banned maintainers: {maintainerList(record.maintainerBans)}
-                  </>
-                ) : null}
-                {record.accountReinstatements?.length ? (
-                  <>
-                    <br />
-                    Reinstated accounts:{" "}
-                    {maintainerList(record.accountReinstatements)}
-                  </>
-                ) : null}
+                {record.maintainerBans?.map((account) => (
+                  <Fragment key={`ban:${account.githubLogin}`}>
+                    {" "}
+                    <StatusBadge title="Banned" tone="danger">
+                      <span className="visually-hidden">Banned </span>@
+                      {account.githubLogin}
+                    </StatusBadge>
+                  </Fragment>
+                ))}
+                {record.accountReinstatements?.map((account) => (
+                  <Fragment key={`reinstated:${account.githubLogin}`}>
+                    {" "}
+                    <StatusBadge title="Reinstated" tone="success">
+                      <span className="visually-hidden">Reinstated </span>@
+                      {account.githubLogin}
+                    </StatusBadge>
+                  </Fragment>
+                ))}
+                <p>{record.reason}</p>
               </li>
             ))}
           </ol>
         </section>
       ) : null}
       {enforcement.moderation === "unconfigured" ? (
-        <p className="admin-status">Moderation unavailable.</p>
+        <p className="admin-status">
+          <StatusBadge>Unavailable</StatusBadge>
+        </p>
       ) : enforcement.moderation === "not-moderator" ? (
-        <p className="admin-status">Moderator access required.</p>
+        <p className="admin-status">
+          <StatusBadge icon={<Lock />}>Moderators only</StatusBadge>
+        </p>
       ) : (
         <form className="admin-actions" onSubmit={showPreview}>
           <label>
@@ -425,10 +463,15 @@ export function ProjectEnforcementPanel({
           {(action === "ban" && enforcement.decisionRequired) ||
           action === "reinstate_accounts" ? (
             <label>
-              {action === "reinstate_accounts"
-                ? "Accounts to reinstate (comma-separated)"
-                : "Responsible accounts (comma-separated, optional)"}
+              {action === "reinstate_accounts" ? (
+                "Accounts"
+              ) : (
+                <span>
+                  Responsible accounts <StatusBadge>optional</StatusBadge>
+                </span>
+              )}
               <input
+                placeholder="@a, @b"
                 value={responsible}
                 onChange={(event) => setResponsible(event.target.value)}
                 readOnly={preview !== null}
@@ -446,9 +489,10 @@ export function ProjectEnforcementPanel({
             />
           </label>
           <label>
-            Evidence link or case ID
+            Evidence
             <input
               maxLength={500}
+              placeholder="URL or case ID"
               onChange={(event) => setEvidence(event.target.value)}
               readOnly={preview !== null}
               required
@@ -470,9 +514,13 @@ export function ProjectEnforcementPanel({
                   reason.trim() === "" ||
                   evidence.trim() === ""
                 }
+                aria-busy={busy === "preview"}
                 type="submit"
               >
-                {busy === "preview" ? "Preparing preview…" : "Preview action"}
+                {busy === "preview" ? (
+                  <LoaderCircle aria-hidden="true" className="wallet-spin" />
+                ) : null}
+                Preview
               </button>
             </div>
           ) : (
@@ -525,24 +573,26 @@ export function ProjectEnforcementPanel({
                 </div>
                 {preview.maintainerBans.length > 0 ? (
                   <div>
-                    <dt>Maintainer accounts banned</dt>
+                    <dt>Bans</dt>
                     <dd>{maintainerList(preview.maintainerBans)}</dd>
                   </div>
                 ) : null}
                 {preview.accountReinstatements?.length ? (
                   <div>
                     <dt>Accounts reinstated</dt>
-                    <dd>
-                      {maintainerList(preview.accountReinstatements)}. The
-                      project restriction and other account bans stay in place.
-                    </dd>
+                    <dd>{maintainerList(preview.accountReinstatements)}</dd>
                   </div>
                 ) : null}
               </dl>
               {preview.pendingReason ? (
-                <p className="form-error" role="status">
-                  <CircleAlert aria-hidden="true" /> Restriction applies now;
-                  revision not appended yet: {preview.pendingReason}
+                <p role="status">
+                  <StatusBadge
+                    icon={<CircleAlert />}
+                    title={preview.pendingReason}
+                    tone="warning"
+                  >
+                    Revision pending
+                  </StatusBadge>
                 </p>
               ) : null}
               <div>

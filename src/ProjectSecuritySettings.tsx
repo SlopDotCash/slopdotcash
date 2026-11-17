@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -88,9 +89,7 @@ export function ProjectSecuritySettings({
           }
           if (result.canManageBounty) setPermitted(`${project.id}:${actorId}`);
           else {
-            onAccessLost(
-              "Only the current project steward or a repository administrator can manage this bounty.",
-            );
+            onAccessLost("Steward or repo admin only.");
           }
         } catch (cause) {
           if (!owns()) return;
@@ -134,7 +133,9 @@ export function ProjectSecuritySettings({
             </button>
           </div>
         ) : (
-          <p role="status">Checking current project access…</p>
+          <p role="status" aria-label="Checking project access">
+            <LoaderCircle className="wallet-spin" aria-hidden="true" />
+          </p>
         )
       ) : null}
       {opened && permitted === `${project.id}:${actorId}` ? (
@@ -230,7 +231,11 @@ function SecuritySettingsEditor({
     };
   }, [actor.githubId, project.id, attempt, onAccessLost, onProjectChange]);
   if (state.status === "loading")
-    return <p role="status">Loading current security settings…</p>;
+    return (
+      <p role="status" aria-label="Loading security settings">
+        <LoaderCircle className="wallet-spin" aria-hidden="true" />
+      </p>
+    );
   if (state.status === "error")
     return (
       <div className="form-error" role="alert">

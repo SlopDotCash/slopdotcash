@@ -4,6 +4,7 @@ import {
   GitHubGraphqlClient,
   GraphqlUpstreamError,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
+  SourceNodeUnavailableError,
 } from "./generate-leaderboard";
 
 const QUERY = "query Batch($ids: [ID!]!) { nodes(ids: $ids) { id } }";
@@ -73,6 +74,88 @@ test("a single id that still fails upstream rethrows, and other errors never spl
     executeNodeBatch(other, QUERY, ["PR_1", "PR_2", "PR_3"]),
   ).rejects.toThrow("rejected the leaderboard query");
   expect(calls).toEqual([["PR_1", "PR_2", "PR_3"]]);
+});
+
+test("a node GitHub cannot resolve in one half still probes the other half and reports the whole batch", async () => {
+  // An unavailable node is reported one half at a time. The half that failed
+  // must not stop the other half being probed, and the error that leaves
+  // executeNodeBatch must cover every id it was asked for, because callers
+  // record its `sources` as the batch's unavailable set.
+  const executor = (gone: readonly string[]) => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      execute: async (
+        _document: string,
+        variables: Record<string, unknown> = {},
+      ) => {
+        const ids = variables.ids as string[];
+        calls.push(ids);
+        if (ids.length > 1)
+          throw new GraphqlUpstreamError("GitHub GraphQL HTTP 504", 504);
+        if (gone.includes(ids[0]))
+          throw new SourceNodeUnavailableError([
+            { nodeId: ids[0], reason: "NOT_FOUND" },
+          ]);
+        return { nodes: ids.map((id) => ({ id })) };
+      },
+    };
+  };
+
+  // Both halves are gone: both halves are requested and every id is reported.
+  const both = executor(["PR_1", "PR_2"]);
+  const bothFailure = await executeNodeBatch(both, QUERY, [
+    "PR_1",
+    "PR_2",
+  ]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(bothFailure).toBeInstanceOf(SourceNodeUnavailableError);
+  expect(
+    (bothFailure as SourceNodeUnavailableError).sources.map(
+      (source) => source.nodeId,
+    ),
+  ).toEqual(["PR_1", "PR_2"]);
+  expect(both.calls).toEqual([["PR_1", "PR_2"], ["PR_1"], ["PR_2"]]);
+
+  // Only the tail half is gone: the head's answer is discarded, the tail is
+  // still probed, and the tail alone is reported.
+  const tail = executor(["PR_2"]);
+  const tailFailure = await executeNodeBatch(tail, QUERY, [
+    "PR_1",
+    "PR_2",
+  ]).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  expect(tailFailure).toBeInstanceOf(SourceNodeUnavailableError);
+  expect(
+    (tailFailure as SourceNodeUnavailableError).sources.map(
+      (source) => source.nodeId,
+    ),
+  ).toEqual(["PR_2"]);
+  expect(tail.calls).toEqual([["PR_1", "PR_2"], ["PR_1"], ["PR_2"]]);
+
+  // An ordinary failure in one half is not an unavailable node: it still fails
+  // closed without spending a request on the other half.
+  const rejected: string[][] = [];
+  const plain = {
+    execute: async (
+      _document: string,
+      variables: Record<string, unknown> = {},
+    ) => {
+      const ids = variables.ids as string[];
+      rejected.push(ids);
+      if (ids.length > 1)
+        throw new GraphqlUpstreamError("GitHub GraphQL HTTP 504", 504);
+      throw new Error("GitHub GraphQL rejected the leaderboard query");
+    },
+  };
+  await expect(
+    executeNodeBatch(plain, QUERY, ["PR_1", "PR_2"]),
+  ).rejects.toThrow("rejected the leaderboard query");
+  expect(rejected).toEqual([["PR_1", "PR_2"], ["PR_1"]]);
 });
 
 test("the client reports an exhausted 502/504 gateway answer as an upstream error with its status", async () => {

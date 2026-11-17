@@ -156,26 +156,24 @@ test("failed preflight never enables an email switch that writes to a new accoun
 
   await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
   const email = page.getByRole("region", {
-    name: "Email preferences",
+    name: "Email",
     exact: true,
   });
   await expect(email).toHaveCount(1);
   // Step 1: the identity preflight fails. The control stays unavailable
   // and retryable; its existing switch stays disabled and nothing is posted.
-  await expect(email.getByText(/The account check failed/)).toBeVisible();
+  await expect(email.getByRole("alert")).toHaveText("Couldn't load");
   await expect(
-    email.getByRole("switch", { name: "Activity email", exact: true }),
+    email.getByRole("switch", { name: "Activity", exact: true }),
   ).toBeDisabled();
   expect(posts).toHaveLength(0);
 
   // Step 2: retry with a working preflight. The preference loads for the
   // bound actor and the switch becomes usable.
   sessionFail = false;
-  await email
-    .getByRole("button", { name: "Retry email preferences", exact: true })
-    .click();
+  await email.getByRole("button", { name: "Retry", exact: true }).click();
   const toggle = email.getByRole("switch", {
-    name: "Activity email",
+    name: "Activity",
     exact: true,
   });
   await expect(toggle).toBeVisible();

@@ -32,6 +32,7 @@ const MIGRATIONS = [
   "0104_slopbot_value_inference_attempts.sql",
   "0118_slopbot_zero_call_reconciliation.sql",
   "0120_slopbot_value_attempt_completion.sql",
+  "0135_slopbot_call_failure_details.sql",
 ];
 
 const output = (sourceDigest: string) => ({

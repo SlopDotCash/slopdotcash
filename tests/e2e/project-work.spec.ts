@@ -145,8 +145,10 @@ test("old work stays dated and an empty queue does not claim availability", asyn
   const work = page.getByRole("region", { name: "Suggested work" });
   await expect(work).toBeVisible();
   // One stale notice per page, whichever section shows it.
-  await expect(page.getByText(/Points may be outdated/)).toHaveCount(1);
-  await expect(work).toContainText("No suggested work right now.");
+  await expect(
+    page.getByText(/^(Points|Projects|Cycles) stale · /u),
+  ).toHaveCount(1);
+  await expect(work).toContainText("Nothing open");
   await expect(work.getByRole("link")).toHaveCount(0);
 });
 

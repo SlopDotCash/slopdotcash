@@ -160,9 +160,7 @@ export async function sendEvmCommitment(
     review.transaction,
   ]);
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
-    throw new Error(
-      "The wallet result is unclear. Check wallet activity before another attempt.",
-    );
+    throw new Error("The wallet result is unclear. Check wallet activity.");
   return hash;
 }
 export async function checkEvmCommitment(
