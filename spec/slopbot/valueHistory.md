@@ -6,7 +6,11 @@ corrections, and no duplicate work-unit credit. The
 publication of an individual inference. This model owns the read of durable
 grouped assessment history and selection of a current decision before any
 new attempt starts. It also consumes verified heads from the older
-per-source assessment journal.
+per-source assessment journal. [Work units](./workUnits.md) own the durable
+append that produces this history, and [value requests](./valueRequests.md)
+own the request claims and the shared source leases that fence it. The
+focused witness scenarios are in
+`formal/validation/source-coverage/slopbot-value-history.witness.qnt`.
 
 The source at main `ee1a4b2cd2672245537928380e425f5bd9ecb994` is
 `workers/slopbot/value-work-unit-journal.ts:275–363`,
