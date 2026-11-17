@@ -791,8 +791,19 @@ its receipt must show exactly that amount leaving the wallet for that address.
 ### Buyback configuration
 
 Every value is required once `BUYBACK_MODE` is not `off`; the code has no
-fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD section 6);
+fallback. The owner confirmed the original limits on 10 November 2026 (PRD
+section 6). On 16–17 November, the owner lowered the bridge eligibility and
+execution minimum to 25 USDC and raised the total bridge cost cap to 10%.
 `BUYBACK_START_AT` was set at activation on 12 November 2026.
+
+The minimum applies to available buyback funds: unspent entitlement from
+verified fee income or proven arrivals, bounded by the wallet balance and
+remaining caps. A wallet top-up or the retained half of fees cannot make an
+order eligible. Below the minimum, skip new bridge and reference-asset
+purchase route requests; other assets can require a valuation quote first.
+Continue reconciliation, refunds, arrivals and owed burns under their existing
+controls. Include spread, fixed protocol fees, rent and network costs in the
+bridge cost check. A quote with unpriced native costs does not qualify a send.
 
 | Var                              | Checked-in value               | Meaning                                                                                          |
 | -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
@@ -800,8 +811,8 @@ fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD sec
 | `BUYBACK_START_AT`               | `2026-11-12T00:00:00.000Z`     | UTC instant from which fee income counts.                                                        |
 | `BUYBACK_SHARE_BPS`              | `5000`                         | Share of fee income that funds the buyback.                                                      |
 | `BUYBACK_BURN_BPS`               | `5000`                         | Share of acquired SLOP that is burned.                                                           |
-| `BUYBACK_MIN_BRIDGE_MICRO`       | `500000000`                    | Minimum order (500 USDC).                                                                        |
-| `BUYBACK_MAX_BRIDGE_COST_BPS`    | `150`                          | Spread, native cost and network fee as a share of the order.                                     |
+| `BUYBACK_MIN_BRIDGE_MICRO`       | `25000000`                     | Minimum eligible share and order (25 USDC).                                                       |
+| `BUYBACK_MAX_BRIDGE_COST_BPS`    | `1000`                         | All spread, native cost, rent and network fee, at most 10% of the order.                          |
 | `BUYBACK_MAX_BRIDGE_NATIVE_FEE`  | Base, Ethereum, Solana set     | EVM: the fixed protocol fee in wei. Solana: the order's whole SOL debit in lamports.             |
 | `BUYBACK_SOLANA_BRIDGE_NATIVE`   | `0.05` SOL / `0.1` SOL per day | Native limits of Solana orders, separate from `FEE_CONVERTER_NATIVE_BUDGETS` (purpose `bridge`). |
 | `BUYBACK_MIN_BUY_MICRO`          | `25000000`                     | Minimum purchase value.                                                                          |

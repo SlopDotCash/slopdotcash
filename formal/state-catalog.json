@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "45afca100c55b4bc3e1acb3fb374eda1271d016a89ab2d747a7a163016c99ce4",
+  "inventorySha256": "5a02240c29c3f06790710537bc1cf971499acee8e1844ae6ea3a5247da8e1808",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -111,8 +111,44 @@
       "review": "candidate-only"
     },
     {
+      "path": "backend/projects/cloudflare-persistence.ts",
+      "line": 447,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["expired", "refused"],
+      "models": [
+        "formal/models/api/api_owner_vault_lifecycle.qnt",
+        "formal/models/api/api_project_creation_completion.qnt",
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
+        "formal/models/referrals/referrer_attribution.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/projects/contracts.ts",
+      "line": 84,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["expired", "refused"],
+      "models": [
+        "formal/models/api/api_project_registry.qnt",
+        "formal/models/api/api_project_removal.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "backend/projects/handler.ts",
-      "line": 2485,
+      "line": 2653,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -126,6 +162,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -147,7 +184,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2689,
+      "line": 2857,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -161,6 +198,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/api_saved_vault_creation.qnt",
         "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
@@ -1923,6 +1961,26 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0132_saved_vault_creations.sql",
+      "line": 16,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["expired", "refused", "registered", "waiting"],
+      "models": ["formal/models/api/api_saved_vault_creation.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
+      "line": 7,
+      "name": "reason",
+      "kind": "sql-check",
+      "values": ["repeat-within-6h", "served-by-fallback"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "lexicallyUnmentionedValues": ["repeat-within-6h", "served-by-fallback"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -2126,6 +2184,38 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/inspect-slopbot-runtime.ts",
+      "line": 33,
+      "name": "Stage",
+      "kind": "string-union",
+      "values": [
+        "authority",
+        "deployment-read",
+        "deployment-recheck",
+        "expected-source",
+        "runtime-shape",
+        "tls",
+        "version-identity",
+        "version-read",
+        "version-source"
+      ],
+      "models": [
+        "formal/models/release/slopbot_runtime_metadata.qnt",
+        "formal/models/release/workflow_authority.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "deployment-read",
+        "deployment-recheck",
+        "expected-source",
+        "runtime-shape",
+        "tls",
+        "version-identity",
+        "version-read",
+        "version-source"
+      ],
       "review": "candidate-only"
     },
     {
@@ -2360,7 +2450,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 460,
+      "line": 472,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2370,6 +2460,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2386,7 +2477,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1062,
+      "line": 1072,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2396,6 +2487,7 @@
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_hash_navigation.qnt",
         "formal/models/ui/ui_hero_animation.qnt",
+        "formal/models/ui/ui_home_audience.qnt",
         "formal/models/ui/ui_navigation.qnt",
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_points_disputes.qnt",
@@ -2987,7 +3079,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 441,
+      "line": 442,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -3210,7 +3302,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 33,
+      "line": 35,
       "name": "state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -3224,7 +3316,7 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "line": 59,
+      "line": 61,
       "name": "MonthlyAwardState",
       "kind": "string-union",
       "values": [
@@ -3630,7 +3722,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 160,
+      "line": 162,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -3638,6 +3730,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3646,7 +3739,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 223,
+      "line": 225,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3654,6 +3747,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3662,7 +3756,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 229,
+      "line": 231,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3670,6 +3764,7 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
@@ -3678,7 +3773,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 330,
+      "line": 332,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -3686,10 +3781,11 @@
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/buyback_slop_accounting.qnt",
         "formal/models/fees/fee_value_caps.qnt"
       ],
-      "lexicallyUnmentionedValues": ["no_route", "pending"],
+      "lexicallyUnmentionedValues": ["no_route"],
       "review": "candidate-only"
     },
     {
@@ -3699,6 +3795,7 @@
       "kind": "string-union",
       "values": ["dry_run", "live", "off"],
       "models": [
+        "formal/models/fees/buyback_quote_eligibility.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_quote_policy.qnt",
         "formal/models/fees/fee_wallet_handoff.qnt"
@@ -4037,7 +4134,7 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "line": 59,
+      "line": 105,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
@@ -4050,7 +4147,7 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "line": 61,
+      "line": 107,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
