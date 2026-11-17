@@ -1967,14 +1967,9 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
       async quoteBuy(token, amount) {
         if (token.toLowerCase() === SLOP_TOKEN)
           throw new Error("SLOP is never an input of its own purchase");
-        const quote = await quoteTo(
-          token,
-          amount,
-          SLOP_TOKEN,
-          buyback.limits.maxSlippageBps,
-        );
-        if ("noRoute" in quote) return quote;
         // The input's own stablecoin value bounds the caps and the gas check.
+        // Value other assets before requesting a SLOP route so a small fee
+        // does not trigger purchase work merely because it has many base units.
         let valueMicro = amount;
         if (token.toLowerCase() !== reference) {
           const valued = await self.quote(token, amount);
@@ -1982,6 +1977,15 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
             return { noRoute: `value unavailable: ${valued.noRoute}` };
           valueMicro = valued.amountOut;
         }
+        if (valueMicro < buyback.limits.minBuyMicro)
+          return { belowMinimumValueMicro: valueMicro };
+        const quote = await quoteTo(
+          token,
+          amount,
+          SLOP_TOKEN,
+          buyback.limits.maxSlippageBps,
+        );
+        if ("noRoute" in quote) return quote;
         return { ...quote, valueMicro };
       },
 

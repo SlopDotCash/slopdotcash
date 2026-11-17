@@ -1196,9 +1196,16 @@ try {
       );
       await rpc("anvil_setNextBlockBaseFeePerGas", ["0x7"]);
       await mine(1);
+      // The cancellation waits in the pool, so the next run offers the same
+      // signed bytes to a node that already holds them.
+      await rpc("evm_setAutomine", [false]);
       const first = await runStoredBindings(active.env, []);
       assert.equal(first.failed, 0);
       assert.equal(first.submitted.length, 1);
+      const pooled = await runStoredBindings(active.env, []);
+      assert.equal(pooled.failed, 0);
+      assert.deepEqual(pooled.submitted, first.submitted);
+      await rpc("evm_setAutomine", [true]);
       await mine(64);
       const second = await runStoredBindings(active.env, []);
       assert.equal(second.failed, 0);
