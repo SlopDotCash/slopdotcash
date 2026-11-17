@@ -29,11 +29,7 @@ import {
   homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
-import {
-  loadMergeActivity,
-  mergeActivityCardLine,
-  mergeActivityLine,
-} from "./lib/merge-activity";
+import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
   asShown,
   listedThisMonth,
@@ -636,13 +632,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({
-  project,
-  merge,
-}: {
-  project: ProjectDefinition;
-  merge?: string | null;
-}) {
+function ProjectCard({ project }: { project: ProjectDefinition }) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -679,21 +669,12 @@ function ProjectCard({
             <span>/mo</span>
           )}
         </p>
-        {bounty ? (
-          <small className="project-money-state">
-            {bountyFundingLabel(bounty)}
-          </small>
-        ) : monthlyPoolPointsOnly(project.reward) ? (
+        {!bounty && monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
         ) : null}
         {project.reward.reviewBudget ? (
           <small className="project-review-budget">
             + {reviewBudgetLabel(project.reward.reviewBudget)}
-          </small>
-        ) : null}
-        {merge ? (
-          <small className="project-money-state project-merge-activity">
-            {merge}
           </small>
         ) : null}
       </div>
@@ -767,9 +748,6 @@ function SecurityBounties() {
                         : "/ Finding"}
                     </span>
                   </p>
-                  <small className="project-money-state">
-                    {bountyFundingLabel(terms)}
-                  </small>
                 </div>
               </Link>
             );
@@ -793,16 +771,7 @@ function HomePage() {
     window.history.pushState(window.history.state, "", destination);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
-  // One shared read of the daily merge activity (#1993) for every card.
-  const [merge] = usePublicResource(
-    true,
-    loadMergeActivity,
-    "Merge activity unavailable",
-  );
-  // One shared read of vault balances: only money in a vault is shown, and
-  // an unfunded monthly pool is not listed this month. The list never waits
-  // for the read: until it loads, or when it fails, every project is listed
-  // as before.
+  // Funding changes the displayed reward, never homepage discovery.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -810,17 +779,9 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const listed = (project: ProjectDefinition) =>
-    listedThisMonth(project, fundingIndex, now);
   const listedProjects = homeProjectOrder(
-    homeProjects()
-      .filter(listed)
-      .map((project) => asShown(project, fundingIndex, now)),
+    homeProjects().map((project) => asShown(project, fundingIndex, now)),
   );
-  const mergeLine = (project: ProjectDefinition) =>
-    project.status === "active" && merge.status === "ready"
-      ? mergeActivityCardLine(merge.index.get(project.id), now)
-      : null;
 
   return (
     <main>
@@ -858,11 +819,7 @@ function HomePage() {
         ) : (
           <div className="project-grid">
             {listedProjects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                merge={mergeLine(project)}
-              />
+              <ProjectCard key={project.id} project={project} />
             ))}
           </div>
         )}

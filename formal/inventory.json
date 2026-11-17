@@ -5243,7 +5243,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "a89bfa7b4aea716db36df9899f5601515c5f5a52af01240413fd19dcfa5522e6",
+      "sha256": "fa81ad7419d03b888e5d2cc2e1a0384092a54f569d787f8d8ac6792d7e87d751",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -5263,14 +5263,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        7, 9, 310, 320, 330, 341, 350, 351, 352, 353, 354, 356, 357, 418, 474,
-        475, 476, 479, 502, 568, 599, 636, 683, 687, 695, 714, 770, 792, 793,
-        812, 821, 1030, 1045, 1059, 1069, 1112, 1114, 1117, 1181, 1184, 1186,
-        1190, 1191, 1199, 1218, 1222, 1230, 1231, 1238, 1242, 1277, 1321, 1324,
-        1341, 1342, 1392, 1395, 1398, 1399, 1400, 1401, 1405, 1408, 1428, 1430,
-        1507, 1508, 1513, 1514, 1519, 1557, 1558, 1561, 1562, 1565, 1566, 1585,
-        1586, 1592, 1597, 1599, 1603, 1604, 1643, 1666, 1676, 1707, 1709, 1734,
-        1735, 1752, 1753, 1764, 1766, 1779, 1782, 1793
+        7, 9, 306, 316, 326, 337, 346, 347, 348, 349, 350, 352, 353, 414, 470,
+        471, 472, 475, 498, 564, 595, 632, 673, 695, 770, 771, 781, 987, 1002,
+        1016, 1026, 1069, 1071, 1074, 1138, 1141, 1143, 1147, 1148, 1156, 1175,
+        1179, 1187, 1188, 1195, 1199, 1234, 1278, 1281, 1298, 1299, 1349, 1352,
+        1355, 1356, 1357, 1358, 1362, 1365, 1385, 1387, 1464, 1465, 1470, 1471,
+        1476, 1514, 1515, 1518, 1519, 1522, 1523, 1542, 1543, 1549, 1554, 1556,
+        1560, 1561, 1600, 1623, 1633, 1664, 1666, 1691, 1692, 1709, 1710, 1721,
+        1723, 1736, 1739, 1750
       ],
       "review": "mapped-abstraction"
     },
@@ -6393,9 +6393,9 @@
     {
       "path": "src/lib/home-projects.ts",
       "sha256": "421bc3013d2cdc664c9ab99f7b10946b31d0b1827d254c2727fd606a1f053f75",
-      "models": [],
+      "models": ["formal/models/ui/ui_project_listing.qnt"],
       "candidateLines": [1, 7, 8],
-      "review": "reviewed-no-independent-state",
+      "review": "mapped-abstraction",
       "statelessReason": "Pure filters over the immutable runtime registry and bounty status. Registry transitions are owned by project policy/boot models."
     },
     {
@@ -6740,7 +6740,7 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "82154f50ad504284bd8008a9fb6b7745803f5b01d97f0b4ba6b6669bf88ed611",
+      "sha256": "78bd748d0bac824dc24c7a11364d9467f53dc14b58eec3e682f4f1f78637821f",
       "models": [
         "formal/models/ui/ui_pool_funding.qnt",
         "formal/models/ui/ui_project_listing.qnt"
@@ -18566,24 +18566,28 @@
     },
     {
       "path": "formal/models/ui/ui_project_listing.qnt",
-      "sha256": "b431ffa8bbd59d26aa6c8326c6a40cee57e0d34d98016c7b73b321cba82a4a3b",
+      "sha256": "5dcb29be1a5d081aeb31197ff2db55a83c6ff0a839e12cee1cae7cb1be55ac6b",
       "sources": [
         "backend/projects/pool-funding.ts",
         "backend/projects/skill-publication.ts",
         "functions/[[path]].ts",
         "src/App.tsx",
         "src/PublicPages.tsx",
+        "src/lib/home-projects.ts",
         "src/lib/pool-funding.ts"
       ],
       "scenarios": [
         "externalPrizeStaysListedTest",
+        "failedFundingReadKeepsHomeCardTest",
         "failedReadsListAsBeforeTest",
         "fundedPoolIsListedTest",
+        "fundingLossKeepsHomeCardTest",
         "fundingTheMonthListsItTest",
         "loadingListsAsBeforeTest",
         "pausedProjectKeepsItsListingTest",
+        "registryEligibilityStillGatesHomeTest",
         "securityProgramStaysListedTest",
-        "unfundedPoolIsHiddenTest"
+        "unfundedPoolStaysOnHomeTest"
       ]
     },
     {
