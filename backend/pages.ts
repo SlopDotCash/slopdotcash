@@ -97,6 +97,13 @@ export type PagesEnv = {
   SURPLUS_API_KEY?: string;
   /** Local browser tests only: a loopback analysis provider fixture origin. */
   SLOP_ANALYSIS_API_ORIGIN?: string;
+  /**
+   * Routine decisions on undecided private reports (PRD section 8, operator
+   * decision of 17 November 2026): exactly `dry_run` or `live`; anything
+   * else, including unset, is off. `wrangler.toml` sets production and
+   * `wrangler.staging.toml` sets staging.
+   */
+  SECURITY_ROUTINE_DECISIONS?: string;
   /** Notification Worker; absent where no notifier is deployed. */
   SLOP_NOTIFY?: { fetch(request: Request): Promise<Response> };
   /**

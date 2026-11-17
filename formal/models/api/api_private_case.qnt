@@ -25,7 +25,10 @@
 // *CannotDecideAppeal scenarios show each refusal. Paid terms are assumed present; funding
 // shortfall is the nondeterministic `short` award. Bounds: three human actors,
 // three technical decisions, two appeals. Roles and CAS are refined by
-// api_private_case_roles and api_private_case_transaction.
+// api_private_case_roles and api_private_case_transaction. A close by the
+// routine pass, and its appeal that returns to the owner without a moderator,
+// are modeled in api_security_routine_decisions; every decision here is a
+// person's.
 module api_private_case {
   type Case = { receipt: str, award: str, related: bool, relatedReview: str,
     appeal: str, from: str, deciders: Set[int], decisions: int, appeals: int,
