@@ -204,6 +204,18 @@ an item already admitted this month (new pushes, a moved base, retries) runs
 and adds nothing. A new item over the cap makes no model call, writes nothing
 to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
 
+A project owner may set an intake cap (operator decision, 17 November 2026;
+PRD section 5, `src/lib/intake-cap.mjs`): pause new contributors when this
+many outside pull requests are open. While the stored open count of one of the
+project's repositories (`repository_merge_activity.open_outside`, read by the
+scheduled merge activity job) is at or above the number, `intake-cap.ts`
+refuses the review of a pull request from an outside contributor that Slopbot
+has not completed a review of before. It makes no model call, writes nothing
+to GitHub, uses no monthly review and is recorded as skipped with the reason
+`intake-cap`. A pull request reviewed once keeps its reviews, a maintainer's
+own pull request is not refused, and a count that was never read or is older
+than three days refuses nothing. Value assessment and scoring are unchanged.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
 provider window opens. A Surplus spending denial skips the other Surplus model
 and asks Orbio in the same attempt. If Orbio serves a valid result, it is used

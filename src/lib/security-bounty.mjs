@@ -87,6 +87,32 @@ export function securityExclusions(scope) {
   return [...SECURITY_DEFAULT_EXCLUSIONS, ...programExclusions(scope)];
 }
 
+/**
+ * Default lines a routine decision never closes on by name (operator
+ * decision, 17 November 2026). The two proof lines lead to a request for
+ * proof with a 14-day clock, and the duplicate line needs the earlier report
+ * itself, so each has its own rule in `backend/security/routine-decisions.ts`.
+ */
+const ROUTINE_SEPARATE_RULES = Object.freeze([
+  SECURITY_DEFAULT_EXCLUSIONS[0],
+  SECURITY_DEFAULT_EXCLUSIONS[7],
+  SECURITY_DEFAULT_EXCLUSIONS[9],
+]);
+
+/**
+ * The published lines a routine decision may close a report on: every
+ * default line without its own rule, then the program owner's lines.
+ */
+export function routineClosingExclusions(scope) {
+  return securityExclusions(scope).filter(
+    (line) => !ROUTINE_SEPARATE_RULES.includes(line),
+  );
+}
+
+/** One sentence under the published list on every program page. */
+export const SECURITY_ROUTINE_DECISION_NOTICE =
+  "Reports that match this list, duplicates of an earlier report and reports without proof are closed with a reason, and the reporter can appeal.";
+
 const CURRENCIES = Object.freeze({
   USD: { decimals: 2, networks: [null] },
   USDC: { decimals: 6, networks: ESCROW_CHAINS },

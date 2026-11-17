@@ -18,6 +18,7 @@ import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
+import { intakePaused } from "./lib/intake-cap.mjs";
 import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
@@ -568,8 +569,18 @@ export function SponsorsPage({
           </Link>
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.filter((project) =>
-            listedThisMonth(project, fundingIndex, now),
+          {PROJECTS.filter(
+            (project) =>
+              listedThisMonth(project, fundingIndex, now) &&
+              // A project over its owner's intake cap has paused new
+              // contributors; a failed or pending read pauses nothing.
+              !intakePaused(
+                project,
+                merge.status === "ready"
+                  ? merge.index.get(project.id)
+                  : undefined,
+                now,
+              ),
           ).map((project) => {
             return (
               <li className="route-sponsor-card" key={project.id}>

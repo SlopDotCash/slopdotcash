@@ -41,6 +41,11 @@ import {
   homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
+import {
+  INTAKE_PAUSED_NOTICE,
+  intakeCap,
+  intakePaused,
+} from "./lib/intake-cap.mjs";
 import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
   listedThisMonth,
@@ -802,13 +807,26 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const listedProjects = homeProjectOrder(
-    homeProjects().map((project) => {
-      const shown = publicPoolReward(project, fundingIndex, now);
-      return { ...shown.project, promise: shown.promise };
-    }),
+  // A project over its owner's intake cap has paused new contributors and
+  // is left out. The counts are read only when a project has a cap; while
+  // they load, and when they cannot be read, every project is listed.
+  const open = homeProjects();
+  const [merge] = usePublicResource(
+    open.some((project) => intakeCap(project) !== null),
+    loadMergeActivity,
+    "Merge activity unavailable",
   );
-
+  const mergeIndex = merge.status === "ready" ? merge.index : null;
+  const listedProjects = homeProjectOrder(
+    open
+      .filter(
+        (project) => !intakePaused(project, mergeIndex?.get(project.id), now),
+      )
+      .map((project) => {
+        const shown = publicPoolReward(project, fundingIndex, now);
+        return { ...shown.project, promise: shown.promise };
+      }),
+  );
   return (
     <main>
       <section className="hero shell">
@@ -1113,6 +1131,15 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const unlisted =
     funding.status === "ready" &&
     !listedThisMonth(project, funding.index, new Date());
+  // Neither is a pause at the owner's intake cap.
+  const [merge] = usePublicResource(
+    project.status === "active" && intakeCap(project) !== null,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const paused =
+    merge.status === "ready" &&
+    intakePaused(project, merge.index.get(project.id), new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1155,6 +1182,8 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
         <p>
           {eligibility === "loading" ? (
             <Spinner label="Checking project clearance" />
+          ) : eligibility === "blocked" && paused ? (
+            "This project has paused new contributors. The prompt below picks only listed projects."
           ) : eligibility === "blocked" && unlisted ? (
             <StatusBadge tone="warning">Not listed this month</StatusBadge>
           ) : eligibility === "blocked" ? (
@@ -1518,8 +1547,17 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
       <p className="project-merge-activity">Merge activity unavailable.</p>
     );
   // A repository not read yet shows nothing rather than an empty claim.
-  const line = mergeActivityLine(state.index.get(project.id), new Date());
-  return line ? <p className="project-merge-activity">{line}</p> : null;
+  const rows = state.index.get(project.id);
+  const now = new Date();
+  const line = mergeActivityLine(rows, now);
+  return (
+    <>
+      {intakePaused(project, rows, now) ? (
+        <p className="project-reward-status">{INTAKE_PAUSED_NOTICE}</p>
+      ) : null}
+      {line ? <p className="project-merge-activity">{line}</p> : null}
+    </>
+  );
 }
 
 function ProjectBountyIntroduction({

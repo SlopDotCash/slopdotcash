@@ -10,6 +10,13 @@ export type RepositoryMergeActivity = {
   waitingCapped: boolean;
   mergedOutsideLast30Days: number;
   medianHoursToMerge: number | null;
+  /**
+   * Open outside pull requests, answered or not, for the intake cap
+   * (src/lib/intake-cap.mjs). Null or absent until the repository is read
+   * again after the count was added.
+   */
+  openOutside?: number | null;
+  openOutsideCapped?: boolean;
 };
 
 export type MergeActivityIndex = Map<string, RepositoryMergeActivity[]>;
@@ -27,6 +34,11 @@ function isRow(value: unknown): value is RepositoryMergeActivity {
     count(row.waitingOutside) &&
     typeof row.waitingCapped === "boolean" &&
     count(row.mergedOutsideLast30Days) &&
+    (row.openOutside === undefined ||
+      row.openOutside === null ||
+      count(row.openOutside)) &&
+    (row.openOutsideCapped === undefined ||
+      typeof row.openOutsideCapped === "boolean") &&
     (row.medianHoursToMerge === null ||
       (typeof row.medianHoursToMerge === "number" &&
         row.medianHoursToMerge >= 0))

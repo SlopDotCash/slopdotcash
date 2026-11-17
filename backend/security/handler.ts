@@ -101,6 +101,7 @@ import {
 } from "./project-access";
 import {
   analysisDependencies,
+  readStoredReportByCase,
   scheduleAnalysis,
   scheduleAppealTriage,
   storedIntakeViewForCase,
@@ -110,6 +111,12 @@ import {
   cachedReportingReadiness,
   reportingTarget,
 } from "./reporting-readiness";
+import {
+  handleRoutineApi,
+  ROUTINE_PROOF_NEXT_ACTION,
+  routineClosed,
+  sweepRoutineDecisions,
+} from "./routine-decisions";
 import { handleSubmissionRoute } from "./submissions";
 
 type EventRow = {
@@ -407,7 +414,11 @@ function nextStep(
           ? "Add the requested evidence to your saved report in Inbox."
           : "Answer the owner's question in the GitHub advisory."
         : "Waiting for the reporter's answer; decide when ready.",
-      dueAt: null,
+      // A routine request for proof carries its 14-day clock.
+      dueAt:
+        row.next_action === ROUTINE_PROOF_NEXT_ACTION
+          ? row.next_action_due_at
+          : null,
     };
   if (row.related_party_review === "pending" && row.award_state === "pending")
     return {
@@ -1604,6 +1615,8 @@ type Change = {
   unmet?: { code: string; message: string };
   /** The change proposes a related-party award for independent review. */
   relatedReview?: boolean;
+  /** An appeal of a routine close: the program owner decides, not a moderator. */
+  returnedToOwner?: boolean;
 };
 
 /**
@@ -1794,7 +1807,12 @@ async function planChange(
         reason: textField(body, "reason", 8, 2000),
         evidenceReference: null,
         detail: {},
-        set: { receipt_state: "needs-information" },
+        // A person's request has no clock; it replaces a routine one.
+        set: {
+          receipt_state: "needs-information",
+          next_action: null,
+          next_action_due_at: null,
+        },
       };
     }
     case "decide":
@@ -1939,10 +1957,32 @@ async function planChange(
     case "appeal": {
       exactKeys(body, [...common, "reason"]);
       requireAction(row, roles, action);
+      const reason = textField(body, "reason", 20, 2000);
+      // No person decided a routine close (PRD section 8, operator decision
+      // of 17 November 2026), so its appeal has nothing for a moderator to
+      // uphold: the report returns to the program owner for a first human
+      // decision, and the routine pass never reads it again.
+      if (await routineClosed(deps, row))
+        return {
+          kind: action,
+          role: "reporter",
+          reason,
+          evidenceReference: null,
+          detail: { from: row.receipt_state, routine: true },
+          set: {
+            appeal_state: "returned",
+            appeal_from_state: row.receipt_state,
+            receipt_state: "triaging",
+            // Only the routine refusal reopens, as for a returned appeal.
+            award_state:
+              row.award_state === "ineligible" ? "pending" : row.award_state,
+          },
+          returnedToOwner: true,
+        };
       return {
         kind: action,
         role: "reporter",
-        reason: textField(body, "reason", 20, 2000),
+        reason,
         evidenceReference: null,
         detail: { from: row.receipt_state },
         set: {
@@ -3285,6 +3325,7 @@ async function actOnCase(
         detail: change.detail,
         terms: program?.manifest.securityBounty,
         relatedReview: change.relatedReview,
+        returnedToOwner: change.returnedToOwner,
       }),
     ]);
   } catch (error) {
@@ -3318,8 +3359,10 @@ async function actOnCase(
     }
     fail(409, "stale_revision", "The case changed since you loaded it");
   }
-  // Slopbot triages every appeal first; a moderator still decides it.
-  if (change.kind === "appeal") await scheduleAppealTriage(deps, row.id);
+  // Slopbot triages every appeal first; a moderator still decides it. An
+  // appeal of a routine close is already back with the owner.
+  if (change.kind === "appeal" && !change.returnedToOwner)
+    await scheduleAppealTriage(deps, row.id);
   const updated = (await loadCase(deps, row.id)) as CaseRow;
   const nextRoles = await caseRoles(deps, updated, actor);
   return json(200, {
@@ -3442,12 +3485,30 @@ export async function handleSecurityApi(
   if (
     parts[0] !== "security-cases" &&
     parts[0] !== "security-programs" &&
-    parts[0] !== "security-submissions"
+    parts[0] !== "security-submissions" &&
+    parts[0] !== "security-routine"
   )
     return null;
+  const routine = {
+    db: deps.db,
+    now: deps.now,
+    analyzer: deps.analyzer,
+    waitUntil: deps.waitUntil,
+    sessionActor: deps.sessionActor,
+    readReport: (caseId: string, reportVersion: number) =>
+      readStoredReportByCase(deps, caseId, reportVersion),
+  };
+  // Routine decisions run behind security API requests (PRD section 8). An
+  // admin's own pass must not find the lease taken by its own request.
+  if (parts[0] !== "security-routine")
+    sweepRoutineDecisions(routine, deps.routineDecisions);
   try {
     if (request.method !== "GET" && !isSameOriginJsonWrite(request))
       fail(403, "origin_forbidden", "Requests must come from this site");
+    if (parts[0] === "security-routine")
+      return parts.length === 1
+        ? await handleRoutineApi(request, routine, deps.routineDecisions)
+        : json(404, { error: "not_found" });
     if (
       request.method === "GET" &&
       parts[0] === "security-programs" &&
