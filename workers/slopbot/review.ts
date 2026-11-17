@@ -58,6 +58,7 @@ import {
   GitHubClient,
   GitHubError,
 } from "./github";
+import { INTAKE_CAP_REASON, intakeCapRefuses } from "./intake-cap";
 import {
   MAINTAINER_HOLD_DAYS,
   openHold,
@@ -1376,6 +1377,7 @@ export async function reviewItem(
       reviewKey,
       contentDigest,
       claimToken,
+      exemption,
     );
   } catch (error) {
     // A provider failure must not leave an apparently untouched submission.
@@ -1416,6 +1418,7 @@ async function runReview(
   reviewKey: string,
   contentDigest: string,
   claimToken: string,
+  exemption: Exemption,
 ): Promise<string> {
   let context = initialContext;
   const db = env.SLOPBOT_DB;
@@ -1430,6 +1433,30 @@ async function runReview(
       skipReason: routing.reason,
     });
     return routing.reason;
+  }
+  // A project over its owner's intake cap has paused new contributors
+  // (operator decision, 17 November 2026). A pull request from an outside
+  // contributor that Slopbot has not reviewed before gets no model call and
+  // no label, comment or close; the skip is recorded and uses no monthly
+  // review. A later delivery for the pull request is reviewed once the
+  // project is under the cap. Value assessment and scoring are a separate
+  // pipeline and unchanged.
+  if (
+    scope === "contributor" &&
+    job.itemKind === "pull_request" &&
+    exemption === "not-exempt" &&
+    (await intakeCapRefuses(
+      db,
+      context.registration.projectId,
+      job.repositoryId,
+      issue.user.id,
+      job.number,
+    ))
+  ) {
+    await store.finishReview(db, reviewKey, claimToken, "skipped", {
+      skipReason: INTAKE_CAP_REASON,
+    });
+    return INTAKE_CAP_REASON;
   }
   // Free advisory reviews are capped at a number of distinct pull requests or
   // issues per repository and UTC month (operator decision, 16 November 2026).

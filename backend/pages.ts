@@ -47,6 +47,11 @@ export type PagesEnv = {
   X_CLIENT_ID?: string;
   X_CLIENT_SECRET?: string;
   OPERATOR_GITHUB_IDS?: string;
+  /**
+   * Bearer token of the private reserved-awards feed for one operator
+   * service (PRD section 9). Unset keeps that route closed.
+   */
+  OPERATOR_FEED_TOKEN?: string;
   /** GitHub numeric actor IDs allowed to handle project exceptions. */
   ADMIN_GITHUB_IDS?: string;
   /**

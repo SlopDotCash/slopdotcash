@@ -8,6 +8,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { INTAKE_CAP_LIMITS } from "./lib/intake-cap.mjs";
 import {
   type ProjectDraftStore,
   useProjectDraftSave,
@@ -2166,9 +2167,34 @@ function ProjectProposalForm({
   );
 }
 
+/** The owner's intake cap as typed: a whole number, or empty for off. */
+function intakeCapDraft(text: string): {
+  cap: number | undefined;
+  error: string | undefined;
+} {
+  const typed = text.trim();
+  if (typed === "") return { cap: undefined, error: undefined };
+  const cap = /^\d{1,6}$/u.test(typed) ? Number(typed) : Number.NaN;
+  return Number.isSafeInteger(cap) &&
+    cap >= INTAKE_CAP_LIMITS.min &&
+    cap <= INTAKE_CAP_LIMITS.max
+    ? { cap, error: undefined }
+    : {
+        cap: undefined,
+        error: `Enter a whole number from ${INTAKE_CAP_LIMITS.min} to ${INTAKE_CAP_LIMITS.max}, or leave it empty.`,
+      };
+}
+
+function intakeCapSummary(cap: number | undefined): string {
+  return cap === undefined
+    ? "Off"
+    : `At ${cap} open outside pull request${cap === 1 ? "" : "s"}`;
+}
+
 type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
+  intakeCap: string;
   headline: string;
   goal: string;
   website: string;
@@ -2193,6 +2219,7 @@ const DRAFT_FIELDS = [
   "readyMaxLines",
   "readyMaxFiles",
   "readyProtectedPaths",
+  "intakeCap",
   "headline",
   "goal",
   "website",
@@ -2439,6 +2466,7 @@ function ProjectUpdateForm({
       currentReady?.maxChangedFiles ?? READY_LABEL_DEFAULTS.maxChangedFiles,
     ),
     readyProtectedPaths: (currentReady?.protectedPaths ?? []).join("\n"),
+    intakeCap: String(current.slopbot?.intakeCap ?? ""),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
@@ -2571,8 +2599,12 @@ function ProjectUpdateForm({
     : currentReady
       ? { ...currentReady, enabled: false }
       : undefined;
+  const intake = intakeCapDraft(value.intakeCap);
+  // An invalid entry keeps the published number until it is corrected.
+  const nextIntakeCap = intake.error ? current.slopbot?.intakeCap : intake.cap;
   const errors: Record<string, string | undefined> = {
     ...(readyOn ? ready.errors : {}),
+    intakeCap: intake.error,
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
     website: websiteInput.ok ? undefined : websiteInput.error,
@@ -2679,11 +2711,15 @@ function ProjectUpdateForm({
         : {}),
       ...(source.slopbot !== undefined ||
       value.automaticClosure === "true" ||
-      nextReady !== undefined
+      nextReady !== undefined ||
+      nextIntakeCap !== undefined
         ? {
             slopbot: {
               automaticClosure: value.automaticClosure === "true",
               ...(nextReady ? { readyLabel: nextReady } : {}),
+              ...(nextIntakeCap !== undefined
+                ? { intakeCap: nextIntakeCap }
+                : {}),
             },
           }
         : {}),
@@ -2737,6 +2773,12 @@ function ProjectUpdateForm({
       label: "Slopbot ready label",
       before: readySummary(current.slopbot?.readyLabel),
       after: readySummary(next.slopbot?.readyLabel),
+    },
+    {
+      field: "intakeCap",
+      label: "Pause new contributors",
+      before: intakeCapSummary(current.slopbot?.intakeCap),
+      after: intakeCapSummary(next.slopbot?.intakeCap),
     },
     ...(current.image !== next.image
       ? [
@@ -3139,6 +3181,14 @@ function ProjectUpdateForm({
             error={(field) => shown(field)}
             set={set}
             value={value}
+          />
+          <TextField
+            error={shown("intakeCap")}
+            inputMode="numeric"
+            label="Pause new contributors when this many outside pull requests are open (optional)"
+            name="intakeCap"
+            onChange={set("intakeCap")}
+            value={value.intakeCap}
           />
           <details className="proposal-skill-rules">
             <summary>Contributor instructions</summary>

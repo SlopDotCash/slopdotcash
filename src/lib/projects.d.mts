@@ -217,6 +217,11 @@ export interface ProjectDefinition {
     readonly automaticClosure: boolean;
     /** The slopbot:ready label (PRD section 5); absent means off. */
     readonly readyLabel?: ReadyLabelSettings;
+    /**
+     * Pause new contributors when this many outside pull requests are open
+     * (PRD section 5); absent means off.
+     */
+    readonly intakeCap?: number;
   };
   /** Public terms of an opt-in private security bounty (SEC-01, SEC-05). */
   readonly securityBounty?: SecurityBountyTerms;

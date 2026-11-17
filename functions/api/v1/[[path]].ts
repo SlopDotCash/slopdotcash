@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { handleReservedAwardsFeed } from "../../../backend/payments/reserved-awards-feed";
 import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
 import {
@@ -496,6 +497,16 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (mergeActivity !== null) return mergeActivity;
   const poolFunding = await handlePoolFundingApi(request, { db, tier });
   if (poolFunding !== null) return poolFunding;
+  // Null without the exact operator token: the request then falls through
+  // to the ordinary not-found answer below.
+  const reservedAwards = await handleReservedAwardsFeed(request, {
+    db,
+    token: env.OPERATOR_FEED_TOKEN,
+    tier,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    now,
+  });
+  if (reservedAwards !== null) return reservedAwards;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
